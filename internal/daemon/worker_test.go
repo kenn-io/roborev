@@ -3788,6 +3788,46 @@ func TestAutoClosePassingReviews(t *testing.T) {
 	})
 }
 
+func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+	const agentName = "compact-verdict-agent"
+	const output = "## Critical Issues\n\n1. SQL injection in main.go:42"
+
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return output, nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:  tc.Repo.ID,
+		GitRef:  "main",
+		Agent:   agentName,
+		JobType: storage.JobTypeCompact,
+		Prompt:  "Consolidate the open review findings.",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		compactMetadataPath(job.ID), []byte(`{"source_job_ids":[]}`), 0o600,
+	))
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	var verdict sql.NullInt64
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	require.True(t, verdict.Valid)
+	assert.Equal(t, int64(0), verdict.Int64)
+}
+
 func TestProcessJob_MinSeverityCascade(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

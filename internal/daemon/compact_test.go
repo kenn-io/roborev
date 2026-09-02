@@ -237,6 +237,36 @@ func TestCleanCompactOutputsParseAsPassVerdicts(t *testing.T) {
 	}
 }
 
+func TestCompactVerdict(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   storage.Verdict
+	}{
+		{
+			name:   "clean",
+			output: "No findings remain.",
+			want:   storage.VerdictPass,
+		},
+		{
+			name:   "findings",
+			output: "## Critical Issues\n\n1. SQL injection in main.go:42",
+			want:   storage.VerdictFail,
+		},
+		{
+			name:   "invalid",
+			output: "Error: failed to read review output",
+			want:   storage.VerdictUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, compactVerdict(tt.output))
+		})
+	}
+}
+
 func TestCompactMetadataPath(t *testing.T) {
 	tmpDir := setupTestEnv(t)
 
