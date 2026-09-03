@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/autofix"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type agentCase struct {
@@ -1102,6 +1104,134 @@ func TestFixSkillsRecognizeRuntimeAutofixGuidelines(t *testing.T) {
 			}
 			require.NotEmpty(t, content)
 			assert.Contains(t, content, autofix.GuidelinesHeading)
+		})
+	}
+}
+
+const wantReviewBranchRefSnippet = `read -r branch <<'ROBOREV_REF'
+<branch>
+ROBOREV_REF
+if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
+  remote=${branch%%/*}
+  if [ "$remote" != "$branch" ] && git config --get "remote.$remote.url" >/dev/null; then
+    git fetch --quiet --end-of-options "$remote" "${branch#*/}" || exit 1
+  fi
+  git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
+fi
+roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]`
+
+func reviewBranchRefSnippets(t *testing.T, agent Agent) []string {
+	t.Helper()
+	spec, ok := lookupAgent(agent)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+
+	var snippets []string
+	for _, skill := range skills {
+		if skill.DirName != "roborev-review-branch" {
+			continue
+		}
+		content := strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
+		for _, block := range strings.Split(content, "```bash\n")[1:] {
+			body, _, ok := strings.Cut(block, "\n```")
+			if ok && strings.Contains(body, "ROBOREV_REF") {
+				snippets = append(snippets, body)
+			}
+		}
+	}
+	return snippets
+}
+
+func TestReviewBranchSkillsShareOneRefValidationSnippet(t *testing.T) {
+	wantCounts := map[Agent]int{
+		AgentClaude: 2,
+		AgentCodex:  1,
+		AgentDroid:  1,
+		AgentGrok:   1,
+	}
+
+	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
+		t.Run(string(agent), func(t *testing.T) {
+			snippets := reviewBranchRefSnippets(t, agent)
+			require.Len(t, snippets, wantCounts[agent])
+			for _, snippet := range snippets {
+				assert.Equal(t, wantReviewBranchRefSnippet, snippet)
+			}
+
+			spec, ok := lookupAgent(agent)
+			require.True(t, ok)
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+			for _, skill := range skills {
+				if skill.DirName == "roborev-review-branch" {
+					assert.NotContains(t, string(skill.Content), "--verify -- ")
+				}
+			}
+		})
+	}
+}
+
+func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash unavailable: %v", err)
+	}
+
+	upstreamRepo := testutil.InitTestRepo(t)
+
+	snippets := reviewBranchRefSnippets(t, AgentCodex)
+	require.Len(t, snippets, 1)
+
+	pwnPath := filepath.Join(t.TempDir(), "pwn")
+	cases := []struct {
+		name          string
+		ref           string
+		wantSuccess   bool
+		wantRun       bool
+		wantRemoteRef bool
+	}{
+		{name: "upstream_main", ref: "upstream/main", wantSuccess: true, wantRun: true, wantRemoteRef: true},
+		{name: "feat", ref: "feat", wantSuccess: true, wantRun: true},
+		{name: "main", ref: "main", wantSuccess: true, wantRun: true},
+		{name: "develop", ref: "develop"},
+		{name: "upstream_ghost", ref: "upstream/ghost"},
+		{name: "release_1_2", ref: "release/1.2"},
+		{name: "exec_id", ref: "--exec=id"},
+		{name: "upload_pack", ref: "origin/--upload-pack=touch " + pwnPath},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work := testutil.InitTestRepo(t)
+			work.CheckoutNewBranch("feat")
+			work.CommitFile("feature.txt", "feature", "feature commit")
+			work.AddRemote("upstream", filepath.ToSlash(upstreamRepo.Path()))
+
+			precondition := exec.Command("git", "rev-parse", "--verify", "--end-of-options", "refs/remotes/upstream/main")
+			precondition.Dir = work.Path()
+			require.Error(t, precondition.Run(), "upstream/main must start unfetched")
+
+			script := strings.Replace(snippets[0], "<branch>", tc.ref, 1)
+			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", "echo ROBOREV_WOULD_RUN", 1)
+			scriptPath := filepath.Join(t.TempDir(), "review-branch.sh")
+			require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
+
+			var stdout, stderr strings.Builder
+			cmd := exec.Command(bash, scriptPath)
+			cmd.Dir = work.Path()
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			runErr := cmd.Run()
+			assert.Equal(t, tc.wantSuccess, runErr == nil, "stderr: %s", stderr.String())
+			assert.Equal(t, tc.wantRun, strings.Contains(stdout.String(), "ROBOREV_WOULD_RUN"), "stdout: %s", stdout.String())
+
+			remoteRef := exec.Command("git", "rev-parse", "--verify", "--end-of-options", "refs/remotes/upstream/main")
+			remoteRef.Dir = work.Path()
+			afterRemoteRef := remoteRef.Run() == nil
+			assert.Equal(t, tc.wantRemoteRef, afterRemoteRef)
+			_, err := os.Stat(pwnPath)
+			assert.Error(t, err)
 		})
 	}
 }
