@@ -1140,6 +1140,8 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
 fi
 roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]`
 
+const wantReviewBranchFetchCommand = `git fetch --quiet --refmap= --end-of-options "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1`
+
 func reviewBranchRefSnippets(t *testing.T, agent Agent) []string {
 	t.Helper()
 	spec, ok := lookupAgent(agent)
@@ -1210,6 +1212,7 @@ func TestReviewBranchSkillsShareOneRefValidationSnippet(t *testing.T) {
 			require.Len(t, snippets, wantCounts[agent])
 			for _, snippet := range snippets {
 				assert.Equal(t, wantReviewBranchRefSnippet, snippet)
+				assert.Contains(t, snippet, wantReviewBranchFetchCommand)
 			}
 
 			spec, ok := lookupAgent(agent)
