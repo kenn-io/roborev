@@ -232,6 +232,8 @@ func TestDataDirRejectsRelativeCommonDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ".", commonDir)
 	assert.Equal(t, homeDefault, dataDirForRepo(""))
+	assert.Equal(t, homeDefault, dataDirForRepo(bareDir))
+	assert.Equal(t, homeDefault, DataDir())
 }
 
 func TestResolveAgent(t *testing.T) {

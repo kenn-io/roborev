@@ -928,6 +928,11 @@ func dataDirForRepo(repoPath string) string {
 		return filepath.Clean(dir)
 	}
 
+	// Bare repositories have no working tree to anchor a relative data root.
+	if _, err := git.GetRepoRoot(repoPath); err != nil {
+		return defaultDir
+	}
+
 	commonDir, err := git.ResolveGitCommonDir(repoPath)
 	if err != nil || commonDir == "" || commonDir == "." || !filepath.IsAbs(commonDir) {
 		return defaultDir
