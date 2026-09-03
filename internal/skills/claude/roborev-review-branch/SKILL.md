@@ -90,6 +90,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
     esac
   done
   if [ -n "$remote" ]; then
+    git check-ref-format --branch "$remote_branch" >/dev/null || exit 1
     git fetch --quiet --end-of-options "$remote" "$remote_branch" || exit 1
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
@@ -139,6 +140,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
     esac
   done
   if [ -n "$remote" ]; then
+    git check-ref-format --branch "$remote_branch" >/dev/null || exit 1
     git fetch --quiet --end-of-options "$remote" "$remote_branch" || exit 1
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
