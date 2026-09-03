@@ -249,6 +249,11 @@ func TestCompactVerdict(t *testing.T) {
 			want:   storage.VerdictPass,
 		},
 		{
+			name:   "explicit pass verdict",
+			output: "Verdict: PASS",
+			want:   storage.VerdictPass,
+		},
+		{
 			name:   "findings",
 			output: "## Critical Issues\n\n1. SQL injection in main.go:42",
 			want:   storage.VerdictFail,
