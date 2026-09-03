@@ -1075,9 +1075,10 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		}
 	}()
 
-	// Fetch output_prefix from job (if any)
+	// Fetch output_prefix and job_type from job (if any)
 	var outputPrefix sql.NullString
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	var jobType string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -1106,12 +1107,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// Only store a verdict for non-empty output, matching CompleteJob:
 	// listings treat a non-NULL verdict_bool as proof that a non-empty
 	// review output exists and skip reading the output column.
-	var verdictBoolVal any
-	if finalOutput != "" {
-		if verdict := ParseVerdict(finalOutput); verdict != VerdictUnknown {
-			verdictBoolVal = verdictToBool(verdict)
-		}
-	}
+	verdictBoolVal := verdictBoolFromOutput(finalOutput)
 	_, err = conn.ExecContext(ctx,
 		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
@@ -1187,9 +1183,10 @@ func (db *DB) completeJob(
 		}
 	}()
 
-	// Fetch output_prefix from job (if any)
+	// Fetch output_prefix and job_type from job (if any)
 	var outputPrefix sql.NullString
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	var jobType string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -1221,14 +1218,13 @@ func (db *DB) completeJob(
 		return nil
 	}
 
-	// Insert review with sync columns
+	// Insert review with sync columns. Task and insights output is free-form
+	// prose, so it never carries a parsed verdict.
 	var verdictBoolVal any
 	if completion.Verdict != VerdictUnknown {
 		verdictBoolVal = verdictToBool(completion.Verdict)
-	} else if finalOutput != "" {
-		if verdict := ParseVerdict(finalOutput); verdict != VerdictUnknown {
-			verdictBoolVal = verdictToBool(verdict)
-		}
+	} else if jobType != JobTypeTask && jobType != JobTypeInsights {
+		verdictBoolVal = verdictBoolFromOutput(finalOutput)
 	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal,

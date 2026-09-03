@@ -93,12 +93,32 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	assert.JSONEq(t, string(structured), storedStructured)
 }
 
-func TestCompleteJobUnknownOutputLeavesVerdictNull(t *testing.T) {
+func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/task-verdict")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "count the exported symbols", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "worker-1")
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must not carry a parsed verdict")
+}
+
+func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/unknown-verdict", "unknown123")
 	claimJob(t, env.db, "worker-1")
 
 	require.NoError(t, env.db.CompleteJob(
-		env.job.ID, "codex", "prompt", "Task completed successfully.",
+		env.job.ID, "codex", "prompt", "I am unable to read the diff file because it is ignored by configured ignore patterns.",
 	))
 
 	var verdict sql.NullInt64
@@ -2502,7 +2522,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 	claimJob(t, db, "w1")
 
 	require.NoError(t, db.CompleteFixJob(
-		job.ID, "codex", "p", "Applied the requested change.", "patch content",
+		job.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content",
 	))
 
 	var verdict sql.NullInt64

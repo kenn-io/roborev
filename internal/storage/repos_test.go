@@ -573,7 +573,7 @@ func TestGetRepoStats(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-unknown-verdict")
 		commit := createCommit(t, db, repo.ID, "stats-unknown-sha")
 		job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
-		completeTestJob(t, db, job.ID, "Review completed without a verdict.")
+		completeTestJob(t, db, job.ID, "I am unable to read the diff file because it is ignored by configured ignore patterns.")
 
 		stats, err := db.GetRepoStats(repo.ID)
 		require.NoError(t, err)

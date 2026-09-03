@@ -5166,3 +5166,19 @@ func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	assert.Equal(t, "alice", pr.Author.Login,
 		"direct lookup must reconstruct the PR with its author preserved")
 }
+
+func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal("no verdict", formatPanelReviewerStatus(storage.BatchReviewResult{
+		Status: string(storage.JobStatusFailed),
+		Error:  review.NoVerdictMessage(&review.NoVerdictError{Output: "unable to read the diff"}),
+	}))
+	assert.Equal("failed", formatPanelReviewerStatus(storage.BatchReviewResult{
+		Status: string(storage.JobStatusFailed),
+		Error:  "agent: exit status 1",
+	}))
+	assert.Equal("skipped", formatPanelReviewerStatus(storage.BatchReviewResult{
+		Status: string(storage.JobStatusFailed),
+		Error:  review.QuotaErrorPrefix + "exhausted",
+	}))
+}

@@ -192,6 +192,47 @@ func UnavailableError(msg string) string {
 	return UnavailableErrorPrefix + msg
 }
 
+// NoVerdictErrorPrefix is prepended to the stored job error when a built-in
+// review ran to completion but its output carried no recognizable verdict,
+// typically because the agent could not read the diff. Consumers can select
+// these rows to separate "never reviewed" from genuine agent failures.
+const NoVerdictErrorPrefix = "no-verdict: "
+
+// noVerdictOutputLimit caps the agent output preserved in the job error so a
+// runaway response cannot bloat the row.
+const noVerdictOutputLimit = 4000
+
+// NoVerdictError reports that a built-in review completed without a
+// recognizable verdict. Output holds the agent's response so the reason can
+// be inspected after the job fails.
+type NoVerdictError struct {
+	Output string
+}
+
+func (e *NoVerdictError) Error() string {
+	return "review produced no recognizable verdict"
+}
+
+// NoVerdictMessage renders the stored job error for a NoVerdictError: the
+// prefix, the reason, and the agent output that lacked a verdict.
+func NoVerdictMessage(err *NoVerdictError) string {
+	output := strings.TrimSpace(err.Output)
+	if len(output) > noVerdictOutputLimit {
+		output = output[:noVerdictOutputLimit] + "\n[truncated]"
+	}
+	if output == "" {
+		return NoVerdictErrorPrefix + err.Error() + " (empty output)"
+	}
+	return NoVerdictErrorPrefix + err.Error() + "\n\n" + output
+}
+
+// IsNoVerdictFailure reports whether a review failed because its output had
+// no recognizable verdict.
+func IsNoVerdictFailure(r ReviewResult) bool {
+	return r.Status == ResultFailed &&
+		strings.HasPrefix(r.Error, NoVerdictErrorPrefix)
+}
+
 // TimeoutErrorPrefix is prepended to error messages when a batch job
 // is canceled because the batch exceeded its timeout and results were
 // posted with the available reviews.

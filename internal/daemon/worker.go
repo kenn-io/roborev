@@ -1414,6 +1414,16 @@ func (wp *WorkerPool) failOrRetryAgentExecutionContext(
 	agentName string,
 	executionErr error,
 ) {
+	// A review that ran but produced no verdict (typically an unreadable
+	// diff) is deterministic for that agent: retrying it wastes runs. Fail
+	// over to the backup agent at once, or fail with the agent output kept
+	// in the stored error so the reason stays inspectable.
+	if noVerdict, ok := errors.AsType[*review.NoVerdictError](executionErr); ok {
+		wp.failoverOrFailNonRetryableAgentContext(
+			ctx, workerID, job, agentName, review.NoVerdictMessage(noVerdict),
+		)
+		return
+	}
 	errorMsg := fmt.Sprintf("agent: %v", executionErr)
 	classification, attached := agent.LimitClassificationFromError(executionErr)
 	if !attached {

@@ -63,7 +63,39 @@ func TestRunAgentReviewRejectsOutputWithoutVerdict(t *testing.T) {
 		context.Background(), a, t.TempDir(), "HEAD", "prompt",
 		"default", "", nil,
 	)
-	require.EqualError(t, err, "review produced no recognizable verdict")
+	var noVerdict *NoVerdictError
+	require.ErrorAs(t, err, &noVerdict)
+	assert.Equal(t, output, noVerdict.Output)
 	assert.Equal(t, output, got.Output)
 	assert.Equal(t, storage.VerdictUnknown, got.Verdict)
+}
+
+func TestRunAgentReviewKeepsProseFindings(t *testing.T) {
+	a := &mockAgent{name: "prose", output: "The retry loop never terminates when the queue is empty."}
+
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "", nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, storage.VerdictFail, got.Verdict)
+}
+
+func TestNoVerdictMessage(t *testing.T) {
+	assert := assert.New(t)
+
+	msg := NoVerdictMessage(&NoVerdictError{Output: "  I am unable to read the diff.\n"})
+	assert.True(strings.HasPrefix(msg, NoVerdictErrorPrefix))
+	assert.Contains(msg, "review produced no recognizable verdict")
+	assert.Contains(msg, "I am unable to read the diff.")
+	assert.False(strings.HasSuffix(msg, "\n"))
+
+	assert.Contains(NoVerdictMessage(&NoVerdictError{}), "(empty output)")
+
+	long := NoVerdictMessage(&NoVerdictError{Output: strings.Repeat("x", noVerdictOutputLimit+50)})
+	assert.Contains(long, "[truncated]")
+	assert.Less(len(long), noVerdictOutputLimit+100)
+
+	assert.True(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: msg}))
+	assert.False(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: "agent: boom"}))
 }

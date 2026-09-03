@@ -884,10 +884,8 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		if *r.VerdictBool {
 			verdictBool = 1
 		}
-	} else if r.Output != "" {
-		if verdict := ParseVerdict(r.Output); verdict != VerdictUnknown {
-			verdictBool = verdictToBool(verdict)
-		}
+	} else {
+		verdictBool = verdictBoolFromOutput(r.Output)
 	}
 	_, err = db.Exec(`
 		INSERT INTO reviews (
