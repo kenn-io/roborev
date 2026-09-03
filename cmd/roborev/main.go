@@ -10,6 +10,8 @@ import (
 	_ "time/tzdata"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 var (
@@ -17,7 +19,15 @@ var (
 	verbose    bool
 )
 
+func pinDataDirForProcess() {
+	if os.Getenv("ROBOREV_DATA_DIR") != "" {
+		return
+	}
+	_ = os.Setenv("ROBOREV_DATA_DIR", config.DataDir())
+}
+
 func main() {
+	pinDataDirForProcess()
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",

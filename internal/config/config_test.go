@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -51,27 +53,20 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestDataDir(t *testing.T) {
 	t.Run("default uses home directory", func(t *testing.T) {
+		t.Chdir(t.TempDir())
 		t.Setenv("ROBOREV_DATA_DIR", "") // DataDir() treats empty the same as unset
 
 		dir := DataDir()
 		home, _ := os.UserHomeDir()
 		expected := filepath.Join(home, ".roborev")
-		if dir != expected {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected %s, got %s", expected, dir)
-		}
+		assert.Equal(t, expected, dir)
 	})
 
 	t.Run("env var overrides default", func(t *testing.T) {
 		t.Setenv("ROBOREV_DATA_DIR", "/custom/data/dir")
 
 		dir := DataDir()
-		if dir != "/custom/data/dir" {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected /custom/data/dir, got %s", dir)
-		}
+		assert.Equal(t, "/custom/data/dir", dir)
 	})
 
 	t.Run("GlobalConfigPath uses DataDir", func(t *testing.T) {
@@ -80,11 +75,133 @@ func TestDataDir(t *testing.T) {
 
 		path := GlobalConfigPath()
 		expected := filepath.Join(testDir, "config.toml")
-		if path != expected {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected %s, got %s", expected, path)
-		}
+		assert.Equal(t, expected, path)
+	})
+}
+
+func TestDataDirGitLocalFallback(t *testing.T) {
+	mainDir := t.TempDir()
+	execGit(t, mainDir, "init")
+	execGit(t, mainDir, "config", "user.email", "test@example.com")
+	execGit(t, mainDir, "config", "user.name", "Test User")
+	writeTestFile(t, mainDir, "initial.txt", "initial")
+	execGit(t, mainDir, "add", "initial.txt")
+	execGit(t, mainDir, "commit", "-m", "initial")
+	execGit(t, mainDir, "config", "--local", "roborev.dataDir", "roborev")
+
+	linkedDir := t.TempDir()
+	execGit(t, mainDir, "worktree", "add", linkedDir, "-b", "linked")
+	t.Cleanup(func() {
+		cmd := exec.Command("git", "worktree", "remove", "--force", linkedDir)
+		cmd.Dir = mainDir
+		_ = cmd.Run()
+	})
+
+	commonDir, err := git.ResolveGitCommonDir(mainDir)
+	require.NoError(t, err)
+	expected := filepath.Join(commonDir, "roborev")
+	t.Setenv("ROBOREV_DATA_DIR", "")
+
+	t.Chdir(mainDir)
+	assert.Equal(t, expected, DataDir())
+	t.Chdir(linkedDir)
+	assert.Equal(t, expected, DataDir())
+}
+
+func TestDataDirPrecedenceAndFallbacks(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	homeDefault := filepath.Join(home, ".roborev")
+
+	newRepo := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		execGit(t, dir, "init")
+		execGit(t, dir, "config", "user.email", "test@example.com")
+		execGit(t, dir, "config", "user.name", "Test User")
+		return dir
+	}
+
+	t.Run("ROBOREV_DATA_DIR", func(t *testing.T) {
+		dir := newRepo(t)
+		writeTestFile(t, filepath.Join(dir, ".git"), "config", "[core\n")
+		t.Setenv("ROBOREV_DATA_DIR", "relative/env-root")
+		t.Setenv("PATH", t.TempDir())
+		t.Chdir(dir)
+		assert.Equal(t, "relative/env-root", DataDir())
+	})
+
+	t.Run("relative local value", func(t *testing.T) {
+		dir := newRepo(t)
+		execGit(t, dir, "config", "--local", "roborev.dataDir", "relative/data")
+		commonDir, err := git.ResolveGitCommonDir(dir)
+		require.NoError(t, err)
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, filepath.Join(commonDir, "relative/data"), DataDir())
+	})
+
+	t.Run("absolute local value", func(t *testing.T) {
+		dir := newRepo(t)
+		absolute := filepath.Join(t.TempDir(), "nested", "..", "absolute-data")
+		execGit(t, dir, "config", "--local", "roborev.dataDir", filepath.ToSlash(absolute))
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, filepath.Clean(absolute), DataDir())
+	})
+
+	t.Run("tilde local value", func(t *testing.T) {
+		dir := newRepo(t)
+		execGit(t, dir, "config", "--local", "roborev.dataDir", "~/roborev-local-data")
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, filepath.Join(home, "roborev-local-data"), DataDir())
+	})
+
+	t.Run("missing local value", func(t *testing.T) {
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(newRepo(t))
+		assert.Equal(t, homeDefault, DataDir())
+	})
+
+	t.Run("empty local value", func(t *testing.T) {
+		dir := newRepo(t)
+		execGit(t, dir, "config", "--local", "--add", "roborev.dataDir", "")
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, homeDefault, DataDir())
+	})
+
+	t.Run("malformed local config", func(t *testing.T) {
+		dir := newRepo(t)
+		writeTestFile(t, filepath.Join(dir, ".git"), "config", "[core\n")
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, homeDefault, DataDir())
+	})
+
+	t.Run("outside repository", func(t *testing.T) {
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(t.TempDir())
+		assert.Equal(t, homeDefault, DataDir())
+	})
+
+	t.Run("global-only value", func(t *testing.T) {
+		dir := newRepo(t)
+		globalConfig := filepath.Join(t.TempDir(), "global-config")
+		t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+		execGit(t, dir, "config", "--global", "roborev.dataDir", "global/data")
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, homeDefault, DataDir())
+	})
+
+	t.Run("repo config lookalike", func(t *testing.T) {
+		dir := newRepo(t)
+		writeRepoConfigStr(t, dir, `roborev.dataDir = "lookalike"`)
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		assert.Equal(t, homeDefault, DataDir())
 	})
 }
 

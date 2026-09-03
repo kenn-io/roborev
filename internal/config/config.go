@@ -901,14 +901,38 @@ func DefaultConfig() *Config {
 	return cfg
 }
 
-// DataDir returns the roborev data directory.
-// Uses ROBOREV_DATA_DIR env var if set, otherwise ~/.roborev
+// DataDir returns the roborev data directory from ROBOREV_DATA_DIR, the
+// repository-local Git setting, or ~/.roborev in that order. Git lookup uses
+// the repository containing the current working directory.
 func DataDir() string {
 	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
 		return dir
 	}
+	repoPath, err := os.Getwd()
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".roborev")
+	}
+	return dataDirForRepo(repoPath)
+}
+
+func dataDirForRepo(repoPath string) string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev")
+	defaultDir := filepath.Join(home, ".roborev")
+
+	dir, err := git.ReadLocalPathConfig(repoPath, "roborev.dataDir")
+	if err != nil || dir == "" {
+		return defaultDir
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+
+	commonDir, err := git.ResolveGitCommonDir(repoPath)
+	if err != nil {
+		return defaultDir
+	}
+	return filepath.Join(commonDir, dir)
 }
 
 // GlobalConfigPath returns the path to the global config file

@@ -2470,6 +2470,17 @@ func remoteNameExists(repoPath, remote string) bool {
 	return slices.Contains(remotes, remote)
 }
 
+// ReadLocalPathConfig returns a path-valued key from repository-local Git config.
+func ReadLocalPathConfig(repoPath, key string) (string, error) {
+	cmd := newGitCmd("config", "--local", "--path", "--get", key)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return normalizeMSYSPath(string(out)), nil
+}
+
 // readGitConfig returns the value of a git config key, or "" if missing.
 func readGitConfig(repoPath, key string) string {
 	cmd := newGitCmd("config", "--get", key)

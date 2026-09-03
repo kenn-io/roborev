@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/skills"
@@ -681,6 +682,46 @@ func TestFilterGitEnv(t *testing.T) {
 	for i, got := range filtered {
 		assert.Equal(t, got, want[i])
 	}
+}
+
+func TestPinDataDirForProcess(t *testing.T) {
+	t.Run("pins the initial Git-selected root", func(t *testing.T) {
+		dir := t.TempDir()
+		runGit := func(args ...string) string {
+			t.Helper()
+			cmd := exec.Command("git", args...)
+			cmd.Dir = dir
+			out, err := cmd.Output()
+			require.NoError(t, err)
+			return strings.TrimSpace(string(out))
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@example.com")
+		runGit("config", "user.name", "Test User")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "initial.txt"), []byte("initial"), 0o644))
+		runGit("add", "initial.txt")
+		runGit("commit", "-m", "initial")
+		runGit("config", "--local", "roborev.dataDir", "pinned/data")
+
+		commonDir, err := git.ResolveGitCommonDir(dir)
+		require.NoError(t, err)
+		expected := filepath.Join(commonDir, "pinned/data")
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(dir)
+		pinDataDirForProcess()
+		runGit("config", "--local", "roborev.dataDir", "changed/data")
+
+		assert.Equal(t, expected, os.Getenv("ROBOREV_DATA_DIR"))
+		assert.Equal(t, expected, config.DataDir())
+		assert.Equal(t, filepath.Join(expected, "config.toml"), config.GlobalConfigPath())
+		assert.Equal(t, filepath.Join(expected, "reviews.db"), storage.DefaultDBPath())
+	})
+
+	t.Run("preserves an explicit environment root", func(t *testing.T) {
+		t.Setenv("ROBOREV_DATA_DIR", "explicit/data")
+		pinDataDirForProcess()
+		assert.Equal(t, "explicit/data", os.Getenv("ROBOREV_DATA_DIR"))
+	})
 }
 
 func TestIsGoTestBinaryPath(t *testing.T) {

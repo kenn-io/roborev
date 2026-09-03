@@ -836,6 +836,39 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 }
 
+func TestReadLocalPathConfig(t *testing.T) {
+	assert := assert.New(t)
+	repo := NewTestRepoWithCommit(t)
+	const key = "roborev.dataDir"
+
+	repo.Run("config", "--local", key, "relative/data")
+	got, err := ReadLocalPathConfig(repo.Dir, key)
+	require.NoError(t, err)
+	assert.Equal(filepath.FromSlash("relative/data"), got)
+
+	worktree := repo.AddWorktree("local-data")
+	got, err = ReadLocalPathConfig(worktree.Dir, key)
+	require.NoError(t, err)
+	assert.Equal(filepath.FromSlash("relative/data"), got)
+
+	abs := filepath.Join(t.TempDir(), "nested", "..", "absolute-data")
+	repo.Run("config", "--local", key, filepath.ToSlash(abs))
+	got, err = ReadLocalPathConfig(repo.Dir, key)
+	require.NoError(t, err)
+	assert.Equal(filepath.Clean(abs), got)
+
+	repo.Run("config", "--local", key, "~/roborev-local-data")
+	got, err = ReadLocalPathConfig(repo.Dir, key)
+	require.NoError(t, err)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(filepath.Join(home, "roborev-local-data"), got)
+
+	got, err = ReadLocalPathConfig(repo.Dir, "roborev.missingDataDir")
+	require.Error(t, err)
+	assert.Empty(got)
+}
+
 func TestGetMainRepoRootForBareBackedWorktree(t *testing.T) {
 	bareRepo := NewBareTestRepo(t)
 	seedRepo := NewTestRepoWithCommit(t)

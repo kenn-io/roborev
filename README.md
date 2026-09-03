@@ -347,7 +347,7 @@ hook, so a configured integration never goes dark unnoticed.
 
 | Variable | Description |
 |----------|-------------|
-| `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_DATA_DIR` | Highest-precedence data directory override; when unset, roborev checks the repository-local Git setting before `~/.roborev` |
 | `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |
 | `ROBOREV_SYNC_CURSOR_LOOKBACK` | PostgreSQL sync cursor overlap duration (default `5m`) |
 | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |
@@ -358,6 +358,9 @@ hook, so a configured integration never goes dark unnoticed.
 | `ROBOREV_DROID_HOOK_COMMIT_THRESHOLD` | Override Factory Droid agent-hook commit threshold |
 | `ROBOREV_DROID_HOOK_FAILED_REVIEW_THRESHOLD` | Override Factory Droid agent-hook failed-review threshold |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
+
+For Git-local data directory fallback, relative paths, linked-worktree sharing,
+and process-start timing, see [Data Directory](https://roborev.dev/configuration/#data-directory).
 
 ## Supported Agents
 

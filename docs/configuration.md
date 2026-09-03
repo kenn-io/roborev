@@ -1032,7 +1032,31 @@ All roborev data is stored in `~/.roborev/` by default:
 └── logs/jobs/        # Persistent job output logs
 ```
 
-Override with the `ROBOREV_DATA_DIR` environment variable:
+The effective data directory is selected in this order:
+
+1. A non-empty `ROBOREV_DATA_DIR` value, which is used unchanged.
+1. A non-empty `roborev.dataDir` value in the repository-local Git config for
+    the process's starting working directory.
+1. The home directory default shown above.
+
+Configure the Git-local value with:
+
+```bash
+git config --local roborev.dataDir roborev
+```
+
+Relative Git-local values are resolved beneath the repository's Git common
+directory, so the main checkout and its linked worktrees share one data
+directory. Git expands `~` values before roborev uses them; absolute values
+remain absolute. Roborev reads this setting from the repository containing the
+current working directory when the process starts. A later `--repo` argument
+doesn't retarget the process data directory, and changing the Git setting takes
+effect in a new process.
+
+Missing, empty, invalid, unavailable, or non-repository Git-local settings fall
+back to the home directory. The `ROBOREV_DATA_DIR` environment variable always
+takes precedence, including when Git isn't available. For a direct override,
+use:
 
 ```bash
 export ROBOREV_DATA_DIR=/custom/path
@@ -1191,7 +1215,7 @@ systemctl --user enable --now roborev
 
 | Variable | Description |
 |----------|-------------|
-| `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_DATA_DIR` | Highest-precedence data directory override; when unset, roborev checks the repository-local Git setting before `~/.roborev` |
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
 | `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous daemon telemetry |
 | `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
