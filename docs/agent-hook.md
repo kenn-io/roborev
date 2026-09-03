@@ -185,11 +185,10 @@ stdin, pass it through kit's typed dispatcher, post a normalized request to the
 regular roborev daemon, and let kit encode the native response.
 
 The regular daemon loads and persists session accounting and delivered review
-IDs at:
-
-```text
-${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json
-```
+IDs under the effective data directory. When `ROBOREV_DATA_DIR` is explicitly
+set, the shell path is `${ROBOREV_DATA_DIR}/agent-hook/state.json`; otherwise
+the daemon uses the Git-local or home-backed directory selected at process
+start.
 
 The same process reads repository registration, review jobs, verdicts, and
 workspace snoozes from the review database. Hook communication fails open: a

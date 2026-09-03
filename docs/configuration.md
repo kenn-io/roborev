@@ -1201,6 +1201,8 @@ Description=roborev daemon
 After=network.target
 
 [Service]
+# Set this to the repository that owns the local roborev.dataDir setting.
+WorkingDirectory=/path/to/repository
 ExecStart=${ROBOREV_BIN} daemon run
 Restart=on-failure
 
@@ -1210,6 +1212,11 @@ EOF
 
 systemctl --user enable --now roborev
 ```
+
+Set `WorkingDirectory` to the configured repository path so an externally
+supervised daemon can find its repository-local data directory. A service
+manager that cannot set the working directory can set `ROBOREV_DATA_DIR`
+explicitly instead.
 
 ### Environment Variables
 

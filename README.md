@@ -108,10 +108,12 @@ updates bundled skills for Claude Code, Codex, Factory Droid, and Grok Build.
 Other profiles receive no CLI fallback. Hermes delivers queued post-tool
 reminders at `Stop`; Cursor records the same events but emits no control
 response.
-Installed hooks post events to the regular roborev daemon. That daemon evaluates
-the reminders and persists session counters and delivered review IDs in
-`${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`. Hook callbacks fail open
-when the daemon is unavailable, so they do not block the coding agent.
+Installed hooks post events to the regular roborev daemon. The daemon evaluates
+the reminders and persists session counters and delivered review IDs under the
+effective data directory. When `ROBOREV_DATA_DIR` is explicitly set, the shell
+path is `${ROBOREV_DATA_DIR}/agent-hook/state.json`; otherwise it uses the
+Git-local or home-backed directory selected at process start. Hook callbacks
+fail open when the daemon is unavailable, so they do not block the coding agent.
 
 For fully automated iteration (advanced feature), use `refine`:
 
