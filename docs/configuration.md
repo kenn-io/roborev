@@ -837,14 +837,19 @@ When enabled, reviews with a passing verdict are closed immediately after the
 verdict is parsed. Failed reviews remain open for attention. This is useful if
 you only want to focus on reviews that found issues.
 
-The option works in both global config (`~/.roborev/config.toml`) and per-repo
-config (`.roborev.toml`). Per-repo settings override the global value.
+The option works in both the effective global config (`~/.roborev/config.toml`
+with the home-backed default) and per-repo config (`.roborev.toml`). Per-repo
+settings override the global value.
 
 ## Global Configuration
 
-Create `~/.roborev/config.toml` to set system-wide defaults.
+Create the effective global config at `{DataDir}/config.toml`; this is
+`~/.roborev/config.toml` when the home-backed default is selected. A Git-local
+`roborev.dataDir` or explicit `ROBOREV_DATA_DIR` changes the effective path.
 
 ```toml
+# Home-backed default global config path; use the effective path above when it
+# is selected by Git-local configuration or ROBOREV_DATA_DIR.
 default_agent = "codex"
 default_model = "gpt-5.5"  # Default LLM
 default_backup_model = "claude-sonnet-4-20250514"  # Model paired with default_backup_agent
@@ -922,8 +927,9 @@ column_borders = true             # Show separators between TUI columns
 
 ### Hot-Reload
 
-The daemon automatically watches `~/.roborev/config.toml` for changes. Most
-settings take effect immediately without restarting the daemon.
+The daemon automatically watches the effective global config at
+`{DataDir}/config.toml`; `~/.roborev/config.toml` is the home-backed default.
+Most settings take effect immediately without restarting the daemon.
 
 **Settings that require daemon restart:** `server_addr`, `max_workers`, the
 `[web]` section, and the `[sync]` section.

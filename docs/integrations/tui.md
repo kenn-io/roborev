@@ -13,6 +13,11 @@ closes passing reviews automatically). This creates an accountability loop that
 ensures every line of agent-generated code is reviewed and every finding is
 resolved.
 
+The TUI uses the effective data directory selected when the process starts.
+Paths shown as `~/.roborev` below are the home-backed default; a Git-local
+`roborev.dataDir` or explicit `ROBOREV_DATA_DIR` moves runtime metadata, logs,
+the control socket, and global configuration under `{DataDir}`.
+
 ```bash
 roborev tui                         # Open TUI
 roborev tui --repo                  # Pre-filter to current repo
@@ -26,7 +31,7 @@ roborev tui --branch=feature-x      # Pre-filter to specific branch
 | `--repo [path]` | Lock filter to a repo. Without a value, resolves to the current repo. |
 | `--branch [name]` | Lock filter to a branch. Without a value, resolves to the current branch. |
 | `--no-quit` | Suppress keyboard quit (`q`) in queue and tasks views. Useful for managed TUI instances controlled externally. The `quit` control socket command still works. |
-| `--control-socket <path>` | Custom path for the control socket (default: `~/.roborev/tui.{PID}.sock`). |
+| `--control-socket <path>` | Custom path for the control socket (default: `{DataDir}/tui.{PID}.sock`, `~/.roborev/tui.{PID}.sock` with the home-backed default). |
 
 When set via flags, the filter is locked and cannot be changed in the TUI. This
 is useful for side-by-side working when you want to focus on a specific repo or
@@ -155,8 +160,9 @@ The log view features:
     lines showing tool calls (file reads, edits, bash commands) with a gutter
     prefix for visual grouping.
 
-Logs are stored in `~/.roborev/logs/jobs/` and can also be viewed from the CLI
-with `roborev log <job-id>`. Use `roborev log clean` to remove old log files.
+Logs are stored under `{DataDir}/logs/jobs/` (`~/.roborev/logs/jobs/` with the
+home-backed default) and can also be viewed from the CLI with
+`roborev log <job-id>`. Use `roborev log clean` to remove old log files.
 
 ## Filtering
 
@@ -183,9 +189,10 @@ The current working directory's repo sorts to the top of the tree, and its
 current branch sorts to the top of that repo's branch list.
 
 To start the TUI with closed items already hidden, set
-`hide_closed_by_default = true` in `~/.roborev/config.toml`. To auto-filter to
-the current repository on startup, set `auto_filter_repo = true`. To auto-filter
-to the current branch or worktree, set `auto_filter_branch = true`. Both
+`hide_closed_by_default = true` in the effective global config
+(`~/.roborev/config.toml` with the home-backed default). To auto-filter to the
+current repository on startup, set `auto_filter_repo = true`. To auto-filter to
+the current branch or worktree, set `auto_filter_branch = true`. Both
 auto-filters add clearable filters (press `Esc`), and CLI flags (`--repo`,
 `--branch`) take priority when set. See [Configuration](/configuration/) for
 details.
@@ -216,12 +223,13 @@ Press `o` in the queue or tasks view to open the column options modal. From
 there you can reorder columns or toggle their visibility.
 
 Custom column order is saved to `column_order` (queue) and `task_column_order`
-(tasks) in `~/.roborev/config.toml`. Hidden columns are saved to
-`hidden_columns`, which accepts these names: `ref`, `branch`, `repo`, `agent`,
-`review_type`, `queued`, `elapsed`, `status`, `pf`, `closed`, `session_id`,
-`requested_model`, `requested_provider`, `cost`. When `hidden_columns` is not
-set, the Session, Req Model, and Req Provider columns are hidden by default. To
-show separator lines between columns, set `column_borders = true`.
+(tasks) in the effective global config (`~/.roborev/config.toml` with the
+home-backed default). Hidden columns are saved to `hidden_columns`, which
+accepts these names: `ref`, `branch`, `repo`, `agent`, `review_type`, `queued`,
+`elapsed`, `status`, `pf`, `closed`, `session_id`, `requested_model`,
+`requested_provider`, `cost`. When `hidden_columns` is not set, the Session, Req
+Model, and Req Provider columns are hidden by default. To show separator lines
+between columns, set `column_borders = true`.
 
 The Review Type column identifies standard reviews as `default` and shows the
 configured name for specialized or custom reviews. The review detail view shows
@@ -261,10 +269,11 @@ reported cost, the status line includes the priced-job coverage.
 Mouse support is enabled by default. Click to select rows, double-click to open
 a review, and use the scroll wheel to navigate lists.
 
-To disable mouse interactions globally, set `mouse_enabled = false` in
-`~/.roborev/config.toml`. You can also toggle this from within the TUI by
-pressing `o` to open the options menu and toggling "Mouse interactions". The
-change takes effect immediately and is persisted to your config file.
+To disable mouse interactions globally, set `mouse_enabled = false` in the
+effective global config (`~/.roborev/config.toml` with the home-backed default).
+You can also toggle this from within the TUI by pressing `o` to open the options
+menu and toggling "Mouse interactions". The change takes effect immediately and
+is persisted to your config file.
 
 ## Review View
 
@@ -295,8 +304,8 @@ Press `Enter` on a job to view its review.
 
 The TUI includes an optional workflow for running fix jobs, applying patches,
 and rebasing directly from the terminal. This is disabled by default. To enable
-it, set `tasks_enabled = true` under the `[advanced]` section in
-`~/.roborev/config.toml`.
+it, set `tasks_enabled = true` under the `[advanced]` section in the effective
+global config (`~/.roborev/config.toml` with the home-backed default).
 
 See [Background Tasks](/advanced/background-tasks/) for the full reference.
 
@@ -456,9 +465,11 @@ The TUI exposes a Unix domain socket for programmatic interaction by external
 tools. The socket uses a newline-delimited JSON protocol: send a JSON request,
 receive a JSON response.
 
-On startup, the TUI writes runtime metadata to `~/.roborev/tui.{PID}.json`
-containing the PID, socket path, and daemon server address. External tools can
-read this file to discover running TUI instances.
+On startup, the TUI writes runtime metadata to `{DataDir}/tui.{PID}.json`
+(`~/.roborev/tui.{PID}.json` with the home-backed default), containing the PID,
+socket path, and daemon server address. External tools can read this file to
+discover running TUI instances. The runtime metadata and control socket always
+share the TUI process's selected data directory.
 
 ### Query Commands
 
@@ -507,7 +518,7 @@ The `get-state` response's `layout` field is always `"stacked"` or `"split"`.
 ### Example
 
 ```bash
-# Find the socket path from runtime metadata
+# Find the socket path from runtime metadata in the home-backed default
 SOCKET=$(python3 -c "import json,glob; f=glob.glob('$HOME/.roborev/tui.*.json')[0]; print(json.load(open(f))['socket_path'])")
 
 # Query current state

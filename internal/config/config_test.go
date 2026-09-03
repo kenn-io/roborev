@@ -192,6 +192,7 @@ func TestDataDirPrecedenceAndFallbacks(t *testing.T) {
 		t.Setenv("HOME", globalHome)
 		t.Setenv("USERPROFILE", globalHome)
 		execGit(t, dir, "config", "--global", "roborev.dataDir", "global/data")
+		assert.Equal(t, "global/data", execGit(t, dir, "config", "--get", "roborev.dataDir"))
 		t.Setenv("ROBOREV_DATA_DIR", "")
 		t.Chdir(dir)
 		assert.Equal(t, filepath.Join(globalHome, ".roborev"), DataDir())
