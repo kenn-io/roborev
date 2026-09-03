@@ -1133,13 +1133,13 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
   done
   if [ -n "$remote" ]; then
     git check-ref-format --branch "$remote_branch" >/dev/null || exit 1
-    git fetch --quiet --refmap= --end-of-options "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1
+    git fetch --quiet --refmap= -- "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
 roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]`
 
-const wantReviewBranchFetchCommand = `git fetch --quiet --refmap= --end-of-options "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1`
+const wantReviewBranchFetchCommand = `git fetch --quiet --refmap= -- "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1`
 
 func reviewBranchRefSnippets(t *testing.T, agent Agent) []string {
 	t.Helper()
