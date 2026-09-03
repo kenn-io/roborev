@@ -9,7 +9,7 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **CLI flags** (`--agent`, `--model`, `--reasoning`)
 1. **Experiment overlay** for an enrolled review
 1. **Per-repo** `.roborev.toml` in your repository root
-1. **Global** `~/.roborev/config.toml`
+1. **Global** config (the default path is `~/.roborev/config.toml`)
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
 
 ## The `config` Command
@@ -1129,6 +1129,8 @@ managed alongside other system services, set up a system service.
 # Resolve paths. Homebrew prefix differs between Intel and Apple Silicon
 ROBOREV_BIN="$(command -v roborev)"
 BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /usr/local)"
+# Set this to the repository whose local roborev.dataDir should be used.
+ROBOREV_REPO="/path/to/repository"
 
 mkdir -p ~/Library/Logs/roborev
 cat > ~/Library/LaunchAgents/com.roborev.daemon.plist << EOF
@@ -1144,6 +1146,8 @@ cat > ~/Library/LaunchAgents/com.roborev.daemon.plist << EOF
         <string>daemon</string>
         <string>run</string>
     </array>
+    <key>WorkingDirectory</key>
+    <string>${ROBOREV_REPO}</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -1164,19 +1168,38 @@ EOF
 launchctl load ~/Library/LaunchAgents/com.roborev.daemon.plist
 ```
 
-The heredoc expands `${ROBOREV_BIN}`, `${BREW_PREFIX}`, and `${HOME}` at
-generation time so the plist contains absolute paths. Launchd does not expand
-`~` or environment variables in plist values.
+The heredoc expands `${ROBOREV_BIN}`, `${BREW_PREFIX}`, `${ROBOREV_REPO}`, and
+`${HOME}` at generation time so the plist contains absolute paths. Set
+`ROBOREV_REPO` to the repository that owns the local `roborev.dataDir` setting.
+A launchd plist manages one repository-scoped daemon, so create one plist per
+repository when their Git-local data roots differ. A service manager that cannot
+set a repository working directory must set `ROBOREV_DATA_DIR` explicitly in the
+plist instead. Launchd does not expand `~` or environment variables in plist
+values.
 
 **Linux (systemd):**
 
 roborev ships with `roborev.service` and `roborev.socket` unit files in its
-`packaging/systemd/` directory. If your package manager installed the unit
-files, enable the user-level service:
+`packaging/systemd/` directory. The packaged service explicitly starts in the
+user's home directory, so it uses the home-backed default. If your package
+manager installed the unit files, enable the user-level service:
 
 ```bash
 systemctl --user enable --now roborev
 ```
+
+The packaged unit has no repository context. To use a repository-local
+`roborev.dataDir`, configure `WorkingDirectory` to that repository in a
+per-repository unit or a `systemctl --user edit roborev` drop-in:
+
+```ini
+[Service]
+WorkingDirectory=/path/to/repository
+```
+
+A systemd unit manages one repository-scoped daemon, so use one unit per
+repository when their Git-local data roots differ. A service manager that cannot
+set the working directory can set `ROBOREV_DATA_DIR` explicitly instead.
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to
@@ -1214,9 +1237,10 @@ systemctl --user enable --now roborev
 ```
 
 Set `WorkingDirectory` to the configured repository path so an externally
-supervised daemon can find its repository-local data directory. A service
-manager that cannot set the working directory can set `ROBOREV_DATA_DIR`
-explicitly instead.
+supervised daemon can find its repository-local data directory. This
+per-repository setting is required for Git-local data roots; otherwise the
+supervisor uses the home-backed default. A service manager that cannot set the
+working directory can set `ROBOREV_DATA_DIR` explicitly instead.
 
 ### Environment Variables
 

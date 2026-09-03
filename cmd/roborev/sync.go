@@ -42,7 +42,7 @@ func syncStatusCmd() *cobra.Command {
 			if !cfg.Sync.Enabled {
 				fmt.Println("Sync: disabled")
 				fmt.Println()
-				fmt.Println("Enable in ~/.roborev/config.toml:")
+				fmt.Printf("Enable in %s:\n", config.GlobalConfigPath())
 				fmt.Println("  [sync]")
 				fmt.Println("  enabled = true")
 				fmt.Println("  postgres_url = \"postgres://...\"")

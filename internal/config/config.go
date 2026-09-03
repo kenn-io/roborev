@@ -1298,8 +1298,9 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 func validateRepoConfigScope(md toml.MetaData) error {
 	if md.IsDefined("fix_guidelines") {
 		return fmt.Errorf(
-			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"repository config key %q is global-only; move it to the global config at %s",
 			"fix_guidelines",
+			GlobalConfigPath(),
 		)
 	}
 	return nil

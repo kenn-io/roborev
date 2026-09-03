@@ -22,7 +22,7 @@ func initCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize roborev in current repository",
 		Long: `Initialize roborev with a single command:
-  - Creates ~/.roborev/ global config directory
+  - Creates the effective global data directory
   - Creates .roborev.toml in repo (if --agent specified)
   - Installs Git hooks
   - Starts the daemon (unless --no-daemon)`,

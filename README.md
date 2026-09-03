@@ -299,9 +299,9 @@ fix_commit_author = "Your Name <you@example.com>"
 fix_commit_co_authored_by = ["Pair Reviewer <pair@example.com>"]
 ```
 
-You can also set `review_guidelines` in `~/.roborev/config.toml`. Global
-guidelines apply to every repo and are appended before repo guidelines by
-default.
+You can also set `review_guidelines` in the effective global config, which is
+`~/.roborev/config.toml` by default. Global guidelines apply to every repo and
+are appended before repo guidelines by default.
 
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
@@ -362,7 +362,7 @@ hook, so a configured integration never goes dark unnoticed.
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 For Git-local data directory fallback, relative paths, linked-worktree sharing,
-and process-start timing, see [Data Directory](https://roborev.dev/configuration/#data-directory).
+and process-start timing, see [Data Directory](https://roborev.io/configuration/#data-directory).
 
 ## Supported Agents
 

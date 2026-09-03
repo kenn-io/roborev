@@ -61,14 +61,15 @@ roborev daemon run 2>&1 | head -50
 
 ### Post-commit hook log
 
-roborev logs every post-commit hook invocation to `~/.roborev/post-commit.log`
-as JSONL. Each entry records a timestamp, the repository path, the outcome (`ok`
-or `error`), and a reason when the hook skips or fails. This is useful for
+roborev logs every post-commit hook invocation to `post-commit.log` under the
+effective data directory (`~/.roborev/post-commit.log` by default) as JSONL.
+Each entry records a timestamp, the repository path, the outcome (`ok` or
+`error`), and a reason when the hook skips or fails. This is useful for
 diagnosing silent hook failures, especially in linked git worktrees where path
 resolution issues can prevent the hook from firing.
 
 ```bash
-# View the last few hook invocations
+# View the last few hook invocations from the home-backed default
 tail -5 ~/.roborev/post-commit.log | jq .
 ```
 

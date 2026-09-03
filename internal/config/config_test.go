@@ -188,12 +188,13 @@ func TestDataDirPrecedenceAndFallbacks(t *testing.T) {
 
 	t.Run("global-only value", func(t *testing.T) {
 		dir := newRepo(t)
-		globalConfig := filepath.Join(t.TempDir(), "global-config")
-		t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+		globalHome := t.TempDir()
+		t.Setenv("HOME", globalHome)
+		t.Setenv("USERPROFILE", globalHome)
 		execGit(t, dir, "config", "--global", "roborev.dataDir", "global/data")
 		t.Setenv("ROBOREV_DATA_DIR", "")
 		t.Chdir(dir)
-		assert.Equal(t, homeDefault, DataDir())
+		assert.Equal(t, filepath.Join(globalHome, ".roborev"), DataDir())
 	})
 
 	t.Run("repo config lookalike", func(t *testing.T) {

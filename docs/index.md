@@ -158,8 +158,10 @@ through the cracks.
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
 - **Workers**: Pool of 4 (configurable) parallel review workers
-- **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
-- **Config**: Global at `~/.roborev/config.toml`, per-repo at `.roborev.toml`
+- **Storage**: SQLite under the effective data directory
+    (`~/.roborev/reviews.db` by default) with WAL mode
+- **Config**: Global under the effective data directory
+    (`~/.roborev/config.toml` by default), per-repo at `.roborev.toml`
 
 ## Federated Multiplayer
 
