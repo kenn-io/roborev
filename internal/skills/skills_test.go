@@ -1,6 +1,7 @@
 package skills
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1134,7 +1134,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
   done
   if [ -n "$remote" ]; then
     git check-ref-format --branch "$remote_branch" >/dev/null || exit 1
-    git fetch --quiet --end-of-options "$remote" "$remote_branch" || exit 1
+    git fetch --quiet --refmap= --end-of-options "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
@@ -1164,27 +1164,22 @@ func reviewBranchRefSnippets(t *testing.T, agent Agent) []string {
 }
 
 type reviewBranchIssueArtifact struct {
-	Body            string `json:"body"`
-	Number          int    `json:"number"`
-	URL             string `json:"url"`
+	Body         string `json:"body"`
+	Number       int    `json:"number"`
+	URL          string `json:"url"`
+	Reproduction struct {
+		BaseRef string `json:"base_ref"`
+	} `json:"reproduction"`
 	ReproductionRef string `json:"-"`
 }
 
+//go:embed testdata/roborev-issue-442.json
+var reviewBranchIssueFixture []byte
+
 func loadReviewBranchIssueArtifact(t *testing.T) reviewBranchIssueArtifact {
 	t.Helper()
-	artifactPath := os.Getenv("ROBOREV_ISSUE_ARTIFACT")
-	if artifactPath == "" {
-		_, sourcePath, _, ok := runtime.Caller(0)
-		require.True(t, ok)
-		repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(sourcePath)))
-		artifactPath = filepath.Join(repoRoot, "..", ".claude", "pr-sweep", "bodies", "roborev-issue-442.json")
-	}
-
-	content, err := os.ReadFile(artifactPath)
-	require.NoError(t, err, "read issue artifact %s", artifactPath)
-
 	var artifact reviewBranchIssueArtifact
-	require.NoError(t, json.Unmarshal(content, &artifact))
+	require.NoError(t, json.Unmarshal(reviewBranchIssueFixture, &artifact))
 	require.Equal(t, 442, artifact.Number)
 	require.Equal(t, "https://github.com/kenn-io/roborev/issues/442", artifact.URL)
 
@@ -1195,8 +1190,9 @@ func loadReviewBranchIssueArtifact(t *testing.T) reviewBranchIssueArtifact {
 			reproductionRef = match[1]
 		}
 	}
-	require.Equal(t, "upstream/main", reproductionRef, "issue artifact must declare the valid upstream/main reproduction")
-	artifact.ReproductionRef = reproductionRef
+	require.Equal(t, "upstream/main", reproductionRef, "issue fixture must preserve the valid upstream/main reproduction")
+	require.Equal(t, reproductionRef, artifact.Reproduction.BaseRef, "issue fixture base must bind to its declared reproduction")
+	artifact.ReproductionRef = artifact.Reproduction.BaseRef
 	return artifact
 }
 
@@ -1245,17 +1241,19 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 
 	pwnPath := filepath.Join(t.TempDir(), "pwn")
 	cases := []struct {
-		name              string
-		ref               string
-		prepareFetchedRef bool
-		wantSuccess       bool
-		wantRun           bool
-		wantRemoteRefs    []string
+		name                      string
+		ref                       string
+		prepareFetchedRef         bool
+		maliciousFetchDestination bool
+		wantSuccess               bool
+		wantRun                   bool
+		wantRemoteRefs            []string
 	}{
 		{name: "upstream_main", ref: issueArtifact.ReproductionRef, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/main"}},
 		{name: "upstream_feature_x", ref: "upstream/feature/x", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/feature/x"}},
 		{name: "slash_remote_main", ref: "team/upstream/main", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/team/upstream/main"}},
 		{name: "origin_main_fetched", ref: "origin/main", prepareFetchedRef: true, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/origin/main"}},
+		{name: "malicious_remote_fetch_destination", ref: "origin/main", maliciousFetchDestination: true, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/origin/main"}},
 		{name: "feat", ref: "feat", wantSuccess: true, wantRun: true},
 		{name: "main", ref: "main", wantSuccess: true, wantRun: true},
 		{name: "develop", ref: "develop"},
@@ -1266,6 +1264,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 		{name: "slash_main", ref: "/main"},
 		{name: "exec_id", ref: "--exec=id"},
 		{name: "upload_pack", ref: "origin/--upload-pack=touch " + pwnPath},
+		{name: "substitution_shape", ref: "origin/$(touch " + pwnPath + ")"},
 		{name: "malformed_destination", ref: "origin/main:foo"},
 		{name: "malformed_heads_destination", ref: "origin/main:refs/heads/pwn"},
 	}
@@ -1278,6 +1277,9 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			work.AddRemote("upstream", filepath.ToSlash(upstreamRepo.Path()))
 			work.AddRemote("origin", filepath.ToSlash(upstreamRepo.Path()))
 			work.AddRemote("team/upstream", filepath.ToSlash(upstreamRepo.Path()))
+			if tc.maliciousFetchDestination {
+				work.RunGit("config", "remote.origin.fetch", "+refs/heads/main:refs/heads/pwn")
+			}
 
 			for _, ref := range []string{
 				"refs/remotes/upstream/main",
