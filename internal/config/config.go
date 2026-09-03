@@ -929,7 +929,7 @@ func dataDirForRepo(repoPath string) string {
 	}
 
 	commonDir, err := git.ResolveGitCommonDir(repoPath)
-	if err != nil {
+	if err != nil || commonDir == "" || commonDir == "." || !filepath.IsAbs(commonDir) {
 		return defaultDir
 	}
 	return filepath.Join(commonDir, dir)

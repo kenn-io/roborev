@@ -9,7 +9,7 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **CLI flags** (`--agent`, `--model`, `--reasoning`)
 1. **Experiment overlay** for an enrolled review
 1. **Per-repo** `.roborev.toml` in your repository root
-1. **Global** config (the default path is `~/.roborev/config.toml`)
+1. **Global** config (the home-backed default path is `~/.roborev/config.toml`)
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
 
 ## The `config` Command
@@ -197,7 +197,8 @@ Use `fix_commit_author` and `fix_commit_co_authored_by` to set author metadata
 on commits produced by fix-like workflows:
 
 ```toml
-# .roborev.toml or ~/.roborev/config.toml
+# .roborev.toml or the effective global config (home-backed default:
+# ~/.roborev/config.toml)
 fix_commit_author = "Your Name <you@example.com>"
 fix_commit_co_authored_by = [
   "Pair Reviewer <pair@example.com>",
@@ -240,7 +241,7 @@ Use the global-only `fix_guidelines` setting to tell Agent Hook and foreground
 every suggestion:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 fix_guidelines = """
 Treat review findings as hypotheses. Verify each one against the code and
 project requirements. Explain findings that are intentionally not applied.
@@ -269,7 +270,7 @@ architecture so the reviewer doesn't flag non-issues. Guidelines can be global,
 per-repo, or both:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 review_guidelines = """
 These rules apply to every repository on this machine.
 Prefer clear error messages and avoid speculative findings.
@@ -366,7 +367,8 @@ prompts. For an overview of both directions of the integration, see
 [Kata](/integrations/kata/).
 
 ```toml
-# .roborev.toml or ~/.roborev/config.toml
+# .roborev.toml or the effective global config (home-backed default:
+# ~/.roborev/config.toml)
 [kata_context]
 mode = "current"   # off (default), current, or open
 max_chars = 50000  # cap on Kata context bytes in the prompt
@@ -589,7 +591,7 @@ agent has usage caps. For example, Codex plans often hit rate limits during
 heavy review sessions, so falling back to Claude Code keeps reviews flowing.
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 default_agent = "codex"
 default_backup_agent = "claude-code"  # Fallback for any workflow
 default_backup_model = "claude-sonnet-4-20250514"  # Model paired with default_backup_agent
@@ -603,7 +605,7 @@ than `default_model`, which is typically chosen for the primary agent.
 You can also set backup agents per workflow:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 review_backup_agent = "claude-code"   # Fallback for reviews
 refine_backup_agent = "codex"         # Fallback for refine
 fix_backup_agent = "claude-code"      # Fallback for fix
@@ -649,7 +651,7 @@ If an agent binary is installed under a non-standard name or path, use a `*_cmd`
 setting to tell roborev where to find it:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 claude_code_cmd = "/opt/bin/claude"
 codex_cmd = "codex-nightly"
 gemini_cmd = "gemini"                 # Pin legacy Gemini CLI instead of auto-preferring agy
@@ -728,7 +730,7 @@ exclude_patterns = ["generated.go", "*.pb.go", "vendor/"]
 ```
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 exclude_patterns = ["*.min.js", "dist/"]
 ```
 
@@ -750,7 +752,7 @@ per-repo value takes precedence over the global default. The default is 200,000
 bytes (~200 KB).
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 default_max_prompt_size = 300000   # 300 KB global default
 
 # .roborev.toml
@@ -1087,7 +1089,7 @@ configuration remains socket-only.
 To enable Unix domain sockets, set `server_addr` to `unix://`:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 server_addr = "unix://"
 ```
 
@@ -1403,7 +1405,7 @@ The `[advanced]` section controls opt-in features that are not part of the
 default workflow.
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 [advanced]
 tasks_enabled = true   # Enable background tasks in the TUI
 ```
@@ -1423,7 +1425,7 @@ Both options default to `true` so Codex reviews start from a clean state without
 skill instructions or user-level Codex config. Fix jobs are not affected.
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 [agent.codex]
 disable_review_skills = true       # Suppress Codex skill instructions on review jobs
 ignore_review_user_config = true   # Pass --ignore-user-config to Codex review jobs
@@ -1451,7 +1453,7 @@ The table mirrors Codex's own `config.toml`, so you can declare a custom
 provider and select it:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 [agent.codex]
 ignore_review_user_config = true   # safe to leave enabled
 
@@ -1571,7 +1573,8 @@ By default, the TUI queue hides the auto-design-router's classifier jobs
 `source = auto_design`) so per-commit routing decisions do not crowd out review
 rows. Decisions are still recorded and counted on the daemon status endpoint.
 Press `s` in the TUI to toggle visibility for the current session, or set
-`show_classify_jobs = true` in `~/.roborev/config.toml` to make them visible
+`show_classify_jobs = true` in the effective global config
+(`~/.roborev/config.toml` with the home-backed default) to make them visible
 globally; per-repo `.roborev.toml` can override with a nullable
 `show_classify_jobs` field (omit to inherit). When viewing a hidden classifier
 or skipped row, press `l` to see the classifier verdict and `skip_reason`
@@ -1579,7 +1582,8 @@ rendered above the (typically empty) log.
 
 ### Enabling
 
-Turn it on globally in `~/.roborev/config.toml`:
+Turn it on globally in the effective global config (`~/.roborev/config.toml`
+with the home-backed default):
 
 ```toml
 [auto_design_review]
@@ -1698,7 +1702,7 @@ These keys live at the top level of the config file (not inside
 `review_agent` and `fix_agent` describe their workflows:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 classify_agent = "claude-code"
 classify_model = "claude-opus-4-8"
 classify_reasoning = "fast"
@@ -1782,7 +1786,7 @@ charges.
 To use Anthropic API credits instead of your subscription:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 anthropic_api_key = "sk-ant-..."
 ```
 
@@ -1807,7 +1811,7 @@ spec. See
 Sensitive values can reference environment variables:
 
 ```toml
-# ~/.roborev/config.toml
+# Effective global config (home-backed default: ~/.roborev/config.toml)
 anthropic_api_key = "${ANTHROPIC_API_KEY}"
 ```
 

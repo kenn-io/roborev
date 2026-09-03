@@ -217,6 +217,23 @@ func TestDataDirPrecedenceAndFallbacks(t *testing.T) {
 	})
 }
 
+func TestDataDirRejectsRelativeCommonDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	homeDefault := filepath.Join(home, ".roborev")
+
+	bareDir := t.TempDir()
+	execGit(t, bareDir, "init", "--bare")
+	execGit(t, bareDir, "config", "--local", "roborev.dataDir", "relative/data")
+	t.Setenv("ROBOREV_DATA_DIR", "")
+	t.Chdir(bareDir)
+
+	commonDir, err := git.ResolveGitCommonDir("")
+	require.NoError(t, err)
+	assert.Equal(t, ".", commonDir)
+	assert.Equal(t, homeDefault, dataDirForRepo(""))
+}
+
 func TestResolveAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	tmpDir := t.TempDir()
