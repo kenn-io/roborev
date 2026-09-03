@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -1112,9 +1113,26 @@ const wantReviewBranchRefSnippet = `read -r branch <<'ROBOREV_REF'
 <branch>
 ROBOREV_REF
 if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
-  remote=${branch%%/*}
-  if [ "$remote" != "$branch" ] && git config --get "remote.$remote.url" >/dev/null; then
-    git fetch --quiet --end-of-options "$remote" "${branch#*/}" || exit 1
+  remote=
+  remote_branch="${branch##*/}"
+  remote_candidate="${branch%/*}"
+  while :; do
+    if [ "$remote_candidate" != "$branch" ] && git config --get "remote.$remote_candidate.url" >/dev/null; then
+      remote="$remote_candidate"
+      break
+    fi
+    case "$remote_candidate" in
+      */*)
+        remote_branch="${remote_candidate##*/}/$remote_branch"
+        remote_candidate="${remote_candidate%/*}"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [ -n "$remote" ]; then
+    git fetch --quiet --end-of-options "$remote" "$remote_branch" || exit 1
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
@@ -1179,24 +1197,31 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 	}
 
 	upstreamRepo := testutil.InitTestRepo(t)
+	upstreamRepo.CheckoutNewBranch("feature/x")
+	upstreamRepo.CommitFile("nested-feature.txt", "nested feature", "nested feature commit")
 
 	snippets := reviewBranchRefSnippets(t, AgentCodex)
 	require.Len(t, snippets, 1)
 
 	pwnPath := filepath.Join(t.TempDir(), "pwn")
 	cases := []struct {
-		name          string
-		ref           string
-		wantSuccess   bool
-		wantRun       bool
-		wantRemoteRef bool
+		name           string
+		ref            string
+		wantSuccess    bool
+		wantRun        bool
+		wantRemoteRefs []string
 	}{
-		{name: "upstream_main", ref: "upstream/main", wantSuccess: true, wantRun: true, wantRemoteRef: true},
+		{name: "upstream_main", ref: "upstream/main", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/main"}},
+		{name: "upstream_feature_x", ref: "upstream/feature/x", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/feature/x"}},
+		{name: "slash_remote_main", ref: "team/upstream/main", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/team/upstream/main"}},
 		{name: "feat", ref: "feat", wantSuccess: true, wantRun: true},
 		{name: "main", ref: "main", wantSuccess: true, wantRun: true},
 		{name: "develop", ref: "develop"},
 		{name: "upstream_ghost", ref: "upstream/ghost"},
 		{name: "release_1_2", ref: "release/1.2"},
+		{name: "nosuchremote_main", ref: "nosuchremote/main"},
+		{name: "empty", ref: ""},
+		{name: "slash_main", ref: "/main"},
 		{name: "exec_id", ref: "--exec=id"},
 		{name: "upload_pack", ref: "origin/--upload-pack=touch " + pwnPath},
 	}
@@ -1207,10 +1232,19 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			work.CheckoutNewBranch("feat")
 			work.CommitFile("feature.txt", "feature", "feature commit")
 			work.AddRemote("upstream", filepath.ToSlash(upstreamRepo.Path()))
+			work.AddRemote("origin", filepath.ToSlash(upstreamRepo.Path()))
+			work.AddRemote("team/upstream", filepath.ToSlash(upstreamRepo.Path()))
 
-			precondition := exec.Command("git", "rev-parse", "--verify", "--end-of-options", "refs/remotes/upstream/main")
-			precondition.Dir = work.Path()
-			require.Error(t, precondition.Run(), "upstream/main must start unfetched")
+			for _, ref := range []string{
+				"refs/remotes/upstream/main",
+				"refs/remotes/upstream/feature/x",
+				"refs/remotes/team/upstream/main",
+				"refs/remotes/origin/main",
+			} {
+				precondition := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref)
+				precondition.Dir = work.Path()
+				require.Error(t, precondition.Run(), "%s must start unfetched", ref)
+			}
 
 			script := strings.Replace(snippets[0], "<branch>", tc.ref, 1)
 			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", "echo ROBOREV_WOULD_RUN", 1)
@@ -1226,10 +1260,17 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			assert.Equal(t, tc.wantSuccess, runErr == nil, "stderr: %s", stderr.String())
 			assert.Equal(t, tc.wantRun, strings.Contains(stdout.String(), "ROBOREV_WOULD_RUN"), "stdout: %s", stdout.String())
 
-			remoteRef := exec.Command("git", "rev-parse", "--verify", "--end-of-options", "refs/remotes/upstream/main")
-			remoteRef.Dir = work.Path()
-			afterRemoteRef := remoteRef.Run() == nil
-			assert.Equal(t, tc.wantRemoteRef, afterRemoteRef)
+			for _, ref := range []string{
+				"refs/remotes/upstream/main",
+				"refs/remotes/upstream/feature/x",
+				"refs/remotes/team/upstream/main",
+				"refs/remotes/origin/main",
+			} {
+				remoteRef := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref)
+				remoteRef.Dir = work.Path()
+				got := remoteRef.Run() == nil
+				assert.Equal(t, slices.Contains(tc.wantRemoteRefs, ref), got, "%s", ref)
+			}
 			_, err := os.Stat(pwnPath)
 			assert.Error(t, err)
 		})
