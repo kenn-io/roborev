@@ -91,6 +91,9 @@ func compactVerdict(output string) storage.Verdict {
 	if reportsNoRemainingFindings(lower) {
 		return storage.VerdictPass
 	}
+	if verdict := storage.ParseVerdict(output); verdict != storage.VerdictUnknown {
+		return verdict
+	}
 	return storage.VerdictFail
 }
 
