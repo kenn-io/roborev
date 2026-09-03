@@ -1032,7 +1032,8 @@ All roborev data is stored in `~/.roborev/` by default:
 ```
 ~/.roborev/
 ├── config.toml       # Global configuration
-├── daemon.json       # Runtime state (port, PID)
+├── runtime/
+│   └── daemon.<pid>.json # Runtime state (port, PID)
 ├── post-commit.log   # JSONL log of post-commit hook invocations
 ├── reviews.db        # SQLite database
 └── logs/jobs/        # Persistent job output logs

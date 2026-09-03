@@ -191,7 +191,17 @@ func TestDataDirPrecedenceAndFallbacks(t *testing.T) {
 		globalHome := t.TempDir()
 		t.Setenv("HOME", globalHome)
 		t.Setenv("USERPROFILE", globalHome)
+		previousGlobalConfig, hadGlobalConfig := os.LookupEnv("GIT_CONFIG_GLOBAL")
+		require.NoError(t, os.Unsetenv("GIT_CONFIG_GLOBAL"))
+		t.Cleanup(func() {
+			if hadGlobalConfig {
+				_ = os.Setenv("GIT_CONFIG_GLOBAL", previousGlobalConfig)
+			} else {
+				_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
+			}
+		})
 		execGit(t, dir, "config", "--global", "roborev.dataDir", "global/data")
+		require.FileExists(t, filepath.Join(globalHome, ".gitconfig"))
 		assert.Equal(t, "global/data", execGit(t, dir, "config", "--get", "roborev.dataDir"))
 		t.Setenv("ROBOREV_DATA_DIR", "")
 		t.Chdir(dir)
