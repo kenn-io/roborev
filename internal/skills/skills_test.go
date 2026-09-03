@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -1238,6 +1237,8 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 	upstreamRepo := testutil.InitTestRepo(t)
 	upstreamRepo.CheckoutNewBranch("feature/x")
 	upstreamRepo.CommitFile("nested-feature.txt", "nested feature", "nested feature commit")
+	upstreamMainSHA := upstreamRepo.RevParse("main")
+	upstreamFeatureSHA := upstreamRepo.HeadSHA()
 
 	snippets := reviewBranchRefSnippets(t, AgentCodex)
 	require.Len(t, snippets, 1)
@@ -1250,17 +1251,18 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 		maliciousFetchDestination bool
 		wantSuccess               bool
 		wantRun                   bool
-		wantRemoteRefs            []string
+		wantFetches               int
+		wantRemoteRefs            map[string]string
 	}{
-		{name: "upstream_main", ref: issueArtifact.ReproductionRef, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/main"}},
-		{name: "upstream_feature_x", ref: "upstream/feature/x", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/upstream/feature/x"}},
-		{name: "slash_remote_main", ref: "team/upstream/main", wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/team/upstream/main"}},
-		{name: "origin_main_fetched", ref: "origin/main", prepareFetchedRef: true, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/origin/main"}},
-		{name: "malicious_remote_fetch_destination", ref: "origin/main", maliciousFetchDestination: true, wantSuccess: true, wantRun: true, wantRemoteRefs: []string{"refs/remotes/origin/main"}},
+		{name: "upstream_main", ref: issueArtifact.ReproductionRef, wantFetches: 1, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/upstream/main": upstreamMainSHA}},
+		{name: "upstream_feature_x", ref: "upstream/feature/x", wantFetches: 1, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/upstream/feature/x": upstreamFeatureSHA}},
+		{name: "slash_remote_main", ref: "team/upstream/main", wantFetches: 1, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/team/upstream/main": upstreamMainSHA}},
+		{name: "origin_main_fetched", ref: "origin/main", prepareFetchedRef: true, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/origin/main": upstreamMainSHA}},
+		{name: "malicious_remote_fetch_destination", ref: "origin/main", maliciousFetchDestination: true, wantFetches: 1, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/origin/main": upstreamMainSHA}},
 		{name: "feat", ref: "feat", wantSuccess: true, wantRun: true},
 		{name: "main", ref: "main", wantSuccess: true, wantRun: true},
 		{name: "develop", ref: "develop"},
-		{name: "upstream_ghost", ref: "upstream/ghost"},
+		{name: "upstream_ghost", ref: "upstream/ghost", wantFetches: 1},
 		{name: "release_1_2", ref: "release/1.2"},
 		{name: "nosuchremote_main", ref: "nosuchremote/main"},
 		{name: "empty", ref: ""},
@@ -1282,6 +1284,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			work.AddRemote("team/upstream", filepath.ToSlash(upstreamRepo.Path()))
 			if tc.maliciousFetchDestination {
 				work.RunGit("config", "remote.origin.fetch", "+refs/heads/main:refs/heads/pwn")
+				work.RunGit("update-ref", "refs/heads/pwn", work.HeadSHA())
 			}
 
 			for _, ref := range []string{
@@ -1306,8 +1309,19 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				return string(output)
 			}
 			beforeHeadRefs := localHeadRefs()
+			var beforePwnSHA string
+			if tc.maliciousFetchDestination {
+				beforePwnSHA = work.RevParse("refs/heads/pwn")
+			}
 
-			script := strings.Replace(snippets[0], "<branch>", tc.ref, 1)
+			script := "fetch_log=.fetch-invocations\n" +
+				"git() {\n" +
+				"  if [ \"$1\" = fetch ]; then\n" +
+				"    printf '%s\\n' \"$*\" >> \"$fetch_log\"\n" +
+				"  fi\n" +
+				"  command git \"$@\"\n" +
+				"}\n" +
+				strings.Replace(snippets[0], "<branch>", tc.ref, 1)
 			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", "echo ROBOREV_WOULD_RUN", 1)
 			scriptPath := filepath.Join(t.TempDir(), "review-branch.sh")
 			require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
@@ -1329,11 +1343,26 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			} {
 				remoteRef := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref)
 				remoteRef.Dir = work.Path()
-				got := remoteRef.Run() == nil
-				assert.Equal(t, slices.Contains(tc.wantRemoteRefs, ref), got, "%s", ref)
+				output, err := remoteRef.Output()
+				wantSHA, wantRef := tc.wantRemoteRefs[ref]
+				if wantRef {
+					require.NoError(t, err, "%s", ref)
+					assert.Equal(t, wantSHA, strings.TrimSpace(string(output)), "%s object ID", ref)
+				} else {
+					require.Error(t, err, "%s", ref)
+				}
 			}
 			assert.Equal(t, beforeHeadRefs, localHeadRefs(), "snippet must not mutate refs/heads")
-			_, err := os.Stat(pwnPath)
+			if tc.maliciousFetchDestination {
+				assert.Equal(t, beforePwnSHA, work.RevParse("refs/heads/pwn"), "malicious fetch mapping must not change refs/heads/pwn")
+			}
+			fetchLog, err := os.ReadFile(filepath.Join(work.Path(), ".fetch-invocations"))
+			if err != nil {
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+			gotFetches := strings.Count(string(fetchLog), "\n")
+			assert.Equal(t, tc.wantFetches, gotFetches, "fetch invocation count")
+			_, err = os.Stat(pwnPath)
 			assert.Error(t, err)
 		})
 	}
