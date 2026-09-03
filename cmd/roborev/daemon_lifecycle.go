@@ -131,6 +131,14 @@ func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 	return defaultDaemonEndpoint()
 }
 
+func usesHomeDataDir() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(config.DataDir()) == filepath.Join(home, ".roborev")
+}
+
 // validateServerFlag parses and validates the --server flag value.
 // Called from PersistentPreRunE so invalid values fail fast.
 func validateServerFlag() error {
@@ -263,6 +271,11 @@ func ensureDaemon() error {
 		}
 
 		return nil
+	}
+
+	// A non-default root has no safe shared-port fallback to probe.
+	if serverAddr == "" && !usesHomeDataDir() {
+		return startDaemonForEnsure()
 	}
 
 	// Try the configured default address for manual daemon runs that do not

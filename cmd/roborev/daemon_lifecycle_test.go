@@ -152,6 +152,9 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 
 func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	home, homeErr := os.UserHomeDir()
+	require.NoError(t, homeErr)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(home, ".roborev"))
 
 	origServerAddr := serverAddr
 	origParsed := parsedServerEndpoint
@@ -186,6 +189,45 @@ func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
 
 	require.NoError(t, ensureDaemon())
 	assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, calls)
+}
+
+func TestEnsureDaemonDoesNotProbeDefaultPortForNonDefaultDataDir(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "1")
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	origProbe := probeDaemonForEnsure
+	origCleanup := cleanupZombieDaemons
+	origStart := startDaemonForEnsure
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	probeCalls := 0
+	probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+		probeCalls++
+		return nil, errors.New("daemon not running")
+	}
+	cleanupCalls, startCalls := 0, 0
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
+	startDaemonForEnsure = func() error { startCalls++; return nil }
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+		probeDaemonForEnsure = origProbe
+		cleanupZombieDaemons = origCleanup
+		startDaemonForEnsure = origStart
+	})
+
+	require.NoError(t, ensureDaemon())
+	assert.Zero(t, probeCalls)
+	assert.Zero(t, cleanupCalls)
+	assert.Equal(t, 1, startCalls)
 }
 
 func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
@@ -254,6 +296,9 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 
 func TestEnsureDaemonDoesNotColdStartAfterAccessDeniedDefaultProbe(t *testing.T) {
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	home, homeErr := os.UserHomeDir()
+	require.NoError(t, homeErr)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(home, ".roborev"))
 
 	origServerAddr := serverAddr
 	origParsed := parsedServerEndpoint
