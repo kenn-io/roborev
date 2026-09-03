@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 
@@ -29,7 +28,7 @@ func RunAgentReview(
 		result := ReviewResult{Output: output}
 		result.Verdict = storage.ParseVerdict(output)
 		if result.Verdict == storage.VerdictUnknown {
-			return result, errors.New("review produced no recognizable verdict")
+			return result, &NoVerdictError{Output: output}
 		}
 		return result, nil
 	}

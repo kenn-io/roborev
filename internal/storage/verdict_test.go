@@ -615,24 +615,49 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictUnknown,
 	},
 	{
-		name:   "Unknown/ambiguous language",
+		name:   "Unknown/whitespace only",
+		output: "  \n\t\n",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "FailFallback/ambiguous language",
 		output: "The commit looks mostly fine but could use some cleanup.",
-		want:   VerdictUnknown,
+		want:   VerdictFail,
 	},
 	{
-		name:   "Unknown/narrative front matter without final verdict",
+		name:   "FailFallback/narrative front matter without final verdict",
 		output: "Reviewing the diff in context first. I'm opening the touched storage parsing code and adjacent tests to check for regressions.",
-		want:   VerdictUnknown,
+		want:   VerdictFail,
 	},
 	{
-		name:   "Unknown/unstructured issue statement",
+		name:   "FailFallback/unstructured issue statement defaults to fail",
 		output: "The code has issues.",
-		want:   VerdictUnknown,
+		want:   VerdictFail,
 	},
 	{
-		name:   "Unknown/diff could not be read",
+		name:   "Unreadable/diff could not be read",
 		output: "I am unable to read the diff file because it is ignored by configured ignore patterns.",
 		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/could not read wins over later pass phrase",
+		output: "I could not read the diff at the given path.\n\nNo issues found.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/ignore pattern wins over explicit pass verdict",
+		output: "The file is ignored by configured ignore patterns, so I skipped it.\n\nVerdict: PASS",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/curly apostrophe",
+		output: "I can\u2019t read the diff you referenced.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/severity label still reports findings",
+		output: "Note: I was unable to read the diff for vendor/, reviewed the rest.\n\n- Medium: nil deref in main.go:42",
+		want:   VerdictFail,
 	},
 	{
 		name:   "ExplicitFail/plain verdict",

@@ -369,27 +369,54 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	assert.Equal(t, 0, *stored.VerdictBool)
 }
 
-func TestWorkerDoesNotCompleteReviewWithoutVerdict(t *testing.T) {
-	const agentName = "unreadable-diff-test"
+func registerUnreadableDiffAgent(t *testing.T, name string) {
+	t.Helper()
 	agent.Register(&agent.FakeAgent{
-		NameStr: agentName,
+		NameStr: name,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
+	t.Cleanup(func() { agent.Unregister(name) })
+}
+
+func TestWorkerFailsReviewWithoutVerdictKeepingOutput(t *testing.T) {
+	const agentName = "unreadable-diff-test"
+	registerUnreadableDiffAgent(t, agentName)
 
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
-	job = tc.exhaustRetries(t, job, testWorkerID, agentName)
 
 	tc.Pool.processJob(testWorkerID, job)
 
+	assert := assert.New(t)
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
-	assert.Contains(t, updated.Error, "review produced no recognizable verdict")
+	assert.True(strings.HasPrefix(updated.Error, review.NoVerdictErrorPrefix), updated.Error)
+	assert.Contains(updated.Error, "review produced no recognizable verdict")
+	assert.Contains(updated.Error, "unable to read the diff file")
+	assert.Equal(0, updated.RetryCount, "no-verdict output must not burn same-agent retries")
 	_, err := tc.DB.GetReviewByJobID(job.ID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestWorkerFailsOverReviewWithoutVerdictWithoutRetry(t *testing.T) {
+	const agentName = "unreadable-diff-failover-test"
+	registerUnreadableDiffAgent(t, agentName)
+
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert := assert.New(t)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal("test", updated.Agent)
+	assert.Equal(0, updated.RetryCount)
 }
 
 func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {

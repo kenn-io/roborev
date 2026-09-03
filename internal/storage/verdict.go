@@ -87,19 +87,84 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 	job.Verdict = &value
 }
 
-// ParseVerdict extracts P (pass) or F (fail) from review output. Output without
-// a clear verdict signal returns VerdictUnknown.
+// unreadableInputPhrases are deterministic signals that the agent never saw
+// the diff it was asked to review. Output containing one of these and no
+// severity-labelled finding is not a review at all, so it must not record a
+// verdict even when the agent appends a reflexive "No issues found."
+var unreadableInputPhrases = []string{
+	"unable to read the diff",
+	"unable to access the diff",
+	"cannot read the diff",
+	"can't read the diff",
+	"could not read the diff",
+	"couldn't read the diff",
+	"failed to read the diff",
+	"no diff was provided",
+	"ignored by configured ignore patterns",
+}
+
+// IsUnreadableInput reports whether review output says the agent could not
+// read its input diff.
+func IsUnreadableInput(output string) bool {
+	lower := strings.ToLower(output)
+	lower = strings.ReplaceAll(lower, "\u2019", "'")
+	for _, phrase := range unreadableInputPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// UnreadableInputLikeClauses returns SQL predicates, one per unreadable-input
+// phrase, that prefilter review rows whose lower-cased output may match
+// IsUnreadableInput. The caller ANDs them under an OR and binds args in order.
+func UnreadableInputLikeClauses(column string) (string, []any) {
+	clauses := make([]string, 0, len(unreadableInputPhrases))
+	args := make([]any, 0, len(unreadableInputPhrases))
+	for _, phrase := range unreadableInputPhrases {
+		clauses = append(clauses, "lower("+column+") LIKE '%' || ? || '%'")
+		args = append(args, phrase)
+	}
+	return strings.Join(clauses, " OR "), args
+}
+
+// verdictBoolFromOutput returns the verdict_bool column value for review
+// output: 1 or 0 for a parsed verdict, nil (SQL NULL) when the output carries
+// no verdict.
+func verdictBoolFromOutput(output string) any {
+	verdict := ParseVerdict(output)
+	if verdict == VerdictUnknown {
+		return nil
+	}
+	return verdictToBool(verdict)
+}
+
+// ParseVerdict extracts P (pass) or F (fail) from review output. Empty output
+// and output that says the diff could not be read return VerdictUnknown so the
+// caller can treat the job as never reviewed instead of clean or failed.
 // It intentionally uses a small set of deterministic signals:
 // clear severity/findings markers mean fail, and clear pass phrases mean pass.
+// Anything else defaults to fail so prose findings without labels are kept.
 // We do not try to interpret narrative caveats after "No issues found." because
 // that quickly turns into a brittle natural-language parser. If agent output is
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
 func ParseVerdict(output string) Verdict {
+	if strings.TrimSpace(output) == "" {
+		return VerdictUnknown
+	}
+
 	// First check for severity labels which indicate actual findings
 	// These appear as "- Medium —", "* Low:", "Critical -", etc.
+	// A labelled finding is a real review even if part of the input was
+	// unreadable, so this check runs before the unreadable-input check.
 	if hasSeverityLabel(output) {
 		return VerdictFail
+	}
+
+	if IsUnreadableInput(output) {
+		return VerdictUnknown
 	}
 
 	// Marker signals pass ONLY when it stands alone. A loose
@@ -110,7 +175,6 @@ func ParseVerdict(output string) Verdict {
 		return VerdictPass
 	}
 
-	sawFail := strings.Contains(output, config.SeverityThresholdMarker)
 	for line := range strings.SplitSeq(output, "\n") {
 		normalized := normalizeVerdictLine(line)
 		// Historical reviews sometimes include a stale "Verdict: Fail" header
@@ -125,14 +189,8 @@ func ParseVerdict(output string) Verdict {
 		if hasPassPrefix(normalized) {
 			return VerdictPass
 		}
-		if isExplicitVerdictValue(normalized, "fail") {
-			sawFail = true
-		}
 	}
-	if sawFail {
-		return VerdictFail
-	}
-	return VerdictUnknown
+	return VerdictFail
 }
 
 func normalizeVerdictLine(line string) string {

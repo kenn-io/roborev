@@ -604,7 +604,7 @@ func TestUpsertPulledReviewLeavesUnknownVerdictUnset(t *testing.T) {
 		JobUUID:            *job.UUID,
 		Agent:              "test",
 		Prompt:             "prompt",
-		Output:             "Review completed without a verdict.",
+		Output:             "I am unable to read the diff file because it is ignored by configured ignore patterns.",
 		UpdatedByMachineID: testUUID("unknown-review-machine"),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
