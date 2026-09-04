@@ -1217,3 +1217,39 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	assert.Equal(worktreePath, capturedPath,
 		"synthesis agent must run against the reviewed worktree, not the main repo")
 }
+
+func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-null-location-member"
+	registerPassingAgent(t, memberAgent)
+
+	const synthAgent = "synth-null-location"
+	agent.Register(&agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return `{"schema_version":1,"summary":"One finding without a location.","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(synthAgent) })
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "null-location-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Contains(review.Output, "Missing test")
+	assert.NotContains(review.Output, "**Location:**")
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(0, *review.VerdictBool)
+}

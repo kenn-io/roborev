@@ -210,6 +210,22 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 	}
 }
 
+func TestSynthesisDocumentRoundTripsNullLocation(t *testing.T) {
+	doc, err := DecodeSynthesisDocument(json.RawMessage(
+		`{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null,"sources":[1]}]}`,
+	), []ReviewResult{{Agent: "codex"}})
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"location":null`)
+	assert.NotContains(t, string(encoded), "source_labels")
+
+	again, err := DecodeStructuredReview(encoded)
+	require.NoError(t, err, "the stored document must satisfy the storage validator")
+	assert.Equal(t, doc.Findings, again.Findings)
+}
+
 func TestSynthesisSourceLabels(t *testing.T) {
 	labels := SynthesisSourceLabels([]ReviewResult{
 		{Agent: "codex"},
