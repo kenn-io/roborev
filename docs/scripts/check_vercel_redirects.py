@@ -46,8 +46,9 @@ def docs_tier_redirects() -> dict[str, str]:
     redirects: dict[str, str] = {}
     for source in public_markdown_sources(CONFIG):
         if source == "index.md":
-            # The site root is the website tier now; the docs index moved to
-            # /docs/ and is linked from every root page.
+            # /index.md stays the Markdown twin of the product page at /.
+            # Redirecting it to /docs/index.md would leave / without a twin,
+            # so the product twin links to the docs index instead.
             continue
         stem = source.removesuffix(".md")
         route = f"/{stem.removesuffix('/index')}/"

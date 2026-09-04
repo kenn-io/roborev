@@ -160,6 +160,7 @@ See [all install options](https://roborev.io/docs/installation/).
 
 - [The guide](https://roborev.io/guide.md): ten stops from `roborev init` to
   CI panels and team-wide history.
-- [Documentation](https://roborev.io/docs/): every command, configuration key,
-  and integration.
+- [Documentation](https://roborev.io/docs/index.md): install, quickstart, and
+  the documentation map. Every docs page is also served as Markdown at
+  `/docs/<page>.md`; [llms.txt](https://roborev.io/llms.txt) indexes them.
 - [GitHub](https://github.com/kenn-io/roborev): source, issues, releases. MIT.
