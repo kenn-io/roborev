@@ -1,29 +1,19 @@
 # roborev: local, continuous code review for the agentic loop
 
-Find bugs faster and ship better quality code. roborev is a review daemon that
-runs on your machine: a git hook reviews each commit in the background with the
-agents you already run, while you and your agents keep working. Findings stay
-open in a ledger until they are addressed, and the fix goes back to the agent
-while the context that wrote the code is still warm.
+Find bugs faster and ship better quality code. roborev is a review daemon on
+your machine. A git hook reviews each commit in the background with the agents
+you already run, while you keep working.
 
 ```sh
-roborev init                     # post-commit hook + daemon, once per repo
-git commit -m "Add retry to payment webhook"
-# reviewed in the background; nothing blocks on it. later:
+roborev init                                  # hook + daemon, once per repo
+git commit -m "Add retry to payment webhook"  # reviewed in the background
 # FAIL high    internal/webhook/retry.go:41   retries re-send a non-idempotent POST
 # FAIL medium  internal/webhook/retry_test.go no test covers the backoff ceiling
-roborev tui                      # the ledger: findings stay open until you close them
-/roborev-fix                     # in Claude Code or Codex: fix, verify, close
+/roborev-fix                                  # fix, verify, close
 ```
 
-Install:
-
-- macOS / Linux: `curl -fsSL https://roborev.io/install.sh | bash`
-- Homebrew: `brew install kenn-io/tap/roborev`
-- Windows: `powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"`
-
-One Go binary, no runtime dependencies, MIT licensed. See
-[all install options](https://roborev.io/docs/installation/).
+One Go binary, no runtime dependencies, MIT licensed. Install commands are
+under 10 / Start.
 
 ## 01 / The gap: agents commit faster than anyone reads
 
@@ -154,6 +144,12 @@ the layer in between: continuous, local, running on the agents you already pay
 for, so what reaches the PR has already been reviewed and fixed several times.
 
 ## 10 / Start
+
+- macOS / Linux: `curl -fsSL https://roborev.io/install.sh | bash`
+- Homebrew: `brew install kenn-io/tap/roborev`
+- Windows: `powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"`
+
+See [all install options](https://roborev.io/docs/installation/).
 
 - [The guide](https://roborev.io/guide.md): ten stops from `roborev init` to
   CI panels and team-wide history.

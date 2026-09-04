@@ -240,7 +240,7 @@ main {
 
 .hero {
   position: relative;
-  padding: clamp(4.5rem, 11vw, 7.5rem) 0 clamp(4rem, 9vw, 6rem);
+  padding: clamp(3.5rem, 8vw, 5.5rem) 0 clamp(4rem, 9vw, 6rem);
   border-bottom: 1px solid var(--rule);
   overflow: hidden;
 }
@@ -429,7 +429,7 @@ h3 {
 .install-matrix {
   width: fit-content;
   max-width: 100%;
-  margin-top: 2.5rem;
+  margin-top: 1.5rem;
   border: 1px solid var(--rule);
   background: var(--panel);
 }

@@ -85,39 +85,20 @@
       <section class="hero" aria-labelledby="hero-title">
         <p class="hero-brand"><img src="/docs/assets/static/logo.svg" alt="">roborev</p>
         <h1 id="hero-title">Local, continuous code review for the agentic loop.</h1>
-        <p class="lede"><strong>Find bugs faster and ship better quality code.</strong> roborev is a review daemon that runs on your machine: a git hook reviews each commit in the background with the agents you already run, while you and your agents keep working. Findings stay open in a ledger until they are addressed, and the fix goes back to the agent while the context that wrote the code is still warm.</p>
+        <p class="lede"><strong>Find bugs faster and ship better quality code.</strong> roborev is a review daemon on your machine. A git hook reviews each commit in the background with the agents you already run, while you keep working.</p>
         <figure class="term">
           <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
-          <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                     <span class="out"># post-commit hook + daemon, once per repo</span>
-<span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
-<span class="out"># reviewed in the background; nothing blocks on it. later:</span>
+          <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                                  <span class="out"># hook + daemon, once per repo</span>
+<span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>  <span class="out"># reviewed in the background</span>
 <span class="fail">FAIL</span> <span class="out">high</span>    <span class="path">internal/webhook/retry.go:41</span>  <span class="out">retries re-send a non-idempotent POST</span>
 <span class="fail">FAIL</span> <span class="out">medium</span>  <span class="path">internal/webhook/retry_test.go</span> <span class="out">no test covers the backoff ceiling</span>
-<span class="ps1">$</span> <span class="cmd">roborev tui</span>                      <span class="out"># the ledger: findings stay open until you close them</span>
-<span class="ps1">$</span> <span class="cmd">/roborev-fix</span>                     <span class="out"># in Claude Code or Codex: fix, verify, close</span></code></pre>
+<span class="ps1">$</span> <span class="cmd">/roborev-fix</span>                                  <span class="out"># fix, verify, close</span></code></pre>
         </figure>
-        <div class="install-matrix">
-          <div class="install-row" data-install-command data-command="curl -fsSL https://roborev.io/install.sh | bash">
-            <span class="install-label">macOS / Linux</span>
-            <code>curl -fsSL https://roborev.io/install.sh | bash</code>
-            <button class="button install-copy" type="button" data-install-copy>Copy</button>
-          </div>
-          <div class="install-row" data-install-command data-command="brew install kenn-io/tap/roborev">
-            <span class="install-label">Homebrew</span>
-            <code>brew install kenn-io/tap/roborev</code>
-            <button class="button install-copy" type="button" data-install-copy>Copy</button>
-          </div>
-          <div class="install-row" data-install-command data-command="powershell -ExecutionPolicy ByPass -c &quot;irm https://roborev.io/install.ps1 | iex&quot;">
-            <span class="install-label">Windows</span>
-            <code class="ps">powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"</code>
-            <button class="button install-copy" type="button" data-install-copy>Copy</button>
-          </div>
-        </div>
-        <p class="install-hint">One Go binary, no runtime dependencies, MIT licensed. See <a href="/docs/installation/">all install options</a>.<span data-install-status aria-live="polite"></span></p>
         <div class="actions">
           <a class="button primary" href="/guide/">Take the tour</a>
           <a class="button" href="/docs/">Read the docs</a>
         </div>
+        <p class="install-hint">One Go binary, no runtime dependencies, MIT licensed. <a href="#start">Install in one command</a>.</p>
       </section>
 
       <section class="site-section" aria-labelledby="gap-title">
@@ -390,7 +371,7 @@
         </div>
       </section>
 
-      <section class="site-section" aria-labelledby="start-title">
+      <section class="site-section" id="start" aria-labelledby="start-title">
         <div class="section-heading">
           <div>
             <p class="section-index">10 / Start</p>
@@ -398,6 +379,24 @@
           </div>
           <div>
             <p>The guide walks the loop from <code>roborev init</code> to CI panels and team-wide history. The docs carry every command, configuration key, and integration. <code>roborev quickstart</code> prints the setup guide for your coding agent to finish itself.</p>
+            <div class="install-matrix">
+              <div class="install-row" data-install-command data-command="curl -fsSL https://roborev.io/install.sh | bash">
+                <span class="install-label">macOS / Linux</span>
+                <code>curl -fsSL https://roborev.io/install.sh | bash</code>
+                <button class="button install-copy" type="button" data-install-copy>Copy</button>
+              </div>
+              <div class="install-row" data-install-command data-command="brew install kenn-io/tap/roborev">
+                <span class="install-label">Homebrew</span>
+                <code>brew install kenn-io/tap/roborev</code>
+                <button class="button install-copy" type="button" data-install-copy>Copy</button>
+              </div>
+              <div class="install-row" data-install-command data-command="powershell -ExecutionPolicy ByPass -c &quot;irm https://roborev.io/install.ps1 | iex&quot;">
+                <span class="install-label">Windows</span>
+                <code class="ps">powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"</code>
+                <button class="button install-copy" type="button" data-install-copy>Copy</button>
+              </div>
+            </div>
+            <p class="install-hint">See <a href="/docs/installation/">all install options</a>.<span data-install-status aria-live="polite"></span></p>
             <div class="actions">
               <a class="button primary" href="/guide/">Take the tour</a>
               <a class="button" href="/docs/quickstart/">Start in five minutes</a>
