@@ -201,25 +201,26 @@ copy the example job below.
     optional: from inside the worktree, roborev reads `.roborev.toml` from the
     merge request's tree, so its author controls the `[ci]` settings. Left
     unpinned, they could swap in a weaker agent, drop review types, or raise
-    `min_severity` to hide their own findings. Flags outrank the file, so pin
-    whatever must not be author-controlled. Model settings are the gap worth
-    knowing about: `ci review` has no `--model` flag, and a model spec may carry
-    a proxy URL (`<model>@https://host`), so an author who controls
-    `.roborev.toml` can route the review through a server that returns whatever
-    verdict they like. If that matters, review from the protected checkout
-    rather than the merge request worktree, which is the default described
-    above. `--min-severity` pins both halves of the run: the synthesis filter
-    and the threshold the individual reviews are prompted with, so a
-    `review_min_severity` in the merge request's tree cannot stop findings from
-    being reported in the first place. `review_guidelines` has no flag: it is
-    read from the default branch, but only when that branch both resolves in the
-    checkout *and* has a committed `.roborev.toml`. If either is missing — and a
-    project that never committed one always misses the second — it falls back to
-    the merge request's tree, where the author controls it. Commit a
-    `.roborev.toml` on the default branch and make sure the job can resolve that
-    branch (fetch it, or set `origin/HEAD`). The token stays out of the agents
-    either way — this is about the review's integrity, not its exposure. If the
-    runner reuses its workspace, finish with
+    `min_severity` so their own findings no longer fail the review. Flags
+    outrank the file, so pin whatever must not be author-controlled. Model
+    settings are the gap worth knowing about: `ci review` has no `--model` flag,
+    and a model spec may carry a proxy URL (`<model>@https://host`), so an
+    author who controls `.roborev.toml` can route the review through a server
+    that returns whatever verdict they like. If that matters, review from the
+    protected checkout rather than the merge request worktree, which is the
+    default described above. `--min-severity` pins the verdict threshold for the
+    combined review. Reviewers never see the threshold and every finding stays in
+    the output, so a `review_min_severity` in the merge request's tree cannot
+    hide findings; it can only change which severities fail, and the flag
+    overrides it. `review_guidelines` has no flag: it is read from the default
+    branch, but only when that branch both resolves in the checkout *and* has a
+    committed `.roborev.toml`. If either is missing — and a project that never
+    committed one always misses the second — it falls back to the merge
+    request's tree, where the author controls it. Commit a `.roborev.toml` on
+    the default branch and make sure the job can resolve that branch (fetch it,
+    or set `origin/HEAD`). The token stays out of the agents either way — this
+    is about the review's integrity, not its exposure. If the runner reuses its
+    workspace, finish with
     `cd "$CI_PROJECT_DIR" && git worktree remove --force "$mr_tree"` so the next
     run starts clean; the `cd` matters because git refuses to remove the
     worktree you are standing in.
@@ -382,7 +383,7 @@ Subgroup paths are supported: `--gl-repo group/subgroup/project`.
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (`security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
-| `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
+| `--min-severity <level>` | Lowest severity that fails the combined review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 
 Forge detection precedence, highest first:
@@ -466,7 +467,7 @@ upsert_comments = true
 |--------|------|---------|-------------|
 | `review_types` | array | `["security"]` | Review types to run |
 | `reasoning` | string | `"thorough"` | Reasoning level |
-| `min_severity` | string | `"low"` | Minimum severity to include in output |
+| `min_severity` | string | `"low"` | Lowest severity that fails the review; lower findings are still reported |
 | `upsert_comments` | bool | `false` | Update the previous roborev note instead of adding a new one |
 
 With `upsert_comments = true`, roborev finds its previous note on the merge

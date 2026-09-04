@@ -85,7 +85,10 @@ fresh panel run; member rows cannot be rerun directly.
 
 Synthesis avoids extra agent work when it can:
 
-- If all successful members pass, the parent output is `No issues found.`
+- If all successful members pass and none of them reported a finding, the parent
+    output is `No issues found.` Members that pass only because their findings
+    fall below `min_severity` still go through synthesis so those findings reach
+    the combined output.
 - If exactly one member produced output, that output can be passed through
     directly.
 - If multiple members produced findings, a read only synthesis agent verifies,

@@ -1448,6 +1448,27 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		assert.Contains(t, fake.prompt, "review body")
 		assert.Contains(t, fake.prompt, instruction)
 	})
+
+	t.Run("cap-sized prompt runs without the instruction instead of failing", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		cfg := config.DefaultConfig()
+		cfg.DefaultMaxPromptSize = 4096
+		tc.reconfigurePool(cfg)
+		agentName := "prebuilt-structured-at-cap"
+		fake := &structuredWorkerTestAgent{
+			name:   agentName,
+			result: json.RawMessage(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+		}
+		agent.Register(fake)
+		t.Cleanup(func() { agent.Unregister(agentName) })
+
+		body := "review body\n" + strings.Repeat("x", 4096-len("review body\n"))
+		require.Len(t, body, 4096)
+		job := enqueuePrebuilt(t, tc, agentName, body)
+
+		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		assert.Equal(t, body, fake.prompt, "the prompt is sent unchanged rather than over the cap")
+	})
 }
 
 func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing.T) {
