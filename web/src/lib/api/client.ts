@@ -1,43 +1,5 @@
 import { Effect, Option, Schema, Stream } from "effect";
 import { appPath, stripBasePath } from "../base-path";
-import { addComment } from "./generated/comments/comments";
-import { getStatus, listReleases } from "./generated/daemon/daemon";
-import { cancelJob, listJobs, rerunJob } from "./generated/jobs/jobs";
-import type {
-  AddCommentRequest,
-  AnalyticsSnapshot,
-  CancelJobOutputBody,
-  CancelJobRequest,
-  CloseReviewOutputBody,
-  CloseReviewRequest,
-  DaemonStatus,
-  GetReviewParams,
-  GetReviewProjectionParams,
-  GetWebAnalyticsParams,
-  ListBranchesParams,
-  ListBranchesOutputBody,
-  ListJobsOutputBody,
-  ListJobsParams,
-  ListReposOutputBody,
-  ListReposParams,
-  ReleaseNotesResponse,
-  RerunJobOutputBody,
-  RerunJobRequest,
-  Response as ReviewResponse,
-  Review,
-  ReviewProjection,
-} from "./generated/models";
-import { listBranches, listRepos } from "./generated/repos/repos";
-import { closeReview, getReview } from "./generated/reviews/reviews";
-import {
-  getReviewProjection,
-  getWebAnalytics,
-} from "./generated/web-ui/web-ui";
-import type {
-  RoborevRequestOptions,
-  RoborevTransport,
-} from "./generated-fetch";
-import type { Fetch } from "./session";
 import { TransientTransportError } from "./effect-errors";
 import {
   openStreamingResponse,
@@ -50,132 +12,6 @@ import {
   RoborevLogLinePayload,
   RoborevStreamOpened,
 } from "./schemas";
-
-interface SignalOptions {
-  readonly signal?: AbortSignal;
-}
-
-interface QueryOptions<Query> extends SignalOptions {
-  readonly params: { readonly query: Query };
-}
-
-interface OptionalQueryOptions<Query> extends SignalOptions {
-  readonly params?: { readonly query: Query };
-}
-
-interface BodyOptions<Body> extends SignalOptions {
-  readonly body: Body;
-}
-
-export type RoborevClientResult<Value> =
-  | { readonly data: Value; readonly error?: never; readonly response?: never }
-  | {
-      readonly data?: never;
-      readonly error: RoborevAPIError;
-      readonly response: globalThis.Response;
-    };
-
-type GetArguments =
-  | [path: "/api/status", options?: SignalOptions]
-  | [path: "/api/releases", options?: SignalOptions]
-  | [path: "/api/repos", options?: OptionalQueryOptions<ListReposParams>]
-  | [path: "/api/branches", options: QueryOptions<ListBranchesParams>]
-  | [path: "/api/review", options: QueryOptions<GetReviewParams>]
-  | [
-      path: "/api/ui/review-projection",
-      options: QueryOptions<GetReviewProjectionParams>,
-    ]
-  | [path: "/api/jobs", options?: OptionalQueryOptions<ListJobsParams>]
-  | [path: "/api/ui/analytics", options: QueryOptions<GetWebAnalyticsParams>];
-
-type PostArguments =
-  | [path: "/api/review/close", options: BodyOptions<CloseReviewRequest>]
-  | [path: "/api/comment", options: BodyOptions<AddCommentRequest>]
-  | [path: "/api/job/cancel", options: BodyOptions<CancelJobRequest>]
-  | [path: "/api/job/rerun", options: BodyOptions<RerunJobRequest>];
-
-export class RoborevAPIError extends Error {
-  constructor(
-    message: string,
-    readonly detail?: string,
-  ) {
-    super(message);
-    this.name = "RoborevAPIError";
-  }
-}
-
-export interface RoborevClient {
-  GET(
-    path: "/api/status",
-    options?: SignalOptions,
-  ): Promise<RoborevClientResult<DaemonStatus>>;
-  GET(
-    path: "/api/releases",
-    options?: SignalOptions,
-  ): Promise<RoborevClientResult<ReleaseNotesResponse>>;
-  GET(
-    path: "/api/repos",
-    options?: OptionalQueryOptions<ListReposParams>,
-  ): Promise<RoborevClientResult<ListReposOutputBody>>;
-  GET(
-    path: "/api/branches",
-    options: QueryOptions<ListBranchesParams>,
-  ): Promise<RoborevClientResult<ListBranchesOutputBody>>;
-  GET(
-    path: "/api/review",
-    options: QueryOptions<GetReviewParams>,
-  ): Promise<RoborevClientResult<Review>>;
-  GET(
-    path: "/api/ui/review-projection",
-    options: QueryOptions<GetReviewProjectionParams>,
-  ): Promise<RoborevClientResult<ReviewProjection>>;
-  GET(
-    path: "/api/jobs",
-    options?: OptionalQueryOptions<ListJobsParams>,
-  ): Promise<RoborevClientResult<ListJobsOutputBody>>;
-  GET(
-    path: "/api/ui/analytics",
-    options: QueryOptions<GetWebAnalyticsParams>,
-  ): Promise<RoborevClientResult<AnalyticsSnapshot>>;
-  POST(
-    path: "/api/review/close",
-    options: BodyOptions<CloseReviewRequest>,
-  ): Promise<RoborevClientResult<CloseReviewOutputBody>>;
-  POST(
-    path: "/api/comment",
-    options: BodyOptions<AddCommentRequest>,
-  ): Promise<RoborevClientResult<ReviewResponse>>;
-  POST(
-    path: "/api/job/cancel",
-    options: BodyOptions<CancelJobRequest>,
-  ): Promise<RoborevClientResult<CancelJobOutputBody>>;
-  POST(
-    path: "/api/job/rerun",
-    options: BodyOptions<RerunJobRequest>,
-  ): Promise<RoborevClientResult<RerunJobOutputBody>>;
-}
-
-function requestOptions(
-  transport: RoborevTransport,
-  options?: SignalOptions,
-): RoborevRequestOptions {
-  return { ...options, roborevTransport: transport };
-}
-
-async function clientResult<Value>(
-  request: Promise<Value>,
-): Promise<RoborevClientResult<Value>> {
-  try {
-    return { data: await request };
-  } catch (cause) {
-    if (!(cause instanceof globalThis.Response)) throw cause;
-    const detail = await responseDetail(cause);
-    return {
-      error: new RoborevAPIError(detail ?? `API ${cause.status}`, detail),
-      response: cause,
-    };
-  }
-}
 
 async function responseDetail(
   response: globalThis.Response,
@@ -197,155 +33,37 @@ async function responseDetail(
   return undefined;
 }
 
-class GeneratedRoborevClient implements RoborevClient {
-  constructor(private readonly transport: RoborevTransport) {}
-
-  GET(
-    path: "/api/status",
-    options?: SignalOptions,
-  ): Promise<RoborevClientResult<DaemonStatus>>;
-  GET(
-    path: "/api/releases",
-    options?: SignalOptions,
-  ): Promise<RoborevClientResult<ReleaseNotesResponse>>;
-  GET(
-    path: "/api/repos",
-    options?: OptionalQueryOptions<ListReposParams>,
-  ): Promise<RoborevClientResult<ListReposOutputBody>>;
-  GET(
-    path: "/api/branches",
-    options: QueryOptions<ListBranchesParams>,
-  ): Promise<RoborevClientResult<ListBranchesOutputBody>>;
-  GET(
-    path: "/api/review",
-    options: QueryOptions<GetReviewParams>,
-  ): Promise<RoborevClientResult<Review>>;
-  GET(
-    path: "/api/ui/review-projection",
-    options: QueryOptions<GetReviewProjectionParams>,
-  ): Promise<RoborevClientResult<ReviewProjection>>;
-  GET(
-    path: "/api/jobs",
-    options?: OptionalQueryOptions<ListJobsParams>,
-  ): Promise<RoborevClientResult<ListJobsOutputBody>>;
-  GET(
-    path: "/api/ui/analytics",
-    options: QueryOptions<GetWebAnalyticsParams>,
-  ): Promise<RoborevClientResult<AnalyticsSnapshot>>;
-  GET(...args: GetArguments): Promise<RoborevClientResult<unknown>> {
-    const [path, options] = args;
-    switch (path) {
-      case "/api/status":
-        return clientResult(getStatus(requestOptions(this.transport, options)));
-      case "/api/releases":
-        return clientResult(
-          listReleases(requestOptions(this.transport, options)),
-        );
-      case "/api/repos":
-        return clientResult(
-          listRepos(
-            options?.params?.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-      case "/api/branches":
-        return clientResult(
-          listBranches(
-            options.params.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-      case "/api/review":
-        return clientResult(
-          getReview(
-            options.params.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-      case "/api/ui/review-projection":
-        return clientResult(
-          getReviewProjection(
-            options.params.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-      case "/api/jobs":
-        return clientResult(
-          listJobs(
-            options?.params?.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-      case "/api/ui/analytics":
-        return clientResult(
-          getWebAnalytics(
-            options.params.query,
-            requestOptions(this.transport, options),
-          ),
-        );
-    }
-  }
-
-  POST(
-    path: "/api/review/close",
-    options: BodyOptions<CloseReviewRequest>,
-  ): Promise<RoborevClientResult<CloseReviewOutputBody>>;
-  POST(
-    path: "/api/comment",
-    options: BodyOptions<AddCommentRequest>,
-  ): Promise<RoborevClientResult<ReviewResponse>>;
-  POST(
-    path: "/api/job/cancel",
-    options: BodyOptions<CancelJobRequest>,
-  ): Promise<RoborevClientResult<CancelJobOutputBody>>;
-  POST(
-    path: "/api/job/rerun",
-    options: BodyOptions<RerunJobRequest>,
-  ): Promise<RoborevClientResult<RerunJobOutputBody>>;
-  POST(...args: PostArguments): Promise<RoborevClientResult<unknown>> {
-    const [path, options] = args;
-    switch (path) {
-      case "/api/review/close":
-        return clientResult(
-          closeReview(options.body, requestOptions(this.transport, options)),
-        );
-      case "/api/comment":
-        return clientResult(
-          addComment(options.body, requestOptions(this.transport, options)),
-        );
-      case "/api/job/cancel":
-        return clientResult(
-          cancelJob(options.body, requestOptions(this.transport, options)),
-        );
-      case "/api/job/rerun":
-        return clientResult(
-          rerunJob(options.body, requestOptions(this.transport, options)),
-        );
-    }
-  }
-}
-
-export function createRoborevClient(
-  baseUrl: string,
-  fetchFn?: Fetch,
-): RoborevClient {
-  return new GeneratedRoborevClient({
-    baseUrl,
-    fetch: fetchFn ?? globalThis.fetch.bind(globalThis),
-  });
-}
-
-export const executeRoborevRequest = Effect.fn("RoborevClient.execute")(
-  function* <A>(
-    operation: string,
-    request: (signal: AbortSignal) => Promise<A>,
-  ) {
-    return yield* Effect.tryPromise({
-      try: request,
-      catch: (cause) => TransientTransportError.make({ operation, cause }),
-    });
+export class RoborevHTTPError extends Schema.TaggedErrorClass<RoborevHTTPError>()(
+  "RoborevHTTPError",
+  {
+    operation: Schema.String,
+    status: Schema.Number,
+    detail: Schema.optionalKey(Schema.String),
+    cause: Schema.Defect(),
   },
-);
+) {}
+
+export const executeRoborevRequest = Effect.fn("RoborevApi.execute")(function* <
+  A,
+>(operation: string, request: (signal: AbortSignal) => Promise<A>) {
+  return yield* Effect.tryPromise({
+    try: (signal) =>
+      request(signal).catch(async (cause: unknown) => {
+        if (!(cause instanceof globalThis.Response)) throw cause;
+        const detail = await responseDetail(cause);
+        throw RoborevHTTPError.make({
+          operation,
+          status: cause.status,
+          ...(detail !== undefined && { detail }),
+          cause,
+        });
+      }),
+    catch: (cause) =>
+      cause instanceof RoborevHTTPError
+        ? cause
+        : TransientTransportError.make({ operation, cause }),
+  });
+});
 
 export class RoborevStreamError extends Schema.TaggedErrorClass<RoborevStreamError>()(
   "RoborevStreamError",
@@ -540,7 +258,7 @@ function resolveBaseUrl(baseUrl: string): string {
   return stripBasePath(baseUrl) === "" ? appPath(baseUrl) : baseUrl;
 }
 
-export const loadRoborevJobOutput = Effect.fn("RoborevClient.loadJobOutput")(
+export const loadRoborevJobOutput = Effect.fn("RoborevApi.loadJobOutput")(
   function* (baseUrl: string, jobID: number) {
     return yield* Effect.scoped(
       Effect.gen(function* () {

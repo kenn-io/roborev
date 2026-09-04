@@ -1,10 +1,11 @@
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
+import { executeRoborevRequest, RoborevStreamError } from "../../api/client";
 import {
-  executeRoborevRequest,
-  type RoborevClient,
-  RoborevStreamError,
-} from "../../api/client";
+  cancelJob as cancelJobRequest,
+  listJobs,
+  rerunJob as rerunJobRequest,
+} from "../../api/generated/jobs/jobs";
 import type {
   CancelJobOutputBody,
   JobStats,
@@ -29,7 +30,11 @@ type CancelJobResponse = CancelJobOutputBody;
 type ListJobsQuery = ListJobsParams;
 
 export interface JobsStoreOptions {
-  client: RoborevClient;
+  api?: {
+    readonly cancelJob: typeof cancelJobRequest;
+    readonly listJobs: typeof listJobs;
+    readonly rerunJob: typeof rerunJobRequest;
+  };
   runtime: AppRuntime;
   owner: string;
   navigate: (jobId?: number) => void;
@@ -131,7 +136,11 @@ function setBooleanFilterPreference(
 }
 
 export function createJobsStore(opts: JobsStoreOptions) {
-  const client = opts.client;
+  const api = opts.api ?? {
+    cancelJob: cancelJobRequest,
+    listJobs,
+    rerunJob: rerunJobRequest,
+  };
   const filterOwner = Symbol(opts.owner);
   let disposed = false;
 
@@ -310,18 +319,19 @@ export function createJobsStore(opts: JobsStoreOptions) {
     const filtered = queryHasActiveFilters(query);
     const countScope = JSON.stringify(query);
     const result = yield* executeRoborevRequest("list Roborev jobs", (signal) =>
-      client.GET("/api/jobs", { params: { query }, signal }),
+      api.listJobs(query, { signal }),
+    ).pipe(
+      Effect.catchTag("RoborevHTTPError", (cause) =>
+        Effect.fail(
+          RoborevResponseError.make({
+            operation: "list Roborev jobs",
+            message: "Failed to load jobs",
+            cause,
+          }),
+        ),
+      ),
     );
-    if (result.error !== undefined) {
-      return yield* Effect.fail(
-        RoborevResponseError.make({
-          operation: "list Roborev jobs",
-          message: "Failed to load jobs",
-          cause: result.error,
-        }),
-      );
-    }
-    const stats = result.data?.stats ?? {
+    const stats = result.stats ?? {
       queued: 0,
       running: 0,
       done: 0,
@@ -331,11 +341,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
       closed: 0,
       open: 0,
     };
-    const exactStats = result.data?.filtered_stats ?? stats;
+    const exactStats = result.filtered_stats ?? stats;
     return {
-      jobs: result.data?.jobs ?? [],
-      hasMore: result.data?.has_more ?? false,
-      nextCursor: result.data?.next_cursor ?? undefined,
+      jobs: result.jobs ?? [],
+      hasMore: result.has_more ?? false,
+      nextCursor: result.next_cursor ?? undefined,
       stats,
       filteredStatusCounts: filtered
         ? Option.some(statusCountsFromStats(exactStats))
@@ -459,28 +469,29 @@ export function createJobsStore(opts: JobsStoreOptions) {
           });
           const result = yield* executeRoborevRequest(
             "load more Roborev jobs",
-            (signal) => client.GET("/api/jobs", { params: { query }, signal }),
+            (signal) => api.listJobs(query, { signal }),
+          ).pipe(
+            Effect.catchTag("RoborevHTTPError", (cause) =>
+              Effect.fail(
+                RoborevResponseError.make({
+                  operation: "load more Roborev jobs",
+                  message: "Failed to load more jobs",
+                  cause,
+                }),
+              ),
+            ),
           );
-          if (result.error) {
-            return yield* Effect.fail(
-              RoborevResponseError.make({
-                operation: "load more Roborev jobs",
-                message: "Failed to load more jobs",
-                cause: result.error,
-              }),
-            );
-          }
           yield* Effect.sync(() => {
             const existingIds = new Set(jobs.map((job) => job.id));
             const remaining = MAX_LOADED_JOBS - jobs.length;
-            const fresh = (result.data?.jobs ?? [])
+            const fresh = (result.jobs ?? [])
               .filter((job) => !existingIds.has(job.id))
               .slice(0, remaining);
             jobs = sortJobs([...jobs, ...fresh]);
             hasMore =
-              (result.data?.has_more ?? false) && jobs.length < MAX_LOADED_JOBS;
-            allResultsLoaded = !(result.data?.has_more ?? false);
-            nextCursor = result.data?.next_cursor ?? undefined;
+              (result.has_more ?? false) && jobs.length < MAX_LOADED_JOBS;
+            allResultsLoaded = !(result.has_more ?? false);
+            nextCursor = result.next_cursor ?? undefined;
             loadedLimit = Math.max(DEFAULT_PAGE_LIMIT, jobs.length);
           });
         }).pipe(
@@ -577,27 +588,26 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const result = yield* executeRoborevRequest(
         "load authoritative Roborev job",
         (signal) =>
-          client.GET("/api/jobs", {
-            params: {
-              query: {
-                id,
-                limit: 1,
-                omit_prompt: "true",
-              } satisfies ListJobsQuery,
-            },
-            signal,
-          }),
+          api.listJobs(
+            {
+              id,
+              limit: 1,
+              omit_prompt: "true",
+            } satisfies ListJobsQuery,
+            { signal },
+          ),
+      ).pipe(
+        Effect.catchTag("RoborevHTTPError", (cause) =>
+          Effect.fail(
+            RoborevResponseError.make({
+              operation: "load authoritative Roborev job",
+              message: "Failed to revalidate job",
+              cause,
+            }),
+          ),
+        ),
       );
-      if (result.error !== undefined) {
-        return yield* Effect.fail(
-          RoborevResponseError.make({
-            operation: "load authoritative Roborev job",
-            message: "Failed to revalidate job",
-            cause: result.error,
-          }),
-        );
-      }
-      return result.data?.jobs?.[0];
+      return result.jobs?.[0];
     },
   );
 
@@ -631,22 +641,15 @@ export function createJobsStore(opts: JobsStoreOptions) {
         key: `job:${id}`,
         operation: "cancel Roborev job",
         mutation: executeRoborevRequest("cancel Roborev job", (signal) =>
-          client.POST("/api/job/cancel", {
-            body: { job_id: id },
-            signal,
-          }),
+          api.cancelJob({ job_id: id }, { signal }),
         ).pipe(
-          Effect.flatMap((result) =>
-            result.error || !result.data
-              ? Effect.fail(
-                  RoborevMutationError.make({
-                    operation: "cancel Roborev job",
-                    cause:
-                      result.error ??
-                      new Error("Roborev cancellation response was empty"),
-                  }),
-                )
-              : Effect.succeed(result.data),
+          Effect.catchTag("RoborevHTTPError", (cause) =>
+            Effect.fail(
+              RoborevMutationError.make({
+                operation: "cancel Roborev job",
+                cause,
+              }),
+            ),
           ),
         ),
         reconcile: (acknowledged) =>
@@ -687,22 +690,15 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const query = buildQuery();
       const requestID = globalThis.crypto.randomUUID();
       const submit = executeRoborevRequest("rerun Roborev job", (signal) =>
-        client.POST("/api/job/rerun", {
-          body: { job_id: id, request_id: requestID },
-          signal,
-        }),
+        api.rerunJob({ job_id: id, request_id: requestID }, { signal }),
       ).pipe(
-        Effect.flatMap((result) =>
-          result.error || !result.data
-            ? Effect.fail(
-                RoborevMutationError.make({
-                  operation: "rerun Roborev job",
-                  cause:
-                    result.error ??
-                    new Error("Roborev rerun response was empty"),
-                }),
-              )
-            : Effect.succeed(result.data),
+        Effect.catchTag("RoborevHTTPError", (cause) =>
+          Effect.fail(
+            RoborevMutationError.make({
+              operation: "rerun Roborev job",
+              cause,
+            }),
+          ),
         ),
       );
       const response = yield* workflow.mutate({
@@ -777,31 +773,27 @@ export function createJobsStore(opts: JobsStoreOptions) {
           panelMemberErrors = startedErrors;
         }),
         read: executeRoborevRequest("load Roborev panel members", (signal) =>
-          client.GET("/api/jobs", {
-            params: {
-              query: { panel_run: runUuid, limit: 0, omit_prompt: "true" },
-            },
-            signal,
-          }),
+          api.listJobs(
+            { panel_run: runUuid, limit: 0, omit_prompt: "true" },
+            { signal },
+          ),
         ).pipe(
-          Effect.flatMap((result) =>
-            result.error
-              ? Effect.fail(
-                  RoborevResponseError.make({
-                    operation: "load Roborev panel members",
-                    message: "Failed to load panel members",
-                    cause: result.error,
-                  }),
-                )
-              : Effect.succeed(
-                  (result.data?.jobs ?? [])
-                    .filter((job) => job.panel_role === "member")
-                    .sort(
-                      (a, b) =>
-                        (a.panel_member_index ?? 0) -
-                        (b.panel_member_index ?? 0),
-                    ),
-                ),
+          Effect.catchTag("RoborevHTTPError", (cause) =>
+            Effect.fail(
+              RoborevResponseError.make({
+                operation: "load Roborev panel members",
+                message: "Failed to load panel members",
+                cause,
+              }),
+            ),
+          ),
+          Effect.map((result) =>
+            (result.jobs ?? [])
+              .filter((job) => job.panel_role === "member")
+              .sort(
+                (a, b) =>
+                  (a.panel_member_index ?? 0) - (b.panel_member_index ?? 0),
+              ),
           ),
         ),
         onSuccess: (members) =>

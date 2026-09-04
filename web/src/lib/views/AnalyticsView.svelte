@@ -17,7 +17,6 @@
 
   import MetricCard from "../components/analytics/MetricCard.svelte";
   import TimeSeriesChart from "../components/analytics/TimeSeriesChart.svelte";
-  import { getRoborevClient } from "../runtime/context";
   import {
     createAnalyticsStore,
     type AnalyticsBucket,
@@ -31,9 +30,7 @@
   }
 
   let { store }: Props = $props();
-  const analytics = untrack(
-    () => store ?? createAnalyticsStore({ client: getRoborevClient() }),
-  );
+  const analytics = untrack(() => store ?? createAnalyticsStore({}));
   const filters = $derived(analytics.getFilters());
   const snapshot = $derived(analytics.getSnapshot());
   const loading = $derived(analytics.isLoading());

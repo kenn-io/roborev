@@ -19,7 +19,7 @@ describe("native daemon store", () => {
   it("can begin provisionally available without recording a successful status", () => {
     runtime = makeTestAppRuntime();
     const store = createDaemonStore({
-      client: { GET: vi.fn() } as never,
+      getStatus: vi.fn(),
       runtime,
       initiallyAvailable: true,
     });
@@ -31,9 +31,7 @@ describe("native daemon store", () => {
   it("revokes provisional availability when the first status request fails", async () => {
     runtime = makeTestAppRuntime();
     const store = createDaemonStore({
-      client: {
-        GET: vi.fn().mockRejectedValue(new TypeError("offline")),
-      } as never,
+      getStatus: vi.fn().mockRejectedValue(new TypeError("offline")),
       runtime,
       initiallyAvailable: true,
     });
@@ -47,18 +45,16 @@ describe("native daemon store", () => {
   it("publishes direct daemon status as one authority", async () => {
     runtime = makeTestAppRuntime();
     const get = vi.fn().mockResolvedValue({
-      data: {
-        active_workers: 1,
-        canceled_jobs: 2,
-        completed_jobs: 3,
-        failed_jobs: 4,
-        max_workers: 5,
-        queued_jobs: 6,
-        running_jobs: 7,
-        version: "test-version",
-      },
+      active_workers: 1,
+      canceled_jobs: 2,
+      completed_jobs: 3,
+      failed_jobs: 4,
+      max_workers: 5,
+      queued_jobs: 6,
+      running_jobs: 7,
+      version: "test-version",
     });
-    const store = createDaemonStore({ client: { GET: get } as never, runtime });
+    const store = createDaemonStore({ getStatus: get, runtime });
 
     store.checkHealth();
 
@@ -80,19 +76,17 @@ describe("native daemon store", () => {
     const get = vi
       .fn()
       .mockResolvedValueOnce({
-        data: {
-          active_workers: 1,
-          canceled_jobs: 2,
-          completed_jobs: 3,
-          failed_jobs: 4,
-          max_workers: 5,
-          queued_jobs: 6,
-          running_jobs: 7,
-          version: "test-version",
-        },
+        active_workers: 1,
+        canceled_jobs: 2,
+        completed_jobs: 3,
+        failed_jobs: 4,
+        max_workers: 5,
+        queued_jobs: 6,
+        running_jobs: 7,
+        version: "test-version",
       })
       .mockRejectedValueOnce(new TypeError("offline"));
-    const store = createDaemonStore({ client: { GET: get } as never, runtime });
+    const store = createDaemonStore({ getStatus: get, runtime });
 
     store.checkHealth();
     await vi.waitFor(() => expect(store.isAvailable()).toBe(true));
@@ -117,18 +111,16 @@ describe("native daemon store", () => {
           }),
       )
       .mockResolvedValueOnce({
-        data: {
-          active_workers: 1,
-          canceled_jobs: 0,
-          completed_jobs: 8,
-          failed_jobs: 0,
-          max_workers: 2,
-          queued_jobs: 3,
-          running_jobs: 1,
-          version: "newer",
-        },
+        active_workers: 1,
+        canceled_jobs: 0,
+        completed_jobs: 8,
+        failed_jobs: 0,
+        max_workers: 2,
+        queued_jobs: 3,
+        running_jobs: 1,
+        version: "newer",
       });
-    const store = createDaemonStore({ client: { GET: get } as never, runtime });
+    const store = createDaemonStore({ getStatus: get, runtime });
 
     store.checkHealth();
     store.loadStatus();
@@ -145,7 +137,7 @@ describe("native daemon store", () => {
       const get = vi.fn().mockRejectedValue(new TypeError("offline"));
       const testRuntime = makeTestAppRuntime();
       const store = createDaemonStore({
-        client: { GET: get } as never,
+        getStatus: get,
         runtime: testRuntime,
       });
       const polling = yield* Effect.forkChild(store.pollingEffect);

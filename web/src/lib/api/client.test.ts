@@ -1,11 +1,8 @@
 import { Effect, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import {
-  createRoborevClient,
-  decodeRoborevNdjson,
-  roborevJobOutputStream,
-} from "./client";
+import { decodeRoborevNdjson, roborevJobOutputStream } from "./client";
+import { roborevFetch } from "./generated-fetch";
 import { getListJobsUrl } from "./generated/jobs/jobs";
 import { getGetWebAnalyticsUrl } from "./generated/web-ui/web-ui";
 import { StreamingFetch } from "../browser/streaming-fetch";
@@ -30,9 +27,9 @@ describe("native Roborev client", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    const client = createRoborevClient("/", fetchMock);
-
-    await client.GET("/api/status");
+    await roborevFetch("/api/status", {
+      roborevTransport: { baseUrl: "/", fetch: fetchMock },
+    });
 
     const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
     const request = calls[0]![0] as unknown as Request;
@@ -49,9 +46,9 @@ describe("native Roborev client", () => {
       async () =>
         new Response(JSON.stringify({ version: "dev" }), { status: 200 }),
     );
-    const client = createRoborevClient("/roborev-ci/", fetchMock);
-
-    await client.GET("/api/status");
+    await roborevFetch("/api/status", {
+      roborevTransport: { baseUrl: "/roborev-ci/", fetch: fetchMock },
+    });
 
     const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
     const request = calls[0]![0] as unknown as Request;

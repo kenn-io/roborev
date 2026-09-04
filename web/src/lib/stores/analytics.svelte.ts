@@ -1,9 +1,9 @@
 import { appPath } from "../base-path";
-import type { RoborevClient } from "../api/client";
 import type {
   AnalyticsSnapshot,
   GetWebAnalyticsParams,
 } from "../api/generated/models";
+import { getWebAnalytics } from "../api/generated/web-ui/web-ui";
 
 export type { AnalyticsSnapshot };
 export type AnalyticsQuery = GetWebAnalyticsParams;
@@ -25,7 +25,6 @@ export interface AnalyticsFilters {
 }
 
 interface AnalyticsStoreOptions {
-  client?: RoborevClient;
   loader?: AnalyticsLoader;
   now?: () => Date;
 }
@@ -61,7 +60,7 @@ const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
 };
 
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
-  const loader = options.loader ?? makeAnalyticsLoader(options.client);
+  const loader = options.loader ?? getWebAnalytics;
   const now = options.now ?? (() => new Date());
   const initialFilters = readAnalyticsFilters(globalThis.location.search);
   let filters = $state(initialFilters);
@@ -171,26 +170,6 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions) {
     setFilters,
     start,
     dispose,
-  };
-}
-
-function makeAnalyticsLoader(
-  client: RoborevClient | undefined,
-): AnalyticsLoader {
-  if (client === undefined) {
-    throw new Error("analytics store requires a client or loader");
-  }
-  return async (query, signal) => {
-    const result = await client.GET("/api/ui/analytics", {
-      params: { query },
-      signal,
-    });
-    if (result.data !== undefined) return result.data;
-    const detail =
-      result.error && "detail" in result.error
-        ? result.error.detail
-        : undefined;
-    throw new Error(detail ?? "Analytics request failed");
   };
 }
 

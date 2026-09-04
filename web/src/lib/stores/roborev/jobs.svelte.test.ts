@@ -99,38 +99,33 @@ function makeJob(
 
 describe("createJobsStore filter preferences", () => {
   it("maps the branchless display sentinel to the empty branch query", async () => {
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: {
-            queued: 1,
-            running: 0,
-            done: 0,
-            failed: 0,
-            closed: 0,
-            open: 0,
-          },
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: {
+          queued: 1,
+          running: 0,
+          done: 0,
+          failed: 0,
+          closed: 0,
+          open: 0,
         },
-        error: undefined,
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
     store.setFilter("showAutoDesign", true);
     store.setFilter("branch", "(none)");
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalled());
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalled());
 
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query).toEqual(
+    expect(api.listJobs.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({ branch_empty: "true", limit: 50 }),
     );
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query).not.toHaveProperty(
-      "branch",
-    );
+    expect(api.listJobs.mock.calls.at(-1)?.[0]).not.toHaveProperty("branch");
     expect(store.usesFilteredStatusCounts()).toBe(true);
     expect(store.getFilteredStatusCounts()).toEqual({
       queued: 1,
@@ -141,18 +136,15 @@ describe("createJobsStore filter preferences", () => {
   });
 
   it("restores filter choices in a new store and applies them to the jobs query", async () => {
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const firstStore = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -161,50 +153,40 @@ describe("createJobsStore filter preferences", () => {
     firstStore.dispose();
 
     const restoredStore = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(restoredStore);
 
     expect(restoredStore.getFilterHideClosed()).toBe(true);
     expect(restoredStore.getFilterShowAutoDesign()).toBe(true);
-    expect(client.GET).toHaveBeenCalledWith(
-      "/api/jobs",
-      expect.objectContaining({
-        params: {
-          query: { closed: "false", limit: 50, omit_prompt: "true" },
-        },
-      }),
+    expect(api.listJobs).toHaveBeenCalledWith(
+      { closed: "false", limit: 50, omit_prompt: "true" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
   it("synchronizes filter changes across live jobs stores", async () => {
-    const firstClient = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const firstApi = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
-    const secondClient = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const secondApi = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const firstStore = createJobsStore({
-      client: firstClient as never,
+      api: firstApi as never,
       navigate: vi.fn(),
     });
     const secondStore = createJobsStore({
-      client: secondClient as never,
+      api: secondApi as never,
       navigate: vi.fn(),
     });
 
@@ -214,13 +196,9 @@ describe("createJobsStore filter preferences", () => {
     expect(secondStore.getFilterHideClosed()).toBe(true);
     expect(secondStore.getFilterShowAutoDesign()).toBe(true);
     await vi.waitFor(() =>
-      expect(secondClient.GET).toHaveBeenCalledWith(
-        "/api/jobs",
-        expect.objectContaining({
-          params: {
-            query: { closed: "false", limit: 50, omit_prompt: "true" },
-          },
-        }),
+      expect(secondApi.listJobs).toHaveBeenCalledWith(
+        { closed: "false", limit: 50, omit_prompt: "true" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
   });
@@ -231,24 +209,18 @@ describe("createJobsStore filter preferences", () => {
       .mockImplementation(() => {
         throw new Error("storage unavailable");
       });
-    const firstClient = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const firstApi = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
-    const secondClient = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const secondApi = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const setItem = vi
@@ -259,7 +231,7 @@ describe("createJobsStore filter preferences", () => {
 
     try {
       const firstStore = createJobsStore({
-        client: firstClient as never,
+        api: firstApi as never,
         navigate: vi.fn(),
       });
       expect(firstStore.getFilterHideClosed()).toBe(false);
@@ -268,20 +240,16 @@ describe("createJobsStore filter preferences", () => {
       firstStore.setFilter("hideClosed", true);
       firstStore.setFilter("showAutoDesign", true);
       const secondStore = createJobsStore({
-        client: secondClient as never,
+        api: secondApi as never,
         navigate: vi.fn(),
       });
       await loadJobs(secondStore);
 
       expect(secondStore.getFilterHideClosed()).toBe(true);
       expect(secondStore.getFilterShowAutoDesign()).toBe(true);
-      expect(secondClient.GET).toHaveBeenCalledWith(
-        "/api/jobs",
-        expect.objectContaining({
-          params: {
-            query: { closed: "false", limit: 50, omit_prompt: "true" },
-          },
-        }),
+      expect(secondApi.listJobs).toHaveBeenCalledWith(
+        { closed: "false", limit: 50, omit_prompt: "true" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     } finally {
       getItem.mockRestore();
@@ -305,19 +273,16 @@ describe("createJobsStore cost sorting", () => {
       makeCostJob(6, JSON.stringify({ has_cost: true, cost_usd: 0 })),
       makeCostJob(5, "not json"),
     ];
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs,
-          has_more: false,
-          stats: { done: 1, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs,
+        has_more: false,
+        stats: { done: 1, closed: 0, open: 0 },
       }),
     };
 
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -342,18 +307,15 @@ describe("createJobsStore review type sorting", () => {
       { ...makeJob(2), job_type: "synthesis", panel_role: "synthesis" },
       makeJob(3),
     ];
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs,
-          has_more: false,
-          stats: { done: 3, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs,
+        has_more: false,
+        stats: { done: 3, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -382,19 +344,16 @@ describe("createJobsStore elapsed sorting", () => {
       makeJob(6, "2026-04-11T11:30:00Z", "2026-04-11T11:30:00Z"),
       makeJob(5),
     ];
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs,
-          has_more: false,
-          stats: { done: 1, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs,
+        has_more: false,
+        stats: { done: 1, closed: 0, open: 0 },
       }),
     };
 
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -431,18 +390,15 @@ describe("createJobsStore event stream", () => {
         }),
     );
     globalThis.fetch = fetchMock;
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -465,18 +421,15 @@ describe("createJobsStore event stream", () => {
         return new Response(new ReadableStream<Uint8Array>(), { status: 200 });
       },
     );
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -526,24 +479,21 @@ describe("createJobsStore event stream", () => {
         });
       },
     );
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
-    expect(client.GET).toHaveBeenCalledTimes(1);
+    expect(api.listJobs).toHaveBeenCalledTimes(1);
     bodyController?.enqueue(encoder.encode('{"type":"review.com'));
     bodyController?.enqueue(
       encoder.encode(
@@ -551,7 +501,7 @@ describe("createJobsStore event stream", () => {
       ),
     );
 
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
     store.disconnectEventStream(eventOwner);
 
     await vi.waitFor(() => expect(bodyCancelled).toBe(true));
@@ -577,26 +527,20 @@ describe("createJobsStore event stream", () => {
     let firstSignal: AbortSignal | undefined;
     let resolveFirst:
       | ((value: {
-          data: {
-            jobs: never[];
-            has_more: boolean;
-            stats: { done: number; closed: number; open: number };
-          };
-          error: undefined;
+          jobs: never[];
+          has_more: boolean;
+          stats: { done: number; closed: number; open: number };
         }) => void)
       | undefined;
-    const client = {
-      GET: vi.fn(
-        (_path: string, options: { signal?: AbortSignal } | undefined) => {
+    const api = {
+      listJobs: vi.fn(
+        (_query: unknown, options: { signal?: AbortSignal } | undefined) => {
           requestCount += 1;
           if (requestCount !== 2) {
             return Promise.resolve({
-              data: {
-                jobs: [],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
+              jobs: [],
+              has_more: false,
+              stats: { done: 0, closed: 0, open: 0 },
             });
           }
           return new Promise((resolve, reject) => {
@@ -610,30 +554,27 @@ describe("createJobsStore event stream", () => {
       ),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     store.setSelectedJobId(42);
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
-    expect(client.GET).toHaveBeenCalledTimes(1);
+    expect(api.listJobs).toHaveBeenCalledTimes(1);
 
     bodyController?.enqueue(
       encoder.encode(
         '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
       ),
     );
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
     await loadJobs(store);
-    expect(client.GET).toHaveBeenCalledTimes(3);
+    expect(api.listJobs).toHaveBeenCalledTimes(3);
     expect(firstSignal?.aborted).toBe(false);
     resolveFirst?.({
-      data: {
-        jobs: [],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [],
+      has_more: false,
+      stats: { done: 0, closed: 0, open: 0 },
     });
 
     bodyController?.enqueue(
@@ -641,7 +582,7 @@ describe("createJobsStore event stream", () => {
         '{"type":"review.closed","ts":"2026-08-04T13:01:00Z","job_id":42}\n',
       ),
     );
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(4));
 
     expect(store.isEventStreamConnected()).toBe(true);
     store.disconnectEventStream(eventOwner);
@@ -663,33 +604,27 @@ describe("createJobsStore event stream", () => {
     );
 
     type JobsResponse = {
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; running: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; running: number; closed: number; open: number };
     };
     const pending: Array<(value: JobsResponse) => void> = [];
     let requestCount = 0;
-    const client = {
-      GET: vi.fn(() => {
+    const api = {
+      listJobs: vi.fn(() => {
         requestCount += 1;
         if (requestCount === 1) {
           return Promise.resolve({
-            data: {
-              jobs: [],
-              has_more: false,
-              stats: { done: 0, running: 0, closed: 0, open: 0 },
-            },
-            error: undefined,
+            jobs: [],
+            has_more: false,
+            stats: { done: 0, running: 0, closed: 0, open: 0 },
           });
         }
         return new Promise<JobsResponse>((resolve) => pending.push(resolve));
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     store.setSelectedJobId(42);
@@ -705,7 +640,7 @@ describe("createJobsStore event stream", () => {
       );
     };
     emitEvent(0);
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
     for (let index = 1; index < 12; index += 1) {
       emitEvent(index);
     }
@@ -714,21 +649,15 @@ describe("createJobsStore event stream", () => {
       expect(store.getSelectedReviewRevision()).toBe(initialRevision + 12),
     );
     pending[0]?.({
-      data: {
-        jobs: [{ ...makeJob(42), status: "running" }],
-        has_more: false,
-        stats: { done: 0, running: 1, closed: 0, open: 1 },
-      },
-      error: undefined,
+      jobs: [{ ...makeJob(42), status: "running" }],
+      has_more: false,
+      stats: { done: 0, running: 1, closed: 0, open: 1 },
     });
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(3));
     pending[1]?.({
-      data: {
-        jobs: [{ ...makeJob(42), status: "done" }],
-        has_more: false,
-        stats: { done: 1, running: 0, closed: 0, open: 1 },
-      },
-      error: undefined,
+      jobs: [{ ...makeJob(42), status: "done" }],
+      has_more: false,
+      stats: { done: 1, running: 0, closed: 0, open: 1 },
     });
     await vi.waitFor(() => expect(store.getJobs()[0]?.status).toBe("done"));
     store.disconnectEventStream(eventOwner);
@@ -750,16 +679,13 @@ describe("createJobsStore event stream", () => {
     );
 
     type JobsResponse = {
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; running: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; running: number; closed: number; open: number };
     };
     const pending: Array<(value: JobsResponse) => void> = [];
-    const client = {
-      GET: vi.fn(
+    const api = {
+      listJobs: vi.fn(
         () =>
           new Promise<JobsResponse>((resolve) => {
             pending.push(resolve);
@@ -767,18 +693,15 @@ describe("createJobsStore event stream", () => {
       ),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.({
-      data: {
-        jobs: [],
-        has_more: false,
-        stats: { done: 0, running: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [],
+      has_more: false,
+      stats: { done: 0, running: 0, closed: 0, open: 0 },
     });
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
 
@@ -792,22 +715,16 @@ describe("createJobsStore event stream", () => {
     await vi.waitFor(() => expect(pending).toHaveLength(3));
 
     pending[2]?.({
-      data: {
-        jobs: [{ ...makeJob(42), status: "done" }],
-        has_more: false,
-        stats: { done: 1, running: 0, closed: 0, open: 1 },
-      },
-      error: undefined,
+      jobs: [{ ...makeJob(42), status: "done" }],
+      has_more: false,
+      stats: { done: 1, running: 0, closed: 0, open: 1 },
     });
     await vi.waitFor(() => expect(store.getJobs()[0]?.status).toBe("done"));
 
     pending[1]?.({
-      data: {
-        jobs: [{ ...makeJob(42), status: "running" }],
-        has_more: false,
-        stats: { done: 0, running: 1, closed: 0, open: 1 },
-      },
-      error: undefined,
+      jobs: [{ ...makeJob(42), status: "running" }],
+      has_more: false,
+      stats: { done: 0, running: 1, closed: 0, open: 1 },
     });
     await olderLoad;
 
@@ -830,18 +747,15 @@ describe("createJobsStore event stream", () => {
           { status: 200 },
         ),
     );
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     store.setSelectedJobId(42);
@@ -876,18 +790,15 @@ describe("createJobsStore event stream", () => {
           { status: 200 },
         ),
     );
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -898,7 +809,7 @@ describe("createJobsStore event stream", () => {
     await vi.advanceTimersByTimeAsync(500);
 
     await vi.waitFor(() => expect(bodies).toHaveLength(2));
-    expect(client.GET).toHaveBeenCalled();
+    expect(api.listJobs).toHaveBeenCalled();
     store.disconnectEventStream(eventOwner);
   });
 
@@ -916,7 +827,7 @@ describe("createJobsStore event stream", () => {
         return new Response(body, { status: 503 });
       },
     );
-    const store = createJobsStore({ client: {} as never, navigate: vi.fn() });
+    const store = createJobsStore({ api: {} as never, navigate: vi.fn() });
 
     const eventOwner = store.connectEventStream("/api/roborev");
 
@@ -939,18 +850,15 @@ describe("createJobsStore event stream", () => {
       });
       return new Response(body, { status: 200 });
     });
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -983,21 +891,18 @@ describe("createJobsStore event stream", () => {
         { status: 200 },
       );
     });
-    const client = {
-      GET: vi.fn().mockImplementation(async () => {
+    const api = {
+      listJobs: vi.fn().mockImplementation(async () => {
         sequence.push("jobs");
         return {
-          data: {
-            jobs: [],
-            has_more: false,
-            stats: { done: 0, closed: 0, open: 0 },
-          },
-          error: undefined,
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
         };
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1030,27 +935,21 @@ describe("createJobsStore event stream", () => {
         ),
     );
     let reconciliationRound = 0;
-    const client = {
-      GET: vi.fn().mockImplementation(async () => {
+    const api = {
+      listJobs: vi.fn().mockImplementation(async () => {
         reconciliationRound += 1;
         if (reconciliationRound <= 2) {
-          return {
-            data: undefined,
-            error: { message: "authority unavailable" },
-          };
+          throw new TypeError("authority unavailable");
         }
         return {
-          data: {
-            jobs: [],
-            has_more: false,
-            stats: { done: 0, closed: 0, open: 0 },
-          },
-          error: undefined,
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
         };
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1070,82 +969,76 @@ describe("createJobsStore event stream", () => {
 });
 
 describe("createJobsStore auto-design filter", () => {
-  function makeClient() {
+  function makeApi() {
     return {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
   }
 
   it("sends hide_classify_jobs by default and drops it when showAutoDesign is on", async () => {
-    const client = makeClient();
+    const api = makeApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
     await loadJobs(store);
 
     expect(store.getFilterShowAutoDesign()).toBe(false);
-    expect(client.GET).toHaveBeenLastCalledWith(
-      "/api/jobs",
+    expect(api.listJobs).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        params: {
-          query: expect.objectContaining({ hide_classify_jobs: "true" }),
-        },
+        hide_classify_jobs: "true",
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     store.setFilter("showAutoDesign", true);
     await vi.waitFor(() => {
-      expect(client.GET.mock.calls.length).toBeGreaterThan(1);
+      expect(api.listJobs.mock.calls.length).toBeGreaterThan(1);
     });
 
-    const lastQuery = client.GET.mock.calls.at(-1)?.[1]?.params
-      ?.query as Record<string, unknown>;
+    const lastQuery = api.listJobs.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(lastQuery).not.toHaveProperty("hide_classify_jobs");
   });
 });
 
 describe("createJobsStore filtered status counts", () => {
   it("uses server-side aggregate counts without downloading an unbounded job list", async () => {
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [makeJob(1)],
-          has_more: true,
-          stats: {
-            queued: 1,
-            running: 2,
-            done: 30,
-            failed: 4,
-            canceled: 5,
-            skipped: 6,
-            closed: 20,
-            open: 10,
-          },
-          filtered_stats: {
-            queued: 1,
-            running: 2,
-            done: 12,
-            failed: 3,
-            canceled: 2,
-            skipped: 1,
-            closed: 0,
-            open: 9,
-          },
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [makeJob(1)],
+        has_more: true,
+        stats: {
+          queued: 1,
+          running: 2,
+          done: 30,
+          failed: 4,
+          canceled: 5,
+          skipped: 6,
+          closed: 20,
+          open: 10,
         },
-        error: undefined,
+        filtered_stats: {
+          queued: 1,
+          running: 2,
+          done: 12,
+          failed: 3,
+          canceled: 2,
+          skipped: 1,
+          closed: 0,
+          open: 9,
+        },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1157,29 +1050,22 @@ describe("createJobsStore filtered status counts", () => {
       done: 12,
       failed: 3,
     });
-    expect(client.GET).toHaveBeenCalledTimes(1);
-    expect(client.GET).toHaveBeenCalledWith(
-      "/api/jobs",
+    expect(api.listJobs).toHaveBeenCalledTimes(1);
+    expect(api.listJobs).toHaveBeenCalledWith(
       expect.objectContaining({
-        params: {
-          query: expect.objectContaining({
-            hide_classify_jobs: "true",
-            limit: 50,
-            omit_prompt: "true",
-          }),
-        },
+        hide_classify_jobs: "true",
+        limit: 50,
+        omit_prompt: "true",
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    const query = client.GET.mock.calls[0]?.[1]?.params?.query as Record<
-      string,
-      unknown
-    >;
+    const query = api.listJobs.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(query.limit).not.toBe(0);
   });
 });
 
 describe("createJobsStore pagination", () => {
-  function paginatedClient() {
+  function paginatedApi() {
     const firstPage = Array.from({ length: 50 }, (_, index) =>
       makeJob(100 - index),
     );
@@ -1190,48 +1076,39 @@ describe("createJobsStore pagination", () => {
       makeJob(101 - index),
     );
     return {
-      GET: vi.fn().mockImplementation(async (_path, options) => {
-        const query = options.params.query as {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typedQuery = query as {
           before?: number;
           limit?: number;
           status?: string;
         };
         if (query.status) {
           return {
-            data: {
-              jobs: [],
-              has_more: false,
-              stats: { done: 0, closed: 0, open: 0 },
-            },
-            error: undefined,
+            jobs: [],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
           };
         }
         if (query.before !== undefined) {
           return {
-            data: {
-              jobs: query.before === 51 ? secondPage : [],
-              has_more: query.before === 51,
-              stats: { done: 100, closed: 0, open: 100 },
-            },
-            error: undefined,
+            jobs: query.before === 51 ? secondPage : [],
+            has_more: query.before === 51,
+            stats: { done: 100, closed: 0, open: 100 },
           };
         }
         return {
-          data: {
-            jobs: query.limit === 100 ? refreshedPage : firstPage,
-            has_more: true,
-            stats: { done: 101, closed: 0, open: 101 },
-          },
-          error: undefined,
+          jobs: typedQuery.limit === 100 ? refreshedPage : firstPage,
+          has_more: true,
+          stats: { done: 101, closed: 0, open: 101 },
         };
       }),
     };
   }
 
   it("preserves the loaded depth during an authoritative refresh", async () => {
-    const client = paginatedClient();
+    const api = paginatedApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1242,13 +1119,13 @@ describe("createJobsStore pagination", () => {
     await loadJobs(store);
 
     expect(store.getJobs()).toHaveLength(100);
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query.limit).toBe(100);
+    expect(api.listJobs.mock.calls.at(-1)?.[0].limit).toBe(100);
   });
 
   it("resets the loaded depth when filters change", async () => {
-    const client = paginatedClient();
+    const api = paginatedApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1256,18 +1133,16 @@ describe("createJobsStore pagination", () => {
     await loadMoreJobs(store);
     store.setFilter("status", "failed");
     await vi.waitFor(() =>
-      expect(client.GET.mock.calls.at(-1)?.[1]?.params.query.status).toBe(
-        "failed",
-      ),
+      expect(api.listJobs.mock.calls.at(-1)?.[0].status).toBe("failed"),
     );
 
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query.limit).toBe(50);
+    expect(api.listJobs.mock.calls.at(-1)?.[0].limit).toBe(50);
   });
 
   it("keeps subsequent pagination requests at one page", async () => {
-    const client = paginatedClient();
+    const api = paginatedApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1275,11 +1150,11 @@ describe("createJobsStore pagination", () => {
     await loadMoreJobs(store);
     await loadMoreJobs(store);
 
-    const paginationCalls = client.GET.mock.calls.filter(
-      (call) => call[1]?.params.query.before !== undefined,
+    const paginationCalls = api.listJobs.mock.calls.filter(
+      (call) => call[0].before !== undefined,
     );
     expect(paginationCalls).toHaveLength(2);
-    expect(paginationCalls[1]?.[1]?.params.query.limit).toBe(50);
+    expect(paginationCalls[1]?.[0].limit).toBe(50);
   });
 
   it("uses the opaque cursor returned with the current page", async () => {
@@ -1291,27 +1166,24 @@ describe("createJobsStore pagination", () => {
       ...makeJob(100),
       enqueued_at: "2026-04-11T10:00:00Z",
     };
-    const client = {
-      GET: vi.fn().mockImplementation(async (_path, options) => {
-        const query = options.params.query as {
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typedQuery = query as {
           before?: number;
           cursor?: string;
         };
         return {
-          data: {
-            jobs:
-              query.cursor === undefined ? [recentlyRerun, olderHighId] : [],
-            has_more: query.cursor === undefined,
-            next_cursor:
-              query.cursor === undefined ? "stable-enqueue-cursor" : null,
-            stats: { done: 2, closed: 0, open: 2 },
-          },
-          error: undefined,
+          jobs:
+            typedQuery.cursor === undefined ? [recentlyRerun, olderHighId] : [],
+          has_more: typedQuery.cursor === undefined,
+          next_cursor:
+            typedQuery.cursor === undefined ? "stable-enqueue-cursor" : null,
+          stats: { done: 2, closed: 0, open: 2 },
         };
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1325,41 +1197,38 @@ describe("createJobsStore pagination", () => {
 
     await loadMoreJobs(store);
 
-    expect(client.GET.mock.calls[1]?.[1]?.params.query.cursor).toBe(
+    expect(api.listJobs.mock.calls[1]?.[0].cursor).toBe(
       "stable-enqueue-cursor",
     );
-    expect(client.GET.mock.calls[1]?.[1]?.params.query.before).toBeUndefined();
+    expect(api.listJobs.mock.calls[1]?.[0].before).toBeUndefined();
   });
 
   it("does not load beyond the daemon result limit", async () => {
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: Array.from({ length: 10_000 }, (_, index) =>
-            makeJob(10_000 - index),
-          ),
-          has_more: true,
-          stats: { done: 10_001, closed: 0, open: 10_001 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: Array.from({ length: 10_000 }, (_, index) =>
+          makeJob(10_000 - index),
+        ),
+        has_more: true,
+        stats: { done: 10_001, closed: 0, open: 10_001 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
     await loadJobs(store);
     await loadMoreJobs(store);
 
-    expect(client.GET).toHaveBeenCalledTimes(1);
+    expect(api.listJobs).toHaveBeenCalledTimes(1);
     expect(store.getHasMore()).toBe(false);
   });
 
   it("preserves loaded depth when an unchanged filter is reapplied", async () => {
-    const client = paginatedClient();
+    const api = paginatedApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1367,14 +1236,14 @@ describe("createJobsStore pagination", () => {
     await loadMoreJobs(store);
     store.setFilter("status", undefined);
 
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query.limit).toBe(100);
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(3));
+    expect(api.listJobs.mock.calls.at(-1)?.[0].limit).toBe(100);
   });
 
   it("preserves loaded depth when the same repo and branch are reapplied", async () => {
-    const client = paginatedClient();
+    const api = paginatedApi();
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
 
@@ -1382,8 +1251,8 @@ describe("createJobsStore pagination", () => {
     await loadMoreJobs(store);
     store.setRepoBranchFilter(undefined, undefined);
 
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
-    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query.limit).toBe(100);
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(3));
+    expect(api.listJobs.mock.calls.at(-1)?.[0].limit).toBe(100);
   });
 });
 
@@ -1427,37 +1296,24 @@ describe("createJobsStore panel expansion", () => {
   it("lazily fetches members sorted by panel_member_index on first expand", async () => {
     const parent = makePanelParent(10);
     const members = [makeMember(12, "run-10", 1), makeMember(11, "run-10", 0)];
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              return Promise.resolve({
-                data: {
-                  jobs: [parent, ...members],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
-            return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
-            });
-          },
-        ),
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          return Promise.resolve({
+            jobs: [parent, ...members],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1469,36 +1325,29 @@ describe("createJobsStore panel expansion", () => {
       expect(store.getPanelMembers("run-10")).toBeDefined();
     });
     expect(store.getPanelMembers("run-10")?.map((j) => j.id)).toEqual([11, 12]);
-    expect(client.GET).toHaveBeenCalledWith(
-      "/api/jobs",
-      expect.objectContaining({
-        params: {
-          query: { panel_run: "run-10", limit: 0, omit_prompt: "true" },
-        },
-      }),
+    expect(api.listJobs).toHaveBeenCalledWith(
+      { panel_run: "run-10", limit: 0, omit_prompt: "true" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
-    const calls = client.GET.mock.calls.length;
+    const calls = api.listJobs.mock.calls.length;
     store.togglePanel(parent);
     store.togglePanel(parent);
     expect(store.isPanelExpanded("run-10")).toBe(true);
-    expect(client.GET.mock.calls.length).toBe(calls);
+    expect(api.listJobs.mock.calls.length).toBe(calls);
   });
 
   it("refreshes members of expanded panels when the listing reloads", async () => {
     const parent = makePanelParent(10);
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [parent],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [parent],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1507,17 +1356,13 @@ describe("createJobsStore panel expansion", () => {
       expect(store.getPanelMembers("run-10")).toBeDefined(),
     );
 
-    const before = client.GET.mock.calls.filter(
-      (c) =>
-        (c[1] as { params: { query: Record<string, unknown> } }).params.query
-          .panel_run === "run-10",
+    const before = api.listJobs.mock.calls.filter(
+      (c) => c[0].panel_run === "run-10",
     ).length;
     await loadJobs(store);
     await vi.waitFor(() => {
-      const after = client.GET.mock.calls.filter(
-        (c) =>
-          (c[1] as { params: { query: Record<string, unknown> } }).params.query
-            .panel_run === "run-10",
+      const after = api.listJobs.mock.calls.filter(
+        (c) => c[0].panel_run === "run-10",
       ).length;
       expect(after).toBe(before + 1);
     });
@@ -1526,37 +1371,24 @@ describe("createJobsStore panel expansion", () => {
   it("includes expanded panel members in highlight navigation", async () => {
     const parent = makePanelParent(10);
     const members = [makeMember(12, "run-10", 1), makeMember(11, "run-10", 0)];
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              return Promise.resolve({
-                data: {
-                  jobs: [parent, ...members],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
-            return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
-            });
-          },
-        ),
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          return Promise.resolve({
+            jobs: [parent, ...members],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1579,49 +1411,33 @@ describe("createJobsStore panel expansion", () => {
   it("keeps cached members visible in navigation while a refresh is loading", async () => {
     const parent = makePanelParent(10);
     const slowRefresh = deferred<{
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; closed: number; open: number };
     }>();
     let panelCalls = 0;
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              panelCalls++;
-              if (panelCalls === 1) {
-                return Promise.resolve({
-                  data: {
-                    jobs: [parent, makeMember(11, "run-10", 0)],
-                    has_more: false,
-                    stats: { done: 0, closed: 0, open: 0 },
-                  },
-                  error: undefined,
-                });
-              }
-              return slowRefresh.promise;
-            }
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) {
             return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
+              jobs: [parent, makeMember(11, "run-10", 0)],
+              has_more: false,
+              stats: { done: 0, closed: 0, open: 0 },
             });
-          },
-        ),
+          }
+          return slowRefresh.promise;
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1638,12 +1454,9 @@ describe("createJobsStore panel expansion", () => {
     expect(store.getHighlightedJobId()).toBe(11);
 
     slowRefresh.resolve({
-      data: {
-        jobs: [parent, makeMember(12, "run-10", 0)],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [parent, makeMember(12, "run-10", 0)],
+      has_more: false,
+      stats: { done: 0, closed: 0, open: 0 },
     });
     await vi.waitFor(() => {
       expect(store.getVisibleJobs().map((j) => j.id)).toEqual([10, 12]);
@@ -1653,37 +1466,24 @@ describe("createJobsStore panel expansion", () => {
 
   it("moves highlight to the parent when closing a panel from a member row", async () => {
     const parent = makePanelParent(10);
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              return Promise.resolve({
-                data: {
-                  jobs: [parent, makeMember(11, "run-10", 0)],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
-            return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
-            });
-          },
-        ),
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          return Promise.resolve({
+            jobs: [parent, makeMember(11, "run-10", 0)],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1703,41 +1503,25 @@ describe("createJobsStore panel expansion", () => {
   it("refreshes interested panel members on listing reload while the table panel is collapsed", async () => {
     const parent = makePanelParent(10);
     let panelCalls = 0;
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              panelCalls++;
-              return Promise.resolve({
-                data: {
-                  jobs: [
-                    parent,
-                    makeMember(panelCalls === 1 ? 11 : 12, "run-10", 0),
-                  ],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
-            return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
-            });
-          },
-        ),
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          return Promise.resolve({
+            jobs: [parent, makeMember(panelCalls === 1 ? 11 : 12, "run-10", 0)],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1757,47 +1541,31 @@ describe("createJobsStore panel expansion", () => {
   it("drains queued interested refreshes while the table panel is collapsed", async () => {
     const parent = makePanelParent(10);
     const initialFetch = deferred<{
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; closed: number; open: number };
     }>();
     let panelCalls = 0;
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              panelCalls++;
-              if (panelCalls === 1) return initialFetch.promise;
-              return Promise.resolve({
-                data: {
-                  jobs: [parent, makeMember(12, "run-10", 0)],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
-            return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
-            });
-          },
-        ),
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) return initialFetch.promise;
+          return Promise.resolve({
+            jobs: [parent, makeMember(12, "run-10", 0)],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1808,12 +1576,9 @@ describe("createJobsStore panel expansion", () => {
     expect(panelCalls).toBe(1);
 
     initialFetch.resolve({
-      data: {
-        jobs: [parent, makeMember(11, "run-10", 0)],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [parent, makeMember(11, "run-10", 0)],
+      has_more: false,
+      stats: { done: 0, closed: 0, open: 0 },
     });
 
     await vi.waitFor(() => {
@@ -1843,18 +1608,15 @@ describe("createJobsStore panel expansion", () => {
         members_cost_complete: true,
       },
     };
-    const client = {
-      GET: vi.fn().mockResolvedValue({
-        data: {
-          jobs: [expensive, cheaper],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        },
-        error: undefined,
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [expensive, cheaper],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
       }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1868,57 +1630,38 @@ describe("createJobsStore panel expansion", () => {
     const parent = makePanelParent(10);
     const duplicateVisibleMember = makeMember(99, "run-10", 1);
     const slowRefresh = deferred<{
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; closed: number; open: number };
     }>();
     let panelCalls = 0;
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              panelCalls++;
-              if (panelCalls === 1) {
-                return Promise.resolve({
-                  data: {
-                    jobs: [parent, makeMember(11, "run-10", 0)],
-                    has_more: false,
-                    stats: { done: 0, closed: 0, open: 0 },
-                  },
-                  error: undefined,
-                });
-              }
-              if (panelCalls === 2) return slowRefresh.promise;
-              return Promise.resolve({
-                data: {
-                  jobs: [parent, makeMember(13, "run-10", 0)],
-                  has_more: false,
-                  stats: { done: 0, closed: 0, open: 0 },
-                },
-                error: undefined,
-              });
-            }
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) {
             return Promise.resolve({
-              data: {
-                jobs: [parent, duplicateVisibleMember],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
+              jobs: [parent, makeMember(11, "run-10", 0)],
+              has_more: false,
+              stats: { done: 0, closed: 0, open: 0 },
             });
-          },
-        ),
+          }
+          if (panelCalls === 2) return slowRefresh.promise;
+          return Promise.resolve({
+            jobs: [parent, makeMember(13, "run-10", 0)],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        return Promise.resolve({
+          jobs: [parent, duplicateVisibleMember],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
     });
     await loadJobs(store);
@@ -1933,12 +1676,9 @@ describe("createJobsStore panel expansion", () => {
     expect(panelCalls).toBe(2);
 
     slowRefresh.resolve({
-      data: {
-        jobs: [parent, makeMember(12, "run-10", 0)],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [parent, makeMember(12, "run-10", 0)],
+      has_more: false,
+      stats: { done: 0, closed: 0, open: 0 },
     });
 
     await vi.waitFor(() => {
@@ -1950,54 +1690,35 @@ describe("createJobsStore panel expansion", () => {
   it("keeps accepted members when a stale in-flight refresh is followed by a failed latest refresh", async () => {
     const parent = makePanelParent(10);
     const staleRefresh = deferred<{
-      data: {
-        jobs: ReviewJob[];
-        has_more: boolean;
-        stats: { done: number; closed: number; open: number };
-      };
-      error: undefined;
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; closed: number; open: number };
     }>();
     const onError = vi.fn();
     let panelCalls = 0;
-    const client = {
-      GET: vi
-        .fn()
-        .mockImplementation(
-          (
-            _path: string,
-            opts: { params: { query: Record<string, unknown> } },
-          ) => {
-            if (opts.params.query.panel_run === "run-10") {
-              panelCalls++;
-              if (panelCalls === 1) {
-                return Promise.resolve({
-                  data: {
-                    jobs: [parent, makeMember(11, "run-10", 0)],
-                    has_more: false,
-                    stats: { done: 0, closed: 0, open: 0 },
-                  },
-                  error: undefined,
-                });
-              }
-              if (panelCalls === 2) return staleRefresh.promise;
-              return Promise.resolve({
-                data: undefined,
-                error: { message: "newest refresh failed" },
-              });
-            }
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) {
             return Promise.resolve({
-              data: {
-                jobs: [parent],
-                has_more: false,
-                stats: { done: 0, closed: 0, open: 0 },
-              },
-              error: undefined,
+              jobs: [parent, makeMember(11, "run-10", 0)],
+              has_more: false,
+              stats: { done: 0, closed: 0, open: 0 },
             });
-          },
-        ),
+          }
+          if (panelCalls === 2) return staleRefresh.promise;
+          return Promise.reject(new Response(null, { status: 503 }));
+        }
+        return Promise.resolve({
+          jobs: [parent],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }),
     };
     const store = createJobsStore({
-      client: client as never,
+      api: api as never,
       navigate: vi.fn(),
       onError,
     });
@@ -2013,12 +1734,9 @@ describe("createJobsStore panel expansion", () => {
     expect(panelCalls).toBe(2);
 
     staleRefresh.resolve({
-      data: {
-        jobs: [parent, makeMember(12, "run-10", 0)],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      },
-      error: undefined,
+      jobs: [parent, makeMember(12, "run-10", 0)],
+      has_more: false,
+      stats: { done: 0, closed: 0, open: 0 },
     });
 
     await vi.waitFor(() => {
