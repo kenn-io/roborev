@@ -66,7 +66,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":1,"verdict":"fail","markdown":"synthesized output"}`, nil
+	return `{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -94,7 +94,7 @@ func (a *synthesisEntrypointAgent) Synthesize(
 	_ context.Context, prompt string, _ io.Writer,
 ) (json.RawMessage, error) {
 	a.synthPrompt = prompt
-	return json.RawMessage(`{"schema_version":1,"verdict":"fail","markdown":"synthesized output"}`), nil
+	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 

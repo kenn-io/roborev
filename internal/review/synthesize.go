@@ -154,7 +154,7 @@ func runSynthesis(
 		ctx, 5*time.Minute)
 	defer cancel()
 
-	doc, err := RunSynthesisAgent(synthCtx, synthAgent, synthPrompt, nil, SynthesisHooks{
+	doc, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
 		Checkout: func() (SynthesisCheckout, error) {
 			return SynthesisCheckout{RepoPath: opts.RepoPath, GitRef: opts.GitRef}, nil
 		},
@@ -164,5 +164,5 @@ func runSynthesis(
 	}
 
 	return FormatSynthesizedComment(
-		doc.Markdown, results, opts.HeadSHA), nil
+		doc.Markdown(), results, opts.HeadSHA), nil
 }

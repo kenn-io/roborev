@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -145,19 +146,24 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	}
 	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
-		ctx, workerID, job, prompt,
+		ctx, workerID, job, succeeded, prompt,
 	)
 	if runErr != nil {
 		// runSynthesisAgent already handled the failure/cancel.
 		return
 	}
+	structured, err := json.Marshal(doc)
+	if err != nil {
+		log.Printf("[%s] Error encoding synthesis document for job %d: %v", workerID, job.ID, err)
+	}
 	wp.completeSynthesisContext(workerID, job, synthesisResult{
-		agentName:       resolvedAgent,
-		prompt:          prompt,
-		output:          doc.Markdown,
-		verdict:         doc.Verdict,
-		capturedSession: capturedSession,
-		captureUsage:    true,
+		agentName:        resolvedAgent,
+		prompt:           prompt,
+		output:           doc.Markdown(),
+		verdict:          reviewpkg.SynthesisVerdict(doc),
+		structuredOutput: structured,
+		capturedSession:  capturedSession,
+		captureUsage:     true,
 	})
 }
 
@@ -238,12 +244,13 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 // capture must happen after the terminal write but before the completion
 // broadcast so a CI cost footer never renders an unpriced synthesis row.
 type synthesisResult struct {
-	agentName       string
-	prompt          string
-	output          string
-	verdict         storage.Verdict
-	capturedSession string
-	captureUsage    bool
+	agentName        string
+	prompt           string
+	output           string
+	verdict          storage.Verdict
+	structuredOutput json.RawMessage
+	capturedSession  string
+	captureUsage     bool
 }
 
 // completeSynthesisContext stores the synthesis review, guards against the
@@ -266,6 +273,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		completeErr = wp.db.CompleteJobResult(
 			job.ID, agentName, prompt, storage.ReviewCompletion{
 				Output: output, Verdict: res.verdict,
+				StructuredOutput: res.structuredOutput,
 			},
 		)
 	} else {
@@ -325,7 +333,8 @@ func (wp *WorkerPool) completeSynthesisLocked(
 // after routing through failOrRetryAgent; cancel returns errSynthesisCanceled
 // so the caller stores nothing.
 func (wp *WorkerPool) runSynthesisAgent(
-	ctx context.Context, workerID string, job *storage.ReviewJob, prompt string,
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+	reviews []reviewpkg.ReviewResult, prompt string,
 ) (reviewpkg.SynthesisDocument, string, string, error) {
 	if err := wp.db.SaveJobPrompt(job.ID, prompt); err != nil {
 		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
@@ -367,7 +376,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 	})
 	agentOutput = sessionWriter
 
-	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, prompt, agentOutput, reviewpkg.SynthesisHooks{
+	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
 		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
