@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>The roborev guide — a ten-stop tour of the review loop</title>
+    <title>The roborev guide: a ten-stop tour of the review loop</title>
     <meta name="description" content="The roborev review loop in ten stops: install, commit, read the ledger, act on findings, wire the agent hook, refine before the PR, tune reviewers, go deeper with panels and analysis, review pull requests, run it as a team.">
     <link rel="canonical" href="https://roborev.io/guide/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="alternate" type="text/markdown" href="https://roborev.io/guide.md">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="The roborev guide — a tour of the review loop">
+    <meta property="og:title" content="The roborev guide: a tour of the review loop">
     <meta property="og:description" content="Install, commit, read, act, hook, refine, tune, deepen, review PRs, run as a team. The loop teams run with roborev and their coding agents.">
     <meta property="og:url" content="https://roborev.io/guide/">
     <meta property="og:site_name" content="roborev">
@@ -18,7 +18,7 @@
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="The roborev guide — a tour of the review loop">
+    <meta name="twitter:title" content="The roborev guide: a tour of the review loop">
     <meta name="twitter:description" content="Install, commit, read, act, hook, refine, tune, deepen, review PRs, run as a team. The loop teams run with roborev and their coding agents.">
     <meta name="twitter:image" content="https://roborev.io/docs/assets/static/og-image.png">
   </head>
@@ -113,7 +113,7 @@
 
         <li class="guide-stop" id="read">
           <div class="guide-copy">
-            <h2>Read the ledger, not the scrollback.</h2>
+            <h2>Every review, in one ledger.</h2>
             <p>Every review lives in a persistent queue with its verdict, findings, the exact prompt, and the agent log. <code>roborev tui</code> shows the queue in the terminal with vim keys and a split-screen layout on wide windows. <code>roborev ui</code> opens the browser workspace served by the same daemon.</p>
             <p>Both read the same SQLite history. A review stays open until you or an agent closes it, so the queue is an honest list of what still needs attention across every repository on the machine.</p>
             <p><a href="/docs/integrations/tui/">Terminal UI</a> · <a href="/docs/web-ui/">Browser UI</a></p>

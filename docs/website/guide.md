@@ -42,7 +42,7 @@ roborev review --branch --type security   # or ask for one explicitly
 → [Post-commit reviews](https://roborev.io/docs/automation/post-commit-reviews/),
 [Reviewing code](https://roborev.io/docs/guides/reviewing-code/)
 
-## 03 / Read the ledger, not the scrollback
+## 03 / Every review, in one ledger
 
 Every review lives in a persistent queue with its verdict, findings, the exact
 prompt, and the agent log. `roborev tui` shows the queue in the terminal with

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>roborev — local, continuous code review for the agentic loop</title>
+    <title>roborev: local, continuous code review for the agentic loop</title>
     <meta name="description" content="Find bugs faster and ship better quality code. roborev is a local code review daemon for teams shipping with coding agents: a git hook reviews every commit in the background with the agents you already run, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
     <link rel="canonical" href="https://roborev.io/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -141,7 +141,7 @@
         <div class="section-heading">
           <div>
             <p class="section-index">02 / The loop</p>
-            <h2 id="loop-title">Write. Review. Fix. Hands off.</h2>
+            <h2 id="loop-title">The loop runs while you work.</h2>
           </div>
           <p>Two automation layers close the loop. The post-commit hook reviews every commit with any agent or editor. The agent hook watches supported coding-agent sessions and, once review work piles up, delivers the exact review IDs to the <code>roborev-fix</code> skill before the session goes cold. Neither layer touches your working tree on its own.</p>
         </div>
@@ -202,7 +202,7 @@
             <p class="section-index">04 / Agents</p>
             <h2 id="agents-title">Bring the agents you already have.</h2>
           </div>
-          <p>roborev is not a model. It orchestrates the agent CLIs installed on the machine, so the reviewer can be a different vendor than the writer, a cheaper model than the writer, or a local model behind a proxy. Pick per repo, per workflow, and per reasoning level, and name a backup for when a quota runs out.</p>
+          <p>roborev orchestrates the agent CLIs already installed on the machine, so the reviewer can be a different vendor than the writer, a cheaper model than the writer, or a local model behind a proxy. Pick per repo, per workflow, and per reasoning level, and name a backup for when a quota runs out.</p>
         </div>
         <ul class="agent-strip" aria-label="Supported coding agents">
           <li><img src="/docs/assets/static/agents/codex.svg" alt="Codex" data-agent="codex"></li>
@@ -226,7 +226,7 @@
           </article>
           <article class="proof">
             <p class="proof-tag">Failover</p>
-            <h3>Quota errors are handled, not paged.</h3>
+            <h3>Quota errors fail over on their own.</h3>
             <p>Transient failures retry. Exhausted retries or a quota error fail over to the backup agent. Rate-limited agents sit in a cooldown parsed from the provider's own reset message.</p>
           </article>
           <article class="proof">
@@ -236,7 +236,7 @@
           </article>
           <article class="proof">
             <p class="proof-tag">Anywhere</p>
-            <h3>Local models and other harnesses.</h3>
+            <h3>Local models, proxies, and ACP agents.</h3>
             <p>Point Claude Code at Ollama or LiteLLM with a <code>model@base_url</code> spec, or add any Agent Client Protocol adapter as a named agent. Reviews never require a hosted roborev service.</p>
           </article>
         </div>
@@ -246,9 +246,9 @@
         <div class="section-heading">
           <div>
             <p class="section-index">05 / Depth</p>
-            <h2 id="depth-title">One reviewer is a sample. A panel is a signal.</h2>
+            <h2 id="depth-title">Several reviewers, one verdict.</h2>
           </div>
-          <p>Risky changes deserve more than one opinion. A review panel fans one target out to named subagents, each with its own agent, review type, instructions, and timeout, then a synthesis agent merges them into one actionable review. The same machinery runs security, design, and look-ahead-bias reviews, your own template-driven review types, and whole-codebase analysis.</p>
+          <p>Risky changes deserve more than one opinion. A review panel fans one target out to named subagents, each with its own agent, review type, instructions, and timeout, then a synthesis agent merges them into one review. The same machinery runs security, design, and look-ahead-bias reviews, your own template-driven review types, and whole-codebase analysis.</p>
         </div>
         <div class="proof-grid">
           <article class="proof">
@@ -268,7 +268,7 @@
           </article>
           <article class="proof">
             <p class="proof-tag">Verification</p>
-            <h3>False positives get filtered, not forwarded.</h3>
+            <h3>False positives get dropped before anyone reads them.</h3>
             <p><code>roborev compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
           </article>
         </div>
@@ -300,7 +300,7 @@
           </article>
           <article class="proof">
             <p class="proof-tag">Runs anywhere</p>
-            <h3>A daemon, not a CI minute.</h3>
+            <h3>Runs on a box you own.</h3>
             <p>The CI poller is the same roborev daemon under systemd or launchd on a box you own. It reviews on the interval you set, at the concurrency you set, with no per-seat pricing and no code leaving your network.</p>
           </article>
         </div>
@@ -367,7 +367,7 @@
         <div class="section-heading">
           <div>
             <p class="section-index">09 / Boundary</p>
-            <h2 id="boundary-title">Not another PR bot. The layer before the PR.</h2>
+            <h2 id="boundary-title">The layer before the pull request.</h2>
           </div>
           <p>Hosted review bots read your code from someone else's cloud, once, when the pull request opens. Human review is still the gate, and it should be. roborev is the layer in between: continuous, local, running on the agents you already pay for, so what reaches the PR has already been reviewed and fixed several times over.</p>
         </div>
@@ -380,7 +380,7 @@
           <article class="boundary">
             <p class="choice-label">Human review</p>
             <h3>The gate.</h3>
-            <p>The most expensive attention on the team, spent once per PR. It should be looking at design and intent, not at the retry loop that re-sends a POST.</p>
+            <p>The most expensive attention on the team, spent once per PR. Save it for design and intent. The retry loop that re-sends a POST should never reach it.</p>
           </article>
           <article class="boundary highlight">
             <p class="choice-label">roborev</p>

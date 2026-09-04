@@ -44,7 +44,7 @@ back to the thing that can fix it fastest.
 - **Findings closed by: you.** Reviews are a ledger. A finding stays open until
   a person or an agent addresses it and closes it.
 
-## 02 / The loop: write, review, fix, hands off
+## 02 / The loop: it runs while you work
 
 Two automation layers close the loop. The post-commit hook reviews every commit
 with any agent or editor. The agent hook watches supported coding-agent
@@ -78,9 +78,9 @@ visible until someone closes them, with a response on record if they disagree.
 
 ## 04 / Agents: bring the agents you already have
 
-roborev is not a model. It orchestrates the agent CLIs installed on the
-machine, so the reviewer can be a different vendor than the writer, a cheaper
-model than the writer, or a local model behind a proxy.
+roborev orchestrates the agent CLIs already installed on the machine, so the
+reviewer can be a different vendor than the writer, a cheaper model than the
+writer, or a local model behind a proxy.
 
 - **Routing.** `review_agent_fast`, `fix_model_thorough`,
   `security_backup_agent`, and friends route each workflow to its own agent,
@@ -94,7 +94,7 @@ model than the writer, or a local model behind a proxy.
 - **Anywhere.** Point Claude Code at Ollama or LiteLLM with a `model@base_url`
   spec, or add any Agent Client Protocol adapter as a named agent.
 
-## 05 / Depth: one reviewer is a sample, a panel is a signal
+## 05 / Depth: several reviewers, one verdict
 
 - **Panels.** Define `[review.subagents.*]` once, group them into
   `[review.panels.*]`, and run `roborev review --branch --panel branch_final`.
@@ -146,7 +146,7 @@ converges in one place, deduplicated by UUID. Interfaces: CLI, TUI, browser UI,
 HTTP API with server-sent events, bundled agent skills. Telemetry is anonymous
 daemon counts only and off with `ROBOREV_TELEMETRY_ENABLED=0`.
 
-## 09 / Boundary: not another PR bot, the layer before the PR
+## 09 / Boundary: the layer before the pull request
 
 Hosted review bots read your code from someone else's cloud, once, when the
 pull request opens. Human review is still the gate, and it should be. roborev is
