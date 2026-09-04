@@ -50,6 +50,8 @@ type workerTestContext struct {
 type structuredWorkerTestAgent struct {
 	name   string
 	result json.RawMessage
+	// prompt records the last prompt passed to ReviewWithSchema.
+	prompt string
 }
 
 func (a *structuredWorkerTestAgent) Name() string { return a.name }
@@ -61,10 +63,11 @@ func (a *structuredWorkerTestAgent) Review(
 
 func (a *structuredWorkerTestAgent) ReviewWithSchema(
 	_ context.Context,
-	_, _, _ string,
+	_, _, reviewPrompt string,
 	_ json.RawMessage,
 	_ io.Writer,
 ) (json.RawMessage, error) {
+	a.prompt = reviewPrompt
 	return a.result, nil
 }
 
@@ -1378,6 +1381,73 @@ func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.Equal(t, job.Prompt, capturedPrompt)
 	assert.Equal(t, job.Prompt, updated.Prompt)
+}
+
+func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing.T) {
+	instruction := prompt.ReconcileStructuredOutputInstruction("", true)
+	require.NotEmpty(t, instruction)
+
+	enqueuePrebuilt := func(t *testing.T, tc *workerTestContext, agentName, body string) *storage.ReviewJob {
+		t.Helper()
+		sha := testutil.GetHeadSHA(t, tc.TmpDir)
+		commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+			RepoID:         tc.Repo.ID,
+			CommitID:       commit.ID,
+			GitRef:         sha,
+			CIBaseBranch:   "main",
+			Agent:          agentName,
+			Prompt:         body,
+			PromptPrebuilt: true,
+			JobType:        storage.JobTypeRange,
+		})
+		require.NoError(t, err)
+		claimed, err := tc.DB.ClaimJob(testWorkerID)
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+		tc.Pool.processJob(testWorkerID, claimed)
+		return job
+	}
+
+	t.Run("prose agent after failover loses the JSON instruction", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		var capturedPrompt string
+		agentName := "prebuilt-prose-after-failover"
+		agent.Register(&agent.FakeAgent{
+			NameStr: agentName,
+			ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
+				capturedPrompt = reviewPrompt
+				return "No issues found.", nil
+			},
+		})
+		t.Cleanup(func() { agent.Unregister(agentName) })
+
+		body := "review body" + instruction + "\n"
+		job := enqueuePrebuilt(t, tc, agentName, body)
+
+		updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		assert.Contains(t, capturedPrompt, "review body")
+		assert.NotContains(t, capturedPrompt, instruction)
+		assert.Equal(t, body, updated.Prompt, "the stored prompt is left as enqueued")
+	})
+
+	t.Run("structured agent after failover gains the JSON instruction", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		agentName := "prebuilt-structured-after-failover"
+		fake := &structuredWorkerTestAgent{
+			name:   agentName,
+			result: json.RawMessage(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+		}
+		agent.Register(fake)
+		t.Cleanup(func() { agent.Unregister(agentName) })
+
+		job := enqueuePrebuilt(t, tc, agentName, "review body\n")
+
+		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		assert.Contains(t, fake.prompt, "review body")
+		assert.Contains(t, fake.prompt, instruction)
+	})
 }
 
 func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing.T) {

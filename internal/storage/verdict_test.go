@@ -857,6 +857,9 @@ func TestParseVerdictAtSeverity(t *testing.T) {
 		{"structured heading low-only fails without threshold", "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n", "", VerdictFail},
 		{"structured heading high fails medium", "## Summary\n\nBug.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n\n### 2. High\n\n**Problem:** crash\n\n**Fix:** guard\n", "medium", VerdictFail},
 		{"heading text is not a label", "### High-level overview\n\nNo issues found.", "", VerdictPass},
+		{"prose heading with separator fails", "## Findings\n\n### High — security bug\n\nInput is not escaped.", "medium", VerdictFail},
+		{"prose heading with colon passes above it", "## Findings\n\n### Low: naming issue\n\nRename it.", "medium", VerdictPass},
+		{"prose heading with severity label", "### Severity: Medium\n\nRace on shutdown.", "medium", VerdictFail},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
