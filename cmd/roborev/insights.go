@@ -126,7 +126,8 @@ func runInsights(ctx context.Context, cmd *cobra.Command, opts insightsOptions) 
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 
@@ -145,7 +146,6 @@ func runInsights(ctx context.Context, cmd *cobra.Command, opts insightsOptions) 
 		JobType:   storage.JobTypeInsights,
 	})
 
-	ep := getDaemonEndpoint()
 	resp, err := ep.HTTPClient(30*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)

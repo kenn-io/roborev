@@ -86,7 +86,15 @@ func postAgentHookFixDoneRequest(
 	if err != nil {
 		return err
 	}
-	_, err = doAgentHookRequest(
+	return postAgentHookFixDoneRequestAt(ctx, ep, fixSessionID)
+}
+
+func postAgentHookFixDoneRequestAt(
+	ctx context.Context,
+	ep daemon.DaemonEndpoint,
+	fixSessionID uuid.UUID,
+) error {
+	_, err := doAgentHookRequest(
 		ctx, ep, http.MethodPost, "/api/agent-hook/fix-done",
 		daemon.AgentHookFixDoneRequest{FixSessionID: fixSessionID},
 	)
@@ -94,10 +102,7 @@ func postAgentHookFixDoneRequest(
 }
 
 func runAgentHookStatus(stdout io.Writer) error {
-	if err := agentHookEnsureDaemon(); err != nil {
-		return err
-	}
-	ep, err := agentHookEndpoint("")
+	ep, err := agentHookEnsureDaemon()
 	if err != nil {
 		return err
 	}
@@ -115,10 +120,7 @@ func runAgentHookReset(opts agenthook.ResetOptions, sessionID string, stdout io.
 	if !opts.All && sessionID == "" {
 		return fmt.Errorf("reset requires a session id or --all")
 	}
-	if err := agentHookEnsureDaemon(); err != nil {
-		return err
-	}
-	ep, err := agentHookEndpoint("")
+	ep, err := agentHookEnsureDaemon()
 	if err != nil {
 		return err
 	}
@@ -171,7 +173,7 @@ func doAgentHookRequest(
 
 func agentHookEndpoint(addr string) (daemon.DaemonEndpoint, error) {
 	if strings.TrimSpace(addr) == "" {
-		return getDaemonEndpoint(), nil
+		return resolveDaemonEndpoint()
 	}
 	ep, err := daemon.ParseEndpoint(addr)
 	if err != nil {

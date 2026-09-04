@@ -1071,6 +1071,11 @@ use:
 export ROBOREV_DATA_DIR=/custom/path
 ```
 
+Implicit clients use runtime metadata under the selected data directory. A
+Git-local root with no runtime is treated as not running; `init --no-daemon` and
+`quickstart` don't contact the historical default port for that root. Use
+`--server` when an explicit daemon endpoint is required.
+
 ### Unix Domain Socket
 
 On Unix systems, the daemon can listen on a Unix domain socket instead of TCP

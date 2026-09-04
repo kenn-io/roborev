@@ -4,8 +4,6 @@ Documentation=https://github.com/roborev-dev/roborev
 
 [Service]
 Type=notify
-# The packaged unit has no repository context, so keep its default root stable.
-WorkingDirectory=%h
 ExecStart=/usr/bin/roborev daemon run
 Restart=on-failure
 RestartSec=5

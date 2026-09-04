@@ -17,7 +17,8 @@ Only jobs that are still queued or running can be canceled; jobs that have
 already finished (done, failed, canceled, etc.) cannot.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -26,8 +27,7 @@ already finished (done, failed, canceled, etc.) cannot.`,
 				return fmt.Errorf("invalid job_id: %s", args[0])
 			}
 
-			ep := getDaemonEndpoint()
-			if err := cancelJob(ep.BaseURL(), jobID); err != nil {
+			if err := cancelJob(ep, jobID); err != nil {
 				return err
 			}
 

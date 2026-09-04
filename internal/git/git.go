@@ -1220,6 +1220,29 @@ func ResolveGitCommonDir(repoPath string) (string, error) {
 	return filepath.Clean(commonDir), nil
 }
 
+// ResolveDataDirAnchor returns the absolute common directory for a non-bare
+// repository, including an unborn working tree.
+func ResolveDataDirAnchor(repoPath string) (string, error) {
+	bareCmd := newGitCmd("rev-parse", "--is-bare-repository")
+	bareCmd.Dir = repoPath
+	bareOut, err := bareCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --is-bare-repository: %w", err)
+	}
+	if strings.TrimSpace(string(bareOut)) == "true" {
+		return "", fmt.Errorf("bare repository cannot provide a data directory anchor")
+	}
+
+	commonDir, err := ResolveGitCommonDir(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if commonDir == "" || commonDir == "." || !filepath.IsAbs(commonDir) {
+		return "", fmt.Errorf("git common directory is not a usable absolute path: %q", commonDir)
+	}
+	return filepath.Clean(commonDir), nil
+}
+
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.
 // For a regular repository or submodule, this returns the same as GetRepoRoot.
 // For a worktree, this returns the main repository's root path.
@@ -2478,7 +2501,11 @@ func ReadLocalPathConfig(repoPath, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalizeMSYSPath(string(out)), nil
+	value := normalizeMSYSPath(string(out))
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("git config %s is empty", key)
+	}
+	return value, nil
 }
 
 // readGitConfig returns the value of a git config key, or "" if missing.

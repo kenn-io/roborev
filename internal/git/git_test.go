@@ -869,6 +869,28 @@ func TestReadLocalPathConfig(t *testing.T) {
 	assert.Empty(got)
 }
 
+func TestResolveDataDirAnchor(t *testing.T) {
+	t.Run("unborn non-bare repository", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		got, err := ResolveDataDirAnchor(repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Clean(repo.Dir+string(filepath.Separator)+".git"), got)
+	})
+
+	t.Run("bare repository is rejected", func(t *testing.T) {
+		repo := NewBareTestRepo(t)
+		got, err := ResolveDataDirAnchor(repo.Dir)
+		require.Error(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("non-repository is rejected", func(t *testing.T) {
+		got, err := ResolveDataDirAnchor(t.TempDir())
+		require.Error(t, err)
+		assert.Empty(t, got)
+	})
+}
+
 func TestGetMainRepoRootForBareBackedWorktree(t *testing.T) {
 	bareRepo := NewBareTestRepo(t)
 	seedRepo := NewTestRepoWithCommit(t)

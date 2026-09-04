@@ -34,15 +34,12 @@ to the current branch. Use = syntax for explicit values:
   roborev tui --repo --branch         # current repo + branch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon error: %w", err)
 			}
 
-			var ep daemon.DaemonEndpoint
-			if addr == "" {
-				ep = getDaemonEndpoint()
-			} else {
-				var err error
+			if addr != "" {
 				ep, err = daemon.ParseEndpoint(addr)
 				if err != nil {
 					return fmt.Errorf("--addr: %w", err)

@@ -14,6 +14,7 @@ import (
 	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
 )
 
@@ -55,12 +56,19 @@ func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout i
 	if err != nil {
 		return fmt.Errorf("parse fix session ID: %w", err)
 	}
+	var ep daemon.DaemonEndpoint
 	if serverAddr == "" {
-		if err := agentHookEnsureDaemon(); err != nil {
+		ep, err = agentHookEnsureDaemon()
+		if err != nil {
 			return err
 		}
 	}
-	if err := postAgentHookFixDoneRequest(ctx, serverAddr, fixSessionID); err != nil {
+	if serverAddr == "" {
+		err = postAgentHookFixDoneRequestAt(ctx, ep, fixSessionID)
+	} else {
+		err = postAgentHookFixDoneRequest(ctx, serverAddr, fixSessionID)
+	}
+	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(stdout, "Completed Agent Hook fix session %s.\n", fixSessionID)

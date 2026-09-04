@@ -53,11 +53,11 @@ Examples:
 			}
 
 			ctx := cmd.Context()
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
 
 			// Auto-resolve repo from cwd when not specified.

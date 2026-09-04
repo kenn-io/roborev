@@ -102,11 +102,11 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
 			client := ep.HTTPClient(5 * time.Second)
 

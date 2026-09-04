@@ -41,11 +41,11 @@ Examples:
   roborev cost --json              # Structured output for scripting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
 
 			if !allRepos && repoPath == "" {

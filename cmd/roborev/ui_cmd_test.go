@@ -28,7 +28,7 @@ func TestUICmdOpensReviewRoutes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var opened string
 			withUICommandDependencies(t,
-				func() error { return nil },
+				testUIEndpoint,
 				func() (*daemon.RuntimeInfo, error) {
 					return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
 				},
@@ -47,7 +47,7 @@ func TestUICmdOpensReviewRoutes(t *testing.T) {
 func TestUICmdOpensPrefixedReviewRoutes(t *testing.T) {
 	var opened string
 	withUICommandDependencies(t,
-		func() error { return nil },
+		testUIEndpoint,
 		func() (*daemon.RuntimeInfo, error) {
 			return &daemon.RuntimeInfo{
 				WebOrigin:   "https://reviews.example.com",
@@ -73,7 +73,7 @@ func TestUICmdRejectsInvalidJobIDs(t *testing.T) {
 
 func TestUICmdRequiresBrowserMetadata(t *testing.T) {
 	withUICommandDependencies(t,
-		func() error { return nil },
+		testUIEndpoint,
 		func() (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{}, nil },
 		func(string) error { return nil },
 	)
@@ -100,7 +100,7 @@ func TestUICmdExplainsPublishedDisabledReasons(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		withUICommandDependencies(t,
-			func() error { return nil },
+			testUIEndpoint,
 			func() (*daemon.RuntimeInfo, error) {
 				return &daemon.RuntimeInfo{WebDisabledReason: testCase.reason}, nil
 			},
@@ -114,7 +114,7 @@ func TestUICmdExplainsPublishedDisabledReasons(t *testing.T) {
 func TestUICmdPreservesDiscoveryAccessDenial(t *testing.T) {
 	want := daemon.ErrDaemonAccessDenied
 	withUICommandDependencies(t,
-		func() error { return want },
+		func() (daemon.DaemonEndpoint, error) { return daemon.DaemonEndpoint{}, want },
 		func() (*daemon.RuntimeInfo, error) { return nil, errors.New("unexpected discovery") },
 		func(string) error { return nil },
 	)
@@ -125,7 +125,7 @@ func TestUICmdPreservesDiscoveryAccessDenial(t *testing.T) {
 
 func TestUICmdOpenerErrorIncludesManualURL(t *testing.T) {
 	withUICommandDependencies(t,
-		func() error { return nil },
+		testUIEndpoint,
 		func() (*daemon.RuntimeInfo, error) {
 			return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
 		},
@@ -169,7 +169,9 @@ func TestUICmdMatchesExplicitServerToItsRuntime(t *testing.T) {
 	var opened string
 	originalEnsure := uiEnsureDaemon
 	originalOpen := openBrowserURL
-	uiEnsureDaemon = func() error { return nil }
+	uiEnsureDaemon = func() (daemon.DaemonEndpoint, error) {
+		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7474"}, nil
+	}
 	openBrowserURL = func(target string) error { opened = target; return nil }
 	t.Cleanup(func() {
 		uiEnsureDaemon = originalEnsure
@@ -223,7 +225,7 @@ func TestUICmdRejectsInvalidPublishedOrigin(t *testing.T) {
 		"https://reviews.example.com?token=secret",
 	} {
 		withUICommandDependencies(t,
-			func() error { return nil },
+			testUIEndpoint,
 			func() (*daemon.RuntimeInfo, error) {
 				return &daemon.RuntimeInfo{WebOrigin: origin}, nil
 			},
@@ -236,13 +238,15 @@ func TestUICmdRejectsInvalidPublishedOrigin(t *testing.T) {
 
 func withUICommandDependencies(
 	t *testing.T,
-	ensure func() error,
+	ensure func() (daemon.DaemonEndpoint, error),
 	discover func() (*daemon.RuntimeInfo, error),
 	open func(string) error,
 ) {
 	t.Helper()
 	originalEnsure := uiEnsureDaemon
 	originalDiscover := uiGetAnyRunningDaemon
+	originalList := uiListAllRuntimes
+	originalProbe := uiProbeDaemon
 	originalOpen := openBrowserURL
 	originalServerAddr := serverAddr
 	originalParsed := parsedServerEndpoint
@@ -250,12 +254,32 @@ func withUICommandDependencies(
 	parsedServerEndpoint = nil
 	uiEnsureDaemon = ensure
 	uiGetAnyRunningDaemon = discover
+	uiListAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		info, err := discover()
+		if err != nil || info == nil {
+			return nil, err
+		}
+		if info.Network == "" && info.Address == "" {
+			info.Network = "tcp"
+			info.Address = "127.0.0.1:7373"
+		}
+		return []*daemon.RuntimeInfo{info}, nil
+	}
+	uiProbeDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return &daemon.PingInfo{OK: true, Service: "roborev", Version: "test"}, nil
+	}
 	openBrowserURL = open
 	t.Cleanup(func() {
 		uiEnsureDaemon = originalEnsure
 		uiGetAnyRunningDaemon = originalDiscover
+		uiListAllRuntimes = originalList
+		uiProbeDaemon = originalProbe
 		openBrowserURL = originalOpen
 		serverAddr = originalServerAddr
 		parsedServerEndpoint = originalParsed
 	})
+}
+
+func testUIEndpoint() (daemon.DaemonEndpoint, error) {
+	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}, nil
 }

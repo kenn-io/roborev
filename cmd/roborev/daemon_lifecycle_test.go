@@ -23,7 +23,29 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {
+func TestResolveDaemonEndpointUsesExplicitServer(t *testing.T) {
+	originalAddr := serverAddr
+	originalParsed := parsedServerEndpoint
+	originalDiscover := getAnyRunningDaemon
+	t.Cleanup(func() {
+		serverAddr = originalAddr
+		parsedServerEndpoint = originalParsed
+		getAnyRunningDaemon = originalDiscover
+	})
+	serverAddr = "127.0.0.1:7444"
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		t.Fatal("explicit endpoint must not discover a runtime")
+		return nil, nil
+	}
+
+	require.NoError(t, validateServerFlag())
+	got, err := resolveDaemonEndpoint()
+	require.NoError(t, err)
+	assert.Equal(t, daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7444"}, got)
+}
+
+func TestResolveDaemonEndpointFailsClosedWhenRuntimeIsMissing(t *testing.T) {
 	exe, err := os.Executable()
 	require.NoError(t, err)
 	if !isGoTestBinaryPath(exe) {
@@ -44,12 +66,12 @@ func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 	})
 
-	got := getDaemonEndpoint()
-	assert.Equal(t, "tcp", got.Network)
-	assert.Equal(t, "127.0.0.1:1", got.Address)
+	got, err := resolveDaemonEndpoint()
+	require.ErrorIs(t, err, ErrDaemonNotRunning)
+	assert.Empty(t, got)
 }
 
-func TestGetDaemonEndpointIgnoresCachedDefaultFromEmptyServerFlagInTests(t *testing.T) {
+func TestResolveDaemonEndpointDoesNotUseCachedDefaultFromEmptyServerFlag(t *testing.T) {
 	exe, err := os.Executable()
 	require.NoError(t, err)
 	if !isGoTestBinaryPath(exe) {
@@ -72,9 +94,9 @@ func TestGetDaemonEndpointIgnoresCachedDefaultFromEmptyServerFlagInTests(t *test
 
 	require.NoError(t, validateServerFlag())
 
-	got := getDaemonEndpoint()
-	assert.Equal(t, "tcp", got.Network)
-	assert.Equal(t, "127.0.0.1:1", got.Address)
+	got, err := resolveDaemonEndpoint()
+	require.ErrorIs(t, err, ErrDaemonNotRunning)
+	assert.Empty(t, got)
 }
 
 func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
@@ -104,16 +126,16 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	restartDaemonForEnsure = func() (daemon.DaemonEndpoint, error) {
 		restartCalls++
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
 	})
 
-	if err := ensureDaemon(); err != nil {
+	if _, err := ensureDaemon(); err != nil {
 		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
 	assert.Equal(t, 1, restartCalls)
@@ -134,9 +156,9 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	restartDaemonForEnsure = func() (daemon.DaemonEndpoint, error) {
 		restartCalls++
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
@@ -144,7 +166,7 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 		ensureProbeRetryDelay = origRetryDelay
 	})
 
-	if err := ensureDaemon(); err != nil {
+	if _, err := ensureDaemon(); err != nil {
 		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
 	assert.Equal(t, 1, restartCalls)
@@ -174,9 +196,9 @@ func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
 		calls = append(calls, "cleanup:"+target.Address)
 		return 1
 	}
-	startDaemonForEnsure = func() error {
+	startDaemonForEnsure = func() (daemon.DaemonEndpoint, error) {
 		calls = append(calls, "start")
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 	t.Cleanup(func() {
 		serverAddr = origServerAddr
@@ -187,7 +209,8 @@ func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
 		ensureProbeRetryDelay = origRetryDelay
 	})
 
-	require.NoError(t, ensureDaemon())
+	_, err := ensureDaemon()
+	require.NoError(t, err)
 	assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, calls)
 }
 
@@ -214,7 +237,7 @@ func TestEnsureDaemonDoesNotProbeDefaultPortForNonDefaultDataDir(t *testing.T) {
 	}
 	cleanupCalls, startCalls := 0, 0
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-	startDaemonForEnsure = func() error { startCalls++; return nil }
+	startDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { startCalls++; return daemon.DaemonEndpoint{}, nil }
 	t.Cleanup(func() {
 		serverAddr = origServerAddr
 		parsedServerEndpoint = origParsed
@@ -224,7 +247,8 @@ func TestEnsureDaemonDoesNotProbeDefaultPortForNonDefaultDataDir(t *testing.T) {
 		startDaemonForEnsure = origStart
 	})
 
-	require.NoError(t, ensureDaemon())
+	_, err := ensureDaemon()
+	require.NoError(t, err)
 	assert.Zero(t, probeCalls)
 	assert.Zero(t, cleanupCalls)
 	assert.Equal(t, 1, startCalls)
@@ -247,8 +271,8 @@ func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
 		return nil, nil
 	}
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-	restartDaemonForEnsure = func() error { restartCalls++; return nil }
-	startDaemonForEnsure = func() error { startCalls++; return nil }
+	restartDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { restartCalls++; return daemon.DaemonEndpoint{}, nil }
+	startDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { startCalls++; return daemon.DaemonEndpoint{}, nil }
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		probeDaemonForEnsure = origProbe
@@ -257,7 +281,7 @@ func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
 		startDaemonForEnsure = origStart
 	})
 
-	err := ensureDaemon()
+	_, err := ensureDaemon()
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 	assert.Zero(t, probeCalls)
 	assert.Zero(t, cleanupCalls)
@@ -279,8 +303,8 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}
 	}
 	restartCalls, startCalls := 0, 0
-	restartDaemonForEnsure = func() error { restartCalls++; return nil }
-	startDaemonForEnsure = func() error { startCalls++; return nil }
+	restartDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { restartCalls++; return daemon.DaemonEndpoint{}, nil }
+	startDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { startCalls++; return daemon.DaemonEndpoint{}, nil }
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		probeDaemonForEnsure = origProbe
@@ -288,7 +312,7 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 		startDaemonForEnsure = origStart
 	})
 
-	err := ensureDaemon()
+	_, err := ensureDaemon()
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 	assert.Zero(t, restartCalls)
 	assert.Zero(t, startCalls)
@@ -314,7 +338,7 @@ func TestEnsureDaemonDoesNotColdStartAfterAccessDeniedDefaultProbe(t *testing.T)
 	}
 	cleanupCalls, startCalls := 0, 0
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-	startDaemonForEnsure = func() error { startCalls++; return nil }
+	startDaemonForEnsure = func() (daemon.DaemonEndpoint, error) { startCalls++; return daemon.DaemonEndpoint{}, nil }
 	t.Cleanup(func() {
 		serverAddr = origServerAddr
 		parsedServerEndpoint = origParsed
@@ -324,7 +348,7 @@ func TestEnsureDaemonDoesNotColdStartAfterAccessDeniedDefaultProbe(t *testing.T)
 		startDaemonForEnsure = origStart
 	})
 
-	err := ensureDaemon()
+	_, err := ensureDaemon()
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 	assert.Zero(t, cleanupCalls)
 	assert.Zero(t, startCalls)
@@ -368,9 +392,9 @@ func TestRestartDaemonDoesNotStartAfterGracefulStopFailure(t *testing.T) {
 	stopErr := errors.New("graceful shutdown unavailable")
 	stopDaemonForRestart = func() error { return stopErr }
 	startCalls := 0
-	startDaemonAfterRestart = func() error {
+	startDaemonAfterRestart = func() (daemon.DaemonEndpoint, error) {
 		startCalls++
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 
 	err := restartDaemon()

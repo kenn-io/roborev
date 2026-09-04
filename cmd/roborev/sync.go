@@ -130,11 +130,11 @@ func syncNowCmd() *cobra.Command {
 		Long:  "Triggers an immediate sync cycle. Requires the daemon to be running with sync enabled.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Check daemon is running
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
 			// Use longer timeout since sync operations can take up to 5 minutes
 			client := ep.HTTPClient(6 * time.Minute)

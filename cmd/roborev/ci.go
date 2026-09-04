@@ -431,12 +431,10 @@ func resolveCIReviewMinSeverity(
 // resolves inside the repository being reviewed.
 //
 // Global config is trusted: its <agent>_cmd entries name the binaries roborev
-// executes. Its location comes from ROBOREV_DATA_DIR, repository-local Git
-// roborev.dataDir from the starting repository, or HOME through the default.
-// The Git setting is repository-scoped input, while the environment variables
-// are ordinary inputs a pipeline starter can set. Pointing any source into the
-// checkout would have roborev read a file the merge request author committed
-// and run a program they chose.
+// executes. Its location comes from ROBOREV_DATA_DIR, or from HOME through the
+// default, and both are ordinary environment variables a pipeline starter can
+// set. Pointing either into the checkout would have roborev read a file the
+// merge request author committed and run a program they chose.
 //
 // The check is on where the path lands rather than how it looks, so it covers
 // a relative path resolving against the working directory, an absolute one

@@ -59,7 +59,8 @@ func runSnooze(cmd *cobra.Command, enabled bool, duration time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 
@@ -76,7 +77,6 @@ func runSnooze(cmd *cobra.Command, enabled bool, duration time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("encode agent hook snooze: %w", err)
 	}
-	ep := getDaemonEndpoint()
 	httpReq, err := http.NewRequestWithContext(
 		cmd.Context(), http.MethodPost,
 		ep.BaseURL()+"/api/agent-hook/snooze", bytes.NewReader(body),

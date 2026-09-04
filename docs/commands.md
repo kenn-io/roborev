@@ -384,13 +384,12 @@ roborev log clean --days 3       # Remove logs older than 3 days
 | `--path` | Print the log file path instead of contents |
 | `--db` | SQLite database used for log metadata |
 
-Job logs are persisted under the effective data directory
-(`~/.roborev/logs/jobs/` by default) so agent output remains available after
-daemon restarts. By default, `roborev log` renders NDJSON into compact,
-human-readable progress lines showing tool calls and agent text. It uses stored
-job metadata to select that renderer; use `--raw` for the original NDJSON when
-scripting, debugging, or reading an orphaned log file. When the daemon runs with
-a custom `--db` path, pass the same path to `roborev log`.
+Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
+available after daemon restarts. By default, `roborev log` renders NDJSON into
+compact, human-readable progress lines showing tool calls and agent text. It
+uses stored job metadata to select that renderer; use `--raw` for the original
+NDJSON when scripting, debugging, or reading an orphaned log file. When the
+daemon runs with a custom `--db` path, pass the same path to `roborev log`.
 
 The `clean` subcommand removes log files older than the specified number of days
 (default: 7).
@@ -843,7 +842,7 @@ roborev config validate --local      # Validate repo config only
 
 | Flag | Description |
 |------|-------------|
-| `--global` | Use the effective global config (default: `~/.roborev/config.toml`) |
+| `--global` | Use global config (`~/.roborev/config.toml`) |
 | `--local` | Use repo config (`.roborev.toml`) |
 | `--show-origin` | Show origin column (global/local/default) in list output |
 

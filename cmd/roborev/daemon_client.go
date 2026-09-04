@@ -128,7 +128,14 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 
 // findJobForCommit finds a job for the given commit SHA in the specified repo
 func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
-	ep := getDaemonEndpoint()
+	ep, err := resolveDaemonEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	return findJobForCommitAt(ep, repoPath, sha)
+}
+
+func findJobForCommitAt(ep daemon.DaemonEndpoint, repoPath, sha string) (*storage.ReviewJob, error) {
 	addr := ep.BaseURL()
 	client := ep.HTTPClient(5 * time.Second)
 
@@ -213,17 +220,29 @@ func waitForReview(jobID int64) (*storage.Review, error) {
 }
 
 func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
-	client, err := daemon.NewHTTPClientFromRuntime()
+	ep, err := resolveDaemonEndpoint()
 	if err != nil {
 		return nil, err
 	}
+	return waitForReviewAt(ep, jobID, pollInterval)
+}
+
+func waitForReviewAt(ep daemon.DaemonEndpoint, jobID int64, pollInterval time.Duration) (*storage.Review, error) {
+	client := daemon.NewHTTPClient(ep)
 	client.SetPollInterval(pollInterval)
 	return client.WaitForReview(jobID)
 }
 
 // enqueueReview enqueues a review job and returns the job ID
 func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
-	ep := getDaemonEndpoint()
+	ep, err := resolveDaemonEndpoint()
+	if err != nil {
+		return 0, err
+	}
+	return enqueueReviewAt(ep, repoPath, gitRef, agentName)
+}
+
+func enqueueReviewAt(ep daemon.DaemonEndpoint, repoPath, gitRef, agentName string) (int64, error) {
 	addr := ep.BaseURL()
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
@@ -253,7 +272,14 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 
 // getCommentsForJob fetches comments for a job
 func getCommentsForJob(jobID int64) ([]storage.Response, error) {
-	ep := getDaemonEndpoint()
+	ep, err := resolveDaemonEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	return getCommentsForJobAt(ep, jobID)
+}
+
+func getCommentsForJobAt(ep daemon.DaemonEndpoint, jobID int64) ([]storage.Response, error) {
 	addr := ep.BaseURL()
 	client := ep.HTTPClient(5 * time.Second)
 

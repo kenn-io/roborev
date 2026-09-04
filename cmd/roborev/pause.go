@@ -46,11 +46,11 @@ func setQueuePaused(paused bool) error {
 		pendingStartPause = &paused
 		defer func() { pendingStartPause = nil }()
 	}
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 
-	ep := getDaemonEndpoint()
 	addr := ep.BaseURL()
 	path := "/api/queue/unpause"
 	if paused {

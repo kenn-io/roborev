@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 	"uuid"
@@ -366,9 +365,9 @@ func PreferAutoClone(repos []Repo) *Repo {
 		return &repos[0]
 	}
 
-	clonesPrefix := strings.TrimRight(normalizePathSeparators(config.DataDir()), "/") + "/clones/"
+	clonesPrefix := config.DataDir() + "/clones/"
 	for i := range repos {
-		if strings.HasPrefix(normalizePathSeparators(repos[i].RootPath), clonesPrefix) {
+		if strings.HasPrefix(repos[i].RootPath, clonesPrefix) {
 			return &repos[i]
 		}
 	}
@@ -380,10 +379,6 @@ func PreferAutoClone(repos []Repo) *Repo {
 		}
 	}
 	return best
-}
-
-func normalizePathSeparators(path string) string {
-	return strings.ReplaceAll(filepath.ToSlash(path), `\`, "/")
 }
 
 // SyncableJob contains job data needed for sync

@@ -44,11 +44,11 @@ Examples:
   roborev summary --json              # Structured output for scripting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
 
 			// Auto-resolve repo from cwd when not specified (unless --all)

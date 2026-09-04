@@ -235,7 +235,8 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 
@@ -253,7 +254,6 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 		Agentic:      opts.agentic,
 	})
 
-	ep := getDaemonEndpoint()
 	resp, err := ep.HTTPClient(10*time.Second).
 		Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
@@ -337,7 +337,7 @@ func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64,
 		switch job.Status {
 		case storage.JobStatusDone:
 			// Pass done message to showPromptResult - it prints after successful fetch
-			return showPromptResult(cmd, ep.BaseURL(), jobID, quiet, " done!\n\n")
+			return showPromptResultAt(cmd, ep, jobID, quiet, " done!\n\n")
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -381,11 +381,19 @@ func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64,
 // Unlike showReview, this doesn't apply verdict-based exit codes.
 // The doneMsg parameter is printed before the result on success (used for "done!" message).
 func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, doneMsg string) error {
+	return showPromptResultRequest(cmd, addr, http.DefaultClient, jobID, quiet, doneMsg)
+}
+
+func showPromptResultAt(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool, doneMsg string) error {
+	return showPromptResultRequest(cmd, ep.BaseURL(), ep.HTTPClient(5*time.Second), jobID, quiet, doneMsg)
+}
+
+func showPromptResultRequest(cmd *cobra.Command, addr string, client *http.Client, jobID int64, quiet bool, doneMsg string) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	api := newDaemonReviewAPI(addr, getDaemonHTTPClient(5*time.Second))
+	api := newDaemonReviewAPI(addr, client)
 	review, err := api.getReview(ctx, jobID, "result")
 	if errors.Is(err, errReviewNotFound) {
 		return fmt.Errorf("no result found for job %d", jobID)

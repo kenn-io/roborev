@@ -9,13 +9,22 @@ import (
 	"io"
 	"time"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
 
 // waitForJobCompletion polls a job until it completes, streaming output if provided.
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
-	api := newDaemonReviewAPI(serverAddr, getDaemonHTTPClient(30*time.Second))
+	ep, err := daemon.ParseEndpoint(serverAddr)
+	if err != nil {
+		return nil, err
+	}
+	return waitForJobCompletionAt(ctx, ep, jobID, output)
+}
+
+func waitForJobCompletionAt(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64, output io.Writer) (*storage.Review, error) {
+	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(30*time.Second))
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 	lastOutputLen := 0

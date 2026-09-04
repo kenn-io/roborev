@@ -107,7 +107,13 @@ new commits. Called automatically by the post-rewrite hook.`,
 				return nil
 			}
 
-			ep := getDaemonEndpoint()
+			ep, err := resolveDaemonEndpoint()
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "remap failed: %v\n", err)
+				}
+				return nil
+			}
 			client := daemon.NewHTTPClient(ep)
 
 			result, err := client.Remap(daemon.RemapRequest{

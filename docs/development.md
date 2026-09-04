@@ -43,10 +43,8 @@ CLI / Agent hooks -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> A
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
 - **Workers**: Pool of 4 (configurable) parallel review workers
-- **Storage**: SQLite under the effective data directory
-    (`~/.roborev/reviews.db` by default) with WAL mode
-- **Agent Hook state**: JSON under the effective data directory
-    (`~/.roborev/agent-hook/state.json` by default)
+- **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
+- **Agent Hook state**: JSON at `~/.roborev/agent-hook/state.json`
 
 ## Key Files
 
@@ -190,12 +188,11 @@ make build
 ./bin/roborev ui
 ```
 
-This is intentionally different from `make web-dev`: it uses the effective
-Roborev data directory selected at process start, starts or restarts the normal
-daemon as needed, and opens the reviews stored in the user's database. The
-home-backed `~/.roborev` directory is used by default. The binary remains under
-`bin/` and does not replace an installed `roborev`. Because this path runs the
-checkout against real state, use it only when that is the intended test.
+This is intentionally different from `make web-dev`: it uses the normal Roborev
+data directory, starts or restarts the normal daemon as needed, and opens the
+reviews stored in the user's database. The binary remains under `bin/` and does
+not replace an installed `roborev`. Because this path runs the checkout against
+real state, use it only when that is the intended test.
 
 `bun run web:test:e2e` builds and embeds the production SPA into a scratch Go
 binary, seeds a synthetic SQLite database, starts a token-authenticated daemon

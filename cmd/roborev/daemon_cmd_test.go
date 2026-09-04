@@ -64,9 +64,11 @@ func TestDaemonRunHidesWebDevelopmentOrigin(t *testing.T) {
 
 func TestDaemonStartShowsWebUIURL(t *testing.T) {
 	withDaemonCommandDependencies(t,
+		func() (daemon.DaemonEndpoint, error) {
+			return mustParseEndpoint(t, "127.0.0.1:7373"), nil
+		},
 		func() error { return nil },
-		func() error { return nil },
-		func() (*daemon.RuntimeInfo, error) {
+		func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 			return &daemon.RuntimeInfo{WebOrigin: "http://127.0.0.1:7374"}, nil
 		},
 	)
@@ -82,9 +84,11 @@ func TestDaemonStartShowsWebUIURL(t *testing.T) {
 
 func TestDaemonRestartShowsPublicWebUIURL(t *testing.T) {
 	withDaemonCommandDependencies(t,
+		func() (daemon.DaemonEndpoint, error) {
+			return mustParseEndpoint(t, "127.0.0.1:7373"), nil
+		},
 		func() error { return nil },
-		func() error { return nil },
-		func() (*daemon.RuntimeInfo, error) {
+		func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 			return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
 		},
 	)
@@ -100,9 +104,11 @@ func TestDaemonRestartShowsPublicWebUIURL(t *testing.T) {
 
 func TestDaemonRestartShowsPrefixedWebUIURL(t *testing.T) {
 	withDaemonCommandDependencies(t,
+		func() (daemon.DaemonEndpoint, error) {
+			return mustParseEndpoint(t, "127.0.0.1:7373"), nil
+		},
 		func() error { return nil },
-		func() error { return nil },
-		func() (*daemon.RuntimeInfo, error) {
+		func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 			return &daemon.RuntimeInfo{
 				WebOrigin:   "https://reviews.example.com",
 				WebBasePath: "/roborev-ci",
@@ -121,9 +127,11 @@ func TestDaemonRestartShowsPrefixedWebUIURL(t *testing.T) {
 
 func TestDaemonRestartShowsUnavailableWhenBrowserIsDisabled(t *testing.T) {
 	withDaemonCommandDependencies(t,
+		func() (daemon.DaemonEndpoint, error) {
+			return mustParseEndpoint(t, "127.0.0.1:7373"), nil
+		},
 		func() error { return nil },
-		func() error { return nil },
-		func() (*daemon.RuntimeInfo, error) {
+		func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 			return nil, errors.New("browser metadata unavailable")
 		},
 	)
@@ -153,9 +161,11 @@ func TestDaemonRestartExplainsWebDisabledReason(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		withDaemonCommandDependencies(t,
+			func() (daemon.DaemonEndpoint, error) {
+				return mustParseEndpoint(t, "127.0.0.1:7373"), nil
+			},
 			func() error { return nil },
-			func() error { return nil },
-			func() (*daemon.RuntimeInfo, error) {
+			func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 				return &daemon.RuntimeInfo{WebDisabledReason: testCase.reason}, nil
 			},
 		)
@@ -172,9 +182,9 @@ func TestDaemonRestartExplainsWebDisabledReason(t *testing.T) {
 
 func withDaemonCommandDependencies(
 	t *testing.T,
-	ensure func() error,
+	ensure func() (daemon.DaemonEndpoint, error),
 	stop func() error,
-	discover func() (*daemon.RuntimeInfo, error),
+	discover func(daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error),
 ) {
 	t.Helper()
 	originalEnsure := daemonEnsure

@@ -129,7 +129,7 @@ const maxBatchFetch = 100
 // fetchJobReviews fetches job and review data for all job IDs, chunking
 // into batches of maxBatchFetch to respect the server-side limit.
 // Returns successfully fetched entries and list of IDs that were processed.
-func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra.Command) ([]jobReview, []int64, error) {
+func fetchJobReviews(ctx context.Context, ep daemon.DaemonEndpoint, jobIDs []int64, quiet bool, cmd *cobra.Command) ([]jobReview, []int64, error) {
 	if !quiet {
 		cmd.Printf("  Fetching %d job(s)... ", len(jobIDs))
 	}
@@ -138,7 +138,7 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 	allResults := make(map[int64]storage.JobWithReview)
 	for i := 0; i < len(jobIDs); i += maxBatchFetch {
 		end := min(i+maxBatchFetch, len(jobIDs))
-		results, err := fetchJobBatch(ctx, jobIDs[i:end])
+		results, err := fetchJobBatch(ctx, ep, jobIDs[i:end])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -178,7 +178,7 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 }
 
 // fetchJobBatch fetches a single batch of job reviews from the daemon.
-func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithReview, error) {
+func fetchJobBatch(ctx context.Context, ep daemon.DaemonEndpoint, ids []int64) (map[int64]storage.JobWithReview, error) {
 	reqBody, err := json.Marshal(map[string]any{
 		"job_ids": ids,
 	})
@@ -186,7 +186,6 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 		return nil, fmt.Errorf("marshal batch request: %w", err)
 	}
 
-	ep := getDaemonEndpoint()
 	req, err := http.NewRequestWithContext(ctx, "POST", ep.BaseURL()+"/api/jobs/batch", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("create batch request: %w", err)
@@ -216,7 +215,7 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 
 // enqueueConsolidation creates and enqueues a consolidation job.
 // Returns the job ID for tracking.
-func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, error) {
+func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, error) {
 	// Resolve agent/model/reasoning using "fix" workflow so compact
 	// uses the same config as `roborev fix`.  Pass the resolved values
 	// to the daemon so it doesn't re-resolve under the "review" workflow.
@@ -270,7 +269,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(ctx, repoRoot, compactPrompt, outputPrefix, label, branchFilter, resolved)
+	job, err := enqueueCompactJob(ctx, ep, repoRoot, compactPrompt, outputPrefix, label, branchFilter, resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -279,7 +278,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 }
 
 // waitForConsolidation waits for a consolidation job to complete.
-func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, opts compactOptions) error {
+func waitForConsolidation(ctx context.Context, cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, opts compactOptions) error {
 	timeout := opts.timeout
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
@@ -292,7 +291,7 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 		output = cmd.OutOrStdout()
 	}
 
-	_, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
+	_, err := waitForJobCompletionAt(ctx, ep, jobID, output)
 	if err != nil {
 		return fmt.Errorf("verification failed: %w", err)
 	}
@@ -309,7 +308,8 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 // to avoid running multiple compact commands simultaneously on the same branch.
 func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	// Setup
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -336,7 +336,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	// Query and limit jobs, excluding non-review types (compact, task)
 	// to prevent recursive self-compaction loops
-	allJobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, apiBranch)
+	allJobs, err := queryOpenJobs(ctx, ep, roots.mainRepoRoot, apiBranch)
 	if err != nil {
 		return err
 	}
@@ -398,13 +398,13 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Println("Fetching review outputs:")
 	}
 
-	jobReviews, successfulJobIDs, err := fetchJobReviews(ctx, jobIDs, opts.quiet, cmd)
+	jobReviews, successfulJobIDs, err := fetchJobReviews(ctx, ep, jobIDs, opts.quiet, cmd)
 	if err != nil {
 		return err
 	}
 
 	// Enqueue consolidation job
-	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, roots.mainRepoRoot, jobReviews, branchFilter, opts)
+	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, ep, roots.mainRepoRoot, jobReviews, branchFilter, opts)
 	if err != nil {
 		return err
 	}
@@ -413,7 +413,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	// CRITICAL: This must succeed or source jobs will never be closed
 	if err := writeCompactMetadata(consolidatedJobID, successfulJobIDs); err != nil {
 		// Try to cancel the job we just created
-		if cancelErr := cancelJob(getDaemonEndpoint().BaseURL(), consolidatedJobID); cancelErr != nil {
+		if cancelErr := cancelJob(ep, consolidatedJobID); cancelErr != nil {
 			// Best effort - log but don't mask the original error
 			log.Printf("Failed to cancel job %d after metadata write failure: %v", consolidatedJobID, cancelErr)
 		}
@@ -440,7 +440,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Println("\nWaiting for consolidation to complete...")
 	}
 
-	err = waitForConsolidation(ctx, cmd, consolidatedJobID, opts)
+	err = waitForConsolidation(ctx, cmd, ep, consolidatedJobID, opts)
 	if err != nil {
 		return err
 	}
@@ -533,7 +533,7 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	return sb.String()
 }
 
-func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
+func enqueueCompactJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
 	if branch == "" {
 		branch = gitrepo.CurrentBranch(ctx, repoRoot)
 	}
@@ -554,7 +554,6 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)
 	}
 
-	ep := getDaemonEndpoint()
 	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon: %w", err)
@@ -607,12 +606,12 @@ func extractJobIDs(reviews []jobReview) []int64 {
 }
 
 // cancelJob cancels a job by ID via the daemon API
-func cancelJob(serverAddr string, jobID int64) error {
+func cancelJob(ep daemon.DaemonEndpoint, jobID int64) error {
 	reqBody, err := json.Marshal(map[string]any{"job_id": jobID})
 	if err != nil {
 		return fmt.Errorf("marshal cancel request: %w", err)
 	}
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(serverAddr+"/api/job/cancel", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/job/cancel", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}

@@ -52,11 +52,12 @@ Legacy cursors cannot be resumed against a regular export, or vice versa.`),
 			if err := validateExportCICostOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			doc, err := fetchAllExportCICosts(getDaemonEndpoint(), opts, limitSet)
+			doc, err := fetchAllExportCICosts(ep, opts, limitSet)
 			if err != nil {
 				if errors.Is(err, errExportCursorDatabaseReset) {
 					return &exitError{code: exportReviewsCursorResetExitCode, cause: err}

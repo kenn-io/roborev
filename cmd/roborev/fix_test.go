@@ -33,7 +33,7 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
+func patchFixDaemonRetryForTest(t *testing.T, ensure func() (daemon.DaemonEndpoint, error)) {
 	t.Helper()
 
 	oldMaxRetries := fixDaemonMaxRetries
@@ -388,9 +388,9 @@ func TestFetchJob(t *testing.T) {
 
 func TestFetchJobCanceledContextDoesNotRetryRecovery(t *testing.T) {
 	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		recoveryAttempted.Store(true)
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -455,9 +455,9 @@ func TestFetchReview(t *testing.T) {
 
 func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		recoveryAttempted.Store(true)
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -475,9 +475,9 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 
 func TestWithFixDaemonRetryContextRetriesClientTimeoutWhenCallerContextActive(t *testing.T) {
 	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		ensureCalls.Add(1)
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	var attempts atomic.Int32
@@ -509,9 +509,9 @@ func TestWithFixDaemonRetryContextStopsAfterCancellationDuringRecovery(t *testin
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var ensureCalls atomic.Int32
-	fixDaemonEnsure = func() error {
+	fixDaemonEnsure = func() (daemon.DaemonEndpoint, error) {
 		ensureCalls.Add(1)
-		return errors.New("daemon still down")
+		return daemon.DaemonEndpoint{}, errors.New("daemon still down")
 	}
 	fixDaemonSleep = func(time.Duration) {
 		cancel()
@@ -537,7 +537,7 @@ func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
 	fixDaemonRecoveryWait = time.Millisecond
 	fixDaemonRecoveryPoll = time.Millisecond
 	recoveryErr := errors.New("refusing to auto-start daemon from ephemeral binary")
-	fixDaemonEnsure = func() error { return recoveryErr }
+	fixDaemonEnsure = func() (daemon.DaemonEndpoint, error) { return daemon.DaemonEndpoint{}, recoveryErr }
 	fixDaemonSleep = func(time.Duration) {}
 	t.Cleanup(func() {
 		fixDaemonMaxRetries = oldMaxRetries
@@ -556,6 +556,46 @@ func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
 		require.NoError(t, err, "expected recovery failure, got %v")
 	}
 	assert.EqualValues(t, 1, attempts.Load())
+}
+
+func TestWithFixDaemonRetryEndpointContextReturnsRecoveredEndpoint(t *testing.T) {
+	oldMaxRetries := fixDaemonMaxRetries
+	oldRecoveryWait := fixDaemonRecoveryWait
+	oldRecoveryPoll := fixDaemonRecoveryPoll
+	oldEnsure := fixDaemonEnsure
+	oldSleep := fixDaemonSleep
+	fixDaemonMaxRetries = 1
+	fixDaemonRecoveryWait = time.Millisecond
+	fixDaemonRecoveryPoll = time.Millisecond
+	recovered := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7374"}
+	fixDaemonEnsure = func() (daemon.DaemonEndpoint, error) {
+		return recovered, nil
+	}
+	fixDaemonSleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		fixDaemonMaxRetries = oldMaxRetries
+		fixDaemonRecoveryWait = oldRecoveryWait
+		fixDaemonRecoveryPoll = oldRecoveryPoll
+		fixDaemonEnsure = oldEnsure
+		fixDaemonSleep = oldSleep
+	})
+
+	initial := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	var attempts atomic.Int32
+	value, got, err := withFixDaemonRetryEndpointContext(
+		context.Background(), initial,
+		func(ep daemon.DaemonEndpoint) (string, error) {
+			if attempts.Add(1) == 1 {
+				return "", &neturl.Error{Op: "Get", URL: ep.BaseURL(), Err: syscall.ECONNREFUSED}
+			}
+			assert.Equal(t, recovered, ep)
+			return "ok", nil
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", value)
+	assert.Equal(t, recovered, got)
+	assert.EqualValues(t, 2, attempts.Load())
 }
 
 func TestAddJobResponse(t *testing.T) {
@@ -631,9 +671,9 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	err := addJobResponse(context.Background(), startServer.URL, 123, "roborev-fix", "Fix applied")
@@ -645,9 +685,9 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 
 func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
 	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		recoveryAttempted.Store(true)
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -669,9 +709,9 @@ func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
 
 func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		recoveryAttempted.Store(true)
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1129,10 +1169,10 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 	defer recoveryServer.Close()
 
 	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		ensureCalls.Add(1)
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	var daemonDead atomic.Bool
@@ -1844,10 +1884,10 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 	defer recoveryServer.Close()
 
 	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		ensureCalls.Add(1)
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	var openQueryCount atomic.Int32
@@ -1880,8 +1920,7 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			// Simulate daemon death: remove runtime file so
-			// getDaemonEndpoint falls back to serverAddr, then
-			// point serverAddr at a dead address.
+			// Keep the selected server address fixed, then point it at a dead address.
 			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 		}).
@@ -2404,9 +2443,9 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
@@ -2491,9 +2530,9 @@ func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *t
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
@@ -2508,9 +2547,9 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := repo.Run("rev-parse", "HEAD")
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		require.Condition(t, func() bool { return false }, "enqueueIfNeeded should not attempt daemon recovery after request deadline exceeded")
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	var enqueueCalls atomic.Int32
@@ -2569,10 +2608,10 @@ func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) 
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
 		ensureCalls.Add(1)
 		serverAddr = recoveryServer.URL
-		return nil
+		return daemon.ParseEndpoint(serverAddr)
 	})
 
 	err := enqueueIfNeeded(context.Background(), "http://127.0.0.1:1", repo.Dir, sha)
@@ -2588,8 +2627,8 @@ func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) 
 }
 
 func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
-		return fmt.Errorf("hasJobForSHA should not attempt daemon recovery")
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
+		return daemon.DaemonEndpoint{}, fmt.Errorf("hasJobForSHA should not attempt daemon recovery")
 	})
 
 	found, err := hasJobForSHA("http://127.0.0.1:1", "abc123def456")
@@ -2599,8 +2638,8 @@ func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
 }
 
 func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
-		return fmt.Errorf("queryOpenJobIDs should not attempt daemon recovery after request deadline exceeded")
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
+		return daemon.DaemonEndpoint{}, fmt.Errorf("queryOpenJobIDs should not attempt daemon recovery after request deadline exceeded")
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3219,8 +3258,8 @@ func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
 func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	patchFixDaemonRetryForTest(t, func() error {
-		return nil
+	patchFixDaemonRetryForTest(t, func() (daemon.DaemonEndpoint, error) {
+		return daemon.DaemonEndpoint{}, nil
 	})
 
 	deadURL := "http://127.0.0.1:1"

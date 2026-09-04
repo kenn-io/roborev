@@ -19,8 +19,18 @@ import (
 )
 
 var (
-	statusEnsureDaemon = ensureDaemon
-	statusDiscover     = uiRuntimeInfo
+	statusEndpoint     daemon.DaemonEndpoint
+	statusEnsureDaemon = func() error {
+		var err error
+		statusEndpoint, err = ensureDaemon()
+		return err
+	}
+	statusDiscover = func() (*daemon.RuntimeInfo, error) {
+		if statusEndpoint.Address == "" {
+			return nil, ErrDaemonNotRunning
+		}
+		return uiRuntimeInfo(statusEndpoint)
+	}
 )
 
 type statusJSONResult struct {
@@ -62,6 +72,7 @@ func statusCmd() *cobra.Command {
 			}
 
 			// Ensure daemon is running (and restart if version mismatch)
+			statusEndpoint = daemon.DaemonEndpoint{}
 			if err := statusEnsureDaemon(); err != nil {
 				if errors.Is(err, daemon.ErrDaemonAccessDenied) {
 					message := fmt.Sprintf(
@@ -91,7 +102,10 @@ func statusCmd() *cobra.Command {
 			}
 			webStatus = discoverWebUI(statusDiscover)
 
-			ep := getDaemonEndpoint()
+			ep := statusEndpoint
+			if ep.Address == "" {
+				return ErrDaemonNotRunning
+			}
 			addr := ep.BaseURL()
 			client := ep.HTTPClient(2 * time.Second)
 			resp, err := client.Get(addr + "/api/status")

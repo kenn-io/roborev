@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
 )
 
@@ -312,6 +316,42 @@ func TestDetectStateSchema(t *testing.T) {
 			assert.NotContains(c.FixCommand, "<agent>", "fix_command must be fully substituted")
 		}
 	}
+}
+
+func TestQuickstartRequiresScopedRuntime(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "1")
+	listener, err := net.Listen("tcp", "127.0.0.1:7373")
+	if err != nil {
+		t.Skipf("default daemon port unavailable: %v", err)
+	}
+	requestCount := 0
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		switch r.URL.Path {
+		case "/api/ping":
+			_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: os.Getpid()})
+		case "/api/repos/resolve":
+			_ = json.NewEncoder(w).Encode(map[string]bool{"tracked": true})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+	repo := newTempGitRepo(t)
+	originalDiscover := getAnyRunningDaemon
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	t.Cleanup(func() { getAnyRunningDaemon = originalDiscover })
+
+	state := detectState(context.Background(), repo, true)
+	daemonCheck := quickstartCheckByID(t, state, "daemon_running")
+	registeredCheck := quickstartCheckByID(t, state, "repo_registered")
+	assert.Equal(t, statusMissing, daemonCheck.Status)
+	assert.Equal(t, statusUnknown, registeredCheck.Status)
+	assert.Contains(t, registeredCheck.Details, "daemon")
+	assert.Zero(t, requestCount, "quickstart must not contact the home default daemon")
 }
 
 func TestDetectStateOutsideRepoMarksRepoChecksUnknown(t *testing.T) {

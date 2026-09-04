@@ -180,9 +180,12 @@ Examples:
 				autoInstallHooks(ctx, root)
 			}
 
+			var ep daemon.DaemonEndpoint
 			// Ensure daemon is running (skip for --local mode)
 			if !local {
-				if err := ensureDaemon(); err != nil {
+				var err error
+				ep, err = ensureDaemon()
+				if err != nil {
 					return err // Return error (quiet mode silences output, not exit code)
 				}
 			}
@@ -369,7 +372,6 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqFields)
 
-			ep := getDaemonEndpoint()
 			resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)

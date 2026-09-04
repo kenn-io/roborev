@@ -51,11 +51,11 @@ var (
 	listAllRuntimes             = daemon.ListAllRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
-	restartDaemonForEnsure      = restartDaemon
-	startDaemonForEnsure        = startDaemon
+	restartDaemonForEnsure      = restartDaemonWithEndpoint
+	startDaemonForEnsure        = startDaemonWithEndpoint
 	startDaemonDetached         = startDetachedDaemon
 	stopDaemonForRestart        = stopDaemon
-	startDaemonAfterRestart     = startDaemon
+	startDaemonAfterRestart     = startDaemonWithEndpoint
 	stopDaemonForUpdate         = stopDaemon
 	startUpdatedDaemon          = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
@@ -116,7 +116,7 @@ func probeDaemonWithRetry(ep daemon.DaemonEndpoint, timeout time.Duration) (*dae
 var ErrJobNotFound = fmt.Errorf("job not found")
 
 // parsedServerEndpoint caches the validated endpoint from the --server flag.
-// Set once by validateServerFlag, read by getDaemonEndpoint.
+// Set once by validateServerFlag, read by resolveDaemonEndpoint.
 var parsedServerEndpoint *daemon.DaemonEndpoint
 
 func defaultDaemonEndpoint() daemon.DaemonEndpoint {
@@ -129,14 +129,6 @@ func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
 	}
 	return defaultDaemonEndpoint()
-}
-
-func usesHomeDataDir() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	return filepath.Clean(config.DataDir()) == filepath.Join(home, ".roborev")
 }
 
 // validateServerFlag parses and validates the --server flag value.
@@ -154,31 +146,25 @@ func validateServerFlag() error {
 	return nil
 }
 
-// getDaemonEndpoint returns the daemon endpoint from runtime file or config.
-// An explicit --server flag takes precedence over auto-discovered daemons.
-func getDaemonEndpoint() daemon.DaemonEndpoint {
-	// Explicit --server flag takes precedence over auto-discovery
+// resolveDaemonEndpoint returns an endpoint with data-root provenance.
+func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
-			return *parsedServerEndpoint
+			return *parsedServerEndpoint, nil
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fallbackDaemonEndpoint()
+			return daemon.DaemonEndpoint{}, fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
 		}
-		return ep
+		return ep, nil
 	}
-	// No explicit flag: discover running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
-		return info.Endpoint()
+		return info.Endpoint(), nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		return daemon.DaemonEndpoint{}, ErrDaemonNotRunning
+	} else {
+		return daemon.DaemonEndpoint{}, err
 	}
-	// Nothing running: use default
-	return fallbackDaemonEndpoint()
-}
-
-// getDaemonHTTPClient returns an HTTP client configured for the daemon endpoint.
-func getDaemonHTTPClient(timeout time.Duration) *http.Client {
-	return getDaemonEndpoint().HTTPClient(timeout)
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -213,12 +199,11 @@ func isTransportError(err error) bool {
 
 // registerRepo tells the daemon to persist a repo to the DB so that the
 // CI poller (and other components) can find it after a daemon restart.
-func registerRepo(repoPath string) error {
+func registerRepo(ep daemon.DaemonEndpoint, repoPath string) error {
 	body, err := json.Marshal(map[string]string{"repo_path": repoPath})
 	if err != nil {
 		return err
 	}
-	ep := getDaemonEndpoint()
 	resp, err := ep.HTTPClient(5*time.Second).Post(ep.BaseURL()+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err // connection error (*url.Error wrapping net.Error)
@@ -235,20 +220,16 @@ func registerRepo(repoPath string) error {
 // If daemon is running but has different version, restart it.
 // Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
 // restarting (useful for development with go run).
-func ensureDaemon() error {
+func ensureDaemon() (daemon.DaemonEndpoint, error) {
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
-	// First check runtime files for any running daemon
-	info, discoveryErr := getAnyRunningDaemon()
-	if daemon.IsDaemonAccessDenied(discoveryErr) {
-		return discoveryErr
-	}
-	if discoveryErr == nil {
+	ep, resolveErr := resolveDaemonEndpoint()
+	if resolveErr == nil {
 		if !skipVersionCheck {
-			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
+			probe, err := probeDaemonForEnsure(ep, 2*time.Second)
 			if err != nil {
 				if daemon.IsDaemonAccessDenied(err) {
-					return fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, err)
+					return daemon.DaemonEndpoint{}, fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, err)
 				}
 				if verbose {
 					fmt.Printf("Daemon probe failed, restarting...\n")
@@ -270,17 +251,18 @@ func ensureDaemon() error {
 			}
 		}
 
-		return nil
+		return ep, nil
 	}
-
-	// A non-default root has no safe shared-port fallback to probe.
-	if serverAddr == "" && !usesHomeDataDir() {
+	if serverAddr != "" || !errors.Is(resolveErr, ErrDaemonNotRunning) {
+		return daemon.DaemonEndpoint{}, resolveErr
+	}
+	if !config.DataDirIsHomeDefault() {
 		return startDaemonForEnsure()
 	}
 
-	// Try the configured default address for manual daemon runs that do not
-	// have a runtime file yet.
-	ep := getDaemonEndpoint()
+	// Try the historical default address only for the home-backed root.
+	// This compatibility probe is not a general endpoint selector.
+	ep = fallbackDaemonEndpoint()
 	probe, probeErr := probeDaemonForEnsure(ep, 2*time.Second)
 	if probeErr == nil {
 		if !skipVersionCheck {
@@ -297,10 +279,10 @@ func ensureDaemon() error {
 				return restartDaemonForEnsure()
 			}
 		}
-		return nil
+		return ep, nil
 	}
 	if daemon.IsDaemonAccessDenied(probeErr) {
-		return fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, probeErr)
+		return daemon.DaemonEndpoint{}, fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, probeErr)
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
@@ -312,6 +294,11 @@ func ensureDaemon() error {
 }
 
 func startDaemon() error {
+	_, err := startDaemonWithEndpoint()
+	return err
+}
+
+func startDaemonWithEndpoint() (daemon.DaemonEndpoint, error) {
 	if verbose {
 		fmt.Println("Starting daemon...")
 	}
@@ -321,7 +308,7 @@ func startDaemon() error {
 	// or when none was running (cold start), so this never migrates a live DB.
 	if pendingStartPause != nil {
 		if err := writeLocalQueuePaused(*pendingStartPause); err != nil {
-			return fmt.Errorf("persist initial queue pause state: %w", err)
+			return daemon.DaemonEndpoint{}, fmt.Errorf("persist initial queue pause state: %w", err)
 		}
 	}
 
@@ -373,13 +360,22 @@ func startDaemon() error {
 			}
 		},
 	}
-	if _, _, err := manager.Ensure(context.Background(), daemonStartTimeout); err != nil {
+	record, _, err := manager.Ensure(context.Background(), daemonStartTimeout)
+	if err != nil {
 		if errors.Is(err, errDaemonReady) {
-			return nil
+			if info, discoverErr := getAnyRunningDaemonForStart(context.Background()); discoverErr == nil {
+				return info.Endpoint(), nil
+			} else {
+				return daemon.DaemonEndpoint{}, discoverErr
+			}
 		}
-		return fmt.Errorf("failed to start daemon: %w", err)
+		return daemon.DaemonEndpoint{}, fmt.Errorf("failed to start daemon: %w", err)
 	}
-	return nil
+	ep, err := daemon.ParseEndpoint(record.Endpoint().ConfigAddress())
+	if err != nil {
+		return daemon.DaemonEndpoint{}, fmt.Errorf("parse started daemon endpoint: %w", err)
+	}
+	return ep, nil
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {
@@ -447,9 +443,14 @@ func stopDaemon() error {
 
 // restartDaemon stops the running daemon and starts a new one
 func restartDaemon() error {
+	_, err := restartDaemonWithEndpoint()
+	return err
+}
+
+func restartDaemonWithEndpoint() (daemon.DaemonEndpoint, error) {
 	if err := stopDaemonForRestart(); err != nil &&
 		!errors.Is(err, ErrDaemonNotRunning) {
-		return err
+		return daemon.DaemonEndpoint{}, err
 	}
 
 	// Checkpoint WAL to ensure clean state for new daemon

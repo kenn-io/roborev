@@ -236,6 +236,19 @@ func TestDataDirRejectsRelativeCommonDir(t *testing.T) {
 	assert.Equal(t, homeDefault, DataDir())
 }
 
+func TestDataDirIsHomeDefault(t *testing.T) {
+	t.Run("home default", func(t *testing.T) {
+		t.Setenv("ROBOREV_DATA_DIR", "")
+		t.Chdir(t.TempDir())
+		assert.True(t, DataDirIsHomeDefault())
+	})
+
+	t.Run("explicit root", func(t *testing.T) {
+		t.Setenv("ROBOREV_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+		assert.False(t, DataDirIsHomeDefault())
+	})
+}
+
 func TestResolveAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	tmpDir := t.TempDir()

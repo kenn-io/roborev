@@ -79,9 +79,9 @@ func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T
 func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) {
 	originalEnsure := agentHookEnsureDaemon
 	ensureCalled := false
-	agentHookEnsureDaemon = func() error {
+	agentHookEnsureDaemon = func() (daemon.DaemonEndpoint, error) {
 		ensureCalled = true
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
 
@@ -143,9 +143,9 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	serverAddr := strings.TrimPrefix(server.URL, "http://")
 	originalEnsure := agentHookEnsureDaemon
 	ensureCalled := false
-	agentHookEnsureDaemon = func() error {
+	agentHookEnsureDaemon = func() (daemon.DaemonEndpoint, error) {
 		ensureCalled = true
-		return nil
+		return daemon.DaemonEndpoint{}, nil
 	}
 	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
 	cmd := agentHookCmd()
@@ -167,7 +167,7 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {
 	origEnsureDaemon := agentHookEnsureDaemon
 	ensureErr := errors.New("start daemon")
-	agentHookEnsureDaemon = func() error { return ensureErr }
+	agentHookEnsureDaemon = func() (daemon.DaemonEndpoint, error) { return daemon.DaemonEndpoint{}, ensureErr }
 	t.Cleanup(func() { agentHookEnsureDaemon = origEnsureDaemon })
 
 	tests := []struct {

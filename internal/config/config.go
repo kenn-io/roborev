@@ -901,24 +901,27 @@ func DefaultConfig() *Config {
 	return cfg
 }
 
+// DefaultDataDir returns the home-backed roborev data directory.
+func DefaultDataDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".roborev")
+}
+
 // DataDir returns the roborev data directory from ROBOREV_DATA_DIR, the
-// repository-local Git setting, or ~/.roborev in that order. Git lookup uses
-// the repository containing the current working directory.
+// repository-local Git setting, or the home-backed default in that order.
 func DataDir() string {
 	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
 		return dir
 	}
 	repoPath, err := os.Getwd()
 	if err != nil {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".roborev")
+		return DefaultDataDir()
 	}
 	return dataDirForRepo(repoPath)
 }
 
 func dataDirForRepo(repoPath string) string {
-	home, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(home, ".roborev")
+	defaultDir := DefaultDataDir()
 
 	dir, err := git.ReadLocalPathConfig(repoPath, "roborev.dataDir")
 	if err != nil || dir == "" {
@@ -928,16 +931,17 @@ func dataDirForRepo(repoPath string) string {
 		return filepath.Clean(dir)
 	}
 
-	// Bare repositories have no working tree to anchor a relative data root.
-	if _, err := git.GetRepoRoot(repoPath); err != nil {
-		return defaultDir
-	}
-
-	commonDir, err := git.ResolveGitCommonDir(repoPath)
-	if err != nil || commonDir == "" || commonDir == "." || !filepath.IsAbs(commonDir) {
+	commonDir, err := git.ResolveDataDirAnchor(repoPath)
+	if err != nil {
 		return defaultDir
 	}
 	return filepath.Join(commonDir, dir)
+}
+
+// DataDirIsHomeDefault reports whether the effective data root is the home
+// default after path cleaning.
+func DataDirIsHomeDefault() bool {
+	return filepath.Clean(DataDir()) == filepath.Clean(DefaultDataDir())
 }
 
 // GlobalConfigPath returns the path to the global config file

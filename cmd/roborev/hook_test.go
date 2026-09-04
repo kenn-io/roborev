@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
@@ -605,6 +606,42 @@ func TestInitNoDaemon(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInitNoDaemonRejectsUnscopedDefaultDaemon(t *testing.T) {
+	_ = initNoDaemonSetup(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "1")
+	listener, err := net.Listen("tcp", "127.0.0.1:7373")
+	if err != nil {
+		t.Skipf("default daemon port unavailable: %v", err)
+	}
+	requestCount := 0
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+	originalAddr := serverAddr
+	originalDiscover := getAnyRunningDaemon
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	t.Cleanup(func() {
+		serverAddr = originalAddr
+		getAnyRunningDaemon = originalDiscover
+	})
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		require.NoError(t, cmd.Execute())
+	})
+	assert.Contains(t, output, "Daemon not running")
+	assert.Contains(t, output, "Setup incomplete")
+	assert.Zero(t, requestCount, "init --no-daemon must not contact the home default daemon")
 }
 
 func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {

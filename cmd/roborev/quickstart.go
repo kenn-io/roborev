@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/skills"
 )
@@ -51,7 +52,8 @@ var quickstartCheckIDs = []string{
 }
 
 func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstartState {
-	daemonUp := daemonReachable()
+	ep, endpointErr := resolveDaemonEndpoint()
+	daemonUp := endpointErr == nil && daemonReachable(ep)
 	global, _ := config.LoadGlobal()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
 	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
@@ -61,7 +63,7 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	checks := []quickstartCheck{
 		checkDaemon(daemonUp),
 		checkPostCommitHook(ctx, repoRoot, inGitRepo),
-		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
+		checkRepoRegistered(repoRoot, inGitRepo, daemonUp, endpointOrNil(ep, endpointErr)),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
 		checkAgentHook("agent_hook_claude", claudePath, "claude",
@@ -84,8 +86,15 @@ func resolveQuickstartReviewAgent(repoRoot string, global *config.Config) string
 	return config.ResolveAgentForWorkflow("", repoRoot, global, "review", reasoning)
 }
 
-func daemonReachable() bool {
-	_, err := probeDaemonWithRetry(getDaemonEndpoint(), 1*time.Second)
+func endpointOrNil(ep daemon.DaemonEndpoint, err error) *daemon.DaemonEndpoint {
+	if err != nil {
+		return nil
+	}
+	return &ep
+}
+
+func daemonReachable(ep daemon.DaemonEndpoint) bool {
+	_, err := probeDaemonWithRetry(ep, 1*time.Second)
 	return err == nil
 }
 
@@ -116,7 +125,7 @@ func checkPostCommitHook(ctx context.Context, repoRoot string, inGitRepo bool) q
 	return c
 }
 
-func checkRepoRegistered(repoRoot string, inGitRepo, daemonUp bool) quickstartCheck {
+func checkRepoRegistered(repoRoot string, inGitRepo, daemonUp bool, ep *daemon.DaemonEndpoint) quickstartCheck {
 	c := quickstartCheck{ID: "repo_registered"}
 	if !inGitRepo {
 		c.Status = statusUnknown
@@ -127,7 +136,12 @@ func checkRepoRegistered(repoRoot string, inGitRepo, daemonUp bool) quickstartCh
 		c.Details = "daemon unreachable; cannot verify registration"
 		return c
 	}
-	tracked, err := repoTracked(repoRoot)
+	if ep == nil {
+		c.Status = statusUnknown
+		c.Details = "daemon endpoint unavailable; cannot verify registration"
+		return c
+	}
+	tracked, err := repoTracked(*ep, repoRoot)
 	if err != nil {
 		c.Status = statusUnknown
 		c.Details = fmt.Sprintf("could not query daemon: %v", err)
@@ -144,8 +158,7 @@ func checkRepoRegistered(repoRoot string, inGitRepo, daemonUp bool) quickstartCh
 	return c
 }
 
-func repoTracked(repoRoot string) (bool, error) {
-	ep := getDaemonEndpoint()
+func repoTracked(ep daemon.DaemonEndpoint, repoRoot string) (bool, error) {
 	resp, err := ep.HTTPClient(5 * time.Second).Get(
 		ep.BaseURL() + "/api/repos/resolve?path=" + url.QueryEscape(repoRoot))
 	if err != nil {

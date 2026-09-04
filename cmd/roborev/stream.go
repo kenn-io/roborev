@@ -31,7 +31,8 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -45,7 +46,6 @@ Examples:
 			}
 
 			// Build URL with optional repo filter
-			ep := getDaemonEndpoint()
 			streamURL := ep.BaseURL() + "/api/stream/events"
 			if repoFilter != "" {
 				streamURL += "?" + url.Values{"repo": {repoFilter}}.Encode()

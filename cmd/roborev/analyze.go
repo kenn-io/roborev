@@ -295,15 +295,14 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return err
 	}
 
 	// Load config and resolve max prompt size once for all analysis modes
 	cfg, _ := config.LoadGlobal()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
-
-	ep := getDaemonEndpoint()
 
 	// Per-file mode: create one job per file
 	if opts.perFile {
@@ -687,14 +686,14 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	// Ensure the fix commit gets a review enqueued
 	if commitCreated {
 		if head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD"); err == nil {
-			if err := enqueueIfNeeded(ctx, ep.BaseURL(), repoRoot, head); err != nil && !opts.quiet {
+			if err := enqueueIfNeededAt(ctx, ep, repoRoot, head); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 			}
 		}
 	}
 
 	// Close the analysis job
-	if err := markJobClosed(ctx, ep.BaseURL(), jobID); err != nil {
+	if err := markJobClosedAt(ctx, ep, jobID); err != nil {
 		// Non-fatal - the fixes were applied, just couldn't update status
 		if !opts.quiet {
 			cmd.Printf("\nWarning: could not close job: %v\n", err)
@@ -877,13 +876,21 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 
 // markJobClosed closes a job via the API
 func markJobClosed(ctx context.Context, serverAddr string, jobID int64) error {
+	ep, err := daemon.ParseEndpoint(serverAddr)
+	if err != nil {
+		return err
+	}
+	return markJobClosedAt(ctx, ep, jobID)
+}
+
+func markJobClosedAt(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64) error {
 	reqBody, _ := json.Marshal(map[string]any{
 		"job_id": jobID,
 		"closed": true,
 	})
 
-	_, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (struct{}, error) {
-		resp, err := doFixDaemonRequest(ctx, http.MethodPost, addr+"/api/review/close", reqBody)
+	_, _, err := withFixDaemonRetryEndpointContext(ctx, ep, func(current daemon.DaemonEndpoint) (struct{}, error) {
+		resp, err := doFixDaemonRequestAt(ctx, http.MethodPost, current, current.BaseURL()+"/api/review/close", reqBody)
 		if err != nil {
 			return struct{}{}, err
 		}

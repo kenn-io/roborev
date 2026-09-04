@@ -36,10 +36,11 @@ func daemonCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Start the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := daemonEnsure(); err != nil {
+			ep, err := daemonEnsure()
+			if err != nil {
 				return err
 			}
-			writeDaemonLifecycleResult("Daemon started")
+			writeDaemonLifecycleResult("Daemon started", ep)
 			return nil
 		},
 	})
@@ -69,13 +70,14 @@ func daemonCmd() *cobra.Command {
 			} else if err != nil {
 				return err
 			}
-			if err := daemonEnsure(); err != nil {
+			ep, err := daemonEnsure()
+			if err != nil {
 				return err
 			}
 			if wasRunning {
-				writeDaemonLifecycleResult("Daemon restarted")
+				writeDaemonLifecycleResult("Daemon restarted", ep)
 			} else {
-				writeDaemonLifecycleResult("Daemon started (was not running)")
+				writeDaemonLifecycleResult("Daemon started (was not running)", ep)
 			}
 			return nil
 		},
@@ -87,9 +89,11 @@ func daemonCmd() *cobra.Command {
 	return cmd
 }
 
-func writeDaemonLifecycleResult(message string) {
+func writeDaemonLifecycleResult(message string, ep daemon.DaemonEndpoint) {
 	fmt.Println(message)
-	fmt.Printf("Web UI: %s\n", displayWebUI(discoverWebUI(daemonDiscover)))
+	fmt.Printf("Web UI: %s\n", displayWebUI(discoverWebUI(func() (*daemon.RuntimeInfo, error) {
+		return daemonDiscover(ep)
+	})))
 }
 
 // webUIStatus describes the daemon's browser UI: either a reachable URL, or

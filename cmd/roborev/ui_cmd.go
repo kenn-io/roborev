@@ -27,10 +27,11 @@ func uiCmd() *cobra.Command {
 		Short: "Open the Roborev browser UI",
 		Args:  validateUIArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := uiEnsureDaemon(); err != nil {
+			ep, err := uiEnsureDaemon()
+			if err != nil {
 				return err
 			}
-			runtimeInfo, err := uiRuntimeInfo()
+			runtimeInfo, err := uiRuntimeInfo(ep)
 			if err != nil {
 				return fmt.Errorf("discover daemon: %w", err)
 			}
@@ -61,22 +62,22 @@ func webUIDisabledError(reason string) error {
 	return fmt.Errorf("the daemon browser listener is disabled")
 }
 
-func ensureUIDaemon() error {
+func ensureUIDaemon() (daemon.DaemonEndpoint, error) {
 	if serverAddr == "" {
 		return ensureDaemon()
 	}
-	_, err := daemon.ProbeDaemon(getDaemonEndpoint(), 2*time.Second)
+	ep, err := resolveDaemonEndpoint()
 	if err != nil {
-		return fmt.Errorf("daemon error: %w", err)
+		return daemon.DaemonEndpoint{}, err
 	}
-	return nil
+	_, err = daemon.ProbeDaemon(ep, 2*time.Second)
+	if err != nil {
+		return daemon.DaemonEndpoint{}, fmt.Errorf("daemon error: %w", err)
+	}
+	return ep, nil
 }
 
-func uiRuntimeInfo() (*daemon.RuntimeInfo, error) {
-	if serverAddr == "" {
-		return uiGetAnyRunningDaemon()
-	}
-	selected := getDaemonEndpoint()
+func uiRuntimeInfo(selected daemon.DaemonEndpoint) (*daemon.RuntimeInfo, error) {
 	probe, err := uiProbeDaemon(selected, 2*time.Second)
 	if err != nil {
 		return nil, err

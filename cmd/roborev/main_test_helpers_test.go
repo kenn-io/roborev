@@ -496,7 +496,7 @@ func daemonFromHandler(t *testing.T, handler http.Handler) *MockDaemon {
 
 // removeAllDaemonFiles removes all daemon runtime files from the runtime
 // directory. Tests use this to simulate daemon death: once the runtime
-// files are gone, getDaemonEndpoint falls back to the serverAddr global,
+// files are gone, endpoint resolution falls back to the serverAddr global,
 // which can be pointed at a dead address.
 func removeAllDaemonFiles(t *testing.T) {
 	t.Helper()

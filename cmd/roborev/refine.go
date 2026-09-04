@@ -396,14 +396,12 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	}
 
 	// 2. Connect to daemon (only after all validation passes)
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 
-	client, err := daemon.NewHTTPClientFromRuntime()
-	if err != nil {
-		return fmt.Errorf("cannot connect to daemon: %w", err)
-	}
+	client := daemon.NewHTTPClient(ep)
 	if runCtx.PollInterval > 0 {
 		client.SetPollInterval(runCtx.PollInterval)
 	}
@@ -812,7 +810,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 func runRefineList(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	ctx := cmd.Context()
@@ -847,7 +846,7 @@ func runRefineList(
 		queryBranch = ""
 	}
 
-	jobs, err := queryOpenJobs(ctx, apiRoot, queryBranch)
+	jobs, err := queryOpenJobs(ctx, ep, apiRoot, queryBranch)
 	if err != nil {
 		return err
 	}
@@ -874,9 +873,8 @@ func runRefineList(
 
 	cmd.Printf("Found %d failed review(s) to refine:\n\n", len(failed))
 
-	refineListAddr := getDaemonEndpoint().BaseURL()
 	for _, job := range failed {
-		review, err := fetchReview(ctx, refineListAddr, job.ID)
+		review, err := fetchReviewAt(ctx, ep, job.ID)
 		if err != nil {
 			fmt.Fprintf(
 				cmd.ErrOrStderr(),
@@ -944,7 +942,8 @@ func runRefineAllBranches(
 		)
 	}
 
-	if err := ensureDaemon(); err != nil {
+	ep, err := ensureDaemon()
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	// Use main repo root for API queries
@@ -970,7 +969,7 @@ func runRefineAllBranches(
 	}
 
 	// Query all open jobs (no branch filter)
-	jobs, err := queryOpenJobs(ctx, apiRepoRoot, "")
+	jobs, err := queryOpenJobs(ctx, ep, apiRepoRoot, "")
 	if err != nil {
 		return err
 	}

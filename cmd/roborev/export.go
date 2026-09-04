@@ -75,11 +75,12 @@ overlapping window separately.`),
 			if err := validateExportReviewsOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
-			if err := ensureDaemon(); err != nil {
+			ep, err := ensureDaemon()
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			doc, err := fetchAllExportReviews(getDaemonEndpoint(), opts, limitSet)
+			doc, err := fetchAllExportReviews(ep, opts, limitSet)
 			if err != nil {
 				if errors.Is(err, errExportCursorDatabaseReset) {
 					return &exitError{code: exportReviewsCursorResetExitCode, cause: err}
