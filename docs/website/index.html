@@ -86,19 +86,26 @@
         <p class="hero-brand"><img src="/docs/assets/static/logo.svg" alt="">roborev</p>
         <h1 id="hero-title">Local, continuous code review for the agentic loop.</h1>
         <p class="lede"><strong>Find bugs faster and ship better quality code.</strong> roborev is a review daemon on your machine. A git hook reviews each commit in the background with the agents you already run, while you keep working.</p>
-        <figure class="term">
-          <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
-          <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                                  <span class="out"># hook + daemon, once per repo</span>
-<span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>  <span class="out"># reviewed in the background</span>
-<span class="fail">FAIL</span> <span class="out">high</span>    <span class="path">internal/webhook/retry.go:41</span>  <span class="out">retries re-send a non-idempotent POST</span>
-<span class="fail">FAIL</span> <span class="out">medium</span>  <span class="path">internal/webhook/retry_test.go</span> <span class="out">no test covers the backoff ceiling</span>
-<span class="ps1">$</span> <span class="cmd">/roborev-fix</span>                                  <span class="out"># fix, verify, close</span></code></pre>
-        </figure>
         <div class="actions">
           <a class="button primary" href="/guide/">Take the tour</a>
           <a class="button" href="/docs/">Read the docs</a>
         </div>
         <p class="install-hint">One Go binary, no runtime dependencies, MIT licensed. <a href="#start">Install in one command</a>.</p>
+        <figure class="term">
+          <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
+          <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>
+<span class="out">Ready! Every commit will now be automatically reviewed.</span>
+<span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
+<span class="ps1">$</span> <span class="cmd">roborev show HEAD</span>                   <span class="out"># later, whenever you want it</span>
+<span class="out">Review for 8f2c1a0 (job 214, by codex)</span>
+<span class="out">------------------------------------------------------------</span>
+<span class="out">## Review Findings</span>
+
+<span class="out">- **Severity**: <span class="fail">High</span></span>
+<span class="out">- **Location**: `<span class="path">internal/webhook/retry.go:41</span>`</span>
+<span class="out">- **Problem**: A timeout after the POST was delivered retries it, so the
+  webhook can be charged twice. Nothing makes the request idempotent.</span></code></pre>
+        </figure>
       </section>
 
       <section class="site-section" aria-labelledby="gap-title">

@@ -4,12 +4,19 @@ Find bugs faster and ship better quality code. roborev is a review daemon on
 your machine. A git hook reviews each commit in the background with the agents
 you already run, while you keep working.
 
-```sh
-roborev init                                  # hook + daemon, once per repo
-git commit -m "Add retry to payment webhook"  # reviewed in the background
-# FAIL high    internal/webhook/retry.go:41   retries re-send a non-idempotent POST
-# FAIL medium  internal/webhook/retry_test.go no test covers the backoff ceiling
-/roborev-fix                                  # fix, verify, close
+```text
+$ roborev init
+Ready! Every commit will now be automatically reviewed.
+$ git commit -m "Add retry to payment webhook"
+$ roborev show HEAD                   # later, whenever you want it
+Review for 8f2c1a0 (job 214, by codex)
+------------------------------------------------------------
+## Review Findings
+
+- **Severity**: High
+- **Location**: `internal/webhook/retry.go:41`
+- **Problem**: A timeout after the POST was delivered retries it, so the
+  webhook can be charged twice. Nothing makes the request idempotent.
 ```
 
 One Go binary, no runtime dependencies, MIT licensed. Install commands are

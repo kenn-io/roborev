@@ -369,7 +369,7 @@ h3 {
 /* ------------------------------------------------------ terminal panel */
 
 .term {
-  margin: 2.5rem 0 0;
+  margin: 2.25rem 0 0;
   max-width: 46rem;
   border: 1px solid var(--rule);
   background: var(--panel);
