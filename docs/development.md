@@ -157,7 +157,7 @@ make install               # Install with version info
 Plain `go build` and `go install` source builds contain the compilation stub and
 therefore leave the browser listener disabled. `make build` and `make install`
 run the validated web-asset transaction when an embedded browser application is
-required. The Nix source build likewise provides the CLI and terminal UI only.
+required.
 
 ### Browser application
 

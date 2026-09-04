@@ -360,26 +360,3 @@ jobs:
 
       - name: Markdown format
         run: make markdown-ci
-
-  nix:
-    needs: go-changes
-    if: needs.go-changes.outputs.changed == 'true'
-    runs-on: ${{ github.repository == 'kenn-io/roborev' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342  # v31.11.0
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Check flake
-        run: nix flake check
-
-      - name: Build package
-        run: nix build
-
-      - name: Verify binaries
-        run: ./result/bin/roborev version
-
-      - name: Verify nix apps
-        run: nix run .#roborev -- version

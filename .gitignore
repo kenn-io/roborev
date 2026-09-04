@@ -56,7 +56,6 @@ docs/assets/generated/
 .cache
 .gomodcache/
 .gopath/
-result
 tmp/
 REPORT.md
 .zed
