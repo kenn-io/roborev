@@ -881,14 +881,23 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// A remote machine on an older release may have stored a verdict for
 	// output that never reviewed the code (an unreadable diff). Do not
 	// re-import that verdict; the row stays unrated here as it would locally.
+	// A NULL verdict normally keeps the local value on conflict, so an older
+	// sender that never sends verdict_bool cannot wipe a locally computed
+	// one. Unreadable output is the exception: that row must end unrated
+	// even if a legacy verdict was stored before.
 	var verdictBool any
-	if r.VerdictBool != nil && !IsUnreadableInput(r.Output) {
+	unreadable := IsUnreadableInput(r.Output)
+	if r.VerdictBool != nil && !unreadable {
 		verdictBool = 0
 		if *r.VerdictBool {
 			verdictBool = 1
 		}
 	} else if r.VerdictBool == nil {
 		verdictBool = verdictBoolFromOutput(r.Output)
+	}
+	verdictOnConflict := "COALESCE(excluded.verdict_bool, reviews.verdict_bool)"
+	if unreadable {
+		verdictOnConflict = "NULL"
 	}
 	_, err = db.Exec(`
 		INSERT INTO reviews (
@@ -897,7 +906,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
-			verdict_bool = COALESCE(excluded.verdict_bool, reviews.verdict_bool),
+			verdict_bool = `+verdictOnConflict+`,
 			structured_output = COALESCE(excluded.structured_output, reviews.structured_output),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,

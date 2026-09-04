@@ -78,6 +78,23 @@ type Finding struct {
 	Sources []int `json:"sources,omitempty"`
 }
 
+// MarshalJSON emits an empty Location as JSON null so an encoded document
+// stays valid under Schema, which requires the field on every finding.
+func (f Finding) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Severity string  `json:"severity"`
+		Problem  string  `json:"problem"`
+		Fix      string  `json:"fix"`
+		Location *string `json:"location"`
+		Sources  []int   `json:"sources,omitempty"`
+	}
+	w := wire{Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Sources: f.Sources}
+	if f.Location != "" {
+		w.Location = &f.Location
+	}
+	return json.Marshal(w)
+}
+
 type documentWire struct {
 	SchemaVersion int           `json:"schema_version"`
 	Summary       string        `json:"summary"`

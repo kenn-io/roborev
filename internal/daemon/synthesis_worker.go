@@ -288,7 +288,13 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		completeErr = wp.db.CompleteJob(job.ID, agentName, prompt, output)
 	}
 	if completeErr != nil {
+		// Leaving the job running would strand the panel with no comment.
+		// Route the storage failure through the ordinary retry/fail path.
 		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, completeErr)
+		wp.failOrRetryInnerLocked(
+			workerID, job, agentName,
+			fmt.Sprintf("store synthesis review: %v", completeErr), false, nil,
+		)
 		return
 	}
 
