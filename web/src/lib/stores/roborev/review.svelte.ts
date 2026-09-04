@@ -2,7 +2,12 @@ import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest, type RoborevClient } from "../../api/client";
-import type { components, operations } from "../../api/generated";
+import type {
+  ListJobsParams,
+  Response as ReviewResponse,
+  Review,
+  ReviewJob,
+} from "../../api/generated/models";
 import {
   RoborevMutationError,
   roborevMutationFailureMessage,
@@ -10,12 +15,7 @@ import {
   RoborevWorkflow,
 } from "./workflow";
 
-type Review = components["schemas"]["Review"];
-type ReviewJob = components["schemas"]["ReviewJob"];
-type ReviewResponse = components["schemas"]["Response"];
-type ListJobsQuery = NonNullable<
-  operations["list-jobs"]["parameters"]["query"]
->;
+type ListJobsQuery = ListJobsParams;
 
 interface ReviewAuthority {
   readonly review: Review | null;

@@ -1,14 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { components } from "../api/generated";
+import type { AnalyticsSnapshot } from "../api/generated/models";
 import type {
   AnalyticsFilters,
   AnalyticsStore,
 } from "../stores/analytics.svelte";
 import AnalyticsView from "./AnalyticsView.svelte";
-
-type AnalyticsSnapshot = components["schemas"]["AnalyticsSnapshot"];
 
 const filters: AnalyticsFilters = {
   range: "30d",

@@ -1,11 +1,16 @@
-import type { components } from "./generated";
+import type {
+  ReviewProjection,
+  ReviewProjectionJob,
+  ReviewProjectionResponse,
+  ReviewProjectionReview,
+} from "./generated";
 
-export type ReviewProjection = components["schemas"]["ReviewProjection"];
-export type ReviewProjectionJob = components["schemas"]["ReviewProjectionJob"];
-export type ReviewProjectionReview =
-  components["schemas"]["ReviewProjectionReview"];
-export type ReviewProjectionResponse =
-  components["schemas"]["ReviewProjectionResponse"];
+export type {
+  ReviewProjection,
+  ReviewProjectionJob,
+  ReviewProjectionResponse,
+  ReviewProjectionReview,
+};
 
 export const supportedReviewProjectionSchemaVersions = [1] as const;
 

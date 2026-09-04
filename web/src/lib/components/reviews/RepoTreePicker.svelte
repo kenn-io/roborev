@@ -6,15 +6,15 @@
   import { executeRoborevRequest } from "../../api/client";
   import { getReviewStores } from "../../stores/context";
   import { getRoborevClient } from "../../runtime/context";
-  import type { components } from "../../api/generated";
+  import type {
+    BranchWithCount,
+    RepoWithCount,
+  } from "../../api/generated/models";
   import {
     makeRoborevOwner,
     RoborevResponseError,
     RoborevWorkflow,
   } from "../../stores/roborev/workflow";
-
-  type RepoWithCount = components["schemas"]["RepoWithCount"];
-  type BranchWithCount = components["schemas"]["BranchWithCount"];
 
   const stores = getReviewStores();
   const client = getRoborevClient();

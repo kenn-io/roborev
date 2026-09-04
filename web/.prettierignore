@@ -2,4 +2,4 @@ dist/
 coverage/
 playwright-report/
 test-results/
-src/lib/api/generated.ts
+src/lib/api/generated/

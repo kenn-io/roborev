@@ -1,6 +1,6 @@
 <script lang="ts">
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import type { components } from "../../api/generated";
+  import type { ReviewJob } from "../../api/generated/models";
   import {
     panelCostUsd,
     panelElapsedStart,
@@ -10,8 +10,6 @@
   import { formatRelativeTime } from "@kenn-io/kit-ui";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
-
-  type ReviewJob = components["schemas"]["ReviewJob"];
 
   interface Props {
     job: ReviewJob;

@@ -516,6 +516,7 @@ func jsonResponses(
 	responses := make(map[string]*huma.Response, len(schemas))
 	for status, schema := range schemas {
 		responses[status] = &huma.Response{
+			Description: "HTTP " + status + " response",
 			Content: map[string]*huma.MediaType{
 				"application/json": {Schema: schema},
 			},

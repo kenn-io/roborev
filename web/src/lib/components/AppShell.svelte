@@ -6,7 +6,7 @@
 
   import { appPath } from "../base-path";
   import { createRoborevClient, executeRoborevRequest } from "../api/client";
-  import type { components } from "../api/generated";
+  import type { ReleaseNote } from "../api/generated/models";
   import type { SessionCapabilities } from "../api/session";
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime, setRoborevClient } from "../runtime/context";
@@ -16,8 +16,6 @@
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
-
-  type ReleaseNote = components["schemas"]["ReleaseNote"];
 
   interface Props {
     capabilities: SessionCapabilities;

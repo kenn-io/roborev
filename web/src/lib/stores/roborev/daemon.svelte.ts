@@ -2,14 +2,12 @@ import { Duration, Effect, Option, Schedule } from "effect";
 
 import { TransientTransportError } from "../../api/effect-errors";
 import type { RoborevClient } from "../../api/client";
-import type { components } from "../../api/generated";
+import type { DaemonStatus } from "../../api/generated/models";
 import type { AppRuntime } from "../../runtime/runtime";
 
 const UNAVAILABLE_POLL_INTERVAL_MS = 1_000;
 const AVAILABLE_POLL_INTERVAL_MS = 30_000;
 const STATUS_TIMEOUT = "5 seconds";
-
-type DaemonStatus = components["schemas"]["DaemonStatus"];
 
 export interface DaemonStoreOptions {
   client: RoborevClient;

@@ -31,7 +31,6 @@
     "effect": "4.0.0-beta.102",
     "marked": "18.0.5",
     "mermaid": "11.16.1",
-    "openapi-fetch": "0.17.0",
     "shiki": "4.3.0",
     "svelte": "5.56.4"
   },
@@ -47,7 +46,7 @@
     "eslint-plugin-svelte": "3.15.0",
     "globals": "16.5.0",
     "jsdom": "29.1.1",
-    "openapi-typescript": "7.13.0",
+    "orval": "8.26.0",
     "playwright": "1.61.1",
     "prettier": "3.8.3",
     "prettier-plugin-svelte": "3.4.1",

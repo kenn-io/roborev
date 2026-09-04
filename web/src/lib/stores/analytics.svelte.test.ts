@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { components } from "../api/generated";
+import type { AnalyticsSnapshot } from "../api/generated/models";
 import { createAnalyticsStore, type AnalyticsLoader } from "./analytics.svelte";
-
-type AnalyticsSnapshot = components["schemas"]["AnalyticsSnapshot"];
 
 function snapshot(total: number): AnalyticsSnapshot {
   const percentiles = { p50_secs: 0, p90_secs: 0, p99_secs: 0 };

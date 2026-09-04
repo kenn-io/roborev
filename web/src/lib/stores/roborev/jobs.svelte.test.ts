@@ -7,9 +7,7 @@ import {
   type JobsStore,
   type JobsStoreOptions,
 } from "./jobs.svelte";
-import type { components } from "../../api/generated";
-
-type ReviewJob = components["schemas"]["ReviewJob"];
+import type { ReviewJob } from "../../api/generated/models";
 
 const originalFetch = globalThis.fetch;
 const runtimes = new Set<OwnedAppRuntime>();

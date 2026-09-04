@@ -5,7 +5,12 @@ import {
   type RoborevClient,
   RoborevStreamError,
 } from "../../api/client";
-import type { components, operations } from "../../api/generated";
+import type {
+  CancelJobOutputBody,
+  JobStats,
+  ListJobsParams,
+  ReviewJob,
+} from "../../api/generated/models";
 import {
   isPanelParent,
   panelCostUsd,
@@ -20,12 +25,8 @@ import {
   RoborevWorkflow,
 } from "./workflow";
 
-type ReviewJob = components["schemas"]["ReviewJob"];
-type JobStats = components["schemas"]["JobStats"];
-type CancelJobResponse = components["schemas"]["CancelJobOutputBody"];
-type ListJobsQuery = NonNullable<
-  operations["list-jobs"]["parameters"]["query"]
->;
+type CancelJobResponse = CancelJobOutputBody;
+type ListJobsQuery = ListJobsParams;
 
 export interface JobsStoreOptions {
   client: RoborevClient;

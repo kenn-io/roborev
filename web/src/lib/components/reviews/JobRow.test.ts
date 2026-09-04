@@ -2,9 +2,7 @@ import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 
 import JobRow from "./JobRow.svelte";
-import type { components } from "../../api/generated";
-
-type ReviewJob = components["schemas"]["ReviewJob"];
+import type { ReviewJob } from "../../api/generated/models";
 
 function makeJob(tokenUsage?: string): ReviewJob {
   return {

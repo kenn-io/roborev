@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { components } from "../../api/generated";
+import type { ReviewJob } from "../../api/generated/models";
 
 vi.mock("./ReviewContent.svelte", async () => ({
   default: (await import("./ReviewDrawerTestContent.svelte")).default,
@@ -36,7 +36,6 @@ const state = vi.hoisted(() => ({
   },
 }));
 
-type ReviewJob = components["schemas"]["ReviewJob"];
 const job: ReviewJob = {
   id: 42,
   agent: "claude",

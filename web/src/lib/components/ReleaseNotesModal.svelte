@@ -2,11 +2,10 @@
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Component } from "svelte";
 
-  import type { components } from "../api/generated";
+  import type { ReleaseNote } from "../api/generated/models";
   import { pushModalFrame } from "../keyboard/modal-stack.svelte";
   import { untrack } from "svelte";
 
-  type ReleaseNote = components["schemas"]["ReleaseNote"];
   type ReleaseContentComponent = Component<{
     output: string;
     emptyMessage?: string;

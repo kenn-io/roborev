@@ -1,50 +1,189 @@
-import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { promisify } from "node:util";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 
-const execFileAsync = promisify(execFile);
+import { generate } from "orval";
+import { format, resolveConfig } from "prettier";
 
-export interface GenerateAPIOptions {
+interface GenerateAPIOptions {
   spec: string;
-  output: string;
+  webOutput: string;
+  packageOutput: string;
   check: boolean;
 }
 
-export type GeneratorRunner = (spec: string, output: string) => Promise<void>;
-
-const runOpenAPITypeScript: GeneratorRunner = async (spec, output) => {
-  const executable = resolve(
-    import.meta.dirname,
-    "../node_modules/.bin/openapi-typescript",
-  );
-  await access(executable, constants.X_OK);
-  await execFileAsync(executable, [spec, "--output", output]);
-};
-
-export async function generateAPI(
-  options: GenerateAPIOptions,
-  runner: GeneratorRunner = runOpenAPITypeScript,
-): Promise<void> {
-  await mkdir(dirname(options.output), { recursive: true });
-  const temporary = `${options.output}.tmp-${process.pid}-${crypto.randomUUID()}`;
-
+async function generatedSources(
+  directory: string,
+  base = directory,
+  sources = new Map<string, Buffer>(),
+): Promise<Map<string, Buffer>> {
+  let entries;
   try {
-    await runner(options.spec, temporary);
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingFile(error)) return sources;
+    throw error;
+  }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await generatedSources(path, base, sources);
+    } else if (entry.name.endsWith(".ts")) {
+      sources.set(relative(base, path), await readFile(path));
+    }
+  }
+  return sources;
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function operationName(operation: object, route: string): string {
+  const operationId =
+    "operationId" in operation && typeof operation.operationId === "string"
+      ? operation.operationId
+      : undefined;
+  if (!operationId) {
+    throw new Error("Every API operation must have an operationId");
+  }
+  let name = operationId;
+  for (const match of route.matchAll(/\{([^}]+)\}/g)) {
+    const parameter = match[1]!
+      .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+      .replaceAll("_", "-")
+      .toLowerCase();
+    for (const candidate of [parameter, parameter.replaceAll("-", "")]) {
+      const next = name.replace(`-${candidate}`, `-by-${parameter}`);
+      if (next !== name) {
+        name = next;
+        break;
+      }
+    }
+  }
+  return name.replace(/-([a-z0-9])/g, (_, character: string) =>
+    character.toUpperCase(),
+  );
+}
+
+async function changedFiles(
+  currentDirectory: string,
+  generatedDirectory: string,
+): Promise<string[]> {
+  const [current, generated] = await Promise.all([
+    generatedSources(currentDirectory),
+    generatedSources(generatedDirectory),
+  ]);
+  const paths = new Set([...current.keys(), ...generated.keys()]);
+  return [...paths]
+    .filter((path) => {
+      const oldSource = current.get(path);
+      const newSource = generated.get(path);
+      return (
+        oldSource === undefined ||
+        newSource === undefined ||
+        !oldSource.equals(newSource)
+      );
+    })
+    .sort();
+}
+
+async function replaceDirectory(
+  source: string,
+  destination: string,
+): Promise<void> {
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(dirname(destination), { recursive: true });
+  await rename(source, destination);
+}
+
+async function formatGenerated(directory: string): Promise<void> {
+  const prettierOptions = (await resolveConfig(directory)) ?? {};
+  const sources = await generatedSources(directory);
+  await Promise.all(
+    [...sources].map(async ([path, source]) => {
+      const file = join(directory, path);
+      await writeFile(
+        file,
+        await format(source.toString(), {
+          ...prettierOptions,
+          filepath: file,
+        }),
+      );
+    }),
+  );
+}
+
+export async function generateAPI(options: GenerateAPIOptions): Promise<void> {
+  const webParent = dirname(options.webOutput);
+  await mkdir(dirname(options.packageOutput), { recursive: true });
+  const temporaryRoot = await mkdtemp(join(webParent, ".generated-"));
+  const temporaryWeb = temporaryRoot;
+  const temporaryPackage = await mkdtemp(
+    join(dirname(options.packageOutput), ".generated-"),
+  );
+  try {
+    await generate(
+      {
+        input: options.spec,
+        output: {
+          client: "fetch",
+          mode: "tags-split",
+          target: temporaryWeb,
+          schemas: join(temporaryWeb, "models"),
+          clean: true,
+          urlEncodeParameters: true,
+          override: {
+            fetch: { includeHttpResponseReturnType: false },
+            header: () => ["Generated by Orval. Do not edit manually."],
+            mutator: {
+              path: resolve(webParent, "generated-fetch.ts"),
+              name: "roborevFetch",
+            },
+            operationName,
+            useNamedParameters: true,
+          },
+        },
+      },
+      dirname(options.spec),
+    );
+    await formatGenerated(temporaryWeb);
+    await cp(join(temporaryWeb, "models"), temporaryPackage, {
+      recursive: true,
+    });
+
     if (options.check) {
-      const [current, generated] = await Promise.all([
-        readFile(options.output),
-        readFile(temporary),
+      const [webChanges, packageChanges] = await Promise.all([
+        changedFiles(options.webOutput, temporaryWeb),
+        changedFiles(options.packageOutput, temporaryPackage),
       ]);
-      if (!current.equals(generated)) {
-        throw new Error("generated browser API types are stale");
+      const changes = [
+        ...webChanges.map((path) => `web: ${path}`),
+        ...packageChanges.map((path) => `package: ${path}`),
+      ];
+      if (changes.length > 0) {
+        throw new Error(
+          `generated browser API client is stale:\n${changes.join("\n")}`,
+        );
       }
       return;
     }
-    await rename(temporary, options.output);
+
+    await Promise.all([
+      replaceDirectory(temporaryWeb, options.webOutput),
+      replaceDirectory(temporaryPackage, options.packageOutput),
+    ]);
   } finally {
-    await rm(temporary, { force: true });
+    await rm(temporaryRoot, { recursive: true, force: true });
+    await rm(temporaryPackage, { recursive: true, force: true });
   }
 }
 
@@ -55,25 +194,13 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const spec = resolve(import.meta.dirname, "../../pkg/client/openapi.yaml");
-  const check = args[0] === "--check";
-  await Promise.all([
-    generateAPI({
-      spec,
-      output: resolve(import.meta.dirname, "../src/lib/api/generated.ts"),
-      check,
-    }),
-    generateAPI({
-      spec,
-      output: resolve(
-        import.meta.dirname,
-        "../../packages/roborev-ui/src/generated.ts",
-      ),
-      check,
-    }),
-  ]);
+  const repoRoot = resolve(import.meta.dirname, "../..");
+  await generateAPI({
+    spec: join(repoRoot, "pkg/client/openapi.yaml"),
+    webOutput: resolve(import.meta.dirname, "../src/lib/api/generated"),
+    packageOutput: join(repoRoot, "packages/roborev-ui/src/generated"),
+    check: args[0] === "--check",
+  });
 }
 
-if (import.meta.main) {
-  await main();
-}
+if (import.meta.main) await main();

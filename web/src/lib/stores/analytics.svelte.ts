@@ -1,11 +1,12 @@
 import { appPath } from "../base-path";
 import type { RoborevClient } from "../api/client";
-import type { components, operations } from "../api/generated";
+import type {
+  AnalyticsSnapshot,
+  GetWebAnalyticsParams,
+} from "../api/generated/models";
 
-export type AnalyticsSnapshot = components["schemas"]["AnalyticsSnapshot"];
-export type AnalyticsQuery = NonNullable<
-  operations["get-web-analytics"]["parameters"]["query"]
->;
+export type { AnalyticsSnapshot };
+export type AnalyticsQuery = GetWebAnalyticsParams;
 export type AnalyticsLoader = (
   query: AnalyticsQuery,
   signal: AbortSignal,

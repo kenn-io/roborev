@@ -3576,6 +3576,7 @@ paths:
                   - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/PanelEnqueueResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
+          description: HTTP 200 response
         "201":
           content:
             application/json:
@@ -3584,27 +3585,31 @@ paths:
                   - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/PanelEnqueueResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
-          description: Created
+          description: HTTP 201 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 413 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
         "503":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 503 response
       summary: Enqueue a daemon job
       tags:
         - jobs
@@ -3927,27 +3932,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReviewJob"
-          description: Created
+          description: HTTP 201 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "404":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 404 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
         "503":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 503 response
       summary: Create a background fix job
       tags:
         - jobs
@@ -4742,17 +4751,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenSummary"
-          description: OK
+          description: HTTP 200 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
       summary: Backfill token usage from AgentsView payloads
       tags:
         - jobs

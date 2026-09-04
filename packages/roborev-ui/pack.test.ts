@@ -45,7 +45,9 @@ test("the package ships only its supported source contract", () => {
     .filter(Boolean)
     .sort();
 
-  expect(entries).toEqual([
+  expect(
+    entries.filter((entry) => !entry.startsWith("package/src/generated/")),
+  ).toEqual([
     "package/README.md",
     "package/package.json",
     "package/src/components/PanelAttribution.svelte",
@@ -55,11 +57,19 @@ test("the package ships only its supported source contract", () => {
     "package/src/components/ReviewProjectionView.svelte",
     "package/src/components/StatusBadge.svelte",
     "package/src/components/VerdictBadge.svelte",
-    "package/src/generated.ts",
     "package/src/index.ts",
     "package/src/markdown/render.ts",
     "package/src/types.ts",
   ]);
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      "package/src/generated/index.ts",
+      "package/src/generated/reviewProjection.ts",
+      "package/src/generated/reviewProjectionJob.ts",
+      "package/src/generated/reviewProjectionResponse.ts",
+      "package/src/generated/reviewProjectionReview.ts",
+    ]),
+  );
 
   const consumer = join(destination, "consumer");
   mkdirSync(join(consumer, "src"), { recursive: true });
