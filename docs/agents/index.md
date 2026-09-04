@@ -280,8 +280,8 @@ explicitly on every Pi launch:
 launch_args = ["--extension", "npm:@example/pi-provider"]
 ```
 
-See [Pi Classifier Options](/configuration/#pi-classifier-options) for argument
-ordering and tokenization details.
+See [Pi Classifier Options](/docs/configuration/#pi-classifier-options) for
+argument ordering and tokenization details.
 
 ## Agentic Support
 
@@ -303,8 +303,8 @@ and commands):
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
 
-See [Custom Tasks & Agentic Mode](/advanced/custom-tasks/) for details on review
-vs agentic modes.
+See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
+review vs agentic modes.
 
 ## Pi
 
@@ -438,10 +438,12 @@ disable_mode_negotiation = true
 The subtable key supplies the suffix of the canonical agent identity, so these
 entries can be selected with `--agent acp.codex-acp` and `--agent acp.goose`.
 
-See the [Agent Client Protocol (ACP) guide](/advanced/acp/) for setup examples,
-the full configuration reference, mode negotiation, and troubleshooting.
+See the [Agent Client Protocol (ACP) guide](/docs/advanced/acp/) for setup
+examples, the full configuration reference, mode negotiation, and
+troubleshooting.
 
 ## See Also
 
-- [Custom Tasks & Agentic Mode](/advanced/custom-tasks/): Review vs agentic mode
-- [Configuration](/configuration/): API keys and auth setup
+- [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/): Review vs agentic
+    mode
+- [Configuration](/docs/configuration/): API keys and auth setup

@@ -157,8 +157,8 @@ max_chars = 50000
 | `review_min_severity` | string | Minimum severity for reviews: `critical`, `high`, `medium`, or `low`. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
-| `reuse_review_session` | bool | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/guides/reviewing-code/#session-reuse) |
-| `reuse_review_session_lookback` | int | Max recent session candidates to consider (default: unlimited). See [Session Reuse](/guides/reviewing-code/#session-reuse) |
+| `reuse_review_session` | bool | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) |
+| `reuse_review_session_lookback` | int | Max recent session candidates to consider (default: unlimited). See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) |
 | `review_agent_<level>` | string | Agent to use for reviews at specific reasoning level |
 | `review_model_<level>` | string | Model to use for reviews at specific reasoning level |
 | `refine_agent_<level>` | string | Agent to use for refine at specific reasoning level |
@@ -363,7 +363,7 @@ project = "myproj"
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project with
 a committed `.kata.toml`, roborev can include Kata task context in review
 prompts. For an overview of both directions of the integration, see
-[Kata](/integrations/kata/).
+[Kata](/docs/integrations/kata/).
 
 ```toml
 # .roborev.toml or ~/.roborev/config.toml
@@ -400,7 +400,7 @@ context last.
 
 To file failed reviews and review findings back into Kata, configure a
 `type = "kata"` review hook. See
-[Built-in: Kata Integration](/guides/hooks/#built-in-kata-integration).
+[Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration).
 
 ### Workflow-Specific Agent and Model
 
@@ -481,8 +481,8 @@ Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 Custom domain-specific review types are configured under
 `[review.types.<name>]`. They support a Go template, named file includes, and
 optional agent, model, and reasoning overrides. See
-[Custom Review Types](/advanced/custom-review-types/) for path rules, template
-values, structured output, and examples.
+[Custom Review Types](/docs/advanced/custom-review-types/) for path rules,
+template values, structured output, and examples.
 
 ### Review Panels
 
@@ -517,8 +517,9 @@ select a named panel with `[ci] panel = "branch_final"`. Use
 not fail an otherwise successful panel.
 
 Global and repo panel maps are merged by name, with repo entries overriding
-global entries. See [Subagent Review Panels](/advanced/subagent-review-panels/)
-for the full reference.
+global entries. See
+[Subagent Review Panels](/docs/advanced/subagent-review-panels/) for the full
+reference.
 
 ### Review configuration experiments
 
@@ -576,9 +577,9 @@ Review, CI metrics, and CI cost exports include an `experiments` field. It is an
 array of assignments when an experiment applies and `null` otherwise. Each
 assignment records the experiment ID, arm, subject hash, definition hash, and
 effective configuration hash. Use these fields to group outcomes by experiment
-and arm. See [Exporting Reviews](/commands/#exporting-reviews),
-[Exporting CI Metrics](/commands/#exporting-ci-metrics), and
-[Exporting CI Costs](/commands/#exporting-ci-costs).
+and arm. See [Exporting Reviews](/docs/commands/#exporting-reviews),
+[Exporting CI Metrics](/docs/commands/#exporting-ci-metrics), and
+[Exporting CI Costs](/docs/commands/#exporting-ci-costs).
 
 ### Backup Agents
 
@@ -886,7 +887,7 @@ column_borders = true             # Show separators between TUI columns
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
 | `review_context_count` | int | 3 | Recent reviews to include as context | Yes |
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
-| `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/guides/reviewing-code/#session-reuse) | Yes |
+| `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass with no findings | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
@@ -1016,8 +1017,9 @@ receives the cookie and creates credentials stored only for that tab. Disable
 the listener with `web.enabled = false`; in that mode, `roborev ui` reports that
 browser access needs to be configured instead of opening a dead URL.
 
-See [Browser UI](/web-ui/) for the exact installed-user workflow, a Tailscale
-Serve recipe, browser-session behavior, and the analytics metric definitions.
+See [Browser UI](/docs/web-ui/) for the exact installed-user workflow, a
+Tailscale Serve recipe, browser-session behavior, and the analytics metric
+definitions.
 
 ### Data Directory
 
@@ -1352,7 +1354,7 @@ tasks_enabled = true   # Enable background tasks in the TUI
 
 When enabled, the TUI exposes the `F` (fix) and `T` (tasks) shortcuts for
 launching fix jobs and managing patches. See
-[Background Tasks](/advanced/background-tasks/) for the full reference.
+[Background Tasks](/docs/advanced/background-tasks/) for the full reference.
 
 ### Codex Review Options
 
@@ -1458,7 +1460,7 @@ because Pi extensions may define their own flags and value requirements.
 ## Hooks
 
 Run shell commands when reviews complete or fail. See the
-[Review Hooks guide](/guides/hooks) for full details.
+[Review Hooks guide](/docs/guides/hooks) for full details.
 
 ```toml
 # In config.toml or .roborev.toml
@@ -1730,7 +1732,7 @@ suppress notification and completion sounds.
 To route Claude Code through a local or remote proxy (Ollama, LiteLLM, LM
 Studio, etc.) instead of Anthropic's API, use the `<model>@<base_url>` model
 spec. See
-[Routing Claude Code to a Proxy](/agents/#routing-claude-code-to-a-proxy).
+[Routing Claude Code to a Proxy](/docs/agents/#routing-claude-code-to-a-proxy).
 
 ### Other Agents
 

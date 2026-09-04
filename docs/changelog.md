@@ -16,18 +16,18 @@ All notable changes to roborev, grouped by minor release.
     experimental group across daemon-backed and CI poller reviews. Explicit
     request settings still win, and `roborev config validate` checks an
     experiment without starting a review. See
-    [Review Configuration Experiments](/configuration/#review-configuration-experiments).
+    [Review Configuration Experiments](/docs/configuration/#review-configuration-experiments).
 - Maintainers can skip automated reviews for pull requests that do not need one,
     such as drafts or generated updates. Add their labels to `[ci].skip_labels`;
     removing a label makes the current commit eligible again. GitHub App
     installations report the decision as a `skipped` check, while personal
     authentication skips the review without creating a check. See
-    [GitHub Integration](/integrations/github/#setup-with-github-app-recommended).
+    [GitHub Integration](/docs/integrations/github/#setup-with-github-app-recommended).
 - Repositories with many small commits can now get one useful review instead of
     a stream of repetitive ones. Set `post_commit_batch_size` to review several
     commits together. Roborev tracks pending batches per branch across linked
     worktrees and tries to review any partial batch before a push. See
-    [Post-Commit Reviews](/automation/post-commit-reviews/#batch-small-commits).
+    [Post-Commit Reviews](/docs/automation/post-commit-reviews/#batch-small-commits).
 
 **Improvements**
 
@@ -54,7 +54,7 @@ All notable changes to roborev, grouped by minor release.
     inspection commands they need.
 - You can select and copy text with the mouse from the split-screen TUI review
     pane again. Queue clicks and scrolling continue to work as before. See
-    [Split-Screen Review](/integrations/tui/#split-screen-review).
+    [Split-Screen Review](/docs/integrations/tui/#split-screen-review).
 - Agent Hook no longer repeats the same fix reminder throughout an agent
     session. It remembers which reviews it already delivered while still
     surfacing genuinely new review work.
@@ -81,47 +81,48 @@ ______________________________________________________________________
     login proxy instead of giving each user a Roborev token. Set
     `web.auth_mode = "proxy"`; the daemon validates the forwarded request before
     creating a restricted remote session. Local and token authentication still
-    work as before. See [Proxy Authentication](/web-ui/#proxy-authentication).
+    work as before. See
+    [Proxy Authentication](/docs/web-ui/#proxy-authentication).
 - The browser application can now live at a path such as `/roborev` on a shared
     domain. Set `web.base_path`, and Roborev applies it consistently to pages,
     assets, deep links, API calls, live events, and session cookies. This solves
     routing under a path prefix; it does not isolate Roborev from other apps on
     the same origin. See
-    [Private Network Access](/web-ui/#private-network-access).
+    [Private Network Access](/docs/web-ui/#private-network-access).
 - You can now give every fix agent the same standing instructions about which
     review suggestions to verify, apply, or intentionally reject. Set
     `fix_guidelines` in `~/.roborev/config.toml` to cover Agent Hook and
     foreground `roborev fix` sessions. Leaving it empty preserves the previous
-    behavior. See [Fix Guidelines](/configuration/#fix-guidelines).
+    behavior. See [Fix Guidelines](/docs/configuration/#fix-guidelines).
 - Agent Hook now shares the regular Roborev daemon, so there is only one
     background service to start, inspect, and reset. Existing counters are
     preserved. Before upgrading from a release that still runs the old helper
     daemon, stop it with that release's `roborev agent-hook daemon stop`
-    command. See
-    [Upgrading existing hooks](/agent-hook/#upgrading-existing-hooks).
+    command. See [Runtime Model](/docs/agent-hook/#runtime-model).
 
 **Improvements**
 
 - Updating Roborev no longer means blindly interrupting active review work.
     `roborev update` lets you wait, requeue interrupted attempts, or abort. New
     jobs stay queued until the replacement daemon is ready and running the new
-    version. See [Update](/commands/#update).
+    version. See [Update](/docs/commands/#update).
 - Recent reviews are less likely to remain permanently unpriced when usage data
     arrives late. The daemon retries new misses and revisits eligible jobs from
     the previous week, even across restarts. Use `roborev backfill-tokens` for
     older history. See
-    [Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
+    [Cost Usage Endpoint](/docs/configuration/#cost-usage-endpoint).
 - Browser startup failures now tell you whether the UI was disabled in
     configuration or left out of the build. The same explanation appears in
     status, restart, UI, and version commands. Release checks also verify that
     published archives contain the production web application. See
-    [Open the Application](/web-ui/#open-the-application).
+    [Open the Application](/docs/web-ui/#open-the-application).
 - Security reviews now spend less attention on known low-value warning classes.
     They compare changed code with the repository's established secure pattern
     and favor a smaller set of findings that developers can act on.
 - Building Roborev from source now requires Go 1.27 across development, CI,
     release, screenshot, Nix, and CodeQL workflows. Published binaries remain
-    self-contained. See [Build from Source](/installation/#build-from-source).
+    self-contained. See
+    [Build from Source](/docs/installation/#build-from-source).
 - Source builds now use refreshed Go dependencies, including `grpc-go` 1.82.1,
     which is outside the range affected by `GHSA-hrxh-6v49-42gf`.
 
@@ -164,26 +165,27 @@ ______________________________________________________________________
     analytics view shows volume, outcomes, failures, latency, agent attempts,
     estimated cost, and pricing coverage. Local access starts automatically;
     remote HTTPS deployments use a browser session without exposing the private
-    CLI listener. See [Browser UI](/web-ui/).
+    CLI listener. See [Browser UI](/docs/web-ui/).
 - Wide terminals now show the review queue and the selected review side by side,
     so you can triage without repeatedly opening and closing detail views. The
     layout activates at 140 columns by 36 rows, updates while jobs run, and can
     be toggled with `L`. Smaller terminals keep the existing stacked view. See
-    [Split-Screen Review](/integrations/tui/#split-screen-review).
+    [Split-Screen Review](/docs/integrations/tui/#split-screen-review).
 - You can now ask supported agents for an exact reasoning effort: `low`,
     `medium`, `high`, `xhigh`, or `max`. Roborev forwards the value unchanged,
     while the existing `fast`, `standard`, `thorough`, and `maximum` presets
-    remain compatible. See [Reasoning Levels](/configuration/#reasoning-levels).
+    remain compatible. See
+    [Reasoning Levels](/docs/configuration/#reasoning-levels).
 - Pi users can now supply global launch arguments through
     `[agent.pi] launch_args`. This makes extension-provided model services
     available to isolated classifier jobs without weakening Roborev's agent
     discovery isolation. See
-    [Pi Classifier Options](/configuration/#pi-classifier-options).
+    [Pi Classifier Options](/docs/configuration/#pi-classifier-options).
 - Teams can now export the cost of each CI attempt, including retries that a
     final panel summary cannot show. `roborev export ci-costs` supports stable
     cursors, refresh windows, correct missing-versus-zero prices, and backfill
     for older data so accounting pipelines can update incrementally. See
-    [Exporting CI Costs](/commands/#exporting-ci-costs).
+    [Exporting CI Costs](/docs/commands/#exporting-ci-costs).
 
 **Improvements**
 
@@ -194,21 +196,21 @@ ______________________________________________________________________
 - Active Agent Hook snoozes are now visible instead of silently suppressing
     reminders. `roborev status` shows the affected repository, worktree, branch,
     and expiry; an exactly filtered TUI view shows a matching badge. See
-    [Snoozing Reminders](/agent-hook/#snoozing-reminders).
+    [Snoozing Reminders](/docs/agent-hook/#snoozing-reminders).
 - Restarting the daemon no longer cuts off active reviews after a fixed timeout.
     Roborev stops taking new work, waits for reviews, hooks, and final sync to
     finish, and tells you what it is waiting for.
 - Branch reviews launched from a linked worktree now review that worktree, even
     when shared or stale Git configuration points at a sibling checkout. See
-    [Git Worktrees](/guides/repository-management/#git-worktrees).
+    [Git Worktrees](/docs/guides/repository-management/#git-worktrees).
 - Agent Hook now uses one consistent workflow across Claude Code, Codex, Copilot
     CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen, while preserving
     Roborev's Grok integration. Existing Codex, Claude, and Droid registrations
-    upgrade in place. See [Agent Hook](/agent-hook/).
+    upgrade in place. See [Agent Hook](/docs/agent-hook/).
 - Homebrew updates now come directly from official Roborev releases. The tap
     owns its formula updates, removing a duplicate publishing path and its
     cross-repository credential. See
-    [Homebrew installation](/installation/#homebrew-macos-linux).
+    [Homebrew installation](/docs/installation/#homebrew-macos-linux).
 - Building Roborev from source now requires Go 1.26.6. Go, JavaScript,
     documentation, and GitHub Actions dependencies were also refreshed,
     including fixes for known Go toolchain and `go-git` vulnerabilities.
@@ -226,10 +228,11 @@ ______________________________________________________________________
 - Sandboxed clients no longer start a competing daemon just because they cannot
     access the usual loopback address or socket. Roborev preserves the
     permission error and can use the daemon's private Unix-socket fallback. See
-    [Daemon & Hooks](/commands/#daemon-hooks).
+    [Daemon & Hooks](/docs/commands/#daemon-hooks).
 - New agent sessions now briefly retry delayed usage indexing before falling
     back to job-log token counts. This reduces missing cost estimates without
-    making reviews wait indefinitely. See [Token Usage](/commands/#token-usage).
+    making reviews wait indefinitely. See
+    [Token Usage](/docs/commands/#token-usage).
 - The Codex `maximum` preset now reaches the actual `max` tier for explicit
     GPT-5.6 `sol`, `terra`, and `luna` models. Older, default, and unknown
     models keep the compatible `xhigh` mapping, and an explicit `xhigh` remains
@@ -261,32 +264,34 @@ ______________________________________________________________________
     finds the merge request's change range and creates or updates its review
     note. It supports GitLab.com, self-managed hosts, and explicit project,
     host, and merge request selection. See
-    [GitLab Integration](/integrations/gitlab/).
+    [GitLab Integration](/docs/integrations/gitlab/).
 - Reviews and fix workflows can now use [Grok Build](https://x.ai/cli) as a
     first-class agent. Select `--agent grok` or `grok-build` for streamed
     reviews, resumed sessions, structured classification, agentic jobs, bundled
     skills, and Agent Hook. Reviews remain read-only; agentic work still
-    requires the unsafe-agent opt-in. See [Grok Build](/agents/#grok-build).
+    requires the unsafe-agent opt-in. See
+    [Grok Build](/docs/agents/#grok-build).
 - You can now configure several named Agent Client Protocol (ACP) agents at
     once, each with its own command, model, backup, CI work, and synthesis
     settings. Repository configuration replaces only the global agent with the
     same name. Move existing `[acp]` plus `name = "foo"` configuration to
     `[acp.foo]`; this is a breaking configuration change. The guide includes a
     complete Goose setup using ChatGPT Codex subscription authentication. See
-    [Agent Client Protocol (ACP)](/advanced/acp/).
+    [Agent Client Protocol (ACP)](/docs/advanced/acp/).
 - You can temporarily silence Agent Hook reminders without stopping reviews.
     `roborev snooze` affects only the current repository, linked worktree, and
     branch. The bundled Claude Code, Codex, and Factory Droid skills offer the
-    same control. See [Snoozing Reminders](/agent-hook/#snoozing-reminders).
+    same control. See
+    [Snoozing Reminders](/docs/agent-hook/#snoozing-reminders).
 - Bundled skills can now be installed where your agent actually looks for them,
     even when Roborev does not know that location. Use
     `roborev skills install --path <directory>` for agents such as Pi. See
-    [Agent Skills](/guides/agent-skills/).
+    [Agent Skills](/docs/guides/agent-skills/).
 - PostgreSQL sync credentials no longer have to appear directly in Roborev's
     configuration. A `${file:/absolute/path}` reference in `postgres_url` reads
     the password from a file, including when the daemon does not inherit your
     shell environment. See
-    [Credential Expansion](/advanced/postgres-sync/#credential-expansion).
+    [Credential Expansion](/docs/advanced/postgres-sync/#credential-expansion).
 
 **Improvements**
 
@@ -297,13 +302,14 @@ ______________________________________________________________________
     instead of repeating them in configuration. Explicit `review_guidelines`
     still take precedence. Commit and range reviews read `REVIEW.md` from the
     default branch so a change cannot rewrite the policy used to review itself.
-    See [Review Guidelines](/configuration/#review-guidelines).
+    See [Review Guidelines](/docs/configuration/#review-guidelines).
 - `roborev check-agents` now tests the same configured wrapper or binary that
     review jobs will use, making a successful check meaningful for custom agent
     commands.
 - Several post-commit hooks firing at once no longer queue duplicate automatic
     reviews of the same target. Explicit review commands still always create
-    fresh work. See [Post-Commit Reviews](/automation/post-commit-reviews/).
+    fresh work. See
+    [Post-Commit Reviews](/docs/automation/post-commit-reviews/).
 - CI panels that explicitly conclude there are no problems now report a passing
     verdict. Structured findings with failing severity still take precedence.
 - Large job lists now use much less response data and temporary memory because
@@ -327,7 +333,7 @@ ______________________________________________________________________
     `cost_usd` field.
 - An empty Antigravity run now triggers retry or backup-agent handling instead
     of appearing as a successful review with no useful content. See
-    [Gemini: Antigravity vs Legacy CLI](/agents/#gemini-antigravity-vs-legacy-cli).
+    [Gemini: Antigravity vs Legacy CLI](/docs/agents/#gemini-antigravity-vs-legacy-cli).
 
 **Acknowledgements**
 
@@ -366,23 +372,23 @@ ______________________________________________________________________
     turning CI reviews off completely. Configure `[ci.quiet_hours]` with a start
     time, end time, timezone, and per-pull-request `throttle_interval`. This
     extra limit applies by default even to authors who bypass the normal CI
-    throttle. See [Quiet Hours](/integrations/github/#quiet-hours).
+    throttle. See [Quiet Hours](/docs/integrations/github/#quiet-hours).
 - Selected authors can bypass only the quiet-hours limit through
     `[ci.quiet_hours].bypass_users`. Add an author to
     `[ci].throttle_bypass_users` as well if they should bypass both limits. See
-    [Quiet Hours Options](/integrations/github/#quiet-hours-options).
+    [Quiet Hours Options](/docs/integrations/github/#quiet-hours-options).
 - Automation can now tell whether `roborev run` launched work or skipped it
     without parsing terminal prose. Add `--json` to receive a stable receipt
     with the job identifiers, Git reference, and status, or a structured reason
     for a policy skip. See
-    [Custom Tasks & Agentic Mode](/advanced/custom-tasks/).
+    [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/).
 
 **Improvements**
 
 - Pasting a log, transcript, quotation, or old finding that mentions a Roborev
     skill no longer starts that workflow by accident. The bundled `roborev-fix`
     skills act only on a current request or a direct Agent Hook instruction. See
-    [Agent Skills](/guides/agent-skills/#usage).
+    [Agent Skills](/docs/guides/agent-skills/#usage).
 
 **Bug fixes**
 
@@ -391,7 +397,7 @@ ______________________________________________________________________
     grouping, fix and refine discovery, and hook matching work as they do in a
     normal checkout. Ambiguous commits remain branchless, and inferred branches
     still honor `excluded_branches`. See
-    [Detached HEAD Worktrees](/guides/repository-management/#detached-head-worktrees).
+    [Detached HEAD Worktrees](/docs/guides/repository-management/#detached-head-worktrees).
 
 **Acknowledgements**
 
@@ -412,19 +418,21 @@ ______________________________________________________________________
     when a panel finishes. `roborev export ci-metrics` includes member and
     synthesis timing, resumable cursors, database-reset detection, and optional
     backfill for older pre-panel history. See
-    [Exporting CI Metrics](/commands/#exporting-ci-metrics).
+    [Exporting CI Metrics](/docs/commands/#exporting-ci-metrics).
 - Scripts can now read the installed tool name and build version without parsing
     human output. Use `roborev version --json` for a stable machine-readable
-    response. See [Version JSON Contract](/commands/#version-json-contract).
+    response. See
+    [Version JSON Contract](/docs/commands/#version-json-contract).
 
 **Improvements**
 
 - Long agent commands are now readable in the TUI Prompt view because they wrap
     by default. The Log view stays compact. Press `i` in either view to change
-    that view independently. See [Prompt View](/integrations/tui/#prompt-view).
+    that view independently. See
+    [Prompt View](/docs/integrations/tui/#prompt-view).
 - Agent Hook can still start the Codex `roborev-fix` loop it explicitly asks
     for, while every other bundled Codex skill requires a user's direct
-    invocation. See [Agent Skills](/guides/agent-skills/#usage).
+    invocation. See [Agent Skills](/docs/guides/agent-skills/#usage).
 - Nix users get the same supported outputs with one fewer transitive flake
     input; Roborev no longer depends on `flake-utils`.
 
@@ -433,7 +441,7 @@ ______________________________________________________________________
 - An ACP backup agent no longer fails because it inherited a model meant for a
     different agent. Roborev ignores the mismatched model and keeps the ACP
     agent's own `[acp].model`. See
-    [Backup Agents](/configuration/#backup-agents).
+    [Backup Agents](/docs/configuration/#backup-agents).
 
 **Acknowledgements**
 
@@ -457,7 +465,7 @@ ______________________________________________________________________
 
 - You can now stop one queued or running job from the command line with
     `roborev cancel <job_id>`. Jobs that already finished cannot be canceled.
-    See [Canceling a Job](/commands/#canceling-a-job).
+    See [Canceling a Job](/docs/commands/#canceling-a-job).
 
 **Improvements**
 
@@ -465,16 +473,16 @@ ______________________________________________________________________
     a request resembles one. You must select the skill directly through the
     agent's supported skill, command, or menu interface; ordinary review and fix
     requests stay in the agent's native workflow. See
-    [Agent Skills](/guides/agent-skills/#usage).
+    [Agent Skills](/docs/guides/agent-skills/#usage).
 - Custom Claude Code and Codex configuration directories now work across skill
     installation, status checks, updates, and Agent Hook installation. Roborev
     honors `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, with the usual home-directory
     locations as fallbacks. See
-    [Agent Skills](/guides/agent-skills/#how-it-works).
+    [Agent Skills](/docs/guides/agent-skills/#how-it-works).
 - The ACP guide now shows how to choose Gemini models through an Antigravity SDK
     bridge, including thinking-level suffixes, daemon environment setup, and
     agent and model troubleshooting. See
-    [Model-Selectable Gemini via a Bridge](/advanced/acp/#example-model-selectable-gemini-via-a-bridge).
+    [Model-Selectable Gemini via a Bridge](/docs/advanced/acp/#example-model-selectable-gemini-via-a-bridge).
 
 **Bug fixes**
 
@@ -535,7 +543,8 @@ ______________________________________________________________________
 - Data pipelines can now fetch only reviews completed since their previous
     export. `roborev export reviews` returns a stable database identifier and an
     opaque next cursor; pass that cursor back with `--cursor` to resume without
-    rereading old rows. See [Exporting Reviews](/commands/#exporting-reviews).
+    rereading old rows. See
+    [Exporting Reviews](/docs/commands/#exporting-reviews).
 
 **Improvements**
 
@@ -547,7 +556,7 @@ ______________________________________________________________________
     confuse later fix workflows.
 - The refine guide now directs users to Agent Hook when they want an active
     Codex or Claude Code session to pick up review fixes automatically. See
-    [Auto-Fix with Refine](/guides/auto-fixing/).
+    [Auto-Fix with Refine](/docs/guides/auto-fixing/).
 
 **Bug fixes**
 
@@ -579,24 +588,25 @@ ______________________________________________________________________
     or archival. `roborev export reviews` offers content or metadata profiles
     and filters for date, repository, project, closed state, and count. Panel
     results appear once, with their completed member reviews nested below. See
-    [Exporting Reviews](/commands/#exporting-reviews).
+    [Exporting Reviews](/docs/commands/#exporting-reviews).
 - Time-series projects can now ask for a review dedicated to accidental use of
     future data. Run `roborev review --type lookahead` to check for look-ahead
     bias, future-data leakage, incorrect point-in-time joins, temporal split
     mistakes, and related defects. See
-    [Review Types](/guides/reviewing-code/#review-types).
+    [Review Types](/docs/guides/reviewing-code/#review-types).
 - Factory Droid users can now use Agent Hook and Roborev's bundled review, fix,
     refine, response, design-review, and lookahead skills, including branch
     variants. Install the user-scoped hook with
-    `roborev agent-hook install --agent droid`. See [Agent Hook](/agent-hook/).
+    `roborev agent-hook install --agent droid`. See
+    [Agent Hook](/docs/agent-hook/).
 - Each analysis workflow can now choose the agent, model, and reasoning effort
     best suited to it. Configure `[analyze.<type>]` so refactoring and other
     analyses do not have to share the general review defaults. See
-    [Workflow-Specific Agent and Model](/configuration/#workflow-specific-agent-and-model).
+    [Workflow-Specific Agent and Model](/docs/configuration/#workflow-specific-agent-and-model).
 - CI review failures can now alert a Discord channel. Set
     `[ci] discord_webhook_url` to enable best-effort notifications; Roborev
     masks the sensitive URL in configuration output. See
-    [CI Options Reference](/integrations/github/#ci-options-reference).
+    [CI Options Reference](/docs/integrations/github/#ci-options-reference).
 
 **Improvements**
 
@@ -640,7 +650,7 @@ ______________________________________________________________________
 - Codex jobs now support explicit `-c` config passthrough overrides through
     `[agent.codex.config]`, so teams can opt into custom Codex providers without
     loading the full user config. See
-    [Custom Codex Config](/configuration/#custom-codex-config-model-providers).
+    [Custom Codex Config](/docs/configuration/#custom-codex-config-model-providers).
 
 **Improvements**
 
@@ -679,7 +689,7 @@ ______________________________________________________________________
 - `roborev fix` now includes completed `analyze` jobs when discovering open
     findings, so queued analysis results can be fixed without passing each job
     ID explicitly. See
-    [Applying Fixes from Analysis](/guides/assisted-refactoring/#applying-fixes-from-analysis).
+    [Applying Fixes from Analysis](/docs/guides/assisted-refactoring/#applying-fixes-from-analysis).
 
 **Improvements**
 
@@ -687,7 +697,7 @@ ______________________________________________________________________
     instead of pushing directly to the protected tap branch.
 - Workflow-configured reviews, fixes, panels, CI members, and synthesis now use
     only the preferred agent or an explicitly configured backup. See
-    [Backup Agents](/configuration/#backup-agents).
+    [Backup Agents](/docs/configuration/#backup-agents).
 - `roborev analyze` agent invocation is more stable across local setups,
     including Gemini/Antigravity selection, capability probes from deleted
     worktrees, and Codex stored-prompt jobs.
@@ -711,11 +721,11 @@ ______________________________________________________________________
     for `roborev refine` commits, background fix commits applied from the TUI,
     and prompt instructions for foreground `roborev fix` and
     `roborev analyze --fix` commits. See
-    [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+    [Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 - Tolerated panel member failures. Mark a panel subagent with
     `allow_failure = true` when that reviewer is useful but flaky, so a
     transient failure or cancellation does not fail an otherwise usable panel
-    result. See [Subagents](/advanced/subagent-review-panels/#subagents).
+    result. See [Subagents](/docs/advanced/subagent-review-panels/#subagents).
 
 **Improvements**
 
@@ -739,17 +749,17 @@ ______________________________________________________________________
 - Repository-hosted documentation. The roborev.io docs now live in this
     repository, with guides, command reference, integration docs,
     troubleshooting, and a local Zensical build/check workflow. See
-    [Docs Maintainer Guide](/development/#documentation).
+    [Docs Maintainer Guide](/docs/development/#documentation).
 - Global review guidelines. Set `review_guidelines` in `~/.roborev/config.toml`
     to apply shared reviewer instructions across repositories. Repo-level
     `review_guidelines` are appended after the global text by default; set
     `review_guidelines_supersede_global = true` in `.roborev.toml` when a repo
     should replace the global guidance. See
-    [Review Guidelines](/configuration/#review-guidelines).
+    [Review Guidelines](/docs/configuration/#review-guidelines).
 - Hook-only auto-design routing. `[auto_design_review] hook_enabled = true` runs
     the design-review router for post-commit hook reviews without also enabling
     it for manual reviews or CI. See
-    [Auto Design Review](/configuration/#auto-design-review).
+    [Auto Design Review](/docs/configuration/#auto-design-review).
 
 **Improvements**
 
@@ -809,28 +819,28 @@ ______________________________________________________________________
     Kata project, either from the Kata issues referenced in reviewed commit
     messages or from the open Kata backlog. Review hooks can also file failed
     reviews and review findings back into Kata. See
-    [Kata Integration](/configuration/#kata-integration) and
-    [Built-in: Kata Integration](/guides/hooks/#built-in-kata-integration).
+    [Kata Integration](/docs/configuration/#kata-integration) and
+    [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration).
 - Branch filtering for review hooks. Add `branches = ["main", "release/*"]` to a
     `[[hooks]]` entry to run it only for matching branches. Local reviews match
     the job branch; CI PR reviews match the PR base branch so protected-branch
     workflows can target `main` or release branches. See
-    [Branch Filtering](/guides/hooks/#branch-filtering).
+    [Branch Filtering](/docs/guides/hooks/#branch-filtering).
 - Queue pause and resume controls. `roborev pause`, `roborev unpause`, and the
     TUI `P` shortcut pause queue processing without canceling running jobs.
     Queued jobs remain queued until the queue is resumed. See
-    [Queue Pause](/integrations/tui/#queue-pause).
+    [Queue Pause](/docs/integrations/tui/#queue-pause).
 - Aggregate review cost tracking. `roborev cost` shows approximate all-time or
     scoped agent spend, and `roborev summary` now includes windowed cost
-    coverage. See [Aggregate Cost](/commands/#aggregate-cost).
+    coverage. See [Aggregate Cost](/docs/commands/#aggregate-cost).
 - Public daemon Go client. External integrations can import
     `go.kenn.io/roborev/pkg/client` for a typed client generated from the daemon
     OpenAPI contract, with raw helpers for streaming/log endpoints. See
-    [Public Go Client](/advanced/streaming/#public-go-client).
+    [Public Go Client](/docs/advanced/streaming/#public-go-client).
 - Binary overrides for agent hooks. `roborev agent-hook install --binary <path>`
     bakes a stable roborev shim or explicit binary path into Codex and Claude
     Code hook configs, mirroring the git-hook `roborev init --binary` workflow.
-    See [Agent Hook installation](/agent-hook/#install).
+    See [Agent Hook installation](/docs/agent-hook/#install).
 
 **Improvements**
 
@@ -843,7 +853,7 @@ ______________________________________________________________________
     failures instead of posting degraded raw member output.
 - Pi classifier setup guidance now explicitly points users at the JSON schema
     extension install step. See
-    [Pi Structured Output](/agents/#pi-structured-output).
+    [Pi Structured Output](/docs/agents/#pi-structured-output).
 
 **Bug fixes**
 
@@ -893,55 +903,55 @@ ______________________________________________________________________
 - Agent hook integration. The new `roborev agent-hook` command plugs into Codex
     and Claude Code harness hooks and prompts the agent to run `$roborev-fix`
     once review work piles up, so reviews get fixed inside the agent session.
-    See [Agent Hook](/agent-hook/).
+    See [Agent Hook](/docs/agent-hook/).
 - Subagent review panels for CI and manual daemon reviews. A panel fans one
     review target out to named reviewer specs, then produces one synthesis
     parent review that is the actionable row for `show`, `list`, `wait`, fix
     workflows, and the TUI. CI now uses the same panel system; existing
     `agents`, `review_types`, and `[ci.reviews]` configs become an implicit
     panel when `[ci] panel` is not set. See
-    [Subagent Review Panels](/advanced/subagent-review-panels/) and
-    [Named CI Panels](/integrations/github/#named-ci-panels).
+    [Subagent Review Panels](/docs/advanced/subagent-review-panels/) and
+    [Named CI Panels](/docs/integrations/github/#named-ci-panels).
 - Safer CI review retries. The CI poller now tracks retry state per PR HEAD,
     defers transient provider outages without posting misleading comments,
     retries genuine member failures up to a bounded cap, and rechecks PR open
     state, HEAD SHA, and repo identity before retrying or posting. See
-    [Safe CI Retries](/integrations/github/#safe-ci-retries).
+    [Safe CI Retries](/docs/integrations/github/#safe-ci-retries).
 - Anonymous daemon telemetry. roborev sends limited anonymous daemon lifecycle
     telemetry on startup and once every 24 hours while running, with repo and
     review counts plus high-level feature flags. It does not send repo names,
     paths, remotes, prompts, review output, provider tokens, usernames, or IP
     geolocation. Disable with `ROBOREV_TELEMETRY_ENABLED=0` or
-    `TELEMETRY_ENABLED=0`. See [Telemetry](/configuration/#telemetry).
+    `TELEMETRY_ENABLED=0`. See [Telemetry](/docs/configuration/#telemetry).
 - DEB and RPM release artifacts. Linux releases now include `.deb` and `.rpm`
     packages for `amd64` and `arm64`, including user-level systemd units. See
-    [Linux Packages](/installation/#linux-packages-deb-and-rpm).
+    [Linux Packages](/docs/installation/#linux-packages-deb-and-rpm).
 
 **Improvements**
 
 - TUI review and queue panel refinements, plus a new `i` toggle in log and
     prompt views that expands or collapses the full command line used for a job.
-    See [Terminal UI](/integrations/tui/#log-view).
+    See [Terminal UI](/docs/integrations/tui/#log-view).
 - `compact` now requires the consolidated review to repeat each remaining
     finding with actionable detail (severity, file/line, description). Outputs
     that report findings only as counts or summaries are rejected instead of
     stored, so a compacted review cannot claim findings it never lists. Clean
     verifications are unaffected. See
-    [Consolidating Reviews](/commands/#consolidating-reviews).
+    [Consolidating Reviews](/docs/commands/#consolidating-reviews).
 - Cost lookup can be routed through a configurable HTTP usage endpoint instead
     of the local `agentsview` CLI. See
-    [Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
+    [Cost Usage Endpoint](/docs/configuration/#cost-usage-endpoint).
 - Update discovery now uses GitHub's HTML redirect endpoint for latest release
     checks, avoiding GitHub API rate limits.
 - Raised the default CI `batch_timeout` from 3 minutes to 15 minutes. Set
     `batch_timeout = "0"` to disable. See
-    [CI Options Reference](/integrations/github/#ci-options-reference).
+    [CI Options Reference](/docs/integrations/github/#ci-options-reference).
 - Improved dependency metadata filtering to reduce false-positive findings.
 - Default review prompts now put `No issues found.` on its own line for cleaner
     pass output.
 - Improved classifier support, including Pi schema-based classifier output
     through the configured JSON schema extension. See
-    [Pi Classifier Options](/configuration/#pi-classifier-options).
+    [Pi Classifier Options](/docs/configuration/#pi-classifier-options).
 
 **Bug fixes**
 
@@ -952,7 +962,7 @@ ______________________________________________________________________
 - Fixed Claude classifier structured output parsing.
 - Fixed hook binary resolution for managed installs.
 - Fixed the OpenCode install source. See
-    [Supported Agents](/agents/#supported-agents).
+    [Supported Agents](/docs/agents/#supported-agents).
 - Fixed Copilot streaming behavior when the agent supports disabling streaming.
 - Grounded reviewer version checks in the project toolchain.
 
@@ -986,7 +996,7 @@ ______________________________________________________________________
     `agentsview session usage <id> --format json` with `cost_usd`/`has_cost`
     fields); on older versions the column stays blank and token counts are
     unaffected. Run `roborev backfill-tokens` to refresh existing jobs once
-    agentsview is upgraded. See [Token Usage](/commands/#token-usage).
+    agentsview is upgraded. See [Token Usage](/docs/commands/#token-usage).
 - Agent plugin manifests for Claude Code and Codex. The repository now ships
     `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, and
     `.codex-plugin/plugin.json` pointing at the same Claude and Codex skill
@@ -1000,7 +1010,7 @@ ______________________________________________________________________
     writes a local `.git/info/exclude` fallback for repos whose ignore setup is
     stale. `snapshot_dir` must be a relative path under the repo root and may
     not be inside `.git`. See
-    [Prompt Size Budget](/configuration/#prompt-size-budget).
+    [Prompt Size Budget](/docs/configuration/#prompt-size-budget).
 
 **Improvements**
 
@@ -1012,7 +1022,7 @@ ______________________________________________________________________
     does not yet accept a `--model` flag, so model overrides automatically
     reroute to `gemini` if it is installed; when only `agy` is available, an
     explicit `--model` returns a clear error instead of being silently ignored.
-    See [Supported Agents](/agents/#supported-agents).
+    See [Supported Agents](/docs/agents/#supported-agents).
 - Design review prompt gains an "Internal contradictions" check as the new
     top-priority item. This flags places where two parts of a spec, PRD, or task
     list conflict even when each part is individually clear, so downstream
@@ -1078,7 +1088,7 @@ ______________________________________________________________________
     file/secret handling, cryptography, and dependency risks. Jobs are tagged
     `review_type = security` so `security_agent` and `security_model` config
     (and the per-reasoning-level variants) apply automatically. See
-    [Code Analysis](/commands/#code-analysis).
+    [Code Analysis](/docs/commands/#code-analysis).
 - `roborev status --json` emits structured daemon and queue status, including
     the active daemon endpoint as `network`, `address`, and `port` fields so
     scripts and integrations can discover the listening transport without
@@ -1101,13 +1111,13 @@ ______________________________________________________________________
     reflect the current state. Pressing `l` on a hidden classifier or skipped
     row shows the classifier verdict and `skip_reason` above the streamed log.
     The daemon status endpoint's skipped/triggered counters are unchanged. See
-    [Auto Design Review](/configuration/#auto-design-review).
+    [Auto Design Review](/docs/configuration/#auto-design-review).
 - Codex review jobs default to `skills.include_instructions=false` and
     `--ignore-user-config`, so review prompts run without skill instructions or
     user-level Codex config. Two global toggles under `[agent.codex]` control
     this (`disable_review_skills`, `ignore_review_user_config`); both default to
     `true`. Fix jobs are not affected. See
-    [Codex Review Options](/configuration/#codex-review-options).
+    [Codex Review Options](/docs/configuration/#codex-review-options).
 
 **Bug fixes**
 
@@ -1139,7 +1149,7 @@ ______________________________________________________________________
     sits between the default one-fix-per-prompt mode and `--batch` (everything
     in one prompt): you get coordinated multi-finding fixes per call without
     exceeding the prompt budget. Mutually exclusive with `--batch` and `--list`.
-    See [Fixing Reviews](/commands/#fixing-reviews).
+    See [Fixing Reviews](/docs/commands/#fixing-reviews).
 - `--resume` flag on `roborev fix` to reuse the agent's session ID across calls
     within a single fix run, so chained fixes build on prior context instead of
     starting fresh each call. Defaults to off.
@@ -1240,7 +1250,7 @@ ______________________________________________________________________
     `classify_reasoning`, `classify_backup_agent`, and `classify_backup_model`.
     The classifier requires a `SchemaAgent`-capable backend (Claude Code,
     Codex); other agents are rejected at config-resolve time. See
-    [Auto Design Review](/configuration/#auto-design-review).
+    [Auto Design Review](/docs/configuration/#auto-design-review).
 
 **Improvements**
 
@@ -1263,7 +1273,7 @@ ______________________________________________________________________
 - New `roborev repo move <name-or-path> <new-path>` subcommand updates a tracked
     repository's stored root path after a directory rename or move on disk, so
     existing jobs and reviews stay attached to the same repo entry. See
-    [Repository Management](/guides/repository-management/#moving-or-renaming-a-repository).
+    [Repository Management](/docs/guides/repository-management/#moving-or-renaming-a-repository).
 
 **Bug fixes**
 
@@ -1314,7 +1324,7 @@ ______________________________________________________________________
     (Opus/Sonnet/Haiku/subagent) to the specified model and points the agent at
     the given endpoint, making it possible to use local models for reviews and
     fixes. See
-    [Routing Claude Code to a proxy](/agents/#routing-claude-code-to-a-proxy).
+    [Routing Claude Code to a proxy](/docs/agents/#routing-claude-code-to-a-proxy).
 
 **Improvements**
 
@@ -1370,14 +1380,14 @@ ______________________________________________________________________
     cancel, rerun, close). Internal endpoints used by the CLI, TUI, and daemon
     subsystems (enqueue, streaming, sync, fix orchestration) are not part of the
     OpenAPI surface. See
-    [Streaming & Daemon API](/advanced/streaming/#daemon-api).
+    [Streaming & Daemon API](/docs/advanced/streaming/#daemon-api).
 - Cascading `review_min_severity` setting and `--min-severity` flag on
     `roborev review` to filter review findings by severity. The setting cascades
     from CLI flag to per-repo `.roborev.toml` to global `config.toml`, matching
     the existing pattern for `fix_min_severity` and `refine_min_severity`.
     Global defaults for all three (`review_min_severity`, `fix_min_severity`,
     `refine_min_severity`) are now supported in global config. See
-    [Configuration](/configuration/#per-repository-options).
+    [Configuration](/docs/configuration/#per-repository-options).
 
 **Improvements**
 
@@ -1405,7 +1415,7 @@ ______________________________________________________________________
     option bypasses `bwrap` sandboxing on systems where it is unavailable.
     Read-only sandboxed reviews fall back to inline diff snapshots when `.git/`
     is inaccessible to the agent. See
-    [Configuration](/configuration/#global-options).
+    [Configuration](/docs/configuration/#global-options).
 - Codex review jobs now store and display the actual command line used, fixing
     incorrect command reporting in the TUI.
 - CI repo matching resolves ambiguous repositories (multiple repos sharing the
@@ -1436,16 +1446,16 @@ ______________________________________________________________________
 - `auto_close_passing_reviews` config option to automatically close reviews that
     pass with no findings. When enabled, pass reviews are closed immediately
     instead of staying open in the queue. See
-    [Configuration](/configuration/#auto-close-passing-reviews).
+    [Configuration](/docs/configuration/#auto-close-passing-reviews).
 - Bundled `roborev-refine` skills for Claude Code and Codex to run iterative
     review-fix-review loops from within an agent session. The skill performs the
     full refine workflow inline (review, fix, commit, re-review) rather than
     shelling out to the CLI. See
-    [Agent Skills](/guides/agent-skills/#refine-a-branch).
+    [Agent Skills](/docs/guides/agent-skills/#refine-a-branch).
 - Bundled systemd service and socket unit files for Linux daemon deployments.
     The service uses `Type=notify` for readiness signaling. Socket activation is
     supported for on-demand daemon startup. See
-    [Persistent Daemon](/configuration/#persistent-daemon).
+    [Persistent Daemon](/docs/configuration/#persistent-daemon).
 
 **Improvements**
 
@@ -1458,7 +1468,7 @@ ______________________________________________________________________
 - The daemon socket path prefers `$XDG_RUNTIME_DIR/roborev/daemon.sock` when the
     variable is set and points to an existing absolute directory. Falls back to
     the platform temp directory otherwise. See
-    [Configuration](/configuration/#unix-domain-socket).
+    [Configuration](/docs/configuration/#unix-domain-socket).
 
 **Bug fixes**
 
@@ -1470,7 +1480,7 @@ ______________________________________________________________________
     prevent indefinite hangs when some jobs in a multi-agent batch get stuck.
     When the timeout expires, available results are posted and remaining jobs
     are canceled. See
-    [CI Options Reference](/integrations/github/#ci-options-reference).
+    [CI Options Reference](/docs/integrations/github/#ci-options-reference).
 
 **Acknowledgements**
 
@@ -1500,15 +1510,15 @@ ______________________________________________________________________
     patterns, hotspot areas, noise candidates, and guideline gaps. Outputs
     actionable suggestions for improving `review_guidelines` in `.roborev.toml`.
     Runs as a daemon-backed job, queued and tracked like reviews. See
-    [Commands](/commands/#insights).
+    [Commands](/docs/commands/#insights).
 - Unix domain socket support for CLI-to-daemon communication on Unix systems.
     Set `server_addr = "unix://"` in `~/.roborev/config.toml` to listen on
     `/tmp/roborev-{UID}/daemon.sock` instead of TCP loopback. Socket permissions
     (`0600`) enforce per-user access control. See
-    [Configuration](/configuration/#unix-domain-socket).
+    [Configuration](/docs/configuration/#unix-domain-socket).
 - `ROBOREV_COLOR_MODE` environment variable to force `auto`, `dark`, `light`, or
     `none` color output across all TUI screens and CLI rendering. See
-    [Configuration](/configuration/#color-mode).
+    [Configuration](/docs/configuration/#color-mode).
 
 **Improvements**
 
@@ -1604,13 +1614,13 @@ ______________________________________________________________________
     per-agent effectiveness, review duration percentiles, fix resolution rates,
     and per-repo breakdowns. Scopes to the current repo by default; use `--all`
     for cross-repo summary. Supports `--since`, `--branch`, `--repo`, and
-    `--json` flags. See [Commands](/commands/#review-statistics).
+    `--json` flags. See [Commands](/docs/commands/#review-statistics).
 - TUI control socket for programmatic interaction with running TUI instances.
     External tools can query state and trigger mutations (filter, select, close,
     cancel, rerun, quit) over a Unix domain socket using a newline-delimited
     JSON protocol. Runtime metadata is written to `~/.roborev/tui.{PID}.json`
     for discoverability. See
-    [TUI Control Socket](/integrations/tui/#control-socket).
+    [TUI Control Socket](/docs/integrations/tui/#control-socket).
 - `--no-quit` flag on `roborev tui` suppresses keyboard quit (`q`) in queue and
     tasks views, allowing external controllers to manage the TUI lifecycle. The
     `quit` control command still works regardless.
@@ -1629,10 +1639,10 @@ ______________________________________________________________________
     Cargo.lock, uv.lock, and others) are excluded from review diffs by default.
     Add custom patterns via `exclude_patterns` in global or per-repo config.
     Security reviews skip repo-level exclude patterns to prevent suppression of
-    sensitive files. See [Configuration](/configuration/#exclude-patterns).
+    sensitive files. See [Configuration](/docs/configuration/#exclude-patterns).
 - `maximum` reasoning level (aliases: `max`, `xhigh`) maps to Codex's xhigh
     reasoning effort. For agents without an xhigh equivalent, it maps to
-    thorough. See [Reasoning Levels](/configuration/#reasoning-levels).
+    thorough. See [Reasoning Levels](/docs/configuration/#reasoning-levels).
 - Session ID column in the TUI queue view.
 - Column checkboxes in the TUI options menu respond to mouse clicks.
 - Long comment text word-wraps in the TUI review pane.
@@ -1672,7 +1682,7 @@ ______________________________________________________________________
     (`claude_code_cmd`, `codex_cmd`, `cursor_cmd`, `pi_cmd`). Previously, custom
     agent commands were ignored during availability detection, so an agent could
     appear unavailable even when the configured binary was in PATH. See
-    [Agent Command Overrides](/configuration/#agent-command-overrides).
+    [Agent Command Overrides](/docs/configuration/#agent-command-overrides).
 - The TUI review screen now displays the branch name stored with the review
     instead of resolving it dynamically via `git name-rev`. In worktree setups
     where the same SHA is reachable from multiple refs, the old behavior could
@@ -1694,7 +1704,7 @@ ______________________________________________________________________
 - Add JSONL post-commit hook logging to `~/.roborev/post-commit.log` so that
     silent hook failures leave an audit trail with timestamps, repo paths, and
     failure reasons. See
-    [Troubleshooting](/guides/troubleshooting/#post-commit-hook-log).
+    [Troubleshooting](/docs/guides/troubleshooting/#post-commit-hook-log).
 
 **Acknowledgements**
 
@@ -1718,7 +1728,7 @@ ______________________________________________________________________
 - Experimental: `reuse_review_session` config option (global and per repo) to
     resume prior agent sessions on the same branch, reducing token usage and
     review latency on active branches. See
-    [Session Reuse](/guides/reviewing-code/#session-reuse).
+    [Session Reuse](/docs/guides/reviewing-code/#session-reuse).
 
 **Improvements**
 

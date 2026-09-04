@@ -46,6 +46,11 @@ def main() -> None:
             fail(f"nav source is missing from public docs tree: {source.relative_to(ROOT)}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+        # Section index pages advertise a flattened twin (/docs/<dir>.md, the
+        # same shape every non-index page uses), so publish that alias too.
+        if path != "index.md" and path.endswith("/index.md"):
+            alias = site_dir / f"{path.removesuffix('/index.md')}.md"
+            shutil.copyfile(source, alias)
 
     print("public Markdown sources copied")
 

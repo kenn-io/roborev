@@ -8,7 +8,7 @@ the same daemon that owns the review queue and SQLite database, on a separate
 browser-only listener.
 
 <figure class="hero-shot" data-lightbox>
-  <img src="/assets/generated/web-ui.png" alt="Roborev browser application showing the review queue and an open review" loading="eager">
+  <img src="/docs/assets/generated/web-ui.png" alt="Roborev browser application showing the review queue and an open review" loading="eager">
 </figure>
 
 ## Open the Application

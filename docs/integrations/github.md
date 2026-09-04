@@ -5,8 +5,8 @@ description: Automatically review GitHub PRs and post results as bot comments
 
 roborev can poll GitHub for open pull requests, run code reviews on each one,
 and post the results as PR comments. In 0.57 and later, daemon CI reviews run
-through the [subagent review panel](/advanced/subagent-review-panels/) system:
-each PR HEAD gets one panel run and one synthesis parent review.
+through the [subagent review panel](/docs/advanced/subagent-review-panels/)
+system: each PR HEAD gets one panel run and one synthesis parent review.
 
 ## How It Works
 
@@ -434,8 +434,8 @@ status checks are silently skipped. PR comments are still posted regardless.
 ## Keeping the Daemon Running
 
 `roborev daemon start` runs the daemon in the background, but it won't survive a
-reboot. See [Persistent Daemon](/configuration/#persistent-daemon) for launchd
-(macOS) and systemd (Linux) setup.
+reboot. See [Persistent Daemon](/docs/configuration/#persistent-daemon) for
+launchd (macOS) and systemd (Linux) setup.
 
 ## Wildcard Repository Patterns
 
@@ -511,8 +511,8 @@ Use `allow_failure = true` on a subagent when that reviewer is best-effort or
 depends on flaky infrastructure. Its successful output is still included, but a
 failure or cancellation will not block an otherwise usable CI panel comment.
 
-See [Subagent Review Panels](/advanced/subagent-review-panels/) for the full
-panel configuration reference.
+See [Subagent Review Panels](/docs/advanced/subagent-review-panels/) for the
+full panel configuration reference.
 
 ## Multi-Review Types and Agents
 
@@ -743,7 +743,7 @@ set, it takes priority over the matrix fields for that repo.
 | `agents` | array | global `agents` | Agents for CI reviews of this repo |
 | `review_types` | array | global `review_types` | Review types for CI reviews of this repo |
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
-| `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Minimum severity to include: `low`, `medium`, `high`, or `critical` |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
@@ -1084,8 +1084,8 @@ During cooldown:
 - The agent is skipped for new jobs. CI comments show "skipped (quota)" for that
     agent instead of "failed".
 - If a backup agent is configured (see
-    [Backup Agents](/configuration/#backup-agents)) and is not also in cooldown,
-    the job is retried with the backup agent automatically.
+    [Backup Agents](/docs/configuration/#backup-agents)) and is not also in
+    cooldown, the job is retried with the backup agent automatically.
 - Commit status is set to `success` when all panel members were skipped due to
     quota. This prevents quota exhaustion from blocking PRs.
 - The cooldown timer resets each time the agent hits a quota error, but it is
@@ -1209,8 +1209,8 @@ different review types.
 
 ## See Also
 
-- [GitLab Integration](/integrations/gitlab/): The equivalent GitLab CI pipeline
-    setup
-- [Configuration](/configuration/): Global and per-repo settings
-- [Event Streaming](/advanced/streaming/): Stream review events for custom
+- [GitLab Integration](/docs/integrations/gitlab/): The equivalent GitLab CI
+    pipeline setup
+- [Configuration](/docs/configuration/): Global and per-repo settings
+- [Event Streaming](/docs/advanced/streaming/): Stream review events for custom
     integrations

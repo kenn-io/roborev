@@ -119,10 +119,10 @@ roborev fix --min-severity medium  # Skip low-severity findings
 
 The agent reads the review findings, applies changes, commits, and closes the
 review. This is a one-shot fix. For an iterative loop with re-review, see
-[`roborev refine`](/guides/auto-fixing/).
+[`roborev refine`](/docs/guides/auto-fixing/).
 
 To require the fix agent to verify suggestions rather than apply them blindly,
-set global [`fix_guidelines`](/configuration/#fix-guidelines). The policy
+set global [`fix_guidelines`](/docs/configuration/#fix-guidelines). The policy
 reaches direct fixes, batch fixes, and commit retries. It does not change the
 separate `analyze --fix` or `refine` workflows. When the agent intentionally
 leaves a finding unchanged, the job records the no-change outcome and the
@@ -322,7 +322,7 @@ max_prompt_size = 204800
 |------|-------------|
 | `--agent <name>` | Agent to use for analysis (default: from config) |
 | `--model <model>` | Model for analysis agent |
-| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--branch [name]` | Analyze files changed on branch (optionally specify branch name with `--branch=name`) |
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--wait` | Wait for job to complete and show result |
@@ -341,7 +341,7 @@ max_prompt_size = 204800
 |------|-------------|
 | `--agent <name>` | Agent to use for fixes (default: from config) |
 | `--model <model>` | Model for fix agent |
-| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--quiet` | Suppress agent output |
 | `--open` | Fix all open reviews on the current branch (default when no job IDs given) |
 | `--batch` | Concatenate multiple reviews into a single agent prompt instead of fixing one at a time |
@@ -355,11 +355,11 @@ max_prompt_size = 204800
 
 ## See Also
 
-- [Custom Agent Tasks](/advanced/custom-tasks/): Ad hoc analysis with
+- [Custom Agent Tasks](/docs/advanced/custom-tasks/): Ad hoc analysis with
     `roborev run`
-- [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/): Fix failed reviews
-    automatically
-- [Consolidating Reviews](/commands/#consolidating-reviews): Verify and
+- [Auto-Fix Agentic Loop with Refine](/docs/guides/auto-fixing/): Fix failed
+    reviews automatically
+- [Consolidating Reviews](/docs/commands/#consolidating-reviews): Verify and
     deduplicate findings before fixing
-- [Terminal UI](/integrations/tui/): Browse analysis results interactively
-- [Configuration](/configuration/): Prompt size and agent settings
+- [Terminal UI](/docs/integrations/tui/): Browse analysis results interactively
+- [Configuration](/docs/configuration/): Prompt size and agent settings

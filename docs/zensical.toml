@@ -1,6 +1,6 @@
 [project]
 site_name = "roborev"
-site_url = "https://roborev.io"
+site_url = "https://roborev.io/docs/"
 site_description = "Continuous code review for coding agents"
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'

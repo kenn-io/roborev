@@ -18,47 +18,357 @@
     },
     {
       "source": "/integrations/postgres-sync/",
-      "destination": "/advanced/postgres-sync/",
+      "destination": "/docs/advanced/postgres-sync/",
       "permanent": true
     },
     {
       "source": "/agents/modes/",
-      "destination": "/advanced/custom-tasks/",
+      "destination": "/docs/advanced/custom-tasks/",
       "permanent": true
     },
     {
       "source": "/guides/reviewing-branches/",
-      "destination": "/guides/reviewing-code/",
+      "destination": "/docs/guides/reviewing-code/",
       "permanent": true
     },
     {
       "source": "/guides/reviewing-dirty/",
-      "destination": "/guides/reviewing-code/",
+      "destination": "/docs/guides/reviewing-code/",
       "permanent": true
     },
     {
       "source": "/guides/custom-tasks/",
-      "destination": "/advanced/custom-tasks/",
+      "destination": "/docs/advanced/custom-tasks/",
       "permanent": true
     },
     {
       "source": "/guides/acp/",
-      "destination": "/advanced/acp/",
+      "destination": "/docs/advanced/acp/",
       "permanent": true
     },
     {
       "source": "/guides/postgres-sync/",
-      "destination": "/advanced/postgres-sync/",
+      "destination": "/docs/advanced/postgres-sync/",
       "permanent": true
     },
     {
       "source": "/integrations/streaming/",
-      "destination": "/advanced/streaming/",
+      "destination": "/docs/advanced/streaming/",
       "permanent": true
     },
     {
       "source": "/integrations/git-worktrees/",
-      "destination": "/guides/repository-management/",
+      "destination": "/docs/guides/repository-management/",
+      "permanent": true
+    },
+    {
+      "source": "/assets/static/:path*",
+      "destination": "/docs/assets/static/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/assets/generated/:path*",
+      "destination": "/docs/assets/generated/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/quickstart/",
+      "destination": "/docs/quickstart/",
+      "permanent": true
+    },
+    {
+      "source": "/quickstart.md",
+      "destination": "/docs/quickstart.md",
+      "permanent": true
+    },
+    {
+      "source": "/installation/",
+      "destination": "/docs/installation/",
+      "permanent": true
+    },
+    {
+      "source": "/installation.md",
+      "destination": "/docs/installation.md",
+      "permanent": true
+    },
+    {
+      "source": "/changelog/",
+      "destination": "/docs/changelog/",
+      "permanent": true
+    },
+    {
+      "source": "/changelog.md",
+      "destination": "/docs/changelog.md",
+      "permanent": true
+    },
+    {
+      "source": "/automation/post-commit-reviews/",
+      "destination": "/docs/automation/post-commit-reviews/",
+      "permanent": true
+    },
+    {
+      "source": "/automation/post-commit-reviews.md",
+      "destination": "/docs/automation/post-commit-reviews.md",
+      "permanent": true
+    },
+    {
+      "source": "/agent-hook/",
+      "destination": "/docs/agent-hook/",
+      "permanent": true
+    },
+    {
+      "source": "/agent-hook.md",
+      "destination": "/docs/agent-hook.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/hooks/",
+      "destination": "/docs/guides/hooks/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/hooks.md",
+      "destination": "/docs/guides/hooks.md",
+      "permanent": true
+    },
+    {
+      "source": "/commands/",
+      "destination": "/docs/commands/",
+      "permanent": true
+    },
+    {
+      "source": "/commands.md",
+      "destination": "/docs/commands.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/tui/",
+      "destination": "/docs/integrations/tui/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/tui.md",
+      "destination": "/docs/integrations/tui.md",
+      "permanent": true
+    },
+    {
+      "source": "/web-ui/",
+      "destination": "/docs/web-ui/",
+      "permanent": true
+    },
+    {
+      "source": "/web-ui.md",
+      "destination": "/docs/web-ui.md",
+      "permanent": true
+    },
+    {
+      "source": "/configuration/",
+      "destination": "/docs/configuration/",
+      "permanent": true
+    },
+    {
+      "source": "/configuration.md",
+      "destination": "/docs/configuration.md",
+      "permanent": true
+    },
+    {
+      "source": "/agents/",
+      "destination": "/docs/agents/",
+      "permanent": true
+    },
+    {
+      "source": "/agents/index.md",
+      "destination": "/docs/agents/index.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/github/",
+      "destination": "/docs/integrations/github/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/github.md",
+      "destination": "/docs/integrations/github.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/gitlab/",
+      "destination": "/docs/integrations/gitlab/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/gitlab.md",
+      "destination": "/docs/integrations/gitlab.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/reviewing-code/",
+      "destination": "/docs/guides/reviewing-code/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/reviewing-code.md",
+      "destination": "/docs/guides/reviewing-code.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/responding-to-reviews/",
+      "destination": "/docs/guides/responding-to-reviews/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/responding-to-reviews.md",
+      "destination": "/docs/guides/responding-to-reviews.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/agent-skills/",
+      "destination": "/docs/guides/agent-skills/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/agent-skills.md",
+      "destination": "/docs/guides/agent-skills.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/assisted-refactoring/",
+      "destination": "/docs/guides/assisted-refactoring/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/assisted-refactoring.md",
+      "destination": "/docs/guides/assisted-refactoring.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/auto-fixing/",
+      "destination": "/docs/guides/auto-fixing/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/auto-fixing.md",
+      "destination": "/docs/guides/auto-fixing.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/repository-management/",
+      "destination": "/docs/guides/repository-management/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/repository-management.md",
+      "destination": "/docs/guides/repository-management.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/background-tasks/",
+      "destination": "/docs/advanced/background-tasks/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/background-tasks.md",
+      "destination": "/docs/advanced/background-tasks.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/subagent-review-panels/",
+      "destination": "/docs/advanced/subagent-review-panels/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/subagent-review-panels.md",
+      "destination": "/docs/advanced/subagent-review-panels.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/custom-review-types/",
+      "destination": "/docs/advanced/custom-review-types/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/custom-review-types.md",
+      "destination": "/docs/advanced/custom-review-types.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/custom-tasks/",
+      "destination": "/docs/advanced/custom-tasks/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/custom-tasks.md",
+      "destination": "/docs/advanced/custom-tasks.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/acp/",
+      "destination": "/docs/advanced/acp/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/acp.md",
+      "destination": "/docs/advanced/acp.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/postgres-sync/",
+      "destination": "/docs/advanced/postgres-sync/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/postgres-sync.md",
+      "destination": "/docs/advanced/postgres-sync.md",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/streaming/",
+      "destination": "/docs/advanced/streaming/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/streaming.md",
+      "destination": "/docs/advanced/streaming.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/kata/",
+      "destination": "/docs/integrations/kata/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/kata.md",
+      "destination": "/docs/integrations/kata.md",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/claudechic/",
+      "destination": "/docs/integrations/claudechic/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/claudechic.md",
+      "destination": "/docs/integrations/claudechic.md",
+      "permanent": true
+    },
+    {
+      "source": "/guides/troubleshooting/",
+      "destination": "/docs/guides/troubleshooting/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/troubleshooting.md",
+      "destination": "/docs/guides/troubleshooting.md",
+      "permanent": true
+    },
+    {
+      "source": "/development/",
+      "destination": "/docs/development/",
+      "permanent": true
+    },
+    {
+      "source": "/development.md",
+      "destination": "/docs/development.md",
       "permanent": true
     }
   ]

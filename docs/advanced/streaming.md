@@ -178,5 +178,5 @@ done
 
 ## See Also
 
-- [TUI](/integrations/tui/) - Interactive terminal interface
-- [Commands Reference](/commands/) - Full command list
+- [TUI](/docs/integrations/tui/) - Interactive terminal interface
+- [Commands Reference](/docs/commands/) - Full command list

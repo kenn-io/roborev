@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>roborev — every commit reviewed before the agent moves on</title>
+    <meta name="description" content="roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews every commit in the background with the agents you already run, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
+    <link rel="canonical" href="https://roborev.io/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="alternate" type="text/markdown" href="https://roborev.io/index.md">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Every commit reviewed before the agent moves on.">
+    <meta property="og:description" content="Continuous code review for coding agents. Runs on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta property="og:url" content="https://roborev.io/">
+    <meta property="og:site_name" content="roborev">
+    <meta property="og:image" content="https://roborev.io/docs/assets/static/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Every commit reviewed before the agent moves on.">
+    <meta name="twitter:description" content="Continuous code review for coding agents. Runs on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta name="twitter:image" content="https://roborev.io/docs/assets/static/og-image.png">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/"><img src="/docs/assets/static/logo.svg" alt="">roborev</a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://discord.gg/fDnmxB8Wkq">Discord</a>
+        <a class="repo" href="https://github.com/kenn-io/roborev">
+          <span class="sr-only">roborev on GitHub:</span>
+          <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+              -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07
+              -.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2
+              -.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27
+              c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
+              3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0
+              .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <span class="repo-meta">
+            <span class="repo-name">kenn-io/roborev</span>
+            <span class="facts" data-facts hidden>
+              <span class="fact" data-fact="version" hidden>
+                <span class="sr-only">latest release</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0
+                    .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426
+                    2.426 0 0 0 0-3.42z"/>
+                  <circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="stars" hidden>
+                <span class="sr-only">stars</span>
+                <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor">
+                  <path d="M8 .25a.75.75 0 0 1 .67.42l1.88 3.8 4.2.62a.75.75 0 0 1 .42
+                    1.28l-3.04 2.97.72 4.18a.75.75 0 0 1-1.09.8L8 12.35l-3.76
+                    1.97a.75.75 0 0 1-1.09-.79l.72-4.19L.83 6.37a.75.75 0 0 1
+                    .42-1.28l4.2-.61L7.33.67A.75.75 0 0 1 8 .25Z"/>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+              <span class="fact" data-fact="forks" hidden>
+                <span class="sr-only">forks</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="18" r="3"></circle>
+                  <circle cx="6" cy="6" r="3"></circle>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9m6 3v3"></path>
+                </svg>
+                <span data-fact-text></span>
+              </span>
+            </span>
+          </span>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="hero-brand"><img src="/docs/assets/static/logo.svg" alt="">roborev</p>
+        <h1 id="hero-title">Every commit reviewed before the agent moves on.</h1>
+        <p class="lede">roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews each commit in the background with the agents you <strong>already run</strong>, keeps every finding open until it is addressed, and hands the fix back to the agent while the context that wrote the bug is still warm.</p>
+        <figure class="term">
+          <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
+          <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                     <span class="out"># post-commit hook + daemon, once per repo</span>
+<span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
+<span class="out"># reviewed in the background while you keep working:</span>
+<span class="fail">FAIL</span> <span class="out">high</span>    <span class="path">internal/webhook/retry.go:41</span>  <span class="out">retries re-send a non-idempotent POST</span>
+<span class="fail">FAIL</span> <span class="out">medium</span>  <span class="path">internal/webhook/retry_test.go</span> <span class="out">no test covers the backoff ceiling</span>
+<span class="ps1">$</span> <span class="cmd">roborev tui</span>                      <span class="out"># the ledger: findings stay open until you close them</span>
+<span class="ps1">$</span> <span class="cmd">/roborev-fix</span>                     <span class="out"># in Claude Code or Codex: fix, verify, close</span></code></pre>
+        </figure>
+        <div class="install-matrix">
+          <div class="install-row" data-install-command data-command="curl -fsSL https://roborev.io/install.sh | bash">
+            <span class="install-label">macOS / Linux</span>
+            <code>curl -fsSL https://roborev.io/install.sh | bash</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="brew install kenn-io/tap/roborev">
+            <span class="install-label">Homebrew</span>
+            <code>brew install kenn-io/tap/roborev</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+          <div class="install-row" data-install-command data-command="powershell -ExecutionPolicy ByPass -c &quot;irm https://roborev.io/install.ps1 | iex&quot;">
+            <span class="install-label">Windows</span>
+            <code class="ps">powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"</code>
+            <button class="button install-copy" type="button" data-install-copy>Copy</button>
+          </div>
+        </div>
+        <p class="install-hint">One Go binary, no runtime dependencies, MIT licensed. See <a href="/docs/installation/">all install options</a>.<span data-install-status aria-live="polite"></span></p>
+        <div class="actions">
+          <a class="button primary" href="/guide/">Take the tour</a>
+          <a class="button" href="/docs/">Read the docs</a>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="gap-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 / The gap</p>
+            <h2 id="gap-title">Agents commit faster than anyone reads.</h2>
+          </div>
+          <p>A coding agent can land dozens of commits in an hour. Review still arrives at the pull request: once, late, after the agent has moved on and the reasoning that produced the bug is gone from its context. By then every finding is a context switch for a human. roborev moves review to the commit, runs it in the background on your own machine, and gives the result back to the thing that can fix it fastest.</p>
+        </div>
+        <ol class="ledger">
+          <li><strong>Trigger</strong><span class="stat">commit</span><span>A git post-commit hook queues the review. No CI job, no bot install, no waiting for a PR.</span></li>
+          <li><strong>Agents</strong><span class="stat">11</span><span>Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Grok Build, auto-detected.</span></li>
+          <li><strong>Hosted services</strong><span class="stat">0</span><span>Reviews run through the agent CLIs already on your machine, on the subscriptions and keys you already pay for.</span></li>
+          <li><strong>Binary</strong><span class="stat">1</span><span>A single Go binary: daemon, CLI, terminal UI, and browser UI. SQLite underneath.</span></li>
+          <li><strong>Findings closed by</strong><span class="stat">you</span><span>Reviews are a ledger. A finding stays open until a person or an agent addresses it and closes it.</span></li>
+        </ol>
+      </section>
+
+      <section class="site-section" aria-labelledby="loop-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">02 / The loop</p>
+            <h2 id="loop-title">Write. Review. Fix. Hands off.</h2>
+          </div>
+          <p>Two automation layers close the loop. The post-commit hook reviews every commit with any agent or editor. The agent hook watches supported coding-agent sessions and, once review work piles up, delivers the exact review IDs to the <code>roborev-fix</code> skill before the session goes cold. Neither layer touches your working tree on its own.</p>
+        </div>
+        <figure class="diagram pipeline">
+          <img src="/docs/assets/static/how-it-works.svg" alt="The roborev loop: a coding agent commits, the post-commit hook queues a background review through the daemon, findings land in the review ledger, and the agent hook feeds open findings back into the agent session to fix">
+        </figure>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Layer 1 · post-commit</p>
+            <h3>Every commit, any agent.</h3>
+            <p><code>roborev init</code> installs the hook, starts the daemon, and registers the repo. Each commit gets a verdict and, when it fails, findings with severities and file locations. Set <code>post_commit_batch_size</code> to review a run of small commits as one range.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Layer 2 · agent hook</p>
+            <h3>The fix comes back to the session.</h3>
+            <p><code>roborev agent-hook install</code> wires Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After a configurable number of turns, commits, or failed reviews, the agent is told which reviews to fix, by ID, and told to verify and close them.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Skills</p>
+            <h3>Fix in one pass. Refine until it passes.</h3>
+            <p><code>/roborev-fix</code> pulls every open failing review for the branch, fixes the valid findings, documents the invalid ones, and closes them. <code>/roborev-refine</code> reviews, fixes, commits, and re-reviews the whole branch until every review passes, before the PR exists.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Headless</p>
+            <h3>Or run the loop with no session at all.</h3>
+            <p><code>roborev fix</code> hands open findings to an agent that applies changes and commits. <code>roborev refine</code> runs the same iterate-until-green loop in an isolated worktree, with <code>--max-iterations</code> and <code>--min-severity</code> as the guardrails.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="ledger-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03 / The ledger</p>
+            <h2 id="ledger-title">Nothing closes itself.</h2>
+          </div>
+          <p>A review that scrolls past in a chat window is a review nobody is accountable for. roborev keeps every review in a persistent queue with a verdict, findings, the exact prompt, and the agent log. Open findings stay visible in the terminal UI and the browser UI until someone closes them, with a response on record if they disagree.</p>
+        </div>
+        <div class="capture-pair">
+          <figure class="capture">
+            <a href="/docs/assets/generated/tui-hero.svg" data-lightbox>
+              <img src="/docs/assets/generated/tui-hero.svg" alt="roborev terminal UI in split-screen layout with the review queue on the left and a rendered review on the right">
+            </a>
+            <figcaption class="caption"><code>roborev tui</code>: the queue and the selected review, side by side, with vim keys.</figcaption>
+          </figure>
+          <figure class="capture">
+            <a href="/docs/assets/generated/web-ui.png" data-lightbox>
+              <img src="/docs/assets/generated/web-ui.png" alt="roborev browser application showing the live review queue and an open review with its rendered findings">
+            </a>
+            <figcaption class="caption"><code>roborev ui</code>: the browser workspace, served by the same daemon over the same SQLite history.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="agents-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">04 / Agents</p>
+            <h2 id="agents-title">Bring the agents you already have.</h2>
+          </div>
+          <p>roborev is not a model. It orchestrates the agent CLIs installed on the machine, so the reviewer can be a different vendor than the writer, a cheaper model than the writer, or a local model behind a proxy. Pick per repo, per workflow, and per reasoning level, and name a backup for when a quota runs out.</p>
+        </div>
+        <ul class="agent-strip" aria-label="Supported coding agents">
+          <li><img src="/docs/assets/static/agents/codex.svg" alt="Codex" data-agent="codex"></li>
+          <li><img src="/docs/assets/static/agents/claude-code.svg" alt="Claude Code" data-agent="claude-code"></li>
+          <li><img src="/docs/assets/static/agents/gemini.svg" alt="Gemini" data-agent="gemini"></li>
+          <li><img src="/docs/assets/static/agents/copilot.svg" alt="Copilot" data-agent="copilot"></li>
+          <li><img src="/docs/assets/static/agents/opencode.svg" alt="OpenCode" data-agent="opencode"></li>
+          <li><img src="/docs/assets/static/agents/cursor.svg" alt="Cursor" data-agent="cursor"></li>
+          <li><span class="agent-text">Droid</span></li>
+          <li><span class="agent-text">Kilo</span></li>
+          <li><span class="agent-text">Kiro</span></li>
+          <li><img src="/docs/assets/static/agents/pi.svg" alt="Pi" data-agent="pi"></li>
+          <li><span class="agent-text">Grok Build</span></li>
+          <li><span class="agent-text">ACP</span></li>
+        </ul>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Routing</p>
+            <h3>Different agent, different job.</h3>
+            <p>Config keys like <code>review_agent_fast</code>, <code>fix_model_thorough</code>, and <code>security_backup_agent</code> route each workflow (review, fix, refine, security, design) to its own agent, model, and reasoning level.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Failover</p>
+            <h3>Quota errors are handled, not paged.</h3>
+            <p>Transient failures retry. Exhausted retries or a quota error fail over to the backup agent. Rate-limited agents sit in a cooldown parsed from the provider's own reset message.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Guidelines</p>
+            <h3>Your rules, in the prompt.</h3>
+            <p>Per-repo <code>review_guidelines</code> in <code>.roborev.toml</code> (or a <code>REVIEW.md</code>) ride along on every review, with global guidelines layered underneath. Bound to a kata project? The task context comes too.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Anywhere</p>
+            <h3>Local models and other harnesses.</h3>
+            <p>Point Claude Code at Ollama or LiteLLM with a <code>model@base_url</code> spec, or add any Agent Client Protocol adapter as a named agent. Reviews never require a hosted roborev service.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="depth-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">05 / Depth</p>
+            <h2 id="depth-title">One reviewer is a sample. A panel is a signal.</h2>
+          </div>
+          <p>Risky changes deserve more than one opinion. A review panel fans one target out to named subagents, each with its own agent, review type, instructions, and timeout, then a synthesis agent merges them into one actionable review. The same machinery runs security, design, and look-ahead-bias reviews, your own template-driven review types, and whole-codebase analysis.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Panels</p>
+            <h3>Named reviewers, one verdict.</h3>
+            <p>Define <code>[review.subagents.security]</code> and friends once, group them into <code>[review.panels.branch_final]</code>, and run <code>roborev review --branch --panel branch_final</code>. Optional members can flake without blocking the panel.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Review types</p>
+            <h3>Built-in lenses and your own.</h3>
+            <p><code>--type security</code>, <code>--type design</code>, and <code>--type lookahead</code> swap the system prompt. Custom types wrap a Go template rubric in the same schema, severity filtering, and pass/fail verdict.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Analysis</p>
+            <h3>Look at the code you already have.</h3>
+            <p><code>roborev analyze duplication ./...</code>, plus <code>complexity</code>, <code>dead-code</code>, <code>refactor</code>, <code>api-design</code>, <code>architecture</code>, <code>security</code>, and <code>test-fixtures</code>. Findings land in the same queue; <code>--fix</code> applies them.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Verification</p>
+            <h3>False positives get filtered, not forwarded.</h3>
+            <p><code>roborev compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="ci-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">06 / Pull requests</p>
+            <h2 id="ci-title">The same panel on every pull request.</h2>
+          </div>
+          <p>The daemon polls GitHub and GitLab for open pull and merge requests, runs one panel per PR head against the frozen merge-base range, and posts a single synthesized comment with the member reviewers, runtimes, and costs in the footer. Human discussion from trusted collaborators goes into the prompt; a fork's branch name never gets to pick which rules apply.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">GitHub</p>
+            <h3>A bot with scoped permissions.</h3>
+            <p>Install as a GitHub App so comments and checks appear as <code>your-app[bot]</code> with repository-scoped permissions, or use your <code>gh</code> login for a personal project. Each reviewed head gets a check.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">GitLab</p>
+            <h3>Merge request notes, same daemon.</h3>
+            <p>Point the poller at GitLab projects and the synthesized review lands as an MR note, with quick-action escaping so an agent's output cannot drive the MR.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Control</p>
+            <h3>Skip what should not be reviewed.</h3>
+            <p><code>[ci].skip_labels</code> exempts drafts and generated updates and reports a skipped check. Per-repo <code>.roborev.toml</code> overrides the panel, agents, and reasoning for one project without touching the rest.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Runs anywhere</p>
+            <h3>A daemon, not a CI minute.</h3>
+            <p>The CI poller is the same roborev daemon under systemd or launchd on a box you own. It reviews on the interval you set, at the concurrency you set, with no per-seat pricing and no code leaving your network.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="visibility-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">07 / Visibility</p>
+            <h2 id="visibility-title">Know what review costs and what it catches.</h2>
+          </div>
+          <p>Every job records its agent, model, runtime, token usage, estimated cost, and outcome. The browser UI turns that into an analytics workspace; the exports turn it into your own dashboards; the experiments turn it into decisions about which configuration your team should actually run.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <p class="proof-tag">Analytics</p>
+            <h3>Cost, latency, reliability, outcomes.</h3>
+            <p>Filter by project, source, agent, model, or time range, with the filters encoded in the URL so a view can be shared. <code>roborev cost</code>, <code>summary</code>, and <code>insights</code> give the same numbers on the command line.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Exports</p>
+            <h3>JSON with cursors, built for pipelines.</h3>
+            <p><code>roborev export reviews</code>, <code>ci-metrics</code>, and <code>ci-costs</code> emit stable, resumable JSON for review turnaround, CI outcomes, and job-level spend. A metadata profile keeps review text out when you only need the numbers.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Experiments</p>
+            <h3>Compare two review configurations.</h3>
+            <p>Assign branches to a default or experimental group and roborev keeps each branch in its group across local and CI reviews. <code>roborev config validate</code> checks an experiment before it runs a single review.</p>
+          </article>
+          <article class="proof">
+            <p class="proof-tag">Events</p>
+            <h3>Route outcomes where the team looks.</h3>
+            <p><code>[[hooks]]</code> run shell commands on review events: desktop notifications, Slack, webhooks. Built-in kata and beads hooks file findings as tracked issues, scoped to the branches you name.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="own-title">
+        <div class="interface-layout">
+          <div>
+            <p class="section-index">08 / Ownership</p>
+            <h2 id="own-title">Local by construction. Shared when you choose.</h2>
+            <p class="lede">The daemon runs on your machine, reads your repo, and writes to a SQLite database under <code>~/.roborev</code>. Nothing leaves except the calls your agents already make. Turn on PostgreSQL sync and every machine keeps its local database while the team's review history converges in one place, deduplicated by UUID.</p>
+            <ul class="interface-list">
+              <li><strong>CLI</strong><span><code>review</code>, <code>show</code>, <code>fix</code>, <code>refine</code>, <code>analyze</code>, <code>wait</code>, and <code>--json</code> where scripts need it.</span></li>
+              <li><strong>TUI</strong><span>The live queue in the terminal, split-screen on wide windows.</span></li>
+              <li><strong>Browser UI</strong><span>Reviews and analytics served by the daemon, loopback by default.</span></li>
+              <li><strong>HTTP API</strong><span>Enqueue, query, and stream job output over server-sent events.</span></li>
+              <li><strong>Skills</strong><span>Bundled review, fix, refine, and respond skills for Claude Code, Codex, Droid, and Grok Build.</span></li>
+              <li><strong>Telemetry</strong><span>Anonymous daemon counts only, no repo names or code, off with <code>ROBOREV_TELEMETRY_ENABLED=0</code>.</span></li>
+            </ul>
+            <div class="actions">
+              <a class="button" href="/docs/advanced/postgres-sync/">PostgreSQL sync</a>
+              <a class="button" href="/docs/advanced/streaming/">Daemon API</a>
+            </div>
+          </div>
+          <figure class="diagram">
+            <img src="/docs/assets/static/federation.svg" alt="Several machines, each running a roborev daemon over its own SQLite database, syncing review history bidirectionally through a shared PostgreSQL database">
+          </figure>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="boundary-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">09 / Boundary</p>
+            <h2 id="boundary-title">Not another PR bot. The layer before the PR.</h2>
+          </div>
+          <p>Hosted review bots read your code from someone else's cloud, once, when the pull request opens. Human review is still the gate, and it should be. roborev is the layer in between: continuous, local, running on the agents you already pay for, so what reaches the PR has already been reviewed and fixed several times over.</p>
+        </div>
+        <div class="boundary-grid">
+          <article class="boundary">
+            <p class="choice-label">Hosted PR bot</p>
+            <h3>Review as a service.</h3>
+            <p>Arrives at the pull request. Another vendor with read access to your repositories, another per-seat bill, and findings that land after the agent's context is gone.</p>
+          </article>
+          <article class="boundary">
+            <p class="choice-label">Human review</p>
+            <h3>The gate.</h3>
+            <p>The most expensive attention on the team, spent once per PR. It should be looking at design and intent, not at the retry loop that re-sends a POST.</p>
+          </article>
+          <article class="boundary highlight">
+            <p class="choice-label">roborev</p>
+            <h3>The loop before the gate.</h3>
+            <p>Per commit, on your machine, with your agents. Findings go back to the agent that can fix them now, and the ledger says what is still open when a human finally looks.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="start-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">10 / Start</p>
+            <h2 id="start-title">Install once. Every commit after that gets read.</h2>
+          </div>
+          <div>
+            <p>The guide walks the loop from <code>roborev init</code> to CI panels and team-wide history. The docs carry every command, configuration key, and integration. <code>roborev quickstart</code> prints the setup guide for your coding agent to finish itself.</p>
+            <div class="actions">
+              <a class="button primary" href="/guide/">Take the tour</a>
+              <a class="button" href="/docs/quickstart/">Start in five minutes</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Copyright 2026 Kenn Software LLC. Open source under MIT.</p>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="/index.md">Markdown</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://discord.gg/fDnmxB8Wkq">Discord</a>
+        <a href="https://github.com/kenn-io/roborev/blob/main/LICENSE">License</a>
+      </nav>
+    </footer>
+
+    <dialog data-lightbox-dialog aria-labelledby="lightbox-title">
+      <div class="dialog-header">
+        <p id="lightbox-title" data-lightbox-title>Documentation capture</p>
+        <button class="dialog-close" type="button" data-lightbox-close aria-label="Close image">Close</button>
+      </div>
+      <img alt="Expanded documentation capture">
+    </dialog>
+    <script type="module" src="/scripts/site.js"></script>
+  </body>
+</html>

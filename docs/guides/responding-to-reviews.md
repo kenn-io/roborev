@@ -28,7 +28,7 @@ roborev fix --batch                # Batch all open into one agent prompt
 
 The agent reads the review, applies changes, commits, and closes the review.
 This is a one-shot fix. For an iterative loop with re-review, see
-[Auto-Fix with Refine](/guides/auto-fixing/).
+[Auto-Fix with Refine](/docs/guides/auto-fixing/).
 
 When a finding asks to restore prior behavior, the fix prompt directs the agent
 to inspect relevant repository history before editing. The reviewed git ref is
@@ -47,7 +47,7 @@ commit messages.
 `roborev show` also displays comments after the review output.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-copy.svg" alt="roborev TUI copy review to clipboard" loading="lazy">
+  <img src="/docs/assets/generated/tui-copy.svg" alt="roborev TUI copy review to clipboard" loading="lazy">
 </figure>
 
 ## Adding a Comment
@@ -58,7 +58,7 @@ Press `c` from either the queue view or review detail view to open the comment
 modal:
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-respond.svg" alt="roborev TUI comment modal" loading="lazy">
+  <img src="/docs/assets/generated/tui-respond.svg" alt="roborev TUI comment modal" loading="lazy">
 </figure>
 
 1. Navigate to the review you want to comment on

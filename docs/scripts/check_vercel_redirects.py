@@ -1,31 +1,84 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import pathlib
 import sys
 from typing import Any
 
+from public_markdown_sources import public_markdown_sources
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERCEL = ROOT / "vercel.json"
+CONFIG = ROOT / "zensical.toml"
 
-PERMANENT = {
-    "/integrations/postgres-sync/": "/advanced/postgres-sync/",
-    "/agents/modes/": "/advanced/custom-tasks/",
-    "/guides/reviewing-branches/": "/guides/reviewing-code/",
-    "/guides/reviewing-dirty/": "/guides/reviewing-code/",
-    "/guides/custom-tasks/": "/advanced/custom-tasks/",
-    "/guides/acp/": "/advanced/acp/",
-    "/guides/postgres-sync/": "/advanced/postgres-sync/",
-    "/integrations/streaming/": "/advanced/streaming/",
-    "/integrations/git-worktrees/": "/guides/repository-management/",
+# Routes that were renamed while the docs still lived at the site root. They
+# now land on the docs tier directly.
+LEGACY_PERMANENT = {
+    "/integrations/postgres-sync/": "/docs/advanced/postgres-sync/",
+    "/agents/modes/": "/docs/advanced/custom-tasks/",
+    "/guides/reviewing-branches/": "/docs/guides/reviewing-code/",
+    "/guides/reviewing-dirty/": "/docs/guides/reviewing-code/",
+    "/guides/custom-tasks/": "/docs/advanced/custom-tasks/",
+    "/guides/acp/": "/docs/advanced/acp/",
+    "/guides/postgres-sync/": "/docs/advanced/postgres-sync/",
+    "/integrations/streaming/": "/docs/advanced/streaming/",
+    "/integrations/git-worktrees/": "/docs/guides/repository-management/",
+}
+
+# Hydrated media used to be served from the site root; the README, older
+# release binaries, and external links still point there.
+ASSET_PERMANENT = {
+    "/assets/static/:path*": "/docs/assets/static/:path*",
+    "/assets/generated/:path*": "/docs/assets/generated/:path*",
 }
 
 TEMPORARY = {
     "/install.sh": "https://raw.githubusercontent.com/kenn-io/roborev/main/scripts/install.sh",
     "/install.ps1": "https://raw.githubusercontent.com/kenn-io/roborev/main/scripts/install.ps1",
 }
+
+
+def docs_tier_redirects() -> dict[str, str]:
+    """Every docs page moved from the site root to /docs/, twins included."""
+    redirects: dict[str, str] = {}
+    for source in public_markdown_sources(CONFIG):
+        if source == "index.md":
+            # The site root is the website tier now; the docs index moved to
+            # /docs/ and is linked from every root page.
+            continue
+        stem = source.removesuffix(".md")
+        route = f"/{stem.removesuffix('/index')}/"
+        redirects[route] = f"/docs{route}"
+        redirects[f"/{source}"] = f"/docs/{source}"
+    return redirects
+
+
+def expected_permanent() -> dict[str, str]:
+    return {**LEGACY_PERMANENT, **ASSET_PERMANENT, **docs_tier_redirects()}
+
+
+def render_vercel_json() -> str:
+    redirects = [
+        {"source": source, "destination": destination, "permanent": False}
+        for source, destination in TEMPORARY.items()
+    ]
+    redirects.extend(
+        {"source": source, "destination": destination, "permanent": True}
+        for source, destination in expected_permanent().items()
+    )
+    data = {
+        "$schema": "https://openapi.vercel.sh/vercel.json",
+        "framework": None,
+        "installCommand": "uv sync --frozen --no-dev",
+        "buildCommand": "uv run --frozen bash ./vercel-build.sh",
+        "outputDirectory": "site",
+        "trailingSlash": True,
+        "redirects": redirects,
+    }
+    return json.dumps(data, indent=2) + "\n"
 
 MAX_REDIRECTS = 2048
 MAX_CONDITIONS = 16
@@ -269,6 +322,18 @@ def load_vercel() -> dict[str, Any]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate or regenerate vercel.json redirects.")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="rewrite vercel.json from zensical.toml instead of checking it",
+    )
+    args = parser.parse_args()
+    if args.write:
+        VERCEL.write_text(render_vercel_json(), encoding="utf-8")
+        print(f"wrote {VERCEL.relative_to(ROOT)}")
+        return
+
     data = load_vercel()
     if "framework" not in data or data["framework"] is not None:
         fail("vercel framework must be null")
@@ -282,17 +347,11 @@ def main() -> None:
         fail("vercel.json must set trailingSlash true")
 
     redirects = collect_redirects(data)
-    for source in redirects:
-        if source.endswith(".md"):
-            fail(
-                "Markdown source URL must be served as a static file, "
-                f"not redirected: {source}"
-            )
-
-    for source, destination in PERMANENT.items():
+    permanent = expected_permanent()
+    for source, destination in permanent.items():
         item = redirects.get(source)
         if not item:
-            fail(f"missing permanent redirect {source}")
+            fail(f"missing permanent redirect {source} (run check_vercel_redirects.py --write)")
         if item.get("destination") != destination or item.get("permanent") is not True:
             fail(f"incorrect permanent redirect {source}")
 
@@ -302,6 +361,11 @@ def main() -> None:
             fail(f"missing temporary redirect {source}")
         if item.get("destination") != destination or item.get("permanent") is not False:
             fail(f"incorrect temporary redirect {source}")
+
+    for source in redirects:
+        if source in permanent or source in TEMPORARY:
+            continue
+        fail(f"unexpected redirect {source}; declare it in check_vercel_redirects.py")
 
     print("vercel redirect checks passed")
 

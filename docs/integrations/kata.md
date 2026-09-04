@@ -48,8 +48,8 @@ comments. Fix and task jobs do not receive Kata context either.
 If the prompt exceeds `max_prompt_size`, roborev trims other optional context
 first and drops Kata context last.
 
-See [Kata Integration](/configuration/#kata-integration) in the configuration
-reference for full details.
+See [Kata Integration](/docs/configuration/#kata-integration) in the
+configuration reference for full details.
 
 ## Filing Findings as Kata Issues
 
@@ -76,8 +76,8 @@ a marker label (`review-failed` or `review-finding`) and any extra `labels` you
 configure. roborev uses an idempotency key per job/event, so reruns do not
 create duplicate issues.
 
-See [Built-in: Kata Integration](/guides/hooks/#built-in-kata-integration) in
-the review hooks guide for hook fields and event patterns.
+See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
+in the review hooks guide for hook fields and event patterns.
 
 ## Closing the Loop
 

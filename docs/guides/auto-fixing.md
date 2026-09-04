@@ -8,19 +8,19 @@ branch, runs an agent to fix them, waits for re-review, and repeats until
 everything passes or the iteration limit is reached.
 
 For a one-shot fix without re-review, see
-[`roborev fix`](/guides/assisted-refactoring/#using-fix-with-reviews).
+[`roborev fix`](/docs/guides/assisted-refactoring/#using-fix-with-reviews).
 
 !!! tip "Run from an agent session"
 
     The `/roborev-refine` skill runs the same iterative loop from within a Claude
     Code or Codex session. See
-    [Agent Skills](/guides/agent-skills/#refine-a-branch).
+    [Agent Skills](/docs/guides/agent-skills/#refine-a-branch).
 
 !!! tip "Automation inside your coding agent"
 
     If you want review fixes to happen automatically during your Codex or Claude
     Code sessions — without invoking a command yourself — see
-    [Agent Hook](/agent-hook/), which watches the agent boundary and steers the
+    [Agent Hook](/docs/agent-hook/), which watches the agent boundary and steers the
     agent to fix failed reviews as they appear.
 
 ```bash
@@ -77,7 +77,7 @@ moves on to the next failed review.
 Refine creates its own commits after applying agent changes. If
 `fix_commit_author` or `fix_commit_co_authored_by` is configured, refine applies
 those values directly with Git's `--author` and `--trailer` options. See
-[Fix Commit Metadata](/configuration/#fix-commit-metadata).
+[Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
 ## Refine vs Fix
 
@@ -97,7 +97,7 @@ those values directly with Git's `--author` and `--trailer` options. See
 | `--model <model>` | Model for agent |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
 | `--quiet` | Show elapsed time instead of agent output |
-| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--since <commit>` | Refine commits since a specific commit |
 | `--branch <name>` | Validate the current branch before refining (guardrail, does not switch branches) |
@@ -216,10 +216,10 @@ use caution with untrusted sources:
 
 ## See Also
 
-- [Assisted Refactoring](/guides/assisted-refactoring/): One-shot fix and
+- [Assisted Refactoring](/docs/guides/assisted-refactoring/): One-shot fix and
     analysis workflows
-- [Consolidating Reviews](/commands/#consolidating-reviews): Verify and
+- [Consolidating Reviews](/docs/commands/#consolidating-reviews): Verify and
     deduplicate findings before fixing
-- [Custom Tasks & Agentic Mode](/advanced/custom-tasks/): Review vs agentic mode
-    details
-- [Agent Skills](/guides/agent-skills/): Fix findings interactively
+- [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/): Review vs agentic
+    mode details
+- [Agent Skills](/docs/guides/agent-skills/): Fix findings interactively

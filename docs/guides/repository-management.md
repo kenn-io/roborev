@@ -6,7 +6,7 @@ description: Manage repositories tracked by roborev
 Manage repositories tracked by roborev:
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/cli-repo-list.svg" alt="roborev repo list output" loading="lazy" style="max-width: 480px">
+  <img src="/docs/assets/generated/cli-repo-list.svg" alt="roborev repo list output" loading="lazy" style="max-width: 480px">
 </figure>
 
 ```bash
@@ -95,8 +95,8 @@ You can have multiple local clones of the same remote repository (e.g.,
 `~/project-main` and `~/project-feature`). Each clone is tracked separately in
 roborev while sharing the same repository identity for sync purposes.
 
-When using [PostgreSQL Sync](/advanced/postgres-sync/), reviews from teammates
-are intelligently matched:
+When using [PostgreSQL Sync](/docs/advanced/postgres-sync/), reviews from
+teammates are intelligently matched:
 
 - If you have exactly one local clone with that identity, synced reviews appear
     there
@@ -172,4 +172,4 @@ the post-commit hook fires correctly from linked worktrees.
 
 ## See Also
 
-- [Configuration](/configuration/) - Per-repo and global settings
+- [Configuration](/docs/configuration/) - Per-repo and global settings

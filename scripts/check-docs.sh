@@ -38,14 +38,33 @@ fi
 
 root_media_refs="$(
   (rg -n '(<img[^>]+src="/|!\[[^]]*\]\(/)[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)' docs README.md || true) \
-    | grep -v '/assets/static/' \
-    | grep -v '/assets/generated/' \
+    | grep -v '/docs/assets/static/' \
+    | grep -v '/docs/assets/generated/' \
     || true
 )"
 if [[ -n "$root_media_refs" ]]; then
-  printf 'docs media references must use /assets/static or /assets/generated:\n%s\n' "$root_media_refs" >&2
+  printf 'docs media references must use /docs/assets/static or /docs/assets/generated:\n%s\n' "$root_media_refs" >&2
   exit 1
 fi
+
+website_entries=(
+  "docs/website/index.html"
+  "docs/website/index.md"
+  "docs/website/guide/index.html"
+  "docs/website/guide.md"
+  "docs/website/404.html"
+  "docs/website/styles/site.css"
+  "docs/website/scripts/site.js"
+  "docs/website/fonts/licenses/Inter-OFL-1.1.txt"
+  "docs/website/fonts/licenses/JetBrains-Mono-OFL-1.1.txt"
+  "docs/llms.txt"
+)
+for entry in "${website_entries[@]}"; do
+  if [[ ! -f "$entry" ]]; then
+    printf 'missing website tier file: %s\n' "$entry" >&2
+    exit 1
+  fi
+done
 
 bash docs/assets/hydrate-assets.sh
 

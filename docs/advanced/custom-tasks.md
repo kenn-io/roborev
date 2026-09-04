@@ -11,9 +11,9 @@ or perform targeted analysis.
 
     For common analysis tasks like finding duplication, reducing complexity, or
     identifying dead code, see
-    [Assisted Refactoring](/guides/assisted-refactoring/). The `roborev analyze`
-    command provides built-in prompts for these use cases and can automatically
-    apply fixes.
+    [Assisted Refactoring](/docs/guides/assisted-refactoring/). The
+    `roborev analyze` command provides built-in prompts for these use cases and can
+    automatically apply fixes.
 
 ```bash
 roborev run "Review src/auth.go for security issues"
@@ -103,7 +103,7 @@ cat review-checklist.txt | roborev run --wait
 |------|-------------|
 | `--wait` | Wait for task to complete and show result |
 | `--agent` | Agent to use (default: from config) |
-| `--reasoning` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--no-context` | Don't include repository context in prompt |
 | `--agentic` | Enable agentic mode (allow file edits and commands) |
 | `--yolo` | Alias for `--agentic` |
@@ -203,12 +203,12 @@ When using agentic mode:
 - Use isolation for untrusted code (containers, VMs)
 
 See
-[Auto-Fix Agentic Loop Security](/guides/auto-fixing/#security-considerations)
+[Auto-Fix Agentic Loop Security](/docs/guides/auto-fixing/#security-considerations)
 for detailed guidance.
 
 ## See Also
 
-- [Assisted Refactoring](/guides/assisted-refactoring/) - Built-in analysis
+- [Assisted Refactoring](/docs/guides/assisted-refactoring/) - Built-in analysis
     types with `roborev analyze` and `roborev fix`
-- [Auto-Fix with Refine](/guides/auto-fixing/) - Automated issue resolution
-- [Terminal UI](/integrations/tui/) - View task results
+- [Auto-Fix with Refine](/docs/guides/auto-fixing/) - Automated issue resolution
+- [Terminal UI](/docs/integrations/tui/) - View task results

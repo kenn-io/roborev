@@ -50,7 +50,7 @@ roborev tui
 ```
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-queue.svg" alt="roborev TUI queue view" loading="lazy">
+  <img src="/docs/assets/generated/tui-queue.svg" alt="roborev TUI queue view" loading="lazy">
 </figure>
 
 The review queue is a ledger of every review roborev has run. Each entry stays
@@ -69,7 +69,7 @@ agent session. Press `y` on any completed review to copy its content to your
 clipboard.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-copy.svg" alt="Copying a review to clipboard" loading="lazy">
+  <img src="/docs/assets/generated/tui-copy.svg" alt="Copying a review to clipboard" loading="lazy">
 </figure>
 
 Paste the review into Claude Code, Codex, or whichever agent you're working
@@ -94,7 +94,7 @@ $roborev-fix          # Codex
 
 The agent fetches your open reviews, groups findings by file, fixes them in
 priority order, runs tests, and offers to commit. See
-[Agent Skills](/guides/agent-skills/) for the full skill reference.
+[Agent Skills](/docs/guides/agent-skills/) for the full skill reference.
 
 ### Use `roborev fix` from the CLI
 
@@ -107,11 +107,12 @@ roborev fix 123                    # Fix a specific review by job ID
 
 The agent applies changes, commits, and closes the review. For a fully automated
 loop that re-reviews and iterates until everything passes, use `roborev refine`.
-See [Auto-Fix with Refine](/guides/auto-fixing/).
+See [Auto-Fix with Refine](/docs/guides/auto-fixing/).
 
 ## Next Steps
 
-- [Terminal UI](/integrations/tui/) — Full TUI reference and shortcuts
-- [Agent Skills](/guides/agent-skills/) — Review and fix from your agent session
-- [Commands](/commands/) — CLI command reference
-- [Configuration](/configuration/) — Customize agents, models, and behavior
+- [Terminal UI](/docs/integrations/tui/) — Full TUI reference and shortcuts
+- [Agent Skills](/docs/guides/agent-skills/) — Review and fix from your agent
+    session
+- [Commands](/docs/commands/) — CLI command reference
+- [Configuration](/docs/configuration/) — Customize agents, models, and behavior

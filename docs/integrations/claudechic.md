@@ -9,7 +9,7 @@ Agent SDK. Its roborev integration adds a live review sidebar, verdict icons,
 and one-command fix workflows, so you never have to leave your coding session to
 check review status.
 
-![Claude Chic review sidebar showing pass/fail verdicts alongside a review detail view](/assets/static/claudechic-review-sidebar.png)
+![Claude Chic review sidebar showing pass/fail verdicts alongside a review detail view](/docs/assets/static/claudechic-review-sidebar.png)
 
 ## Installation
 
@@ -39,7 +39,7 @@ The sidebar appears automatically when roborev reviews are detected and stays in
 sync as you work.
 
 Claude Chic supports multiple
-[git worktrees](/guides/repository-management/#git-worktrees). Switching
+[git worktrees](/docs/guides/repository-management/#git-worktrees). Switching
 worktrees or branches filters the sidebar to show only reviews for that worktree
 or branch.
 
@@ -69,9 +69,9 @@ The entire loop happens without switching windows or terminals.
 
 ## See Also
 
-- [Agent Skills](/guides/agent-skills/): Skills available to coding agents
+- [Agent Skills](/docs/guides/agent-skills/): Skills available to coding agents
     including roborev skills
-- [Responding to Reviews](/guides/responding-to-reviews/): How to address and
-    comment on review findings
-- [Auto-Fix with Refine](/guides/auto-fixing/): Automated fix loops using
+- [Responding to Reviews](/docs/guides/responding-to-reviews/): How to address
+    and comment on review findings
+- [Auto-Fix with Refine](/docs/guides/auto-fixing/): Automated fix loops using
     `roborev fix`

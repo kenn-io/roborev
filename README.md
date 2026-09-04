@@ -1,20 +1,20 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/assets/static/logo-with-text-dark-bg.svg">
-  <img alt="roborev" src="https://roborev.io/assets/static/logo-with-text-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/docs/assets/static/logo-with-text-dark-bg.svg">
+  <img alt="roborev" src="https://roborev.io/docs/assets/static/logo-with-text-light.svg">
 </picture>
 
 [![Go](https://img.shields.io/badge/Go-1.27.0+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/Docs-roborev.io-blue)](https://roborev.io)
 
-**[Documentation](https://roborev.io)** | **[Quick Start](https://roborev.io/quickstart/)** | **[Installation](https://roborev.io/installation/)**
+**[Documentation](https://roborev.io/docs/)** | **[Quick Start](https://roborev.io/docs/quickstart/)** | **[Installation](https://roborev.io/docs/installation/)**
 
 Continuous code review for AI coding agents. roborev runs in the
 background, reviews every commit as agents write code, and surfaces
 issues in seconds -- before they compound. Pull code reviews into
 your agentic loop while context is fresh.
 
-![Roborev browser application](https://roborev.io/assets/generated/web-ui.png)
+![Roborev browser application](https://roborev.io/docs/assets/generated/web-ui.png)
 
 ## How It Works
 
@@ -24,7 +24,7 @@ your agentic loop while context is fresh.
 
 ### Automation, two layers
 
-![How roborev works](https://roborev.io/assets/static/how-it-works.svg)
+![How roborev works](https://roborev.io/docs/assets/static/how-it-works.svg)
 
 - **Post-commit reviews** - a git hook reviews every commit in the background (any agent).
 - **Agent hook** - watches supported coding-agent sessions and brings open
@@ -57,7 +57,7 @@ You can also choose the exact binary path with
 `roborev init --binary ~/.local/share/mise/shims/roborev`, or
 `roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
 
-![roborev review](https://roborev.io/assets/generated/tui-review.svg)
+![roborev review](https://roborev.io/docs/assets/generated/tui-review.svg)
 
 ## Features
 
@@ -224,7 +224,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev close <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
 
-See [full command reference](https://roborev.io/commands/) for all options.
+See [full command reference](https://roborev.io/docs/commands/) for all options.
 
 ### Exporting review history
 
@@ -303,7 +303,7 @@ default.
 
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
-See [configuration guide](https://roborev.io/configuration/) for all options.
+See [configuration guide](https://roborev.io/docs/configuration/) for all options.
 
 ### Kata task context
 
@@ -459,16 +459,16 @@ unintended commands.
 
 Full documentation available at **[roborev.io](https://roborev.io)**:
 
-- [Quick Start](https://roborev.io/quickstart/)
-- [Installation](https://roborev.io/installation/)
-- [Commands Reference](https://roborev.io/commands/)
-- [Configuration](https://roborev.io/configuration/)
-- [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
-- [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
-- [Hooks](https://roborev.io/guides/hooks/)
-- [Agent Hook](docs/agent-hook.md)
-- [Agent Skills](https://roborev.io/guides/agent-skills/)
-- [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
+- [Quick Start](https://roborev.io/docs/quickstart/)
+- [Installation](https://roborev.io/docs/installation/)
+- [Commands Reference](https://roborev.io/docs/commands/)
+- [Configuration](https://roborev.io/docs/configuration/)
+- [Auto-Fixing with Refine](https://roborev.io/docs/guides/auto-fixing/)
+- [Code Analysis and Assisted Refactoring](https://roborev.io/docs/guides/assisted-refactoring/)
+- [Hooks](https://roborev.io/docs/guides/hooks/)
+- [Agent Hook](https://roborev.io/docs/agent-hook/)
+- [Agent Skills](https://roborev.io/docs/guides/agent-skills/)
+- [PostgreSQL Sync](https://roborev.io/docs/advanced/postgres-sync/)
 
 For local development in this repo, install hooks with `prek install` or run
 `make install-hooks` as a thin wrapper around `prek install`.

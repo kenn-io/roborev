@@ -232,8 +232,8 @@ and one member output can pass through without an extra synthesis agent call.
 CI panel posting has additional safety checks. Before posting or retrying,
 roborev verifies the PR is still open, the HEAD SHA is unchanged, and the repo
 identity still matches. Stale runs are retired without posting a misleading
-comment. See [GitHub Integration](/integrations/github/) for CI retry behavior
-and status checks.
+comment. See [GitHub Integration](/docs/integrations/github/) for CI retry
+behavior and status checks.
 
 ## Viewing Panel Runs
 

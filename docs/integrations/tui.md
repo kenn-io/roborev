@@ -8,7 +8,7 @@ with roborev reviews. The queue updates in real time by subscribing to the
 daemon event stream over SSE; polling is retained as a 15-second fallback. The
 review queue acts as a ledger: every commit review is recorded, and each entry
 stays open until you explicitly close it (or until
-[`auto_close_passing_reviews`](/configuration/#auto-close-passing-reviews)
+[`auto_close_passing_reviews`](/docs/configuration/#auto-close-passing-reviews)
 closes passing reviews automatically). This creates an accountability loop that
 ensures every line of agent-generated code is reviewed and every finding is
 resolved.
@@ -35,7 +35,7 @@ branch.
 ## Queue View
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-queue.svg" alt="roborev TUI queue view" loading="lazy">
+  <img src="/docs/assets/generated/tui-queue.svg" alt="roborev TUI queue view" loading="lazy">
 </figure>
 
 | Key | Action |
@@ -54,8 +54,8 @@ branch.
 | `y` | Copy review to clipboard |
 | `x` | Cancel running/queued job |
 | `r` | Rerun completed/failed/canceled job |
-| `F` | Launch fix job (requires [`advanced.tasks_enabled`](/advanced/background-tasks/)) |
-| `T` | Switch to Tasks view (requires [`advanced.tasks_enabled`](/advanced/background-tasks/)) |
+| `F` | Launch fix job (requires [`advanced.tasks_enabled`](/docs/advanced/background-tasks/)) |
+| `T` | Switch to Tasks view (requires [`advanced.tasks_enabled`](/docs/advanced/background-tasks/)) |
 | `o` | Column options (reorder, toggle visibility) |
 | `f` | Open filter (repo/branch tree) |
 | `b` | Open filter with branches expanded |
@@ -187,8 +187,8 @@ To start the TUI with closed items already hidden, set
 the current repository on startup, set `auto_filter_repo = true`. To auto-filter
 to the current branch or worktree, set `auto_filter_branch = true`. Both
 auto-filters add clearable filters (press `Esc`), and CLI flags (`--repo`,
-`--branch`) take priority when set. See [Configuration](/configuration/) for
-details.
+`--branch`) take priority when set. See [Configuration](/docs/configuration/)
+for details.
 
 Pressing `h` toggles the hide-closed filter for the current session without
 changing the config.
@@ -242,9 +242,9 @@ For a commit review with no resolvable branch, the Branch column displays
 branch filtering continues to group the review under `(none)`.
 
 The default-visible "Cost" column shows the model-pricing estimate from
-[agentsview](/commands/#token-usage) for jobs that have reported usage. The cell
-stays blank for unpriced models, for jobs whose usage has not been fetched yet,
-and on agentsview versions older than 0.30.0.
+[agentsview](/docs/commands/#token-usage) for jobs that have reported usage. The
+cell stays blank for unpriced models, for jobs whose usage has not been fetched
+yet, and on agentsview versions older than 0.30.0.
 
 For panel parent rows, the cost column shows known member costs as soon as they
 are available, including while other members are still running or unpriced.
@@ -271,7 +271,7 @@ change takes effect immediately and is persisted to your config file.
 Press `Enter` on a job to view its review.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-review.svg" alt="roborev TUI review detail view" loading="lazy">
+  <img src="/docs/assets/generated/tui-review.svg" alt="roborev TUI review detail view" loading="lazy">
 </figure>
 
 | Key | Action |
@@ -284,7 +284,7 @@ Press `Enter` on a job to view its review.
 | `y` | Copy review to clipboard |
 | `x` | Cancel running/queued job |
 | `r` | Rerun completed/failed/canceled job |
-| `F` | Open inline fix panel (requires [`advanced.tasks_enabled`](/advanced/background-tasks/)) |
+| `F` | Open inline fix panel (requires [`advanced.tasks_enabled`](/docs/advanced/background-tasks/)) |
 | `l` | View job log |
 | `p` | Switch between review/prompt |
 | `m` | View commit message |
@@ -298,14 +298,14 @@ and rebasing directly from the terminal. This is disabled by default. To enable
 it, set `tasks_enabled = true` under the `[advanced]` section in
 `~/.roborev/config.toml`.
 
-See [Background Tasks](/advanced/background-tasks/) for the full reference.
+See [Background Tasks](/docs/advanced/background-tasks/) for the full reference.
 
 !!! note
 
     Most users should address review findings from their coding agent session using
-    [`/roborev-fix`](/guides/agent-skills/) or
-    [`roborev fix`](/commands/#fixing-reviews). The background tasks workflow is
-    intended for users who prefer to manage fixes entirely within the TUI.
+    [`/roborev-fix`](/docs/guides/agent-skills/) or
+    [`roborev fix`](/docs/commands/#fixing-reviews). The background tasks workflow
+    is intended for users who prefer to manage fixes entirely within the TUI.
 
 ## Prompt View
 
@@ -333,7 +333,7 @@ Press `y` to copy the review content to your clipboard. This works from both the
 queue view (on completed jobs) and the review detail view.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-copy.svg" alt="roborev TUI copy review to clipboard" loading="lazy">
+  <img src="/docs/assets/generated/tui-copy.svg" alt="roborev TUI copy review to clipboard" loading="lazy">
 </figure>
 
 The copied content includes a metadata header for reference:
@@ -360,7 +360,7 @@ Press `?` at any time to toggle the commands overlay. This displays all
 available shortcuts for the current view.
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/tui-help.svg" alt="roborev TUI keyboard commands" loading="lazy">
+  <img src="/docs/assets/generated/tui-help.svg" alt="roborev TUI keyboard commands" loading="lazy">
 </figure>
 
 ## Review Screen Layout
@@ -426,7 +426,7 @@ ROBOREV_COLOR_MODE=none roborev tui    # Strip all colors
 
 `NO_COLOR` is honored across all TUI screens, including review and prompt detail
 views. When set, all ANSI color sequences are stripped. See
-[Color Mode](/configuration/#color-mode) for details.
+[Color Mode](/docs/configuration/#color-mode) for details.
 
 ## Version Mismatch Warning
 
@@ -525,7 +525,7 @@ dead processes are cleaned up automatically via PID liveness checks.
 
 ## See Also
 
-- [Commands Reference](/commands/): Full command list
-- [Responding to Reviews](/guides/responding-to-reviews/): Add comments to
+- [Commands Reference](/docs/commands/): Full command list
+- [Responding to Reviews](/docs/guides/responding-to-reviews/): Add comments to
     reviews
-- [Event Streaming](/advanced/streaming/): Programmatic access to events
+- [Event Streaming](/docs/advanced/streaming/): Programmatic access to events

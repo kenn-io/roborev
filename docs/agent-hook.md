@@ -25,7 +25,7 @@ selection, reminder policy, and local session state.
 
 !!! note
 
-    This differs from [Review Hooks](/guides/hooks/), which run your own shell
+    This differs from [Review Hooks](/docs/guides/hooks/), which run your own shell
     commands when a review completes. Agent Hook plugs into the coding agent's hook
     system to steer the active session itself.
 

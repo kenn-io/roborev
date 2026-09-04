@@ -69,7 +69,7 @@ automatically. Use `--panel none` to force a normal single-agent review:
 roborev review --branch --panel none
 ```
 
-See [Subagent Review Panels](/advanced/subagent-review-panels/) for panel
+See [Subagent Review Panels](/docs/advanced/subagent-review-panels/) for panel
 configuration.
 
 Panel subagents can be marked `allow_failure = true` when a reviewer is useful
@@ -154,7 +154,7 @@ single commits, ranges).
 The `security` and `design` types can have their own agent and model
 configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global
 config. See
-[Workflow-Specific Agent and Model](/configuration/#workflow-specific-agent-and-model).
+[Workflow-Specific Agent and Model](/docs/configuration/#workflow-specific-agent-and-model).
 `lookahead` has no dedicated fields, so pin it through the generic per-type
 block:
 
@@ -168,7 +168,7 @@ When unset, it falls back to your repo or global default agent and model.
 
 You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
-[Custom Review Types](/advanced/custom-review-types/).
+[Custom Review Types](/docs/advanced/custom-review-types/).
 
 ## Task Context from Kata
 
@@ -189,8 +189,8 @@ backlog as background context. Dirty reviews have no commit messages, so
 Kata context is optional and applies to local reviews only; CI pull-request
 reviews never include it. If the `kata` CLI is missing or the repo is not bound
 to Kata, the review proceeds without it. See
-[Kata Integration](/configuration/#kata-integration) for setup and
-[Built-in: Kata Integration](/guides/hooks/#built-in-kata-integration) for
+[Kata Integration](/docs/configuration/#kata-integration) for setup and
+[Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration) for
 filing review findings back into Kata.
 
 ## Severity Filtering
@@ -216,7 +216,7 @@ review_min_severity = "medium"
 
 The cascade order is: CLI flag > per-repo config > global config. The CLI flag
 overrides the config value. See
-[Configuration](/configuration/#per-repository-options).
+[Configuration](/docs/configuration/#per-repository-options).
 
 ## Review Guidelines
 
@@ -242,8 +242,8 @@ guidelines by default, so a repo can add local rules without losing shared
 preferences. Set `review_guidelines_supersede_global = true` in `.roborev.toml`
 when a repo should replace the global text entirely.
 
-See [Review Guidelines](/configuration/#review-guidelines) for common patterns
-and precedence details.
+See [Review Guidelines](/docs/configuration/#review-guidelines) for common
+patterns and precedence details.
 
 ## Specific Commit Ranges
 
@@ -426,15 +426,15 @@ roborev fix                      # Fix open reviews on this branch
 ```
 
 Browse open reviews first with `roborev tui`, then fix them. See
-[Responding to Reviews](/guides/responding-to-reviews/) for the full set of
+[Responding to Reviews](/docs/guides/responding-to-reviews/) for the full set of
 options.
 
 ## See Also
 
-- [Responding to Reviews](/guides/responding-to-reviews/): Fix findings and add
-    comments
-- [Code Analysis & Refactoring](/guides/assisted-refactoring/): Targeted
+- [Responding to Reviews](/docs/guides/responding-to-reviews/): Fix findings and
+    add comments
+- [Code Analysis & Refactoring](/docs/guides/assisted-refactoring/): Targeted
     analysis with `roborev analyze`
-- [Auto-Fix with Refine](/guides/auto-fixing/): Automated fix loop
-- [Agent Skills](/guides/agent-skills/): Review and fix from within an agent
-    session
+- [Auto-Fix with Refine](/docs/guides/auto-fixing/): Automated fix loop
+- [Agent Skills](/docs/guides/agent-skills/): Review and fix from within an
+    agent session

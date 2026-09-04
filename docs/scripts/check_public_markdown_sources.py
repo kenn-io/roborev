@@ -16,8 +16,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--site-dir",
-        default="site",
-        help="generated site directory relative to docs root",
+        default="site/docs",
+        help="generated docs tier directory relative to docs root",
     )
     args = parser.parse_args()
 

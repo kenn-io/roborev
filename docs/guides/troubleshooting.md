@@ -90,7 +90,7 @@ roborev install-hook --force
 
 If your repo uses a hook manager, you may need to add the `roborev enqueue` call
 to your hook manager's post-commit configuration instead. See
-[Review Hooks](/guides/hooks/) for details on hook managers and
+[Review Hooks](/docs/guides/hooks/) for details on hook managers and
 `core.hooksPath`.
 
 ### The nuclear option
@@ -125,6 +125,6 @@ Post-commit reviews still work in any environment - check `roborev status` and
 
 ## See Also
 
-- [Quick Start](/quickstart/): Initial setup and first review
-- [CLI Commands](/commands/): Full command reference
-- [Review Hooks](/guides/hooks/): Hook configuration and custom workflows
+- [Quick Start](/docs/quickstart/): Initial setup and first review
+- [CLI Commands](/docs/commands/): Full command reference
+- [Review Hooks](/docs/guides/hooks/): Hook configuration and custom workflows

@@ -388,7 +388,7 @@ roborev wait --quiet                  # Block until verdict (exit 0=pass, 1=fail
 
 This is more token-efficient than polling `roborev list` or `roborev show`
 because the agent makes a single blocking call and reads the exit code. See
-[Waiting for a Review Without Enqueuing](/guides/reviewing-code/#waiting-for-a-review-without-enqueuing)
+[Waiting for a Review Without Enqueuing](/docs/guides/reviewing-code/#waiting-for-a-review-without-enqueuing)
 for the full flag reference.
 
 ## Skills vs Async Reviews
@@ -411,5 +411,6 @@ For **fully automated** fixing outside an agent session, use
 
 ## See Also
 
-- [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/): Automated fix loop
-- [Commands Reference](/commands/): Full command list
+- [Auto-Fix Agentic Loop with Refine](/docs/guides/auto-fixing/): Automated fix
+    loop
+- [Commands Reference](/docs/commands/): Full command list

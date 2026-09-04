@@ -14,8 +14,8 @@ description: Run fix jobs in isolated worktrees and manage patches from the TUI
     This feature provides an advanced workflow for running fix jobs and applying
     patches directly from the TUI. Most users should address review findings by
     copying the review (`y`) and pasting it into their coding agent session, or by
-    using [`/roborev-fix`](/guides/agent-skills/) or
-    [`roborev fix`](/commands/#fixing-reviews).
+    using [`/roborev-fix`](/docs/guides/agent-skills/) or
+    [`roborev fix`](/docs/commands/#fixing-reviews).
 
 ## Fix Jobs
 
@@ -71,6 +71,7 @@ patch as context and produces a new patch targeting the current code.
 
 ## See Also
 
-- [Agent Skills](/guides/agent-skills/): Fix findings from your agent session
-- [Auto-Fix with Refine](/guides/auto-fixing/): Automated fix loop
-- [Terminal UI](/integrations/tui/): TUI overview and keyboard shortcuts
+- [Agent Skills](/docs/guides/agent-skills/): Fix findings from your agent
+    session
+- [Auto-Fix with Refine](/docs/guides/auto-fixing/): Automated fix loop
+- [Terminal UI](/docs/integrations/tui/): TUI overview and keyboard shortcuts

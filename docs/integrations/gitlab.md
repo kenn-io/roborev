@@ -6,8 +6,8 @@ description: Review GitLab merge requests from a CI pipeline and post results as
 roborev can review GitLab merge requests from inside a GitLab CI job and post
 the synthesized result as a merge request note. This is the same daemon-free
 "pipeline mode" the GitHub integration offers through
-[`roborev ci review`](/commands/#ci-review): the review matrix runs in the CI
-job, results are synthesized into one comment, and nothing is stored between
+[`roborev ci review`](/docs/commands/#ci-review): the review matrix runs in the
+CI job, results are synthesized into one comment, and nothing is stored between
 runs.
 
 !!! note
@@ -381,7 +381,7 @@ Subgroup paths are supported: `--gl-repo group/subgroup/project`.
 | `--upsert-comments` | Update the previous roborev note instead of adding one (overrides `[ci] upsert_comments`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (`security`, `design`, `lookahead`, `default`) |
-| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 
@@ -489,7 +489,7 @@ clones shallowly by default.
 
 ## See Also
 
-- [CLI Commands](/commands/#ci-review): Full `ci review` flag reference
-- [GitHub Integration](/integrations/github/): The equivalent GitHub setup and
-    the daemon CI poller
-- [Configuration](/configuration/): Global and per-repo settings
+- [CLI Commands](/docs/commands/#ci-review): Full `ci review` flag reference
+- [GitHub Integration](/docs/integrations/github/): The equivalent GitHub setup
+    and the daemon CI poller
+- [Configuration](/docs/configuration/): Global and per-repo settings
