@@ -1,14 +1,15 @@
-# roborev: every commit reviewed before the agent moves on
+# roborev: every commit reviewed, nobody waits
 
 roborev is a local code review daemon for teams shipping with coding agents. A
 git hook reviews each commit in the background with the agents you already run,
-keeps every finding open until it is addressed, and hands the fix back to the
-agent while the context that wrote the bug is still warm.
+while you and your agents keep working. Findings land in a ledger that stays
+open until they are addressed, and the fix goes back to the agent while the
+context that wrote the code is still warm.
 
 ```sh
 roborev init                     # post-commit hook + daemon, once per repo
 git commit -m "Add retry to payment webhook"
-# reviewed in the background while you keep working:
+# reviewed in the background; nothing blocks on it. later:
 # FAIL high    internal/webhook/retry.go:41   retries re-send a non-idempotent POST
 # FAIL medium  internal/webhook/retry_test.go no test covers the backoff ceiling
 roborev tui                      # the ledger: findings stay open until you close them
@@ -32,8 +33,8 @@ that produced the bug is gone from its context. roborev moves review to the
 commit, runs it in the background on your own machine, and gives the result
 back to the thing that can fix it fastest.
 
-- **Trigger: commit.** A git post-commit hook queues the review. No CI job, no
-  bot install, no waiting for a PR.
+- **Trigger: commit.** A git post-commit hook queues the review and returns.
+  No CI job, no bot install, nothing waits on the result.
 - **Agents: 11.** Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro,
   Kilo, Droid, Pi, and Grok Build, auto-detected.
 - **Hosted services: 0.** Reviews run through the agent CLIs already on your

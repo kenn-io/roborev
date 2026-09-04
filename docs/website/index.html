@@ -3,23 +3,23 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>roborev — every commit reviewed before the agent moves on</title>
-    <meta name="description" content="roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews every commit in the background with the agents you already run, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
+    <title>roborev — every commit reviewed, nobody waits</title>
+    <meta name="description" content="roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews every commit in the background with the agents you already run while work continues, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
     <link rel="canonical" href="https://roborev.io/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="alternate" type="text/markdown" href="https://roborev.io/index.md">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Every commit reviewed before the agent moves on.">
-    <meta property="og:description" content="Continuous code review for coding agents. Runs on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta property="og:title" content="Every commit reviewed. Nobody waits.">
+    <meta property="og:description" content="Continuous code review for coding agents. Runs in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
     <meta property="og:url" content="https://roborev.io/">
     <meta property="og:site_name" content="roborev">
     <meta property="og:image" content="https://roborev.io/docs/assets/static/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Every commit reviewed before the agent moves on.">
-    <meta name="twitter:description" content="Continuous code review for coding agents. Runs on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta name="twitter:title" content="Every commit reviewed. Nobody waits.">
+    <meta name="twitter:description" content="Continuous code review for coding agents. Runs in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
     <meta name="twitter:image" content="https://roborev.io/docs/assets/static/og-image.png">
   </head>
   <body>
@@ -84,13 +84,13 @@
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <p class="hero-brand"><img src="/docs/assets/static/logo.svg" alt="">roborev</p>
-        <h1 id="hero-title">Every commit reviewed before the agent moves on.</h1>
-        <p class="lede">roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews each commit in the background with the agents you <strong>already run</strong>, keeps every finding open until it is addressed, and hands the fix back to the agent while the context that wrote the bug is still warm.</p>
+        <h1 id="hero-title">Every commit reviewed. Nobody waits.</h1>
+        <p class="lede">roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews each commit in the background with the agents you <strong>already run</strong>, while you and your agents keep working. Findings land in a ledger that stays open until they are addressed, and the fix goes back to the agent while the context that wrote the code is still warm.</p>
         <figure class="term">
           <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
           <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                     <span class="out"># post-commit hook + daemon, once per repo</span>
 <span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
-<span class="out"># reviewed in the background while you keep working:</span>
+<span class="out"># reviewed in the background; nothing blocks on it. later:</span>
 <span class="fail">FAIL</span> <span class="out">high</span>    <span class="path">internal/webhook/retry.go:41</span>  <span class="out">retries re-send a non-idempotent POST</span>
 <span class="fail">FAIL</span> <span class="out">medium</span>  <span class="path">internal/webhook/retry_test.go</span> <span class="out">no test covers the backoff ceiling</span>
 <span class="ps1">$</span> <span class="cmd">roborev tui</span>                      <span class="out"># the ledger: findings stay open until you close them</span>
@@ -129,7 +129,7 @@
           <p>A coding agent can land dozens of commits in an hour. Review still arrives at the pull request: once, late, after the agent has moved on and the reasoning that produced the bug is gone from its context. By then every finding is a context switch for a human. roborev moves review to the commit, runs it in the background on your own machine, and gives the result back to the thing that can fix it fastest.</p>
         </div>
         <ol class="ledger">
-          <li><strong>Trigger</strong><span class="stat">commit</span><span>A git post-commit hook queues the review. No CI job, no bot install, no waiting for a PR.</span></li>
+          <li><strong>Trigger</strong><span class="stat">commit</span><span>A git post-commit hook queues the review and returns. No CI job, no bot install, nothing waits on the result.</span></li>
           <li><strong>Agents</strong><span class="stat">11</span><span>Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Grok Build, auto-detected.</span></li>
           <li><strong>Hosted services</strong><span class="stat">0</span><span>Reviews run through the agent CLIs already on your machine, on the subscriptions and keys you already pay for.</span></li>
           <li><strong>Binary</strong><span class="stat">1</span><span>A single Go binary: daemon, CLI, terminal UI, and browser UI. SQLite underneath.</span></li>
@@ -345,7 +345,7 @@
             <h2 id="own-title">Local by construction. Shared when you choose.</h2>
             <p class="lede">The daemon runs on your machine, reads your repo, and writes to a SQLite database under <code>~/.roborev</code>. Nothing leaves except the calls your agents already make. Turn on PostgreSQL sync and every machine keeps its local database while the team's review history converges in one place, deduplicated by UUID.</p>
             <ul class="interface-list">
-              <li><strong>CLI</strong><span><code>review</code>, <code>show</code>, <code>fix</code>, <code>refine</code>, <code>analyze</code>, <code>wait</code>, and <code>--json</code> where scripts need it.</span></li>
+              <li><strong>CLI</strong><span><code>review</code>, <code>show</code>, <code>fix</code>, <code>refine</code>, <code>analyze</code>, <code>list</code>, and <code>--json</code> where scripts need it.</span></li>
               <li><strong>TUI</strong><span>The live queue in the terminal, split-screen on wide windows.</span></li>
               <li><strong>Browser UI</strong><span>Reviews and analytics served by the daemon, loopback by default.</span></li>
               <li><strong>HTTP API</strong><span>Enqueue, query, and stream job output over server-sent events.</span></li>

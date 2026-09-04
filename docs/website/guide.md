@@ -23,9 +23,10 @@ roborev quickstart --json
 → [Quick start](https://roborev.io/docs/quickstart/),
 [Installation](https://roborev.io/docs/installation/)
 
-## 02 / Commit; the review is already running
+## 02 / Commit and keep going; the review runs behind you
 
-Each commit queues a background review through the daemon's worker pool. The
+Each commit queues a background review through the daemon's worker pool and
+returns immediately; neither you nor the agent waits on it. The
 first installed agent in the fallback order reads the diff, the commit message,
 your guidelines, and recent review history, and returns a verdict with findings,
 severities, and file locations. Duplicate hook requests for the same target are
@@ -92,7 +93,7 @@ inside the agent session.
 ```sh
 roborev refine --max-iterations 5 --min-severity high
 roborev refine --list                # preview, change nothing
-roborev review --branch --wait       # block until the branch review lands
+roborev refine --since HEAD~3        # only the last three commits
 ```
 
 → [Auto-fix with refine](https://roborev.io/docs/guides/auto-fixing/)

@@ -91,8 +91,8 @@
 
         <li class="guide-stop" id="commit">
           <div class="guide-copy">
-            <h2>Commit. The review is already running.</h2>
-            <p>Each commit queues a background review through the daemon's worker pool. The first installed agent in the fallback order picks it up, reads the diff, the commit message, your guidelines, and recent review history, and returns a verdict with findings, severities, and file locations.</p>
+            <h2>Commit and keep going. The review runs behind you.</h2>
+            <p>Each commit queues a background review through the daemon's worker pool and returns immediately; neither you nor the agent waits on it. The first installed agent in the fallback order picks it up, reads the diff, the commit message, your guidelines, and recent review history, and returns a verdict with findings, severities, and file locations.</p>
             <p>Duplicate hook requests for the same target are coalesced, so several worktrees or editors committing at once still produce one review. Small commits can be batched into one range review with <code>post_commit_batch_size</code>.</p>
             <p><a href="/docs/automation/post-commit-reviews/">Post-commit reviews</a> · <a href="/docs/guides/reviewing-code/">Reviewing code</a></p>
           </div>
@@ -183,8 +183,8 @@
 <span class="out"># fix -> commit -> re-review -> fix ... then a whole-branch review</span>
 <span class="ps1">$</span> <span class="cmd">roborev refine --list</span>
 <span class="out"># preview which reviews would be refined, change nothing</span>
-<span class="ps1">$</span> <span class="cmd">roborev review --branch --wait</span>
-<span class="out"># block until the branch review lands, for scripts and CI</span></code></pre>
+<span class="ps1">$</span> <span class="cmd">roborev refine --since HEAD~3</span>
+<span class="out"># only the last three commits</span></code></pre>
             </figure>
           </div>
         </li>
