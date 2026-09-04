@@ -182,9 +182,17 @@ func headOf(gitRef string) string {
 func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult {
 	out := make([]reviewpkg.ReviewResult, 0, len(results))
 	for _, r := range results {
-		if reviewpkg.IsSubstantiveOutput(r) {
-			out = append(out, r)
+		if !reviewpkg.IsSubstantiveOutput(r) {
+			continue
 		}
+		// A member whose stored verdict is unset and whose output carries no
+		// verdict never reviewed the code (for example an unreadable diff);
+		// it must not feed synthesis as if it had.
+		if r.Verdict == storage.VerdictUnknown &&
+			storage.ParseVerdict(r.Output) == storage.VerdictUnknown {
+			continue
+		}
+		out = append(out, r)
 	}
 	return out
 }

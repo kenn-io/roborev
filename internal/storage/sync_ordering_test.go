@@ -595,6 +595,29 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	assert.Equal(t, VerdictFail, review.Verdict())
 }
 
+func TestUpsertPulledReviewDropsVerdictOnUnreadableOutput(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("unreadable-pulled-verdict")
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID:               testUUID("unreadable-pulled-verdict"),
+		JobUUID:            *job.UUID,
+		Agent:              "test",
+		Prompt:             "prompt",
+		Output:             "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+		VerdictBool:        new(false),
+		UpdatedByMachineID: testUUID("unreadable-pulled-machine"),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "a remote fail verdict on unreadable output must not be imported")
+}
+
 func TestUpsertPulledReviewLeavesUnknownVerdictUnset(t *testing.T) {
 	h := newSyncTestHelper(t)
 	job := h.createPendingJob("unknown-review-verdict")
