@@ -583,6 +583,18 @@ func TestTUIJobCellsContent(t *testing.T) {
 		assert.Equal(t, "claude", cells[colAgent-colRef])
 	})
 
+	t.Run("requested model includes reasoning", func(t *testing.T) {
+		job := makeJob(1)
+		job.RequestedModel = "gpt-5.5"
+		job.Reasoning = "xhigh"
+		cells := m.jobCells(job)
+		assert.Equal(t, "gpt-5.5-xhigh", cells[colRequestedModel-colRef])
+
+		job.Reasoning = ""
+		cells = m.jobCells(job)
+		assert.Equal(t, "gpt-5.5-thorough", cells[colRequestedModel-colRef])
+	})
+
 	t.Run("verdict and handled values", func(t *testing.T) {
 		pass := "P"
 		handled := true

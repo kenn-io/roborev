@@ -1026,7 +1026,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		sessionID = string(runes[:12])
 	}
 
-	requestedModel := stripControlChars(job.RequestedModel)
+	requestedModel := formatModelWithReasoning(stripControlChars(job.RequestedModel), job.Reasoning)
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
 	cost := m.jobCostCell(job)

@@ -46,7 +46,14 @@ func formatAgentLabelWithReasoning(agentName, model, reasoning string) string {
 	if model == "" {
 		return formatAgentLabel(agentName, model)
 	}
-	return fmt.Sprintf("%s: %s-%s", agentName, model, effectiveReasoningLabel(reasoning))
+	return fmt.Sprintf("%s: %s", agentName, formatModelWithReasoning(model, reasoning))
+}
+
+func formatModelWithReasoning(model, reasoning string) string {
+	if model == "" {
+		return ""
+	}
+	return model + "-" + effectiveReasoningLabel(reasoning)
 }
 
 // detachedBranchLabel formats a placeholder branch label for a review job

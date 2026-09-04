@@ -373,8 +373,8 @@ Review #42 myrepo (codex: gpt-5.5-xhigh)
 Verdict: Pass [CLOSED]
 ```
 
-- **Line 1**: Review identity: job ID, repo name, agent, model, and reasoning
-    (if explicitly configured)
+- **Line 1**: Review identity: job ID, repo name, agent, model, and configured
+    or default reasoning
 - **Line 2**: Location: repo path, git ref, branch
 - **Line 3**: Status: verdict and closed state
 
