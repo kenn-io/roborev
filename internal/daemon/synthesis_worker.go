@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -368,38 +367,23 @@ func (wp *WorkerPool) runSynthesisAgent(
 	})
 	agentOutput = sessionWriter
 
-	var raw json.RawMessage
-	if schemaAgent, ok := a.(agent.SchemaAgent); ok {
-		wp.markAgentInvoked(workerID, job, a)
-		raw, err = schemaAgent.ClassifyWithSchema(
-			ctx, "", "", prompt, reviewpkg.SynthesisSchema, agentOutput,
-		)
-	} else if synthAgent, ok := a.(agent.SynthesisAgent); ok {
-		// No pre-agent gate on this path; mark immediately before the agent runs
-		// to keep the "set only when an agent actually runs" invariant adjacent
-		// to the call.
-		wp.markAgentInvoked(workerID, job, a)
-		raw, err = synthAgent.Synthesize(ctx, prompt, agentOutput)
-	} else {
+	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, prompt, agentOutput, reviewpkg.SynthesisHooks{
+		// Mark the agent invoked only once it is about to run, so a checkout
+		// failure below is never miscounted as an agent run.
+		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
 		// Verify findings against the reviewed checkout: a panel enqueued from a
 		// linked worktree must synthesize against that worktree, and CI panels
 		// get a detached checkout at the reviewed head instead of the stale
 		// shared clone.
-		checkout, checkoutErr := wp.prepareJobCheckout(ctx, workerID, job)
-		if checkout.cleanup != nil {
-			defer checkout.cleanup()
-		}
-		if checkoutErr != nil {
-			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
-			return reviewpkg.SynthesisDocument{}, agentName, "", checkoutErr
-		}
-		// Checkout succeeded and the agent is about to run; mark it invoked only
-		// now so a checkout failure above is never miscounted as an agent run.
-		wp.markAgentInvoked(workerID, job, a)
-		var output string
-		output, err = a.Review(ctx, checkout.agentRepoPath, job.GitRef, prompt, agentOutput)
-		raw = json.RawMessage(output)
-	}
+		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
+			checkout, err := wp.prepareJobCheckout(ctx, workerID, job)
+			return reviewpkg.SynthesisCheckout{
+				RepoPath: checkout.agentRepoPath,
+				GitRef:   job.GitRef,
+				Cleanup:  checkout.cleanup,
+			}, err
+		},
+	})
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
 		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
@@ -407,6 +391,10 @@ func (wp *WorkerPool) runSynthesisAgent(
 		}
 	}
 	if err != nil {
+		if checkoutErr, ok := errors.AsType[*reviewpkg.SynthesisCheckoutError](err); ok {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, checkoutErr.Error())
+			return reviewpkg.SynthesisDocument{}, agentName, "", checkoutErr.Err
+		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			if wp.handleUpdateInterruption(ctx, workerID, job) {
 				return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
@@ -416,15 +404,10 @@ func (wp *WorkerPool) runSynthesisAgent(
 			return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
 		}
 		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
-		return reviewpkg.SynthesisDocument{}, agentName, "", err
+		return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
 		return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
-	}
-	doc, err := reviewpkg.DecodeSynthesisDocument(raw)
-	if err != nil {
-		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
-		return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err
 	}
 	return doc, agentName, sessionWriter.SessionID(), nil
 }

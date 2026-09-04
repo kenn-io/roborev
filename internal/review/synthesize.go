@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -155,23 +154,11 @@ func runSynthesis(
 		ctx, 5*time.Minute)
 	defer cancel()
 
-	var raw json.RawMessage
-	if sa, ok := synthAgent.(agent.SchemaAgent); ok {
-		raw, err = sa.ClassifyWithSchema(
-			synthCtx, "", "", synthPrompt, SynthesisSchema, nil,
-		)
-	} else if sa, ok := synthAgent.(agent.SynthesisAgent); ok {
-		raw, err = sa.Synthesize(synthCtx, synthPrompt, nil)
-	} else {
-		var output string
-		output, err = synthAgent.Review(
-			synthCtx, opts.RepoPath, opts.GitRef, synthPrompt, nil)
-		raw = json.RawMessage(output)
-	}
-	if err != nil {
-		return "", fmt.Errorf("synthesis review: %w", err)
-	}
-	doc, err := DecodeSynthesisDocument(raw)
+	doc, err := RunSynthesisAgent(synthCtx, synthAgent, synthPrompt, nil, SynthesisHooks{
+		Checkout: func() (SynthesisCheckout, error) {
+			return SynthesisCheckout{RepoPath: opts.RepoPath, GitRef: opts.GitRef}, nil
+		},
+	})
 	if err != nil {
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}
