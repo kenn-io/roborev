@@ -83,7 +83,7 @@ func TestTUIRenderViews(t *testing.T) {
 					Model:    "o3",
 				},
 			},
-			wantContains: []string{"(codex: o3)"},
+			wantContains: []string{"(codex: o3-thorough)"},
 			wantAbsent:   []string{"Daemon:"},
 		},
 		{

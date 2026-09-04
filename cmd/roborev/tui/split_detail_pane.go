@@ -32,7 +32,7 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 	var out []string
 	title := fmt.Sprintf("Review #%d %s (%s)", review.Job.ID,
 		m.getDisplayName(review.Job.RepoPath, review.Job.RepoName),
-		formatAgentLabel(review.Agent, review.Job.Model))
+		formatAgentLabelWithReasoning(review.Agent, review.Job.Model, review.Job.Reasoning))
 	out = append(out, xansi.Truncate(titleStyle.Render(title), innerW, ""))
 
 	verdictParts := []string{

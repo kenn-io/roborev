@@ -85,7 +85,7 @@ func (m model) renderReviewView() string {
 		}
 		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
 
-		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
+		agentStr := formatAgentLabelWithReasoning(review.Agent, review.Job.Model, review.Job.Reasoning)
 
 		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
 		titleLen = runewidth.StringWidth(title)
