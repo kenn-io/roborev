@@ -135,8 +135,23 @@ func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalCont
 		DependencyMetadata: view.DependencyMetadata,
 		PreviousReviews:    previousReviewsFromView(view.PreviousReviews),
 		InRangeReviews:     inRangeReviewsFromView(view.InRangeReviews),
+		PriorRangeReviews:  priorRangeReviewsFromView(view.PriorRangeReviews),
 		PreviousAttempts:   reviewAttemptsFromView(view.PreviousAttempts),
 	}
+}
+
+func priorRangeReviewsFromView(views []PriorRangeReviewTemplateContext) []PriorRangeReviewTemplateContext {
+	reviews := make([]PriorRangeReviewTemplateContext, 0, len(views))
+	for _, view := range views {
+		reviews = append(reviews, PriorRangeReviewTemplateContext{
+			Range:    view.Range,
+			Agent:    view.Agent,
+			When:     view.When,
+			Output:   view.Output,
+			Comments: reviewCommentsFromView(view.Comments),
+		})
+	}
+	return reviews
 }
 
 func inRangeReviewsFromView(views []InRangeReviewTemplateContext) []InRangeReviewTemplateContext {

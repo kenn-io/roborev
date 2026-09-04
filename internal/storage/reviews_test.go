@@ -653,6 +653,42 @@ func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, outpu
 	return updatedJob
 }
 
+func TestGetRecentRangeReviewCandidates(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, "/tmp/range-context-repo")
+	otherRepo := createRepo(t, db, "/tmp/other-range-context-repo")
+
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..older", Agent: "test", JobType: JobTypeRange,
+	}, "older")
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..newer", Agent: "test", JobType: JobTypeSynthesis, PanelRole: PanelRoleSynthesis,
+	}, "newer")
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..member", Agent: "test", JobType: JobTypeRange, PanelRole: PanelRoleMember,
+	}, "member")
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID, GitRef: "commit", Agent: "test", JobType: JobTypeReview,
+	}, "commit")
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..task", Agent: "test", JobType: JobTypeTask,
+	}, "task")
+	createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: otherRepo.ID, GitRef: "base..other", Agent: "test", JobType: JobTypeRange,
+	}, "other")
+
+	candidates, err := db.GetRecentRangeReviewCandidates(repo.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	assert.Equal(t, "base..newer", candidates[0].GitRef)
+	assert.Equal(t, "base..older", candidates[1].GitRef)
+	assert.Equal(t, []RangeReviewCandidate{
+		{JobID: candidates[0].JobID, GitRef: "base..newer"},
+		{JobID: candidates[1].JobID, GitRef: "base..older"},
+	}, candidates)
+}
+
 func TestGetReviewByJobIDIncludesBranch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

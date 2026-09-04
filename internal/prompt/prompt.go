@@ -1058,6 +1058,9 @@ func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
 	if len(original.InRangeReviews) > 0 && len(trimmed.InRangeReviews) == 0 {
 		loss++
 	}
+	if len(original.PriorRangeReviews) > 0 && len(trimmed.PriorRangeReviews) == 0 {
+		loss++
+	}
 	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
 		loss++
 	}
@@ -1264,10 +1267,12 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 
+	var rangeStart string
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
 		startSHA, err := git.GetRangeStartCtx(b.context(), b.repoPath, rangeRef)
 		if err == nil {
+			rangeStart = startSHA
 			contexts, err := b.getPreviousReviewContexts(startSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
 				ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
@@ -1285,6 +1290,9 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	}
 	if files, err := git.GetRangeFilesChangedCtx(b.context(), b.repoPath, rangeRef); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
+	}
+	if rangeStart != "" {
+		ctx.optional.PriorRangeReviews = b.priorRangeReviewViews(rangeStart, rangeRef, commits, contextCount)
 	}
 
 	// Include per-commit reviews for commits inside the range so the agent
@@ -1394,6 +1402,93 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	return ctx.requiredPrefix + body, nil
+}
+
+const priorRangeReviewScanLimit = 40
+
+func (b *Builder) priorRangeReviewViews(
+	rangeStart, rangeRef string, commits []string, limit int,
+) []PriorRangeReviewTemplateContext {
+	if b.db == nil || b.repoID <= 0 || rangeStart == "" || limit <= 0 || len(commits) == 0 {
+		return nil
+	}
+	candidates, err := b.db.GetRecentRangeReviewCandidates(b.repoID, priorRangeReviewScanLimit)
+	if err != nil {
+		return nil
+	}
+	commitIndex := make(map[string]int, len(commits))
+	for i, commit := range commits {
+		commitIndex[commit] = i
+	}
+	currentEnd := commits[len(commits)-1]
+	type selected struct {
+		view  PriorRangeReviewTemplateContext
+		index int
+	}
+	selectedByEnd := make(map[string]selected, len(candidates))
+	resolveCache := make(map[string]string)
+	resolve := func(ref string) (string, bool) {
+		if resolved, ok := resolveCache[ref]; ok {
+			return resolved, resolved != ""
+		}
+		resolved, err := git.ResolveSHACtx(b.context(), b.repoPath, ref)
+		if err != nil {
+			resolveCache[ref] = ""
+			return "", false
+		}
+		resolveCache[ref] = resolved
+		return resolved, true
+	}
+	for _, candidate := range candidates {
+		if candidate.GitRef == rangeRef {
+			continue
+		}
+		start, end, ok := git.ParseRange(candidate.GitRef)
+		if !ok {
+			continue
+		}
+		resolvedStart, ok := resolve(start)
+		if !ok || resolvedStart != rangeStart {
+			continue
+		}
+		resolvedEnd, ok := resolve(end)
+		index, contained := commitIndex[resolvedEnd]
+		if !ok || !contained || resolvedEnd == currentEnd {
+			continue
+		}
+		if _, exists := selectedByEnd[resolvedEnd]; exists {
+			continue
+		}
+		review, err := b.db.GetReviewByJobID(candidate.JobID)
+		if err != nil || review == nil {
+			continue
+		}
+		view := PriorRangeReviewTemplateContext{
+			Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
+			Agent:  review.Agent,
+			When:   review.CreatedAt.Format("2006-01-02 15:04"),
+			Output: review.Output,
+		}
+		if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
+			for _, response := range storage.PromptTrustedResponses(responses) {
+				view.Comments = append(view.Comments, ReviewCommentTemplateContext{Responder: response.Responder, Response: response.Response})
+			}
+		}
+		selectedByEnd[resolvedEnd] = selected{view: view, index: index}
+	}
+	selectedViews := make([]selected, 0, len(selectedByEnd))
+	for _, candidate := range selectedByEnd {
+		selectedViews = append(selectedViews, candidate)
+	}
+	slices.SortFunc(selectedViews, func(a, b selected) int { return a.index - b.index })
+	if len(selectedViews) > limit {
+		selectedViews = selectedViews[len(selectedViews)-limit:]
+	}
+	views := make([]PriorRangeReviewTemplateContext, 0, len(selectedViews))
+	for _, candidate := range selectedViews {
+		views = append(views, candidate.view)
+	}
+	return views
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {

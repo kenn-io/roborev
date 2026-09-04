@@ -106,6 +106,46 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	return reviews, rows.Err()
 }
 
+// RangeReviewCandidate identifies a canonical review row whose ref may be
+// resolved and checked against the range currently being prompted.
+type RangeReviewCandidate struct {
+	JobID  int64
+	GitRef string
+}
+
+// GetRecentRangeReviewCandidates returns recent canonical range reviews for a
+// repository. Git topology decides whether a candidate is contained.
+func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit int) ([]RangeReviewCandidate, error) {
+	if repoID <= 0 || limit <= 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT j.id, j.git_ref
+		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
+		WHERE j.repo_id = ?
+		  AND COALESCE(NULLIF(j.job_type, ''), 'review') IN ('review', 'range', 'dirty', 'synthesis', 'compact')
+		  AND j.git_ref LIKE '%..%'
+		  AND COALESCE(j.panel_role, '') != 'member'
+		ORDER BY `+sqliteNormalizedTimestampExpr("rv.created_at")+` DESC, rv.id DESC
+		LIMIT ?
+	`, repoID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []RangeReviewCandidate
+	for rows.Next() {
+		var candidate RangeReviewCandidate
+		if err := rows.Scan(&candidate.JobID, &candidate.GitRef); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, rows.Err()
+}
+
 // GetRecentReviewsForRepo returns the N most recent reviews for a repo
 func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error) {
 	rows, err := db.Query(`

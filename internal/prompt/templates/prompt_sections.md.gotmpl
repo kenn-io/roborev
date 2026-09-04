@@ -43,6 +43,15 @@ Focus on cross-commit interactions and problems not caught by per-commit reviews
 
 {{template "review_comments" .Comments}}
 {{- end}}{{end}}{{end}}
+{{define "prior_range_reviews"}}{{if .PriorRangeReviews}}## Prior Same-Base Range Reviews
+
+The following canonical reviews cover an earlier endpoint in this range and share its base.
+
+{{range .PriorRangeReviews}}--- Range {{.Range}} ({{.Agent}}{{if .When}}, {{.When}}{{end}}) ---
+{{.Output}}
+
+{{template "review_comments" .Comments}}
+{{- end}}{{end}}{{end}}
 {{define "previous_review_attempts"}}{{if .PreviousAttempts}}## Previous Review Attempts
 
 This commit has been reviewed before. The following are previous review results and any
@@ -56,7 +65,7 @@ responses from developers. Use this context to:
 
 {{template "review_comments" .Comments}}
 {{- end}}{{end}}{{end}}
-{{define "optional_sections"}}{{template "kata_context" .}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "dependency_metadata" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
+{{define "optional_sections"}}{{template "kata_context" .}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "dependency_metadata" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "prior_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
 {{define "current_commit_required"}}## Current Commit
 
 **Commit:** {{.Commit}}
