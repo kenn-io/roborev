@@ -1,12 +1,13 @@
 # roborev
 
-> roborev is an open-source, local-first code review daemon for teams that
-> ship with coding agents. A git hook reviews every commit in the background
-> using the agents you already run (Codex, Claude Code, Gemini, Copilot, and
-> more), keeps findings in a ledger until they are addressed, and feeds them
-> back into the agent session so fixes happen while context is fresh. It also
-> reviews GitHub and GitLab pull requests with multi-agent panels and syncs
-> review history across machines.
+> roborev is local, continuous code review for the agentic loop: an
+> open-source review daemon for teams that ship with coding agents. A git
+> hook reviews every commit in the background using the agents you already
+> run (Codex, Claude Code, Gemini, Copilot, and more), keeps findings in a
+> ledger until they are addressed, and feeds them back into the agent session
+> so fixes happen while context is fresh. It also reviews GitHub and GitLab
+> pull requests with multi-agent panels and syncs review history across
+> machines.
 
 The product and guide pages have exact Markdown twins; documentation pages are
 served as HTML with Markdown twins alongside. Markdown versions are canonical

@@ -3,23 +3,23 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>roborev — every commit reviewed, nobody waits</title>
-    <meta name="description" content="roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews every commit in the background with the agents you already run while work continues, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
+    <title>roborev — local, continuous code review for the agentic loop</title>
+    <meta name="description" content="Find bugs faster and ship better quality code. roborev is a local code review daemon for teams shipping with coding agents: a git hook reviews every commit in the background with the agents you already run, keeps findings open until they are fixed, and hands the fix back to the agent while context is fresh.">
     <link rel="canonical" href="https://roborev.io/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="alternate" type="text/markdown" href="https://roborev.io/index.md">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Every commit reviewed. Nobody waits.">
-    <meta property="og:description" content="Continuous code review for coding agents. Runs in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta property="og:title" content="Local, continuous code review for the agentic loop.">
+    <meta property="og:description" content="Find bugs faster and ship better quality code. roborev reviews every commit in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
     <meta property="og:url" content="https://roborev.io/">
     <meta property="og:site_name" content="roborev">
     <meta property="og:image" content="https://roborev.io/docs/assets/static/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Every commit reviewed. Nobody waits.">
-    <meta name="twitter:description" content="Continuous code review for coding agents. Runs in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
+    <meta name="twitter:title" content="Local, continuous code review for the agentic loop.">
+    <meta name="twitter:description" content="Find bugs faster and ship better quality code. roborev reviews every commit in the background on your machine, with the agents you already have, and feeds fixes back into the session.">
     <meta name="twitter:image" content="https://roborev.io/docs/assets/static/og-image.png">
   </head>
   <body>
@@ -84,8 +84,8 @@
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <p class="hero-brand"><img src="/docs/assets/static/logo.svg" alt="">roborev</p>
-        <h1 id="hero-title">Every commit reviewed. Nobody waits.</h1>
-        <p class="lede">roborev is a local code review daemon for teams shipping with coding agents. A git hook reviews each commit in the background with the agents you <strong>already run</strong>, while you and your agents keep working. Findings land in a ledger that stays open until they are addressed, and the fix goes back to the agent while the context that wrote the code is still warm.</p>
+        <h1 id="hero-title">Local, continuous code review for the agentic loop.</h1>
+        <p class="lede"><strong>Find bugs faster and ship better quality code.</strong> roborev is a review daemon that runs on your machine: a git hook reviews each commit in the background with the agents you already run, while you and your agents keep working. Findings stay open in a ledger until they are addressed, and the fix goes back to the agent while the context that wrote the code is still warm.</p>
         <figure class="term">
           <figcaption class="term-title"><span>the review loop</span><span>local daemon · your agents</span></figcaption>
           <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>                     <span class="out"># post-commit hook + daemon, once per repo</span>

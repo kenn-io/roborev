@@ -1,10 +1,10 @@
-# roborev: every commit reviewed, nobody waits
+# roborev: local, continuous code review for the agentic loop
 
-roborev is a local code review daemon for teams shipping with coding agents. A
-git hook reviews each commit in the background with the agents you already run,
-while you and your agents keep working. Findings land in a ledger that stays
-open until they are addressed, and the fix goes back to the agent while the
-context that wrote the code is still warm.
+Find bugs faster and ship better quality code. roborev is a review daemon that
+runs on your machine: a git hook reviews each commit in the background with the
+agents you already run, while you and your agents keep working. Findings stay
+open in a ledger until they are addressed, and the fix goes back to the agent
+while the context that wrote the code is still warm.
 
 ```sh
 roborev init                     # post-commit hook + daemon, once per repo
