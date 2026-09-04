@@ -38,13 +38,16 @@ type SynthesisHooks struct {
 }
 
 // RunSynthesisAgent sends the synthesis prompt to the most capable interface
-// the agent implements and decodes the schema-validated document. Schema and
-// synthesis agents run without a checkout; plain review agents run against
-// the checkout returned by hooks.Checkout.
+// the agent implements, decodes the schema-validated document against the
+// reviews it combined, and drops findings below minSeverity so the threshold
+// holds even if the agent ignored the instruction. Schema and synthesis agents
+// run without a checkout; plain review agents run against the checkout
+// returned by hooks.Checkout.
 func RunSynthesisAgent(
 	ctx context.Context,
 	a agent.Agent,
-	prompt string,
+	reviews []ReviewResult,
+	prompt, minSeverity string,
 	out io.Writer,
 	hooks SynthesisHooks,
 ) (SynthesisDocument, error) {
@@ -82,5 +85,9 @@ func RunSynthesisAgent(
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
-	return DecodeSynthesisDocument(raw)
+	doc, err := DecodeSynthesisDocument(raw, reviews)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
+	return doc.Filter(minSeverity), nil
 }

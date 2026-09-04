@@ -447,7 +447,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
-		"Organize by severity",
+		"Order findings by severity",
 		"### Review 1",
 		"### Review 2",
 		"[FAILED]",
