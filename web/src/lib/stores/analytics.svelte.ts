@@ -1,4 +1,5 @@
 import { appPath } from "../base-path";
+import { normalizeRoborevHTTPError, RoborevHTTPError } from "../api/client";
 import type {
   AnalyticsSnapshot,
   GetWebAnalyticsParams,
@@ -59,8 +60,13 @@ const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
   month: 3,
 };
 
+const loadGeneratedAnalytics: AnalyticsLoader = (query, signal) =>
+  getWebAnalytics(query, { signal }).catch((cause: unknown) =>
+    normalizeRoborevHTTPError("load Roborev analytics", cause),
+  );
+
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
-  const loader = options.loader ?? getWebAnalytics;
+  const loader = options.loader ?? loadGeneratedAnalytics;
   const now = options.now ?? (() => new Date());
   const initialFilters = readAnalyticsFilters(globalThis.location.search);
   let filters = $state(initialFilters);
@@ -273,6 +279,9 @@ function sortedUnique(values: string[]): string[] {
 }
 
 function analyticsErrorMessage(cause: unknown): string {
+  if (cause instanceof RoborevHTTPError && cause.detail !== undefined) {
+    return cause.detail;
+  }
   if (cause instanceof Error && cause.message !== "") return cause.message;
   return "Analytics request failed";
 }

@@ -115,7 +115,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           selectedJob: Option.isSome(result.job)
             ? (result.job.value.jobs?.[0] ?? null)
             : null,
-          responses: [],
+          responses: Option.isSome(result.projection)
+            ? result.projection.value.responses
+            : [],
           reviewNotFound: true,
         } satisfies ReviewAuthority;
       }

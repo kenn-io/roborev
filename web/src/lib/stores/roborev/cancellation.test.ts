@@ -163,8 +163,17 @@ describe("Roborev request cancellation", () => {
     expect(getReviewProjection).toHaveBeenCalledOnce();
   });
 
-  it("uses the selected job prompt when no completed review exists", async () => {
+  it("uses the selected job prompt and projection when no review exists", async () => {
     const notFound = () => Promise.reject(new Response(null, { status: 404 }));
+    const response = {
+      id: 7,
+      created_at: "2026-08-14T12:01:00Z",
+      responder: "web",
+      response: "Queued job comment",
+    };
+    const getReviewProjection = vi.fn().mockResolvedValue({
+      responses: [response],
+    });
     const listJobs = vi.fn().mockResolvedValue({
       jobs: [
         {
@@ -185,7 +194,7 @@ describe("Roborev request cancellation", () => {
     });
     const store = reviewStore({
       getReview: notFound,
-      getReviewProjection: notFound,
+      getReviewProjection,
       listJobs,
     } as never);
 
@@ -194,6 +203,7 @@ describe("Roborev request cancellation", () => {
 
     await vi.waitFor(() => expect(store.isLoading()).toBe(false));
     expect(store.getPrompt()).toBe("persisted review prompt");
+    expect(store.getResponses()).toEqual([response]);
   });
 
   it("aborts stale job-list transport when a newer list becomes authoritative", async () => {

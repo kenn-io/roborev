@@ -43,21 +43,28 @@ export class RoborevHTTPError extends Schema.TaggedErrorClass<RoborevHTTPError>(
   },
 ) {}
 
+export async function normalizeRoborevHTTPError(
+  operation: string,
+  cause: unknown,
+): Promise<never> {
+  if (!(cause instanceof globalThis.Response)) throw cause;
+  const detail = await responseDetail(cause);
+  throw RoborevHTTPError.make({
+    operation,
+    status: cause.status,
+    ...(detail !== undefined && { detail }),
+    cause,
+  });
+}
+
 export const executeRoborevRequest = Effect.fn("RoborevApi.execute")(function* <
   A,
 >(operation: string, request: (signal: AbortSignal) => Promise<A>) {
   return yield* Effect.tryPromise({
     try: (signal) =>
-      request(signal).catch(async (cause: unknown) => {
-        if (!(cause instanceof globalThis.Response)) throw cause;
-        const detail = await responseDetail(cause);
-        throw RoborevHTTPError.make({
-          operation,
-          status: cause.status,
-          ...(detail !== undefined && { detail }),
-          cause,
-        });
-      }),
+      request(signal).catch((cause: unknown) =>
+        normalizeRoborevHTTPError(operation, cause),
+      ),
     catch: (cause) =>
       cause instanceof RoborevHTTPError
         ? cause
