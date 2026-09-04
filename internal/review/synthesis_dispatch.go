@@ -40,9 +40,9 @@ type SynthesisHooks struct {
 // RunSynthesisAgent sends the synthesis prompt to the most capable interface
 // the agent implements, decodes the schema-validated document against the
 // reviews it combined, and drops findings below minSeverity so the threshold
-// holds even if the agent ignored the instruction. Schema and synthesis agents
-// run without a checkout; plain review agents run against the checkout
-// returned by hooks.Checkout.
+// holds even if the agent ignored the instruction. Classifier and synthesis
+// agents run without a checkout; schema-constrained and plain review agents
+// run against the checkout returned by hooks.Checkout.
 func RunSynthesisAgent(
 	ctx context.Context,
 	a agent.Agent,
@@ -57,25 +57,48 @@ func RunSynthesisAgent(
 		}
 	}
 
+	resolveCheckout := func() (SynthesisCheckout, error) {
+		if hooks.Checkout == nil {
+			return SynthesisCheckout{}, nil
+		}
+		checkout, err := hooks.Checkout()
+		if err != nil {
+			if checkout.Cleanup != nil {
+				checkout.Cleanup()
+			}
+			return SynthesisCheckout{}, &SynthesisCheckoutError{Err: err}
+		}
+		return checkout, nil
+	}
+
 	var raw json.RawMessage
 	var err error
 	switch sa := a.(type) {
 	case agent.SchemaAgent:
 		invoke()
 		raw, err = sa.ClassifyWithSchema(ctx, "", "", prompt, SynthesisSchema, out)
+	case agent.StructuredReviewAgent:
+		// Codex and similar agents constrain review output to a schema but
+		// expose no classifier entry point.
+		checkout, cerr := resolveCheckout()
+		if cerr != nil {
+			return SynthesisDocument{}, cerr
+		}
+		if checkout.Cleanup != nil {
+			defer checkout.Cleanup()
+		}
+		invoke()
+		raw, err = sa.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
 	case agent.SynthesisAgent:
 		invoke()
 		raw, err = sa.Synthesize(ctx, prompt, out)
 	default:
-		var checkout SynthesisCheckout
-		if hooks.Checkout != nil {
-			checkout, err = hooks.Checkout()
-			if checkout.Cleanup != nil {
-				defer checkout.Cleanup()
-			}
-			if err != nil {
-				return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}
-			}
+		checkout, cerr := resolveCheckout()
+		if cerr != nil {
+			return SynthesisDocument{}, cerr
+		}
+		if checkout.Cleanup != nil {
+			defer checkout.Cleanup()
 		}
 		invoke()
 		var output string

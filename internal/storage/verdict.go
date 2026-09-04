@@ -87,11 +87,14 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 	job.Verdict = &value
 }
 
-// unreadableInputPhrases are deterministic signals that the agent never saw
-// the diff it was asked to review. Output containing one of these and no
+// unreadableInputPhrases are deterministic signals that the agent never
+// produced a review: it could not see the diff, or it printed nothing. Output containing one of these and no
 // severity-labelled finding is not a review at all, so it must not record a
 // verdict even when the agent appends a reflexive "No issues found."
 var unreadableInputPhrases = []string{
+	// Every agent adapter returns this fixed text when the process printed
+	// nothing at all; it is an empty review, not a finding.
+	"no review output generated",
 	"unable to read the diff",
 	"unable to access the diff",
 	"cannot read the diff",

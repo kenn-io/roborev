@@ -655,6 +655,11 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictUnknown,
 	},
 	{
+		name:   "Unreadable/empty agent output placeholder",
+		output: "No review output generated",
+		want:   VerdictUnknown,
+	},
+	{
 		name:   "Unreadable/severity label still reports findings",
 		output: "Note: I was unable to read the diff for vendor/, reviewed the rest.\n\n- Medium: nil deref in main.go:42",
 		want:   VerdictFail,
