@@ -1038,6 +1038,12 @@ func TestHumaCollectionsAreNonNullable(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	assert.Equal(t, []any{}, body["repos"])
 
+	statusResponse := serveHuma(t, srv, http.MethodGet, "/api/status", nil)
+	require.Equal(t, http.StatusOK, statusResponse.Code)
+	var statusBody map[string]any
+	require.NoError(t, json.Unmarshal(statusResponse.Body.Bytes(), &statusBody))
+	assert.NotContains(t, statusBody, "port")
+
 	api := (&Server{}).registerHumaAPI(http.NewServeMux())
 	schema := api.OpenAPI().Components.Schemas.Map()["ListReposOutputBody"]
 	require.NotNil(t, schema)

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"io"
 	"net/http"
@@ -29,10 +30,16 @@ func humaConfig(title string) huma.Config {
 	cfg := huma.DefaultConfig(title, version.Version)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
-			return jsonv2.MarshalWrite(w, value)
+			return jsonv2.MarshalWrite(
+				w,
+				value,
+				json.DefaultOptionsV1(),
+				jsonv2.FormatNilSliceAsNull(false),
+				jsontext.EscapeForHTML(false),
+			)
 		},
 		Unmarshal: func(data []byte, value any) error {
-			return jsonv2.Unmarshal(data, value)
+			return jsonv2.Unmarshal(data, value, json.DefaultOptionsV1())
 		},
 	}
 	cfg.Formats = map[string]huma.Format{
