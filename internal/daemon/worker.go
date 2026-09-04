@@ -1057,6 +1057,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
+	// A prebuilt CI prompt was written for the agent configured at enqueue
+	// time. After failover the running agent may parse output differently,
+	// so align the output instruction with the agent that will answer.
+	if job.PromptPrebuilt && job.IsReviewJob() {
+		_, structured := a.(agent.StructuredReviewAgent)
+		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, structured)
+	}
+
 	// Enforce the final submission size after all prompt transformations.
 	// Oversized prompts are deterministic and should never be sent to any
 	// agent just to discover a context-window failure.

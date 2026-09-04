@@ -153,7 +153,7 @@ max_chars = 50000
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
 | `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` review every commit |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
-| `auto_close_passing_reviews` | bool | Automatically close reviews that pass with no findings |
+| `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
 | `refine_reasoning` | string | Reasoning level for refine. See [Reasoning Levels](#reasoning-levels) |
 | `review_min_severity` | string | Lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported. Cascades: CLI flag > repo config > global config |
@@ -840,7 +840,8 @@ review is queued, while the review still covers the entire branch.
 
 By default, all reviews remain open in the queue until you explicitly close
 them. Set `auto_close_passing_reviews = true` to automatically close reviews
-that pass with no findings:
+that pass. A review whose findings all fall below `review_min_severity` passes
+and is closed too; the findings stay readable in the closed review:
 
 ```toml
 auto_close_passing_reviews = true
@@ -901,7 +902,7 @@ column_borders = true             # Show separators between TUI columns
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
-| `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass with no findings | Yes |
+| `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |

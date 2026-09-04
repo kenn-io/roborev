@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -398,15 +399,16 @@ func HighestSeverityLabel(output string) string {
 		// Structured reviews render each finding as a numbered heading whose
 		// whole text is the severity: "### 1. Low". Recognize that form so
 		// rendered structured output parses the same way as prose findings.
+		// Any other heading falls through to the prose checks below, so
+		// "### High — crash" still counts.
 		if first == '#' {
 			heading := stripListMarker(checkText)
-			for _, sev := range severities {
-				if heading == sev && !isLegendEntry(lines, i) {
-					record(sev)
-					break
+			if slices.Contains(severities, heading) {
+				if !isLegendEntry(lines, i) {
+					record(heading)
 				}
+				continue
 			}
-			continue
 		}
 
 		// Check if text starts with a severity word

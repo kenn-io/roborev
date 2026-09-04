@@ -8,7 +8,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -32,9 +31,8 @@ type ReviewResult struct {
 	// reviews persist it so a later panel threshold can use the same findings.
 	StructuredOutput json.RawMessage
 	// MinSeverity is the threshold already applied to Verdict (and, for
-	// structured reviews, to the rendered Output). Later consumers combine it
-	// with their own threshold instead of relaxing a verdict that was already
-	// decided under a stricter one.
+	// structured reviews, to the rendered Output). Findings are never dropped,
+	// so a later consumer can re-derive the verdict under its own threshold.
 	MinSeverity string
 
 	// Skipped/SkipReason are populated for skipped (auto-design) rows so
@@ -58,13 +56,19 @@ func (r ReviewResult) Passed() bool {
 	return storage.ParseVerdict(r.Output) == storage.VerdictPass
 }
 
-// ApplyMinSeverity re-derives the verdict under the stricter of the result's
-// own threshold and minSeverity. Findings are never dropped: structured
+// ApplyMinSeverity re-derives the verdict under minSeverity, replacing the
+// threshold the result was decided under. A panel or CI threshold therefore
+// applies to the combined review exactly as configured, whether it is looser
+// or stricter than the member's own. Findings are never dropped: structured
 // reviews re-render every finding and pass when none reaches the threshold,
-// and prose reviews re-parse their severity labels the same way. Failed and
-// skipped results are returned unchanged.
+// and prose reviews re-parse their severity labels the same way. An empty
+// minSeverity keeps the result's threshold. Failed and skipped results are
+// returned unchanged.
 func (r ReviewResult) ApplyMinSeverity(minSeverity string) ReviewResult {
-	effective := config.StricterSeverity(r.MinSeverity, minSeverity)
+	effective := strings.ToLower(strings.TrimSpace(minSeverity))
+	if effective == "" {
+		effective = r.MinSeverity
+	}
 	if r.Structured != nil {
 		r.MinSeverity = effective
 		r.Verdict = storage.VerdictFromPassed(r.Structured.Passed(effective))

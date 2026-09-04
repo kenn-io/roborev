@@ -205,8 +205,11 @@ roborev review --branch --min-severity medium  # Low findings are informational 
 The reviewer never sees the threshold and reports every finding with its
 severity. Roborev applies the threshold afterwards: the review fails when any
 finding is at or above it, and passes when every finding is below it. Findings
-below the threshold stay in the review output so you can still read them, and
-`roborev fix` applies its own `fix_min_severity` when choosing what to address.
+below the threshold stay in the review output so you can still read them. A
+review that passes under the threshold is a pass like any other: it is eligible
+for auto-close, and `roborev fix` and the fix skills skip it because there is
+nothing to fix. `fix_min_severity` applies only to the findings of failing
+reviews.
 
 Agents that support schema-constrained output (Codex, Claude Code, Pi, and Grok)
 return their findings as structured data for every review type, so the verdict

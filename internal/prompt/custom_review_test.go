@@ -233,3 +233,17 @@ func TestBuiltInReviewPromptStructuredOutputInstruction(t *testing.T) {
 	assert.NotContains(t, structured, "Severity threshold")
 	assert.NotContains(t, structured, "high severity")
 }
+
+func TestReconcileStructuredOutputInstruction(t *testing.T) {
+	assert := assert.New(t)
+	prose := "Review the change.\n"
+	structured := prose + structuredReviewOutputInstruction
+
+	assert.Equal(structured, ReconcileStructuredOutputInstruction(prose, true),
+		"a structured agent gets the instruction appended")
+	assert.Equal(structured, ReconcileStructuredOutputInstruction(structured, true),
+		"an existing instruction is not duplicated")
+	assert.Equal(prose, ReconcileStructuredOutputInstruction(structured, false),
+		"a prose agent never sees the JSON instruction")
+	assert.Equal(prose, ReconcileStructuredOutputInstruction(prose, false))
+}

@@ -24,6 +24,25 @@ verdict is "pass" when the change is acceptable, "fail" when it is not, and
 "unable_to_review" only when you could not assess the change at all, for
 example because the diff is missing or unreadable; explain why in the summary.`
 
+// ReconcileStructuredOutputInstruction makes a prebuilt review prompt match
+// the agent that will actually run it. Prompts are built before failover,
+// so a prompt written for a structured agent may reach a prose agent and
+// vice versa. A prose agent must not be told its answer will be
+// schema-constrained, and a structured agent should be told what the schema
+// expects. The instruction is appended only when absent, so custom prompts
+// that already embed it are unchanged.
+func ReconcileStructuredOutputInstruction(prompt string, structured bool) string {
+	present := strings.Contains(prompt, structuredReviewOutputInstruction)
+	switch {
+	case structured && !present:
+		return prompt + structuredReviewOutputInstruction
+	case !structured && present:
+		return strings.ReplaceAll(prompt, structuredReviewOutputInstruction, "")
+	default:
+		return prompt
+	}
+}
+
 type customReviewTemplateData struct {
 	ReviewType string
 	Includes   map[string]string
