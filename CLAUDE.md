@@ -291,6 +291,8 @@ Configured via `[ci]` section: `enabled`, `github_repo`, `poll_interval`, `agent
 
 **Max prompt size**: 250KB (configurable). Falls back to file listing if diff exceeds limit.
 
+**Structured output**: Agents implementing `agent.StructuredReviewAgent` (codex, claude-code, pi, grok) run every review type through `ReviewWithSchema` with the `internal/structuredreview` schema; `review.RunAgentReview` renders the Markdown and derives the verdict from the findings. Other agents run built-in types as prose and `storage.ParseVerdictAtSeverity` reads the severity labels. `min_severity` is pure post-processing: prompts never mention it, findings are never removed, and it only decides which severities fail the review. The schema (v2, v1 still decodes) also carries the agent's own `verdict`; it is rendered but does not change the outcome except `unable_to_review`, which `RunAgentReview` returns as an agent error. Fix/refine prompts still use `config.SeverityInstruction` to limit what gets addressed.
+
 ## Worktree System (`internal/worktree/`)
 
 Used for fix jobs to run agents in isolated environments:

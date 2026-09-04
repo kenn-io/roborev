@@ -97,6 +97,9 @@ type Builder struct {
 	repoPath   string
 	repoID     int64
 	kataClient kata.Client
+	// structuredOutput appends the JSON output instruction to built-in
+	// review prompts when the agent will return schema-constrained findings.
+	structuredOutput bool
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -143,6 +146,15 @@ func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 	next := *b
 	next.repoPath = repoPath
 	next.repoID = repoID
+	return &next
+}
+
+// WithStructuredOutput returns a builder that tells built-in review prompts
+// the response will be constrained by Roborev's review JSON Schema. Custom
+// review types always carry that instruction.
+func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
+	next := *b
+	next.structuredOutput = enabled
 	return &next
 }
 
@@ -776,7 +788,8 @@ type buildOpts struct {
 	// is available. Set by BuildWithDiffFile so the worker can
 	// detect when a snapshot is needed.
 	requireDiffFile bool
-	// minSeverity, when non-empty, injects a severity filter
+	// minSeverity is accepted for call-site symmetry. The threshold is applied
+	// after the review runs and is never shown to the agent.
 	// instruction into the system prompt.
 	minSeverity string
 }
@@ -802,12 +815,11 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	if err != nil {
 		return promptBuildContext{}, err
 	}
-	requiredPrefix := systemPrompt + "\n"
-	if !custom {
-		if inst := config.SeverityInstruction(minSeverity); inst != "" {
-			requiredPrefix += inst + "\n"
-		}
+	requiredPrefix := systemPrompt
+	if !custom && b.structuredOutput {
+		requiredPrefix += structuredReviewOutputInstruction
 	}
+	requiredPrefix += "\n"
 	if custom && len(requiredPrefix) > promptCap {
 		return promptBuildContext{}, fmt.Errorf(
 			"custom review prompt is %d bytes but prompt limit is %d bytes",

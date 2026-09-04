@@ -116,7 +116,7 @@ review_reasoning = "thorough"  # For code reviews (default: thorough)
 refine_reasoning = "standard"  # For refine command (default: standard)
 
 # Severity filtering
-review_min_severity = "medium"  # Skip low-severity findings in reviews
+review_min_severity = "medium"  # Low findings are reported but do not fail reviews
 fix_min_severity = "medium"     # Skip low-severity findings in fix
 refine_min_severity = "medium"  # Skip low-severity findings in refine
 
@@ -156,7 +156,7 @@ max_chars = 50000
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass with no findings |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
 | `refine_reasoning` | string | Reasoning level for refine. See [Reasoning Levels](#reasoning-levels) |
-| `review_min_severity` | string | Minimum severity for reviews: `critical`, `high`, `medium`, or `low`. Cascades: CLI flag > repo config > global config |
+| `review_min_severity` | string | Lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
 | `reuse_review_session` | bool | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) |
@@ -904,7 +904,7 @@ column_borders = true             # Show separators between TUI columns
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass with no findings | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
-| `review_min_severity` | string | - | Default minimum severity for reviews: `critical`, `high`, `medium`, or `low` | Yes |
+| `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |
 | `refine_min_severity` | string | - | Default minimum severity for `refine`: `critical`, `high`, `medium`, or `low` | Yes |
 | `disable_codex_sandbox` | bool | false | Disable Codex `bwrap` sandboxing for systems where it is unavailable | Yes |

@@ -212,8 +212,8 @@ func IsMarkerOnlyOutput(output string) bool {
 	return sNoSpace == SeverityThresholdMarker
 }
 
-// SeverityInstruction returns a prompt instruction telling the agent
-// to focus only on findings at or above minSeverity. Returns "" for
+// SeverityInstruction returns a fix prompt instruction telling the agent
+// to address only findings at or above minSeverity. Returns "" for
 // empty, "low", or unrecognized input (no filtering needed).
 func SeverityInstruction(minSeverity string) string {
 	instruction, ok := severityAbove[minSeverity]
@@ -466,10 +466,11 @@ func ResolveReviewMinSeverityFromConfig(
 	return "", nil
 }
 
-// severityRank returns a numeric rank for a severity level.
-// Higher rank = stricter threshold (fewer findings pass).
-func severityRank(s string) int {
-	switch s {
+// SeverityRank returns a numeric rank for a severity level: critical is
+// 4, high 3, medium 2, low 1, and anything else 0. Higher rank means a
+// stricter threshold (fewer findings pass).
+func SeverityRank(s string) int {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "critical":
 		return 4
 	case "high":
@@ -486,7 +487,7 @@ func severityRank(s string) int {
 // StricterSeverity returns whichever severity threshold is stricter
 // (filters more). Empty string means "no filter" (least strict).
 func StricterSeverity(a, b string) string {
-	if severityRank(a) >= severityRank(b) {
+	if SeverityRank(a) >= SeverityRank(b) {
 		return a
 	}
 	return b

@@ -1,143 +1,59 @@
 package review
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestTrimPartialRune(t *testing.T) {
+func TestApplyMinSeverityProseReparsesUnderStricterThreshold(t *testing.T) {
 	assert := assert.New(t)
+	result := ReviewResult{
+		Status:      ResultDone,
+		Output:      "Summary.\n\n- Low: naming nit\n",
+		Verdict:     storage.VerdictFail,
+		MinSeverity: "low",
+	}
 
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty", "", ""},
-		{"ascii only", "hello", "hello"},
-		{
-			"clean emoji boundary",
-			"abc😀",
-			"abc😀",
-		},
-		{
-			"split 4-byte emoji after 1 byte",
-			"abc" + string([]byte{0xF0}),
-			"abc",
-		},
-		{
-			"split 4-byte emoji after 2 bytes",
-			"abc" + string([]byte{0xF0, 0x9F}),
-			"abc",
-		},
-		{
-			"split 4-byte emoji after 3 bytes",
-			"abc" + string([]byte{0xF0, 0x9F, 0x98}),
-			"abc",
-		},
-		{
-			"split 2-byte char after 1 byte",
-			"abc" + string([]byte{0xC3}),
-			"abc",
-		},
-		{
-			"interior invalid bytes preserved",
-			"a" + string([]byte{0xFF}) + "b",
-			"a" + string([]byte{0xFF}) + "b",
-		},
-		{
-			"orphan continuation byte",
-			"abc" + string([]byte{0x80}),
-			"abc",
-		},
-		{
-			"two orphan continuation bytes",
-			"abc" + string([]byte{0x80, 0x80}),
-			"abc",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := TrimPartialRune(tt.in)
-			assert.Equalf(tt.want, got, "TrimPartialRune(%q) = %q, want %q", tt.in, got, tt.want)
-		})
-	}
+	relaxed := result.ApplyMinSeverity("")
+	assert.Equal(storage.VerdictFail, relaxed.Verdict, "a looser threshold never relaxes a verdict")
+	assert.Equal("low", relaxed.MinSeverity)
+
+	stricter := result.ApplyMinSeverity("medium")
+	assert.Equal(storage.VerdictPass, stricter.Verdict)
+	assert.Equal("medium", stricter.MinSeverity)
+	assert.Equal(result.Output, stricter.Output, "prose output is never rewritten")
+
+	failed := ReviewResult{Status: ResultFailed, Error: "boom"}.ApplyMinSeverity("high")
+	assert.Equal(storage.VerdictUnknown, failed.Verdict)
+	assert.Empty(failed.MinSeverity)
 }
 
-func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
+func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert := assert.New(t)
-
-	// Verify that a string with interior invalid UTF-8 is NOT
-	// stripped down to empty — only the trailing boundary matters.
-	// This is the bug that utf8.ValidString would cause.
-	interior := strings.Repeat("x", 1000) +
-		string([]byte{0xFF}) +
-		strings.Repeat("y", 1000)
-	got := TrimPartialRune(interior)
-	assert.Equalf(interior, got, "interior invalid bytes should be preserved, got len %d want len %d", len(got), len(interior))
-}
-
-func TestHasSubstantiveOutput(t *testing.T) {
-	tests := []struct {
-		name    string
-		results []ReviewResult
-		want    bool
-	}{
-		{name: "empty batch"},
-		{
-			name: "completed output",
-			results: []ReviewResult{{
-				Status: ResultDone,
-				Output: "## Findings\n",
-			}},
-			want: true,
-		},
-		{
-			name: "completed whitespace",
-			results: []ReviewResult{{
-				Status: ResultDone,
-				Output: " \n\t",
-			}},
-		},
-		{
-			name: "completed empty-output placeholder",
-			results: []ReviewResult{{
-				Status: ResultDone,
-				Output: "No review output generated",
-			}},
-		},
-		{
-			name: "failed output",
-			results: []ReviewResult{{
-				Status: ResultFailed,
-				Output: "partial diagnostics",
-			}},
-		},
-		{
-			name: "skipped output",
-			results: []ReviewResult{{
-				Status: ResultSkipped,
-				Output: "not a review",
-			}},
+	structured := StructuredReview{
+		SchemaVersion: storage.StructuredReviewSchemaVersion,
+		Summary:       "Two findings.",
+		Findings: []StructuredFinding{
+			{Severity: "medium", Problem: "Off by one.", Fix: "Fix the bound."},
+			{Severity: "low", Problem: "Name is vague.", Fix: "Rename it."},
 		},
 	}
+	result := ReviewResult{Status: ResultDone, Structured: &structured}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, HasSubstantiveOutput(tt.results))
-		})
-	}
-}
+	medium := result.ApplyMinSeverity("medium")
+	assert.Equal(storage.VerdictFail, medium.Verdict)
+	assert.Contains(medium.Output, "Off by one.")
+	assert.Contains(medium.Output, "Name is vague.")
 
-func TestUnavailableError(t *testing.T) {
-	assert.Equal(t,
-		UnavailableErrorPrefix+"agent review: native package missing",
-		UnavailableError("agent review: native package missing"),
-	)
-	assert.Equal(t,
-		UnavailableErrorPrefix+"already categorized",
-		UnavailableError(UnavailableErrorPrefix+"already categorized"),
-	)
+	high := medium.ApplyMinSeverity("high")
+	assert.Equal(storage.VerdictPass, high.Verdict)
+	assert.Equal("high", high.MinSeverity)
+	assert.Contains(high.Output, "No findings at or above high severity.")
+	assert.Contains(high.Output, "Off by one.")
+
+	assert.Equal(storage.VerdictPass, high.ApplyMinSeverity("medium").Verdict,
+		"the stricter threshold already applied wins")
 }

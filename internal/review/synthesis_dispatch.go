@@ -115,5 +115,11 @@ func RunSynthesisAgent(
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
-	return doc.Filter(minSeverity), nil
+	if err := validateLiveDocument(a.Name(), doc); err != nil {
+		return SynthesisDocument{}, err
+	}
+	// minSeverity never removes findings; callers apply it when rendering
+	// and deriving the verdict.
+	_ = minSeverity
+	return doc, nil
 }

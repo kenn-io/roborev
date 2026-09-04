@@ -190,14 +190,28 @@ func verdictBoolFromOutput(output string) any {
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
 func ParseVerdict(output string) Verdict {
+	return ParseVerdictAtSeverity(output, "")
+}
+
+// ParseVerdictAtSeverity is ParseVerdict with a minimum severity. Labeled
+// findings at or above minSeverity fail the review. When every labeled
+// finding is below the threshold the review passes: the findings stay in the
+// output as information, they just do not count against it. Output without
+// severity labels falls back to the agent's own pass/fail statement. Empty,
+// "low", and unknown thresholds count every labeled finding.
+func ParseVerdictAtSeverity(output, minSeverity string) Verdict {
 	if ClassifyOutput(output) != OutputReviewed {
 		return VerdictUnknown
 	}
 
 	// Severity labels indicate actual findings. They appear as
 	// "- Medium —", "* Low:", "Critical -", etc.
-	if hasSeverityLabel(output) {
-		return VerdictFail
+	if highest := HighestSeverityLabel(output); highest != "" {
+		threshold := max(config.SeverityRank(minSeverity), config.SeverityRank("low"))
+		if config.SeverityRank(highest) >= threshold {
+			return VerdictFail
+		}
+		return VerdictPass
 	}
 
 	// Marker signals pass ONLY when it stands alone. A loose
@@ -343,15 +357,22 @@ func stripFieldLabel(s string) string {
 	return s
 }
 
-// hasSeverityLabel checks if the output contains severity labels indicating findings.
+// HighestSeverityLabel returns the highest severity label found in prose
+// review output, or "" when the output has no severity-labeled findings.
 // Matches patterns like "- Medium —", "* Low:", "Critical — issue", etc.
 // Checks lines that start with bullets/numbers OR directly with severity words.
 // Requires separators to be followed by space to avoid "High-level overview".
 // Skips lines that appear to be part of a severity legend/rubric.
-func hasSeverityLabel(output string) bool {
+func HighestSeverityLabel(output string) string {
 	lc := strings.ToLower(output)
 	severities := []string{"critical", "high", "medium", "low"}
 	lines := strings.Split(lc, "\n")
+	highest := ""
+	record := func(sev string) {
+		if config.SeverityRank(sev) > config.SeverityRank(highest) {
+			highest = sev
+		}
+	}
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -373,6 +394,20 @@ func hasSeverityLabel(output string) bool {
 
 		// Strip markdown formatting (bold, headers) before checking
 		checkText = stripMarkdown(checkText)
+
+		// Structured reviews render each finding as a numbered heading whose
+		// whole text is the severity: "### 1. Low". Recognize that form so
+		// rendered structured output parses the same way as prose findings.
+		if first == '#' {
+			heading := stripListMarker(checkText)
+			for _, sev := range severities {
+				if heading == sev && !isLegendEntry(lines, i) {
+					record(sev)
+					break
+				}
+			}
+			continue
+		}
 
 		// Check if text starts with a severity word
 		for _, sev := range severities {
@@ -412,7 +447,8 @@ func hasSeverityLabel(output string) bool {
 				continue
 			}
 
-			return true
+			record(sev)
+			break
 		}
 
 		// Check for "severity: <level>" pattern (e.g., "**Severity**: High")
@@ -432,14 +468,15 @@ func hasSeverityLabel(output string) bool {
 				for _, sev := range severities {
 					if strings.HasPrefix(rest, sev) {
 						if !isLegendEntry(lines, i) {
-							return true
+							record(sev)
 						}
+						break
 					}
 				}
 			}
 		}
 	}
-	return false
+	return highest
 }
 
 // isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric

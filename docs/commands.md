@@ -97,7 +97,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--type <type>` | Review type (`security`, `design`, `lookahead`); changes system prompt |
 | `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Legacy shorthand for `--reasoning fast` |
-| `--min-severity <level>` | Only report findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+| `--min-severity <level>` | Lowest severity that fails the review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--panel <name or none>` | Run a named review panel. Use `none` to bypass configured defaults |
 | `--local` | Run review locally without the daemon (streams output to console) |
 | `--repo <path>` | Specify repository path |
@@ -698,7 +698,7 @@ roborev ci review --comment                  # Post results as PR/MR comment
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Legacy (`fast`/`standard`/`thorough`/`maximum`) or exact (`low`/`medium`/`high`/`xhigh`/`max`) reasoning |
-| `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
+| `--min-severity <level>` | Lowest severity that fails the combined review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--upsert-comments` | Update the previous roborev comment instead of adding one (overrides `[ci] upsert_comments`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 

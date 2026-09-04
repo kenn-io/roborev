@@ -1055,7 +1055,8 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		return fmt.Errorf("fetch review: %w", err)
 	}
 
-	// Skip reviews that passed — no findings to fix
+	// Skip reviews that passed — a pass, including a pass under the severity
+	// threshold, has nothing to fix.
 	if review.Verdict() == "P" {
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)

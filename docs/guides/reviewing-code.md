@@ -96,7 +96,7 @@ fi
 | `--quiet` | Suppress output |
 | `--agent <name>` | Use specific agent |
 | `--reasoning <level>` | Set reasoning depth |
-| `--min-severity <level>` | Only report findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+| `--min-severity <level>` | Lowest severity that fails the review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--panel <name or none>` | Run a named review panel, or use `none` to force single-agent review |
 
 ## Uncommitted Changes
@@ -125,7 +125,7 @@ The `--dirty` flag includes:
 | `--quiet` | Suppress output |
 | `--agent <name>` | Use specific agent |
 | `--reasoning <level>` | Set reasoning depth |
-| `--min-severity <level>` | Only report findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+| `--min-severity <level>` | Lowest severity that fails the review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--panel <name or none>` | Run a named review panel, or use `none` to force single-agent review |
 
 ## Review Types
@@ -195,17 +195,27 @@ filing review findings back into Kata.
 
 ## Severity Filtering
 
-Use `--min-severity` to limit which findings the reviewer reports:
+Use `--min-severity` to decide which findings fail a review:
 
 ```bash
-roborev review --min-severity high          # Only report high and critical findings
-roborev review --branch --min-severity medium  # Skip low-severity findings in branch reviews
+roborev review --min-severity high          # Only high and critical findings fail the review
+roborev review --branch --min-severity medium  # Low findings are informational in branch reviews
 ```
 
-The severity filter is injected into the review prompt as an instruction.
-Findings below the threshold are omitted from the review output. When
-`min_severity` is set and all findings fall below the threshold, the review
-receives a passing verdict.
+The reviewer never sees the threshold and reports every finding with its
+severity. Roborev applies the threshold afterwards: the review fails when any
+finding is at or above it, and passes when every finding is below it. Findings
+below the threshold stay in the review output so you can still read them, and
+`roborev fix` applies its own `fix_min_severity` when choosing what to address.
+
+Agents that support schema-constrained output (Codex, Claude Code, Pi, and Grok)
+return their findings as structured data for every review type, so the verdict
+comes from the reported severities rather than from parsing prose. Other agents
+keep prose output, and roborev reads the severity labels in that prose the same
+way. A prose review without severity labels falls back to the agent's own pass
+or fail statement. Structured reviews also carry the agent's own verdict, shown
+in the output for context; an agent that reports it was unable to review the
+change fails the job instead of passing it.
 
 Set a default per repo in `.roborev.toml` or globally in
 `~/.roborev/config.toml`:

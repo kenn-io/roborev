@@ -47,6 +47,15 @@ func IsStructuredReviewAgent(a Agent) bool {
 	return ok
 }
 
+// SupportsStructuredReview reports whether the registered agent with this
+// name (or alias) returns schema-constrained review output. Unknown names
+// report false so prompts built before an agent is resolved fall back to the
+// prose output format.
+func SupportsStructuredReview(name string) bool {
+	a, err := Get(name)
+	return err == nil && IsStructuredReviewAgent(a)
+}
+
 // ValidateStructuredReviewSelection rejects a resolved agent that cannot run
 // a schema-constrained custom review. Built-in review types use prose output
 // and accept every Agent implementation.

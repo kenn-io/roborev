@@ -832,3 +832,35 @@ func TestClassifyOutput(t *testing.T) {
 func TestParseVerdict(t *testing.T) {
 	runVerdictTests(t, verdictTests)
 }
+
+func TestParseVerdictAtSeverity(t *testing.T) {
+	const lowOnly = "Summary.\n\n- Low: naming nit\n\n---\n\n- Low — another nit"
+	const mixed = "Summary.\n\n- Low: naming nit\n\n**Severity**: High\nProblem: crash"
+	tests := []struct {
+		name        string
+		output      string
+		minSeverity string
+		want        Verdict
+	}{
+		{"no threshold counts every label", lowOnly, "", VerdictFail},
+		{"low threshold counts every label", lowOnly, "low", VerdictFail},
+		{"medium threshold passes low-only findings", lowOnly, "medium", VerdictPass},
+		{"critical threshold passes low-only findings", lowOnly, "critical", VerdictPass},
+		{"highest label decides", mixed, "medium", VerdictFail},
+		{"highest label below threshold passes", mixed, "critical", VerdictPass},
+		{"mixed case threshold is normalized", lowOnly, " Medium ", VerdictPass},
+		{"unknown threshold counts every label", lowOnly, "bogus", VerdictFail},
+		{"unlabeled pass statement still passes", "No issues found.", "high", VerdictPass},
+		{"unlabeled prose finding still fails", "The auth module leaks tokens.", "high", VerdictFail},
+		{"legend entries are not findings", "Severity levels:\n- High: bad\n- Low: meh\n\nNo issues found.", "medium", VerdictPass},
+		{"structured heading low-only passes medium", "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n", "medium", VerdictPass},
+		{"structured heading low-only fails without threshold", "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n", "", VerdictFail},
+		{"structured heading high fails medium", "## Summary\n\nBug.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n\n### 2. High\n\n**Problem:** crash\n\n**Fix:** guard\n", "medium", VerdictFail},
+		{"heading text is not a label", "### High-level overview\n\nNo issues found.", "", VerdictPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ParseVerdictAtSeverity(tt.output, tt.minSeverity))
+		})
+	}
+}

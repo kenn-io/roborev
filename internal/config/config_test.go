@@ -4788,6 +4788,16 @@ func TestSeverityInstruction(t *testing.T) {
 	}
 }
 
+func TestSeverityRank(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(4, SeverityRank("critical"))
+	assert.Equal(3, SeverityRank(" High "))
+	assert.Equal(2, SeverityRank("medium"))
+	assert.Equal(1, SeverityRank("low"))
+	assert.Equal(0, SeverityRank(""))
+	assert.Equal(0, SeverityRank("urgent"))
+}
+
 func TestIsMarkerOnlyOutput(t *testing.T) {
 	tests := []struct {
 		name   string
