@@ -11,7 +11,7 @@ import (
 )
 
 func TestPreferAutoCloneNormalizesPathSeparators(t *testing.T) {
-	dataDir := filepath.ToSlash(filepath.Join(t.TempDir(), "roborev-data"))
+	dataDir := filepath.Join(t.TempDir(), "roborev-data")
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	t.Run("matches forward slash stored clone path", func(t *testing.T) {
