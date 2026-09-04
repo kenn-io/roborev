@@ -14,14 +14,15 @@ import (
 	"go.kenn.io/roborev/internal/git"
 )
 
-const customReviewOutputInstruction = `
+const structuredReviewOutputInstruction = `
 
 Roborev will constrain the final response with a JSON Schema. Return a concise
-summary and every actionable finding. Each finding must include its severity,
-problem, and recommended fix; include a location when one is known. Use only
-these severity values: critical, high, medium, or low. Do not omit a real
-finding because of the configured severity threshold; Roborev applies that
-threshold after receiving the structured result.`
+summary, your overall verdict, and every actionable finding. Each finding must
+include its severity, problem, and recommended fix; include a location when one
+is known. Use only these severity values: critical, high, medium, or low. The
+verdict is "pass" when the change is acceptable, "fail" when it is not, and
+"unable_to_review" only when you could not assess the change at all, for
+example because the diff is missing or unreadable; explain why in the summary.`
 
 type customReviewTemplateData struct {
 	ReviewType string
@@ -93,7 +94,7 @@ func (b *Builder) resolveSystemPrompt(
 		)
 	}
 	result := strings.TrimSpace(rendered.String()) +
-		customReviewOutputInstruction
+		structuredReviewOutputInstruction
 	if len(result)+1 > limit {
 		return "", true, fmt.Errorf(
 			"review type %q rendered prompt is %d bytes but prompt limit is %d bytes",

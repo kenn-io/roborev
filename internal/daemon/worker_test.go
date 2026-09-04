@@ -323,14 +323,15 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	}
 }
 
-func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
+func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	agentName := "structured-review-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "schema_version":1,
+  "schema_version":2,
   "summary":"Review complete.",
+  "verdict":"fail",
   "findings":[
     {"severity":"high","problem":"State diverges.","fix":"Use one owner.","location":null},
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
@@ -364,9 +365,9 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	stored, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.Contains(t, stored.Output, "State diverges.")
-	assert.NotContains(t, stored.Output, "Name is vague.")
+	assert.Contains(t, stored.Output, "Name is vague.", "findings below the threshold stay in the review")
 	require.NotNil(t, stored.VerdictBool)
-	assert.Equal(t, 0, *stored.VerdictBool)
+	assert.Equal(t, 0, *stored.VerdictBool, "the high finding fails the review")
 }
 
 func registerUnreadableDiffAgent(t *testing.T, name string) {
@@ -425,8 +426,9 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-	  "schema_version":1,
+	  "schema_version":2,
 	  "summary":"High: no actionable findings.",
+	  "verdict":"pass",
   "findings":[
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
@@ -1384,8 +1386,9 @@ func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "schema_version":1,
+  "schema_version":2,
   "summary":"Default-branch review instructions loaded.",
+  "verdict":"pass",
   "findings":[]
 }`),
 	})
@@ -1440,8 +1443,9 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "schema_version":1,
+  "schema_version":2,
   "summary":"Global review instructions loaded from the default branch.",
+  "verdict":"pass",
   "findings":[]
 }`),
 	})
@@ -3883,8 +3887,13 @@ func TestProcessJob_MinSeverityCascade(t *testing.T) {
 	tc.Pool.processJob("test-worker", claimed)
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Contains(t, capturedPrompt, "Severity filter:")
-	assert.Contains(t, capturedPrompt, "SEVERITY_THRESHOLD_MET")
+	assert.NotContains(t, capturedPrompt, "Severity threshold",
+		"the threshold is post-processing and never reaches the agent")
+	assert.NotContains(t, capturedPrompt, "SEVERITY_THRESHOLD_MET",
+		"review prompts must not ask the agent to drop findings")
+	stored, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "medium", stored.MinSeverity, "the cascaded threshold is recorded on the job")
 }
 
 func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
@@ -3925,7 +3934,10 @@ func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
 	tc.Pool.processJob("test-worker", claimed)
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Contains(t, capturedPrompt, "Critical")
+	assert.NotContains(t, capturedPrompt, "Severity threshold")
+	stored, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "critical", stored.MinSeverity, "the job override wins over global config")
 }
 
 func TestProcessJobExperimentPlanKeepsClearedExecutionSettings(t *testing.T) {
@@ -3974,7 +3986,7 @@ func TestProcessJobExperimentPlanKeepsClearedExecutionSettings(t *testing.T) {
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.NotNil(t, claimed.FrozenExperimentPlan)
-	assert.NotContains(t, capturedPrompt, "Severity filter:")
+	assert.NotContains(t, capturedPrompt, "Severity threshold:")
 	assert.Empty(t, tc.Pool.resolveBackupAgent(claimed))
 	assert.Empty(t, tc.Pool.resolveBackupModel(claimed))
 }

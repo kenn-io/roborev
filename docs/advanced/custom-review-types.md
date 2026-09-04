@@ -127,8 +127,9 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": "Overall assessment",
+  "verdict": "fail",
   "findings": [
     {
       "severity": "high",
@@ -140,14 +141,38 @@ The schema is fixed by roborev. The agent must return:
 }
 ```
 
-`schema_version`, `summary`, and `findings` are required. The current schema
-version is `1`; Roborev rejects missing or unsupported versions. Every finding
-requires `severity`, `problem`, `fix`, and `location`; use `null` when a finding
-has no location. Severity must be one of `critical`, `high`, `medium`, or `low`.
+`schema_version`, `summary`, `verdict`, and `findings` are required. The current
+schema version is `2`; stored version `1` documents (without a verdict) still
+load, and Roborev rejects missing or unsupported versions. `verdict` is `pass`,
+`fail`, or `unable_to_review`. Every finding requires `severity`, `problem`,
+`fix`, and `location`; use `null` when a finding has no location. Severity must
+be one of `critical`, `high`, `medium`, or `low`.
 
-Roborev removes findings below `review_min_severity` or `--min-severity`. The
-review passes when no findings remain, and fails otherwise. Built-in review
-types keep their existing prose output path.
+The agent's verdict is shown in the review as an assessment but does not change
+the outcome: the findings and the severity threshold decide pass or fail. The
+exception is `unable_to_review`, which means the agent could not assess the
+change at all. Roborev treats that as an agent failure, so normal retry and
+backup-agent failover apply instead of recording a clean pass. A `fail` verdict
+with no findings is rejected the same way, because the agent has not said what
+is wrong.
+
+| Agent verdict | Findings | Review outcome |
+|---------------|----------|----------------|
+| `pass` or `fail` | Any finding at or above the threshold | Fail |
+| `pass` or `fail` | Findings only below the threshold | Pass; findings stay in the output |
+| `pass` | None | Pass |
+| `fail` | None | Agent error; retried or failed over |
+| `unable_to_review` | Any | Agent error; retried or failed over |
+
+Panels apply the panel threshold to each member the same way. When every member
+passes but some still carry lower findings, the synthesis agent combines them so
+those findings reach the combined output.
+
+Roborev keeps every finding in the review output. `review_min_severity` or
+`--min-severity` only decides the verdict: the review fails when any finding is
+at or above the threshold and passes otherwise. Built-in review types use the
+same schema when the agent supports schema-constrained output, and fall back to
+prose for other agents.
 
 ## Writing useful severity guidance
 

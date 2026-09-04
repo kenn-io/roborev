@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -390,7 +391,8 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
 		result: json.RawMessage(`{
-	  "schema_version":1,
+	  "schema_version":2,
+	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",
   "findings":[
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
@@ -607,6 +609,8 @@ func TestRunBatch_CodexReviewSettings(t *testing.T) {
 	results := RunBatch(context.Background(), cfg)
 	require.Len(t, results, 1)
 	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
+	require.NotNil(t, results[0].Structured, "codex built-in reviews use schema output")
+	assert.Equal(t, storage.VerdictPass, results[0].Verdict)
 
 	argsBytes, err := os.ReadFile(argsPath)
 	require.NoError(t, err)
@@ -624,7 +628,9 @@ func writeFakeCodex(t *testing.T) (cmdPath string, argsPath string) {
 		"#!/bin/sh",
 		"case \"$*\" in *--help*) echo 'usage --sandbox --ignore-user-config'; exit 0;; esac",
 		fmt.Sprintf("echo \"$@\" > %q", argsPath),
-		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"No issues found.\"}}'",
+		// The fake returns a structured review document because the real
+		// codex agent supports schema-constrained output for every review type.
+		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"schema_version\\\":2,\\\"summary\\\":\\\"ok\\\",\\\"verdict\\\":\\\"pass\\\",\\\"findings\\\":[]}\"}}'",
 	}, "\n") + "\n"
 
 	cmdPath = filepath.Join(dir, "codex")

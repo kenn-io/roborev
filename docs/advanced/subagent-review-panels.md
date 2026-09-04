@@ -94,8 +94,9 @@ Synthesis avoids extra agent work when it can:
 - If no member succeeds, roborev records a durable all failed review instead of
     pretending the code passed.
 
-When a panel uses `min_severity`, synthesis may still run for a single failed
-member so findings below the threshold can be filtered consistently.
+When a panel uses `min_severity`, member findings below the threshold stay in
+the combined output. The threshold only decides whether the panel passes or
+fails.
 
 ## Selection Rules
 

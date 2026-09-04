@@ -38,9 +38,10 @@ func DecodeSynthesisDocument(raw json.RawMessage, reviews []ReviewResult) (Synth
 }
 
 // SynthesisVerdict is the canonical verdict of a synthesis document: pass when
-// no finding survived the severity threshold, otherwise fail.
-func SynthesisVerdict(doc SynthesisDocument) storage.Verdict {
-	return storage.VerdictFromPassed(doc.Passed())
+// no finding reaches the severity threshold, otherwise fail. Findings below
+// the threshold stay in the document.
+func SynthesisVerdict(doc SynthesisDocument, minSeverity string) storage.Verdict {
+	return storage.VerdictFromPassed(doc.Passed(minSeverity))
 }
 
 // SynthesisSourceLabels names each input review for readers: the agent, plus
@@ -60,14 +61,6 @@ func SynthesisSourceLabels(reviews []ReviewResult) []string {
 		labels[i] = label
 	}
 	return labels
-}
-
-// severityAbove maps a minimum severity to the instruction
-// describing which levels to include in synthesis output.
-var severityAbove = map[string]string{
-	"critical": "Only include Critical findings.",
-	"high":     "Only include High and Critical findings.",
-	"medium":   "Only include Medium, High, and Critical findings.",
 }
 
 // VerifyDedupePreamble returns the instruction block used by the compact
@@ -93,20 +86,20 @@ func VerifyDedupePreamble() string {
 		"   - The summary may mention how many prior findings were dropped as fixed, duplicates, or false positives\n\n"
 }
 
-// BuildSynthesisPrompt creates the prompt for the synthesis agent.
-// When minSeverity is non-empty (and not "low"), a filtering
-// instruction is appended.
+// BuildSynthesisPrompt creates the prompt for the synthesis agent. The
+// severity threshold is applied to the synthesized output afterwards and is
+// never shown to the agent, so every finding survives synthesis.
 func BuildSynthesisPrompt(
 	reviews []ReviewResult,
-	minSeverity string,
+	_ string,
 ) string {
 	var b strings.Builder
 	b.WriteString(
 		"You are combining multiple code review outputs " +
 			"into a single GitHub PR comment.\n" +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":1,"summary":"...","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
-			"Put a one-line overall summary in `summary`. " +
+			`{"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
+			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
@@ -117,12 +110,6 @@ func BuildSynthesisPrompt(
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references in `location`\n" +
 			"- No preamble about yourself\n")
-
-	if instruction, ok := severityAbove[minSeverity]; ok {
-		b.WriteString(
-			"- Omit findings below " + minSeverity +
-				" severity. " + instruction + "\n")
-	}
 
 	b.WriteString("\n")
 
@@ -154,6 +141,10 @@ func BuildSynthesisPrompt(
 		} else if IsTransientFailure(r) {
 			b.WriteString(
 				"(review skipped — provider unavailable)")
+		} else if r.Structured != nil {
+			// Render without the threshold so the synthesis agent never
+			// learns which severities are informational.
+			b.WriteString(TruncateOutput(r.Structured.Markdown(""), maxPerReview))
 		} else if r.Output != "" {
 			b.WriteString(TruncateOutput(r.Output, maxPerReview))
 		} else if r.Status == ResultFailed {

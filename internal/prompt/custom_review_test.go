@@ -213,3 +213,23 @@ func TestCustomReviewFilesUsePromptLimit(t *testing.T) {
 		)
 	require.ErrorContains(t, err, "prompt limit")
 }
+
+func TestBuiltInReviewPromptStructuredOutputInstruction(t *testing.T) {
+	repoPath := t.TempDir()
+	const diff = "diff --git a/a.go b/a.go"
+
+	prose, err := NewBuilder(nil).ForRepo(repoPath, 0).
+		BuildDirty(diff, 0, "codex", "", "high")
+	require.NoError(t, err)
+	assert.NotContains(t, prose, "Roborev will constrain the final response with a JSON Schema")
+	assert.NotContains(t, prose, "Severity threshold", "the threshold never reaches the agent")
+	assert.NotContains(t, prose, "SEVERITY_THRESHOLD_MET")
+
+	structured, err := NewBuilder(nil).ForRepo(repoPath, 0).WithStructuredOutput(true).
+		BuildDirty(diff, 0, "codex", "", "high")
+	require.NoError(t, err)
+	assert.Contains(t, structured, "Roborev will constrain the final response with a JSON Schema")
+	assert.Contains(t, structured, `"unable_to_review" only when you could not assess the change`)
+	assert.NotContains(t, structured, "Severity threshold")
+	assert.NotContains(t, structured, "high severity")
+}

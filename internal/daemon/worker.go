@@ -588,13 +588,21 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 ) *prompt.Builder {
 	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
 		WithContext(ctx).
-		ForRepo(checkout.promptRepoPath, job.RepoID)
+		ForRepo(checkout.promptRepoPath, job.RepoID).
+		WithStructuredOutput(reviewJobUsesStructuredOutput(job))
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
 			kata.NewCLIClient(checkout.promptRepoPath),
 		)
 	}
 	return builder
+}
+
+// reviewJobUsesStructuredOutput reports whether a review job's agent returns
+// schema-constrained findings. Fix, task, and compact jobs always run as prose
+// because their stored prompts define their own output contract.
+func reviewJobUsesStructuredOutput(job *storage.ReviewJob) bool {
+	return job.IsReviewJob() && agent.SupportsStructuredReview(job.Agent)
 }
 
 // markAgentInvoked records that an agent is being invoked for this attempt. Call

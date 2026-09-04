@@ -5,6 +5,32 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Reviews with a minimum severity now keep every finding instead of dropping the
+    ones below the threshold. The threshold only decides the verdict: a review
+    fails when any finding is at or above it and passes otherwise, so
+    low-severity notes stay visible without failing your commit or pull request.
+    This applies to `review_min_severity`, `--min-severity`, and the CI poller's
+    `min_severity`. See
+    [Severity Filtering](/guides/reviewing-code/#severity-filtering).
+- Codex, Claude Code, Pi, and Grok now return structured findings for every
+    review type, not only custom ones. Verdicts come from the reported
+    severities instead of from parsing Markdown, and the review output uses one
+    consistent summary and findings layout. The structured schema is now version
+    2 and records the agent's own verdict alongside the findings. An agent that
+    reports it could not review the change fails the job, so an unreadable diff
+    no longer looks like a clean pass. See
+    [Custom Review Types](/advanced/custom-review-types/#structured-results-and-compatible-agents).
+
+**Bug fixes**
+
+- Non-agentic Pi reviews can no longer run commands or change files. They use
+    Pi's read-only repository tools, while agentic jobs keep the default tool
+    set. Structured reviews also retain their required JSON output tool.
+
 ## 0.67.0
 
 <small>2026-08-26</small>
@@ -46,9 +72,6 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
-- Non-agentic Pi reviews can no longer run commands or change files. They use
-    Pi's read-only repository tools, while agentic jobs keep the default tool
-    set. Structured reviews also retain their required JSON output tool.
 - Large Antigravity reviews no longer fail when the prompt exceeds the operating
     system's command-line limit. Non-agentic reviews can also run the workspace
     inspection commands they need.
