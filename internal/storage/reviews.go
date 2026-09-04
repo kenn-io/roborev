@@ -113,10 +113,11 @@ type RangeReviewCandidate struct {
 	GitRef string
 }
 
-// GetRecentRangeReviewCandidates returns recent canonical range reviews for a
-// repository. Git topology decides whether a candidate is contained.
-func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit int) ([]RangeReviewCandidate, error) {
-	if repoID <= 0 || limit <= 0 {
+// GetRecentRangeReviewCandidates returns a page of recent canonical range
+// reviews for a repository. Git topology decides whether a candidate is
+// contained.
+func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit, offset int) ([]RangeReviewCandidate, error) {
+	if repoID <= 0 || limit <= 0 || offset < 0 {
 		return nil, nil
 	}
 	rows, err := db.Query(`
@@ -128,8 +129,8 @@ func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit int) ([]RangeRe
 		  AND j.git_ref LIKE '%..%'
 		  AND COALESCE(j.panel_role, '') != 'member'
 		ORDER BY `+sqliteNormalizedTimestampExpr("rv.created_at")+` DESC, rv.id DESC
-		LIMIT ?
-	`, repoID, limit)
+		LIMIT ? OFFSET ?
+	`, repoID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

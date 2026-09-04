@@ -1404,16 +1404,12 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	return ctx.requiredPrefix + body, nil
 }
 
-const priorRangeReviewScanLimit = 40
+const priorRangeReviewPageSize = 40
 
 func (b *Builder) priorRangeReviewViews(
 	rangeStart, rangeRef string, commits []string, limit int,
 ) []PriorRangeReviewTemplateContext {
 	if b.db == nil || b.repoID <= 0 || rangeStart == "" || limit <= 0 || len(commits) == 0 {
-		return nil
-	}
-	candidates, err := b.db.GetRecentRangeReviewCandidates(b.repoID, priorRangeReviewScanLimit)
-	if err != nil {
 		return nil
 	}
 	commitIndex := make(map[string]int, len(commits))
@@ -1425,7 +1421,7 @@ func (b *Builder) priorRangeReviewViews(
 		view  PriorRangeReviewTemplateContext
 		index int
 	}
-	selectedByEnd := make(map[string]selected, len(candidates))
+	selectedByEnd := make(map[string]selected)
 	resolveCache := make(map[string]string)
 	resolve := func(ref string) (string, bool) {
 		if resolved, ok := resolveCache[ref]; ok {
@@ -1439,42 +1435,51 @@ func (b *Builder) priorRangeReviewViews(
 		resolveCache[ref] = resolved
 		return resolved, true
 	}
-	for _, candidate := range candidates {
-		if candidate.GitRef == rangeRef {
-			continue
+	for offset := 0; len(selectedByEnd) < limit; offset += priorRangeReviewPageSize {
+		candidates, err := b.db.GetRecentRangeReviewCandidates(b.repoID, priorRangeReviewPageSize, offset)
+		if err != nil {
+			return nil
 		}
-		start, end, ok := git.ParseRange(candidate.GitRef)
-		if !ok {
-			continue
-		}
-		resolvedStart, ok := resolve(start)
-		if !ok || resolvedStart != rangeStart {
-			continue
-		}
-		resolvedEnd, ok := resolve(end)
-		index, contained := commitIndex[resolvedEnd]
-		if !ok || !contained || resolvedEnd == currentEnd {
-			continue
-		}
-		if _, exists := selectedByEnd[resolvedEnd]; exists {
-			continue
-		}
-		review, err := b.db.GetReviewByJobID(candidate.JobID)
-		if err != nil || review == nil {
-			continue
-		}
-		view := PriorRangeReviewTemplateContext{
-			Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
-			Agent:  review.Agent,
-			When:   review.CreatedAt.Format("2006-01-02 15:04"),
-			Output: review.Output,
-		}
-		if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
-			for _, response := range storage.PromptTrustedResponses(responses) {
-				view.Comments = append(view.Comments, ReviewCommentTemplateContext{Responder: response.Responder, Response: response.Response})
+		for _, candidate := range candidates {
+			if candidate.GitRef == rangeRef {
+				continue
 			}
+			start, end, ok := git.ParseRange(candidate.GitRef)
+			if !ok {
+				continue
+			}
+			resolvedStart, ok := resolve(start)
+			if !ok || resolvedStart != rangeStart {
+				continue
+			}
+			resolvedEnd, ok := resolve(end)
+			index, contained := commitIndex[resolvedEnd]
+			if !ok || !contained || resolvedEnd == currentEnd {
+				continue
+			}
+			if _, exists := selectedByEnd[resolvedEnd]; exists {
+				continue
+			}
+			review, err := b.db.GetReviewByJobID(candidate.JobID)
+			if err != nil || review == nil {
+				continue
+			}
+			view := PriorRangeReviewTemplateContext{
+				Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
+				Agent:  review.Agent,
+				When:   review.CreatedAt.Format("2006-01-02 15:04"),
+				Output: review.Output,
+			}
+			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
+				for _, response := range storage.PromptTrustedResponses(responses) {
+					view.Comments = append(view.Comments, ReviewCommentTemplateContext{Responder: response.Responder, Response: response.Response})
+				}
+			}
+			selectedByEnd[resolvedEnd] = selected{view: view, index: index}
 		}
-		selectedByEnd[resolvedEnd] = selected{view: view, index: index}
+		if len(candidates) < priorRangeReviewPageSize {
+			break
+		}
 	}
 	selectedViews := make([]selected, 0, len(selectedByEnd))
 	for _, candidate := range selectedByEnd {

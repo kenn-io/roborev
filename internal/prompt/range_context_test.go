@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,11 @@ func TestBuildRangePrompt_IncludesPriorSameBaseRangeReview(t *testing.T) {
 	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+first, storage.JobTypeSynthesis, "prior synthesis review")
 	createCompletedRangeReview(t, db, dbRepo.ID, "other-base.."+second, storage.JobTypeRange, "unrelated review")
 	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+fourth, storage.JobTypeRange, "out of range review")
+	for i := range 40 {
+		createCompletedRangeReview(t, db, dbRepo.ID,
+			fmt.Sprintf("unrelated-base-%d..unrelated-end-%d", i, i),
+			storage.JobTypeRange, fmt.Sprintf("unrelated recent review %d", i))
+	}
 
 	prompt, err := NewBuilder(db).ForRepo(repo.Path(), dbRepo.ID).Build(
 		base+".."+third, 2, "test", "", "",

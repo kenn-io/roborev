@@ -678,7 +678,7 @@ func TestGetRecentRangeReviewCandidates(t *testing.T) {
 		RepoID: otherRepo.ID, GitRef: "base..other", Agent: "test", JobType: JobTypeRange,
 	}, "other")
 
-	candidates, err := db.GetRecentRangeReviewCandidates(repo.ID, 10)
+	candidates, err := db.GetRecentRangeReviewCandidates(repo.ID, 10, 0)
 	require.NoError(t, err)
 	require.Len(t, candidates, 2)
 	assert.Equal(t, "base..newer", candidates[0].GitRef)
@@ -687,6 +687,11 @@ func TestGetRecentRangeReviewCandidates(t *testing.T) {
 		{JobID: candidates[0].JobID, GitRef: "base..newer"},
 		{JobID: candidates[1].JobID, GitRef: "base..older"},
 	}, candidates)
+
+	page, err := db.GetRecentRangeReviewCandidates(repo.ID, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "base..older", page[0].GitRef)
 }
 
 func TestGetReviewByJobIDIncludesBranch(t *testing.T) {
