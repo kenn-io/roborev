@@ -11,18 +11,13 @@ import type { AnalyticsTimeBucket } from "./analyticsTimeBucket";
 export interface AnalyticsSnapshot {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  agents: AnalyticsDimensionRow[] | null;
+  agents: AnalyticsDimensionRow[];
   filters: AnalyticsFilters;
-  /** @nullable */
-  models: AnalyticsDimensionRow[] | null;
+  models: AnalyticsDimensionRow[];
   options: AnalyticsFilterOptions;
-  /** @nullable */
-  projects: AnalyticsProjectRow[] | null;
+  projects: AnalyticsProjectRow[];
   schema_version: number;
-  /** @nullable */
-  sources: AnalyticsDimensionRow[] | null;
+  sources: AnalyticsDimensionRow[];
   summary: AnalyticsSummary;
-  /** @nullable */
-  time_series: AnalyticsTimeBucket[] | null;
+  time_series: AnalyticsTimeBucket[];
 }

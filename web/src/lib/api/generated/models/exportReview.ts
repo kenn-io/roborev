@@ -18,8 +18,7 @@ export interface ExportReview {
   created_at: string;
   /** @nullable */
   duration_ms: number | null;
-  /** @nullable */
-  experiments: ExperimentAssignment[] | null;
+  experiments: ExperimentAssignment[];
   /** @nullable */
   model: string | null;
   /** @nullable */
@@ -32,7 +31,6 @@ export interface ExportReview {
   resume_source_job_uuid: string | null;
   review_id: string;
   status: string;
-  /** @nullable */
-  subagents: ExportSubagent[] | null;
+  subagents: ExportSubagent[];
   verdict: string;
 }

@@ -7,14 +7,12 @@ import type { ExportCIPanelJob } from "./exportCIPanelJob";
 export interface ExportCIPanel {
   /** @nullable */
   attempt_count: number | null;
-  /** @nullable */
-  experiments: ExperimentAssignment[] | null;
+  experiments: ExperimentAssignment[];
   /** @nullable */
   first_attempt_at: string | null;
   github_repo: string;
   head_sha: string;
-  /** @nullable */
-  jobs: ExportCIPanelJob[] | null;
+  jobs: ExportCIPanelJob[];
   outcome: string;
   panel_created_at: string;
   posted_at: string;

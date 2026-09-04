@@ -6,7 +6,6 @@ import type { RemapMapping } from "./remapMapping";
 export interface RemapRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  mappings: RemapMapping[] | null;
+  mappings: RemapMapping[];
   repo_path: string;
 }

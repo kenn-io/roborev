@@ -7,8 +7,7 @@ export interface ExportCICostJob {
   agent: string;
   /** @nullable */
   cost_usd: number | null;
-  /** @nullable */
-  experiments: ExperimentAssignment[] | null;
+  experiments: ExperimentAssignment[];
   finished_at: string;
   job_uuid: string;
   /** @nullable */

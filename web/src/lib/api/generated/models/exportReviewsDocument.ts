@@ -16,8 +16,7 @@ export interface ExportReviewsDocument {
    */
   next_cursor: string | null;
   profile: string;
-  /** @nullable */
-  reviews: ExportReview[] | null;
+  reviews: ExportReview[];
   schema_version: number;
   tool: string;
   tool_version: string;

@@ -18,12 +18,10 @@ export interface ReviewJob {
   commit_id?: number;
   commit_subject?: string;
   diff_content?: string;
-  /** @nullable */
-  dirty_files?: string[] | null;
+  dirty_files?: string[];
   enqueued_at: string;
   error?: string;
-  /** @nullable */
-  experiments?: ExperimentAssignment[] | null;
+  experiments?: ExperimentAssignment[];
   finished_at?: string;
   git_ref: string;
   id: number;

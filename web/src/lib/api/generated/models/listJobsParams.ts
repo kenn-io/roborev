@@ -18,9 +18,8 @@ export type ListJobsParams = {
   status?: string;
   /**
    * Filter by repo root path (repeatable)
-   * @nullable
    */
-  repo?: string[] | null;
+  repo?: string[];
   /**
    * Filter by git ref
    */

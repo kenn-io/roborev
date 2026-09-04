@@ -5,7 +5,6 @@
 export type ListBranchesParams = {
   /**
    * Filter to branches in these repo paths
-   * @nullable
    */
-  repo?: string[] | null;
+  repo?: string[];
 };

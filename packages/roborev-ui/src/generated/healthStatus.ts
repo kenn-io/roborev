@@ -7,12 +7,10 @@ import type { ErrorEntry } from "./errorEntry";
 export interface HealthStatus {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  components: ComponentHealth[] | null;
+  components: ComponentHealth[];
   error_count_24h: number;
   healthy: boolean;
-  /** @nullable */
-  recent_errors: ErrorEntry[] | null;
+  recent_errors: ErrorEntry[];
   uptime: string;
   version: string;
 }

@@ -6,6 +6,5 @@ import type { ActivityEntry } from "./activityEntry";
 export interface ActivityOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  entries: ActivityEntry[] | null;
+  entries: ActivityEntry[];
 }

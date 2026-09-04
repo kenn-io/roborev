@@ -15,8 +15,7 @@ export interface ExportCIMetricsDocument {
    * @nullable
    */
   next_cursor: string | null;
-  /** @nullable */
-  panels: ExportCIPanel[] | null;
+  panels: ExportCIPanel[];
   schema_version: number;
   tool: string;
   tool_version: string;

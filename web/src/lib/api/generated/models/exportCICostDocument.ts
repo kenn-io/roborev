@@ -10,8 +10,7 @@ export interface ExportCICostDocument {
   /** Stable identity for the local review database; changes when the database is recreated. */
   database_id: string;
   generated_at: string;
-  /** @nullable */
-  jobs: ExportCICostJob[] | null;
+  jobs: ExportCICostJob[];
   legacy: boolean;
   /**
    * Opaque resume cursor emitted when jobs is non-empty.

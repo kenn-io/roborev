@@ -7,8 +7,7 @@ import type { AutoDesignStatus } from "./autoDesignStatus";
 export interface DaemonStatus {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  active_snoozes: AgentHookSnooze[] | null;
+  active_snoozes: AgentHookSnooze[];
   active_workers: number;
   address?: string;
   applied_jobs: number;
@@ -32,6 +31,5 @@ export interface DaemonStatus {
   update_drain_policy?: string;
   update_draining: boolean;
   version: string;
-  /** @nullable */
-  web_capabilities: string[] | null;
+  web_capabilities: string[];
 }

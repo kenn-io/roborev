@@ -7,7 +7,6 @@ export interface ReleaseNotesResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   fetched_at: string;
-  /** @nullable */
-  releases: ReleaseNote[] | null;
+  releases: ReleaseNote[];
   stale: boolean;
 }

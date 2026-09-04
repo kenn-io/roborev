@@ -6,9 +6,8 @@ import type { GetCostBranchEmpty } from "./getCostBranchEmpty";
 export type GetCostParams = {
   /**
    * Repo root paths (repeatable)
-   * @nullable
    */
-  repo?: string[] | null;
+  repo?: string[];
   /**
    * Filter by branch name
    */

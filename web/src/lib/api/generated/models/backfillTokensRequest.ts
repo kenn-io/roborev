@@ -7,6 +7,5 @@ export interface BackfillTokensRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   dry_run?: boolean;
-  /** @nullable */
-  sessions: SessionUsagePayload[] | null;
+  sessions: SessionUsagePayload[];
 }

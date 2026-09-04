@@ -9,8 +9,7 @@ export interface ListJobsOutputBody {
   readonly $schema?: string;
   filtered_stats?: JobStats;
   has_more: boolean;
-  /** @nullable */
-  jobs: ReviewJob[] | null;
+  jobs: ReviewJob[];
   /**
    * Opaque resume cursor when more jobs are available
    * @nullable

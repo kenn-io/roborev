@@ -6,7 +6,6 @@ import type { RepoWithCount } from "./repoWithCount";
 export interface ListReposOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  repos: RepoWithCount[] | null;
+  repos: RepoWithCount[];
   total_count: number;
 }

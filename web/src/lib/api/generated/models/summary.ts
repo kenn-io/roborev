@@ -13,18 +13,15 @@ import type { VerdictStats } from "./verdictStats";
 export interface Summary {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  agents: AgentStats[] | null;
+  agents: AgentStats[];
   branch?: string;
   cost: CostAggregate;
   duration: DurationStats;
   failures: FailureStats;
-  /** @nullable */
-  job_types: JobTypeStats[] | null;
+  job_types: JobTypeStats[];
   overview: OverviewStats;
   repo_path?: string;
-  /** @nullable */
-  repos?: RepoSummary[] | null;
+  repos?: RepoSummary[];
   since: string;
   verdicts: VerdictStats;
 }

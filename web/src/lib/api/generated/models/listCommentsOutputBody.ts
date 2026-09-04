@@ -6,6 +6,5 @@ import type { Response } from "./response";
 export interface ListCommentsOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  responses: Response[] | null;
+  responses: Response[];
 }

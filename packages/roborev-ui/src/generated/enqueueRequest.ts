@@ -11,8 +11,7 @@ export interface EnqueueRequest {
   commit_sha?: string;
   custom_prompt?: string;
   diff_content?: string;
-  /** @nullable */
-  dirty_files?: string[] | null;
+  dirty_files?: string[];
   git_ref?: string;
   job_type?: string;
   min_severity?: string;

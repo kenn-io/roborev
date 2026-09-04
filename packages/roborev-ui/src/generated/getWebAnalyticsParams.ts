@@ -13,14 +13,12 @@ export type GetWebAnalyticsParams = {
   until?: string;
   /**
    * Exact displayed project names (repeatable)
-   * @nullable
    */
-  project?: string[] | null;
+  project?: string[];
   /**
    * Exact stored source values (repeatable)
-   * @nullable
    */
-  source?: string[] | null;
+  source?: string[];
   /**
    * Exact agent filter for attempt metrics
    */

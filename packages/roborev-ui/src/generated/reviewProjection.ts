@@ -9,10 +9,8 @@ export interface ReviewProjection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   job: ReviewProjectionJob;
-  /** @nullable */
-  panel_members: ReviewProjectionJob[] | null;
-  /** @nullable */
-  responses: ReviewProjectionResponse[] | null;
+  panel_members: ReviewProjectionJob[];
+  responses: ReviewProjectionResponse[];
   review?: ReviewProjectionReview;
   schema_version: number;
 }

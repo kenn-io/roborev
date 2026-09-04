@@ -7,8 +7,7 @@ export interface TokenSummary {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   failed: number;
-  /** @nullable */
-  results: TokenResult[] | null;
+  results: TokenResult[];
   skipped: number;
   total: number;
   updated: number;

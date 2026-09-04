@@ -5,6 +5,5 @@
 export interface BatchJobsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  job_ids: number[] | null;
+  job_ids: number[];
 }

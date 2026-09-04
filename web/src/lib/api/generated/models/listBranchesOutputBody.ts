@@ -6,8 +6,7 @@ import type { BranchWithCount } from "./branchWithCount";
 export interface ListBranchesOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
-  branches: BranchWithCount[] | null;
+  branches: BranchWithCount[];
   nulls_remaining: number;
   total_count: number;
 }

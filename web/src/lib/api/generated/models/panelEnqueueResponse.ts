@@ -16,18 +16,15 @@ export interface PanelEnqueueResponse {
   commit_id?: number;
   commit_subject?: string;
   diff_content?: string;
-  /** @nullable */
-  dirty_files?: string[] | null;
+  dirty_files?: string[];
   enqueued_at: string;
   error?: string;
-  /** @nullable */
-  experiments?: ExperimentAssignment[] | null;
+  experiments?: ExperimentAssignment[];
   finished_at?: string;
   git_ref: string;
   id: number;
   job_type: string;
-  /** @nullable */
-  member_job_ids: number[] | null;
+  member_job_ids: number[];
   min_severity?: string;
   model?: string;
   output_prefix?: string;

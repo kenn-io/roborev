@@ -3,12 +3,8 @@
  */
 
 export interface AnalyticsFilterOptions {
-  /** @nullable */
-  agents: string[] | null;
-  /** @nullable */
-  models: string[] | null;
-  /** @nullable */
-  projects: string[] | null;
-  /** @nullable */
-  sources: string[] | null;
+  agents: string[];
+  models: string[];
+  projects: string[];
+  sources: string[];
 }
