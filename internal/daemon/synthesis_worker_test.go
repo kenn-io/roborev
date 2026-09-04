@@ -130,6 +130,18 @@ func TestFilterSucceededRejectsEmptyOutputPlaceholder(t *testing.T) {
 	assert.Equal(t, results[1:], filterSucceeded(results))
 }
 
+func TestFilterSucceededRejectsUnreadableDiffWithoutVerdict(t *testing.T) {
+	const unreadable = "I am unable to read the diff file because it is ignored by configured ignore patterns."
+	results := []reviewpkg.ReviewResult{
+		{Status: reviewpkg.ResultDone, Output: unreadable},
+		{Status: reviewpkg.ResultDone, Output: unreadable, Verdict: storage.VerdictFail},
+		{Status: reviewpkg.ResultDone, Output: "- High: nil deref in a.go:1"},
+	}
+
+	assert.Equal(t, results[1:], filterSucceeded(results),
+		"a done member with no stored verdict and unreadable output never reviewed the code")
+}
+
 // jobAgentInvoked reads the raw agent_invoked cost-eligibility marker for a job.
 func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 	t.Helper()

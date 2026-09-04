@@ -878,13 +878,16 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	// A remote machine on an older release may have stored a verdict for
+	// output that never reviewed the code (an unreadable diff). Do not
+	// re-import that verdict; the row stays unrated here as it would locally.
 	var verdictBool any
-	if r.VerdictBool != nil {
+	if r.VerdictBool != nil && !IsUnreadableInput(r.Output) {
 		verdictBool = 0
 		if *r.VerdictBool {
 			verdictBool = 1
 		}
-	} else {
+	} else if r.VerdictBool == nil {
 		verdictBool = verdictBoolFromOutput(r.Output)
 	}
 	_, err = db.Exec(`
