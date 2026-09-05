@@ -891,6 +891,7 @@ func resolveRerunOpts(
 	job *storage.ReviewJob,
 	cfg *config.Config,
 	assignment *storage.ExperimentAssignmentInput,
+	selectedAgent string,
 ) (storage.ReenqueueOpts, error) {
 	resolutionPath := job.RepoPath
 	if job.WorktreePath != "" {
@@ -905,6 +906,9 @@ func resolveRerunOpts(
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
 	if assignment != nil {
+		if strings.TrimSpace(selectedAgent) != "" {
+			return storage.ReenqueueOpts{}, errors.New("frozen experiment jobs cannot change agents on rerun")
+		}
 		var plan experimentJobPlan
 		if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan); err != nil {
 			return storage.ReenqueueOpts{}, fmt.Errorf("decode frozen experiment plan: %w", err)
@@ -936,6 +940,31 @@ func resolveRerunOpts(
 	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	if selectedAgent != "" {
+		selected, err := agent.GetAvailableExactWithConfigFromConfig(
+			resolution.RepoConfig, selectedAgent, cfg,
+		)
+		if err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf(
+				"resolve selected agent %q: %w", selectedAgent, err,
+			)
+		}
+		if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		storageName := agent.StorageNameFromConfig(
+			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
+		)
+		return storage.ReenqueueOpts{
+			Agent: storageName,
+			Model: resolution.ModelForSelectedAgent(
+				storageName, strings.TrimSpace(job.RequestedModel),
+			),
+			Provider:     strings.TrimSpace(job.RequestedProvider),
+			ReplaceAgent: true,
+		}, nil
+	}
 
 	backupAgent := resolution.BackupAgent
 	if strings.TrimSpace(job.BackupAgent) != "" {
@@ -955,7 +984,7 @@ func resolveRerunOpts(
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
-	opts, err := resolveRerunOpts(job, cfg, nil)
+	opts, err := resolveRerunOpts(job, cfg, nil, "")
 	return opts.Model, opts.Provider, err
 }
 
@@ -2293,12 +2322,18 @@ func (s *Server) humaRerunJob(
 	if job.Status == storage.JobStatusCanceled && job.WorkerID != "" {
 		return nil, huma.Error409Conflict("canceled job is still stopping")
 	}
+	selectedAgent := strings.TrimSpace(input.Body.Agent)
 
 	// Rerunning a panel synthesis parent spawns a brand-new panel run (fresh
 	// members + a re-blocked synthesis) rather than re-queueing the parent in
 	// place, so the new run gets fresh member reviews to synthesize.
 	// rerunPanelRun enforces the terminal-state guard.
 	if job.IsSynthesisJob() {
+		if selectedAgent != "" {
+			return nil, huma.Error400BadRequest(
+				"panel synthesis jobs cannot change agents on rerun",
+			)
+		}
 		return s.rerunPanelRun(job, requestID)
 	}
 	if job.PanelRole == storage.PanelRoleMember {
@@ -2317,7 +2352,14 @@ func (s *Server) humaRerunJob(
 			fmt.Sprintf("load experiment assignment: %v", err),
 		)
 	}
-	rerunOpts, err := resolveRerunOpts(job, s.configWatcher.Config(), assignment)
+	if selectedAgent != "" && assignment != nil {
+		return nil, huma.Error400BadRequest(
+			"frozen experiment jobs cannot change agents on rerun",
+		)
+	}
+	rerunOpts, err := resolveRerunOpts(
+		job, s.configWatcher.Config(), assignment, selectedAgent,
+	)
 	if err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
@@ -2336,6 +2378,9 @@ func (s *Server) humaRerunJob(
 		)
 	}
 	if !replayed {
+		if rerunOpts.ReplaceAgent {
+			job.Agent = rerunOpts.Agent
+		}
 		s.broadcastRerunEnqueued(resultJobID, job.UUID, job)
 	}
 

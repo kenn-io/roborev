@@ -645,6 +645,7 @@ func (m model) handleCtrlRerunJob(
 
 	snap := rerunSnapshot{
 		jobID:         job.ID,
+		oldAgent:      job.Agent,
 		oldStatus:     job.Status,
 		oldStartedAt:  job.StartedAt,
 		oldFinishedAt: job.FinishedAt,

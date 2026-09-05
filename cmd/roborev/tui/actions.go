@@ -209,10 +209,14 @@ func (m model) callPauseAPI(paused bool) error {
 // rerunJob sends a rerun request to the server for failed/canceled jobs.
 func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 	return func() tea.Msg {
+		body := &daemonclient.RerunJobRequest{JobID: snap.jobID}
+		if snap.agent != "" {
+			body.Agent = &snap.agent
+		}
 		resp, err := m.api.RerunJobWithResponse(
 			m.apiContext(),
 			&daemonclient.RerunJobRequestOptions{
-				Body: &daemonclient.RerunJobRequest{JobID: snap.jobID},
+				Body: body,
 			},
 		)
 		if resp != nil && resp.StatusCode != http.StatusOK {
@@ -220,6 +224,8 @@ func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 		}
 		return rerunResultMsg{
 			jobID:         snap.jobID,
+			agent:         snap.agent,
+			oldAgent:      snap.oldAgent,
 			oldState:      snap.oldStatus,
 			oldStartedAt:  snap.oldStartedAt,
 			oldFinishedAt: snap.oldFinishedAt,
@@ -236,6 +242,8 @@ func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 // update so it can be rolled back if the server request fails.
 type rerunSnapshot struct {
 	jobID         int64
+	agent         string
+	oldAgent      string
 	oldStatus     storage.JobStatus
 	oldStartedAt  *time.Time
 	oldFinishedAt *time.Time

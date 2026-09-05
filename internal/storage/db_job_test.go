@@ -1369,6 +1369,62 @@ func TestReenqueueJob(t *testing.T) {
 		assert.Equal(t, "anthropic", updated.RequestedProvider)
 	})
 
+	t.Run("replacement requires a non-empty agent", func(t *testing.T) {
+		err := db.ReenqueueJob(99999, ReenqueueOpts{ReplaceAgent: true})
+		require.EqualError(t, err, "replacement agent is required")
+	})
+
+	t.Run("agent changes only for a marked replacement", func(t *testing.T) {
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+
+		repo := createRepo(t, isolatedDB, "/tmp/rerun-replace-agent-gate")
+		commit := createCommit(t, isolatedDB, repo.ID, "rerun-replace-agent-gate-sha")
+		job, err := isolatedDB.EnqueueJob(EnqueueOpts{
+			RepoID: repo.ID, CommitID: commit.ID,
+			GitRef: "rerun-replace-agent-gate-sha", Agent: "codex",
+		})
+		require.NoError(t, err)
+		require.NoError(t, isolatedDB.CancelJob(job.ID))
+
+		require.NoError(t, isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{Agent: "claude-code"}))
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "codex", updated.Agent)
+	})
+
+	t.Run("marked replacement preserves provenance and backups", func(t *testing.T) {
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+
+		repo := createRepo(t, isolatedDB, "/tmp/rerun-replace-agent")
+		commit := createCommit(t, isolatedDB, repo.ID, "rerun-replace-agent-sha")
+		job, err := isolatedDB.EnqueueJob(EnqueueOpts{
+			RepoID: repo.ID, CommitID: commit.ID,
+			GitRef: "rerun-replace-agent-sha", Agent: "codex",
+			Model: "old-effective", Provider: "old-provider",
+			RequestedModel: "requested-model", RequestedProvider: "requested-provider",
+			BackupAgent: "backup-agent", BackupModel: "backup-model",
+		})
+		require.NoError(t, err)
+		require.NoError(t, isolatedDB.CancelJob(job.ID))
+
+		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{
+			Agent: "claude-code", Model: "new-effective", Provider: "requested-provider",
+			ReplaceAgent: true,
+		})
+		require.NoError(t, err)
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "claude-code", updated.Agent)
+		assert.Equal(t, "new-effective", updated.Model)
+		assert.Equal(t, "requested-provider", updated.Provider)
+		assert.Equal(t, "requested-model", updated.RequestedModel)
+		assert.Equal(t, "requested-provider", updated.RequestedProvider)
+		assert.Equal(t, "backup-agent", updated.BackupAgent)
+		assert.Equal(t, "backup-model", updated.BackupModel)
+	})
+
 	t.Run("rerun restores empty non-nullable experiment plan fields", func(t *testing.T) {
 		isolatedDB := openTestDB(t)
 		defer isolatedDB.Close()

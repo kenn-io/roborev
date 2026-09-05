@@ -1,13 +1,17 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -193,6 +197,7 @@ func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 		}
 		snap := rerunSnapshot{
 			jobID:         job.ID,
+			oldAgent:      job.Agent,
 			oldStatus:     job.Status,
 			oldStartedAt:  job.StartedAt,
 			oldFinishedAt: job.FinishedAt,
@@ -229,6 +234,192 @@ func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 		return m, m.rerunJob(snap)
 	}
 	return m, nil
+}
+
+func rerunAgentEligible(job *storage.ReviewJob) bool {
+	if job == nil || job.PanelRole != "" || job.IsSynthesisJob() || len(job.Experiments) > 0 {
+		return false
+	}
+	if job.Status == storage.JobStatusCanceled && job.WorkerID != "" {
+		return false
+	}
+	return job.Status == storage.JobStatusDone ||
+		job.Status == storage.JobStatusFailed ||
+		job.Status == storage.JobStatusCanceled ||
+		job.Status == storage.JobStatusSkipped
+}
+
+func (m model) rerunAgentConfig(
+	job *storage.ReviewJob,
+) (*config.RepoConfig, *config.Config, error) {
+	repoPath := job.RepoPath
+	if job.WorktreePath != "" {
+		repoPath = job.WorktreePath
+	}
+	repoCfg, err := config.LoadRepoConfig(repoPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load repo config: %w", err)
+	}
+	globalCfg := m.globalCfg
+	if globalCfg == nil {
+		globalCfg = config.DefaultConfig()
+	}
+	return repoCfg, globalCfg, nil
+}
+
+func rerunAgentStorageName(
+	name string, repoCfg *config.RepoConfig, globalCfg *config.Config,
+) string {
+	return agent.StorageNameFromConfig(
+		agent.CanonicalName(name), repoCfg, globalCfg,
+	)
+}
+
+func validateRerunAgentChoice(
+	job *storage.ReviewJob,
+	name string,
+	repoCfg *config.RepoConfig,
+	globalCfg *config.Config,
+) error {
+	selected, err := agent.GetAvailableExactWithConfigFromConfig(
+		repoCfg, name, globalCfg,
+	)
+	if err != nil {
+		return err
+	}
+	if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
+		return err
+	}
+	if rerunAgentStorageName(name, repoCfg, globalCfg) ==
+		rerunAgentStorageName(job.Agent, repoCfg, globalCfg) {
+		return errors.New("selected agent is already assigned to this job")
+	}
+	return nil
+}
+
+func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
+	repoCfg, globalCfg, err := m.rerunAgentConfig(job)
+	if err != nil {
+		return nil, err
+	}
+	names := agent.AvailableNamesFromConfig(repoCfg, globalCfg)
+	available := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.TrimSpace(name) == "test" {
+			continue
+		}
+		if validateRerunAgentChoice(job, name, repoCfg, globalCfg) == nil {
+			available = append(available, name)
+		}
+	}
+	return available, nil
+}
+
+func (m model) handleRerunAgentKey() (tea.Model, tea.Cmd) {
+	job, ok := m.selectedJob()
+	if m.currentView != viewQueue || !ok || !rerunAgentEligible(job) {
+		return m, nil
+	}
+	options, err := m.availableRerunAgents(job)
+	if err != nil {
+		m.setWarningFlash(
+			fmt.Sprintf("Cannot load rerun agents: %v", err),
+			4*time.Second, viewQueue,
+		)
+		return m, nil
+	}
+	if len(options) == 0 {
+		m.setFlash("No alternate agents available", 3*time.Second, viewQueue)
+		return m, nil
+	}
+	m.rerunAgentJobID = job.ID
+	m.rerunAgentOptions = options
+	m.rerunAgentSelected = 0
+	m.currentView = viewRerunAgent
+	return m, nil
+}
+
+func (m *model) closeRerunAgentPicker() {
+	m.currentView = viewQueue
+	m.rerunAgentJobID = 0
+	m.rerunAgentOptions = nil
+	m.rerunAgentSelected = 0
+}
+
+func (m model) handleRerunAgentPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.closeRerunAgentPicker()
+		return m, nil
+	case "up", "k":
+		if m.rerunAgentSelected > 0 {
+			m.rerunAgentSelected--
+		}
+		return m, nil
+	case "down", "j":
+		if m.rerunAgentSelected < len(m.rerunAgentOptions)-1 {
+			m.rerunAgentSelected++
+		}
+		return m, nil
+	case "enter":
+		return m.submitRerunAgentChoice()
+	default:
+		return m, nil
+	}
+}
+
+func (m model) submitRerunAgentChoice() (tea.Model, tea.Cmd) {
+	if m.rerunAgentSelected < 0 || m.rerunAgentSelected >= len(m.rerunAgentOptions) {
+		m.closeRerunAgentPicker()
+		return m, nil
+	}
+	var job *storage.ReviewJob
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.rerunAgentJobID {
+			job = &m.jobs[i]
+			break
+		}
+	}
+	if !rerunAgentEligible(job) {
+		m.closeRerunAgentPicker()
+		m.setWarningFlash("Job is no longer eligible for an alternate-agent rerun", 4*time.Second, viewQueue)
+		return m, nil
+	}
+	selectedAgent := m.rerunAgentOptions[m.rerunAgentSelected]
+	repoCfg, globalCfg, err := m.rerunAgentConfig(job)
+	if err == nil {
+		err = validateRerunAgentChoice(job, selectedAgent, repoCfg, globalCfg)
+	}
+	if err != nil {
+		m.closeRerunAgentPicker()
+		m.setWarningFlash(
+			fmt.Sprintf("Agent is no longer available: %v", err),
+			4*time.Second, viewQueue,
+		)
+		return m, nil
+	}
+	snap := rerunSnapshot{
+		jobID:         job.ID,
+		agent:         selectedAgent,
+		oldAgent:      job.Agent,
+		oldStatus:     job.Status,
+		oldStartedAt:  job.StartedAt,
+		oldFinishedAt: job.FinishedAt,
+		oldError:      job.Error,
+		oldClosed:     job.Closed,
+		oldVerdict:    job.Verdict,
+	}
+	job.Agent = selectedAgent
+	job.Status = storage.JobStatusQueued
+	job.StartedAt = nil
+	job.FinishedAt = nil
+	job.Error = ""
+	job.Closed = nil
+	job.Verdict = nil
+	m.closeRerunAgentPicker()
+	return m, m.rerunJob(snap)
 }
 
 func (m model) handleLogKey2() (tea.Model, tea.Cmd) {
