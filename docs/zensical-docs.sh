@@ -174,9 +174,11 @@ case "$command_name" in
     build_site "$@"
     ;;
   serve)
-    # Zensical mounts the docs at the site_url path, so this previews the docs
-    # tier at /docs/ with live reload. The product page and guide are static
-    # files outside Zensical; use "preview" to see the whole site.
+    # site_url in zensical.toml ends in /docs/, and Zensical's dev server
+    # mounts the build at that path and redirects / to it, so generated
+    # /docs/... links and assets resolve here with live reload. The product
+    # page and guide are static files outside Zensical; use "preview" to see
+    # the whole site.
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
     ;;
   preview)
