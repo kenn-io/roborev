@@ -3,7 +3,7 @@
 roborev is built to run hands-off. There are two automation layers - turn on
 both for the full loop.
 
-![How roborev works](/assets/static/how-it-works.svg){ loading=lazy }
+![How roborev works](/docs/assets/static/how-it-works.svg){ loading=lazy }
 
 ## Layer 1 - Post-commit reviews
 

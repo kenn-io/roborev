@@ -1,13 +1,28 @@
 # roborev docs maintainer guide
 
-This directory contains the Zensical source for <https://roborev.io>. The docs
-source lives on `main`; image media lives on orphan asset branches so normal
-clones do not pull large screenshots and PNGs into the main history.
+This directory contains the source for <https://roborev.io>. The site has three
+tiers assembled by one build:
+
+| Tier | Source | Published at |
+| --- | --- | --- |
+| Product page | `website/index.html`, `website/index.md` | `/`, `/index.md` |
+| Guide | `website/guide/index.html`, `website/guide.md` | `/guide/`, `/guide.md` |
+| Docs | Zensical pages listed in `zensical.toml` | `/docs/...`, `/docs/....md` |
+
+`llms.txt` indexes all three tiers for machine readers. The docs source lives
+on `main`; image media lives on orphan asset branches so normal clones do not
+pull large screenshots and PNGs into the main history.
 
 ## Layout
 
 - `*.md`, `guides/`, `advanced/`, `integrations/`, `agents/`: public docs
-  source.
+  source, rendered under `/docs/`.
+- `website/`: the hand-written product page, guide, 404 page, styles, script,
+  and self-hosted fonts (OFL licenses alongside). Copied verbatim to the site
+  root. Every local reference must be root-relative (`/docs/...`,
+  `/styles/...`); media comes from the hydrated `/docs/assets/...` tree, never
+  from tracked files.
+- `llms.txt`: the machine-readable site index.
 - `zensical.toml`: Zensical site configuration and navigation.
 - `pyproject.toml` and `uv.lock`: pinned docs toolchain.
 - `vercel.json` and `vercel-build.sh`: Vercel project configuration.
@@ -19,6 +34,8 @@ clones do not pull large screenshots and PNGs into the main history.
 - `scripts/format_markdown.py`: syntax-aware formatting for published pages.
 - `scripts/check_built_site.py`, `scripts/check_public_markdown_sources.py`, and
   `scripts/check_vercel_redirects.py`: post-build validation.
+  `check_vercel_redirects.py --write` regenerates `vercel.json` from the nav
+  after a docs page is added, moved, or removed.
 
 `docs/assets/static/`, `docs/assets/generated/`, `docs/site/`, and `docs/.venv/`
 are ignored local outputs.
@@ -29,10 +46,12 @@ are ignored local outputs.
   images, diagrams, agent icons, and manually captured integration images.
 - `docs-generated-assets`: generated browser UI, CLI, and TUI screenshots.
 
-Docs pages should reference media through:
+Docs pages and the website tier should reference media through:
 
-- `/assets/static/...` for curated assets.
-- `/assets/generated/...` for generated screenshots.
+- `/docs/assets/static/...` for curated assets.
+- `/docs/assets/generated/...` for generated screenshots.
+
+The root `favicon.svg` is copied from the hydrated static assets at build time.
 
 Do not commit image media to `main`.
 
@@ -50,10 +69,21 @@ Hydrate assets and build:
 make docs-build
 ```
 
-Preview locally:
+Preview the docs tier at `http://localhost:8000/docs/`:
 
 ```bash
 make docs-serve
+```
+
+Zensical serves only the docs tier, mounted at `/docs/` as in production. The
+product page and guide are static files it does not serve. Both targets below
+render a staged copy of the docs tree, so restart them to pick up edits. To
+preview the whole site with production routing, build it and serve the
+assembled `site/` directory:
+
+```bash
+make docs-preview                          # http://127.0.0.1:8000/
+make docs-preview DOCS_PREVIEW_PORT=8765   # another port
 ```
 
 Run all docs validation:
@@ -147,10 +177,17 @@ Vercel root directory:
 | Build command | `uv run --frozen bash ./vercel-build.sh` |
 | Output directory | `site` |
 
-The build wrapper also copies `index.md` and every nav-listed Markdown document
-into `site/`. That keeps source-form docs available from the same deployment as
-the rendered page: for example, `/changelog.md` serves the Markdown source that
-generated `/changelog/`.
+The build wrapper renders the Zensical docs into `site/docs/`, copies
+`index.md` and every nav-listed Markdown document alongside its rendered page
+(for example, `/docs/changelog.md` serves the Markdown source that generated
+`/docs/changelog/`, and section indexes such as `agents/index.md` also publish a
+flattened `/docs/agents.md` twin), then copies the website tier and `llms.txt`
+to the site root. Every rendered docs page advertises its twin with
+`<link rel="alternate" type="text/markdown">`.
+
+Docs used to be served from the site root. `vercel.json` carries a permanent
+redirect for every old page, its Markdown twin, and the `/assets/...` media
+paths, so external links and older binaries keep resolving.
 
 Link the checkout once from the repository root:
 

@@ -130,5 +130,5 @@ This downloads and replaces the current binary with the latest release.
 ## Agent Requirements
 
 roborev requires at least one AI agent CLI to be installed. See
-[Supported Agents](/agents/) for the full list, installation commands, and
+[Supported Agents](/docs/agents/) for the full list, installation commands, and
 configuration options.

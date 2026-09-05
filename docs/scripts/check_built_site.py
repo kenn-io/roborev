@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
+"""Validate the assembled three-tier site under docs/site.
+
+Tiers: the hand-written product page at /, the guide at /guide/, and the
+Zensical docs under /docs/. Every nav docs page must ship a Markdown twin and
+advertise it; every local link and asset referenced by any tier must resolve
+inside the built site; llms.txt must index only real routes; and no dotfile or
+credential-pattern file may enter the published output.
+"""
+
 from __future__ import annotations
 
+import fnmatch
 import html
 import html.parser
 import pathlib
@@ -11,58 +21,58 @@ import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
+DOCS = SITE / "docs"
+ORIGIN = "https://roborev.io"
 
-ROUTES = [
-    "/",
-    "/quickstart/",
-    "/installation/",
-    "/commands/",
-    "/integrations/tui/",
-    "/configuration/",
-    "/agents/",
-    "/integrations/github/",
-    "/integrations/gitlab/",
-    "/guides/reviewing-code/",
-    "/guides/responding-to-reviews/",
-    "/guides/agent-skills/",
-    "/guides/assisted-refactoring/",
-    "/guides/auto-fixing/",
-    "/guides/repository-management/",
-    "/advanced/background-tasks/",
-    "/advanced/subagent-review-panels/",
-    "/advanced/custom-tasks/",
-    "/advanced/acp/",
-    "/advanced/postgres-sync/",
-    "/advanced/streaming/",
-    "/integrations/kata/",
-    "/integrations/claudechic/",
-    "/guides/hooks/",
-    "/agent-hook/",
-    "/guides/troubleshooting/",
-    "/development/",
-    "/changelog/",
+sys.path.insert(0, str(ROOT / "scripts"))
+from public_markdown_sources import public_markdown_sources  # noqa: E402
+
+REQUIRED_ROOT_ENTRIES = [
+    "index.html",
+    "index.md",
+    "guide/index.html",
+    "guide.md",
+    "404.html",
+    "favicon.svg",
+    "llms.txt",
+    "sitemap.xml",
+    "styles/site.css",
+    "scripts/site.js",
+    "fonts/Inter-Regular.woff2",
+    "fonts/JetBrainsMono-Regular.woff2",
+    "fonts/licenses/Inter-OFL-1.1.txt",
+    "fonts/licenses/JetBrains-Mono-OFL-1.1.txt",
+    "docs/index.html",
+    "docs/index.md",
+    "docs/404.html",
+    "docs/sitemap.xml",
 ]
+
+HANDWRITTEN_PAGES = ["index.html", "guide/index.html", "404.html"]
 
 REQUIRED_FRAGMENTS = [
-    "/configuration/#kata-integration",
-    "/guides/hooks/#built-in-kata-integration",
+    "/docs/configuration/#kata-integration",
+    "/docs/guides/hooks/#built-in-kata-integration",
 ]
 
-REQUIRED_META = {
-    ("property", "og:image"): "https://roborev.io/assets/static/og-image.png",
+REQUIRED_DOCS_META = {
+    ("property", "og:image"): f"{ORIGIN}/docs/assets/static/og-image.png",
     ("property", "og:image:width"): "1200",
     ("property", "og:image:height"): "630",
     ("property", "og:type"): "website",
     ("name", "twitter:card"): "summary_large_image",
-    ("name", "twitter:image"): "https://roborev.io/assets/static/og-image.png",
+    ("name", "twitter:image"): f"{ORIGIN}/docs/assets/static/og-image.png",
 }
 
-REQUIRED_SITEMAP_URLS = [
-    "https://roborev.io/",
+REQUIRED_ROOT_SITEMAP_URLS = [
+    f"{ORIGIN}/",
+    f"{ORIGIN}/guide/",
+    f"{ORIGIN}/docs/",
+    f"{ORIGIN}/docs/quickstart/",
 ]
 
 COMPACT_SVG_MAX_HEIGHTS = {
-    "assets/generated/cli-repo-list.svg": 220.0,
+    "docs/assets/generated/cli-repo-list.svg": 220.0,
 }
 
 FORBIDDEN_PATTERNS = [
@@ -78,6 +88,30 @@ FORBIDDEN_PATTERNS = [
     "<Aside",
     "set:html",
 ]
+
+# Keep in sync with the prune in docs/zensical-docs.sh assemble_site_root.
+FORBIDDEN_SITE_PATTERNS = [
+    ".*",
+    "*~",
+    "*.swp",
+    "client_secret*.json",
+    "credentials*.json",
+    "service_account*.json",
+    "service-account*.json",
+    "token.json",
+    "tokens.json",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa*",
+    "id_ed25519*",
+    "*.tfstate",
+    "*.tfvars",
+]
+
+# Served through vercel.json redirects, not the filesystem.
+REDIRECTED_ROUTE = re.compile(r"^/(install\.sh|install\.ps1)$")
 
 MAX_HTML_UNESCAPE_PASSES = 50
 
@@ -167,6 +201,7 @@ class LinkParser(html.parser.HTMLParser):
         self.links: list[str] = []
         self.link_attrs: list[dict[str, str]] = []
         self.assets: list[str] = []
+        self.alternates: list[dict[str, str]] = []
         self.style_attrs: list[str] = []
         self.style_blocks: list[str] = []
         self.meta: list[dict[str, str]] = []
@@ -185,8 +220,11 @@ class LinkParser(html.parser.HTMLParser):
             self.assets.extend(srcset_urls(attr["srcset"]))
         if tag == "video" and "poster" in attr:
             self.assets.append(attr["poster"])
-        if tag == "link" and "href" in attr and is_fetched_link_resource(attr):
-            self.assets.append(attr["href"])
+        if tag == "link" and "href" in attr:
+            if is_fetched_link_resource(attr):
+                self.assets.append(attr["href"])
+            if "alternate" in rel_tokens(attr.get("rel", "")):
+                self.alternates.append(attr)
         if tag == "meta":
             self.meta.append(attr)
         if "style" in attr:
@@ -258,6 +296,8 @@ def target_file(current: pathlib.Path, href: str) -> pathlib.Path | None:
     if parsed.scheme or parsed.netloc:
         return None
     decoded_path = urllib.parse.unquote(parsed.path)
+    if REDIRECTED_ROUTE.match(decoded_path):
+        return None
     if decoded_path.startswith("/"):
         if is_local_file_path(decoded_path):
             return require_site_child(SITE / decoded_path.lstrip("/"), href, current)
@@ -293,8 +333,8 @@ def html_unescape_variants(text: str) -> list[str]:
     return variants
 
 
-def check_global_metadata(current: pathlib.Path, parser: LinkParser) -> None:
-    for (kind, name), value in REQUIRED_META.items():
+def check_docs_metadata(current: pathlib.Path, parser: LinkParser) -> None:
+    for (kind, name), value in REQUIRED_DOCS_META.items():
         found = any(
             meta.get(kind) == name and meta.get("content") == value for meta in parser.meta
         )
@@ -356,23 +396,97 @@ def fragment_id(fragment: str) -> str:
     return urllib.parse.unquote(fragment)
 
 
+def check_handwritten_page_references(current: pathlib.Path, parser: LinkParser) -> None:
+    """Root-tier pages are copied verbatim, so every local reference must be
+    root-relative: a relative path would silently break under /guide/."""
+    for reference in [*parser.links, *parser.assets]:
+        if reference.startswith(("http://", "https://", "mailto:", "data:", "#", "/")):
+            continue
+        fail(f"{current.relative_to(SITE)}: non-root-relative reference {reference}")
+
+
+def docs_route(source: str) -> str:
+    stem = source.removesuffix(".md")
+    if stem == "index":
+        return "/docs/"
+    return f"/docs/{stem.removesuffix('/index')}/"
+
+
+def check_docs_tier(parsed_by_file: dict[pathlib.Path, LinkParser]) -> None:
+    for source in public_markdown_sources(ROOT / "zensical.toml"):
+        route = docs_route(source)
+        page = route_to_file(route)
+        parser = parsed_by_file.get(page.resolve())
+        if parser is None:
+            fail(f"docs page missing for nav source {source}: {route}")
+        twin = DOCS / source
+        if not twin.is_file():
+            fail(f"Markdown twin missing for nav source {source}")
+        twin_url = f"{ORIGIN}/docs/index.md" if route == "/docs/" else f"{ORIGIN}{route.rstrip('/')}.md"
+        advertised = [
+            link for link in parser.alternates if link.get("type") == "text/markdown"
+        ]
+        if not any(link.get("href") == twin_url for link in advertised):
+            fail(f"{page.relative_to(SITE)} does not advertise its Markdown twin {twin_url}")
+        if not (SITE / twin_url[len(ORIGIN) + 1 :]).is_file():
+            fail(f"advertised Markdown twin missing for nav source {source}: {twin_url}")
+
+
+def check_markdown_twin_links() -> None:
+    for name in ("index.md", "guide.md", "docs/index.md"):
+        text = (SITE / name).read_text(encoding="utf-8")
+        for url in re.findall(r"\((https://roborev\.io[^)#]*)[^)]*\)", text):
+            route = url[len(ORIGIN) :] or "/"
+            if REDIRECTED_ROUTE.match(route):
+                continue
+            target = SITE / route.lstrip("/") if is_local_file_path(route) else route_to_file(route)
+            if not target.is_file():
+                fail(f"{name}: broken site link {url}")
+
+
+def check_llms_txt() -> None:
+    text = (SITE / "llms.txt").read_text(encoding="utf-8")
+    urls = re.findall(r"\((https://roborev\.io[^)]+)\)", text)
+    if not urls:
+        fail("llms.txt lists no roborev.io routes")
+    for url in urls:
+        route = url[len(ORIGIN) :]
+        target = SITE / route.lstrip("/") if is_local_file_path(route) else route_to_file(route)
+        if not target.is_file():
+            fail(f"llms.txt links a missing route: {url}")
+    for twin in (f"{ORIGIN}/index.md", f"{ORIGIN}/guide.md", f"{ORIGIN}/docs/index.md"):
+        if twin not in urls:
+            fail(f"llms.txt must index {twin}")
+
+
+def check_sitemaps() -> None:
+    root_sitemap = (SITE / "sitemap.xml").read_text(encoding="utf-8")
+    for url in REQUIRED_ROOT_SITEMAP_URLS:
+        if f"<loc>{url}</loc>" not in root_sitemap:
+            fail(f"root sitemap.xml is missing {url}")
+    docs_sitemap = (DOCS / "sitemap.xml").read_text(encoding="utf-8")
+    if f"<loc>{ORIGIN}/docs/</loc>" not in docs_sitemap:
+        fail("docs sitemap.xml is missing the docs index")
+
+
+def check_public_site_file_inventory(site: pathlib.Path = SITE) -> None:
+    if not site.is_dir():
+        fail(f"missing built site directory: {site}")
+    for path in site.rglob("*"):
+        if not path.is_file():
+            continue
+        for pattern in FORBIDDEN_SITE_PATTERNS:
+            if fnmatch.fnmatchcase(path.name, pattern):
+                fail(f"forbidden file in built site: {path.relative_to(site)}")
+
+
 def main() -> None:
     if not SITE.exists():
         fail("site directory does not exist. Run the Zensical build first.")
 
-    for route in ROUTES:
-        path = route_to_file(route)
-        if not path.exists():
-            fail(f"missing route {route}: {path}")
-
-    if not (SITE / "404.html").exists():
-        fail("missing 404.html")
-    if not (SITE / "sitemap.xml").exists():
-        fail("missing sitemap.xml")
-    sitemap_text = (SITE / "sitemap.xml").read_text(encoding="utf-8", errors="ignore")
-    for url in REQUIRED_SITEMAP_URLS:
-        if f"<loc>{url}</loc>" not in sitemap_text:
-            fail(f"missing sitemap URL {url}")
+    for entry in REQUIRED_ROOT_ENTRIES:
+        if not (SITE / entry).is_file():
+            fail(f"built site is missing {entry}")
 
     html_files = list(SITE.rglob("*.html"))
     all_text = "\n".join(
@@ -387,9 +501,17 @@ def main() -> None:
     for path in html_files:
         parsed_by_file[path.resolve()] = parse_html(path)
 
+    docs_dir = DOCS.resolve()
     for current, parser in parsed_by_file.items():
-        check_global_metadata(current, parser)
-        check_discord_header_link(current, parser)
+        if current.is_relative_to(docs_dir):
+            check_docs_metadata(current, parser)
+            check_discord_header_link(current, parser)
+
+    for name in HANDWRITTEN_PAGES:
+        parser = parsed_by_file.get((SITE / name).resolve())
+        if parser is None:
+            fail(f"missing handwritten page {name}")
+        check_handwritten_page_references(SITE / name, parser)
 
     for spec in REQUIRED_FRAGMENTS:
         parsed = urllib.parse.urlparse(spec)
@@ -440,7 +562,12 @@ def main() -> None:
     for css_file in css_files:
         check_css_assets(css_file, visited_css)
 
+    check_docs_tier(parsed_by_file)
+    check_markdown_twin_links()
+    check_llms_txt()
+    check_sitemaps()
     check_compact_svg_assets()
+    check_public_site_file_inventory()
 
     print("built site checks passed")
 

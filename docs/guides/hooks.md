@@ -202,8 +202,8 @@ jump straight to the full review.
 
 If you use [Kata](https://github.com/kenn-io/kata) for task tracking, roborev
 can file review failures and findings as Kata issues. For an overview of both
-directions of the integration, see [Kata](/integrations/kata/). To enable the
-hook:
+directions of the integration, see [Kata](/docs/integrations/kata/). To enable
+the hook:
 
 ```toml
 [[hooks]]
@@ -255,8 +255,8 @@ url = "https://example.com/roborev-webhook"
 The webhook sends a JSON POST with a 5-second timeout. The payload is the full
 review event as JSON (`type`, `ts`, `job_id`, `job_uuid`, `repo`, `repo_name`,
 `sha`, `branch`, `agent`, `verdict`, `findings`, `error`, `worktree_path`), with
-unset fields omitted. See [Event Fields](/advanced/streaming/#event-fields) for
-field semantics. The `url` field is treated as sensitive and is masked in
+unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
+for field semantics. The `url` field is treated as sensitive and is masked in
 `roborev config list` output. Webhook URLs are redacted in daemon logs (only the
 scheme and host are shown).
 

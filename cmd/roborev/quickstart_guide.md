@@ -116,4 +116,4 @@ default_model = "gpt-5-codex"
 ```
 
 For per-workflow routing and legacy or exact reasoning levels, see
-https://roborev.io/configuration/.
+https://roborev.io/docs/configuration/.

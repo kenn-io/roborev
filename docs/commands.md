@@ -4,7 +4,7 @@ description: Quick reference for all roborev commands and flags
 ---
 
 <figure class="screenshot" data-lightbox>
-  <img src="/assets/generated/cli-help.svg" alt="roborev help output" loading="lazy">
+  <img src="/docs/assets/generated/cli-help.svg" alt="roborev help output" loading="lazy">
 </figure>
 
 ## Essentials
@@ -52,7 +52,7 @@ The stable fields are:
 |-------|------|-------------|
 | `name` | string | Canonical tool name; always `roborev` |
 | `version` | string | Build version, using the release semantic version for release builds |
-| `web_assets` | bool | Whether this binary embeds the production web assets required to serve the [browser UI](/web-ui/) |
+| `web_assets` | bool | Whether this binary embeds the production web assets required to serve the [browser UI](/docs/web-ui/) |
 
 Consumers should ignore additional fields so the contract can grow compatibly.
 
@@ -95,14 +95,14 @@ roborev review --branch --panel none          # Force single-agent review
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
 | `--type <type>` | Review type (`security`, `design`, `lookahead`); changes system prompt |
-| `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/configuration/#reasoning-levels) |
+| `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Legacy shorthand for `--reasoning fast` |
 | `--min-severity <level>` | Only report findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 | `--panel <name or none>` | Run a named review panel. Use `none` to bypass configured defaults |
 | `--local` | Run review locally without the daemon (streams output to console) |
 | `--repo <path>` | Specify repository path |
 
-See: [Reviewing Code](/guides/reviewing-code/)
+See: [Reviewing Code](/docs/guides/reviewing-code/)
 
 ## Waiting for Reviews
 
@@ -127,7 +127,7 @@ an already-running job, making it useful when a post-commit hook has already
 triggered the review. For most interactive workflows, use `roborev tui` to
 browse completed reviews instead of blocking.
 
-See: [Reviewing Code](/guides/reviewing-code/)
+See: [Reviewing Code](/docs/guides/reviewing-code/)
 
 ## Viewing Reviews
 
@@ -175,14 +175,14 @@ needs no additional configuration for local use: run `roborev ui` and the
 application displays the reviews from the same SQLite database used by the CLI
 and terminal UI.
 
-See [Browser UI](/web-ui/) for analytics definitions, remote HTTPS access, and
-the production Tailscale Serve setup.
+See [Browser UI](/docs/web-ui/) for analytics definitions, remote HTTPS access,
+and the production Tailscale Serve setup.
 
 For panel parent reviews, `roborev show` also displays a one-line reviewer
 summary. `roborev show --json` includes an additive `panel` object with the run
 UUID, panel name, synthesis job ID, and member reviewer statuses.
 
-See: [Terminal UI](/integrations/tui/)
+See: [Terminal UI](/docs/integrations/tui/)
 
 !!! tip
 
@@ -413,7 +413,7 @@ roborev close <job_id> --reopen      # Reopen a closed review
 
     `roborev address` is still accepted as an alias for `roborev close`.
 
-See: [Responding to Reviews](/guides/responding-to-reviews/)
+See: [Responding to Reviews](/docs/guides/responding-to-reviews/)
 
 ## Auto-Fix Agentic Loop
 
@@ -447,9 +447,9 @@ roborev refine --min-severity high  # Only fix high and critical findings
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
 `--trailer` options. See
-[Fix Commit Metadata](/configuration/#fix-commit-metadata).
+[Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
-See: [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/)
+See: [Auto-Fix Agentic Loop with Refine](/docs/guides/auto-fixing/)
 
 ## Fixing Reviews
 
@@ -485,9 +485,9 @@ roborev fix --min-severity medium  # Skip low-severity findings
 For foreground `fix` and `analyze --fix` flows, the selected agent owns the
 commit. `fix_commit_author` and `fix_commit_co_authored_by` are included as
 prompt instructions only, so agent-level Git config can still add its own
-trailers. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+trailers. See [Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
-See: [Assisted Refactoring](/guides/assisted-refactoring/)
+See: [Assisted Refactoring](/docs/guides/assisted-refactoring/)
 
 ## Consolidating Reviews
 
@@ -657,7 +657,7 @@ when that log is still available.
 
 If you run a central usage service, configure `[cost] endpoint` to fetch usage
 over HTTP instead of through the local `agentsview` CLI. See
-[Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
+[Cost Usage Endpoint](/docs/configuration/#cost-usage-endpoint).
 
 To backfill token data for older jobs:
 
@@ -729,13 +729,14 @@ Posting an MR note requires a project access token with the `api` scope exposed
 as `GITLAB_TOKEN` — `CI_JOB_TOKEN` cannot create notes. When that token is a
 protected variable, hardcode `--gl-host https://gitlab.example.com` in the job
 script: `CI_SERVER_URL` is overridable by whoever starts the pipeline, the
-script is not. See the [GitLab Integration](/integrations/gitlab/) trust model.
+script is not. See the [GitLab Integration](/docs/integrations/gitlab/) trust
+model.
 
 Exit codes: `0` on success or when all agents were skipped due to quota
 exhaustion, non-zero on real failures.
 
-See: [GitHub Integration](/integrations/github/),
-[GitLab Integration](/integrations/gitlab/)
+See: [GitHub Integration](/docs/integrations/github/),
+[GitLab Integration](/docs/integrations/gitlab/)
 
 ## GitHub Actions Setup
 
@@ -765,7 +766,7 @@ Agent API keys are read from repository secrets (e.g. `ANTHROPIC_API_KEY` for
 Claude Code, `OPENAI_API_KEY` for Codex). Add the required secrets in your
 repository's Settings > Secrets and variables > Actions.
 
-See: [GitHub Integration](/integrations/github/)
+See: [GitHub Integration](/docs/integrations/github/)
 
 ## Code Analysis
 
@@ -796,7 +797,7 @@ roborev analyze --list                             # List analysis types
 | `--list` | List available analysis types |
 | `--show-prompt <type>` | Show prompt template |
 
-See: [Assisted Refactoring](/guides/assisted-refactoring/)
+See: [Assisted Refactoring](/docs/guides/assisted-refactoring/)
 
 ## Custom Agent Tasks
 
@@ -820,7 +821,7 @@ cat review-checklist.txt | roborev run --wait
 | `--label <string>` | Custom label displayed in TUI (default: `run`) |
 | `--json` | Emit one launch receipt with `job_id`, `job_uuid`, `git_ref`, and `status`; incompatible with `--quiet`, `--wait`, and global `--verbose` |
 
-See: [Custom Agent Tasks](/advanced/custom-tasks/)
+See: [Custom Agent Tasks](/docs/advanced/custom-tasks/)
 
 ## Configuration
 
@@ -846,7 +847,7 @@ roborev config validate --local      # Validate repo config only
 | `--local` | Use repo config (`.roborev.toml`) |
 | `--show-origin` | Show origin column (global/local/default) in list output |
 
-See: [Configuration](/configuration/)
+See: [Configuration](/docs/configuration/)
 
 ## Repository Management
 
@@ -859,7 +860,7 @@ roborev repo delete <name>              # Remove from tracking
 roborev repo merge <src> <dst>          # Merge reviews between repos
 ```
 
-See: [Repository Management](/guides/repository-management/)
+See: [Repository Management](/docs/guides/repository-management/)
 
 ## Daemon & Hooks
 
@@ -966,8 +967,8 @@ The hook queues one review after five commits instead of one review per commit.
 The pre-push hook attempts to queue a partial batch before push, but it does not
 block the push if queueing fails. Values below `2` disable batching.
 
-See: [Configuration](/configuration/#post-commit-review-mode) and
-[Post-Commit Review Batching](/configuration/#post-commit-review-batching)
+See: [Configuration](/docs/configuration/#post-commit-review-mode) and
+[Post-Commit Review Batching](/docs/configuration/#post-commit-review-batching)
 
 ## Agent Hook
 
@@ -997,8 +998,8 @@ project `.factory/hooks.json` paths. Hermes queues post-tool reminders for a
 later `Stop`. Cursor records the same events as other profiles but emits no
 control response.
 
-See [Agent Hook](/agent-hook/) for profile detection, threshold configuration,
-the exact-ID fix workflow, and declarative config details.
+See [Agent Hook](/docs/agent-hook/) for profile detection, threshold
+configuration, the exact-ID fix workflow, and declarative config details.
 
 ## Checking Agents
 
@@ -1023,7 +1024,7 @@ roborev skills install           # Install skills for agents
 roborev skills update            # Update installed skills
 ```
 
-See: [Agent Skills](/guides/agent-skills/)
+See: [Agent Skills](/docs/guides/agent-skills/)
 
 ## Sync & Streaming
 
@@ -1035,8 +1036,8 @@ roborev stream                   # Stream all events (JSONL)
 roborev stream --repo .          # Filter to current repo
 ```
 
-See: [PostgreSQL Sync](/advanced/postgres-sync/),
-[Event Streaming](/advanced/streaming/)
+See: [PostgreSQL Sync](/docs/advanced/postgres-sync/),
+[Event Streaming](/docs/advanced/streaming/)
 
 ## Multi-Repo Workspaces
 

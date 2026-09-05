@@ -1,0 +1,93 @@
+# roborev
+
+> roborev is local, continuous code review for the agentic loop: an
+> open-source review daemon for teams that ship with coding agents. A git
+> hook reviews every commit in the background using the agents you already
+> run (Codex, Claude Code, Gemini, Copilot, and more), keeps findings in a
+> ledger until they are addressed, and feeds them back into the agent session
+> so fixes happen while context is fresh. It also reviews GitHub and GitLab
+> pull requests with multi-agent panels and syncs review history across
+> machines.
+
+The product and guide pages have exact Markdown twins; documentation pages are
+served as HTML with Markdown twins alongside. Markdown versions are canonical
+for machine readers: every rendered docs page at /docs/<page>/ is also served
+as raw Markdown at /docs/<page>.md.
+
+## Product
+
+- [Product overview](https://roborev.io/index.md): what roborev is; the
+  review loop, the ledger, agents, panels, CI, team visibility, ownership
+- [The guide](https://roborev.io/guide.md): a ten-stop tour from `roborev
+  init` to CI panels and team-wide review history
+
+## Docs
+
+- [Documentation index](https://roborev.io/docs/index.md): install,
+  quickstart, and the documentation map
+- [Quick start](https://roborev.io/docs/quickstart.md): install, initialize a
+  repo, read reviews, act on findings
+- [Installation](https://roborev.io/docs/installation.md): every install
+  method, upgrades, and uninstall
+- [Changelog](https://roborev.io/docs/changelog.md): release history
+- [Post-commit reviews](https://roborev.io/docs/automation/post-commit-reviews.md):
+  the two automation layers, batching, and hands-off setup
+- [Agent Hook](https://roborev.io/docs/agent-hook.md): bring open findings
+  back into Claude Code, Codex, Copilot, Cursor, Droid, Gemini, Hermes, and
+  Qwen sessions
+- [Review event hooks](https://roborev.io/docs/guides/hooks.md): run shell
+  commands, notifications, and the built-in kata and beads integrations on
+  review events
+- [CLI commands](https://roborev.io/docs/commands.md): every command and flag
+- [Terminal UI](https://roborev.io/docs/integrations/tui.md): the review queue
+  in the terminal
+- [Browser UI](https://roborev.io/docs/web-ui.md): the review workspace and
+  analytics served by the daemon
+- [Configuration](https://roborev.io/docs/configuration.md): global and
+  per-repo settings, guidelines, agents, models, panels, experiments
+- [Supported agents](https://roborev.io/docs/agents.md): agent detection,
+  selection, and install commands
+- [GitHub integration](https://roborev.io/docs/integrations/github.md): CI
+  poller, GitHub App auth, PR comments and checks
+- [GitLab integration](https://roborev.io/docs/integrations/gitlab.md): merge
+  request reviews and notes
+- [Reviewing code](https://roborev.io/docs/guides/reviewing-code.md): commits,
+  ranges, branches, dirty trees, review types
+- [Responding to reviews](https://roborev.io/docs/guides/responding-to-reviews.md):
+  comments, closing, and the review ledger
+- [Agent skills](https://roborev.io/docs/guides/agent-skills.md): the
+  `/roborev-fix`, `/roborev-refine`, and review skills
+- [Code analysis and refactoring](https://roborev.io/docs/guides/assisted-refactoring.md):
+  `roborev analyze` types and `roborev fix`
+- [Auto-fix with refine](https://roborev.io/docs/guides/auto-fixing.md): the
+  fix, re-review, repeat loop
+- [Repository management](https://roborev.io/docs/guides/repository-management.md):
+  registering repos, worktrees, exclusions
+- [Background tasks](https://roborev.io/docs/advanced/background-tasks.md):
+  `roborev run` and task jobs
+- [Subagent review panels](https://roborev.io/docs/advanced/subagent-review-panels.md):
+  multi-reviewer panels with synthesis
+- [Custom review types](https://roborev.io/docs/advanced/custom-review-types.md):
+  template-driven review rubrics
+- [Custom tasks and agentic mode](https://roborev.io/docs/advanced/custom-tasks.md):
+  agentic reviews and custom prompts
+- [Agent Client Protocol](https://roborev.io/docs/advanced/acp.md): ACP
+  adapters for additional agents
+- [PostgreSQL sync](https://roborev.io/docs/advanced/postgres-sync.md):
+  multi-machine review history
+- [Streaming and daemon API](https://roborev.io/docs/advanced/streaming.md):
+  HTTP API and server-sent events
+- [Kata integration](https://roborev.io/docs/integrations/kata.md): task
+  context in prompts and findings filed as kata issues
+- [Claude Chic integration](https://roborev.io/docs/integrations/claudechic.md):
+  review sidebar in Claude Chic
+- [Troubleshooting](https://roborev.io/docs/guides/troubleshooting.md): daemon,
+  hooks, agents, and quota problems
+- [Development](https://roborev.io/docs/development.md): building, testing,
+  and contributing
+
+## Other
+
+- [GitHub repository](https://github.com/kenn-io/roborev): source, issues,
+  releases. MIT license.
+- [Discord](https://discord.gg/fDnmxB8Wkq): community chat

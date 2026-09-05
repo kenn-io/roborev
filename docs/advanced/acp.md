@@ -219,9 +219,9 @@ Pick by how you authenticate to Gemini:
     `gemini` agent via the `agy` CLI. No model selection is possible on this
     path: an explicit model errors whenever the agent resolves to `agy` — even
     with the legacy `gemini` CLI also installed — unless you pin
-    `gemini_cmd = "gemini"` (see [Supported Agents](/agents/)). The underlying
-    SDK has no OAuth path, so an ACP bridge cannot restore model selection
-    either.
+    `gemini_cmd = "gemini"` (see [Supported Agents](/docs/agents/)). The
+    underlying SDK has no OAuth path, so an ACP bridge cannot restore model
+    selection either.
 - **`GEMINI_API_KEY` (AI Studio key):** use the agy-acp bridge above. Full model
     and thinking-suffix selection.
 - **GCP Vertex (application-default credentials):** use the agy-acp bridge with
@@ -404,7 +404,8 @@ Backup models follow the same pairing rule. A global `default_backup_model`
 belongs to `default_backup_agent`; it is not passed to a different ACP agent
 selected by a more-specific workflow or repo backup setting. On a mismatch, the
 selected ACP agent keeps its `[acp.<name>].model`. See
-[Backup Agents](/configuration/#backup-agents) for the full resolution order.
+[Backup Agents](/docs/configuration/#backup-agents) for the full resolution
+order.
 
 ### `--agent` is ignored and a panel runs instead
 
@@ -419,7 +420,7 @@ you need file edits, use `roborev refine` or `roborev run --agentic`.
 
 ## See Also
 
-- [Supported Agents](/agents/): Built-in agent adapters and auto-detection
-- [Custom Tasks & Agentic Mode](/advanced/custom-tasks/): Review vs agentic
+- [Supported Agents](/docs/agents/): Built-in agent adapters and auto-detection
+- [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/): Review vs agentic
     modes
-- [Configuration](/configuration/): Global and per-repo settings
+- [Configuration](/docs/configuration/): Global and per-repo settings

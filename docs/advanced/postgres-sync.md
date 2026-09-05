@@ -114,5 +114,5 @@ synced but the target database doesn't have it.
 
 ## See Also
 
-- [Configuration](/configuration/) - Global configuration options
-- [Repository Management](/guides/repository-management/) - Managing repos
+- [Configuration](/docs/configuration/) - Global configuration options
+- [Repository Management](/docs/guides/repository-management/) - Managing repos
