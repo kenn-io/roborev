@@ -2,10 +2,13 @@
 set -euo pipefail
 
 command_name="${1:-}"
-if [[ "$command_name" != "build" && "$command_name" != "serve" ]]; then
-  printf 'usage: %s {build|serve} [zensical args...]\n' "$0" >&2
-  exit 2
-fi
+case "$command_name" in
+  build | serve | preview) ;;
+  *)
+    printf 'usage: %s build|serve [zensical args...] | preview [port]\n' "$0" >&2
+    exit 2
+    ;;
+esac
 shift || true
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,22 +154,36 @@ assemble_site_root() {
   done
 }
 
+build_site() {
+  # Zensical only cleans its own site/docs subtree; clear the whole output
+  # directory so files from earlier builds or layouts never ship.
+  rm -rf "${docs_root:?}/${site_dir:?}"
+  (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
+  (
+    cd "$docs_root"
+    python3 scripts/copy_public_markdown_sources.py \
+      --docs-dir "$tmp_docs_name" \
+      --site-dir "$docs_output_dir" \
+      --config "$tmp_config_name"
+  )
+  assemble_site_root
+}
+
 case "$command_name" in
   build)
-    # Zensical only cleans its own site/docs subtree; clear the whole output
-    # directory so files from earlier builds or layouts never ship.
-    rm -rf "${docs_root:?}/${site_dir:?}"
-    (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
-    (
-      cd "$docs_root"
-      python3 scripts/copy_public_markdown_sources.py \
-        --docs-dir "$tmp_docs_name" \
-        --site-dir "$docs_output_dir" \
-        --config "$tmp_config_name"
-    )
-    assemble_site_root
+    build_site "$@"
     ;;
   serve)
+    # Zensical mounts the docs at the site_url path, so this previews the docs
+    # tier at /docs/ with live reload. The product page and guide are static
+    # files outside Zensical; use "preview" to see the whole site.
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
+    ;;
+  preview)
+    build_site
+    preview_port="${1:-8000}"
+    printf 'Serving %s on http://127.0.0.1:%s (production routing, no live reload)\n' \
+      "$site_dir" "$preview_port"
+    python3 -m http.server --bind 127.0.0.1 --directory "$docs_root/$site_dir" "$preview_port"
     ;;
 esac
