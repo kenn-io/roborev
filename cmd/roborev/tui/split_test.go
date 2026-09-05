@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -7249,6 +7251,24 @@ func registerRerunPickerAgent(t *testing.T, name string) {
 	t.Cleanup(func() { agent.Unregister(name) })
 }
 
+type rerunPickerSchemaAgent struct {
+	*agent.FakeAgent
+}
+
+func (a *rerunPickerSchemaAgent) ClassifyWithSchema(
+	context.Context, string, string, string, json.RawMessage, io.Writer,
+) (json.RawMessage, error) {
+	return nil, nil
+}
+
+func registerRerunPickerSchemaAgent(t *testing.T, name string) {
+	t.Helper()
+	agent.Register(&rerunPickerSchemaAgent{
+		FakeAgent: &agent.FakeAgent{NameStr: name},
+	})
+	t.Cleanup(func() { agent.Unregister(name) })
+}
+
 func rerunPickerModel(t *testing.T, handler http.HandlerFunc) model {
 	t.Helper()
 	_, m := mockServerModel(t, handler)
@@ -7292,6 +7312,22 @@ func TestRerunAgentPickerTransitionsAndOptions(t *testing.T) {
 	got = res.(model)
 	assert.Equal(t, viewQueue, got.currentView)
 	assert.Empty(t, got.rerunAgentOptions)
+}
+
+func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) {
+	registerRerunPickerAgent(t, "picker-current")
+	registerRerunPickerAgent(t, "picker-non-schema")
+	registerRerunPickerSchemaAgent(t, "picker-schema")
+	m := rerunPickerModel(t, rerunOKHandler)
+	m.jobs[0].JobType = storage.JobTypeClassify
+	m.jobs[0].ReviewType = "design"
+
+	res, cmd := m.handleRerunAgentKey()
+	got := res.(model)
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewRerunAgent, got.currentView)
+	assert.Contains(t, got.rerunAgentOptions, "picker-schema")
+	assert.NotContains(t, got.rerunAgentOptions, "picker-non-schema")
 }
 
 func TestRerunAgentPickerRejectsIneligibleRows(t *testing.T) {

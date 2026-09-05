@@ -915,6 +915,67 @@ func TestRerunJobBroadcastsOnlyAcceptedRequest(t *testing.T) {
 	assert.Empty(t, events, "idempotent replay must not broadcast again")
 }
 
+func TestRerunClassifierRequiresSchemaAgent(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	const selectedAgent = "rerun-classifier-unstructured"
+	agent.Register(&commandTestAgent{name: selectedAgent, command: "go"})
+	t.Cleanup(func() { agent.Unregister(selectedAgent) })
+
+	repo, err := db.GetOrCreateRepo(tempDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "rerun-classifier-unstructured", "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID,
+		GitRef:  "rerun-classifier-unstructured",
+		Agent:   storage.AutoDesignAgentSentinel,
+		JobType: storage.JobTypeClassify, ReviewType: "design",
+		Source: storage.JobSourceAutoDesign,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
+		JobID: job.ID, Agent: selectedAgent,
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "SchemaAgent")
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, updated.Status)
+	assert.Equal(t, storage.AutoDesignAgentSentinel, updated.Agent)
+}
+
+func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
+	repoPath := t.TempDir()
+	testutil.InitTestGitRepo(t, repoPath)
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(
+		"classify_model = \"classify-model\"\ndesign_model = \"design-model\"\n",
+	), 0o644))
+
+	const selectedAgent = "rerun-classifier-model"
+	agent.Register(&fakeSchemaAgent{name: selectedAgent})
+	t.Cleanup(func() { agent.Unregister(selectedAgent) })
+
+	job := &storage.ReviewJob{
+		Agent: selectedAgent, JobType: storage.JobTypeClassify,
+		ReviewType: "design", Reasoning: "fast", RepoPath: repoPath,
+	}
+	opts, err := resolveRerunOpts(job, config.DefaultConfig(), nil, selectedAgent)
+	require.NoError(t, err)
+	assert.Equal(t, "classify-model", opts.Model)
+
+	job.RequestedModel = "requested-model"
+	opts, err = resolveRerunOpts(job, config.DefaultConfig(), nil, selectedAgent)
+	require.NoError(t, err)
+	assert.Equal(t, "requested-model", opts.Model)
+}
+
 func TestWorkflowForJobFixType(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal("fix", workflowForJob(storage.JobTypeFix, config.ReviewTypeDefault))

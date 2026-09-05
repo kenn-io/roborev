@@ -287,6 +287,9 @@ func validateRerunAgentChoice(
 	if err != nil {
 		return err
 	}
+	if job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected) {
+		return errors.New("classifier reruns require a SchemaAgent")
+	}
 	if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
 		return err
 	}

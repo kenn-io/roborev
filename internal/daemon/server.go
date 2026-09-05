@@ -950,17 +950,29 @@ func resolveRerunOpts(
 				"resolve selected agent %q: %w", selectedAgent, err,
 			)
 		}
+		if job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected) {
+			return storage.ReenqueueOpts{}, fmt.Errorf(
+				"classifier reruns require a SchemaAgent, got %q", selectedAgent,
+			)
+		}
 		if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
 		)
+		model := resolution.ModelForSelectedAgent(
+			storageName, strings.TrimSpace(job.RequestedModel),
+		)
+		if job.JobType == storage.JobTypeClassify {
+			model = config.ResolveClassifyModel("", resolutionPath, cfg)
+			if requestedModel := strings.TrimSpace(job.RequestedModel); requestedModel != "" {
+				model = requestedModel
+			}
+		}
 		return storage.ReenqueueOpts{
-			Agent: storageName,
-			Model: resolution.ModelForSelectedAgent(
-				storageName, strings.TrimSpace(job.RequestedModel),
-			),
+			Agent:        storageName,
+			Model:        model,
 			Provider:     strings.TrimSpace(job.RequestedProvider),
 			ReplaceAgent: true,
 		}, nil
