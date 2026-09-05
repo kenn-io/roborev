@@ -26,10 +26,10 @@ func RunAgentReview(
 			return ReviewResult{}, err
 		}
 		result := ReviewResult{Output: output}
-		result.Verdict = storage.ParseVerdict(output)
-		if result.Verdict == storage.VerdictUnknown {
-			return result, &NoVerdictError{Output: output}
+		if noVerdict := NoVerdict(output); noVerdict != nil {
+			return result, noVerdict
 		}
+		result.Verdict = storage.ParseVerdict(output)
 		return result, nil
 	}
 

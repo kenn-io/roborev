@@ -886,7 +886,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// one. Unreadable output is the exception: that row must end unrated
 	// even if a legacy verdict was stored before.
 	var verdictBool any
-	unreadable := IsUnreadableInput(r.Output)
+	unreadable := ClassifyOutput(r.Output) != OutputReviewed
 	if r.VerdictBool != nil && !unreadable {
 		verdictBool = 0
 		if *r.VerdictBool {

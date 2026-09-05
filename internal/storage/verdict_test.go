@@ -815,6 +815,19 @@ var verdictTests = []verdictTestCase{
 	},
 }
 
+func TestClassifyOutput(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(OutputEmpty, ClassifyOutput(""))
+	assert.Equal(OutputEmpty, ClassifyOutput("  \n"))
+	assert.Equal(OutputEmpty, ClassifyOutput(" No review output generated \n"))
+	assert.Equal(OutputUnreadableInput, ClassifyOutput("I couldn\u2019t read the diff."))
+	assert.Equal(OutputUnreadableInput, ClassifyOutput("The file is ignored by configured ignore patterns."))
+	assert.Equal(OutputReviewed, ClassifyOutput("No issues found."))
+	assert.Equal(OutputReviewed, ClassifyOutput("- High: nil deref in a.go:1"))
+	assert.Equal("empty output", OutputEmpty.String())
+	assert.Equal("unreadable input", OutputUnreadableInput.String())
+}
+
 func TestParseVerdict(t *testing.T) {
 	runVerdictTests(t, verdictTests)
 }

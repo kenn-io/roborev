@@ -84,17 +84,26 @@ func TestRunAgentReviewKeepsProseFindings(t *testing.T) {
 func TestNoVerdictMessage(t *testing.T) {
 	assert := assert.New(t)
 
-	msg := NoVerdictMessage(&NoVerdictError{Output: "  I am unable to read the diff.\n"})
+	unreadable := NoVerdict("  I am unable to read the diff.\n")
+	require.NotNil(t, unreadable)
+	assert.Equal(storage.OutputUnreadableInput, unreadable.Kind)
+	msg := NoVerdictMessage(unreadable)
 	assert.True(strings.HasPrefix(msg, NoVerdictErrorPrefix))
-	assert.Contains(msg, "review produced no recognizable verdict")
+	assert.Contains(msg, "review produced no recognizable verdict (unreadable input)")
 	assert.Contains(msg, "I am unable to read the diff.")
 	assert.False(strings.HasSuffix(msg, "\n"))
 
-	assert.Contains(NoVerdictMessage(&NoVerdictError{}), "(empty output)")
+	empty := NoVerdict("No review output generated")
+	require.NotNil(t, empty)
+	assert.Equal(storage.OutputEmpty, empty.Kind)
+	assert.Contains(NoVerdictMessage(empty), "(empty output)")
 
-	long := NoVerdictMessage(&NoVerdictError{Output: strings.Repeat("x", noVerdictOutputLimit+50)})
+	assert.Nil(NoVerdict("No issues found."))
+	assert.Nil(NoVerdict("The code has issues."))
+
+	long := NoVerdictMessage(&NoVerdictError{Kind: storage.OutputUnreadableInput, Output: "cannot read the diff " + strings.Repeat("x", noVerdictOutputLimit+50)})
 	assert.Contains(long, "[truncated]")
-	assert.Less(len(long), noVerdictOutputLimit+100)
+	assert.Less(len(long), noVerdictOutputLimit+120)
 
 	assert.True(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: msg}))
 	assert.False(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: "agent: boom"}))

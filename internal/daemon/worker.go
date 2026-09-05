@@ -1145,8 +1145,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		agentReview.Output, err = a.Review(
 			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
 		)
-		if job.JobType == storage.JobTypeCompact {
-			agentReview.Verdict = compactVerdict(agentReview.Output)
+		if job.JobType == storage.JobTypeCompact && err == nil {
+			if noVerdict := review.NoVerdict(agentReview.Output); noVerdict != nil {
+				err = noVerdict
+			} else {
+				agentReview.Verdict = compactVerdict(agentReview.Output)
+			}
 		}
 	} else {
 		agentReview, err = review.RunAgentReview(

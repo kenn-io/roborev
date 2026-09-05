@@ -108,6 +108,9 @@ func RunSynthesisAgent(
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
+	if noVerdict := NoVerdict(string(raw)); noVerdict != nil {
+		return SynthesisDocument{}, noVerdict
+	}
 	doc, err := DecodeSynthesisDocument(raw, reviews)
 	if err != nil {
 		return SynthesisDocument{}, err
