@@ -61,9 +61,11 @@ func IsValidCompactOutput(output string) bool {
 		return false
 	}
 
-	// Reject placeholder output from agents that ran but produced no
-	// review content (auth errors, empty responses, etc.).
-	if output == "No review output generated" {
+	// Reject output from agents that ran but never reviewed anything: the
+	// empty-output placeholder, or a response saying the diff could not be
+	// read. Completing such a job would mark its source reviews as compacted
+	// with nothing verified.
+	if storage.IsUnreadableInput(output) {
 		return false
 	}
 
