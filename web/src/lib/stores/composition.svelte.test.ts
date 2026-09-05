@@ -18,7 +18,6 @@ describe("review store composition", () => {
     runtime = makeAppRuntime();
     const stores = createReviewStores({
       runtime,
-      client: {} as never,
       navigate: vi.fn(),
       getCapabilities: () => ({
         cancelAnyJob: true,
@@ -38,7 +37,6 @@ describe("review store composition", () => {
     const navigate = vi.fn();
     const stores = createReviewStores({
       runtime,
-      client: {} as never,
       navigate,
       getCapabilities: () => ({
         cancelAnyJob: true,
@@ -58,76 +56,64 @@ describe("review store composition", () => {
     runtime = makeAppRuntime();
     let closed = false;
     let listRequests = 0;
-    const get = vi.fn(
-      (
-        path: string,
-        options?: { params?: { query?: { id?: number; job_id?: number } } },
-      ) => {
-        if (path === "/api/review") {
-          return Promise.resolve({
-            data: {
-              id: 7,
-              job_id: 42,
-              agent: "codex",
-              created_at: "2026-08-14T12:00:00Z",
-              output: "review",
-              closed,
-            },
-            error: undefined,
-          });
-        }
-        if (path === "/api/ui/review-projection") {
-          return Promise.resolve({ data: { responses: [] }, error: undefined });
-        }
-        if (options?.params?.query?.id === 42) {
-          return Promise.resolve({
-            data: { jobs: [], has_more: false },
-            error: undefined,
-          });
-        }
-        listRequests += 1;
-        return Promise.resolve({
-          data: {
-            jobs: [
-              {
-                id: 42,
-                agent: "codex",
-                agentic: false,
-                enqueued_at: "2026-08-14T12:00:00Z",
-                git_ref: "deadbeef",
-                job_type: "review",
-                prompt_prebuilt: false,
-                repo_id: 1,
-                retry_count: 0,
-                status: "done",
-                closed,
-              },
-            ],
-            has_more: false,
-            stats: {
-              queued: 0,
-              running: 0,
-              done: 1,
-              failed: 0,
-              canceled: 0,
-              skipped: 0,
-              closed: closed ? 1 : 0,
-              open: closed ? 0 : 1,
-            },
+    const getReview = vi.fn(() =>
+      Promise.resolve({
+        id: 7,
+        job_id: 42,
+        agent: "codex",
+        created_at: "2026-08-14T12:00:00Z",
+        output: "review",
+        closed,
+      }),
+    );
+    const getReviewProjection = vi.fn(() => Promise.resolve({ responses: [] }));
+    const listJobs = vi.fn((query?: { id?: number }) => {
+      if (query?.id === 42) {
+        return Promise.resolve({ jobs: [], has_more: false });
+      }
+      listRequests += 1;
+      return Promise.resolve({
+        jobs: [
+          {
+            id: 42,
+            agent: "codex",
+            agentic: false,
+            enqueued_at: "2026-08-14T12:00:00Z",
+            git_ref: "deadbeef",
+            job_type: "review",
+            prompt_prebuilt: false,
+            repo_id: 1,
+            retry_count: 0,
+            status: "done",
+            closed,
           },
-          error: undefined,
-        });
-      },
-    );
-    const post = vi.fn(
-      (_path: string, options: { body: { closed: boolean } }) => {
-        closed = options.body.closed;
-        return Promise.resolve({ data: { success: true }, error: undefined });
-      },
-    );
+        ],
+        has_more: false,
+        stats: {
+          queued: 0,
+          running: 0,
+          done: 1,
+          failed: 0,
+          canceled: 0,
+          skipped: 0,
+          closed: closed ? 1 : 0,
+          open: closed ? 0 : 1,
+        },
+      });
+    });
+    const closeReview = vi.fn((request: { closed: boolean }) => {
+      closed = request.closed;
+      return Promise.resolve({ success: true });
+    });
     const stores = createReviewStores({
       runtime,
-      client: { GET: get, POST: post } as never,
+      jobsApi: { listJobs } as never,
+      reviewApi: {
+        closeReview,
+        getReview,
+        getReviewProjection,
+        listJobs,
+      } as never,
       navigate: vi.fn(),
       getCapabilities: () => ({
         cancelAnyJob: true,

@@ -2195,7 +2195,7 @@ func TestProcessJob_NonzeroAgentExitFailsPromptly(t *testing.T) {
 	require.NoError(t, os.WriteFile(commandPath, []byte(`#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 case "$*" in *--help*) echo "usage --sandbox"; exit 0;; esac
-(sleep 3 2>/dev/null) &
+(sleep 30 2>/dev/null) &
 echo '{"type":"thread.started","thread_id":"synthetic"}'
 echo 'synthetic agent failure' >&2
 exit 17
@@ -2215,7 +2215,9 @@ exit 17
 	elapsed := time.Since(startedAt)
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
-	assert.Less(elapsed, 1500*time.Millisecond,
+	// Allow coverage-instrumented CI overhead while staying well below the
+	// descendant's 30-second pipe lifetime.
+	assert.Less(elapsed, 10*time.Second,
 		"job waited for a descendant-held stdout pipe after the agent exited")
 	assert.Contains(updated.Error, "exit status 17")
 	assert.NotContains(updated.Error, agentTimeoutErrorPrefix)

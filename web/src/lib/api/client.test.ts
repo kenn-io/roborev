@@ -1,11 +1,10 @@
 import { Effect, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import {
-  createRoborevClient,
-  decodeRoborevNdjson,
-  roborevJobOutputStream,
-} from "./client";
+import { decodeRoborevNdjson, roborevJobOutputStream } from "./client";
+import { roborevFetch } from "./generated-fetch";
+import { getListJobsUrl } from "./generated/jobs/jobs";
+import { getGetWebAnalyticsUrl } from "./generated/web-ui/web-ui";
 import { StreamingFetch } from "../browser/streaming-fetch";
 import { RoborevLogLinePayload } from "./schemas";
 
@@ -28,9 +27,9 @@ describe("native Roborev client", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    const client = createRoborevClient("/", fetchMock);
-
-    await client.GET("/api/status");
+    await roborevFetch("/api/status", {
+      roborevTransport: { baseUrl: "/", fetch: fetchMock },
+    });
 
     const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
     const request = calls[0]![0] as unknown as Request;
@@ -47,13 +46,43 @@ describe("native Roborev client", () => {
       async () =>
         new Response(JSON.stringify({ version: "dev" }), { status: 200 }),
     );
-    const client = createRoborevClient("/roborev-ci/", fetchMock);
-
-    await client.GET("/api/status");
+    await roborevFetch("/api/status", {
+      roborevTransport: { baseUrl: "/roborev-ci/", fetch: fetchMock },
+    });
 
     const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
     const request = calls[0]![0] as unknown as Request;
     expect(new URL(request.url).pathname).toBe("/roborev-ci/api/status");
+  });
+
+  test("encodes repeatable query filters as repeated keys", () => {
+    const analytics = new URL(
+      getGetWebAnalyticsUrl({
+        project: ["project-a", "project-b"],
+        source: ["codex", "claude"],
+      }),
+      "https://example.com",
+    );
+    expect(analytics.searchParams.getAll("project")).toEqual([
+      "project-a",
+      "project-b",
+    ]);
+    expect(analytics.searchParams.getAll("source")).toEqual([
+      "codex",
+      "claude",
+    ]);
+
+    const emptyAnalytics = new URL(
+      getGetWebAnalyticsUrl({ project: [], source: [] }),
+      "https://example.com",
+    );
+    expect(Array.from(emptyAnalytics.searchParams)).toEqual([]);
+
+    const jobs = new URL(
+      getListJobsUrl({ repo: ["/repo/a", "/repo/b"] }),
+      "https://example.com",
+    );
+    expect(jobs.searchParams.getAll("repo")).toEqual(["/repo/a", "/repo/b"]);
   });
 
   test("decodes complete and trailing NDJSON records", async () => {

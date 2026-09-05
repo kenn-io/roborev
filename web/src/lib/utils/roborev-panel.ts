@@ -1,8 +1,6 @@
-import type { components } from "../api/generated";
+import type { ReviewJob } from "../api/generated/models";
 import type { SessionCapabilities } from "../api/session";
 import { parseCostUsd } from "./roborev-usage";
-
-type ReviewJob = components["schemas"]["ReviewJob"];
 
 const TERMINAL_STATUSES = new Set([
   "done",

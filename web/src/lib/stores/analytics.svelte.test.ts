@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { components } from "../api/generated";
+import type { AnalyticsSnapshot } from "../api/generated/models";
 import { createAnalyticsStore, type AnalyticsLoader } from "./analytics.svelte";
 
-type AnalyticsSnapshot = components["schemas"]["AnalyticsSnapshot"];
+const originalFetch = globalThis.fetch;
 
 function snapshot(total: number): AnalyticsSnapshot {
   const percentiles = { p50_secs: 0, p90_secs: 0, p99_secs: 0 };
@@ -69,6 +69,7 @@ function deferred<T>() {
 }
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   history.replaceState(null, "", "/analytics");
   document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
 });
@@ -156,6 +157,48 @@ describe("analytics store URL filters", () => {
 });
 
 describe("analytics store request ownership", () => {
+  it("passes cancellation to generated analytics requests", async () => {
+    const requests: Request[] = [];
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const request = new Request(input);
+      requests.push(request);
+      if (requests.length === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("request aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve(Response.json(snapshot(7)));
+    });
+    const store = createAnalyticsStore({});
+
+    const oldRequest = store.refresh();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const newRequest = store.setFilters({ range: "7d" });
+    await Promise.all([oldRequest, newRequest]);
+
+    expect(requests[0]?.signal.aborted).toBe(true);
+    expect(store.getSnapshot()?.summary.reviews.total).toBe(7);
+    store.dispose();
+  });
+
+  it("preserves daemon error details from generated analytics requests", async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        Response.json({ detail: "invalid analytics window" }, { status: 400 }),
+      ),
+    );
+    const store = createAnalyticsStore({});
+
+    await store.refresh();
+
+    expect(store.getError()).toBe("invalid analytics window");
+    store.dispose();
+  });
+
   it("aborts obsolete requests and ignores their late responses", async () => {
     const first = deferred<AnalyticsSnapshot>();
     const second = deferred<AnalyticsSnapshot>();

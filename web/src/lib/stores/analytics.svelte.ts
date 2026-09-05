@@ -1,11 +1,13 @@
 import { appPath } from "../base-path";
-import type { RoborevClient } from "../api/client";
-import type { components, operations } from "../api/generated";
+import { normalizeRoborevHTTPError, RoborevHTTPError } from "../api/client";
+import type {
+  AnalyticsSnapshot,
+  GetWebAnalyticsParams,
+} from "../api/generated/models";
+import { getWebAnalytics } from "../api/generated/web-ui/web-ui";
 
-export type AnalyticsSnapshot = components["schemas"]["AnalyticsSnapshot"];
-export type AnalyticsQuery = NonNullable<
-  operations["get-web-analytics"]["parameters"]["query"]
->;
+export type { AnalyticsSnapshot };
+export type AnalyticsQuery = GetWebAnalyticsParams;
 export type AnalyticsLoader = (
   query: AnalyticsQuery,
   signal: AbortSignal,
@@ -24,7 +26,6 @@ export interface AnalyticsFilters {
 }
 
 interface AnalyticsStoreOptions {
-  client?: RoborevClient;
   loader?: AnalyticsLoader;
   now?: () => Date;
 }
@@ -59,8 +60,13 @@ const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
   month: 3,
 };
 
+const loadGeneratedAnalytics: AnalyticsLoader = (query, signal) =>
+  getWebAnalytics(query, { signal }).catch((cause: unknown) =>
+    normalizeRoborevHTTPError("load Roborev analytics", cause),
+  );
+
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
-  const loader = options.loader ?? makeAnalyticsLoader(options.client);
+  const loader = options.loader ?? loadGeneratedAnalytics;
   const now = options.now ?? (() => new Date());
   const initialFilters = readAnalyticsFilters(globalThis.location.search);
   let filters = $state(initialFilters);
@@ -173,26 +179,6 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions) {
   };
 }
 
-function makeAnalyticsLoader(
-  client: RoborevClient | undefined,
-): AnalyticsLoader {
-  if (client === undefined) {
-    throw new Error("analytics store requires a client or loader");
-  }
-  return async (query, signal) => {
-    const result = await client.GET("/api/ui/analytics", {
-      params: { query },
-      signal,
-    });
-    if (result.data !== undefined) return result.data;
-    const detail =
-      result.error && "detail" in result.error
-        ? result.error.detail
-        : undefined;
-    throw new Error(detail ?? "Analytics request failed");
-  };
-}
-
 export function readAnalyticsFilters(search: string): AnalyticsFilters {
   const params = new URLSearchParams(search);
   const rangeValue = params.get("range") ?? "30d";
@@ -293,6 +279,9 @@ function sortedUnique(values: string[]): string[] {
 }
 
 function analyticsErrorMessage(cause: unknown): string {
+  if (cause instanceof RoborevHTTPError && cause.detail !== undefined) {
+    return cause.detail;
+  }
   if (cause instanceof Error && cause.message !== "") return cause.message;
   return "Analytics request failed";
 }

@@ -1,8 +1,20 @@
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
-import { executeRoborevRequest, type RoborevClient } from "../../api/client";
-import type { components, operations } from "../../api/generated";
+import { executeRoborevRequest } from "../../api/client";
+import { addComment as addCommentRequest } from "../../api/generated/comments/comments";
+import { listJobs as listJobsRequest } from "../../api/generated/jobs/jobs";
+import type {
+  ListJobsParams,
+  Response as ReviewResponse,
+  Review,
+  ReviewJob,
+} from "../../api/generated/models";
+import {
+  closeReview as closeReviewRequest,
+  getReview as getReviewRequest,
+} from "../../api/generated/reviews/reviews";
+import { getReviewProjection as getReviewProjectionRequest } from "../../api/generated/web-ui/web-ui";
 import {
   RoborevMutationError,
   roborevMutationFailureMessage,
@@ -10,12 +22,7 @@ import {
   RoborevWorkflow,
 } from "./workflow";
 
-type Review = components["schemas"]["Review"];
-type ReviewJob = components["schemas"]["ReviewJob"];
-type ReviewResponse = components["schemas"]["Response"];
-type ListJobsQuery = NonNullable<
-  operations["list-jobs"]["parameters"]["query"]
->;
+type ListJobsQuery = ListJobsParams;
 
 interface ReviewAuthority {
   readonly review: Review | null;
@@ -25,7 +32,13 @@ interface ReviewAuthority {
 }
 
 export interface ReviewStoreOptions {
-  client: RoborevClient;
+  api?: {
+    readonly addComment: typeof addCommentRequest;
+    readonly closeReview: typeof closeReviewRequest;
+    readonly getReview: typeof getReviewRequest;
+    readonly getReviewProjection: typeof getReviewProjectionRequest;
+    readonly listJobs: typeof listJobsRequest;
+  };
   runtime: AppRuntime;
   owner: string;
   onError?: (msg: string) => void;
@@ -33,7 +46,13 @@ export interface ReviewStoreOptions {
 }
 
 export function createReviewStore(opts: ReviewStoreOptions) {
-  const client = opts.client;
+  const api = opts.api ?? {
+    addComment: addCommentRequest,
+    closeReview: closeReviewRequest,
+    getReview: getReviewRequest,
+    getReviewProjection: getReviewProjectionRequest,
+    listJobs: listJobsRequest,
+  };
 
   // State
   let review = $state.raw<Review | null>(null);
@@ -49,24 +68,40 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
-            client.GET("/api/review", {
-              params: { query: { job_id: jobId } },
-              signal,
-            }),
+            api.getReview({ job_id: jobId }, { signal }),
+          ).pipe(
+            Effect.map(Option.some),
+            Effect.catchTag("RoborevHTTPError", (cause) =>
+              cause.status === 404
+                ? Effect.succeed(Option.none<Review>())
+                : Effect.fail(
+                    RoborevResponseError.make({
+                      operation: "GET Roborev review",
+                      message: "Failed to load review",
+                      cause,
+                    }),
+                  ),
+            ),
           ),
           projection: executeRoborevRequest(
             "GET Roborev review projection",
-            (signal) =>
-              client.GET("/api/ui/review-projection", {
-                params: { query: { job_id: jobId } },
-                signal,
-              }),
+            (signal) => api.getReviewProjection({ job_id: jobId }, { signal }),
+          ).pipe(
+            Effect.map(Option.some),
+            Effect.catchTag("RoborevHTTPError", (cause) =>
+              cause.status === 404
+                ? Effect.succeed(Option.none())
+                : Effect.fail(
+                    RoborevResponseError.make({
+                      operation: "GET Roborev review projection",
+                      message: "Failed to load review comments",
+                      cause,
+                    }),
+                  ),
+            ),
           ),
           job: executeRoborevRequest("GET Roborev review job", (signal) =>
-            client.GET("/api/jobs", {
-              params: {
-                query: { id: jobId, limit: 1 } satisfies ListJobsQuery,
-              },
+            api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
               signal,
             }),
           ).pipe(Effect.option),
@@ -74,41 +109,36 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         { concurrency: "unbounded" },
       );
 
-      const notFound =
-        result.review.error !== undefined &&
-        result.review.response?.status === 404;
-      if (result.review.error !== undefined && !notFound) {
-        return yield* Effect.fail(
-          RoborevResponseError.make({
-            operation: "GET Roborev review",
-            message: "Failed to load review",
-            cause: result.review.error,
-          }),
-        );
+      if (Option.isNone(result.review)) {
+        return {
+          review: null,
+          selectedJob: Option.isSome(result.job)
+            ? (result.job.value.jobs?.[0] ?? null)
+            : null,
+          responses: Option.isSome(result.projection)
+            ? result.projection.value.responses
+            : [],
+          reviewNotFound: true,
+        } satisfies ReviewAuthority;
       }
-      if (
-        result.projection.error !== undefined &&
-        !(notFound && result.projection.response?.status === 404)
-      ) {
+      if (Option.isNone(result.projection)) {
         return yield* Effect.fail(
           RoborevResponseError.make({
             operation: "GET Roborev review projection",
             message: "Failed to load review comments",
-            cause: result.projection.error,
+            cause: new Error("Review projection was not found"),
           }),
         );
       }
-
-      const fetchedReview = result.review.data ?? null;
-      const fetchedJob =
-        Option.isSome(result.job) && !result.job.value.error
-          ? (result.job.value.data?.jobs?.[0] ?? fetchedReview?.job ?? null)
-          : (fetchedReview?.job ?? null);
+      const fetchedReview = result.review.value;
+      const fetchedJob = Option.isSome(result.job)
+        ? (result.job.value.jobs?.[0] ?? fetchedReview.job ?? null)
+        : (fetchedReview.job ?? null);
       return {
         review: fetchedReview,
         selectedJob: fetchedJob,
-        responses: result.projection.data?.responses ?? [],
-        reviewNotFound: notFound,
+        responses: result.projection.value.responses ?? [],
+        reviewNotFound: false,
       } satisfies ReviewAuthority;
     },
   );
@@ -180,21 +210,17 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           key: `review:${jobId}`,
           operation: "close Roborev review",
           mutation: executeRoborevRequest("close Roborev review", (signal) =>
-            client.POST("/api/review/close", {
-              body: { job_id: jobId, closed },
-              signal,
-            }),
+            api.closeReview({ job_id: jobId, closed }, { signal }),
           ).pipe(
-            Effect.flatMap((result) =>
-              result.error
-                ? Effect.fail(
-                    RoborevMutationError.make({
-                      operation: "close Roborev review",
-                      cause: result.error,
-                    }),
-                  )
-                : Effect.succeed(closed),
+            Effect.catchTag("RoborevHTTPError", (cause) =>
+              Effect.fail(
+                RoborevMutationError.make({
+                  operation: "close Roborev review",
+                  cause,
+                }),
+              ),
             ),
+            Effect.as(closed),
           ),
           reconcile: (acknowledged) =>
             reconcileReview(jobId).pipe(
@@ -241,26 +267,22 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         key: `review:${jobId}`,
         operation: "add Roborev comment",
         mutation: executeRoborevRequest("add Roborev comment", (signal) =>
-          client.POST("/api/comment", {
-            body: {
+          api.addComment(
+            {
               job_id: jobId,
               commenter: "web",
               comment: text,
             },
-            signal,
-          }),
+            { signal },
+          ),
         ).pipe(
-          Effect.flatMap((result) =>
-            result.error || !result.data
-              ? Effect.fail(
-                  RoborevMutationError.make({
-                    operation: "add Roborev comment",
-                    cause:
-                      result.error ??
-                      new Error("Roborev comment response was empty"),
-                  }),
-                )
-              : Effect.succeed(result.data),
+          Effect.catchTag("RoborevHTTPError", (cause) =>
+            Effect.fail(
+              RoborevMutationError.make({
+                operation: "add Roborev comment",
+                cause,
+              }),
+            ),
           ),
         ),
         reconcile: (acknowledged) =>

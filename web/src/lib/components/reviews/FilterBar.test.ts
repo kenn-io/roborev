@@ -28,16 +28,18 @@ const state = {
   jobs: null as JobsStoreStub | null,
 };
 
-const client = {
-  GET: vi.fn(),
-};
+const repoApi = vi.hoisted(() => ({
+  listBranches: vi.fn(),
+  listRepos: vi.fn(),
+}));
 let runtime: OwnedAppRuntime;
+
+vi.mock("../../api/generated/repos/repos", () => repoApi);
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevJobs: state.jobs,
   }),
-  getRoborevClient: () => client,
 }));
 
 describe("FilterBar", () => {
@@ -55,13 +57,14 @@ describe("FilterBar", () => {
         if (key === "showAutoDesign") state.showAutoDesign = value === true;
       }),
     };
-    client.GET.mockResolvedValue({ data: { repos: [] }, error: undefined });
+    repoApi.listRepos.mockResolvedValue({ repos: [] });
   });
 
   afterEach(async () => {
     cleanup();
     state.jobs = null;
-    client.GET.mockReset();
+    repoApi.listBranches.mockReset();
+    repoApi.listRepos.mockReset();
     vi.useRealTimers();
     await Effect.runPromise(runtime.disposeEffect);
   });

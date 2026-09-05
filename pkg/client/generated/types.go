@@ -26,7 +26,7 @@ func (a ActivityEntry) Validate() error {
 type ActivityOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string         `json:"$schema,omitempty"`
-	Entries []ActivityEntry `json:"entries,omitempty" validate:"required"`
+	Entries []ActivityEntry `json:"entries" validate:"required"`
 }
 
 func (a ActivityOutputBody) Validate() error {
@@ -176,10 +176,10 @@ func (a AnalyticsDimensionRow) Validate() error {
 }
 
 type AnalyticsFilterOptions struct {
-	Agents   []string `json:"agents,omitempty" validate:"required"`
-	Models   []string `json:"models,omitempty" validate:"required"`
-	Projects []string `json:"projects,omitempty" validate:"required"`
-	Sources  []string `json:"sources,omitempty" validate:"required"`
+	Agents   []string `json:"agents" validate:"required"`
+	Models   []string `json:"models" validate:"required"`
+	Projects []string `json:"projects" validate:"required"`
+	Sources  []string `json:"sources" validate:"required"`
 }
 
 func (a AnalyticsFilterOptions) Validate() error {
@@ -187,12 +187,12 @@ func (a AnalyticsFilterOptions) Validate() error {
 }
 
 type AnalyticsFilters struct {
-	Agents   []string   `json:"agents,omitempty" validate:"required"`
+	Agents   []string   `json:"agents" validate:"required"`
 	Bucket   string     `json:"bucket" validate:"required"`
-	Models   []string   `json:"models,omitempty" validate:"required"`
-	Projects []string   `json:"projects,omitempty" validate:"required"`
+	Models   []string   `json:"models" validate:"required"`
+	Projects []string   `json:"projects" validate:"required"`
 	Since    *time.Time `json:"since,omitempty"`
-	Sources  []string   `json:"sources,omitempty" validate:"required"`
+	Sources  []string   `json:"sources" validate:"required"`
 	Until    time.Time  `json:"until" validate:"required"`
 }
 
@@ -265,15 +265,15 @@ type AnalyticsReviewStats struct {
 type AnalyticsSnapshot struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema        *string                 `json:"$schema,omitempty"`
-	Agents        []AnalyticsDimensionRow `json:"agents,omitempty" validate:"required"`
+	Agents        []AnalyticsDimensionRow `json:"agents" validate:"required"`
 	Filters       AnalyticsFilters        `json:"filters"`
-	Models        []AnalyticsDimensionRow `json:"models,omitempty" validate:"required"`
+	Models        []AnalyticsDimensionRow `json:"models" validate:"required"`
 	Options       AnalyticsFilterOptions  `json:"options"`
-	Projects      []AnalyticsProjectRow   `json:"projects,omitempty" validate:"required"`
+	Projects      []AnalyticsProjectRow   `json:"projects" validate:"required"`
 	SchemaVersion int64                   `json:"schema_version"`
-	Sources       []AnalyticsDimensionRow `json:"sources,omitempty" validate:"required"`
+	Sources       []AnalyticsDimensionRow `json:"sources" validate:"required"`
 	Summary       AnalyticsSummary        `json:"summary"`
-	TimeSeries    []AnalyticsTimeBucket   `json:"time_series,omitempty" validate:"required"`
+	TimeSeries    []AnalyticsTimeBucket   `json:"time_series" validate:"required"`
 }
 
 func (a AnalyticsSnapshot) Validate() error {
@@ -445,7 +445,7 @@ type BackfillTokensRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string               `json:"$schema,omitempty"`
 	DryRun   *bool                 `json:"dry_run,omitempty"`
-	Sessions []SessionUsagePayload `json:"sessions,omitempty" validate:"required"`
+	Sessions []SessionUsagePayload `json:"sessions" validate:"required"`
 }
 
 func (b BackfillTokensRequest) Validate() error {
@@ -487,7 +487,7 @@ func (b BatchJobsOutputBody) Validate() error {
 type BatchJobsRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
-	JobIds []int64 `json:"job_ids,omitempty" validate:"required"`
+	JobIds []int64 `json:"job_ids" validate:"required"`
 }
 
 func (b BatchJobsRequest) Validate() error {
@@ -554,7 +554,7 @@ type CostEnvelope struct {
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema               *string           `json:"$schema,omitempty"`
-	ActiveSnoozes        []AgentHookSnooze `json:"active_snoozes,omitempty" validate:"required"`
+	ActiveSnoozes        []AgentHookSnooze `json:"active_snoozes" validate:"required"`
 	ActiveWorkers        int64             `json:"active_workers"`
 	Address              *string           `json:"address,omitempty"`
 	AppliedJobs          int64             `json:"applied_jobs"`
@@ -577,7 +577,7 @@ type DaemonStatus struct {
 	UpdateDrainPolicy    *string           `json:"update_drain_policy,omitempty"`
 	UpdateDraining       bool              `json:"update_draining"`
 	Version              string            `json:"version" validate:"required"`
-	WebCapabilities      []string          `json:"web_capabilities,omitempty" validate:"required"`
+	WebCapabilities      []string          `json:"web_capabilities" validate:"required"`
 }
 
 func (d DaemonStatus) Validate() error {
@@ -887,7 +887,7 @@ type ExportCICostDocument struct {
 	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
 	DatabaseID  uuid.UUID         `json:"database_id" validate:"required"`
 	GeneratedAt string            `json:"generated_at" validate:"required"`
-	Jobs        []ExportCICostJob `json:"jobs,omitempty" validate:"required"`
+	Jobs        []ExportCICostJob `json:"jobs" validate:"required"`
 	Legacy      bool              `json:"legacy"`
 
 	// NextCursor Opaque resume cursor emitted when jobs is non-empty.
@@ -943,7 +943,7 @@ func (e ExportCICostDocument) Validate() error {
 type ExportCICostJob struct {
 	Agent               string                 `json:"agent" validate:"required"`
 	CostUsd             *float64               `json:"cost_usd,omitempty"`
-	Experiments         []ExperimentAssignment `json:"experiments,omitempty" validate:"required"`
+	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
 	FinishedAt          string                 `json:"finished_at" validate:"required"`
 	JobUUID             uuid.UUID              `json:"job_uuid" validate:"required"`
 	Model               *string                `json:"model,omitempty" validate:"required"`
@@ -1012,7 +1012,7 @@ type ExportCIMetricsDocument struct {
 
 	// NextCursor Opaque resume cursor emitted when panels is non-empty.
 	NextCursor    *string         `json:"next_cursor,omitempty" validate:"required"`
-	Panels        []ExportCIPanel `json:"panels,omitempty" validate:"required"`
+	Panels        []ExportCIPanel `json:"panels" validate:"required"`
 	SchemaVersion int64           `json:"schema_version"`
 	Tool          string          `json:"tool" validate:"required"`
 	ToolVersion   string          `json:"tool_version" validate:"required"`
@@ -1063,11 +1063,11 @@ func (e ExportCIMetricsDocument) Validate() error {
 
 type ExportCIPanel struct {
 	AttemptCount   *int64                 `json:"attempt_count,omitempty"`
-	Experiments    []ExperimentAssignment `json:"experiments,omitempty" validate:"required"`
+	Experiments    []ExperimentAssignment `json:"experiments" validate:"required"`
 	FirstAttemptAt *string                `json:"first_attempt_at,omitempty" validate:"required"`
 	GithubRepo     string                 `json:"github_repo" validate:"required"`
 	HeadSha        string                 `json:"head_sha" validate:"required"`
-	Jobs           []ExportCIPanelJob     `json:"jobs,omitempty" validate:"required"`
+	Jobs           []ExportCIPanelJob     `json:"jobs" validate:"required"`
 	Outcome        string                 `json:"outcome" validate:"required"`
 	PanelCreatedAt string                 `json:"panel_created_at" validate:"required"`
 	PostedAt       string                 `json:"posted_at" validate:"required"`
@@ -1198,7 +1198,7 @@ type ExportReview struct {
 	Cost                ExportReviewCost       `json:"cost"`
 	CreatedAt           string                 `json:"created_at" validate:"required"`
 	DurationMs          *int64                 `json:"duration_ms,omitempty"`
-	Experiments         []ExperimentAssignment `json:"experiments,omitempty" validate:"required"`
+	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
 	Model               *string                `json:"model,omitempty" validate:"required"`
 	PrNumber            *int64                 `json:"pr_number,omitempty"`
 	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
@@ -1207,7 +1207,7 @@ type ExportReview struct {
 	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
 	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
-	Subagents           []ExportSubagent       `json:"subagents,omitempty" validate:"required"`
+	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
 	Verdict             string                 `json:"verdict" validate:"required"`
 }
 
@@ -1313,7 +1313,7 @@ type ExportReviewsDocument struct {
 	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
 	NextCursor    *string        `json:"next_cursor,omitempty" validate:"required"`
 	Profile       string         `json:"profile" validate:"required"`
-	Reviews       []ExportReview `json:"reviews,omitempty" validate:"required"`
+	Reviews       []ExportReview `json:"reviews" validate:"required"`
 	SchemaVersion int64          `json:"schema_version"`
 	Tool          string         `json:"tool" validate:"required"`
 	ToolVersion   string         `json:"tool_version" validate:"required"`
@@ -1459,10 +1459,10 @@ type FixJobRequest struct {
 type HealthStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema        *string           `json:"$schema,omitempty"`
-	Components    []ComponentHealth `json:"components,omitempty" validate:"required"`
+	Components    []ComponentHealth `json:"components" validate:"required"`
 	ErrorCount24H int64             `json:"error_count_24h"`
 	Healthy       bool              `json:"healthy"`
-	RecentErrors  []ErrorEntry      `json:"recent_errors,omitempty" validate:"required"`
+	RecentErrors  []ErrorEntry      `json:"recent_errors" validate:"required"`
 	Uptime        string            `json:"uptime" validate:"required"`
 	Version       string            `json:"version" validate:"required"`
 }
@@ -1561,7 +1561,7 @@ func (j JobWithReview) Validate() error {
 type ListBranchesOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema         *string           `json:"$schema,omitempty"`
-	Branches       []BranchWithCount `json:"branches,omitempty" validate:"required"`
+	Branches       []BranchWithCount `json:"branches" validate:"required"`
 	NullsRemaining int64             `json:"nulls_remaining"`
 	TotalCount     int64             `json:"total_count"`
 }
@@ -1584,7 +1584,7 @@ func (l ListBranchesOutputBody) Validate() error {
 type ListCommentsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string    `json:"$schema,omitempty"`
-	Responses []Response `json:"responses,omitempty" validate:"required"`
+	Responses []Response `json:"responses" validate:"required"`
 }
 
 func (l ListCommentsOutputBody) Validate() error {
@@ -1607,7 +1607,7 @@ type ListJobsOutputBody struct {
 	Schema        *string     `json:"$schema,omitempty"`
 	FilteredStats *JobStats   `json:"filtered_stats,omitempty"`
 	HasMore       bool        `json:"has_more"`
-	Jobs          []ReviewJob `json:"jobs,omitempty" validate:"required"`
+	Jobs          []ReviewJob `json:"jobs" validate:"required"`
 
 	// NextCursor Opaque resume cursor when more jobs are available
 	NextCursor *string   `json:"next_cursor,omitempty" validate:"required"`
@@ -1651,7 +1651,7 @@ func (l ListJobsOutputBody) Validate() error {
 type ListReposOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema     *string         `json:"$schema,omitempty"`
-	Repos      []RepoWithCount `json:"repos,omitempty" validate:"required"`
+	Repos      []RepoWithCount `json:"repos" validate:"required"`
 	TotalCount int64           `json:"total_count"`
 }
 
@@ -1701,7 +1701,7 @@ type PanelEnqueueResponse struct {
 	GitRef                string                 `json:"git_ref" validate:"required"`
 	ID                    int64                  `json:"id"`
 	JobType               string                 `json:"job_type" validate:"required"`
-	MemberJobIds          []int64                `json:"member_job_ids,omitempty" validate:"required"`
+	MemberJobIds          []int64                `json:"member_job_ids" validate:"required"`
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
@@ -1882,7 +1882,7 @@ type ReleaseNotesResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string       `json:"$schema,omitempty"`
 	FetchedAt time.Time     `json:"fetched_at" validate:"required"`
-	Releases  []ReleaseNote `json:"releases,omitempty" validate:"required"`
+	Releases  []ReleaseNote `json:"releases" validate:"required"`
 	Stale     bool          `json:"stale"`
 }
 
@@ -1926,7 +1926,7 @@ func (r RemapMapping) Validate() error {
 type RemapRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string        `json:"$schema,omitempty"`
-	Mappings []RemapMapping `json:"mappings,omitempty" validate:"required"`
+	Mappings []RemapMapping `json:"mappings" validate:"required"`
 	RepoPath string         `json:"repo_path" validate:"required"`
 }
 
@@ -2314,8 +2314,8 @@ type ReviewProjection struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema        *string                    `json:"$schema,omitempty"`
 	Job           ReviewProjectionJob        `json:"job"`
-	PanelMembers  []ReviewProjectionJob      `json:"panel_members,omitempty" validate:"required"`
-	Responses     []ReviewProjectionResponse `json:"responses,omitempty" validate:"required"`
+	PanelMembers  []ReviewProjectionJob      `json:"panel_members" validate:"required"`
+	Responses     []ReviewProjectionResponse `json:"responses" validate:"required"`
 	Review        *ReviewProjectionReview    `json:"review,omitempty"`
 	SchemaVersion int64                      `json:"schema_version"`
 }
@@ -2480,12 +2480,12 @@ func (s ShutdownOutputBody) Validate() error {
 type Summary struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string        `json:"$schema,omitempty"`
-	Agents   []AgentStats   `json:"agents,omitempty" validate:"required"`
+	Agents   []AgentStats   `json:"agents" validate:"required"`
 	Branch   *string        `json:"branch,omitempty"`
 	Cost     CostAggregate  `json:"cost"`
 	Duration DurationStats  `json:"duration"`
 	Failures FailureStats   `json:"failures"`
-	JobTypes []JobTypeStats `json:"job_types,omitempty" validate:"required"`
+	JobTypes []JobTypeStats `json:"job_types" validate:"required"`
 	Overview OverviewStats  `json:"overview"`
 	RepoPath *string        `json:"repo_path,omitempty"`
 	Repos    []RepoSummary  `json:"repos,omitempty"`
@@ -2579,7 +2579,7 @@ type TokenSummary struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string       `json:"$schema,omitempty"`
 	Failed  int64         `json:"failed"`
-	Results []TokenResult `json:"results,omitempty" validate:"required"`
+	Results []TokenResult `json:"results" validate:"required"`
 	Skipped int64         `json:"skipped"`
 	Total   int64         `json:"total"`
 	Updated int64         `json:"updated"`

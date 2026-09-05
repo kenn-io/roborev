@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { components } from "../api/generated";
+import type { PanelSummary, ReviewJob } from "../api/generated/models";
 import {
   canCancelJob,
   canRerunJob,
@@ -10,9 +10,6 @@ import {
   panelReviewHeader,
   panelStatusLabel,
 } from "./roborev-panel";
-
-type ReviewJob = components["schemas"]["ReviewJob"];
-type PanelSummary = components["schemas"]["PanelSummary"];
 
 function makeJob(overrides: Partial<ReviewJob> = {}): ReviewJob {
   return {

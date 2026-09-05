@@ -1,8 +1,5 @@
-import createClient from "openapi-fetch";
 import { Effect, Option, Schema, Stream } from "effect";
 import { appPath, stripBasePath } from "../base-path";
-import type { paths } from "./generated";
-import { authenticatedFetch, type Fetch } from "./session";
 import { TransientTransportError } from "./effect-errors";
 import {
   openStreamingResponse,
@@ -16,31 +13,64 @@ import {
   RoborevStreamOpened,
 } from "./schemas";
 
-export type RoborevClient = ReturnType<typeof createClient<paths>>;
+async function responseDetail(
+  response: globalThis.Response,
+): Promise<string | undefined> {
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return undefined;
+  }
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "detail" in body &&
+    typeof body.detail === "string"
+  ) {
+    return body.detail;
+  }
+  return undefined;
+}
 
-export function createRoborevClient(
-  baseUrl: string,
-  fetchFn?: Fetch,
-): RoborevClient {
-  const inner = fetchFn ?? globalThis.fetch.bind(globalThis);
-  const resolvedBaseUrl = resolveBaseUrl(baseUrl);
-  return createClient<paths>({
-    baseUrl: new URL(resolvedBaseUrl, globalThis.location.origin).toString(),
-    fetch: authenticatedFetch(inner),
+export class RoborevHTTPError extends Schema.TaggedErrorClass<RoborevHTTPError>()(
+  "RoborevHTTPError",
+  {
+    operation: Schema.String,
+    status: Schema.Number,
+    detail: Schema.optionalKey(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {}
+
+export async function normalizeRoborevHTTPError(
+  operation: string,
+  cause: unknown,
+): Promise<never> {
+  if (!(cause instanceof globalThis.Response)) throw cause;
+  const detail = await responseDetail(cause);
+  throw RoborevHTTPError.make({
+    operation,
+    status: cause.status,
+    ...(detail !== undefined && { detail }),
+    cause,
   });
 }
 
-export const executeRoborevRequest = Effect.fn("RoborevClient.execute")(
-  function* <A>(
-    operation: string,
-    request: (signal: AbortSignal) => Promise<A>,
-  ) {
-    return yield* Effect.tryPromise({
-      try: request,
-      catch: (cause) => TransientTransportError.make({ operation, cause }),
-    });
-  },
-);
+export const executeRoborevRequest = Effect.fn("RoborevApi.execute")(function* <
+  A,
+>(operation: string, request: (signal: AbortSignal) => Promise<A>) {
+  return yield* Effect.tryPromise({
+    try: (signal) =>
+      request(signal).catch((cause: unknown) =>
+        normalizeRoborevHTTPError(operation, cause),
+      ),
+    catch: (cause) =>
+      cause instanceof RoborevHTTPError
+        ? cause
+        : TransientTransportError.make({ operation, cause }),
+  });
+});
 
 export class RoborevStreamError extends Schema.TaggedErrorClass<RoborevStreamError>()(
   "RoborevStreamError",
@@ -235,7 +265,7 @@ function resolveBaseUrl(baseUrl: string): string {
   return stripBasePath(baseUrl) === "" ? appPath(baseUrl) : baseUrl;
 }
 
-export const loadRoborevJobOutput = Effect.fn("RoborevClient.loadJobOutput")(
+export const loadRoborevJobOutput = Effect.fn("RoborevApi.loadJobOutput")(
   function* (baseUrl: string, jobID: number) {
     return yield* Effect.scoped(
       Effect.gen(function* () {

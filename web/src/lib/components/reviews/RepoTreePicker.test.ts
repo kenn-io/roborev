@@ -32,19 +32,20 @@ const state = {
   runtime: null as OwnedAppRuntime | null,
 };
 
-const client = {
-  GET: vi.fn(),
-};
+const repoApi = vi.hoisted(() => ({
+  listBranches: vi.fn(),
+  listRepos: vi.fn(),
+}));
+
+vi.mock("../../api/generated/repos/repos", () => repoApi);
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevJobs: state.jobs,
   }),
-  getRoborevClient: () => client,
 }));
 
 vi.mock("../../runtime/context", () => ({
-  getRoborevClient: () => client,
   getAppRuntime: () => {
     if (state.runtime === null)
       throw new Error("test runtime was not initialized");
@@ -65,23 +66,22 @@ describe("RepoTreePicker", () => {
         if (key === "branch") state.branch = value;
       }),
     };
-    client.GET.mockResolvedValue({
-      data: {
-        repos: [
-          {
-            root_path: "/workspace/project-a",
-            name: "project-a",
-            count: 4,
-          },
-        ],
-      },
+    repoApi.listRepos.mockResolvedValue({
+      repos: [
+        {
+          root_path: "/workspace/project-a",
+          name: "project-a",
+          count: 4,
+        },
+      ],
     });
   });
 
   afterEach(async () => {
     cleanup();
     state.jobs = null;
-    client.GET.mockReset();
+    repoApi.listBranches.mockReset();
+    repoApi.listRepos.mockReset();
     if (state.runtime !== null)
       await Effect.runPromise(state.runtime.disposeEffect);
     state.runtime = null;
@@ -100,31 +100,27 @@ describe("RepoTreePicker", () => {
 
   it("keeps the newer repository loading while an older branch request is canceled", async () => {
     const projectABranches = Promise.withResolvers<{
-      data: { branches: Array<{ name: string; count: number }> };
+      branches: Array<{ name: string; count: number }>;
     }>();
     const projectBBranches = Promise.withResolvers<{
-      data: { branches: Array<{ name: string; count: number }> };
+      branches: Array<{ name: string; count: number }>;
     }>();
-    client.GET.mockImplementation((path, options) => {
-      if (path === "/api/repos") {
-        return Promise.resolve({
-          data: {
-            repos: [
-              {
-                root_path: "/workspace/project-a",
-                name: "project-a",
-                count: 4,
-              },
-              {
-                root_path: "/workspace/project-b",
-                name: "project-b",
-                count: 2,
-              },
-            ],
-          },
-        });
-      }
-      const repo = options?.params?.query?.repo?.[0];
+    repoApi.listRepos.mockResolvedValue({
+      repos: [
+        {
+          root_path: "/workspace/project-a",
+          name: "project-a",
+          count: 4,
+        },
+        {
+          root_path: "/workspace/project-b",
+          name: "project-b",
+          count: 2,
+        },
+      ],
+    });
+    repoApi.listBranches.mockImplementation((query) => {
+      const repo = query?.repo?.[0];
       return repo === "/workspace/project-a"
         ? projectABranches.promise
         : projectBBranches.promise;
@@ -137,20 +133,16 @@ describe("RepoTreePicker", () => {
 
     await fireEvent.click(expandButtons[0]);
     await waitFor(() =>
-      expect(client.GET).toHaveBeenCalledWith(
-        "/api/branches",
-        expect.objectContaining({
-          params: { query: { repo: ["/workspace/project-a"] } },
-        }),
+      expect(repoApi.listBranches).toHaveBeenCalledWith(
+        { repo: ["/workspace/project-a"] },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
     await fireEvent.click(expandButtons[1]);
     await waitFor(() =>
-      expect(client.GET).toHaveBeenCalledWith(
-        "/api/branches",
-        expect.objectContaining({
-          params: { query: { repo: ["/workspace/project-b"] } },
-        }),
+      expect(repoApi.listBranches).toHaveBeenCalledWith(
+        { repo: ["/workspace/project-b"] },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
 
@@ -158,45 +150,41 @@ describe("RepoTreePicker", () => {
     expect(screen.queryByText("No branches")).toBeNull();
 
     projectABranches.resolve({
-      data: { branches: [{ name: "stale-a", count: 1 }] },
+      branches: [{ name: "stale-a", count: 1 }],
     });
     await Promise.resolve();
     expect(screen.getByText("Loading...")).toBeTruthy();
     expect(screen.queryByText("stale-a")).toBeNull();
 
     projectBBranches.resolve({
-      data: { branches: [{ name: "current-b", count: 1 }] },
+      branches: [{ name: "current-b", count: 1 }],
     });
     await screen.findByText("current-b");
     expect(screen.queryByText("stale-a")).toBeNull();
   });
 
   it("does not expose a previous repository's branches when the next request fails", async () => {
-    client.GET.mockImplementation((path, options) => {
-      if (path === "/api/repos") {
+    repoApi.listRepos.mockResolvedValue({
+      repos: [
+        {
+          root_path: "/workspace/project-a",
+          name: "project-a",
+          count: 4,
+        },
+        {
+          root_path: "/workspace/project-b",
+          name: "project-b",
+          count: 2,
+        },
+      ],
+    });
+    repoApi.listBranches.mockImplementation((query) => {
+      if (query?.repo?.[0] === "/workspace/project-a") {
         return Promise.resolve({
-          data: {
-            repos: [
-              {
-                root_path: "/workspace/project-a",
-                name: "project-a",
-                count: 4,
-              },
-              {
-                root_path: "/workspace/project-b",
-                name: "project-b",
-                count: 2,
-              },
-            ],
-          },
+          branches: [{ name: "project-a-main", count: 1 }],
         });
       }
-      const repo = options?.params?.query?.repo?.[0];
-      return Promise.resolve(
-        repo === "/workspace/project-a"
-          ? { data: { branches: [{ name: "project-a-main", count: 1 }] } }
-          : { error: { message: "branch lookup failed" } },
-      );
+      return Promise.reject(new TypeError("branch lookup failed"));
     });
     render(RepoTreePicker);
 

@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/pprof"
 	"reflect"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -13,6 +17,37 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
+
+var configureHumaOnce sync.Once
+
+func humaConfig(title string) huma.Config {
+	configureHumaOnce.Do(func() {
+		// JSON v2 encodes nil slices as empty arrays. Keep Huma's schemas aligned
+		// with the response format used by this API.
+		huma.DefaultArrayNullable = false
+	})
+
+	cfg := huma.DefaultConfig(title, version.Version)
+	jsonFormat := huma.Format{
+		Marshal: func(w io.Writer, value any) error {
+			return jsonv2.MarshalWrite(
+				w,
+				value,
+				json.DefaultOptionsV1(),
+				jsonv2.FormatNilSliceAsNull(false),
+				jsontext.EscapeForHTML(false),
+			)
+		},
+		Unmarshal: func(data []byte, value any) error {
+			return jsonv2.Unmarshal(data, value, json.DefaultOptionsV1())
+		},
+	}
+	cfg.Formats = map[string]huma.Format{
+		"application/json": jsonFormat,
+		"json":             jsonFormat,
+	}
+	return cfg
+}
 
 // registerHumaAPI creates a Huma API on the given mux and registers
 // all typed endpoints. The returned huma.API can be used to serve
@@ -26,7 +61,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	cfg := huma.DefaultConfig("roborev", version.Version)
+	cfg := humaConfig("roborev")
 	cfg.DocsPath = ""
 	cfg.SchemasPath = ""
 	api := humago.New(mux, cfg)
@@ -452,7 +487,7 @@ func addUpdateDrainConflictResponse(api huma.API, operation *huma.Operation) {
 }
 
 func (s *Server) registerAgentHookRoutes(mux *http.ServeMux) {
-	cfg := huma.DefaultConfig("roborev-agent-hook", version.Version)
+	cfg := humaConfig("roborev-agent-hook")
 	cfg.OpenAPIPath = ""
 	cfg.DocsPath = ""
 	cfg.SchemasPath = ""
@@ -516,6 +551,7 @@ func jsonResponses(
 	responses := make(map[string]*huma.Response, len(schemas))
 	for status, schema := range schemas {
 		responses[status] = &huma.Response{
+			Description: "HTTP " + status + " response",
 			Content: map[string]*huma.MediaType{
 				"application/json": {Schema: schema},
 			},

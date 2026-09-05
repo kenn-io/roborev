@@ -178,6 +178,11 @@ document. `make web-release-check` builds the SPA, validates its Vite manifest,
 temporarily stages it for Go embedding, tests the embedded release, and always
 restores the tracked compilation stub.
 
+The daemon's typed HTTP API uses Go's JSON v2 encoder while retaining its
+existing JSON behavior for other values. Ordinary slice fields are non-nullable
+collections in OpenAPI and serialize as `[]` when empty. Use an explicit
+nullable representation only when `null` is part of the API contract.
+
 To exercise a checkout exactly like an installed release, including the embedded
 application and the normal Roborev SQLite database and configuration, build the
 release-shaped binary and launch the UI through that binary:

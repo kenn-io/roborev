@@ -1,11 +1,22 @@
 import { appPath } from "../base-path";
-import type { RoborevClient } from "../api/client";
 import type { SessionCapabilities } from "../api/session";
 import type { OwnedAppRuntime } from "../runtime/runtime";
-import { createDaemonStore, type DaemonStore } from "./roborev/daemon.svelte";
-import { createJobsStore, type JobsStore } from "./roborev/jobs.svelte";
+import {
+  createDaemonStore,
+  type DaemonStore,
+  type DaemonStoreOptions,
+} from "./roborev/daemon.svelte";
+import {
+  createJobsStore,
+  type JobsStore,
+  type JobsStoreOptions,
+} from "./roborev/jobs.svelte";
 import { createLogStore, type LogStore } from "./roborev/log.svelte";
-import { createReviewStore, type ReviewStore } from "./roborev/review.svelte";
+import {
+  createReviewStore,
+  type ReviewStore,
+  type ReviewStoreOptions as NativeReviewStoreOptions,
+} from "./roborev/review.svelte";
 import { makeRoborevOwner } from "./roborev/workflow";
 
 export interface ReviewStores {
@@ -18,7 +29,9 @@ export interface ReviewStores {
 
 export interface ReviewStoreOptions {
   runtime: OwnedAppRuntime;
-  client: RoborevClient;
+  daemonStatus?: DaemonStoreOptions["getStatus"];
+  jobsApi?: JobsStoreOptions["api"];
+  reviewApi?: NativeReviewStoreOptions["api"];
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
   onError?: (message: string) => void;
@@ -33,18 +46,20 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
   };
 
   const roborevDaemon = createDaemonStore({
-    client: options.client,
+    ...(options.daemonStatus !== undefined && {
+      getStatus: options.daemonStatus,
+    }),
     runtime: options.runtime,
     initiallyAvailable: options.daemonInitiallyAvailable,
   });
   const roborevJobs = createJobsStore({
-    client: options.client,
+    ...(options.jobsApi !== undefined && { api: options.jobsApi }),
     owner,
     navigate: options.navigate,
     ...shared,
   });
   const roborevReview = createReviewStore({
-    client: options.client,
+    ...(options.reviewApi !== undefined && { api: options.reviewApi }),
     owner,
     refreshJobs: roborevJobs.loadJobsEffect,
     ...shared,

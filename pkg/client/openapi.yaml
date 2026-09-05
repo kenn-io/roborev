@@ -35,9 +35,7 @@ components:
         entries:
           items:
             $ref: "#/components/schemas/ActivityEntry"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - entries
       type: object
@@ -226,27 +224,19 @@ components:
         agents:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         models:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         projects:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         sources:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - projects
         - sources
@@ -259,32 +249,24 @@ components:
         agents:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         bucket:
           type: string
         models:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         projects:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         since:
           format: date-time
           type: string
         sources:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         until:
           format: date-time
           type: string
@@ -386,42 +368,32 @@ components:
         agents:
           items:
             $ref: "#/components/schemas/AnalyticsDimensionRow"
-          type:
-            - array
-            - "null"
+          type: array
         filters:
           $ref: "#/components/schemas/AnalyticsFilters"
         models:
           items:
             $ref: "#/components/schemas/AnalyticsDimensionRow"
-          type:
-            - array
-            - "null"
+          type: array
         options:
           $ref: "#/components/schemas/AnalyticsFilterOptions"
         projects:
           items:
             $ref: "#/components/schemas/AnalyticsProjectRow"
-          type:
-            - array
-            - "null"
+          type: array
         schema_version:
           format: int64
           type: integer
         sources:
           items:
             $ref: "#/components/schemas/AnalyticsDimensionRow"
-          type:
-            - array
-            - "null"
+          type: array
         summary:
           $ref: "#/components/schemas/AnalyticsSummary"
         time_series:
           items:
             $ref: "#/components/schemas/AnalyticsTimeBucket"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - schema_version
         - filters
@@ -549,9 +521,7 @@ components:
         sessions:
           items:
             $ref: "#/components/schemas/SessionUsagePayload"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - sessions
       type: object
@@ -586,9 +556,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - job_ids
       type: object
@@ -729,9 +697,7 @@ components:
         active_snoozes:
           items:
             $ref: "#/components/schemas/AgentHookSnooze"
-          type:
-            - array
-            - "null"
+          type: array
         active_workers:
           format: int64
           type: integer
@@ -793,9 +759,7 @@ components:
         web_capabilities:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - active_snoozes
         - version
@@ -871,9 +835,7 @@ components:
         dirty_files:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         enqueued_at:
           format: date-time
           type: string
@@ -882,9 +844,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         finished_at:
           format: date-time
           type: string
@@ -1020,9 +980,7 @@ components:
         dirty_files:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         git_ref:
           type: string
         job_type:
@@ -1113,9 +1071,7 @@ components:
           description: Optional list of individual error details
           items:
             $ref: "#/components/schemas/ErrorDetail"
-          type:
-            - array
-            - "null"
+          type: array
         instance:
           description: A URI reference that identifies the specific occurrence of the problem.
           examples:
@@ -1195,9 +1151,7 @@ components:
         jobs:
           items:
             $ref: "#/components/schemas/ExportCICostJob"
-          type:
-            - array
-            - "null"
+          type: array
         legacy:
           type: boolean
         next_cursor:
@@ -1242,9 +1196,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         finished_at:
           type: string
         job_uuid:
@@ -1303,9 +1255,7 @@ components:
         panels:
           items:
             $ref: "#/components/schemas/ExportCIPanel"
-          type:
-            - array
-            - "null"
+          type: array
         schema_version:
           format: int64
           type: integer
@@ -1340,9 +1290,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         first_attempt_at:
           type:
             - string
@@ -1354,9 +1302,7 @@ components:
         jobs:
           items:
             $ref: "#/components/schemas/ExportCIPanelJob"
-          type:
-            - array
-            - "null"
+          type: array
         outcome:
           type: string
         panel_created_at:
@@ -1463,9 +1409,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         model:
           type:
             - string
@@ -1496,9 +1440,7 @@ components:
         subagents:
           items:
             $ref: "#/components/schemas/ExportSubagent"
-          type:
-            - array
-            - "null"
+          type: array
         verdict:
           type: string
       required:
@@ -1571,9 +1513,7 @@ components:
         reviews:
           items:
             $ref: "#/components/schemas/ExportReview"
-          type:
-            - array
-            - "null"
+          type: array
         schema_version:
           format: int64
           type: integer
@@ -1722,9 +1662,7 @@ components:
         components:
           items:
             $ref: "#/components/schemas/ComponentHealth"
-          type:
-            - array
-            - "null"
+          type: array
         error_count_24h:
           format: int64
           type: integer
@@ -1733,9 +1671,7 @@ components:
         recent_errors:
           items:
             $ref: "#/components/schemas/ErrorEntry"
-          type:
-            - array
-            - "null"
+          type: array
         uptime:
           type: string
         version:
@@ -1857,9 +1793,7 @@ components:
         branches:
           items:
             $ref: "#/components/schemas/BranchWithCount"
-          type:
-            - array
-            - "null"
+          type: array
         nulls_remaining:
           format: int64
           type: integer
@@ -1884,9 +1818,7 @@ components:
         responses:
           items:
             $ref: "#/components/schemas/Response"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - responses
       type: object
@@ -1907,9 +1839,7 @@ components:
         jobs:
           items:
             $ref: "#/components/schemas/ReviewJob"
-          type:
-            - array
-            - "null"
+          type: array
         next_cursor:
           description: Opaque resume cursor when more jobs are available
           type:
@@ -1935,9 +1865,7 @@ components:
         repos:
           items:
             $ref: "#/components/schemas/RepoWithCount"
-          type:
-            - array
-            - "null"
+          type: array
         total_count:
           format: int64
           type: integer
@@ -2011,9 +1939,7 @@ components:
         dirty_files:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         enqueued_at:
           format: date-time
           type: string
@@ -2022,9 +1948,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         finished_at:
           format: date-time
           type: string
@@ -2039,9 +1963,7 @@ components:
           items:
             format: int64
             type: integer
-          type:
-            - array
-            - "null"
+          type: array
         min_severity:
           type: string
         model:
@@ -2285,9 +2207,7 @@ components:
         releases:
           items:
             $ref: "#/components/schemas/ReleaseNote"
-          type:
-            - array
-            - "null"
+          type: array
         stale:
           type: boolean
       required:
@@ -2346,9 +2266,7 @@ components:
         mappings:
           items:
             $ref: "#/components/schemas/RemapMapping"
-          type:
-            - array
-            - "null"
+          type: array
         repo_path:
           type: string
       required:
@@ -2661,9 +2579,7 @@ components:
         dirty_files:
           items:
             type: string
-          type:
-            - array
-            - "null"
+          type: array
         enqueued_at:
           format: date-time
           type: string
@@ -2672,9 +2588,7 @@ components:
         experiments:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
-          type:
-            - array
-            - "null"
+          type: array
         finished_at:
           format: date-time
           type: string
@@ -2799,15 +2713,11 @@ components:
         panel_members:
           items:
             $ref: "#/components/schemas/ReviewProjectionJob"
-          type:
-            - array
-            - "null"
+          type: array
         responses:
           items:
             $ref: "#/components/schemas/ReviewProjectionResponse"
-          type:
-            - array
-            - "null"
+          type: array
         review:
           $ref: "#/components/schemas/ReviewProjectionReview"
         schema_version:
@@ -2978,9 +2888,7 @@ components:
         agents:
           items:
             $ref: "#/components/schemas/AgentStats"
-          type:
-            - array
-            - "null"
+          type: array
         branch:
           type: string
         cost:
@@ -2992,9 +2900,7 @@ components:
         job_types:
           items:
             $ref: "#/components/schemas/JobTypeStats"
-          type:
-            - array
-            - "null"
+          type: array
         overview:
           $ref: "#/components/schemas/OverviewStats"
         repo_path:
@@ -3002,9 +2908,7 @@ components:
         repos:
           items:
             $ref: "#/components/schemas/RepoSummary"
-          type:
-            - array
-            - "null"
+          type: array
         since:
           format: date-time
           type: string
@@ -3077,9 +2981,7 @@ components:
         results:
           items:
             $ref: "#/components/schemas/TokenResult"
-          type:
-            - array
-            - "null"
+          type: array
         skipped:
           format: int64
           type: integer
@@ -3414,9 +3316,7 @@ paths:
             description: Filter to branches in these repo paths
             items:
               type: string
-            type:
-              - array
-              - "null"
+            type: array
       responses:
         "200":
           content:
@@ -3515,9 +3415,7 @@ paths:
             description: Repo root paths (repeatable)
             items:
               type: string
-            type:
-              - array
-              - "null"
+            type: array
         - description: Filter by branch name
           explode: false
           in: query
@@ -3576,6 +3474,7 @@ paths:
                   - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/PanelEnqueueResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
+          description: HTTP 200 response
         "201":
           content:
             application/json:
@@ -3584,27 +3483,31 @@ paths:
                   - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/PanelEnqueueResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
-          description: Created
+          description: HTTP 201 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "413":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 413 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
         "503":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 503 response
       summary: Enqueue a daemon job
       tags:
         - jobs
@@ -3927,27 +3830,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReviewJob"
-          description: Created
+          description: HTTP 201 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "404":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 404 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
         "503":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 503 response
       summary: Create a background fix job
       tags:
         - jobs
@@ -4143,9 +4050,7 @@ paths:
             description: Filter by repo root path (repeatable)
             items:
               type: string
-            type:
-              - array
-              - "null"
+            type: array
         - description: Filter by git ref
           explode: false
           in: query
@@ -4742,17 +4647,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenSummary"
-          description: OK
+          description: HTTP 200 response
         "400":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
       summary: Backfill token usage from AgentsView payloads
       tags:
         - jobs
@@ -4782,9 +4689,7 @@ paths:
             description: Exact displayed project names (repeatable)
             items:
               type: string
-            type:
-              - array
-              - "null"
+            type: array
         - description: Exact stored source values (repeatable)
           explode: true
           in: query
@@ -4793,9 +4698,7 @@ paths:
             description: Exact stored source values (repeatable)
             items:
               type: string
-            type:
-              - array
-              - "null"
+            type: array
         - description: Exact agent filter for attempt metrics
           explode: false
           in: query

@@ -1,18 +1,16 @@
 import { Duration, Effect, Option, Schedule } from "effect";
 
 import { TransientTransportError } from "../../api/effect-errors";
-import type { RoborevClient } from "../../api/client";
-import type { components } from "../../api/generated";
+import { getStatus } from "../../api/generated/daemon/daemon";
+import type { DaemonStatus } from "../../api/generated/models";
 import type { AppRuntime } from "../../runtime/runtime";
 
 const UNAVAILABLE_POLL_INTERVAL_MS = 1_000;
 const AVAILABLE_POLL_INTERVAL_MS = 30_000;
 const STATUS_TIMEOUT = "5 seconds";
 
-type DaemonStatus = components["schemas"]["DaemonStatus"];
-
 export interface DaemonStoreOptions {
-  client: RoborevClient;
+  getStatus?: typeof getStatus;
   runtime: AppRuntime;
   initiallyAvailable?: boolean;
 }
@@ -31,6 +29,7 @@ export function createDaemonStore(opts: DaemonStoreOptions) {
   let activeWorkers = $state(0);
   let maxWorkers = $state(0);
   let statusGeneration = 0;
+  const readGeneratedStatus = opts.getStatus ?? getStatus;
 
   function clearStatus(): void {
     queuedJobs = 0;
@@ -54,26 +53,13 @@ export function createDaemonStore(opts: DaemonStoreOptions) {
   }
 
   const readStatus = Effect.tryPromise({
-    try: (signal) => opts.client.GET("/api/status", { signal }),
+    try: (signal) => readGeneratedStatus({ signal }),
     catch: (cause) =>
       TransientTransportError.make({
         operation: "GET Roborev daemon status",
         cause,
       }),
-  }).pipe(
-    Effect.flatMap((result) =>
-      result.data === undefined
-        ? Effect.fail(
-            TransientTransportError.make({
-              operation: "GET Roborev daemon status",
-              cause:
-                result.error ?? new Error("Roborev status response was empty"),
-            }),
-          )
-        : Effect.succeed(result.data),
-    ),
-    Effect.timeout(STATUS_TIMEOUT),
-  );
+  }).pipe(Effect.timeout(STATUS_TIMEOUT));
 
   const healthProgram = Effect.gen(function* () {
     const requestGeneration = yield* Effect.sync(() => ++statusGeneration);

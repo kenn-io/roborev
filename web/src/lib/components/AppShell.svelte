@@ -5,11 +5,12 @@
   import { onDestroy } from "svelte";
 
   import { appPath } from "../base-path";
-  import { createRoborevClient, executeRoborevRequest } from "../api/client";
-  import type { components } from "../api/generated";
+  import { executeRoborevRequest } from "../api/client";
+  import { listReleases } from "../api/generated/daemon/daemon";
+  import type { ReleaseNote } from "../api/generated/models";
   import type { SessionCapabilities } from "../api/session";
   import { createRouter } from "../router/router.svelte";
-  import { setAppRuntime, setRoborevClient } from "../runtime/context";
+  import { setAppRuntime } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
   import { createReviewStores } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
@@ -17,15 +18,12 @@
   import ReviewsView from "../views/ReviewsView.svelte";
   import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
 
-  type ReleaseNote = components["schemas"]["ReleaseNote"];
-
   interface Props {
     capabilities: SessionCapabilities;
   }
   let { capabilities }: Props = $props();
 
   const runtime = makeAppRuntime();
-  const client = createRoborevClient(appPath("/"));
   const router = createRouter();
   const route = $derived(router.getRoute());
   const navigationTabs: TopBarTab[] = [
@@ -41,7 +39,6 @@
   let releaseNotesRequest: ReturnType<typeof runtime.runCommand> | undefined;
   const stores = createReviewStores({
     runtime,
-    client,
     navigate: router.navigateToReview,
     getCapabilities: () => capabilities,
     daemonInitiallyAvailable: true,
@@ -50,7 +47,6 @@
     },
   });
   setAppRuntime(runtime);
-  setRoborevClient(client);
   provideReviewStores(stores);
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
@@ -102,16 +98,12 @@
     releaseNotesError = null;
     releaseNotesRequest = runtime.runCommand(
       executeRoborevRequest("list Roborev releases", (signal) =>
-        client.GET("/api/releases", { signal }),
+        listReleases({ signal }),
       ).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            if (result.data) {
-              releaseNotes = result.data.releases ?? [];
-              releaseNotesStale = result.data.stale;
-              return;
-            }
-            releaseNotesError = "The daemon could not retrieve release notes.";
+            releaseNotes = result.releases ?? [];
+            releaseNotesStale = result.stale;
           }),
         ),
         Effect.ensuring(
