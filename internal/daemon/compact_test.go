@@ -237,6 +237,13 @@ func TestCleanCompactOutputsParseAsPassVerdicts(t *testing.T) {
 	}
 }
 
+func TestIsValidCompactOutputRejectsUnreadableInput(t *testing.T) {
+	assert := assert.New(t)
+	assert.False(IsValidCompactOutput("No review output generated"))
+	assert.False(IsValidCompactOutput("I am unable to read the diff file because it is ignored by configured ignore patterns."))
+	assert.True(IsValidCompactOutput("No findings remain."))
+}
+
 func TestCompactVerdict(t *testing.T) {
 	tests := []struct {
 		name   string
