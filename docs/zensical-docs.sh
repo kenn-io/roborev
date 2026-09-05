@@ -176,15 +176,16 @@ case "$command_name" in
   serve)
     # site_url in zensical.toml ends in /docs/, and Zensical's dev server
     # mounts the build at that path and redirects / to it, so generated
-    # /docs/... links and assets resolve here with live reload. The product
-    # page and guide are static files outside Zensical; use "preview" to see
-    # the whole site.
+    # /docs/... links and assets resolve here. It watches the staged copy
+    # above, not the source tree, so edits need a restart. The product page
+    # and guide are static files outside Zensical; use "preview" to see the
+    # whole site.
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")
     ;;
   preview)
     build_site
     preview_port="${1:-8000}"
-    printf 'Serving %s on http://127.0.0.1:%s (production routing, no live reload)\n' \
+    printf 'Serving %s on http://127.0.0.1:%s (production routing; restart to pick up edits)\n' \
       "$site_dir" "$preview_port"
     python3 -m http.server --bind 127.0.0.1 --directory "$docs_root/$site_dir" "$preview_port"
     ;;

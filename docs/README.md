@@ -69,16 +69,17 @@ Hydrate assets and build:
 make docs-build
 ```
 
-Preview the docs tier with live reload at `http://localhost:8000/docs/`:
+Preview the docs tier at `http://localhost:8000/docs/`:
 
 ```bash
 make docs-serve
 ```
 
 Zensical serves only the docs tier, mounted at `/docs/` as in production. The
-product page and guide are static files it does not serve. To preview the whole
-site with production routing, build it and serve the assembled `site/`
-directory:
+product page and guide are static files it does not serve. Both targets below
+render a staged copy of the docs tree, so restart them to pick up edits. To
+preview the whole site with production routing, build it and serve the
+assembled `site/` directory:
 
 ```bash
 make docs-preview                          # http://127.0.0.1:8000/
