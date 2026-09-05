@@ -185,11 +185,9 @@ func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult 
 		if !reviewpkg.IsSubstantiveOutput(r) {
 			continue
 		}
-		// A member whose stored verdict is unset and whose output carries no
-		// verdict never reviewed the code (for example an unreadable diff);
-		// it must not feed synthesis as if it had.
-		if r.Verdict == storage.VerdictUnknown &&
-			storage.ParseVerdict(r.Output) == storage.VerdictUnknown {
+		// A member whose output is not a review (empty, or an unreadable
+		// diff) must not feed synthesis as if it had reviewed the code.
+		if storage.ClassifyOutput(r.Output) != storage.OutputReviewed {
 			continue
 		}
 		out = append(out, r)

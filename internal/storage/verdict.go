@@ -87,14 +87,40 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 	job.Verdict = &value
 }
 
-// unreadableInputPhrases are deterministic signals that the agent never
-// produced a review: it could not see the diff, or it printed nothing. Output containing one of these and no
-// severity-labelled finding is not a review at all, so it must not record a
-// verdict even when the agent appends a reflexive "No issues found."
+// OutputKind classifies agent output before any verdict is parsed from it.
+// Only OutputReviewed carries a verdict; the other kinds mean no review
+// happened, whatever the text says afterwards.
+type OutputKind int
+
+const (
+	// OutputReviewed is ordinary review text; parse it for a verdict.
+	OutputReviewed OutputKind = iota
+	// OutputEmpty means the agent produced nothing: blank output, or the fixed
+	// placeholder every adapter returns when the process printed nothing.
+	OutputEmpty
+	// OutputUnreadableInput means the agent said it could not read its diff.
+	OutputUnreadableInput
+)
+
+func (k OutputKind) String() string {
+	switch k {
+	case OutputEmpty:
+		return "empty output"
+	case OutputUnreadableInput:
+		return "unreadable input"
+	default:
+		return "reviewed"
+	}
+}
+
+// NoReviewOutputPlaceholder is the text agent adapters return when the agent
+// process printed nothing at all.
+const NoReviewOutputPlaceholder = "No review output generated"
+
+// unreadableInputPhrases are deterministic signals that the agent never saw
+// the diff it was asked to review. They win over any pass phrase that
+// follows, such as a reflexive "No issues found."
 var unreadableInputPhrases = []string{
-	// Every agent adapter returns this fixed text when the process printed
-	// nothing at all; it is an empty review, not a finding.
-	"no review output generated",
 	"unable to read the diff",
 	"unable to access the diff",
 	"cannot read the diff",
@@ -106,26 +132,31 @@ var unreadableInputPhrases = []string{
 	"ignored by configured ignore patterns",
 }
 
-// IsUnreadableInput reports whether review output says the agent could not
-// read its input diff.
-func IsUnreadableInput(output string) bool {
-	lower := strings.ToLower(output)
-	lower = strings.ReplaceAll(lower, "\u2019", "'")
+// ClassifyOutput is the single place that decides whether agent output is a
+// review at all. Every path that turns output into a verdict, whether fresh
+// from an agent or already stored, asks this function.
+func ClassifyOutput(output string) OutputKind {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || trimmed == NoReviewOutputPlaceholder {
+		return OutputEmpty
+	}
+	lower := strings.ReplaceAll(strings.ToLower(trimmed), "\u2019", "'")
 	for _, phrase := range unreadableInputPhrases {
 		if strings.Contains(lower, phrase) {
-			return true
+			return OutputUnreadableInput
 		}
 	}
-	return false
+	return OutputReviewed
 }
 
-// UnreadableInputLikeClauses returns SQL predicates, one per unreadable-input
-// phrase, that prefilter review rows whose lower-cased output may match
-// IsUnreadableInput. The caller ANDs them under an OR and binds args in order.
-func UnreadableInputLikeClauses(column string) (string, []any) {
-	clauses := make([]string, 0, len(unreadableInputPhrases))
-	args := make([]any, 0, len(unreadableInputPhrases))
-	for _, phrase := range unreadableInputPhrases {
+// NoReviewLikeClauses returns SQL predicates that prefilter review rows whose
+// output may classify as anything other than OutputReviewed. The caller ORs
+// them and binds args in order; ClassifyOutput makes the final call.
+func NoReviewLikeClauses(column string) (string, []any) {
+	phrases := append([]string{strings.ToLower(NoReviewOutputPlaceholder)}, unreadableInputPhrases...)
+	clauses := make([]string, 0, len(phrases))
+	args := make([]any, 0, len(phrases))
+	for _, phrase := range phrases {
 		clauses = append(clauses, "lower("+column+") LIKE '%' || ? || '%'")
 		args = append(args, phrase)
 	}
@@ -143,8 +174,8 @@ func verdictBoolFromOutput(output string) any {
 	return verdictToBool(verdict)
 }
 
-// ParseVerdict extracts P (pass) or F (fail) from review output. Empty output
-// and output that says the diff could not be read return VerdictUnknown so the
+// ParseVerdict extracts P (pass) or F (fail) from review output. Output that
+// ClassifyOutput does not consider a review returns VerdictUnknown so the
 // caller can treat the job as never reviewed instead of clean or failed.
 // It intentionally uses a small set of deterministic signals:
 // clear severity/findings markers mean fail, and clear pass phrases mean pass.
@@ -154,19 +185,15 @@ func verdictBoolFromOutput(output string) any {
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
 func ParseVerdict(output string) Verdict {
-	if strings.TrimSpace(output) == "" {
-		return VerdictUnknown
-	}
-
 	// First check for severity labels which indicate actual findings
 	// These appear as "- Medium —", "* Low:", "Critical -", etc.
 	// A labelled finding is a real review even if part of the input was
-	// unreadable, so this check runs before the unreadable-input check.
+	// unreadable, so this check runs before the output classification.
 	if hasSeverityLabel(output) {
 		return VerdictFail
 	}
 
-	if IsUnreadableInput(output) {
+	if ClassifyOutput(output) != OutputReviewed {
 		return VerdictUnknown
 	}
 

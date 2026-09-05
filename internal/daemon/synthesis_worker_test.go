@@ -138,8 +138,8 @@ func TestFilterSucceededRejectsUnreadableDiffWithoutVerdict(t *testing.T) {
 		{Status: reviewpkg.ResultDone, Output: "- High: nil deref in a.go:1"},
 	}
 
-	assert.Equal(t, results[1:], filterSucceeded(results),
-		"a done member with no stored verdict and unreadable output never reviewed the code")
+	assert.Equal(t, results[2:], filterSucceeded(results),
+		"a done member with unreadable output never reviewed the code, whatever verdict was stored")
 }
 
 // jobAgentInvoked reads the raw agent_invoked cost-eligibility marker for a job.

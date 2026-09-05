@@ -617,11 +617,11 @@ func percentile(values []float64, p float64) float64 {
 }
 
 // clearUnreadableVerdicts nulls verdict_bool on rows that an older parser
-// recorded as a verdict but that ParseVerdict now classifies as unreadable
-// input. The SQL LIKE prefilter keeps the per-startup scan cheap; the Go
-// parser makes the final call so a labelled finding is never cleared.
+// recorded as a verdict but that ClassifyOutput now says were never reviewed.
+// The SQL LIKE prefilter keeps the per-startup scan cheap; the Go parser
+// makes the final call so a labelled finding is never cleared.
 func (db *DB) clearUnreadableVerdicts() (int64, error) {
-	where, args := UnreadableInputLikeClauses("output")
+	where, args := NoReviewLikeClauses("output")
 	rows, err := db.Query(`SELECT id, output FROM reviews WHERE verdict_bool IS NOT NULL AND (`+where+`)`, args...)
 	if err != nil {
 		return 0, err

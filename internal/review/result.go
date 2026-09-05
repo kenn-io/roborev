@@ -192,25 +192,38 @@ func UnavailableError(msg string) string {
 	return UnavailableErrorPrefix + msg
 }
 
-// NoVerdictErrorPrefix is prepended to the stored job error when a built-in
-// review ran to completion but its output carried no recognizable verdict,
-// typically because the agent could not read the diff. Consumers can select
-// these rows to separate "never reviewed" from genuine agent failures.
+// NoVerdictErrorPrefix is the stored job error code for an agent that ran to
+// completion without producing a review (empty output, or an unreadable
+// diff). It sits beside QuotaErrorPrefix, OutageErrorPrefix, and the others
+// so consumers can separate "never reviewed" from genuine agent failures.
 const NoVerdictErrorPrefix = "no-verdict: "
 
 // noVerdictOutputLimit caps the agent output preserved in the job error so a
 // runaway response cannot bloat the row.
 const noVerdictOutputLimit = 4000
 
-// NoVerdictError reports that a built-in review completed without a
-// recognizable verdict. Output holds the agent's response so the reason can
-// be inspected after the job fails.
+// NoVerdictError reports that an agent ran to completion but its output is
+// not a review. Kind says why and Output holds the agent's response so the
+// reason can be inspected after the job fails.
 type NoVerdictError struct {
+	Kind   storage.OutputKind
 	Output string
 }
 
 func (e *NoVerdictError) Error() string {
-	return "review produced no recognizable verdict"
+	return "review produced no recognizable verdict (" + e.Kind.String() + ")"
+}
+
+// NoVerdict is the one boundary check for fresh agent output. It returns a
+// NoVerdictError when the output is not a review, and nil otherwise. Every
+// path that runs an agent for a verdict (review, compact, synthesis) calls
+// it so the job fails with the same code and the same preserved output.
+func NoVerdict(output string) *NoVerdictError {
+	kind := storage.ClassifyOutput(output)
+	if kind == storage.OutputReviewed {
+		return nil
+	}
+	return &NoVerdictError{Kind: kind, Output: output}
 }
 
 // NoVerdictMessage renders the stored job error for a NoVerdictError: the
@@ -221,7 +234,7 @@ func NoVerdictMessage(err *NoVerdictError) string {
 		output = output[:noVerdictOutputLimit] + "\n[truncated]"
 	}
 	if output == "" {
-		return NoVerdictErrorPrefix + err.Error() + " (empty output)"
+		return NoVerdictErrorPrefix + err.Error()
 	}
 	return NoVerdictErrorPrefix + err.Error() + "\n\n" + output
 }
