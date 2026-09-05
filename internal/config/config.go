@@ -622,6 +622,7 @@ type RepoConfig struct {
 	JobTimeoutMinutes               int                             `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
 	HookTimeoutSeconds              int                             `toml:"hook_timeout_seconds" comment:"Override the post-commit hook request timeout (in seconds) for this repo. Useful for large repos where the enqueue handler's git calls are slow. 0 or negative inherits the global / platform default."`
 	ExcludedBranches                []string                        `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
+	ExcludedBranchPatterns          []string                        `toml:"excluded_branch_patterns" comment:"Branch glob patterns that should be skipped for automatic post-commit review in this repo."`
 	ExcludedCommitPatterns          []string                        `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
 	DisplayName                     string                          `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
 	ReviewReasoning                 string                          `toml:"review_reasoning" comment:"Reasoning for reviews in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`

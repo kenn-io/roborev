@@ -108,6 +108,7 @@ model = "gemini-3-flash-preview"  # Model override for this repo
 review_context_count = 5   # Recent reviews to include as context
 display_name = "backend"   # Custom name shown in TUI (optional)
 excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
+excluded_branch_patterns = ["worktree-agent-*", "release/*"]  # Branch globs to skip for automatic post-commit reviews
 
 # Legacy levels: fast, standard, thorough, maximum
 # Exact agent efforts: low, medium, high, xhigh, max
@@ -146,6 +147,7 @@ max_chars = 50000
 | `display_name` | string | Custom name shown in TUI |
 | `review_context_count` | int | Number of recent reviews to include as context |
 | `excluded_branches` | array | Branches to skip automatic reviews on |
+| `excluded_branch_patterns` | array | Whole-name branch globs to skip automatic post-commit reviews on |
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
@@ -695,9 +697,19 @@ Skip automatic reviews on work-in-progress branches:
 
 ```toml
 excluded_branches = ["wip", "scratch", "experiment"]
+excluded_branch_patterns = ["worktree-agent-*", "release/*"]
 ```
 
-Reviews triggered manually with `roborev review` still work on these branches.
+`excluded_branches` compares exact branch names. `excluded_branch_patterns` uses
+whole-name [`path.Match`](https://pkg.go.dev/path#Match) globs. For example,
+`worktree-agent-*` matches `worktree-agent-fix-123`. The `*` wildcard does not
+cross a slash, so `release/*` matches `release/1.2` but not `release/team/1.2`.
+Malformed patterns are treated as non-matches, and matching continues with the
+remaining patterns.
+
+Branch patterns apply only to automatic post-commit reviews. Reviews triggered
+manually with `roborev review` still work on matching branches. Exact exclusions
+keep their existing automatic review behavior.
 
 ### Excluded Commit Patterns
 
