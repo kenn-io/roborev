@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -1252,4 +1253,37 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	assert.NotContains(review.Output, "**Location:**")
 	require.NotNil(t, review.VerdictBool)
 	assert.Equal(0, *review.VerdictBool)
+}
+
+func TestSynthesisNoVerdictOutputFailsWithoutRetry(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-noverdict-member"
+	registerPassingAgent(t, memberAgent)
+
+	const synthAgent = "synth-noverdict"
+	agent.Register(&agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(synthAgent) })
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "noverdict-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+	assert.True(strings.HasPrefix(updated.Error, reviewpkg.NoVerdictErrorPrefix), updated.Error)
+	assert.Contains(updated.Error, "unable to read the diff file")
+	assert.Equal(0, updated.RetryCount, "no-verdict synthesis output must not burn same-agent retries")
 }

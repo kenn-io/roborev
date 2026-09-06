@@ -824,6 +824,7 @@ func TestClassifyOutput(t *testing.T) {
 	assert.Equal(OutputUnreadableInput, ClassifyOutput("The file is ignored by configured ignore patterns."))
 	assert.Equal(OutputReviewed, ClassifyOutput("No issues found."))
 	assert.Equal(OutputReviewed, ClassifyOutput("- High: nil deref in a.go:1"))
+	assert.Equal(OutputReviewed, ClassifyOutput("I was unable to read the diff for vendor/.\n\n- Medium: nil deref in main.go:42"))
 	assert.Equal("empty output", OutputEmpty.String())
 	assert.Equal("unreadable input", OutputUnreadableInput.String())
 }

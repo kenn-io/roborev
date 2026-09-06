@@ -182,15 +182,9 @@ func headOf(gitRef string) string {
 func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult {
 	out := make([]reviewpkg.ReviewResult, 0, len(results))
 	for _, r := range results {
-		if !reviewpkg.IsSubstantiveOutput(r) {
-			continue
+		if reviewpkg.IsSubstantiveOutput(r) {
+			out = append(out, r)
 		}
-		// A member whose output is not a review (empty, or an unreadable
-		// diff) must not feed synthesis as if it had reviewed the code.
-		if storage.ClassifyOutput(r.Output) != storage.OutputReviewed {
-			continue
-		}
-		out = append(out, r)
 	}
 	return out
 }
@@ -423,6 +417,14 @@ func (wp *WorkerPool) runSynthesisAgent(
 			// A user cancellation is already terminal. Don't fail it.
 			log.Printf("[%s] Synthesis job %d canceled during agent run", workerID, job.ID)
 			return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
+		}
+		if noVerdict, ok := errors.AsType[*reviewpkg.NoVerdictError](err); ok {
+			// Same code and same failover as a review that produced no
+			// verdict: retrying the same agent cannot change the outcome.
+			wp.failoverOrFailNonRetryableAgentContext(
+				ctx, workerID, job, agentName, reviewpkg.NoVerdictMessage(noVerdict),
+			)
+			return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err
 		}
 		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
 		return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err

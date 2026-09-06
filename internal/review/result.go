@@ -80,8 +80,6 @@ const (
 	ResultSkipped = "skipped"
 )
 
-const noReviewOutputPlaceholder = "No review output generated"
-
 // HasSubstantiveOutput reports whether any completed review produced
 // agent-authored output. Failed and skipped results never qualify, even when
 // they carry diagnostic text, and neither does the placeholder returned by
@@ -93,9 +91,8 @@ func HasSubstantiveOutput(results []ReviewResult) bool {
 // IsSubstantiveOutput reports whether one completed review produced
 // agent-authored output.
 func IsSubstantiveOutput(result ReviewResult) bool {
-	output := strings.TrimSpace(result.Output)
 	return result.Status == ResultDone &&
-		output != "" && output != noReviewOutputPlaceholder
+		storage.ClassifyOutput(result.Output) == storage.OutputReviewed
 }
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.
