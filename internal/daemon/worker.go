@@ -588,13 +588,21 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 ) *prompt.Builder {
 	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
 		WithContext(ctx).
-		ForRepo(checkout.promptRepoPath, job.RepoID)
+		ForRepo(checkout.promptRepoPath, job.RepoID).
+		WithStructuredOutput(reviewJobUsesStructuredOutput(job))
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
 			kata.NewCLIClient(checkout.promptRepoPath),
 		)
 	}
 	return builder
+}
+
+// reviewJobUsesStructuredOutput reports whether a review job's agent returns
+// schema-constrained findings. Fix, task, and compact jobs always run as prose
+// because their stored prompts define their own output contract.
+func reviewJobUsesStructuredOutput(job *storage.ReviewJob) bool {
+	return job.IsReviewJob() && agent.SupportsStructuredReview(job.Agent)
 }
 
 // markAgentInvoked records that an agent is being invoked for this attempt. Call
@@ -1049,10 +1057,27 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
+	maxPromptSize := config.ResolveMaxPromptSize(checkout.promptRepoPath, cfg)
+
+	// A prebuilt CI prompt was written for the agent configured at enqueue
+	// time. After failover the running agent may parse output differently,
+	// so align the output instruction with the agent that will answer. A
+	// prompt already at the size limit keeps running without the appended
+	// guidance rather than failing before the backup agent ever runs; the
+	// schema still constrains the answer.
+	if job.PromptPrebuilt && job.IsReviewJob() {
+		_, structured := a.(agent.StructuredReviewAgent)
+		reconciled := prompt.ReconcileStructuredOutputInstruction(reviewPrompt, structured)
+		if maxPromptSize > 0 && len(reconciled) > maxPromptSize && len(reviewPrompt) <= maxPromptSize {
+			log.Printf("[%s] Prompt for job %d is at the size limit; running %s without the structured output instruction", workerID, job.ID, agentName)
+		} else {
+			reviewPrompt = reconciled
+		}
+	}
+
 	// Enforce the final submission size after all prompt transformations.
 	// Oversized prompts are deterministic and should never be sent to any
 	// agent just to discover a context-window failure.
-	maxPromptSize := config.ResolveMaxPromptSize(checkout.promptRepoPath, cfg)
 	if maxPromptSize > 0 && len(reviewPrompt) > maxPromptSize {
 		wp.failoverOrFailNonRetryableAgentContext(
 			ctx, workerID, job, agentName,

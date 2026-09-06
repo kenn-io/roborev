@@ -30,10 +30,10 @@ type ReviewResult struct {
 	// StructuredOutput is the unfiltered JSON returned by the agent. Queued
 	// reviews persist it so a later panel threshold can use the same findings.
 	StructuredOutput json.RawMessage
-	// StructuredMinSeverity is the threshold already applied to Output and
-	// Verdict. Later consumers combine it with their own threshold instead of
-	// accidentally restoring findings that were already excluded.
-	StructuredMinSeverity string
+	// MinSeverity is the threshold already applied to Verdict (and, for
+	// structured reviews, to the rendered Output). Findings are never dropped,
+	// so a later consumer can re-derive the verdict under its own threshold.
+	MinSeverity string
 
 	// Skipped/SkipReason are populated for skipped (auto-design) rows so
 	// synthesis can render them as a distinct short section instead of
@@ -56,20 +56,30 @@ func (r ReviewResult) Passed() bool {
 	return storage.ParseVerdict(r.Output) == storage.VerdictPass
 }
 
-// FilterStructured applies minSeverity to schema-backed output and updates the
-// rendered text and verdict together. Prose review results are unchanged.
-func (r ReviewResult) FilterStructured(minSeverity string) ReviewResult {
-	if r.Structured == nil {
+// ApplyMinSeverity re-derives the verdict under minSeverity, replacing the
+// threshold the result was decided under. A panel or CI threshold therefore
+// applies to the combined review exactly as configured, whether it is looser
+// or stricter than the member's own. Findings are never dropped: structured
+// reviews re-render every finding and pass when none reaches the threshold,
+// and prose reviews re-parse their severity labels the same way. An empty
+// minSeverity keeps the result's threshold. Failed and skipped results are
+// returned unchanged.
+func (r ReviewResult) ApplyMinSeverity(minSeverity string) ReviewResult {
+	effective := strings.ToLower(strings.TrimSpace(minSeverity))
+	if effective == "" {
+		effective = r.MinSeverity
+	}
+	if r.Structured != nil {
+		r.MinSeverity = effective
+		r.Verdict = storage.VerdictFromPassed(r.Structured.Passed(effective))
+		r.Output = r.Structured.Markdown(effective)
 		return r
 	}
-	effectiveMinSeverity := stricterMinSeverity(
-		r.StructuredMinSeverity, minSeverity,
-	)
-	filtered := r.Structured.Filter(effectiveMinSeverity)
-	r.Structured = &filtered
-	r.StructuredMinSeverity = effectiveMinSeverity
-	r.Verdict = storage.VerdictFromPassed(filtered.Passed())
-	r.Output = filtered.Markdown()
+	if effective == r.MinSeverity || !IsSubstantiveOutput(r) {
+		return r
+	}
+	r.MinSeverity = effective
+	r.Verdict = storage.ParseVerdictAtSeverity(r.Output, effective)
 	return r
 }
 

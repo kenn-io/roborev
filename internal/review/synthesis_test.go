@@ -176,9 +176,9 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 		]}`,
 	), reviews)
 	require.NoError(t, err)
-	assert.Equal(storage.VerdictFail, SynthesisVerdict(doc))
+	assert.Equal(storage.VerdictFail, SynthesisVerdict(doc, ""))
 	assert.Equal([]string{"codex", "gemini (security)"}, doc.SourceLabels)
-	md := doc.Markdown()
+	md := doc.Markdown("")
 	assert.Contains(md, "One shared finding.")
 	assert.Contains(md, "**Reported by:** gemini (security), codex")
 
@@ -186,8 +186,8 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 		`{"schema_version":1,"summary":"Clean.","findings":[]}`,
 	), reviews)
 	require.NoError(t, err)
-	assert.Equal(storage.VerdictPass, SynthesisVerdict(clean))
-	assert.NotContains(clean.Markdown(), "Reported by")
+	assert.Equal(storage.VerdictPass, SynthesisVerdict(clean, ""))
+	assert.NotContains(clean.Markdown(""), "Reported by")
 
 	tests := []struct {
 		name string
@@ -280,8 +280,8 @@ func TestBuildSynthesisPrompt_Severity(t *testing.T) {
 		wantContains    string
 		wantNotContains string
 	}{
-		{"high severity", "high", "Only include High and Critical", ""},
-		{"low severity", "low", "", "Omit findings"},
+		{"high severity", "high", "", "Severity threshold"},
+		{"low severity", "low", "", "Severity threshold"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -674,4 +674,22 @@ func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
 		"[SKIPPED]",
 		"provider unavailable",
 	})
+}
+
+func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing.T) {
+	structured := StructuredReview{
+		SchemaVersion: storage.StructuredReviewSchemaVersion,
+		Summary:       "One nit.",
+		Verdict:       "pass",
+		Findings:      []StructuredFinding{{Severity: "low", Problem: "Nit.", Fix: "Tidy."}},
+	}
+	member := ReviewResult{
+		Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured,
+	}.ApplyMinSeverity("medium")
+	require.Contains(t, member.Output, "No findings at or above medium severity.")
+
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium")
+	assert.Contains(t, prompt, "Nit.")
+	assert.NotContains(t, prompt, "at or above")
+	assert.NotContains(t, prompt, "medium severity")
 }

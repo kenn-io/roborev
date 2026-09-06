@@ -196,7 +196,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		agent.Register(&agent.FakeAgent{
 			NameStr: synthAgent,
 			ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-				return `{"schema_version":1,"summary":"No issues found.","findings":[]}`, nil
+				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			},
 		})
 		t.Cleanup(func() { agent.Unregister(synthAgent) })
@@ -245,7 +245,7 @@ func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt st
 	if a.result != "" {
 		return json.RawMessage(a.result), nil
 	}
-	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -623,25 +623,22 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	assert.False(synthCalled, "passthrough must not invoke an agent")
 }
 
-func TestSynthesisSingleSuccessWithMinSeverityUsesFilterPrompt(t *testing.T) {
+func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-single-minsev-member"
 	registerPassingAgent(t, memberAgent)
 
-	synthAgent := &synthesisEntrypointTestAgent{
-		name:   "panel-single-minsev-synth",
-		result: `{"schema_version":1,"summary":"No Medium, High, or Critical findings remain.","findings":[]}`,
-	}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	var synthCalled bool
+	const synthAgent = "panel-single-minsev-synth"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
 
 	runUUID, members, synthJob := enqueuePanelRun(t, tc, "single-success-minsev-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
 		{name: "m1", agent: memberAgent},
 	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
 	_, err := tc.DB.Exec(
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
 		"medium", synthJob.ID,
@@ -657,15 +654,11 @@ func TestSynthesisSingleSuccessWithMinSeverityUsesFilterPrompt(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Contains(review.Output, "No Medium, High, or Critical findings remain.")
-	assert.Equal(synthAgent.name, review.Agent)
-	assert.False(synthAgent.reviewCalled, "synthesis must use the synthesis entrypoint")
-	assert.Contains(synthAgent.synthPrompt, "### Review 1")
-	assert.NotContains(synthAgent.synthPrompt, "Agent="+memberAgent)
-	assert.NotContains(synthAgent.synthPrompt, "Type=")
-	assert.Contains(synthAgent.synthPrompt, "Severity: Low")
-	assert.Contains(synthAgent.synthPrompt, "Omit findings below medium severity")
-	assert.Contains(synthAgent.synthPrompt, "Only include Medium, High, and Critical findings.")
+	assert.Equal(memberOutput, review.Output, "low findings stay in the output")
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(1, *review.VerdictBool, "a low-only review passes a medium threshold")
+	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
+	assert.False(synthCalled, "single-success panels never need a synthesis agent")
 }
 
 func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
@@ -691,8 +684,9 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	const memberOutput = "## Review Findings\n\nThe summary claims a high issue.\n\n### 1. Low\n\n**Problem:** low-only\n\n**Fix:** low fix"
 	structured := json.RawMessage(`{
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": "The summary claims a high issue.",
+  "verdict": "pass",
   "findings": [
     {"severity":"low","problem":"low-only","fix":"low fix","location":null}
   ]
@@ -713,40 +707,60 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Contains(review.Output, "No findings at or above the configured severity threshold.")
-	assert.NotContains(review.Output, "low-only")
+	assert.Contains(review.Output, "No findings at or above medium severity.")
+	assert.Contains(review.Output, "low-only", "findings below the threshold are still rendered")
 	require.NotNil(t, review.VerdictBool)
 	assert.Equal(1, *review.VerdictBool, "panel threshold must use the structured findings")
 	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
+	require.NotNil(t, review.StructuredOutput, "passthrough keeps the member's structured findings")
+	assert.Equal("The summary claims a high issue.", review.StructuredOutput["summary"])
 	assert.False(synthCalled, "passing single-success min-severity panel must not invoke synthesis")
 	memberReview, err := tc.DB.GetReviewByJobID(members[0].ID)
 	require.NoError(t, err)
 	assert.Equal("The summary claims a high issue.", memberReview.StructuredOutput["summary"])
 }
 
-func TestSynthesisSingleMarkerOnlySuccessWithMinSeverityNormalizesOutput(t *testing.T) {
+func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
-	const memberAgent = "panel-single-minsev-marker-member"
+	const memberAgent = "panel-retained-findings-member"
 	registerPassingAgent(t, memberAgent)
 
-	var synthCalled bool
-	const synthAgent = "panel-single-minsev-marker-synth"
-	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+	synthAgent := &synthesisEntrypointTestAgent{
+		name:   "panel-retained-findings-synth",
+		result: `{"schema_version":2,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","problem":"shared nit","fix":"tidy","location":null,"sources":[1,2]}]}`,
+	}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
 
-	runUUID, members, synthJob := enqueuePanelRun(t, tc, "single-success-minsev-marker-panel", []memberSpec{
+	runUUID, members, synthJob := enqueuePanelRun(t, tc, "retained-findings-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
 		{name: "m1", agent: memberAgent},
 	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
 	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
-		"medium", synthJob.ID,
+		"UPDATE review_jobs SET min_severity = ? WHERE id = ?", "medium", synthJob.ID,
 	)
 	require.NoError(t, err)
-	completeMember(t, tc, members[0].ID, memberAgent, config.SeverityThresholdMarker)
-	failMember(t, tc, members[1].ID)
+	structured := json.RawMessage(`{
+  "schema_version": 2,
+  "summary": "One nit.",
+  "verdict": "pass",
+  "findings": [
+    {"severity":"low","problem":"shared nit","fix":"tidy","location":null}
+  ]
+}`)
+	for _, m := range members {
+		markMemberRunning(t, tc, m.ID)
+		require.NoError(t, tc.DB.CompleteJobResult(
+			m.ID, memberAgent, "", storage.ReviewCompletion{
+				Output:           "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** shared nit\n\n**Fix:** tidy\n",
+				Verdict:          storage.VerdictFail,
+				StructuredOutput: structured,
+			},
+		))
+	}
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
@@ -754,9 +768,12 @@ func TestSynthesisSingleMarkerOnlySuccessWithMinSeverityNormalizesOutput(t *test
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Equal("No issues found.", review.Output)
-	assert.Equal(memberAgent, review.Agent, "normalized output remains labeled with the surviving member")
-	assert.False(synthCalled, "marker-only single-success min-severity panel must not invoke synthesis")
+	assert.Contains(synthAgent.synthPrompt, "shared nit", "retained findings reach the synthesis agent")
+	assert.NotContains(synthAgent.synthPrompt, "at or above", "the threshold is hidden from synthesis")
+	assert.Contains(review.Output, "shared nit", "retained findings survive synthesis")
+	assert.NotEqual("No issues found.", review.Output)
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(1, *review.VerdictBool, "low-only findings pass a medium threshold")
 }
 
 func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
@@ -984,7 +1001,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":1,"summary":"Combined","findings":[{"severity":"high","problem":"Consolidated finding.","fix":"Fix it.","location":"alpha.go:1","sources":[1,2]}]}`, nil
+			return `{"schema_version":2,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","problem":"Consolidated finding.","fix":"Fix it.","location":"alpha.go:1","sources":[1,2]}]}`, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(synthAgent) })
@@ -1192,7 +1209,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
-			return `{"schema_version":1,"summary":"Done.","findings":[]}`, nil
+			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(synthAgent) })
@@ -1230,7 +1247,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return `{"schema_version":1,"summary":"One finding without a location.","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
+			return `{"schema_version":2,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(synthAgent) })

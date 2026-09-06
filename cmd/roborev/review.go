@@ -541,7 +541,8 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		WithContext(ctx).
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
-		WithKataClient(kata.NewCLIClient(repoPath))
+		WithKataClient(kata.NewCLIClient(repoPath)).
+		WithStructuredOutput(agent.IsStructuredReviewAgent(a))
 	var reviewPrompt string
 	var snapshotCleanup func()
 	if diffContent != "" || len(dirtyFiles) > 0 {

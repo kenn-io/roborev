@@ -16,7 +16,8 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: json.RawMessage(`{
-	  "schema_version": 1,
+	  "schema_version": 2,
+	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
   "findings": [
     {"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}
@@ -34,12 +35,61 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	require.Len(t, got.Structured.Findings, 1)
 	assert.Equal(t, "low", got.Structured.Findings[0].Severity)
 	assert.JSONEq(t, string(a.result), string(got.StructuredOutput))
-	assert.Equal(t, "medium", got.StructuredMinSeverity)
-	assert.NotContains(t, got.Output, "Vague name")
+	assert.Equal(t, "medium", got.MinSeverity)
+	assert.Contains(t, got.Output, "Vague name", "findings below the threshold stay in the output")
+	assert.Contains(t, got.Output, "No findings at or above medium severity.")
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
 	assert.Equal(t, got.Output+"\n", streamed.String())
 	assert.Equal(t, storage.VerdictFail, storage.ParseVerdict(got.Output),
 		"rendered prose must not replace the structured verdict")
+}
+
+func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
+	a := &structuredBatchAgent{
+		name: "structured", output: "PROSE FALLBACK",
+		result: json.RawMessage(`{
+  "schema_version": 2,
+  "verdict": "pass",
+  "summary": "One real bug.",
+  "findings": [
+    {"severity":"high","problem":"Nil deref.","fix":"Check the pointer.","location":"main.go:10"}
+  ]
+}`),
+	}
+
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "", nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, got.Structured)
+	assert.Equal(t, storage.VerdictFail, got.Verdict)
+	assert.Contains(t, got.Output, "### 1. High")
+	assert.Contains(t, got.Output, "**Location:** main.go:10")
+	assert.NotContains(t, got.Output, "PROSE FALLBACK",
+		"structured agents must not fall back to prose reviews")
+}
+
+func TestRunAgentReviewProseVerdictHonorsMinSeverity(t *testing.T) {
+	const output = "Summary of the change.\n\n- Low: variable name could be clearer\n"
+	a := &mockAgent{name: "prose", output: output}
+
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "medium", nil,
+	)
+	require.NoError(t, err)
+	assert.Nil(t, got.Structured)
+	assert.Equal(t, output, got.Output, "prose output is stored untouched")
+	assert.Equal(t, "medium", got.MinSeverity)
+	assert.Equal(t, storage.VerdictPass, got.Verdict, "a low-only review passes a medium threshold")
+
+	got, err = RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "low", nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, storage.VerdictFail, got.Verdict)
 }
 
 func TestRunAgentReviewDerivesBuiltInVerdict(t *testing.T) {
@@ -107,4 +157,66 @@ func TestNoVerdictMessage(t *testing.T) {
 
 	assert.True(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: msg}))
 	assert.False(IsNoVerdictFailure(ReviewResult{Status: ResultFailed, Error: "agent: boom"}))
+}
+
+func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
+	a := &structuredBatchAgent{
+		name: "structured",
+		result: json.RawMessage(`{
+  "schema_version": 2,
+  "summary": "The diff was truncated before any code appeared.",
+  "verdict": "unable_to_review",
+  "findings": []
+}`),
+	}
+
+	_, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "", nil,
+	)
+	require.ErrorContains(t, err, "could not review the change")
+	require.ErrorContains(t, err, "truncated before any code appeared")
+}
+
+func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
+	a := &structuredBatchAgent{
+		name: "structured",
+		result: json.RawMessage(`{
+  "schema_version": 2,
+  "summary": "Clean change.",
+  "verdict": "pass",
+  "findings": []
+}`),
+	}
+
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "", nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, storage.VerdictPass, got.Verdict)
+	assert.Contains(t, got.Output, "**Agent assessment:** Pass")
+	assert.Contains(t, got.Output, "No issues found.")
+}
+
+func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
+	a := &structuredBatchAgent{
+		name:   "structured",
+		result: json.RawMessage(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
+	}
+	_, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+	)
+	require.ErrorContains(t, err, "schema_version 1, want 2")
+}
+
+func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
+	a := &structuredBatchAgent{
+		name:   "structured",
+		result: json.RawMessage(`{"schema_version":2,"summary":"Bad.","verdict":"fail","findings":[]}`),
+	}
+	_, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+	)
+	require.ErrorContains(t, err, "failing verdict without any finding")
 }

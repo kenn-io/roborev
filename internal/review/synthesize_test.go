@@ -66,7 +66,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
+	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -94,7 +94,7 @@ func (a *synthesisEntrypointAgent) Synthesize(
 	_ context.Context, prompt string, _ io.Writer,
 ) (json.RawMessage, error) {
 	a.synthPrompt = prompt
-	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -124,7 +124,7 @@ func (a *structuredSynthesisAgent) ReviewWithSchema(
 ) (json.RawMessage, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -522,7 +522,7 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 		ReviewType: "custom",
 		Status:     ResultDone,
 		Structured: &structured,
-	}.FilterStructured("low")
+	}.ApplyMinSeverity("low")
 
 	comment, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{
 		MinSeverity: "high",
@@ -531,8 +531,8 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
-	assert.Contains(t, comment, "No findings at or above")
-	assert.NotContains(t, comment, "Name is vague")
+	assert.Contains(t, comment, "No findings at or above high severity.")
+	assert.Contains(t, comment, "Name is vague", "low findings stay in the comment")
 }
 
 func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {

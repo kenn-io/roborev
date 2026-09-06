@@ -52,8 +52,6 @@ Check the manifests for each changed file's language, including every language a
 
 Current date: GOLDEN_DATE (UTC)
 
-Severity filter: Only include Medium, High, and Critical findings. Ignore any findings below medium severity. If ALL findings in the review are below medium severity, output the exact text SEVERITY_THRESHOLD_MET and make no code changes.
-
 ## Current Commit
 
 **Commit:** fde21d1

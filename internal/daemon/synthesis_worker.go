@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -44,7 +43,7 @@ func (wp *WorkerPool) processSynthesisJob(
 	}
 	results := toReviewResults(rows)
 	for i := range results {
-		results[i] = results[i].FilterStructured(job.MinSeverity)
+		results[i] = results[i].ApplyMinSeverity(job.MinSeverity)
 	}
 	succeeded := filterSucceeded(results)
 
@@ -64,30 +63,16 @@ func (wp *WorkerPool) processSynthesisJob(
 		})
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
-		// label the review with that member's agent when no panel-level severity
-		// filter needs to be applied, or when the member already passed and
-		// there are no findings to filter.
-		if config.IsMarkerOnlyOutput(succeeded[0].Output) &&
-			succeeded[0].Passed() {
-			wp.completeSynthesisContext(workerID, job, synthesisResult{
-				agentName: succeeded[0].Agent,
-				output:    "No issues found.",
-				verdict:   succeeded[0].Verdict,
-			})
-			return
-		}
-		if !singleSuccessCanPassthrough(job.MinSeverity) &&
-			!succeeded[0].Passed() {
-			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
-			return
-		}
+		// label the review with that member's agent. Its verdict already
+		// honors the panel threshold, so no synthesis agent is needed.
 		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			agentName: succeeded[0].Agent,
-			output:    succeeded[0].Output,
-			verdict:   succeeded[0].Verdict,
+			agentName:        succeeded[0].Agent,
+			output:           succeeded[0].Output,
+			verdict:          succeeded[0].Verdict,
+			structuredOutput: succeeded[0].StructuredOutput,
 		})
 	default:
-		if allMembersPassed(results, succeeded) {
+		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
 				agentName: job.Agent,
 				output:    "No issues found.",
@@ -120,15 +105,6 @@ func allAvailabilitySkippedFailure(results []reviewpkg.ReviewResult) (string, bo
 	return first, true
 }
 
-func singleSuccessCanPassthrough(minSeverity string) bool {
-	switch strings.ToLower(strings.TrimSpace(minSeverity)) {
-	case "", "low":
-		return true
-	default:
-		return false
-	}
-}
-
 func (wp *WorkerPool) synthesizeSucceededResults(
 	ctx context.Context,
 	workerID string,
@@ -159,8 +135,8 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	wp.completeSynthesisContext(workerID, job, synthesisResult{
 		agentName:        resolvedAgent,
 		prompt:           prompt,
-		output:           doc.Markdown(),
-		verdict:          reviewpkg.SynthesisVerdict(doc),
+		output:           doc.Markdown(job.MinSeverity),
+		verdict:          reviewpkg.SynthesisVerdict(doc, job.MinSeverity),
 		structuredOutput: structured,
 		capturedSession:  capturedSession,
 		captureUsage:     true,
@@ -187,6 +163,24 @@ func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult 
 		}
 	}
 	return out
+}
+
+// anyRetainedFindings reports whether a passing member still carries findings
+// below the panel threshold. Those must reach the synthesized output, so the
+// clean-panel shortcut is not allowed to replace them with "No issues found."
+func anyRetainedFindings(succeeded []reviewpkg.ReviewResult) bool {
+	for _, r := range succeeded {
+		if r.Structured != nil {
+			if len(r.Structured.Findings) > 0 {
+				return true
+			}
+			continue
+		}
+		if storage.HighestSeverityLabel(r.Output) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // allMembersPassed reports whether every panel member completed successfully
@@ -244,10 +238,12 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 // capture must happen after the terminal write but before the completion
 // broadcast so a CI cost footer never renders an unpriced synthesis row.
 type synthesisResult struct {
-	agentName        string
-	prompt           string
-	output           string
-	verdict          storage.Verdict
+	agentName string
+	prompt    string
+	output    string
+	verdict   storage.Verdict
+	// structuredOutput carries a passed-through member's findings document
+	// so the synthesis review is as machine-readable as the member review.
 	structuredOutput json.RawMessage
 	capturedSession  string
 	captureUsage     bool
@@ -272,8 +268,10 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	if res.verdict != storage.VerdictUnknown {
 		completeErr = wp.db.CompleteJobResult(
 			job.ID, agentName, prompt, storage.ReviewCompletion{
-				Output: output, Verdict: res.verdict,
+				Output:           output,
+				Verdict:          res.verdict,
 				StructuredOutput: res.structuredOutput,
+				MinSeverity:      job.MinSeverity,
 			},
 		)
 	} else {

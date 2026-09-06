@@ -9,7 +9,19 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 1
+// SchemaVersion is the version agents must return. Version 1 documents
+// (without a verdict) are still decoded so stored reviews keep working.
+const SchemaVersion = 2
+
+// Verdict values the agent may report. The verdict never relaxes a finding:
+// a review with a finding at or above the severity threshold fails whatever
+// the agent says. VerdictUnableToReview means the agent could not assess the
+// change at all and is treated as an agent failure, not a clean pass.
+const (
+	VerdictPass           = "pass"
+	VerdictFail           = "fail"
+	VerdictUnableToReview = "unable_to_review"
+)
 
 // Schema constrains a single reviewer's output.
 var Schema = schema(false)
@@ -34,10 +46,11 @@ func schema(withSources bool) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "summary", "findings"],
+  "required": ["schema_version", "summary", "verdict", "findings"],
   "properties": {
     "schema_version": {"type": "integer", "const": %d},
     "summary": {"type": "string", "minLength": 1},
+    "verdict": {"type": "string", "enum": [%q, %q, %q]},
     "findings": {
       "type": "array",
       "items": {
@@ -56,13 +69,15 @@ func schema(withSources bool) json.RawMessage {
       }
     }
   }
-}`, SchemaVersion, required, sources))
+}`, SchemaVersion, VerdictPass, VerdictFail, VerdictUnableToReview, required, sources))
 }
 
 type Document struct {
-	SchemaVersion int       `json:"schema_version"`
-	Summary       string    `json:"summary"`
-	Findings      []Finding `json:"findings"`
+	SchemaVersion int    `json:"schema_version"`
+	Summary       string `json:"summary"`
+	// Verdict is the agent's own judgment. Empty for version 1 documents.
+	Verdict  string    `json:"verdict,omitempty"`
+	Findings []Finding `json:"findings"`
 	// SourceLabels names the input reviews a sourced document cites, indexed
 	// by review number minus one. It is caller-provided, never decoded, and
 	// only used when rendering Markdown.
@@ -98,6 +113,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 type documentWire struct {
 	SchemaVersion int           `json:"schema_version"`
 	Summary       string        `json:"summary"`
+	Verdict       string        `json:"verdict"`
 	Findings      []findingWire `json:"findings"`
 }
 
@@ -125,6 +141,7 @@ func Decode(raw json.RawMessage) (Document, error) {
 	result := Document{
 		SchemaVersion: wire.SchemaVersion,
 		Summary:       wire.Summary,
+		Verdict:       strings.ToLower(strings.TrimSpace(wire.Verdict)),
 		Findings:      make([]Finding, len(wire.Findings)),
 	}
 	for i, finding := range wire.Findings {
@@ -149,7 +166,22 @@ func Decode(raw json.RawMessage) (Document, error) {
 			Sources:  finding.Sources,
 		}
 	}
-	if result.SchemaVersion != SchemaVersion {
+	switch result.SchemaVersion {
+	case 1:
+		if result.Verdict != "" {
+			return Document{}, fmt.Errorf(
+				"structured review schema_version 1 does not carry a verdict",
+			)
+		}
+	case SchemaVersion:
+		switch result.Verdict {
+		case VerdictPass, VerdictFail, VerdictUnableToReview:
+		default:
+			return Document{}, fmt.Errorf(
+				"structured review has invalid verdict %q", wire.Verdict,
+			)
+		}
+	default:
 		return Document{}, fmt.Errorf(
 			"unsupported structured review schema_version %d",
 			result.SchemaVersion,
@@ -217,36 +249,54 @@ func ensureEOF(dec *json.Decoder) error {
 	return fmt.Errorf("structured review contains trailing JSON")
 }
 
-func (r Document) Filter(minSeverity string) Document {
+// thresholdRank converts a minimum severity into the rank a finding must
+// reach to count against the verdict. Empty and unknown values mean every
+// finding counts, the same as "low".
+func thresholdRank(minSeverity string) int {
 	threshold := severityRank(strings.ToLower(strings.TrimSpace(minSeverity)))
 	if threshold == 0 {
 		threshold = severityRank("low")
 	}
-	filtered := Document{
-		SchemaVersion: r.SchemaVersion,
-		Summary:       r.Summary,
-		Findings:      make([]Finding, 0, len(r.Findings)),
-		SourceLabels:  r.SourceLabels,
-	}
+	return threshold
+}
+
+// UnableToReview reports whether the agent declared it could not assess the
+// change. Callers treat that as an agent failure rather than a verdict.
+func (r Document) UnableToReview() bool {
+	return r.Verdict == VerdictUnableToReview
+}
+
+// Passed reports whether no finding reaches minSeverity. Findings below the
+// threshold are kept in the document and rendered, but do not fail the review.
+// The agent's own verdict is recorded and rendered but does not change the
+// outcome; the findings are the source of truth.
+func (r Document) Passed(minSeverity string) bool {
+	threshold := thresholdRank(minSeverity)
 	for _, finding := range r.Findings {
 		if severityRank(finding.Severity) >= threshold {
-			filtered.Findings = append(filtered.Findings, finding)
+			return false
 		}
 	}
-	return filtered
+	return true
 }
 
-func (r Document) Passed() bool {
-	return len(r.Findings) == 0
-}
-
-func (r Document) Markdown() string {
+// Markdown renders the summary and every finding. When minSeverity is set and
+// no finding reaches it, the rendering says so before listing the findings so
+// a reader can see why the review passed without losing the content.
+func (r Document) Markdown(minSeverity string) string {
 	var out strings.Builder
 	out.WriteString("## Summary\n\n")
 	out.WriteString(strings.TrimSpace(r.Summary))
+	if r.Verdict != "" {
+		fmt.Fprintf(&out, "\n\n**Agent assessment:** %s", verdictLabel(r.Verdict))
+	}
 	if len(r.Findings) == 0 {
-		out.WriteString("\n\nNo findings at or above the configured severity threshold.\n")
+		out.WriteString("\n\nNo issues found.\n")
 		return out.String()
+	}
+	minSeverity = strings.ToLower(strings.TrimSpace(minSeverity))
+	if severityRank(minSeverity) > severityRank("low") && r.Passed(minSeverity) {
+		fmt.Fprintf(&out, "\n\nNo findings at or above %s severity.", minSeverity)
 	}
 	out.WriteString("\n\n## Findings\n")
 	for i, finding := range r.Findings {
@@ -292,6 +342,19 @@ func severityRank(severity string) int {
 		return 1
 	default:
 		return 0
+	}
+}
+
+func verdictLabel(verdict string) string {
+	switch verdict {
+	case VerdictPass:
+		return "Pass"
+	case VerdictFail:
+		return "Fail"
+	case VerdictUnableToReview:
+		return "Unable to review"
+	default:
+		return verdict
 	}
 }
 

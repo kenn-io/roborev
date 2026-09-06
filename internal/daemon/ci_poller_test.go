@@ -2524,52 +2524,16 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	}
 }
 
-func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
+func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
 	}
-
-	t.Run("no filter when empty", func(t *testing.T) {
-		prompt := review.BuildSynthesisPrompt(reviews, "")
-		if strings.Contains(prompt, "Omit findings below") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected no severity filter instruction when minSeverity is empty")
-		}
-	})
-
-	t.Run("no filter when low", func(t *testing.T) {
-		prompt := review.BuildSynthesisPrompt(reviews, "low")
-		if strings.Contains(prompt, "Omit findings below") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected no severity filter instruction when minSeverity is low")
-		}
-	})
-
-	t.Run("filter for medium", func(t *testing.T) {
-		prompt := review.BuildSynthesisPrompt(reviews, "medium")
-		assertContainsAll(t, prompt, "prompt",
-			"Omit findings below medium severity",
-			"Only include Medium, High, and Critical findings.",
-		)
-	})
-
-	t.Run("filter for high", func(t *testing.T) {
-		prompt := review.BuildSynthesisPrompt(reviews, "high")
-		assertContainsAll(t, prompt, "prompt",
-			"Omit findings below high severity",
-			"Only include High and Critical findings.",
-		)
-	})
-
-	t.Run("filter for critical", func(t *testing.T) {
-		prompt := review.BuildSynthesisPrompt(reviews, "critical")
-		assertContainsAll(t, prompt, "prompt",
-			"Omit findings below critical severity",
-			"Only include Critical findings.",
-		)
-	})
+	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
+		prompt := review.BuildSynthesisPrompt(reviews, severity)
+		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
+		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
+		assert.Contains(t, prompt, "No issues found.")
+	}
 }
 
 func TestResolveMinSeverity(t *testing.T) {
