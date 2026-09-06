@@ -824,12 +824,12 @@ const pgUpsertReviewSQL = `
 			verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6,
 			CASE WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2 AND j.job_type IN ('task', 'insights'))
-				THEN NULL ELSE $7 END,
+				THEN NULL ELSE $7::boolean END,
 			$8, $9, $10, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
 			verdict_bool = CASE
-				WHEN $11 THEN NULL
+				WHEN $11::boolean THEN NULL
 				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
 				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
 			structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
