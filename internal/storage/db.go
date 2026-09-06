@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS reviews (
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  closed INTEGER NOT NULL DEFAULT 0
+  closed INTEGER NOT NULL DEFAULT 0,
+  reviewed_file_count INTEGER,
+  excluded_file_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -887,6 +889,26 @@ func (db *DB) migrate() error {
 	if count == 0 {
 		if _, err = db.Exec(`ALTER TABLE reviews ADD COLUMN structured_output TEXT`); err != nil {
 			return fmt.Errorf("add structured_output column: %w", err)
+		}
+	}
+	count = 0
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'reviewed_file_count'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check reviewed_file_count column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE reviews ADD COLUMN reviewed_file_count INTEGER`); err != nil {
+			return fmt.Errorf("add reviewed_file_count column: %w", err)
+		}
+	}
+	count = 0
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'excluded_file_count'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check excluded_file_count column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE reviews ADD COLUMN excluded_file_count INTEGER`); err != nil {
+			return fmt.Errorf("add excluded_file_count column: %w", err)
 		}
 	}
 

@@ -223,6 +223,9 @@ Examples:
 					fmt.Printf("Tokens: %s\n", tu.FormatSummary())
 				}
 			}
+			if s := review.FileCoverage.FormatSummary(); s != "" {
+				fmt.Printf("Files: %s\n", s)
+			}
 			if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != nil {
 				if members, err := fetchPanelMembers(client, addr, *review.Job.PanelRunUUID); err == nil && len(members) > 0 {
 					fmt.Println(formatReviewersSummary(members))

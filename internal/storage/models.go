@@ -319,8 +319,9 @@ type Review struct {
 	SyncedAt           *time.Time `json:"synced_at,omitempty"`                           // Last sync time
 
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
-	VerdictBool      *int             `json:"verdict_bool,omitempty"`
-	StructuredOutput StructuredOutput `json:"structured_output,omitempty"`
+	VerdictBool      *int                `json:"verdict_bool,omitempty"`
+	StructuredOutput StructuredOutput    `json:"structured_output,omitempty"`
+	FileCoverage     *ReviewFileCoverage `json:"file_coverage,omitempty"`
 
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`

@@ -113,6 +113,7 @@ export * from "./resolveRepoOutputBody";
 export * from "./resolveRepoParams";
 export * from "./response";
 export * from "./review";
+export * from "./reviewFileCoverage";
 export * from "./reviewJob";
 export * from "./reviewProjection";
 export * from "./reviewProjectionJob";

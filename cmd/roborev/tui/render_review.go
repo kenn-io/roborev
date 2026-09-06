@@ -138,6 +138,10 @@ func (m model) renderReviewView() string {
 			metadata.WriteString(" ")
 			metadata.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
 		}
+		if s := review.FileCoverage.FormatSummary(); s != "" {
+			metadata.WriteString(" ")
+			metadata.WriteString(statusStyle.Render("[" + s + "]"))
+		}
 		metadataLine := metadata.String()
 		if m.width > 0 {
 			metadataLine = xansi.Truncate(metadataLine, m.width, "")

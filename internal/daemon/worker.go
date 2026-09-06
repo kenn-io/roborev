@@ -891,6 +891,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
 	var reviewPrompt string
+	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
 	storedPromptValue := job.Prompt
@@ -981,6 +982,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 			reviewPrompt = snapResult.Prompt
 			err = snapErr
+			if err == nil {
+				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
+			}
 		}
 	}
 	if err != nil {
@@ -1237,12 +1241,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
 					MinSeverity:      effectiveMinSeverity,
+					FileCoverage:     fileCoverage,
 				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
-		} else if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
+		} else if err := wp.db.CompleteJobResult(job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+			Output:       output,
+			FileCoverage: fileCoverage,
+		}); err != nil {
 			log.Printf("[%s] Error storing review: %v", workerID, err)
 			return
 		}

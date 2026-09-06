@@ -640,6 +640,8 @@ type SyncableReview struct {
 	Closed             bool
 	VerdictBool        *bool
 	StructuredOutput   json.RawMessage
+	ReviewedFileCount  *int
+	ExcludedFileCount  *int
 	UpdatedByMachineID uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -652,7 +654,8 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
-			r.verdict_bool, r.structured_output, r.updated_by_machine_id, r.created_at, r.updated_at
+			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
+			r.updated_by_machine_id, r.created_at, r.updated_at
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?
@@ -674,11 +677,13 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		var createdAt, updatedAt string
 		var verdictBool sql.NullBool
 		var structuredOutput sql.NullString
+		var reviewedFileCount, excludedFileCount sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
 			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&verdictBool, &structuredOutput, &r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&verdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
+			&r.UpdatedByMachineID, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
@@ -691,6 +696,14 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		}
 		if structuredOutput.Valid {
 			r.StructuredOutput = json.RawMessage(structuredOutput.String)
+		}
+		if reviewedFileCount.Valid {
+			r.ReviewedFileCount = new(int)
+			*r.ReviewedFileCount = int(reviewedFileCount.Int64)
+		}
+		if excludedFileCount.Valid {
+			r.ExcludedFileCount = new(int)
+			*r.ExcludedFileCount = int(excludedFileCount.Int64)
 		}
 		reviews = append(reviews, r)
 	}
@@ -890,18 +903,21 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	_, err = db.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
-			verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
+			updated_by_machine_id, created_at, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
 			verdict_bool = COALESCE(excluded.verdict_bool, reviews.verdict_bool),
 			structured_output = COALESCE(excluded.structured_output, reviews.structured_output),
+			reviewed_file_count = COALESCE(excluded.reviewed_file_count, reviews.reviewed_file_count),
+			excluded_file_count = COALESCE(excluded.excluded_file_count, reviews.excluded_file_count),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
-		verdictBool, nullStr(string(r.StructuredOutput)),
+		verdictBool, nullStr(string(r.StructuredOutput)), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }

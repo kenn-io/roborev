@@ -2125,21 +2125,22 @@ func (r Response) Validate() error {
 
 type Review struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema             *string        `json:"$schema,omitempty"`
-	Agent              string         `json:"agent" validate:"required"`
-	Closed             bool           `json:"closed"`
-	CreatedAt          time.Time      `json:"created_at" validate:"required"`
-	ID                 int64          `json:"id"`
-	Job                *ReviewJob     `json:"job,omitempty"`
-	JobID              int64          `json:"job_id"`
-	Output             string         `json:"output" validate:"required"`
-	Prompt             string         `json:"prompt" validate:"required"`
-	StructuredOutput   map[string]any `json:"structured_output,omitempty"`
-	SyncedAt           *time.Time     `json:"synced_at,omitempty"`
-	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`
-	UpdatedByMachineID *uuid.UUID     `json:"updated_by_machine_id,omitempty"`
-	UUID               *uuid.UUID     `json:"uuid,omitempty"`
-	VerdictBool        *int64         `json:"verdict_bool,omitempty"`
+	Schema             *string             `json:"$schema,omitempty"`
+	Agent              string              `json:"agent" validate:"required"`
+	Closed             bool                `json:"closed"`
+	CreatedAt          time.Time           `json:"created_at" validate:"required"`
+	FileCoverage       *ReviewFileCoverage `json:"file_coverage,omitempty"`
+	ID                 int64               `json:"id"`
+	Job                *ReviewJob          `json:"job,omitempty"`
+	JobID              int64               `json:"job_id"`
+	Output             string              `json:"output" validate:"required"`
+	Prompt             string              `json:"prompt" validate:"required"`
+	StructuredOutput   map[string]any      `json:"structured_output,omitempty"`
+	SyncedAt           *time.Time          `json:"synced_at,omitempty"`
+	UpdatedAt          *time.Time          `json:"updated_at,omitempty"`
+	UpdatedByMachineID *uuid.UUID          `json:"updated_by_machine_id,omitempty"`
+	UUID               *uuid.UUID          `json:"uuid,omitempty"`
+	VerdictBool        *int64              `json:"verdict_bool,omitempty"`
 }
 
 func (r Review) Validate() error {
@@ -2149,6 +2150,13 @@ func (r Review) Validate() error {
 	}
 	if err := typesValidator.Var(r.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
+	}
+	if r.FileCoverage != nil {
+		if v, ok := any(r.FileCoverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FileCoverage", err)
+			}
+		}
 	}
 	if r.Job != nil {
 		if v, ok := any(r.Job).(runtime.Validator); ok {
@@ -2181,6 +2189,11 @@ func (r Review) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ReviewFileCoverage struct {
+	Excluded *int64 `json:"excluded,omitempty"`
+	Reviewed *int64 `json:"reviewed,omitempty"`
 }
 
 type ReviewJob struct {
