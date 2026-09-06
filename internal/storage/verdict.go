@@ -168,6 +168,12 @@ func NoReviewLikeClauses(column string) (string, []any) {
 	return strings.Join(clauses, " OR "), args
 }
 
+// isFreeFormJobType reports whether a job's output is free-form prose that
+// never carries a verdict (task and insights jobs).
+func isFreeFormJobType(jobType string) bool {
+	return jobType == JobTypeTask || jobType == JobTypeInsights
+}
+
 // verdictBoolFromOutput returns the verdict_bool column value for review
 // output: 1 or 0 for a parsed verdict, nil (SQL NULL) when the output carries
 // no verdict.

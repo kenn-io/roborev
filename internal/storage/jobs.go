@@ -1223,7 +1223,7 @@ func (db *DB) completeJob(
 	var verdictBoolVal any
 	if completion.Verdict != VerdictUnknown {
 		verdictBoolVal = verdictToBool(completion.Verdict)
-	} else if jobType != JobTypeTask && jobType != JobTypeInsights {
+	} else if !isFreeFormJobType(jobType) {
 		verdictBoolVal = verdictBoolFromOutput(finalOutput)
 	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
