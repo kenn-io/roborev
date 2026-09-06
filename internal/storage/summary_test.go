@@ -484,6 +484,35 @@ func TestBackfillVerdictBool(t *testing.T) {
 // Older CompleteFixJob stored verdict_bool even for empty outputs. Listings
 // rely on non-NULL verdict_bool implying a non-empty output, so the startup
 // backfill pass must clear those legacy rows.
+func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, "/tmp/backfill-freeform-repo")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "summarize the module", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+	// An older release parsed a verdict out of this prose.
+	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	require.NoError(t, err)
+
+	count, err := db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "the legacy task verdict is cleared")
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must not be re-parsed into a verdict")
+
+	count, err = db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "a second run is a no-op")
+}
+
 func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

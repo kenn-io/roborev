@@ -516,11 +516,30 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	}
 	clearedCount += unreadable
 
+	// Task and insights output is free-form prose and never carries a
+	// verdict. Clear any verdict an older release parsed out of it, and keep
+	// those rows out of the re-parse below so a restart cannot add one back.
+	freeForm, err := db.Exec(`
+		UPDATE reviews SET verdict_bool = NULL
+		WHERE verdict_bool IS NOT NULL
+		  AND job_id IN (SELECT id FROM review_jobs WHERE job_type IN (?, ?))
+	`, JobTypeTask, JobTypeInsights)
+	if err != nil {
+		return 0, err
+	}
+	freeFormCount, err := freeForm.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	clearedCount += freeFormCount
+
 	rows, err := db.Query(`
 		SELECT rv.id, rv.output
 		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE rv.verdict_bool IS NULL AND rv.output != ''
-	`)
+		  AND j.job_type NOT IN (?, ?)
+	`, JobTypeTask, JobTypeInsights)
 	if err != nil {
 		return 0, err
 	}
