@@ -617,8 +617,8 @@ func TestHandleRerunJob(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, storage.JobStatusQueued, updated.Status)
 		assert.Equal(t, selectedAgent, updated.Agent)
-		assert.Equal(t, "requested-model", updated.Model)
-		assert.Equal(t, "requested-provider", updated.Provider)
+		assert.Empty(t, updated.Model, "the selected agent should use its default model")
+		assert.Empty(t, updated.Provider, "the selected agent should use its default provider")
 		assert.Equal(t, "requested-model", updated.RequestedModel)
 		assert.Equal(t, "requested-provider", updated.RequestedProvider)
 		assert.Equal(t, "backup-agent", updated.BackupAgent)
@@ -973,7 +973,29 @@ func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
 	job.RequestedModel = "requested-model"
 	opts, err = resolveRerunOpts(job, config.DefaultConfig(), nil, selectedAgent)
 	require.NoError(t, err)
-	assert.Equal(t, "requested-model", opts.Model)
+	assert.Equal(t, "classify-model", opts.Model)
+}
+
+func TestResolveRerunAgentUsesConfiguredDefaults(t *testing.T) {
+	const selectedAgent = "rerun-configured-agent"
+	agent.Register(&agent.FakeAgent{NameStr: selectedAgent})
+	t.Cleanup(func() { agent.Unregister(selectedAgent) })
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = selectedAgent
+	cfg.DefaultModel = "selected-default-model"
+	job := &storage.ReviewJob{
+		Agent: "test", RepoPath: t.TempDir(),
+		JobType: storage.JobTypeReview, ReviewType: config.ReviewTypeDefault,
+		RequestedModel: "original-model", RequestedProvider: "original-provider",
+	}
+
+	opts, err := resolveRerunOpts(job, cfg, nil, selectedAgent)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal("selected-default-model", opts.Model)
+	assert.Empty(opts.Provider)
+	assert.Equal("original-model", job.RequestedModel)
+	assert.Equal("original-provider", job.RequestedProvider)
 }
 
 func TestWorkflowForJobFixType(t *testing.T) {

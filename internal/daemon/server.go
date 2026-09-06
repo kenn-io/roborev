@@ -961,19 +961,15 @@ func resolveRerunOpts(
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
 		)
-		model := resolution.ModelForSelectedAgent(
-			storageName, strings.TrimSpace(job.RequestedModel),
-		)
+		// Keep the original request as provenance, but do not carry its
+		// model or provider override into a different agent's execution.
+		model := resolution.ModelForSelectedAgent(storageName, "")
 		if job.JobType == storage.JobTypeClassify {
 			model = config.ResolveClassifyModel("", resolutionPath, cfg)
-			if requestedModel := strings.TrimSpace(job.RequestedModel); requestedModel != "" {
-				model = requestedModel
-			}
 		}
 		return storage.ReenqueueOpts{
 			Agent:        storageName,
 			Model:        model,
-			Provider:     strings.TrimSpace(job.RequestedProvider),
 			ReplaceAgent: true,
 		}, nil
 	}

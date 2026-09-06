@@ -71,6 +71,11 @@ branch.
 | `Ctrl-D` | Quit |
 | `q` | Quit |
 
+Choosing another agent with `R` uses its configured model and provider defaults
+instead of the original request's explicit overrides. The job keeps the original
+request for reference. The rerun reuses the job and replaces its previous
+review.
+
 Panel reviews appear as one synthesis parent row by default. The parent row
 shows live progress while member reviewers run and a compact member summary
 after completion. Expand the row to inspect individual member jobs. Close,
