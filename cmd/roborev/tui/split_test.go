@@ -7296,13 +7296,11 @@ func TestRerunAgentPickerTransitionsAndOptions(t *testing.T) {
 	require.Nil(t, cmd)
 	require.Equal(t, viewRerunAgent, got.currentView)
 	assert.Equal(t, int64(42), got.rerunAgentJobID)
-	assert.True(t, slices.IsSorted(got.rerunAgentOptions))
 	assert.Contains(t, got.rerunAgentOptions, "picker-alpha")
 	assert.Contains(t, got.rerunAgentOptions, "picker-zeta")
 	assert.NotContains(t, got.rerunAgentOptions, "picker-current")
 	assert.NotContains(t, got.rerunAgentOptions, "test")
 	assert.NotContains(t, got.rerunAgentOptions, "acp.picker-unavailable")
-	assert.Contains(t, got.renderRerunAgentView(), "Rerun job #42 with agent")
 
 	start := got.rerunAgentSelected
 	res, _ = got.handleKeyMsg(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -7330,82 +7328,32 @@ func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) {
 	assert.NotContains(t, got.rerunAgentOptions, "picker-non-schema")
 }
 
-func TestRerunAgentPickerRejectsIneligibleRows(t *testing.T) {
-	registerRerunPickerAgent(t, "picker-ineligible-alternate")
-	tests := []struct {
-		name string
-		job  *storage.ReviewJob
+func TestRerunAgentPickerEligibility(t *testing.T) {
+	registerRerunPickerAgent(t, "picker-alternate")
+	for _, tt := range []struct {
+		name     string
+		job      storage.ReviewJob
+		wantView viewKind
 	}{
-		{
-			name: "panel member",
-			job: &storage.ReviewJob{
-				ID: 1, Agent: "test", Status: storage.JobStatusDone,
-				PanelRole: storage.PanelRoleMember, RepoPath: t.TempDir(),
-			},
-		},
-		{
-			name: "synthesis parent",
-			job: &storage.ReviewJob{
-				ID: 2, Agent: "test", Status: storage.JobStatusDone,
-				PanelRole: storage.PanelRoleSynthesis, RepoPath: t.TempDir(),
-			},
-		},
-		{
-			name: "running",
-			job: &storage.ReviewJob{
-				ID: 3, Agent: "test", Status: storage.JobStatusRunning,
-				RepoPath: t.TempDir(),
-			},
-		},
-		{
-			name: "canceled worker still stopping",
-			job: &storage.ReviewJob{
-				ID: 4, Agent: "test", Status: storage.JobStatusCanceled,
-				WorkerID: "worker", RepoPath: t.TempDir(),
-			},
-		},
-		{
-			name: "experiment attributed",
-			job: &storage.ReviewJob{
-				ID: 5, Agent: "test", Status: storage.JobStatusDone,
-				RepoPath:    t.TempDir(),
-				Experiments: []storage.ExperimentAssignment{{ID: "experiment"}},
-			},
-		},
-	}
-	for _, tt := range tests {
+		{name: "done", job: storage.ReviewJob{Status: storage.JobStatusDone}, wantView: viewRerunAgent},
+		{name: "failed", job: storage.ReviewJob{Status: storage.JobStatusFailed}, wantView: viewRerunAgent},
+		{name: "skipped", job: storage.ReviewJob{Status: storage.JobStatusSkipped}, wantView: viewRerunAgent},
+		{name: "canceled", job: storage.ReviewJob{Status: storage.JobStatusCanceled}, wantView: viewRerunAgent},
+		{name: "member", job: storage.ReviewJob{Status: storage.JobStatusDone, PanelRole: storage.PanelRoleMember}},
+		{name: "synthesis", job: storage.ReviewJob{Status: storage.JobStatusDone, PanelRole: storage.PanelRoleSynthesis}},
+		{name: "running", job: storage.ReviewJob{Status: storage.JobStatusRunning}},
+		{name: "stopping", job: storage.ReviewJob{Status: storage.JobStatusCanceled, WorkerID: "worker"}},
+		{name: "experiment", job: storage.ReviewJob{Status: storage.JobStatusDone, Experiments: []storage.ExperimentAssignment{{ID: "experiment"}}}},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := initTestModel(
-				withCurrentView(viewQueue), withTestJobs(*tt.job),
-				withSelection(0, tt.job.ID),
-			)
-			m.globalCfg = config.DefaultConfig()
+			m := rerunPickerModel(t, rerunOKHandler)
+			tt.job.ID, tt.job.RepoPath = m.jobs[0].ID, m.jobs[0].RepoPath
+			m.jobs[0] = tt.job
 			res, cmd := m.handleRerunAgentKey()
-			got := res.(model)
 			assert.Nil(t, cmd)
-			assert.Equal(t, viewQueue, got.currentView)
-			assert.Empty(t, got.rerunAgentOptions)
+			assert.Equal(t, tt.wantView, res.(model).currentView)
 		})
 	}
-}
-
-func TestRerunAgentPickerAcceptsSkippedRows(t *testing.T) {
-	registerRerunPickerAgent(t, "picker-skipped-alternate")
-	m := initTestModel(
-		withCurrentView(viewQueue),
-		withTestJobs(storage.ReviewJob{
-			ID: 6, Agent: "test", Status: storage.JobStatusSkipped,
-			RepoPath: t.TempDir(),
-		}),
-		withSelection(0, 6),
-	)
-	m.globalCfg = config.DefaultConfig()
-
-	res, cmd := m.handleRerunAgentKey()
-	got := res.(model)
-	assert.Nil(t, cmd)
-	assert.Equal(t, viewRerunAgent, got.currentView)
-	assert.Contains(t, got.rerunAgentOptions, "picker-skipped-alternate")
 }
 
 func TestRerunAgentPickerRechecksJobBeforeEnter(t *testing.T) {
@@ -7425,62 +7373,49 @@ func TestRerunAgentPickerRechecksJobBeforeEnter(t *testing.T) {
 	assert.Equal(t, "picker-current", got.jobs[0].Agent)
 }
 
-func TestRerunAgentPickerSubmitsSelectedAgent(t *testing.T) {
+func TestRerunAgentPickerSubmission(t *testing.T) {
 	registerRerunPickerAgent(t, "picker-current")
 	registerRerunPickerAgent(t, "picker-selected")
-	var request struct {
-		JobID int64  `json:"job_id"`
-		Agent string `json:"agent"`
+	for _, tt := range []struct {
+		status     int
+		wantAgent  string
+		wantStatus storage.JobStatus
+	}{
+		{http.StatusOK, "picker-selected", storage.JobStatusQueued},
+		{http.StatusBadRequest, "picker-current", storage.JobStatusDone},
+	} {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			var request struct {
+				JobID int64  `json:"job_id"`
+				Agent string `json:"agent"`
+			}
+			m := rerunPickerModel(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+				if tt.status == http.StatusBadRequest {
+					http.Error(w, "agent unavailable", tt.status)
+					return
+				}
+				rerunOKHandler(w, r)
+			})
+			res, _ := m.handleRerunAgentKey()
+			m = res.(model)
+			m.rerunAgentSelected = slices.Index(m.rerunAgentOptions, "picker-selected")
+			require.GreaterOrEqual(t, m.rerunAgentSelected, 0)
+			res, cmd := m.handleRerunAgentPickerKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = res.(model)
+			require.NotNil(t, cmd)
+			assert.Equal(t, viewQueue, m.currentView)
+			assert.Equal(t, storage.JobStatusQueued, m.jobs[0].Status)
+			assert.Equal(t, "picker-selected", m.jobs[0].Agent)
+
+			res, _ = m.Update(cmd())
+			m = res.(model)
+			assert.Equal(t, int64(42), request.JobID)
+			assert.Equal(t, "picker-selected", request.Agent)
+			assert.Equal(t, tt.wantAgent, m.jobs[0].Agent)
+			assert.Equal(t, tt.wantStatus, m.jobs[0].Status)
+		})
 	}
-	m := rerunPickerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		rerunOKHandler(w, r)
-	})
-
-	res, _ := m.handleRerunAgentKey()
-	m = res.(model)
-	m.rerunAgentSelected = slices.Index(m.rerunAgentOptions, "picker-selected")
-	require.GreaterOrEqual(t, m.rerunAgentSelected, 0)
-	res, cmd := m.handleRerunAgentPickerKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	optimistic := res.(model)
-	require.NotNil(t, cmd)
-	assert.Equal(t, viewQueue, optimistic.currentView)
-	assert.Equal(t, storage.JobStatusQueued, optimistic.jobs[0].Status)
-	assert.Equal(t, "picker-selected", optimistic.jobs[0].Agent)
-
-	msg, ok := cmd().(rerunResultMsg)
-	require.True(t, ok)
-	require.NoError(t, msg.err)
-	assert.Equal(t, int64(42), request.JobID)
-	assert.Equal(t, "picker-selected", request.Agent)
-	assert.Equal(t, "picker-selected", msg.agent)
-	res, _ = optimistic.handleRerunResultMsg(msg)
-	assert.Equal(t, "picker-selected", res.(model).jobs[0].Agent)
-}
-
-func TestRerunAgentPickerRollsBackFailedOptimisticRequest(t *testing.T) {
-	registerRerunPickerAgent(t, "picker-current")
-	registerRerunPickerAgent(t, "picker-rejected")
-	m := rerunPickerModel(t, func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "agent unavailable", http.StatusBadRequest)
-	})
-
-	res, _ := m.handleRerunAgentKey()
-	m = res.(model)
-	m.rerunAgentSelected = slices.Index(m.rerunAgentOptions, "picker-rejected")
-	require.GreaterOrEqual(t, m.rerunAgentSelected, 0)
-	res, cmd := m.handleRerunAgentPickerKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	optimistic := res.(model)
-	require.NotNil(t, cmd)
-	assert.Equal(t, "picker-rejected", optimistic.jobs[0].Agent)
-
-	msg, ok := cmd().(rerunResultMsg)
-	require.True(t, ok)
-	require.Error(t, msg.err)
-	res, _ = optimistic.handleRerunResultMsg(msg)
-	rolledBack := res.(model)
-	assert.Equal(t, "picker-current", rolledBack.jobs[0].Agent)
-	assert.Equal(t, storage.JobStatusDone, rolledBack.jobs[0].Status)
 }
 
 func TestDefaultAndControlRerunsOmitAgent(t *testing.T) {

@@ -968,9 +968,8 @@ func resolveRerunOpts(
 			model = config.ResolveClassifyModel("", resolutionPath, cfg)
 		}
 		return storage.ReenqueueOpts{
-			Agent:        storageName,
-			Model:        model,
-			ReplaceAgent: true,
+			Agent: storageName,
+			Model: model,
 		}, nil
 	}
 
@@ -2360,11 +2359,6 @@ func (s *Server) humaRerunJob(
 			fmt.Sprintf("load experiment assignment: %v", err),
 		)
 	}
-	if selectedAgent != "" && assignment != nil {
-		return nil, huma.Error400BadRequest(
-			"frozen experiment jobs cannot change agents on rerun",
-		)
-	}
 	rerunOpts, err := resolveRerunOpts(
 		job, s.configWatcher.Config(), assignment, selectedAgent,
 	)
@@ -2386,7 +2380,7 @@ func (s *Server) humaRerunJob(
 		)
 	}
 	if !replayed {
-		if rerunOpts.ReplaceAgent {
+		if selectedAgent != "" {
 			job.Agent = rerunOpts.Agent
 		}
 		s.broadcastRerunEnqueued(resultJobID, job.UUID, job)

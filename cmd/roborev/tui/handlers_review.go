@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 	"unicode"
 
@@ -195,43 +193,8 @@ func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 			)
 			return m, nil
 		}
-		snap := rerunSnapshot{
-			jobID:         job.ID,
-			oldAgent:      job.Agent,
-			oldStatus:     job.Status,
-			oldStartedAt:  job.StartedAt,
-			oldFinishedAt: job.FinishedAt,
-			oldError:      job.Error,
-			oldClosed:     job.Closed,
-			oldVerdict:    job.Verdict,
-			// 'r' is allowed on a panel SYNTHESIS parent (only members
-			// are blocked above), and the daemon answers that with a
-			// whole new panel run rather than a new attempt of this job
-			// -- record it now, while the job is in hand.
-			spawnsNewRun: job.IsSynthesisJob(),
-		}
-		// The optimistic re-queue is correct ONLY when the daemon really
-		// will re-run THIS row. For a synthesis parent it will not
-		// (rerunPanelRun enqueues a separate run and leaves this row and
-		// its review untouched), so writing it here would be wrong the
-		// moment it is written, not merely wrong if the request fails --
-		// and not only cosmetically: a fake queued status makes
-		// panelInProgressFlash (handlers_queue.go) refuse to open the
-		// parent's still-current review on Enter, flashing "Panel still
-		// synthesizing" with counts from the run that already finished.
-		// Clearing Closed would also flip the row's visibility under
-		// hideClosed. See handleRerunResultMsg's spawnsNewRun branch.
-		if !snap.spawnsNewRun {
-			job.Status = storage.JobStatusQueued
-			job.StartedAt = nil
-			job.FinishedAt = nil
-			job.Error = ""
-			job.Closed = nil
-			job.Verdict = nil
-		} else {
-			m.markPanelRerunInFlight(job.ID)
-		}
-		return m, m.rerunJob(snap)
+		cmd := m.startRerun(job, "")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -249,69 +212,30 @@ func rerunAgentEligible(job *storage.ReviewJob) bool {
 		job.Status == storage.JobStatusSkipped
 }
 
-func (m model) rerunAgentConfig(
-	job *storage.ReviewJob,
-) (*config.RepoConfig, *config.Config, error) {
+func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
 	repoPath := job.RepoPath
 	if job.WorktreePath != "" {
 		repoPath = job.WorktreePath
 	}
 	repoCfg, err := config.LoadRepoConfig(repoPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load repo config: %w", err)
-	}
-	globalCfg := m.globalCfg
-	if globalCfg == nil {
-		globalCfg = config.DefaultConfig()
-	}
-	return repoCfg, globalCfg, nil
-}
-
-func rerunAgentStorageName(
-	name string, repoCfg *config.RepoConfig, globalCfg *config.Config,
-) string {
-	return agent.StorageNameFromConfig(
-		agent.CanonicalName(name), repoCfg, globalCfg,
-	)
-}
-
-func validateRerunAgentChoice(
-	job *storage.ReviewJob,
-	name string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) error {
-	selected, err := agent.GetAvailableExactWithConfigFromConfig(
-		repoCfg, name, globalCfg,
-	)
-	if err != nil {
-		return err
-	}
-	if job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected) {
-		return errors.New("classifier reruns require a SchemaAgent")
-	}
-	if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
-		return err
-	}
-	if rerunAgentStorageName(name, repoCfg, globalCfg) ==
-		rerunAgentStorageName(job.Agent, repoCfg, globalCfg) {
-		return errors.New("selected agent is already assigned to this job")
-	}
-	return nil
-}
-
-func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
-	repoCfg, globalCfg, err := m.rerunAgentConfig(job)
-	if err != nil {
 		return nil, err
 	}
-	names := agent.AvailableNamesFromConfig(repoCfg, globalCfg)
-	available := make([]string, 0, len(names))
-	for _, name := range names {
-		if strings.TrimSpace(name) == "test" {
+	cfg := m.globalCfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	current := agent.StorageNameFromConfig(agent.CanonicalName(job.Agent), repoCfg, cfg)
+	var available []string
+	for _, name := range agent.AvailableNamesFromConfig(repoCfg, cfg) {
+		if name == "test" || agent.StorageNameFromConfig(agent.CanonicalName(name), repoCfg, cfg) == current {
 			continue
 		}
-		if validateRerunAgentChoice(job, name, repoCfg, globalCfg) == nil {
+		selected, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, name, cfg)
+		if err != nil || (job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected)) {
+			continue
+		}
+		if agent.ValidateStructuredReviewSelection(job.ReviewType, selected) == nil {
 			available = append(available, name)
 		}
 	}
@@ -391,38 +315,9 @@ func (m model) submitRerunAgentChoice() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	selectedAgent := m.rerunAgentOptions[m.rerunAgentSelected]
-	repoCfg, globalCfg, err := m.rerunAgentConfig(job)
-	if err == nil {
-		err = validateRerunAgentChoice(job, selectedAgent, repoCfg, globalCfg)
-	}
-	if err != nil {
-		m.closeRerunAgentPicker()
-		m.setWarningFlash(
-			fmt.Sprintf("Agent is no longer available: %v", err),
-			4*time.Second, viewQueue,
-		)
-		return m, nil
-	}
-	snap := rerunSnapshot{
-		jobID:         job.ID,
-		agent:         selectedAgent,
-		oldAgent:      job.Agent,
-		oldStatus:     job.Status,
-		oldStartedAt:  job.StartedAt,
-		oldFinishedAt: job.FinishedAt,
-		oldError:      job.Error,
-		oldClosed:     job.Closed,
-		oldVerdict:    job.Verdict,
-	}
-	job.Agent = selectedAgent
-	job.Status = storage.JobStatusQueued
-	job.StartedAt = nil
-	job.FinishedAt = nil
-	job.Error = ""
-	job.Closed = nil
-	job.Verdict = nil
 	m.closeRerunAgentPicker()
-	return m, m.rerunJob(snap)
+	cmd := m.startRerun(job, selectedAgent)
+	return m, cmd
 }
 
 func (m model) handleLogKey2() (tea.Model, tea.Cmd) {

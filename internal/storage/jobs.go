@@ -1343,16 +1343,15 @@ func (db *DB) MarkJobRebased(jobID int64) error {
 }
 
 type ReenqueueOpts struct {
-	Agent        string
-	Model        string
-	Provider     string
-	Reasoning    string
-	ReviewType   string
-	MinSeverity  string
-	BackupAgent  string
-	BackupModel  string
-	RestorePlan  bool
-	ReplaceAgent bool
+	Agent       string
+	Model       string
+	Provider    string
+	Reasoning   string
+	ReviewType  string
+	MinSeverity string
+	BackupAgent string
+	BackupModel string
+	RestorePlan bool
 }
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
@@ -1400,9 +1399,6 @@ func (db *DB) ReenqueueJobWithRequest(
 			return result.JobID, true, nil
 		}
 	}
-	if opts.ReplaceAgent && strings.TrimSpace(opts.Agent) == "" {
-		return 0, false, errors.New("replacement agent is required")
-	}
 
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
@@ -1448,7 +1444,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
 	`, enqueuedAt,
-		opts.RestorePlan || opts.ReplaceAgent, opts.Agent,
+		opts.RestorePlan || opts.Agent != "", opts.Agent,
 		nullString(opts.Model), nullString(opts.Provider),
 		opts.RestorePlan, opts.Reasoning,
 		opts.RestorePlan, opts.ReviewType,

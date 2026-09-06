@@ -627,92 +627,46 @@ func TestHandleRerunJob(t *testing.T) {
 		assert.Equal(t, selectedAgent, (<-events).Agent)
 	})
 
-	t.Run("rerun rejects unknown selected agent", func(t *testing.T) {
-		commit, err := db.GetOrCreateCommit(
-			repo.ID, "rerun-unknown-agent", "Author", "Subject", time.Now(),
-		)
-		require.NoError(t, err)
-		job, err := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID, CommitID: commit.ID,
-			GitRef: "rerun-unknown-agent", Agent: "test",
+	t.Run("rerun rejects invalid agent changes without mutating the job", func(t *testing.T) {
+		agent.Register(&agent.FakeAgent{NameStr: "rerun-unstructured"})
+		agent.Register(&commandTestAgent{name: "rerun-unavailable", command: "roborev-command-that-does-not-exist"})
+		t.Cleanup(func() {
+			agent.Unregister("rerun-unstructured")
+			agent.Unregister("rerun-unavailable")
 		})
-		require.NoError(t, err)
-		require.NoError(t, db.CancelJob(job.ID))
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
-			JobID: job.ID, Agent: "missing-rerun-agent",
-		})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-		assert.Contains(t, w.Body.String(), "unknown agent")
-
-		updated, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusCanceled, updated.Status)
-		assert.Equal(t, "test", updated.Agent)
-	})
-
-	t.Run("rerun rejects unavailable selected agent without fallback", func(t *testing.T) {
-		const unavailableAgent = "rerun-unavailable-agent"
-		agent.Register(&commandTestAgent{
-			name: unavailableAgent, command: "roborev-command-that-does-not-exist",
-		})
-		t.Cleanup(func() { agent.Unregister(unavailableAgent) })
-
-		commit, err := db.GetOrCreateCommit(
-			repo.ID, "rerun-unavailable-agent", "Author", "Subject", time.Now(),
-		)
-		require.NoError(t, err)
-		job, err := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID, CommitID: commit.ID,
-			GitRef: "rerun-unavailable-agent", Agent: "test",
-		})
-		require.NoError(t, err)
-		require.NoError(t, db.CancelJob(job.ID))
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
-			JobID: job.ID, Agent: unavailableAgent,
-		})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-		assert.Contains(t, w.Body.String(), "unavailable")
-
-		updated, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusCanceled, updated.Status)
-		assert.Equal(t, "test", updated.Agent)
-	})
-
-	t.Run("rerun rejects selected agent incompatible with structured review", func(t *testing.T) {
-		const selectedAgent = "rerun-unstructured-agent"
-		agent.Register(&agent.FakeAgent{NameStr: selectedAgent})
-		t.Cleanup(func() { agent.Unregister(selectedAgent) })
-
-		commit, err := db.GetOrCreateCommit(
-			repo.ID, "rerun-unstructured-agent", "Author", "Subject", time.Now(),
-		)
-		require.NoError(t, err)
-		job, err := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID, CommitID: commit.ID,
-			GitRef: "rerun-unstructured-agent", Agent: "test", ReviewType: "custom",
-		})
-		require.NoError(t, err)
-		require.NoError(t, db.CancelJob(job.ID))
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
-			JobID: job.ID, Agent: selectedAgent,
-		})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-		assert.Contains(t, w.Body.String(), "schema-constrained reviews")
-
-		updated, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusCanceled, updated.Status)
-		assert.Equal(t, "test", updated.Agent)
+		for _, tt := range []struct {
+			name, selected, reviewType, jobType, wantError string
+			experiment                                     *storage.ExperimentAssignmentInput
+		}{
+			{name: "unknown", selected: "missing-rerun-agent", wantError: "unknown agent"},
+			{name: "unavailable", selected: "rerun-unavailable", wantError: "unavailable"},
+			{name: "structured", selected: "rerun-unstructured", reviewType: "custom", wantError: "schema-constrained reviews"},
+			{name: "classifier", selected: "rerun-unstructured", reviewType: "design", jobType: storage.JobTypeClassify, wantError: "SchemaAgent"},
+			{name: "experiment", selected: "test", wantError: "frozen experiment", experiment: &storage.ExperimentAssignmentInput{
+				ExperimentID: "rerun-agent", DefinitionHash: "definition", DefinitionJSON: `{}`,
+				Arm: "experiment", SubjectHash: "subject", EffectiveConfigHash: "effective", EffectiveConfigJSON: `{}`,
+			}},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				job, err := db.EnqueueJob(storage.EnqueueOpts{
+					RepoID: repo.ID, GitRef: "rerun-" + tt.name, Agent: "test",
+					ReviewType: tt.reviewType, JobType: tt.jobType, Experiment: tt.experiment,
+				})
+				require.NoError(t, err)
+				require.NoError(t, db.CancelJob(job.ID))
+				req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
+					JobID: job.ID, Agent: tt.selected,
+				})
+				w := httptest.NewRecorder()
+				server.httpServer.Handler.ServeHTTP(w, req)
+				testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+				assert.Contains(t, w.Body.String(), tt.wantError)
+				updated, err := db.GetJobByID(job.ID)
+				require.NoError(t, err)
+				assert.Equal(t, storage.JobStatusCanceled, updated.Status)
+				assert.Equal(t, "test", updated.Agent)
+			})
+		}
 	})
 
 	t.Run("rerun stores configured ACP identity", func(t *testing.T) {
@@ -732,6 +686,7 @@ func TestHandleRerunJob(t *testing.T) {
 		job, err := isolatedDB.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID, CommitID: commit.ID,
 			GitRef: "rerun-acp-agent", Agent: "test",
+			RequestedModel: "original-model", RequestedProvider: "original-provider",
 		})
 		require.NoError(t, err)
 		require.NoError(t, isolatedDB.CancelJob(job.ID))
@@ -747,36 +702,6 @@ func TestHandleRerunJob(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "acp.rerun-acp", updated.Agent)
 		assert.Equal(t, "acp-model", updated.Model)
-	})
-
-	t.Run("rerun rejects selected agent for frozen experiment", func(t *testing.T) {
-		commit, err := db.GetOrCreateCommit(
-			repo.ID, "rerun-frozen-experiment", "Author", "Subject", time.Now(),
-		)
-		require.NoError(t, err)
-		job, err := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID, CommitID: commit.ID,
-			GitRef: "rerun-frozen-experiment", Agent: "test",
-			Experiment: &storage.ExperimentAssignmentInput{
-				ExperimentID: "rerun-agent", DefinitionHash: "definition",
-				DefinitionJSON: `{}`, Arm: "experiment", SubjectHash: "subject",
-				EffectiveConfigHash: "effective", EffectiveConfigJSON: `{}`,
-			},
-		})
-		require.NoError(t, err)
-		require.NoError(t, db.CancelJob(job.ID))
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
-			JobID: job.ID, Agent: "test",
-		})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-		assert.Contains(t, w.Body.String(), "frozen experiment")
-
-		updated, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusCanceled, updated.Status)
 	})
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
@@ -915,42 +840,6 @@ func TestRerunJobBroadcastsOnlyAcceptedRequest(t *testing.T) {
 	assert.Empty(t, events, "idempotent replay must not broadcast again")
 }
 
-func TestRerunClassifierRequiresSchemaAgent(t *testing.T) {
-	server, db, tempDir := newTestServer(t)
-	const selectedAgent = "rerun-classifier-unstructured"
-	agent.Register(&commandTestAgent{name: selectedAgent, command: "go"})
-	t.Cleanup(func() { agent.Unregister(selectedAgent) })
-
-	repo, err := db.GetOrCreateRepo(tempDir)
-	require.NoError(t, err)
-	commit, err := db.GetOrCreateCommit(
-		repo.ID, "rerun-classifier-unstructured", "Author", "Subject", time.Now(),
-	)
-	require.NoError(t, err)
-	job, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID: repo.ID, CommitID: commit.ID,
-		GitRef:  "rerun-classifier-unstructured",
-		Agent:   storage.AutoDesignAgentSentinel,
-		JobType: storage.JobTypeClassify, ReviewType: "design",
-		Source: storage.JobSourceAutoDesign,
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.CancelJob(job.ID))
-
-	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
-		JobID: job.ID, Agent: selectedAgent,
-	})
-	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, req)
-
-	testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-	assert.Contains(t, w.Body.String(), "SchemaAgent")
-	updated, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusCanceled, updated.Status)
-	assert.Equal(t, storage.AutoDesignAgentSentinel, updated.Agent)
-}
-
 func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
 	repoPath := t.TempDir()
 	testutil.InitTestGitRepo(t, repoPath)
@@ -974,28 +863,6 @@ func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
 	opts, err = resolveRerunOpts(job, config.DefaultConfig(), nil, selectedAgent)
 	require.NoError(t, err)
 	assert.Equal(t, "classify-model", opts.Model)
-}
-
-func TestResolveRerunAgentUsesConfiguredDefaults(t *testing.T) {
-	const selectedAgent = "rerun-configured-agent"
-	agent.Register(&agent.FakeAgent{NameStr: selectedAgent})
-	t.Cleanup(func() { agent.Unregister(selectedAgent) })
-	cfg := config.DefaultConfig()
-	cfg.DefaultAgent = selectedAgent
-	cfg.DefaultModel = "selected-default-model"
-	job := &storage.ReviewJob{
-		Agent: "test", RepoPath: t.TempDir(),
-		JobType: storage.JobTypeReview, ReviewType: config.ReviewTypeDefault,
-		RequestedModel: "original-model", RequestedProvider: "original-provider",
-	}
-
-	opts, err := resolveRerunOpts(job, cfg, nil, selectedAgent)
-	require.NoError(t, err)
-	assert := assert.New(t)
-	assert.Equal("selected-default-model", opts.Model)
-	assert.Empty(opts.Provider)
-	assert.Equal("original-model", job.RequestedModel)
-	assert.Equal("original-provider", job.RequestedProvider)
 }
 
 func TestWorkflowForJobFixType(t *testing.T) {

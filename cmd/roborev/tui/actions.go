@@ -206,6 +206,32 @@ func (m model) callPauseAPI(paused bool) error {
 	return err
 }
 
+// startRerun captures rollback state and updates the queue before sending the request.
+func (m *model) startRerun(job *storage.ReviewJob, selectedAgent string) tea.Cmd {
+	snap := rerunSnapshot{
+		jobID: job.ID, agent: selectedAgent, oldAgent: job.Agent,
+		oldStatus: job.Status, oldStartedAt: job.StartedAt,
+		oldFinishedAt: job.FinishedAt, oldError: job.Error,
+		oldClosed: job.Closed, oldVerdict: job.Verdict,
+		spawnsNewRun: job.IsSynthesisJob(),
+	}
+	if snap.spawnsNewRun {
+		// Panel reruns create a new run; the original row remains history.
+		m.markPanelRerunInFlight(job.ID)
+	} else {
+		if selectedAgent != "" {
+			job.Agent = selectedAgent
+		}
+		job.Status = storage.JobStatusQueued
+		job.StartedAt = nil
+		job.FinishedAt = nil
+		job.Error = ""
+		job.Closed = nil
+		job.Verdict = nil
+	}
+	return m.rerunJob(snap)
+}
+
 // rerunJob sends a rerun request to the server for failed/canceled jobs.
 func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 	return func() tea.Msg {
