@@ -80,20 +80,128 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 		return
 	}
 	verdict := verdictFromBoolOrParse(verdictBool, output)
+	if verdict == VerdictUnknown {
+		return
+	}
 	value := string(verdict)
 	job.Verdict = &value
 }
 
-// ParseVerdict extracts P (pass) or F (fail) from review output.
+// OutputKind classifies agent output before any verdict is parsed from it.
+// Only OutputReviewed carries a verdict; the other kinds mean no review
+// happened, whatever the text says afterwards.
+type OutputKind int
+
+const (
+	// OutputReviewed is ordinary review text; parse it for a verdict.
+	OutputReviewed OutputKind = iota
+	// OutputEmpty means the agent produced nothing: blank output, or the fixed
+	// placeholder every adapter returns when the process printed nothing.
+	OutputEmpty
+	// OutputUnreadableInput means the agent said it could not read its diff.
+	OutputUnreadableInput
+)
+
+func (k OutputKind) String() string {
+	switch k {
+	case OutputEmpty:
+		return "empty output"
+	case OutputUnreadableInput:
+		return "unreadable input"
+	default:
+		return "reviewed"
+	}
+}
+
+// NoReviewOutputPlaceholder is the text agent adapters return when the agent
+// process printed nothing at all.
+const NoReviewOutputPlaceholder = "No review output generated"
+
+// unreadableInputPhrases are deterministic signals that the agent never saw
+// the diff it was asked to review. They win over any pass phrase that
+// follows, such as a reflexive "No issues found."
+var unreadableInputPhrases = []string{
+	"unable to read the diff",
+	"unable to access the diff",
+	"cannot read the diff",
+	"can't read the diff",
+	"could not read the diff",
+	"couldn't read the diff",
+	"failed to read the diff",
+	"no diff was provided",
+	"ignored by configured ignore patterns",
+}
+
+// ClassifyOutput is the single place that decides whether agent output is a
+// review at all. Every path that turns output into a verdict, whether fresh
+// from an agent or already stored, asks this function.
+func ClassifyOutput(output string) OutputKind {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || trimmed == NoReviewOutputPlaceholder {
+		return OutputEmpty
+	}
+	// A severity-labelled finding is a real review even if the agent also
+	// says part of the input was unreadable.
+	if hasSeverityLabel(trimmed) {
+		return OutputReviewed
+	}
+	lower := strings.ReplaceAll(strings.ToLower(trimmed), "\u2019", "'")
+	for _, phrase := range unreadableInputPhrases {
+		if strings.Contains(lower, phrase) {
+			return OutputUnreadableInput
+		}
+	}
+	return OutputReviewed
+}
+
+// NoReviewLikeClauses returns SQL predicates that prefilter review rows whose
+// output may classify as anything other than OutputReviewed. The caller ORs
+// them and binds args in order; ClassifyOutput makes the final call.
+func NoReviewLikeClauses(column string) (string, []any) {
+	phrases := append([]string{strings.ToLower(NoReviewOutputPlaceholder)}, unreadableInputPhrases...)
+	clauses := make([]string, 0, len(phrases))
+	args := make([]any, 0, len(phrases))
+	for _, phrase := range phrases {
+		clauses = append(clauses, "lower("+column+") LIKE '%' || ? || '%'")
+		args = append(args, phrase)
+	}
+	return strings.Join(clauses, " OR "), args
+}
+
+// isFreeFormJobType reports whether a job's output is free-form prose that
+// never carries a verdict (task and insights jobs).
+func isFreeFormJobType(jobType string) bool {
+	return jobType == JobTypeTask || jobType == JobTypeInsights
+}
+
+// verdictBoolFromOutput returns the verdict_bool column value for review
+// output: 1 or 0 for a parsed verdict, nil (SQL NULL) when the output carries
+// no verdict.
+func verdictBoolFromOutput(output string) any {
+	verdict := ParseVerdict(output)
+	if verdict == VerdictUnknown {
+		return nil
+	}
+	return verdictToBool(verdict)
+}
+
+// ParseVerdict extracts P (pass) or F (fail) from review output. Output that
+// ClassifyOutput does not consider a review returns VerdictUnknown so the
+// caller can treat the job as never reviewed instead of clean or failed.
 // It intentionally uses a small set of deterministic signals:
 // clear severity/findings markers mean fail, and clear pass phrases mean pass.
+// Anything else defaults to fail so prose findings without labels are kept.
 // We do not try to interpret narrative caveats after "No issues found." because
 // that quickly turns into a brittle natural-language parser. If agent output is
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
 func ParseVerdict(output string) Verdict {
-	// First check for severity labels which indicate actual findings
-	// These appear as "- Medium —", "* Low:", "Critical -", etc.
+	if ClassifyOutput(output) != OutputReviewed {
+		return VerdictUnknown
+	}
+
+	// Severity labels indicate actual findings. They appear as
+	// "- Medium —", "* Low:", "Critical -", etc.
 	if hasSeverityLabel(output) {
 		return VerdictFail
 	}
@@ -117,10 +225,9 @@ func ParseVerdict(output string) Verdict {
 		if isNoFindingVerdictLine(normalized) {
 			return VerdictPass
 		}
-		if !hasPassPrefix(normalized) {
-			continue
+		if hasPassPrefix(normalized) {
+			return VerdictPass
 		}
-		return VerdictPass
 	}
 	return VerdictFail
 }

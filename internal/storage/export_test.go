@@ -531,7 +531,12 @@ func TestExportReviewsCapsContent(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "cccccccccccccccccccccccccccccccccccccccc")
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", strings.Repeat("x", exportContentMaxBytes+100)))
+	require.NoError(t, db.CompleteJobResult(
+		job.ID, "codex", "prompt", ReviewCompletion{
+			Output:  strings.Repeat("x", exportContentMaxBytes+100),
+			Verdict: VerdictFail,
+		},
+	))
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
 	require.NoError(t, err)

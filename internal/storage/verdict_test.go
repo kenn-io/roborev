@@ -608,12 +608,16 @@ var verdictTests = []verdictTestCase{
 		want: VerdictPass,
 	},
 
-	// Failures should come from clear structured findings or from the absence of a
-	// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
+	// Output without a clear pass or fail signal did not produce a review verdict.
 	{
-		name:   "FailFallback/empty output",
+		name:   "Unknown/empty output",
 		output: "",
-		want:   VerdictFail,
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unknown/whitespace only",
+		output: "  \n\t\n",
+		want:   VerdictUnknown,
 	},
 	{
 		name:   "FailFallback/ambiguous language",
@@ -621,13 +625,53 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictFail,
 	},
 	{
-		name:   "FailFallback/narrative front matter without final verdict defaults to fail",
+		name:   "FailFallback/narrative front matter without final verdict",
 		output: "Reviewing the diff in context first. I'm opening the touched storage parsing code and adjacent tests to check for regressions.",
 		want:   VerdictFail,
 	},
 	{
 		name:   "FailFallback/unstructured issue statement defaults to fail",
 		output: "The code has issues.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "Unreadable/diff could not be read",
+		output: "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/could not read wins over later pass phrase",
+		output: "I could not read the diff at the given path.\n\nNo issues found.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/ignore pattern wins over explicit pass verdict",
+		output: "The file is ignored by configured ignore patterns, so I skipped it.\n\nVerdict: PASS",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/curly apostrophe",
+		output: "I can\u2019t read the diff you referenced.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/empty agent output placeholder",
+		output: "No review output generated",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unreadable/severity label still reports findings",
+		output: "Note: I was unable to read the diff for vendor/, reviewed the rest.\n\n- Medium: nil deref in main.go:42",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ExplicitFail/plain verdict",
+		output: "Verdict: FAIL",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ExplicitFail/markdown verdict",
+		output: "## Verdict: Fail",
 		want:   VerdictFail,
 	},
 
@@ -769,6 +813,20 @@ var verdictTests = []verdictTestCase{
 		output: "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
 		want:   VerdictFail,
 	},
+}
+
+func TestClassifyOutput(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(OutputEmpty, ClassifyOutput(""))
+	assert.Equal(OutputEmpty, ClassifyOutput("  \n"))
+	assert.Equal(OutputEmpty, ClassifyOutput(" No review output generated \n"))
+	assert.Equal(OutputUnreadableInput, ClassifyOutput("I couldn\u2019t read the diff."))
+	assert.Equal(OutputUnreadableInput, ClassifyOutput("The file is ignored by configured ignore patterns."))
+	assert.Equal(OutputReviewed, ClassifyOutput("No issues found."))
+	assert.Equal(OutputReviewed, ClassifyOutput("- High: nil deref in a.go:1"))
+	assert.Equal(OutputReviewed, ClassifyOutput("I was unable to read the diff for vendor/.\n\n- Medium: nil deref in main.go:42"))
+	assert.Equal("empty output", OutputEmpty.String())
+	assert.Equal("unreadable input", OutputUnreadableInput.String())
 }
 
 func TestParseVerdict(t *testing.T) {

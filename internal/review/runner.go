@@ -26,9 +26,10 @@ func RunAgentReview(
 			return ReviewResult{}, err
 		}
 		result := ReviewResult{Output: output}
-		if output != "" {
-			result.Verdict = storage.ParseVerdict(output)
+		if noVerdict := NoVerdict(output); noVerdict != nil {
+			return result, noVerdict
 		}
+		result.Verdict = storage.ParseVerdict(output)
 		return result, nil
 	}
 

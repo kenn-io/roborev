@@ -807,20 +807,43 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 
 // UpsertReview inserts or updates a review in PostgreSQL
 func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
-	_, err := p.pool.Exec(ctx, `
+	verdictBool, noReview := syncedReviewVerdict(r)
+	_, err := p.pool.Exec(ctx, pgUpsertReviewSQL,
+		r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
+		verdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt, noReview)
+	return err
+}
+
+// pgUpsertReviewSQL merges a pushed review. A NULL verdict normally keeps the
+// central value so an older sender cannot wipe one. Two cases must end
+// unrated even if a legacy verdict was stored before: output that is not a
+// review ($11), and free-form task or insights jobs, looked up by job type.
+const pgUpsertReviewSQL = `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
 			verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp())
+		) VALUES ($1, $2, $3, $4, $5, $6,
+			CASE WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2 AND j.job_type IN ('task', 'insights'))
+				THEN NULL ELSE $7::boolean END,
+			$8, $9, $10, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
-			verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
+			verdict_bool = CASE
+				WHEN $11::boolean THEN NULL
+				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
+				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
 			structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
-	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.VerdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt)
-	return err
+`
+
+// syncedReviewVerdict returns the verdict to store for a pushed review and
+// whether its output is not a review at all, mirroring the SQLite pull path.
+func syncedReviewVerdict(r SyncableReview) (*bool, bool) {
+	if ClassifyOutput(r.Output) != OutputReviewed {
+		return nil, true
+	}
+	return r.VerdictBool, false
 }
 
 func (p *PgPool) UpsertExperimentDefinition(ctx context.Context, definition SyncableExperimentDefinition) error {
@@ -1312,19 +1335,10 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 
 	batch := &pgx.Batch{}
 	for _, r := range reviews {
-		batch.Queue(`
-			INSERT INTO reviews (
-				uuid, job_uuid, agent, prompt, output, closed,
-				verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp())
-			ON CONFLICT (uuid) DO UPDATE SET
-				closed = EXCLUDED.closed,
-				verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
-				structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
-				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-				updated_at = clock_timestamp()
-		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.VerdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt)
+		verdictBool, noReview := syncedReviewVerdict(r)
+		batch.Queue(pgUpsertReviewSQL,
+			r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
+			verdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt, noReview)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

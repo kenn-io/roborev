@@ -868,7 +868,8 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// First, find the job_id by uuid
 	var jobID int64
-	err := db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID)
+	var jobType string
+	err := db.QueryRow(`SELECT id, job_type FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return nil
@@ -878,14 +879,27 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	// A remote machine on an older release may have stored a verdict for
+	// output that never reviewed the code (an unreadable diff). Do not
+	// re-import that verdict; the row stays unrated here as it would locally.
+	// A NULL verdict normally keeps the local value on conflict, so an older
+	// sender that never sends verdict_bool cannot wipe a locally computed
+	// one. Two cases are the exception and must end unrated even if a legacy
+	// verdict was stored before: output that is not a review, and free-form
+	// task or insights output, which never carries a verdict locally either.
 	var verdictBool any
-	if r.VerdictBool != nil {
+	noVerdict := ClassifyOutput(r.Output) != OutputReviewed || isFreeFormJobType(jobType)
+	if r.VerdictBool != nil && !noVerdict {
 		verdictBool = 0
 		if *r.VerdictBool {
 			verdictBool = 1
 		}
-	} else if r.Output != "" {
-		verdictBool = verdictToBool(ParseVerdict(r.Output))
+	} else if r.VerdictBool == nil && !noVerdict {
+		verdictBool = verdictBoolFromOutput(r.Output)
+	}
+	verdictOnConflict := "COALESCE(excluded.verdict_bool, reviews.verdict_bool)"
+	if noVerdict {
+		verdictOnConflict = "NULL"
 	}
 	_, err = db.Exec(`
 		INSERT INTO reviews (
@@ -894,7 +908,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
-			verdict_bool = COALESCE(excluded.verdict_bool, reviews.verdict_bool),
+			verdict_bool = `+verdictOnConflict+`,
 			structured_output = COALESCE(excluded.structured_output, reviews.structured_output),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
@@ -910,7 +924,8 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 	// First, find the job_id by uuid
 	var jobID int64
-	err := db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID)
+	var jobType string
+	err := db.QueryRow(`SELECT id, job_type FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this response (orphaned)
 		return nil

@@ -3699,6 +3699,8 @@ func formatPanelReviewerStatus(member storage.BatchReviewResult) string {
 		return "skipped"
 	case reviewpkg.IsTransientFailure(result):
 		return "skipped"
+	case reviewpkg.IsNoVerdictFailure(result):
+		return "no verdict"
 	}
 	status := strings.TrimSpace(member.Status)
 	if status == "" {

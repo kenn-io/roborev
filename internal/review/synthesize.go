@@ -154,17 +154,15 @@ func runSynthesis(
 		ctx, 5*time.Minute)
 	defer cancel()
 
-	var output string
-	if sa, ok := synthAgent.(agent.SynthesisAgent); ok {
-		output, err = sa.Synthesize(synthCtx, synthPrompt, nil)
-	} else {
-		output, err = synthAgent.Review(
-			synthCtx, opts.RepoPath, opts.GitRef, synthPrompt, nil)
-	}
+	doc, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
+		Checkout: func() (SynthesisCheckout, error) {
+			return SynthesisCheckout{RepoPath: opts.RepoPath, GitRef: opts.GitRef}, nil
+		},
+	})
 	if err != nil {
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}
 
 	return FormatSynthesizedComment(
-		output, results, opts.HeadSHA), nil
+		doc.Markdown(), results, opts.HeadSHA), nil
 }

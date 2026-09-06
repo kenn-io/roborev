@@ -80,8 +80,6 @@ const (
 	ResultSkipped = "skipped"
 )
 
-const noReviewOutputPlaceholder = "No review output generated"
-
 // HasSubstantiveOutput reports whether any completed review produced
 // agent-authored output. Failed and skipped results never qualify, even when
 // they carry diagnostic text, and neither does the placeholder returned by
@@ -93,9 +91,8 @@ func HasSubstantiveOutput(results []ReviewResult) bool {
 // IsSubstantiveOutput reports whether one completed review produced
 // agent-authored output.
 func IsSubstantiveOutput(result ReviewResult) bool {
-	output := strings.TrimSpace(result.Output)
 	return result.Status == ResultDone &&
-		output != "" && output != noReviewOutputPlaceholder
+		storage.ClassifyOutput(result.Output) == storage.OutputReviewed
 }
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.
@@ -190,6 +187,60 @@ func UnavailableError(msg string) string {
 		return msg
 	}
 	return UnavailableErrorPrefix + msg
+}
+
+// NoVerdictErrorPrefix is the stored job error code for an agent that ran to
+// completion without producing a review (empty output, or an unreadable
+// diff). It sits beside QuotaErrorPrefix, OutageErrorPrefix, and the others
+// so consumers can separate "never reviewed" from genuine agent failures.
+const NoVerdictErrorPrefix = "no-verdict: "
+
+// noVerdictOutputLimit caps the agent output preserved in the job error so a
+// runaway response cannot bloat the row.
+const noVerdictOutputLimit = 4000
+
+// NoVerdictError reports that an agent ran to completion but its output is
+// not a review. Kind says why and Output holds the agent's response so the
+// reason can be inspected after the job fails.
+type NoVerdictError struct {
+	Kind   storage.OutputKind
+	Output string
+}
+
+func (e *NoVerdictError) Error() string {
+	return "review produced no recognizable verdict (" + e.Kind.String() + ")"
+}
+
+// NoVerdict is the one boundary check for fresh agent output. It returns a
+// NoVerdictError when the output is not a review, and nil otherwise. Every
+// path that runs an agent for a verdict (review, compact, synthesis) calls
+// it so the job fails with the same code and the same preserved output.
+func NoVerdict(output string) *NoVerdictError {
+	kind := storage.ClassifyOutput(output)
+	if kind == storage.OutputReviewed {
+		return nil
+	}
+	return &NoVerdictError{Kind: kind, Output: output}
+}
+
+// NoVerdictMessage renders the stored job error for a NoVerdictError: the
+// prefix, the reason, and the agent output that lacked a verdict.
+func NoVerdictMessage(err *NoVerdictError) string {
+	output := strings.TrimSpace(err.Output)
+	if len(output) > noVerdictOutputLimit {
+		output = output[:noVerdictOutputLimit] + "\n[truncated]"
+	}
+	if output == "" {
+		return NoVerdictErrorPrefix + err.Error()
+	}
+	return NoVerdictErrorPrefix + err.Error() + "\n\n" + output
+}
+
+// IsNoVerdictFailure reports whether a review failed because its output had
+// no recognizable verdict.
+func IsNoVerdictFailure(r ReviewResult) bool {
+	return r.Status == ResultFailed &&
+		strings.HasPrefix(r.Error, NoVerdictErrorPrefix)
 }
 
 // TimeoutErrorPrefix is prepended to error messages when a batch job

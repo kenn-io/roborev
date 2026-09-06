@@ -569,6 +569,19 @@ func TestGetRepoStats(t *testing.T) {
 		assert.Equal(t, 2, stats.OpenReviews)
 	})
 
+	t.Run("unknown verdict is not counted as failed", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "stats-unknown-verdict")
+		commit := createCommit(t, db, repo.ID, "stats-unknown-sha")
+		job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
+		completeTestJob(t, db, job.ID, "I am unable to read the diff file because it is ignored by configured ignore patterns.")
+
+		stats, err := db.GetRepoStats(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, stats.PassedReviews)
+		assert.Equal(t, 0, stats.FailedReviews)
+		assert.Equal(t, 1, stats.OpenReviews)
+	})
+
 	t.Run("closed reviews counted", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-addressed-test")
 		commit1 := createCommit(t, db, repo.ID, "stats-sha1")
@@ -984,7 +997,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as FAIL
-		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
+		db.CompleteJob(jobID, "codex", "prompt", "**Verdict**: FAIL\n\n1. Bug found")
 
 		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)

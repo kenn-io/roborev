@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // CompactMetadata stores source job IDs for a compact job
@@ -60,9 +61,9 @@ func IsValidCompactOutput(output string) bool {
 		return false
 	}
 
-	// Reject placeholder output from agents that ran but produced no
-	// review content (auth errors, empty responses, etc.).
-	if output == "No review output generated" {
+	// Output that is not a review at all (empty, or an unreadable diff)
+	// never satisfies the compact contract either.
+	if storage.ClassifyOutput(output) != storage.OutputReviewed {
 		return false
 	}
 
@@ -79,10 +80,26 @@ func IsValidCompactOutput(output string) bool {
 	return !reportsRemainingFindingsWithoutDetails(output)
 }
 
+func compactVerdict(output string) storage.Verdict {
+	if !IsValidCompactOutput(output) {
+		return storage.VerdictUnknown
+	}
+	lower := strings.ToLower(output)
+	if hasActionableCompactFinding(output, lower) {
+		return storage.VerdictFail
+	}
+	if reportsNoRemainingFindings(lower) {
+		return storage.VerdictPass
+	}
+	if verdict := storage.ParseVerdict(output); verdict != storage.VerdictUnknown {
+		return verdict
+	}
+	return storage.VerdictFail
+}
+
 var (
 	compactFileLinePattern        = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|py|js|ts|tsx|jsx|java|rb|rs|c|cc|cpp|h|hpp|cs|php|swift|kt|m|mm|sql|yaml|yml|json|toml|md):\d+\b`)
 	compactPositiveRemainingCount = regexp.MustCompile(`\b[1-9]\d* (?:verified )?findings? remains?\b`)
-	compactFindingHeadingPattern  = regexp.MustCompile(`(?im)^#{1,6}\s*(review findings|verified findings|findings)\b`)
 	compactSeverityHeadingPattern = regexp.MustCompile(`(?im)^#{1,6}\s*(?:\*\*)?\s*(critical|high|medium|low)\b`)
 )
 
@@ -168,8 +185,7 @@ func hasActionableCompactFinding(output, lower string) bool {
 		return true
 	}
 
-	return compactFindingHeadingPattern.MatchString(output) &&
-		compactSeverityHeadingPattern.MatchString(output) &&
+	return compactSeverityHeadingPattern.MatchString(output) &&
 		compactFileLinePattern.MatchString(output)
 }
 

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -146,6 +148,8 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 
 	assertContainsAll(t, prompt, []string{
 		"combining multiple code review outputs",
+		`"sources":[1]`,
+		"### Review N",
 		"Do not call tools or run commands",
 		"Only combine the input review results according to these rules",
 		"### Review 1",
@@ -157,6 +161,79 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=")
 	assert.NotContains(t, prompt, "Verify each finding")
 	assert.NotContains(t, prompt, "current codebase")
+}
+
+func TestDecodeSynthesisDocument(t *testing.T) {
+	assert := assert.New(t)
+	reviews := []ReviewResult{
+		{Agent: "codex", ReviewType: "default"},
+		{Agent: "gemini", ReviewType: "security"},
+	}
+
+	doc, err := DecodeSynthesisDocument(json.RawMessage(
+		`{"schema_version":1,"summary":"One shared finding.","findings":[
+		  {"severity":"high","problem":"Leak","fix":"Close it","location":"a.go:1","sources":[2,1,2]}
+		]}`,
+	), reviews)
+	require.NoError(t, err)
+	assert.Equal(storage.VerdictFail, SynthesisVerdict(doc))
+	assert.Equal([]string{"codex", "gemini (security)"}, doc.SourceLabels)
+	md := doc.Markdown()
+	assert.Contains(md, "One shared finding.")
+	assert.Contains(md, "**Reported by:** gemini (security), codex")
+
+	clean, err := DecodeSynthesisDocument(json.RawMessage(
+		`{"schema_version":1,"summary":"Clean.","findings":[]}`,
+	), reviews)
+	require.NoError(t, err)
+	assert.Equal(storage.VerdictPass, SynthesisVerdict(clean))
+	assert.NotContains(clean.Markdown(), "Reported by")
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "malformed", raw: `not json`},
+		{name: "legacy verdict shape", raw: `{"schema_version":1,"verdict":"pass","markdown":"Clean"}`},
+		{name: "empty summary", raw: `{"schema_version":1,"summary":" ","findings":[]}`},
+		{name: "missing sources", raw: `{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null}]}`},
+		{name: "empty sources", raw: `{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null,"sources":[]}]}`},
+		{name: "source out of range", raw: `{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null,"sources":[3]}]}`},
+		{name: "unknown field", raw: `{"schema_version":1,"summary":"S","findings":[],"extra":true}`},
+		{name: "multiple values", raw: `{"schema_version":1,"summary":"S","findings":[]} {}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeSynthesisDocument(json.RawMessage(tt.raw), reviews)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestSynthesisDocumentRoundTripsNullLocation(t *testing.T) {
+	doc, err := DecodeSynthesisDocument(json.RawMessage(
+		`{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null,"sources":[1]}]}`,
+	), []ReviewResult{{Agent: "codex"}})
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"location":null`)
+	assert.NotContains(t, string(encoded), "source_labels")
+
+	again, err := DecodeStructuredReview(encoded)
+	require.NoError(t, err, "the stored document must satisfy the storage validator")
+	assert.Equal(t, doc.Findings, again.Findings)
+}
+
+func TestSynthesisSourceLabels(t *testing.T) {
+	labels := SynthesisSourceLabels([]ReviewResult{
+		{Agent: "codex"},
+		{Agent: "claude-code", ReviewType: "review"},
+		{Agent: "gemini", ReviewType: "design"},
+		{},
+	})
+	assert.Equal(t, []string{"codex", "claude-code", "gemini (design)", "review 4"}, labels)
 }
 
 func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {

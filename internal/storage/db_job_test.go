@@ -93,6 +93,44 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	assert.JSONEq(t, string(structured), storedStructured)
 }
 
+func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/task-verdict")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "count the exported symbols", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "worker-1")
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must not carry a parsed verdict")
+}
+
+func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/unknown-verdict", "unknown123")
+	claimJob(t, env.db, "worker-1")
+
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "prompt", "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+	))
+
+	var verdict sql.NullInt64
+	require.NoError(t, env.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid)
+	reviewRow, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reviewRow.Job.Verdict)
+}
+
 func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2472,4 +2510,24 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 	var vb sql.NullInt64
 	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
 	assert.False(t, vb.Valid, "empty output must not store a verdict")
+}
+
+func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/fix-unknown-output-repo")
+	commit := createCommit(t, db, repo.ID, "fix456")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "fix456")
+	claimJob(t, db, "w1")
+
+	require.NoError(t, db.CompleteFixJob(
+		job.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content",
+	))
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid)
 }

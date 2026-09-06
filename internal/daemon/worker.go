@@ -1135,13 +1135,29 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// (prompt size, worktree creation) have passed.
 	wp.markAgentInvoked(workerID, job, a)
 
-	// Run the review
+	// Run the agent. Tasks, insights, fixes, and compact jobs use their stored
+	// prompts directly. Compact derives its verdict from the compact response
+	// contract instead of the ordinary review-text parser.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
-	agentReview, err := review.RunAgentReview(
-		ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
-		effectiveMinSeverity, agentOutput,
-	)
+	var agentReview review.ReviewResult
+	if job.IsTaskJob() || job.IsFixJob() || job.JobType == storage.JobTypeCompact {
+		agentReview.Output, err = a.Review(
+			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
+		)
+		if job.JobType == storage.JobTypeCompact && err == nil {
+			if noVerdict := review.NoVerdict(agentReview.Output); noVerdict != nil {
+				err = noVerdict
+			} else {
+				agentReview.Verdict = compactVerdict(agentReview.Output)
+			}
+		}
+	} else {
+		agentReview, err = review.RunAgentReview(
+			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
+			effectiveMinSeverity, agentOutput,
+		)
+	}
 	output := agentReview.Output
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
@@ -1229,7 +1245,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
-		} else if job.IsReviewJob() &&
+		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
 				job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
@@ -1402,6 +1418,16 @@ func (wp *WorkerPool) failOrRetryAgentExecutionContext(
 	agentName string,
 	executionErr error,
 ) {
+	// A review that ran but produced no verdict (typically an unreadable
+	// diff) is deterministic for that agent: retrying it wastes runs. Fail
+	// over to the backup agent at once, or fail with the agent output kept
+	// in the stored error so the reason stays inspectable.
+	if noVerdict, ok := errors.AsType[*review.NoVerdictError](executionErr); ok {
+		wp.failoverOrFailNonRetryableAgentContext(
+			ctx, workerID, job, agentName, review.NoVerdictMessage(noVerdict),
+		)
+		return
+	}
 	errorMsg := fmt.Sprintf("agent: %v", executionErr)
 	classification, attached := agent.LimitClassificationFromError(executionErr)
 	if !attached {
