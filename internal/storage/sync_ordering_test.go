@@ -820,3 +820,22 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 
 	assert.Len(t, responses, 3)
 }
+
+func TestSyncedReviewVerdictDropsVerdictOnNonReviewOutput(t *testing.T) {
+	assert := assert.New(t)
+	fail := false
+
+	verdict, noReview := syncedReviewVerdict(SyncableReview{Output: "- High: bug in a.go:1", VerdictBool: &fail})
+	assert.False(noReview)
+	assert.Equal(&fail, verdict)
+
+	verdict, noReview = syncedReviewVerdict(SyncableReview{
+		Output: "I am unable to read the diff file because it is ignored by configured ignore patterns.", VerdictBool: &fail,
+	})
+	assert.True(noReview)
+	assert.Nil(verdict)
+
+	verdict, noReview = syncedReviewVerdict(SyncableReview{Output: "No review output generated", VerdictBool: &fail})
+	assert.True(noReview)
+	assert.Nil(verdict)
+}
