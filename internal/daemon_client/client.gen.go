@@ -1164,6 +1164,7 @@ type Review struct {
 	Agent              string                  `json:"agent"`
 	Closed             bool                    `json:"closed"`
 	CreatedAt          time.Time               `json:"created_at"`
+	FileCoverage       *ReviewFileCoverage     `json:"file_coverage,omitempty"`
 	Id                 int64                   `json:"id"`
 	Job                *ReviewJob              `json:"job,omitempty"`
 	JobId              int64                   `json:"job_id"`
@@ -1175,6 +1176,12 @@ type Review struct {
 	UpdatedByMachineId *uuid.UUID              `json:"updated_by_machine_id,omitempty"`
 	Uuid               *uuid.UUID              `json:"uuid,omitempty"`
 	VerdictBool        *int64                  `json:"verdict_bool,omitempty"`
+}
+
+// ReviewFileCoverage defines model for ReviewFileCoverage.
+type ReviewFileCoverage struct {
+	Excluded *int64 `json:"excluded,omitempty"`
+	Reviewed *int64 `json:"reviewed,omitempty"`
 }
 
 // ReviewJob defines model for ReviewJob.

@@ -1781,6 +1781,37 @@ func ReviewPathspecArgs(extraExcludes ...string) []string {
 	return args
 }
 
+// DiffPathsCtx returns the distinct repository paths a committed review
+// subject changes. Renames are disabled so a rename contributes both paths.
+func DiffPathsCtx(ctx context.Context, repoPath, gitRef string, pathspec []string) ([]string, error) {
+	var args []string
+	if IsRange(gitRef) {
+		args = []string{"diff", gitRef, "--name-only", "--no-renames", "-z", "--"}
+	} else {
+		args = []string{"show", gitRef, "--format=", "--name-only", "--no-renames", "-z", "--"}
+	}
+	args = append(args, pathspec...)
+	cmd := newGitCmdContext(ctx, args...)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff paths: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for path := range strings.SplitSeq(string(out), "\x00") {
+		if path != "" {
+			seen[path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	slices.Sort(paths)
+	return paths, nil
+}
+
 func captureGitOutputLimited(ctx context.Context, repoPath string, maxBytes int, args ...string) (string, bool, error) {
 	if maxBytes <= 0 {
 		return "", true, nil

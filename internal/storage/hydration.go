@@ -183,16 +183,19 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 }
 
 type reviewScanFields struct {
-	CreatedAt        string
-	Closed           int
-	UUID             sql.Null[uuid.UUID]
-	VerdictBool      sql.NullInt64
-	StructuredOutput sql.NullString
+	CreatedAt         string
+	Closed            int
+	UUID              sql.Null[uuid.UUID]
+	VerdictBool       sql.NullInt64
+	StructuredOutput  sql.NullString
+	ReviewedFileCount sql.NullInt64
+	ExcludedFileCount sql.NullInt64
 }
 
 const reviewSelectColumns = `
 	rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at,
-	rv.closed, rv.uuid, rv.verdict_bool, rv.structured_output`
+	rv.closed, rv.uuid, rv.verdict_bool, rv.structured_output,
+	rv.reviewed_file_count, rv.excluded_file_count`
 
 func reviewScanDestinations(
 	review *Review,
@@ -209,6 +212,8 @@ func reviewScanDestinations(
 		&fields.UUID,
 		&fields.VerdictBool,
 		&fields.StructuredOutput,
+		&fields.ReviewedFileCount,
+		&fields.ExcludedFileCount,
 	}
 }
 
@@ -241,6 +246,16 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 			&review.StructuredOutput,
 		)
 	}
+	var coverage ReviewFileCoverage
+	if fields.ReviewedFileCount.Valid {
+		value := int(fields.ReviewedFileCount.Int64)
+		coverage.Reviewed = &value
+	}
+	if fields.ExcludedFileCount.Valid {
+		value := int(fields.ExcludedFileCount.Int64)
+		coverage.Excluded = &value
+	}
+	review.FileCoverage = NormalizeReviewFileCoverage(&coverage)
 	applyReviewVerdict(review, fields.VerdictBool)
 }
 
