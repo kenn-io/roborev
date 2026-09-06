@@ -583,6 +583,21 @@ func TestTUIJobCellsContent(t *testing.T) {
 		assert.Equal(t, "claude", cells[colAgent-colRef])
 	})
 
+	t.Run("reasoning has its own column", func(t *testing.T) {
+		job := makeJob(1)
+		job.RequestedModel = "gpt-5.5"
+		job.Reasoning = "xhigh"
+		cells := m.jobCells(job)
+		assert.Equal(t, "gpt-5.5", cells[colRequestedModel-colRef])
+
+		assert.Equal(t, "xhigh", cells[colReasoning-colRef])
+
+		job.Reasoning = ""
+		cells = m.jobCells(job)
+		assert.Equal(t, "gpt-5.5", cells[colRequestedModel-colRef])
+		assert.Equal(t, "—", cells[colReasoning-colRef])
+	})
+
 	t.Run("verdict and handled values", func(t *testing.T) {
 		pass := "P"
 		handled := true
@@ -2088,7 +2103,8 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 
 func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	m.width = 120
+	// Leave room for the default-visible Reasoning column.
+	m.width = 130
 	m.height = 20
 	m.jobs = []storage.ReviewJob{
 		makeJob(1,
@@ -2103,15 +2119,7 @@ func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	found := false
-	for line := range strings.SplitSeq(output, "\n") {
-		stripped := stripTestANSI(line)
-		if strings.Contains(stripped, "my-project-repo") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Repo name 'my-project-repo' was truncated in output")
+	assert.Contains(t, stripTestANSI(output), "my-project-repo")
 }
 
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
@@ -3682,4 +3690,22 @@ func TestContentNavParentOmittedFromJobsRecovers(t *testing.T) {
 			assert.Empty(m.flashMessage, "omitted-parent recovery does not flash")
 		})
 	}
+}
+
+func TestQueueReasoningColumn(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 200, 20
+	job := makeJob(1, withAgent("test"))
+	job.Reasoning = "xhigh"
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, 1
+	output := stripTestANSI(m.renderQueueView())
+	assert.Contains(output, "Reasoning")
+	assert.Contains(output, "xhigh")
+
+	m.hiddenColumns = parseHiddenColumns([]string{"reasoning"})
+	output = stripTestANSI(m.renderQueueView())
+	assert.NotContains(output, "Reasoning")
+	assert.NotContains(output, "xhigh")
 }

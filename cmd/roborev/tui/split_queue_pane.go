@@ -16,6 +16,8 @@ func (m model) queuePaneColumns(paneW int, contentWidth map[int]int) []int {
 			return 2
 		case colRef, colBranch, colRepo:
 			return min(max(w, 4), 12)
+		case colReasoning:
+			return min(max(w, 9), 16)
 		case colReviewType:
 			return min(max(w, 11), 20)
 		default:

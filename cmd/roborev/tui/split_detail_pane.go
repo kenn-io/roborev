@@ -37,6 +37,7 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 
 	verdictParts := []string{
 		statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)),
+		statusStyle.Render("| Reasoning: " + displayReasoning(review.Job.Reasoning)),
 	}
 	if review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob() {
 		if *review.Job.Verdict == "P" {

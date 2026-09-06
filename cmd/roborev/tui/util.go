@@ -33,6 +33,14 @@ func formatAgentLabel(agent string, model string) string {
 	return agent
 }
 
+func displayReasoning(reasoning string) string {
+	reasoning = strings.TrimSpace(stripControlChars(reasoning))
+	if reasoning == "" {
+		return "—"
+	}
+	return reasoning
+}
+
 // detachedBranchLabel formats a placeholder branch label for a review job
 // whose branch is empty because the commit was made on top of a detached
 // HEAD (for example, mid git-bisect) rather than because the branch concept

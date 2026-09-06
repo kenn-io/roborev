@@ -219,9 +219,14 @@ Custom column order is saved to `column_order` (queue) and `task_column_order`
 (tasks) in `~/.roborev/config.toml`. Hidden columns are saved to
 `hidden_columns`, which accepts these names: `ref`, `branch`, `repo`, `agent`,
 `review_type`, `queued`, `elapsed`, `status`, `pf`, `closed`, `session_id`,
-`requested_model`, `requested_provider`, `cost`. When `hidden_columns` is not
-set, the Session, Req Model, and Req Provider columns are hidden by default. To
-show separator lines between columns, set `column_borders = true`.
+`requested_model`, `requested_provider`, `cost`, `reasoning`. When
+`hidden_columns` is not set, the Session, Req Model, and Req Provider columns
+are hidden by default. To show separator lines between columns, set
+`column_borders = true`.
+
+The Reasoning column shows the recorded reasoning effort, such as `xhigh`,
+separately from the model. It is visible by default. Jobs with no recorded
+reasoning show `—`.
 
 The Review Type column identifies standard reviews as `default` and shows the
 configured name for specialized or custom reviews. The review detail view shows
@@ -370,13 +375,14 @@ The review detail view shows:
 ```
 Review #42 myrepo (codex: gpt-5.5)
 /path/to/repo abc1234 on feature-branch
-Verdict: Pass [CLOSED]
+Review type: default | Reasoning: xhigh Verdict: Pass [CLOSED]
 ```
 
 - **Line 1**: Review identity: job ID, repo name, agent and model (if explicitly
     configured)
 - **Line 2**: Location: repo path, git ref, branch
-- **Line 3**: Status: verdict and closed state
+- **Line 3**: Review type, recorded reasoning, verdict and closed state. Missing
+    reasoning displays as `—`.
 
 ## Verdicts
 

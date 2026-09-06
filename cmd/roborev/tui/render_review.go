@@ -121,6 +121,7 @@ func (m model) renderReviewView() string {
 		}
 		var metadata strings.Builder
 		metadata.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)))
+		metadata.WriteString(statusStyle.Render(" | Reasoning: " + displayReasoning(review.Job.Reasoning)))
 		if hasVerdict {
 			metadata.WriteString(" ")
 			v := *review.Job.Verdict
