@@ -2601,7 +2601,7 @@ func (s *Server) humaEnqueue(
 		}
 	}
 	if branchToCheck != "" &&
-		config.IsBranchExcluded(checkoutRoot, branchToCheck) {
+		isBranchExcluded(checkoutRoot, repoCfg, branchToCheck, req.Source) {
 		return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
 			Skipped: true,
 			Reason: fmt.Sprintf(
@@ -2688,7 +2688,9 @@ func (s *Server) humaEnqueue(
 		if inferred := git.InferBranchForCommit(
 			ctx, checkoutRoot, descriptor.sessionSHA,
 		); inferred != "" {
-			if config.IsBranchExcluded(checkoutRoot, inferred) {
+			if isBranchExcluded(
+				checkoutRoot, repoCfg, inferred, req.Source,
+			) {
 				return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
 					Skipped: true,
 					Reason: fmt.Sprintf(
@@ -2782,6 +2784,19 @@ func (s *Server) humaEnqueue(
 		reasoning:      reasoning,
 		requestedModel: requestedModel,
 	})
+}
+
+func isBranchExcluded(
+	repoPath string, repoCfg *config.RepoConfig, branch, source string,
+) bool {
+	if config.IsBranchExcluded(repoPath, branch) {
+		return true
+	}
+	if source != storage.JobSourcePostCommit || repoCfg == nil ||
+		len(repoCfg.ExcludedBranchPatterns) == 0 {
+		return false
+	}
+	return matchBranch(repoCfg.ExcludedBranchPatterns, branch)
 }
 
 // singleAgentInputs groups the inputs threaded from humaEnqueue into the

@@ -383,6 +383,162 @@ func TestHandleEnqueueUsesExplicitBranchForExclusion(t *testing.T) {
 	}
 }
 
+func TestHandleEnqueueExcludedBranchPatterns(t *testing.T) {
+	const skippedPanelConfig = `
+excluded_branch_patterns = ["worktree-agent-*"]
+
+[review]
+hook_review_panel = "solo"
+
+[review.subagents.bug]
+agent = "test"
+review_type = "default"
+
+[review.panels.solo]
+members = ["bug"]
+synthesis_agent = "test"
+`
+	tests := []struct {
+		name          string
+		config        string
+		currentBranch string
+		targetBranch  string
+		source        string
+		wantStatus    int
+		wantBranch    string
+	}{
+		{
+			name:          "post-commit current branch matches issue glob",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "worktree-agent-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusOK,
+		},
+		{
+			name:          "base branch remains allowed",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "main",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "main",
+		},
+		{
+			name:          "nonmatching adjacent branch remains allowed",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "worktree-worker-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "worktree-worker-fix-662",
+		},
+		{
+			name:          "empty patterns remain allowed",
+			config:        `excluded_branch_patterns = []`,
+			currentBranch: "worktree-agent-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "worktree-agent-fix-662",
+		},
+		{
+			name:          "malformed pattern is a non-match",
+			config:        `excluded_branch_patterns = ["["]`,
+			currentBranch: "worktree-agent-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "worktree-agent-fix-662",
+		},
+		{
+			name:          "valid pattern after malformed pattern matches",
+			config:        `excluded_branch_patterns = ["[", "worktree-agent-*"]`,
+			currentBranch: "worktree-agent-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusOK,
+		},
+		{
+			name:          "glob does not cross slash boundary",
+			config:        `excluded_branch_patterns = ["feature/*"]`,
+			currentBranch: "feature/team/topic",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "feature/team/topic",
+		},
+		{
+			name:          "foreground explicit target matching glob remains allowed",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "main",
+			targetBranch:  "worktree-agent-fix-662",
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "worktree-agent-fix-662",
+		},
+		{
+			name:          "explicit post-commit target takes precedence",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "main",
+			targetBranch:  "worktree-agent-fix-662",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusOK,
+		},
+		{
+			name:          "allowed explicit post-commit target overrides matching checkout",
+			config:        `excluded_branch_patterns = ["worktree-agent-*"]`,
+			currentBranch: "worktree-agent-fix-662",
+			targetBranch:  "main",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusCreated,
+			wantBranch:    "main",
+		},
+		{
+			name:          "post-commit panel matching glob is skipped before fanout",
+			config:        skippedPanelConfig,
+			currentBranch: "worktree-agent-panel",
+			source:        storage.JobSourcePostCommit,
+			wantStatus:    http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
+			repoDir := filepath.Join(tmpDir, "testrepo")
+			repo := testutil.InitTestGitRepo(t, repoDir)
+			if tt.currentBranch != repo.RevParse("--abbrev-ref", "HEAD") {
+				repo.CheckoutNewBranch(tt.currentBranch)
+			}
+			require.NoError(t, os.WriteFile(
+				filepath.Join(repoDir, ".roborev.toml"),
+				[]byte(tt.config), 0o644,
+			))
+
+			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue",
+				EnqueueRequest{
+					RepoPath: repoDir,
+					GitRef:   "HEAD",
+					Branch:   tt.targetBranch,
+					Agent:    "test",
+					Source:   tt.source,
+				},
+			)
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+			if tt.wantStatus == http.StatusOK {
+				assert.Zero(t, queued)
+				var response EnqueueSkippedResponse
+				testutil.DecodeJSON(t, w, &response)
+				assert.True(t, response.Skipped)
+				assert.Contains(t, response.Reason, "excluded from reviews")
+				return
+			}
+
+			assert.Equal(t, 1, queued)
+			var job storage.ReviewJob
+			testutil.DecodeJSON(t, w, &job)
+			assert.Equal(t, tt.wantBranch, job.Branch)
+		})
+	}
+}
+
 func TestBuildTargetDescriptorExcludedCommitPattern(t *testing.T) {
 	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
@@ -2992,9 +3148,14 @@ func TestHandleEnqueueDetachedHeadInfersBranch(t *testing.T) {
 		repo.RunGit("branch", "feature-b")
 		repo.CheckoutDetached()
 		repo.CommitFile("g.txt", "content", "detached commit")
+		require.NoError(t, os.WriteFile(
+			filepath.Join(repoDir, ".roborev.toml"),
+			[]byte(`excluded_branch_patterns = ["feature-*"]`), 0o644,
+		))
 
 		w := enqueue(t, server, EnqueueRequest{
 			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+			Source: storage.JobSourcePostCommit,
 		})
 		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
@@ -3053,6 +3214,35 @@ func TestHandleEnqueueDetachedHeadInfersBranch(t *testing.T) {
 
 		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
 		assert.Zero(t, queued, "no job should be enqueued for excluded inferred branch")
+	})
+
+	t.Run("post-commit inferred branch matches exclusion glob", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("worktree-agent-fix-662")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+		require.NoError(t, os.WriteFile(
+			filepath.Join(repoDir, ".roborev.toml"),
+			[]byte(`excluded_branch_patterns = ["worktree-agent-*"]`), 0o644,
+		))
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+			Source: storage.JobSourcePostCommit,
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var response EnqueueSkippedResponse
+		testutil.DecodeJSON(t, w, &response)
+		assert.True(t, response.Skipped)
+		assert.Contains(t, response.Reason, "worktree-agent-fix-662")
+
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+		assert.Zero(t, queued)
 	})
 
 	t.Run("client-sent branch wins over inference", func(t *testing.T) {

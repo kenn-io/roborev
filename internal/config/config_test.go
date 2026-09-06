@@ -913,6 +913,12 @@ func TestIsBranchExcluded(t *testing.T) {
 			branch:     "my-wip",
 			want:       false,
 		},
+		{
+			name:       "branch patterns do not change exact matching",
+			repoConfig: `excluded_branch_patterns = ["wip-*"]`,
+			branch:     "wip-feature",
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -920,14 +926,25 @@ func TestIsBranchExcluded(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			// For "no config file", we just don't write anything.
 
-			got := IsBranchExcluded(tmpDir, tt.branch)
-			if got != tt.want {
-				assert.Condition(t, func() bool {
-					return false
-				}, "IsBranchExcluded(%q) = %v, want %v", tt.branch, got, tt.want)
-			}
+			assert.Equal(t, tt.want, IsBranchExcluded(tmpDir, tt.branch))
 		})
 	}
+}
+
+func TestLoadRepoConfigExcludedBranchPatterns(t *testing.T) {
+	tmpDir := newTempRepo(t, `
+excluded_branches = ["wip"]
+excluded_branch_patterns = ["worktree-agent-*", "release/*"]
+`)
+
+	cfg, err := LoadRepoConfig(tmpDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, []string{"wip"}, cfg.ExcludedBranches)
+	assert.Equal(t,
+		[]string{"worktree-agent-*", "release/*"},
+		cfg.ExcludedBranchPatterns,
+	)
 }
 
 func TestResolveExcludePatterns(t *testing.T) {
