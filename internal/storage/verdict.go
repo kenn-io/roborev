@@ -143,7 +143,7 @@ func ClassifyOutput(output string) OutputKind {
 	}
 	// A severity-labelled finding is a real review even if the agent also
 	// says part of the input was unreadable.
-	if hasSeverityLabel(trimmed) {
+	if HighestSeverityLabel(trimmed) != "" {
 		return OutputReviewed
 	}
 	lower := strings.ReplaceAll(strings.ToLower(trimmed), "\u2019", "'")
