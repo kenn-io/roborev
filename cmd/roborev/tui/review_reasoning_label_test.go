@@ -16,13 +16,11 @@ func TestReviewDetailReasoningLabel(t *testing.T) {
 		model     string
 		reasoning string
 		want      string
-		absent    string
 	}{
-		{name: "explicit", model: "gpt-5.5", reasoning: "xhigh", want: "(codex: gpt-5.5-xhigh)", absent: "gpt-5.5)"},
-		{name: "legacy default", model: "gpt-5.5", want: "(codex: gpt-5.5-thorough)", absent: "gpt-5.5-standard"},
-		{name: "case normalization", model: "gpt-5.5", reasoning: "XHigh", want: "(codex: gpt-5.5-xhigh)", absent: "XHigh"},
-		{name: "unknown normalization", model: "gpt-5.5", reasoning: "ultra", want: "(codex: gpt-5.5-standard)", absent: "ultra"},
-		{name: "without model", reasoning: "xhigh", want: "(codex)", absent: "(codex:"},
+		{name: "explicit", model: "gpt-5.5", reasoning: "xhigh", want: "xhigh"},
+		{name: "missing", model: "gpt-5.5", want: "—"},
+		{name: "recorded value", model: "gpt-5.5", reasoning: "ultra", want: "ultra"},
+		{name: "without model", reasoning: "xhigh", want: "xhigh"},
 	}
 
 	for _, tt := range tests {
@@ -40,10 +38,15 @@ func TestReviewDetailReasoningLabel(t *testing.T) {
 			})
 			fullScreen := stripANSI(m.renderReviewView())
 			pane := stripANSI(strings.Join(m.reviewPaneHeaderLines(88), "\n"))
-			assert.Contains(t, fullScreen, tt.want)
-			assert.Contains(t, pane, tt.want)
-			assert.NotContains(t, fullScreen, tt.absent)
-			assert.NotContains(t, pane, tt.absent)
+			assert := assert.New(t)
+			label := "(codex)"
+			if tt.model != "" {
+				label = "(codex: " + tt.model + ")"
+			}
+			assert.Contains(fullScreen, label)
+			assert.Contains(pane, label)
+			assert.Contains(fullScreen, "Reasoning: "+tt.want)
+			assert.Contains(pane, "Reasoning: "+tt.want)
 		})
 	}
 }

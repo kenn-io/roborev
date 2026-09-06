@@ -85,7 +85,7 @@ func (m model) renderReviewView() string {
 		}
 		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
 
-		agentStr := formatAgentLabelWithReasoning(review.Agent, review.Job.Model, review.Job.Reasoning)
+		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
 
 		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
 		titleLen = runewidth.StringWidth(title)
@@ -121,6 +121,7 @@ func (m model) renderReviewView() string {
 		}
 		var metadata strings.Builder
 		metadata.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)))
+		metadata.WriteString(statusStyle.Render(" | Reasoning: " + displayReasoning(review.Job.Reasoning)))
 		if hasVerdict {
 			metadata.WriteString(" ")
 			v := *review.Job.Verdict

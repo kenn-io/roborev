@@ -6,7 +6,6 @@ import (
 
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/agent"
 	internalgit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -34,26 +33,12 @@ func formatAgentLabel(agent string, model string) string {
 	return agent
 }
 
-func effectiveReasoningLabel(reasoning string) string {
-	reasoning = strings.ToLower(strings.TrimSpace(reasoning))
+func displayReasoning(reasoning string) string {
+	reasoning = strings.TrimSpace(stripControlChars(reasoning))
 	if reasoning == "" {
-		reasoning = "thorough"
+		return "—"
 	}
-	return string(agent.ParseReasoningLevel(reasoning))
-}
-
-func formatAgentLabelWithReasoning(agentName, model, reasoning string) string {
-	if model == "" {
-		return formatAgentLabel(agentName, model)
-	}
-	return fmt.Sprintf("%s: %s", agentName, formatModelWithReasoning(model, reasoning))
-}
-
-func formatModelWithReasoning(model, reasoning string) string {
-	if model == "" {
-		return ""
-	}
-	return model + "-" + effectiveReasoningLabel(reasoning)
+	return reasoning
 }
 
 // detachedBranchLabel formats a placeholder branch label for a review job
