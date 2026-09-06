@@ -58,13 +58,14 @@ const (
 )
 
 type ReviewOptionalContext struct {
-	ProjectGuidelines  *MarkdownSection
-	KataContext        *MarkdownSection
-	AdditionalContext  string
-	DependencyMetadata string
-	PreviousReviews    []PreviousReviewTemplateContext
-	InRangeReviews     []InRangeReviewTemplateContext
-	PreviousAttempts   []ReviewAttemptTemplateContext
+	ProjectGuidelines     *MarkdownSection
+	KataContext           *MarkdownSection
+	AdditionalContext     string
+	DependencyMetadata    string
+	PreviousReviews       []PreviousReviewTemplateContext
+	InRangeReviews        []InRangeReviewTemplateContext
+	PriorRangeReviewsFile string
+	PreviousAttempts      []ReviewAttemptTemplateContext
 }
 
 func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
@@ -99,7 +100,12 @@ func (o ReviewOptionalContext) IsEmpty() bool {
 		o.DependencyMetadata == "" &&
 		len(o.PreviousReviews) == 0 &&
 		len(o.InRangeReviews) == 0 &&
+		o.PriorRangeReviewsFile == "" &&
 		len(o.PreviousAttempts) == 0
+}
+
+func (o ReviewOptionalContext) PriorRangeReviewsXMLPath() string {
+	return escapeXML(o.PriorRangeReviewsFile)
 }
 
 func (o ReviewOptionalContext) ProjectGuidelinesBody() string {
@@ -118,6 +124,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.PreviousAttempts = nil
 	case len(o.InRangeReviews) > 0:
 		o.InRangeReviews = nil
+	case o.PriorRangeReviewsFile != "":
+		o.PriorRangeReviewsFile = ""
 	case len(o.PreviousReviews) > 0:
 		o.PreviousReviews = nil
 	case o.DependencyMetadata != "":

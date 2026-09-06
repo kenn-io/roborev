@@ -910,6 +910,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if cleanup != nil {
 			defer cleanup()
 		}
+		if err == nil {
+			priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
+				reviewPrompt, job.GitRef, cfg.ReviewContextCount, checkout.snapshotTarget,
+			)
+			if priorResult.Cleanup != nil {
+				defer priorResult.Cleanup()
+			}
+			reviewPrompt, err = priorResult.Prompt, priorErr
+		}
 		if err != nil {
 			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
