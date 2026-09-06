@@ -235,13 +235,13 @@ func (b *Builder) buildWithOpts(gitRef string, contextCount int, agentName, revi
 	return b.buildSinglePrompt(gitRef, contextCount, agentName, reviewType, opts)
 }
 
-// SnapshotResult holds a prompt and an optional cleanup function for a diff snapshot file.
+// SnapshotResult holds a prompt and cleanup for its temporary reference files.
 type SnapshotResult struct {
 	Prompt  string
 	Cleanup func()
 }
 
-// SnapshotTarget controls where oversized diff snapshot files are written.
+// SnapshotTarget controls where diff and prior-review snapshot files are written.
 // The zero value writes snapshots under the builder repo using that repo's
 // snapshot_dir config. Set RepoPath to write under a different checkout, and
 // ConfigRepoPath to resolve snapshot_dir from a trusted checkout.
@@ -250,8 +250,8 @@ type SnapshotTarget struct {
 	ConfigRepoPath string
 }
 
-// BuildWithSnapshot builds a review prompt, automatically writing a diff snapshot file
-// when the diff is too large to inline.
+// BuildWithSnapshot builds a review prompt with optional prior-review documents
+// and a diff snapshot when the diff is too large to inline.
 func (b *Builder) BuildWithSnapshot(gitRef string, contextCount int, agentName, reviewType, minSeverity string, excludes []string) (SnapshotResult, error) {
 	return b.BuildWithSnapshotTarget(gitRef, contextCount, agentName, reviewType, minSeverity, excludes, SnapshotTarget{})
 }
@@ -261,21 +261,44 @@ func (b *Builder) BuildWithSnapshot(gitRef string, contextCount int, agentName, 
 func (b *Builder) BuildWithSnapshotTarget(
 	gitRef string, contextCount int, agentName, reviewType, minSeverity string,
 	excludes []string, target SnapshotTarget,
-) (SnapshotResult, error) {
-	p, err := b.BuildWithDiffFile(gitRef, contextCount, agentName, reviewType, minSeverity, "")
+) (result SnapshotResult, err error) {
+	defer func() {
+		if err != nil && result.Cleanup != nil {
+			result.Cleanup()
+			result = SnapshotResult{}
+		}
+	}()
+
+	var priorReviewsFile string
+	if reviews := b.priorRangeReviewsForRef(gitRef, contextCount); len(reviews) > 0 {
+		priorReviewsFile, result.Cleanup, err = b.writePriorRangeReviewsSnapshot(reviews, target)
+		if err != nil {
+			return result, err
+		}
+	}
+	opts := buildOpts{
+		requireDiffFile: true, minSeverity: minSeverity,
+		priorRangeReviewsFile: &priorReviewsFile,
+	}
+	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, opts)
 	if !errors.Is(err, ErrDiffTruncatedNoFile) {
-		return SnapshotResult{Prompt: p}, err
+		return result, err
 	}
 	diffFile, cleanup, writeErr := b.WriteDiffSnapshotTarget(gitRef, excludes, target)
 	if writeErr != nil {
-		return SnapshotResult{}, fmt.Errorf("write diff snapshot: %w", writeErr)
+		return result, fmt.Errorf("write diff snapshot: %w", writeErr)
 	}
-	p, err = b.BuildWithDiffFile(gitRef, contextCount, agentName, reviewType, minSeverity, diffFile)
-	if err != nil {
-		cleanup()
-		return SnapshotResult{}, err
+	if priorCleanup := result.Cleanup; priorCleanup != nil {
+		result.Cleanup = func() {
+			cleanup()
+			priorCleanup()
+		}
+	} else {
+		result.Cleanup = cleanup
 	}
-	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
+	opts.diffFilePath = diffFile
+	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, opts)
+	return result, err
 }
 
 // WriteDiffSnapshot writes the full diff for a git ref to a repo-local temp
@@ -339,6 +362,10 @@ func (b *Builder) resolveSnapshotTarget(target SnapshotTarget) (string, string, 
 }
 
 func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, func(), error) {
+	return writeExternalSnapshot(repoPath, snapshotRoot, "roborev-snapshot-content.diff", diff)
+}
+
+func writeExternalSnapshot(repoPath, snapshotRoot, filename, content string) (string, func(), error) {
 	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
 		return "", nil, err
 	}
@@ -364,14 +391,14 @@ func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, fun
 	}
 	unregister := registerActiveSnapshot(dir)
 	snapshotLifecycleMu.Unlock()
-	diffFile := dir + string(os.PathSeparator) + "roborev-snapshot-content.diff"
-	f, err := os.OpenFile(diffFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	snapshotFile := filepath.Join(dir, filename)
+	f, err := os.OpenFile(snapshotFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		unregister()
 		os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
-	_, writeErr := f.WriteString(diff)
+	_, writeErr := f.WriteString(content)
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil {
 		unregister()
@@ -381,7 +408,7 @@ func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, fun
 		}
 		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
-	return diffFile, func() {
+	return snapshotFile, func() {
 		os.RemoveAll(dir)
 		unregister()
 	}, nil
@@ -768,7 +795,10 @@ func hardCapPrompt(prompt string, limit int) string {
 }
 
 type buildOpts struct {
-	additionalContext string
+	// nil defers review-document creation until a prebuilt prompt is executed.
+	// A non-nil value supplies the prepared path, or an empty string for no history.
+	priorRangeReviewsFile *string
+	additionalContext     string
 	// diffFilePath, when non-empty, is a file containing the full
 	// diff that the prompt can reference for oversized diffs.
 	diffFilePath string
@@ -1058,7 +1088,7 @@ func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
 	if len(original.InRangeReviews) > 0 && len(trimmed.InRangeReviews) == 0 {
 		loss++
 	}
-	if len(original.PriorRangeReviews) > 0 && len(trimmed.PriorRangeReviews) == 0 {
+	if original.PriorRangeReviewsFile != "" && trimmed.PriorRangeReviewsFile == "" {
 		loss++
 	}
 	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
@@ -1291,8 +1321,10 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	if files, err := git.GetRangeFilesChangedCtx(b.context(), b.repoPath, rangeRef); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 	}
-	if rangeStart != "" {
-		ctx.optional.PriorRangeReviews = b.priorRangeReviewViews(rangeStart, rangeRef, commits, contextCount)
+	if opts.priorRangeReviewsFile != nil {
+		ctx.optional.PriorRangeReviewsFile = *opts.priorRangeReviewsFile
+	} else if rangeStart != "" && len(b.priorRangeReviewViews(rangeStart, rangeRef, commits, contextCount)) > 0 {
+		ctx.optional.PriorRangeReviewsFile = PriorRangeReviewsFilePathPlaceholder
 	}
 
 	// Include per-commit reviews for commits inside the range so the agent
@@ -1402,98 +1434,6 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	return ctx.requiredPrefix + body, nil
-}
-
-const priorRangeReviewPageSize = 40
-
-func (b *Builder) priorRangeReviewViews(
-	rangeStart, rangeRef string, commits []string, limit int,
-) []PriorRangeReviewTemplateContext {
-	if b.db == nil || b.repoID <= 0 || rangeStart == "" || limit <= 0 || len(commits) == 0 {
-		return nil
-	}
-	commitIndex := make(map[string]int, len(commits))
-	for i, commit := range commits {
-		commitIndex[commit] = i
-	}
-	currentEnd := commits[len(commits)-1]
-	type selected struct {
-		view  PriorRangeReviewTemplateContext
-		index int
-	}
-	selectedByEnd := make(map[string]selected)
-	resolveCache := make(map[string]string)
-	resolve := func(ref string) (string, bool) {
-		if resolved, ok := resolveCache[ref]; ok {
-			return resolved, resolved != ""
-		}
-		resolved, err := git.ResolveSHACtx(b.context(), b.repoPath, ref)
-		if err != nil {
-			resolveCache[ref] = ""
-			return "", false
-		}
-		resolveCache[ref] = resolved
-		return resolved, true
-	}
-	for offset := 0; len(selectedByEnd) < limit; offset += priorRangeReviewPageSize {
-		candidates, err := b.db.GetRecentRangeReviewCandidates(b.repoID, priorRangeReviewPageSize, offset)
-		if err != nil {
-			return nil
-		}
-		for _, candidate := range candidates {
-			if candidate.GitRef == rangeRef {
-				continue
-			}
-			start, end, ok := git.ParseRange(candidate.GitRef)
-			if !ok {
-				continue
-			}
-			resolvedStart, ok := resolve(start)
-			if !ok || resolvedStart != rangeStart {
-				continue
-			}
-			resolvedEnd, ok := resolve(end)
-			index, contained := commitIndex[resolvedEnd]
-			if !ok || !contained || resolvedEnd == currentEnd {
-				continue
-			}
-			if _, exists := selectedByEnd[resolvedEnd]; exists {
-				continue
-			}
-			review, err := b.db.GetReviewByJobID(candidate.JobID)
-			if err != nil || review == nil {
-				continue
-			}
-			view := PriorRangeReviewTemplateContext{
-				Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
-				Agent:  review.Agent,
-				When:   review.CreatedAt.Format("2006-01-02 15:04"),
-				Output: review.Output,
-			}
-			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
-				for _, response := range storage.PromptTrustedResponses(responses) {
-					view.Comments = append(view.Comments, ReviewCommentTemplateContext{Responder: response.Responder, Response: response.Response})
-				}
-			}
-			selectedByEnd[resolvedEnd] = selected{view: view, index: index}
-		}
-		if len(candidates) < priorRangeReviewPageSize {
-			break
-		}
-	}
-	selectedViews := make([]selected, 0, len(selectedByEnd))
-	for _, candidate := range selectedByEnd {
-		selectedViews = append(selectedViews, candidate)
-	}
-	slices.SortFunc(selectedViews, func(a, b selected) int { return a.index - b.index })
-	if len(selectedViews) > limit {
-		selectedViews = selectedViews[len(selectedViews)-limit:]
-	}
-	views := make([]PriorRangeReviewTemplateContext, 0, len(selectedViews))
-	for _, candidate := range selectedViews {
-		views = append(views, candidate.view)
-	}
-	return views
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {

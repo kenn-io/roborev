@@ -58,14 +58,14 @@ const (
 )
 
 type ReviewOptionalContext struct {
-	ProjectGuidelines  *MarkdownSection
-	KataContext        *MarkdownSection
-	AdditionalContext  string
-	DependencyMetadata string
-	PreviousReviews    []PreviousReviewTemplateContext
-	InRangeReviews     []InRangeReviewTemplateContext
-	PriorRangeReviews  []PriorRangeReviewTemplateContext
-	PreviousAttempts   []ReviewAttemptTemplateContext
+	ProjectGuidelines     *MarkdownSection
+	KataContext           *MarkdownSection
+	AdditionalContext     string
+	DependencyMetadata    string
+	PreviousReviews       []PreviousReviewTemplateContext
+	InRangeReviews        []InRangeReviewTemplateContext
+	PriorRangeReviewsFile string
+	PreviousAttempts      []ReviewAttemptTemplateContext
 }
 
 func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
@@ -86,10 +86,6 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 	for i := range cloned.InRangeReviews {
 		cloned.InRangeReviews[i].Comments = slices.Clone(cloned.InRangeReviews[i].Comments)
 	}
-	cloned.PriorRangeReviews = slices.Clone(o.PriorRangeReviews)
-	for i := range cloned.PriorRangeReviews {
-		cloned.PriorRangeReviews[i].Comments = slices.Clone(cloned.PriorRangeReviews[i].Comments)
-	}
 	cloned.PreviousAttempts = slices.Clone(o.PreviousAttempts)
 	for i := range cloned.PreviousAttempts {
 		cloned.PreviousAttempts[i].Comments = slices.Clone(cloned.PreviousAttempts[i].Comments)
@@ -104,8 +100,12 @@ func (o ReviewOptionalContext) IsEmpty() bool {
 		o.DependencyMetadata == "" &&
 		len(o.PreviousReviews) == 0 &&
 		len(o.InRangeReviews) == 0 &&
-		len(o.PriorRangeReviews) == 0 &&
+		o.PriorRangeReviewsFile == "" &&
 		len(o.PreviousAttempts) == 0
+}
+
+func (o ReviewOptionalContext) PriorRangeReviewsXMLPath() string {
+	return escapeXML(o.PriorRangeReviewsFile)
 }
 
 func (o ReviewOptionalContext) ProjectGuidelinesBody() string {
@@ -124,8 +124,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.PreviousAttempts = nil
 	case len(o.InRangeReviews) > 0:
 		o.InRangeReviews = nil
-	case len(o.PriorRangeReviews) > 0:
-		o.PriorRangeReviews = nil
+	case o.PriorRangeReviewsFile != "":
+		o.PriorRangeReviewsFile = ""
 	case len(o.PreviousReviews) > 0:
 		o.PreviousReviews = nil
 	case o.DependencyMetadata != "":
@@ -383,14 +383,6 @@ type InRangeReviewTemplateContext struct {
 	Commit   string
 	Agent    string
 	Verdict  string
-	Output   string
-	Comments []ReviewCommentTemplateContext
-}
-
-type PriorRangeReviewTemplateContext struct {
-	Range    string
-	Agent    string
-	When     string
 	Output   string
 	Comments []ReviewCommentTemplateContext
 }
