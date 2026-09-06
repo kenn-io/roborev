@@ -187,6 +187,40 @@ echo "Review after settings merge"
 	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
 }
 
+func TestGeminiAntigravityReviewAddsRepositoryWorkspace(t *testing.T) {
+	skipIfWindows(t)
+
+	repoPath := filepath.Join(t.TempDir(), "ci-worktree")
+	require.NoError(t, os.Mkdir(repoPath, 0o755))
+	argsFile := filepath.Join(t.TempDir(), "args")
+	pwdFile := filepath.Join(t.TempDir(), "pwd")
+	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("PWD_FILE", pwdFile)
+
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
+pwd > "$PWD_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
+echo "Workspace review"
+`)
+	a := NewGeminiAgent(filepath.Join(filepath.Dir(scriptPath), "agy"))
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	res, err := a.Review(context.Background(), repoPath, "sha", "prompt", &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, "Workspace review", res)
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	assertFlagValue(t, args, "--add-dir", repoPath)
+	assert.NotContains(t, args, "--project")
+
+	pwdBytes, readErr := os.ReadFile(pwdFile)
+	require.NoError(t, readErr)
+	assert.Equal(t, repoPath+"\n", string(pwdBytes))
+}
+
 func TestGeminiAntigravityReviewStopsWhenSettingsLockCanceled(t *testing.T) {
 	skipIfWindows(t)
 
