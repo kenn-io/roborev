@@ -1224,7 +1224,7 @@ func (db *DB) completeJob(
 	var verdictBoolVal any
 	if completion.Verdict != VerdictUnknown {
 		verdictBoolVal = verdictToBool(completion.Verdict)
-	} else if jobType != JobTypeTask && jobType != JobTypeInsights {
+	} else if !isFreeFormJobType(jobType) {
 		verdictBoolVal = verdictBoolFromOutput(finalOutput)
 	}
 	coverage := NormalizeReviewFileCoverage(completion.FileCoverage)

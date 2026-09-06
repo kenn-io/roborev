@@ -839,3 +839,25 @@ func TestSyncedReviewVerdictDropsVerdictOnNonReviewOutput(t *testing.T) {
 	assert.True(noReview)
 	assert.Nil(verdict)
 }
+
+func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
+	h := newSyncTestHelper(t)
+	repo := createRepo(t, h.db, "/tmp/sync-task-repo")
+	job, err := h.db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "summarize", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, job.UUID)
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID: testUUID("task-pulled-review"), JobUUID: *job.UUID,
+		Agent: "test", Prompt: "prompt", Output: "Task done. No issues found.",
+		VerdictBool: new(true), UpdatedByMachineID: testUUID("task-machine"),
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must stay unrated on pull, as it does locally")
+}

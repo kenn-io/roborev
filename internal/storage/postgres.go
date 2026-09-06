@@ -824,19 +824,24 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 }
 
 // pgUpsertReviewSQL merges a pushed review. A NULL verdict normally keeps the
-// central value so an older sender cannot wipe one, but output that is not a
-// review ($13) must end unrated even if a legacy verdict was stored before.
+// central value so an older sender cannot wipe one. Two cases must end
+// unrated even if a legacy verdict was stored before: output that is not a
+// review ($13), and free-form task or insights jobs, looked up by job type.
 const pgUpsertReviewSQL = `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
 			updated_by_machine_id, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6,
-			$7,
+			CASE WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2 AND j.job_type IN ('task', 'insights'))
+				THEN NULL ELSE $7 END,
 			$8, $9, $10, $11, $12, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
-			verdict_bool = CASE WHEN $13 THEN NULL ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
+			verdict_bool = CASE
+				WHEN $13 THEN NULL
+				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
+				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
 			structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
 			reviewed_file_count = COALESCE(EXCLUDED.reviewed_file_count, reviews.reviewed_file_count),
 			excluded_file_count = COALESCE(EXCLUDED.excluded_file_count, reviews.excluded_file_count),
