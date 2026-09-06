@@ -140,6 +140,11 @@ func ClassifyOutput(output string) OutputKind {
 	if trimmed == "" || trimmed == NoReviewOutputPlaceholder {
 		return OutputEmpty
 	}
+	// A severity-labelled finding is a real review even if the agent also
+	// says part of the input was unreadable.
+	if hasSeverityLabel(trimmed) {
+		return OutputReviewed
+	}
 	lower := strings.ReplaceAll(strings.ToLower(trimmed), "\u2019", "'")
 	for _, phrase := range unreadableInputPhrases {
 		if strings.Contains(lower, phrase) {
@@ -185,16 +190,14 @@ func verdictBoolFromOutput(output string) any {
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
 func ParseVerdict(output string) Verdict {
-	// First check for severity labels which indicate actual findings
-	// These appear as "- Medium —", "* Low:", "Critical -", etc.
-	// A labelled finding is a real review even if part of the input was
-	// unreadable, so this check runs before the output classification.
-	if hasSeverityLabel(output) {
-		return VerdictFail
-	}
-
 	if ClassifyOutput(output) != OutputReviewed {
 		return VerdictUnknown
+	}
+
+	// Severity labels indicate actual findings. They appear as
+	// "- Medium —", "* Low:", "Critical -", etc.
+	if hasSeverityLabel(output) {
+		return VerdictFail
 	}
 
 	// Marker signals pass ONLY when it stands alone. A loose
