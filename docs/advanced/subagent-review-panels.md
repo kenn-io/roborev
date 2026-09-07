@@ -79,6 +79,11 @@ state. Normal job lists and `roborev list` show the synthesis parent as the
 actionable review. The TUI can expand that parent row to inspect individual
 reviewers.
 
+Expanded member rows show the configured reviewer name before the ref. The
+Review Type column shows the base review type, so members with different
+additional instructions can both show `default`. Use the reviewer names to tell
+them apart, and press `p` on a member to inspect its prompt.
+
 The parent review is what you close, fix, cancel, rerun, and wait on. Member
 jobs are implementation details for the panel run. Rerunning the parent starts a
 fresh panel run; member rows cannot be rerun directly.

@@ -3006,6 +3006,23 @@ func seededPanelModel(t *testing.T) model {
 	return m
 }
 
+func TestQueueShowsPanelMemberNamesWithSameReviewType(t *testing.T) {
+	for _, width := range []int{120, 180} {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			m := seededPanelModel(t)
+			m.width = width
+			m.expandedPanels[testUUID("R")] = true
+			m.panelMembers[testUUID("R")] = []storage.ReviewJob{
+				makeJob(11, withRef("abcdef0"), withPanelMember("R", "bugs", 0)),
+				makeJob(12, withRef("abcdef0"), withPanelMember("R", "maintainability", 1)),
+			}
+			output := stripTestANSI(m.renderQueueView())
+			assert.Contains(t, output, "bugs")
+			assert.Contains(t, output, "maintainability")
+		})
+	}
+}
+
 func TestSelectedJobResolvesMember(t *testing.T) {
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true

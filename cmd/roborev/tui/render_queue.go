@@ -80,10 +80,15 @@ func queueTreeSlot(r queueRow, color bool) string {
 	return disclosureGlyph(r.hasChildren, r.expanded, color) + " "
 }
 
-// decorateRefCell prefixes the ref cell with the tree slot and, for a panel
-// parent, appends the live/terminal panel status cell. The summary text is
-// sanitized so it cannot inject terminal escapes into the single-line cell.
+// decorateRefCell prefixes the ref cell with the tree slot and member name,
+// or appends the live/terminal panel status for a parent. Names and summary
+// text are sanitized for the single-line cell.
 func decorateRefCell(ref string, r queueRow, color bool) string {
+	if r.depth == 1 {
+		if name := stripControlChars(r.job.PanelMemberName); name != "" {
+			ref = name + "  " + ref
+		}
+	}
 	ref = queueTreeSlot(r, color) + ref
 	if r.depth == 0 && r.hasChildren {
 		if cell := stripControlChars(panelStatusCell(r.job)); cell != "" {
