@@ -3,7 +3,6 @@ package gitlab
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -410,13 +409,38 @@ func TestUpsertMRComment_RecoversWhenFailedCreateLanded(t *testing.T) {
 	api.createStatus = http.StatusInternalServerError
 	api.createLandsAnyway = true
 
-	// Exercise a full-sized first part and an overflow part. Recovery must
-	// recognize each successfully landed body without posting it twice.
+	// Oversized on purpose: the prepared body then sits exactly at
+	// MaxCommentLen, so a path that prepared it a second time shows up as a
+	// duplicated marker and a body shifted by the 28 bytes that second marker
+	// adds — and the body match this recovery relies on would miss. Two things
+	// it does not show up as: a duplicated truncation suffix — re-preparing
+	// pushes the old suffix past the cut, so it is discarded rather than doubled
+	// — or a length change, since TruncateComment returns exactly MaxCommentLen
+	// for an oversized all-ASCII body like this one (a multi-byte rune
+	// straddling the cut would cost 1-3 bytes to TrimPartialRune). Re-escaping
+	// is not observable at any size either: neutralizeQuickActions is idempotent
+	// and this body has no slash.
 	body := strings.Repeat("x", review.MaxCommentLen)
-	prepared := prepareBodies(body)
-	require.NoError(t, client.UpsertMRComment(context.Background(), testProject, 1, body))
-	assert.Equal(prepared, api.createdBodies)
-	assert.Empty(api.updatedBodies)
+	prepared := prepareBody(body)
+	require.Len(t, prepared, review.MaxCommentLen,
+		"setup: the input must be large enough that preparing twice is observable")
+
+	require.NoError(t, client.UpsertMRComment(
+		context.Background(), testProject, 1, body))
+
+	assert.Len(api.createdBodies, 1, "must not post a second note")
+	assert.Empty(api.updatedBodies,
+		"a note that already carries this exact body needs no write")
+
+	// The landed note is the one the create posted, so checking it pins that the
+	// body was prepared exactly once. Cheap properties first: a re-prepared body
+	// trips the marker count with a readable message, so the full comparison of
+	// two 60KB strings only runs when the difference is something else.
+	got := api.createdBodies[0]
+	require.Equal(t, 1, strings.Count(got, CommentMarker), "marker must not be prepended twice")
+	require.Equal(t, 1, strings.Count(got, review.CommentTruncSuffix),
+		"posted body must be the prepared, truncated one")
+	assert.Equal(prepared, got)
 }
 
 // The concurrency case: another pipeline posts its own marker note between this
@@ -436,7 +460,7 @@ func TestUpsertMRComment_RecoveryLeavesAConcurrentNoteAlone(t *testing.T) {
 	assert.Empty(api.updatedBodies,
 		"the other pipeline's note must not be overwritten")
 	require.Len(t, api.createdBodies, 2, "recovery must post its own note")
-	assert.Equal(prepareBodies("review body")[0], api.createdBodies[1])
+	assert.Equal(prepareBody("review body"), api.createdBodies[1])
 }
 
 // When nothing landed, recovery retries the create once so a genuinely
@@ -494,7 +518,7 @@ func TestUpsertMRComment_LandedNoteRecognizedDespitePreExistingOne(t *testing.T)
 	// body is short and slash-free, so what that pins here is the marker; the
 	// truncation half is covered by the oversized case in
 	// TestUpsertMRComment_RecoversWhenFailedCreateLanded.
-	assert.Equal(prepareBodies("review body")[0], api.createdBodies[0])
+	assert.Equal(prepareBody("review body"), api.createdBodies[0])
 }
 
 // An authorization or not-found create will fail again for the same reason, so
@@ -554,7 +578,7 @@ func TestUpsertMRComment_TransientFailureReachingRecoveryIsRetried(t *testing.T)
 			// Two listings means the second POST came from recovery. Without
 			// this, a library retry inside the create call would also produce
 			// two POSTs and isPermanentFailure would never be consulted.
-			assert.Equal(t, 3, api.listCalls,
+			assert.Equal(t, 2, api.listCalls,
 				"the failure must escape to recoverFailedCreate")
 		})
 	}
@@ -574,7 +598,7 @@ func TestUpsertMRComment_RateLimitedCreateIsRetried(t *testing.T) {
 	// Both POSTs came from one create call, so only the initial upsert lookup
 	// listed notes. A second listing would mean the 429 escaped to
 	// recoverFailedCreate instead of being retried by the library.
-	assert.Equal(t, 2, api.listCalls, "the 429 must be retried inside the create call")
+	assert.Equal(t, 1, api.listCalls, "the 429 must be retried inside the create call")
 }
 
 // WithoutRetries must still mean no retries. The per-request policy replaces
@@ -783,51 +807,47 @@ func TestUpsertMRComment_NeutralizesQuickActionsOnBothPaths(t *testing.T) {
 // TestUpsertMRComment_ReescapingIsStable guards the upsert loop: feeding an
 // already-prepared body back through the API must not grow backslashes.
 func TestUpsertMRComment_ReescapingIsStable(t *testing.T) {
-	first := prepareBodies("/approve\nfindings")[0]
-	second := prepareBodies(strings.TrimPrefix(first, CommentMarker+"\n"))[0]
+	first := prepareBody("/approve\nfindings")
+	second := prepareBody(strings.TrimPrefix(first, CommentMarker+"\n"))
 
 	assert.Equal(t, first, second)
 	assert.Equal(t, 1, strings.Count(second, `\/approve`))
 	assert.NotContains(t, second, `\\/approve`)
 }
 
-// TestPrepareBodies_SplitsEscapedQuickActions guards the interaction
+// TestPrepareBody_TruncationCannotExposeQuickAction guards the interaction
 // between escaping and truncation: because escaping ignores fences, cutting a
 // closing fence away can never turn a code sample back into a live command.
-func TestPrepareBodies_SplitsEscapedQuickActions(t *testing.T) {
+func TestPrepareBody_TruncationCannotExposeQuickAction(t *testing.T) {
 	assert := assert.New(t)
 
 	filler := strings.Repeat("x\n", (review.MaxCommentLen-200)/2)
 	input := filler + "```\n/approve\n" + strings.Repeat("y\n", 500) + "```\n"
 
-	body := prepareBodies(input)[0]
+	body := prepareBody(input)
 	assert.LessOrEqual(len(body), review.MaxCommentLen)
-	assert.NotContains(body, review.CommentTruncSuffix)
+	assert.Contains(body, "truncated")
 	assert.Contains(body, `\/approve`)
 	assert.NotContains(body, "\n/approve")
 }
 
-func TestCreateMRComment_SplittingUTF8Safe(t *testing.T) {
+func TestCreateMRComment_TruncationUTF8Safe(t *testing.T) {
 	api, client := startNoteAPI(t)
 
-	maxBody := review.MaxCommentLen
+	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
+	maxBody := review.MaxCommentLen - len(truncSuffix)
 	markerOverhead := len(CommentMarker) + 1
 	input := strings.Repeat("x", maxBody-markerOverhead-2) +
 		"\U0001f600" + strings.Repeat("y", 100)
 
 	require.NoError(t, client.CreateMRComment(
 		context.Background(), testProject, 1, input))
-	require.Len(t, api.createdBodies, 2)
+	require.Len(t, api.createdBodies, 1)
 	body := api.createdBodies[0]
 	assert.True(t, strings.HasPrefix(body, CommentMarker))
-	assert.NotContains(t, body, review.CommentTruncSuffix)
+	assert.Contains(t, body, "truncated")
 	assert.LessOrEqual(t, len(body), review.MaxCommentLen)
-	var complete strings.Builder
-	for part, posted := range api.createdBodies {
-		assert.True(t, utf8.ValidString(posted))
-		complete.WriteString(strings.TrimPrefix(posted, review.CommentPartMarker(CommentMarker, part)+"\n"))
-	}
-	assert.Equal(t, input, complete.String())
+	assert.True(t, utf8.ValidString(body))
 }
 
 // MergeRequestHeadSHA is what binds a reviewed range to the merge request the
@@ -897,40 +917,4 @@ func TestMergeRequestRefs_RejectsBadProject(t *testing.T) {
 
 	_, err = client.MergeRequestRefs(context.Background(), "nogroup", 7)
 	require.ErrorContains(t, err, "invalid GitLab project")
-}
-
-func TestPostMRCommentPreservesRawFallback(t *testing.T) {
-	for _, upsert := range []bool{false, true} {
-		t.Run(fmt.Sprint(upsert), func(t *testing.T) {
-			api, client := startNoteAPI(t)
-			body := review.FormatRawBatchComment([]review.ReviewResult{
-				{Status: review.ResultDone, Output: strings.Repeat("first finding λ\n", review.MaxCommentLen/4)},
-				{Status: review.ResultDone, Output: "later reviewer finding"},
-			}, "abcdef012345")
-			post := client.CreateMRComment
-			if upsert {
-				post = client.UpsertMRComment
-			}
-			require.NoError(t, post(context.Background(), testProject, 1, body))
-			require.Greater(t, len(api.createdBodies), 1)
-			var complete strings.Builder
-			for part, posted := range api.createdBodies {
-				assert.LessOrEqual(t, len(posted), review.MaxCommentLen)
-				assert.True(t, utf8.ValidString(posted))
-				complete.WriteString(strings.TrimPrefix(posted, review.CommentPartMarker(CommentMarker, part)+"\n"))
-			}
-			assert.Equal(t, body, complete.String())
-		})
-	}
-}
-
-func TestUpsertMRCommentSupersedesUnusedContinuation(t *testing.T) {
-	api, client := startNoteAPI(t)
-	api.notesByMR[1] = []*gogitlab.Note{note(10, CommentMarker+"\nold", false), note(11, review.CommentPartMarker(CommentMarker, 1)+"\nstale finding", false)}
-	require.NoError(t, client.UpsertMRComment(context.Background(), testProject, 1, "short replacement"))
-	assert.Empty(t, api.createdBodies)
-	require.Len(t, api.updatedBodies, 2)
-	assert.Equal(t, CommentMarker+"\nshort replacement", api.updatedBodies[0])
-	assert.NotContains(t, api.updatedBodies[1], "stale finding")
-	assert.Contains(t, api.updatedBodies[1], "superseded")
 }

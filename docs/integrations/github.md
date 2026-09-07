@@ -8,11 +8,6 @@ and post the results as PR comments. In 0.57 and later, daemon CI reviews run
 through the [subagent review panel](/docs/advanced/subagent-review-panels/)
 system: each PR HEAD gets one panel run and one synthesis parent review.
 
-Comment bodies that exceed the per-comment size limit are posted as multiple
-comments, preserving the complete body, including raw reviews when synthesis
-fails. With comment updates enabled, each continuation is updated too; unused
-continuations are marked as superseded when a later review is shorter.
-
 ## How It Works
 
 The CI poller runs inside the roborev daemon. On each interval it:

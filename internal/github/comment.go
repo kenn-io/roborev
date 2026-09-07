@@ -20,10 +20,6 @@ const CommentMarker = "<!-- roborev-pr-comment -->"
 // FindExistingComment searches for an existing roborev comment on the
 // given PR. It returns the comment ID if found, or 0 if no match exists.
 func (c *Client) FindExistingComment(ctx context.Context, ghRepo string, prNumber int) (int64, error) {
-	return c.findCommentPart(ctx, ghRepo, prNumber, CommentMarker)
-}
-
-func (c *Client) findCommentPart(ctx context.Context, ghRepo string, prNumber int, marker string) (int64, error) {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return 0, err
@@ -42,7 +38,7 @@ func (c *Client) findCommentPart(ctx context.Context, ghRepo string, prNumber in
 			return 0, fmt.Errorf("list issue comments: %w", err)
 		}
 		for _, comment := range comments {
-			if strings.Contains(comment.GetBody(), marker) {
+			if strings.Contains(comment.GetBody(), CommentMarker) {
 				lastID = comment.GetID()
 			}
 		}
@@ -53,50 +49,22 @@ func (c *Client) findCommentPart(ctx context.Context, ghRepo string, prNumber in
 	}
 }
 
-// prepareBodies measures provider formatting and preserves every input byte
-// across as many comments as needed.
-func prepareBodies(body string) []string {
-	return review.CommentParts(body, func(body string, part int) string {
-		return review.CommentPartMarker(CommentMarker, part) + "\n" + body
-	})
+// prepareBody prepends the CommentMarker and truncates to
+// review.MaxCommentLen, preserving UTF-8 safety.
+func prepareBody(body string) string {
+	return review.TruncateComment(CommentMarker + "\n" + body)
 }
 
-// CreatePRComment posts the complete review as one or more new comments.
+// CreatePRComment posts a new roborev PR comment. It prepends the
+// CommentMarker and truncates to review.MaxCommentLen, then always
+// creates a new comment (no find/patch).
 func (c *Client) CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
-	for _, body := range prepareBodies(body) {
-		if err := c.createPreparedComment(ctx, ghRepo, prNumber, body); err != nil {
-			return err
-		}
-	}
-	return nil
+	return c.createPreparedComment(ctx, ghRepo, prNumber, prepareBody(body))
 }
 
-// UpsertPRComment updates the primary comment and its continuations. When
-// a later review is shorter, surplus continuations no longer show stale findings.
-func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
-	parts := prepareBodies(body)
-	for part, body := range parts {
-		if err := c.upsertPreparedComment(ctx, ghRepo, prNumber, body, review.CommentPartMarker(CommentMarker, part)); err != nil {
-			return err
-		}
-	}
-	for part := len(parts); ; part++ {
-		marker := review.CommentPartMarker(CommentMarker, part)
-		id, err := c.findCommentPart(ctx, ghRepo, prNumber, marker)
-		if err != nil {
-			return err
-		}
-		if id == 0 {
-			return nil
-		}
-		body := marker + "\nThis continuation has been superseded by the updated review."
-		if err := c.patchComment(ctx, ghRepo, id, body); err != nil {
-			return err
-		}
-	}
-}
-
-// createPreparedComment posts one already-sized part without preparing it again.
+// createPreparedComment posts a body that already went through prepareBody.
+// Keeping the raw POST separate is what lets UpsertPRComment fall back to a
+// create without prepending a second marker or truncating twice.
 func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
@@ -111,9 +79,13 @@ func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNum
 	return nil
 }
 
-// upsertPreparedComment posts one already-sized part.
-func (c *Client) upsertPreparedComment(ctx context.Context, ghRepo string, prNumber int, body, marker string) error {
-	existingID, err := c.findCommentPart(ctx, ghRepo, prNumber, marker)
+// UpsertPRComment creates or updates a roborev PR comment. It prepends
+// the CommentMarker, truncates to review.MaxCommentLen, and either
+// patches an existing comment or creates a new one.
+func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
+	body = prepareBody(body)
+
+	existingID, err := c.FindExistingComment(ctx, ghRepo, prNumber)
 	if err != nil {
 		return fmt.Errorf("find existing comment: %w", err)
 	}

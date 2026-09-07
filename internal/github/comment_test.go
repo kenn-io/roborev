@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -253,7 +252,7 @@ func TestUpsertPRComment_Update(t *testing.T) {
 
 // Both statuses reach the create fallback through a different isGitHubStatus
 // branch, so both must post the already-prepared body: one marker, and one
-// sizing pass. Table-driven to keep the two branches in lockstep, matching
+// truncation pass. Table-driven to keep the two branches in lockstep, matching
 // the GitLab twin.
 func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 	statuses := []struct {
@@ -284,8 +283,9 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 				assert.Equal(1, strings.Count(api.createdBodies[0], CommentMarker))
 			})
 
-			// An oversized body must preserve its overflow through the create fallback.
-			t.Run("PreservesAllParts", func(t *testing.T) {
+			// An oversized body pins the other half of the double-prepare bug:
+			// preparing twice would truncate an already-capped body again.
+			t.Run("TruncatesOnce", func(t *testing.T) {
 				assert := assert.New(t)
 				api := newCommentAPIServer(t)
 				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
@@ -298,12 +298,12 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 				client := newTestGitHubClient(t, "", srv)
 				require.NoError(t, client.UpsertPRComment(context.Background(),
 					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500)))
-				require.Len(t, api.createdBodies, 2)
+				require.Len(t, api.createdBodies, 1)
 
 				body := api.createdBodies[0]
 				assert.LessOrEqual(len(body), review.MaxCommentLen)
 				assert.Equal(1, strings.Count(body, CommentMarker))
-				assert.NotContains(body, review.CommentTruncSuffix)
+				assert.Equal(1, strings.Count(body, review.CommentTruncSuffix))
 			})
 		})
 	}
@@ -324,28 +324,24 @@ func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "patch comment")
 }
 
-func TestCreatePRComment_SplittingUTF8Safe(t *testing.T) {
+func TestCreatePRComment_TruncationUTF8Safe(t *testing.T) {
 	api := newCommentAPIServer(t)
 	srv := httptest.NewServer(http.HandlerFunc(api.handler))
 	defer srv.Close()
 
-	maxBody := review.MaxCommentLen
+	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
+	maxBody := review.MaxCommentLen - len(truncSuffix)
 	markerOverhead := len(CommentMarker) + 1
 	input := strings.Repeat("x", maxBody-markerOverhead-2) + "\U0001f600" + strings.Repeat("y", 100)
 
 	client := newTestGitHubClient(t, "", srv)
 	require.NoError(t, client.CreatePRComment(context.Background(), "owner/repo", 1, input))
-	require.Len(t, api.createdBodies, 2)
+	require.Len(t, api.createdBodies, 1)
 	body := api.createdBodies[0]
 	assert.True(t, strings.HasPrefix(body, CommentMarker))
-	assert.NotContains(t, body, review.CommentTruncSuffix)
+	assert.Contains(t, body, "truncated")
 	assert.LessOrEqual(t, len(body), review.MaxCommentLen)
-	var complete strings.Builder
-	for part, posted := range api.createdBodies {
-		assert.True(t, utf8.ValidString(posted))
-		complete.WriteString(strings.TrimPrefix(posted, review.CommentPartMarker(CommentMarker, part)+"\n"))
-	}
-	assert.Equal(t, input, complete.String())
+	assert.True(t, utf8.ValidString(body))
 }
 
 func TestListPRDiscussionComments_FiltersAndSorts(t *testing.T) {
@@ -425,46 +421,4 @@ func TestCloneURL(t *testing.T) {
 	plain, err := CloneURL("owner/repo")
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/owner/repo.git", plain)
-}
-
-func TestPostPRCommentPreservesRawFallback(t *testing.T) {
-	for _, upsert := range []bool{false, true} {
-		t.Run(fmt.Sprint(upsert), func(t *testing.T) {
-			api := newCommentAPIServer(t)
-			srv := httptest.NewServer(http.HandlerFunc(api.handler))
-			defer srv.Close()
-			client := newTestGitHubClient(t, "", srv)
-			body := review.FormatRawBatchComment([]review.ReviewResult{
-				{Status: review.ResultDone, Output: strings.Repeat("first finding λ\n", review.MaxCommentLen/4)},
-				{Status: review.ResultDone, Output: "later reviewer finding"},
-			}, "abcdef012345")
-			post := client.CreatePRComment
-			if upsert {
-				post = client.UpsertPRComment
-			}
-			require.NoError(t, post(context.Background(), "owner/repo", 1, body))
-			require.Greater(t, len(api.createdBodies), 1)
-			var complete strings.Builder
-			for part, posted := range api.createdBodies {
-				assert.LessOrEqual(t, len(posted), review.MaxCommentLen)
-				assert.True(t, utf8.ValidString(posted))
-				complete.WriteString(strings.TrimPrefix(posted, review.CommentPartMarker(CommentMarker, part)+"\n"))
-			}
-			assert.Equal(t, body, complete.String())
-		})
-	}
-}
-
-func TestUpsertPRCommentSupersedesUnusedContinuation(t *testing.T) {
-	api := newCommentAPIServer(t)
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
-	client := newTestGitHubClient(t, "", srv)
-	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(10, CommentMarker+"\nold", "review-bot", "Bot", ""), issueComment(11, review.CommentPartMarker(CommentMarker, 1)+"\nstale finding", "review-bot", "Bot", "")}
-	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "short replacement"))
-	assert.Empty(t, api.createdBodies)
-	require.Len(t, api.patchedBodies, 2)
-	assert.Equal(t, CommentMarker+"\nshort replacement", api.patchedBodies[0])
-	assert.NotContains(t, api.patchedBodies[1], "stale finding")
-	assert.Contains(t, api.patchedBodies[1], "superseded")
 }
