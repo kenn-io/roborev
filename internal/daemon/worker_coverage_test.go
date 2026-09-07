@@ -51,10 +51,12 @@ func TestReviewFileCoverageForCommittedInputs(t *testing.T) {
 
 func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
+	// Empty output is not a review and fails the job, so the fixture must
+	// return a real (clean) review for a row to be stored.
 	baseline := &agent.FakeAgent{
-		NameStr: "empty-review",
+		NameStr: "clean-review",
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return "", nil
+			return "No issues found.", nil
 		},
 	}
 	agent.Register(baseline)
@@ -85,7 +87,8 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 	require.NotNil(t, review.FileCoverage)
 	assert.Equal(t, 1, *review.FileCoverage.Reviewed)
 	assert.Equal(t, 0, *review.FileCoverage.Excluded)
-	assert.Nil(t, review.VerdictBool)
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(t, 1, *review.VerdictBool)
 	assert.Equal(t, "medium", review.Job.MinSeverity)
 	assert.Equal(t, independent.Prompt, review.Prompt)
 
