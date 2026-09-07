@@ -386,7 +386,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
 		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
-		// Verify findings against the reviewed checkout: a panel enqueued from a
+		// Use the ordinary review execution checkout: a panel enqueued from a
 		// linked worktree must synthesize against that worktree, and CI panels
 		// get a detached checkout at the reviewed head instead of the stale
 		// shared clone.

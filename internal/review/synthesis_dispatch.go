@@ -10,8 +10,8 @@ import (
 	promptpkg "go.kenn.io/roborev/internal/prompt"
 )
 
-// SynthesisCheckout is the reviewed checkout a review agent needs to
-// verify findings. Cleanup may be nil.
+// SynthesisCheckout is the checkout used for agent execution and prompt file
+// handoff. Cleanup may be nil.
 type SynthesisCheckout struct {
 	RepoPath string
 	GitRef   string

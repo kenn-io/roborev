@@ -105,6 +105,8 @@ func BuildSynthesisPrompt(
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
 			"that reported the finding.\nRules:\n" +
 			"- Only combine the input review results according to these rules\n" +
+			"- Do not independently review source code or inspect the repository\n" +
+			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references in `location`\n" +
