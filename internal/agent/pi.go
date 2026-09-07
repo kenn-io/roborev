@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -455,21 +454,9 @@ func resolvePiSessionPath(sessionID string) string {
 	return matches[0]
 }
 
-// maxPiTokenSize is the maximum single-line size parsePiJSON
-// will tolerate. 4 MB accommodates large assistant messages
-// emitted as a single JSON line.
-const maxPiTokenSize = 4 * 1024 * 1024
-
 func parsePiJSON(r io.Reader) (string, error) {
-	br := bufio.NewScanner(r)
-	br.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxPiTokenSize)
 	var latest string
-	for br.Scan() {
-		line := strings.TrimSpace(br.Text())
-		if line == "" {
-			continue
-		}
-
+	err := scanStreamJSONLines(r, nil, func(line string) error {
 		var ev struct {
 			Type    string `json:"type"`
 			Message struct {
@@ -481,10 +468,10 @@ func parsePiJSON(r io.Reader) (string, error) {
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
+			return nil
 		}
 		if ev.Message.Role != "assistant" {
-			continue
+			return nil
 		}
 		var parts []string
 		for _, item := range ev.Message.Content {
@@ -495,8 +482,9 @@ func parsePiJSON(r io.Reader) (string, error) {
 		if len(parts) > 0 {
 			latest = strings.Join(parts, "\n")
 		}
-	}
-	if err := br.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return latest, fmt.Errorf("read pi stream: %w", err)
 	}
 	return latest, nil

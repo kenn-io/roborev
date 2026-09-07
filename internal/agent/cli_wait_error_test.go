@@ -21,7 +21,7 @@ func TestFormatStreamingCLIWaitErrorIncludesParseError(t *testing.T) {
 	assert.EqualError(t, err, "codex failed: exit status 1 (parse error: bad json)\nstderr: stderr text")
 }
 
-func TestFormatDetailedCLIWaitErrorFallsBackToOutputAndTruncatesPartial(t *testing.T) {
+func TestFormatDetailedCLIWaitErrorFallsBackToOutputAndPreservesPartial(t *testing.T) {
 	t.Parallel()
 
 	err := formatDetailedCLIWaitError(streamingCLIResult{
@@ -40,5 +40,5 @@ func TestFormatDetailedCLIWaitErrorFallsBackToOutputAndTruncatesPartial(t *testi
 	assert.Contains(t, err.Error(), "\noutput: raw output")
 	assert.Contains(t, err.Error(), "\npartial output: ")
 	assert.Contains(t, err.Error(), ": exit status 1")
-	assert.Contains(t, err.Error(), "...")
+	assert.Contains(t, err.Error(), strings.Repeat("x", 501))
 }

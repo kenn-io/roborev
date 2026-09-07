@@ -281,12 +281,15 @@ Unlike `--branch`, this works on any branch including main.
 
 ## Large Diffs
 
-For `--dirty` reviews, diffs are limited to 200KB since uncommitted changes
-cannot be easily inspected by the agent. If your dirty diff exceeds this limit,
-commit your changes in smaller chunks.
+Dirty and committed diffs that exceed the configured prompt budget are written
+in full to ignored, repo-local snapshot files. The prompt points the agent at
+those files. Large dirty diffs do not require committing changes in smaller
+chunks.
 
-For committed changes, diffs over 250KB are omitted from the prompt - the agent
-is given only the commit hash and can inspect changes using `git show`.
+Panel synthesis also preserves complete input reviews. When their aggregate
+prompt exceeds the same budget, roborev writes each review to a separate
+snapshot file and invokes the synthesis agent with read tools enabled. Files
+remain available for the invocation and are cleaned up afterward.
 
 ## Session Reuse
 

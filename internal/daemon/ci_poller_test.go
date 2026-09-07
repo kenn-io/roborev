@@ -707,17 +707,13 @@ func TestNewCIPoller_GitHubAppUsesConfiguredEnterpriseAPIURL(t *testing.T) {
 	}, paths)
 }
 
-func TestFormatRawBatchComment_Truncation(t *testing.T) {
+func TestFormatRawBatchComment_PreservesFullOutput(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},
 	}
 
 	comment := review.FormatRawBatchComment(reviews, "abc123def456")
-	if !strings.Contains(comment, "...(truncated)") {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected truncation for large output")
-	}
+	assert.Contains(t, comment, reviews[0].Output)
 }
 
 func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
@@ -2407,7 +2403,7 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	require.NotNil(t, panel)
 }
 
-func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
+func TestBuildSynthesisPrompt_PreservesLargeOutputs(t *testing.T) {
 	largeOutput := strings.Repeat("x", 20000)
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
@@ -2415,17 +2411,7 @@ func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
 
 	prompt := review.BuildSynthesisPrompt(reviews, "")
 
-	if len(prompt) > 16500 {
-		assert. // 15k truncated + headers/instructions
-			Condition(t, func() bool {
-				return false
-			}, "synthesis prompt too large (%d chars), expected truncation", len(prompt))
-	}
-	if !strings.Contains(prompt, "...(truncated)") {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected truncation marker in synthesis prompt")
-	}
+	assert.Contains(t, prompt, largeOutput)
 }
 
 func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
@@ -5145,4 +5131,16 @@ func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {
 		Status: string(storage.JobStatusFailed),
 		Error:  review.QuotaErrorPrefix + "exhausted",
 	}))
+}
+
+func TestPRDiscussionPreservesAllCommentsAndBodies(t *testing.T) {
+	comments := make([]ghpkg.PRDiscussionComment, 45)
+	for i := range comments {
+		comments[i].Author = "reviewer"
+		comments[i].Body = fmt.Sprintf("comment %d: %s end of comment %d", i, strings.Repeat("detail ", 100), i)
+	}
+	context := formatPRDiscussionContext(comments)
+	for _, comment := range comments {
+		assert.Contains(t, context, comment.Body)
+	}
 }

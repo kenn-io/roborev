@@ -759,8 +759,8 @@ are appended to the built-in exclusion list.
 
 The `max_prompt_size` (per repo) and `default_max_prompt_size` (global) settings
 control the maximum size in bytes of the prompt sent to review agents. The
-per-repo value takes precedence over the global default. The default is 200,000
-bytes (~200 KB).
+per-repo value takes precedence over the global default. The default is 204,800
+bytes (200 KiB).
 
 ```toml
 # ~/.roborev/config.toml
@@ -769,6 +769,11 @@ default_max_prompt_size = 300000   # 300 KB global default
 # .roborev.toml
 max_prompt_size = 500000           # 500 KB for this repo only
 ```
+
+Synthesis uses this budget to choose between inline reviews and file references.
+When the combined input exceeds it, each complete review goes into an ignored,
+repo-local snapshot file. The agent reads those files using its read-capable
+review interface. Individual reviews are never shortened to a fixed byte count.
 
 This limit applies to all review commands (`review`, `compact`, `ci review`) and
 all agents. When a diff exceeds the budget, roborev writes the full diff to an

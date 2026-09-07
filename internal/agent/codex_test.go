@@ -594,9 +594,9 @@ func TestCodexReviewNoJSONPreservesStdoutClassificationSignals(t *testing.T) {
 	}
 }
 
-func TestCodexReviewBoundsNoJSONStdoutDiagnostic(t *testing.T) {
-	const omittedTail = "TAIL-MUST-NOT-BE-RENDERED"
-	stdout := "503 Service Unavailable " + strings.Repeat("x", 600) + omittedTail
+func TestCodexReviewPreservesNoJSONStdoutDiagnostic(t *testing.T) {
+	const diagnosticTail = "END-OF-DIAGNOSTIC"
+	stdout := "503 Service Unavailable " + strings.Repeat("x", 600) + diagnosticTail
 	a, _ := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage --sandbox",
 		ExitCode:    1,
@@ -606,10 +606,10 @@ func TestCodexReviewBoundsNoJSONStdoutDiagnostic(t *testing.T) {
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Equal(t, LimitKindTransient, ClassifyLimit("codex", err.Error()).Kind)
-	assert.NotContains(t, err.Error(), omittedTail)
+	assert.Contains(t, err.Error(), stdout)
 }
 
-func TestCodexReviewClassifiesNoJSONSignalsBeyondRenderedDiagnostics(t *testing.T) {
+func TestCodexReviewClassifiesNoJSONSignalsAtEndOfDiagnostics(t *testing.T) {
 	tests := []struct {
 		name     string
 		opts     MockCLIOpts
@@ -644,12 +644,12 @@ func TestCodexReviewClassifiesNoJSONSignalsBeyondRenderedDiagnostics(t *testing.
 			classification, ok := LimitClassificationFromError(err)
 			require.True(t, ok)
 			assert.Equal(t, tt.wantKind, classification.Kind)
-			assert.Equal(t, LimitKindNone, ClassifyLimit("codex", err.Error()).Kind)
+			assert.Equal(t, tt.wantKind, ClassifyLimit("codex", err.Error()).Kind)
 		})
 	}
 }
 
-func TestCodexDiagnosticCaptureIsBoundedAndClassifiesTail(t *testing.T) {
+func TestCodexDiagnosticCapturePreservesOutputAndClassifiesTail(t *testing.T) {
 	capture := newCodexDiagnosticCapture()
 
 	for range 100 {
@@ -659,7 +659,7 @@ func TestCodexDiagnosticCaptureIsBoundedAndClassifiesTail(t *testing.T) {
 	_, err := capture.Write([]byte("503 Service Unavailable"))
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(capture.String()), cliWaitErrorOutputLimit+3)
+	assert.Equal(t, strings.Repeat("x", 10000)+"503 Service Unavailable", capture.String())
 	assert.Equal(t, LimitKindTransient, capture.Classification().Kind)
 }
 

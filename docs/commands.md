@@ -256,6 +256,9 @@ the local review database. Adding `database_id` does not bump `schema_version`
 because it is an additive header field and existing consumers must continue to
 ignore unknown header keys.
 
+Review exports preserve complete content and metadata strings. Pagination limits
+control the number of rows returned; they do not truncate individual fields.
+
 Rows are ordered by `(completed_at, review_id)` ascending. `next_cursor` is an
 opaque, internally versioned token containing that compound position and the
 `database_id`; version 1 cursors are stable across invocations and roborev

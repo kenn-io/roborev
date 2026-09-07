@@ -274,17 +274,18 @@ func TestGetAnalyticsEmitsContinuousTimeBuckets(t *testing.T) {
 	assert.Equal(t, 1, got.TimeSeries[2].Reviews.Total)
 }
 
-func TestGetAnalyticsRejectsExcessiveTimeBuckets(t *testing.T) {
+func TestGetAnalyticsPreservesRequestedTimeRange(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 
-	_, err := db.GetAnalytics(AnalyticsOptions{
+	got, err := db.GetAnalytics(AnalyticsOptions{
 		Since:  base,
-		Until:  base.Add((MaxAnalyticsTimeBuckets + 1) * time.Hour),
+		Until:  base.Add(1001 * time.Hour),
 		Bucket: AnalyticsBucketHour,
 	})
-	require.ErrorIs(t, err, ErrAnalyticsRangeTooLarge)
+	require.NoError(t, err)
+	require.Len(t, got.TimeSeries, 1001)
 }
 
 func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
@@ -293,7 +294,7 @@ func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
 	base := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
 	oldRepo := createRepo(t, db, filepath.Join(t.TempDir(), "old-project"))
 	recentRepo := createRepo(t, db, filepath.Join(t.TempDir(), "recent-project"))
-	recent := base.Add((MaxAnalyticsTimeBuckets + 2) * time.Hour)
+	recent := base.Add(1002 * time.Hour)
 
 	seedAnalyticsJob(t, db, oldRepo, analyticsJobSeed{
 		name: "irrelevant-task", jobType: JobTypeTask, status: JobStatusDone,

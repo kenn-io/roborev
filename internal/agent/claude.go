@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -651,24 +650,22 @@ func validateClaudeClassifyJSON(label string, raw json.RawMessage) (json.RawMess
 // instead of the older final result field, so accept both shapes and ignore
 // assistant prose.
 func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
 	var final json.RawMessage
 	var finalLabel string
 	var found bool
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err := scanStreamJSONLines(r, nil, func(text string) error {
+		line := []byte(text)
 		if len(line) == 0 || line[0] != '{' {
-			continue
+			return nil
 		}
 		var msg claudeStreamMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			continue
+			return nil
 		}
 		if msg.Type == "assistant" {
 			structured, ok, err := extractClaudeStructuredOutput(msg.Message.Content)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if ok {
 				final = structured
@@ -681,8 +678,9 @@ func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 			finalLabel = "result"
 			found = true
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("read stream: %w", err)
 	}
 	if !found {

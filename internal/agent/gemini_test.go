@@ -15,24 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTruncateStderr(t *testing.T) {
-	assert := assert.New(t)
-
-	// Short string - no truncation
-	short := "short stderr"
-	assert.Equal(short, truncateStderr(short))
-
-	// Exactly at limit - no truncation
-	exact := strings.Repeat("x", maxStderrLen)
-	assert.Equal(exact, truncateStderr(exact))
-
-	// Over limit - should truncate
-	over := strings.Repeat("x", maxStderrLen+100)
-	got := truncateStderr(over)
-	assert.True(strings.HasSuffix(got, "... (truncated)"), "expected truncation suffix")
-	assert.Len(got, maxStderrLen+len("... (truncated)"))
-}
-
 func TestGeminiBuildArgs(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -765,14 +747,14 @@ echo "Some stderr message" >&2
 			},
 		},
 		{
-			name: "LargeStderrTruncation",
+			name: "LargeStderrPreserved",
 			script: `#!/bin/sh
 echo "Plain text"
 yes "This is a long stderr line that will contribute to the total size" | head -n 200 >&2
 `,
 			checkErr: func(t *testing.T, err error) {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), "... (truncated)")
+				assert.Contains(t, err.Error(), strings.Repeat("This is a long stderr line that will contribute to the total size\n", 200))
 			},
 		},
 		{

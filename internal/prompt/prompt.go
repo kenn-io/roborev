@@ -341,6 +341,16 @@ func (b *Builder) WriteDiffSnapshotTarget(gitRef string, excludes []string, targ
 	return b.writeExternalDiffSnapshotTarget(fullDiff, target)
 }
 
+// WriteSynthesisReviewSnapshot writes a complete input review using the same
+// ignored repo-local storage and cleanup lifecycle as diff snapshots.
+func (b *Builder) WriteSynthesisReviewSnapshot(content string, target SnapshotTarget) (string, func(), error) {
+	repoPath, snapshotRoot, err := b.resolveSnapshotTarget(target)
+	if err != nil {
+		return "", nil, err
+	}
+	return writeExternalSnapshot(repoPath, snapshotRoot, "review.md", content)
+}
+
 func (b *Builder) writeExternalDiffSnapshotTarget(diff string, target SnapshotTarget) (string, func(), error) {
 	repoPath, snapshotRoot, err := b.resolveSnapshotTarget(target)
 	if err != nil {

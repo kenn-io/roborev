@@ -523,7 +523,7 @@ func TestExportReviewsCISynthesisFields(t *testing.T) {
 	assert.Equal(t, "https://github.com/acme/widgets/pull/42", derefString(got.PRURL))
 }
 
-func TestExportReviewsCapsContent(t *testing.T) {
+func TestExportReviewsPreservesLargeContent(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -533,7 +533,7 @@ func TestExportReviewsCapsContent(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJobResult(
 		job.ID, "codex", "prompt", ReviewCompletion{
-			Output:  strings.Repeat("x", exportContentMaxBytes+100),
+			Output:  strings.Repeat("x", (1<<20)+100),
 			Verdict: VerdictFail,
 		},
 	))
@@ -542,8 +542,7 @@ func TestExportReviewsCapsContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
 	require.NotNil(t, page.Reviews[0].Content)
-	assert.LessOrEqual(t, len(*page.Reviews[0].Content), exportContentMaxBytes+len(exportTruncationMarker))
-	assert.True(t, strings.HasSuffix(*page.Reviews[0].Content, exportTruncationMarker))
+	assert.Equal(t, strings.Repeat("x", (1<<20)+100), *page.Reviews[0].Content)
 }
 
 func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {

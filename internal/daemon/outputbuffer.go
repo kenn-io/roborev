@@ -70,6 +70,15 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 		return
 	}
 
+	// Notify subscribers
+	for _, ch := range jo.subs {
+		select {
+		case ch <- line:
+		default:
+			// Drop if subscriber is slow
+		}
+	}
+
 	lineBytes := len(line.Text)
 
 	// Drop oversized lines that exceed per-job limit on their own
@@ -109,15 +118,6 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 	// Update global total after eviction/add - now reflects actual state
 	ob.totalBytes = ob.totalBytes - evictBytes + lineBytes
 	ob.mu.Unlock()
-
-	// Notify subscribers
-	for _, ch := range jo.subs {
-		select {
-		case ch <- line:
-		default:
-			// Drop if subscriber is slow
-		}
-	}
 }
 
 // GetLines returns all lines for a job.
@@ -209,12 +209,10 @@ type OutputNormalizer func(line string) *OutputLine
 
 // outputWriter implements io.Writer and normalizes output to the buffer.
 type outputWriter struct {
-	buffer     *OutputBuffer
-	jobID      int64
-	normalize  OutputNormalizer
-	lineBuf    bytes.Buffer
-	maxLine    int  // Max line size before forced flush (prevents unbounded growth)
-	discarding bool // True when discarding bytes until next newline (after truncation)
+	buffer    *OutputBuffer
+	jobID     int64
+	normalize OutputNormalizer
+	lineBuf   bytes.Buffer
 }
 
 func (w *outputWriter) Write(p []byte) (n int, err error) {
@@ -225,43 +223,7 @@ func (w *outputWriter) Write(p []byte) (n int, err error) {
 		data := w.lineBuf.String()
 		idx := strings.Index(data, "\n")
 
-		// If discarding, skip all data until newline
-		if w.discarding {
-			if idx < 0 {
-				// No newline yet, discard everything
-				w.lineBuf.Reset()
-				break
-			}
-			// Found newline, stop discarding and keep remainder
-			w.lineBuf.Reset()
-			if idx+1 < len(data) {
-				w.lineBuf.WriteString(data[idx+1:])
-			}
-			w.discarding = false
-			continue
-		}
-
 		if idx < 0 {
-			// No complete line yet - check if buffer exceeds max line size
-			if w.maxLine > 0 && w.lineBuf.Len() > w.maxLine {
-				// Force flush truncated line to prevent unbounded growth
-				var line string
-				if w.maxLine >= 4 {
-					// Room for content + "..." suffix
-					line = data[:w.maxLine-3] + "..."
-				} else {
-					// Too small for ellipsis, just truncate
-					line = data[:w.maxLine]
-				}
-				w.lineBuf.Reset()
-				// Enter discard mode - drop bytes until next newline
-				w.discarding = true
-				if normalized := w.normalize(line); normalized != nil {
-					normalized.Timestamp = time.Now()
-					w.buffer.Append(w.jobID, *normalized)
-				}
-				continue
-			}
 			break
 		}
 		// Extract line and update buffer
@@ -292,12 +254,11 @@ func (w *outputWriter) Flush() {
 }
 
 // Writer returns an io.Writer that normalizes and stores output for a job.
-// Lines exceeding maxPerJob will be truncated to prevent unbounded buffer growth.
+// Complete records are normalized before applying the history retention policy.
 func (ob *OutputBuffer) Writer(jobID int64, normalize OutputNormalizer) *outputWriter {
 	return &outputWriter{
 		buffer:    ob,
 		jobID:     jobID,
 		normalize: normalize,
-		maxLine:   ob.maxPerJob,
 	}
 }

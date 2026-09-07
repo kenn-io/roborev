@@ -943,3 +943,23 @@ func TestFindChildGitReposHintPaths(t *testing.T) {
 	expectedPath := filepath.Join(parent, "my-repo")
 	assert.Contains(t, errMsg, expectedPath, "Hint should contain full path %q, got: %s", expectedPath, errMsg)
 }
+
+func TestReviewDirtySubmitsLargeDiff(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	repo.CommitFile("large.txt", "initial\n", "initial")
+	content := strings.Repeat("added line\n", 40000) + "final finding line\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "large.txt"), []byte(content), 0o600))
+	var received string
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			DiffContent string `json:"diff_content"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		received = req.DiffContent
+		respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: "dirty", Agent: "test", Status: "queued"})
+	})
+	_, _, err := executeReviewCmd("--repo", repo.Dir, "--dirty", "--agent", "test")
+	require.NoError(t, err)
+	assert.Contains(t, received, "+final finding line\n")
+	assert.Greater(t, len(received), 200*1024)
+}

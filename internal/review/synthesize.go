@@ -153,6 +153,8 @@ func runSynthesis(
 	defer cancel()
 
 	doc, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
+		ConfigRepoPath: opts.RepoPath,
+		GlobalConfig:   opts.GlobalConfig,
 		Checkout: func() (SynthesisCheckout, error) {
 			return SynthesisCheckout{RepoPath: opts.RepoPath, GitRef: opts.GitRef}, nil
 		},

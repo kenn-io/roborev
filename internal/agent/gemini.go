@@ -19,17 +19,6 @@ import (
 // Stream-json output is required; this error means the Gemini CLI may need to be upgraded.
 var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
 
-// maxStderrLen is the maximum number of bytes of stderr to include in error messages.
-const maxStderrLen = 1024
-
-// truncateStderr truncates stderr output to a reasonable size for error messages.
-func truncateStderr(stderr string) string {
-	if len(stderr) <= maxStderrLen {
-		return stderr
-	}
-	return stderr[:maxStderrLen] + "... (truncated)"
-}
-
 // defaultGeminiModel is the built-in default that may be auto-retried
 // without -m if Google retires the model name.
 const defaultGeminiModel = "gemini-3.1-pro-preview"
@@ -211,12 +200,12 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	}
 
 	if runResult.WaitErr != nil {
-		return "", runResult.Stderr, formatStreamingCLIWaitError("gemini", runResult, truncateStderr(runResult.Stderr))
+		return "", runResult.Stderr, formatStreamingCLIWaitError("gemini", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {
 		if errors.Is(runResult.ParseErr, errNoStreamJSON) {
-			return "", runResult.Stderr, fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(runResult.Stderr), errNoStreamJSON)
+			return "", runResult.Stderr, fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", runResult.Stderr, errNoStreamJSON)
 		}
 		return "", runResult.Stderr, runResult.ParseErr
 	}
@@ -300,7 +289,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	}
 
 	if runResult.WaitErr != nil {
-		return "", runResult.Stderr, formatStreamingCLIWaitError("antigravity", runResult, truncateStderr(runResult.Stderr))
+		return "", runResult.Stderr, formatStreamingCLIWaitError("antigravity", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {
@@ -328,7 +317,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	if strings.Contains(runResult.Stderr, "permissions.allow") {
 		msg += "; add read_file(*) to permissions.allow in agy's settings.json"
 	}
-	if s := truncateStderr(runResult.Stderr); s != "" {
+	if s := runResult.Stderr; s != "" {
 		msg += "\nstderr: " + s
 	}
 	return "", runResult.Stderr, errors.New(msg)

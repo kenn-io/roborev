@@ -28,7 +28,6 @@ const (
 	defaultACPReadOnlyMode    = "plan"
 	defaultACPAutoApproveMode = "auto-approve"
 	defaultACPTimeoutSeconds  = 600
-	maxACPTextFileBytes       = 10_000_000
 )
 
 // ACPAgent runs code reviews using the Agent Client Protocol via acp-go-sdk

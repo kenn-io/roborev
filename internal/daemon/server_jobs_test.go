@@ -1489,13 +1489,13 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	}
 }
 
-func TestHandleEnqueueBodySizeLimit(t *testing.T) {
+func TestHandleEnqueueLargeDirtyDiff(t *testing.T) {
 	server, _, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
 	testutil.InitTestGitRepo(t, repoDir)
 
-	t.Run("rejects oversized request body", func(t *testing.T) {
+	t.Run("accepts oversized request body", func(t *testing.T) {
 		// Create a request body larger than the default limit (200KB + 50KB overhead)
 		largeDiff := strings.Repeat("a", 300*1024) // 300KB
 		reqData := EnqueueRequest{
@@ -1509,22 +1509,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 
 		server.httpServer.Handler.ServeHTTP(w, req)
 
-		if w.Code != http.StatusRequestEntityTooLarge {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 413, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Error string `json:"error"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if !strings.Contains(response.Error, "too large") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected error about body size, got %q", response.Error)
-		}
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	})
 
 	t.Run("rejects dirty review with empty diff_content", func(t *testing.T) {

@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -866,25 +867,24 @@ func TestReadTextFileWindow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := readTextFileWindow(testPath, tc.startLine, tc.limit, maxACPTextFileBytes)
+			got, err := readTextFileWindow(testPath, tc.startLine, tc.limit)
 			require.NoError(t, err, "readTextFileWindow failed: %v")
 			require.Equal(t, tc.expected, got, "expected %q, got %q", tc.expected, got)
 		})
 	}
 
-	t.Run("enforces byte limit", func(t *testing.T) {
+	t.Run("preserves large content", func(t *testing.T) {
 		t.Parallel()
 
 		tooLargePath := filepath.Join(t.TempDir(), "too-large.txt")
-		tooLarge := strings.Repeat("x", maxACPTextFileBytes+1)
+		tooLarge := strings.Repeat("x", 4096*3000)
 		if err := os.WriteFile(tooLargePath, []byte(tooLarge), 0o644); err != nil {
 			require.NoError(t, err, "failed to write large test file: %v")
 		}
 
-		_, err := readTextFileWindow(tooLargePath, 0, nil, maxACPTextFileBytes)
-		require.Error(t, err, "expected byte-limit error, got nil")
-
-		require.ErrorContains(t, err, "file content too large")
+		got, err := readTextFileWindow(tooLargePath, 0, nil)
+		require.NoError(t, err)
+		require.Equal(t, tooLarge, got)
 	})
 }
 
@@ -1263,4 +1263,38 @@ func TestGetAvailableWithConfigEmptyPreferredBackupUsesConfigCmd(t *testing.T) {
 	ca, ok := resolved.(CommandAgent)
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
+func TestACPTerminalOnlyLimitsOutputWhenRequested(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses cat to emit fixture bytes")
+	}
+	root := t.TempDir()
+	content := strings.Repeat("x", 2*1024*1024)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "output.txt"), []byte(content), 0o600))
+	for _, limit := range []*int{nil, new(0), new(31)} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			client := setupTestClient("auto-approve", root)
+			response, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+				Command: "cat", Args: []string{"output.txt"}, OutputByteLimit: limit,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_, err := client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{TerminalId: response.TerminalId})
+				require.NoError(t, err)
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, err = client.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{TerminalId: response.TerminalId})
+			require.NoError(t, err)
+			output, err := client.TerminalOutput(ctx, acp.TerminalOutputRequest{TerminalId: response.TerminalId})
+			require.NoError(t, err)
+			expected := content
+			if limit != nil {
+				expected = content[len(content)-*limit:]
+			}
+			assert.Equal(t, expected, output.Output)
+			assert.Equal(t, limit != nil, output.Truncated)
+		})
+	}
 }
