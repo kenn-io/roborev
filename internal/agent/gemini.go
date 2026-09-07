@@ -254,6 +254,11 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		return "", "", err
 	}
 
+	// Antigravity tools need an explicit workspace root. cmd.Dir controls the
+	// process cwd, but the CLI resolves its tool workspace separately and can
+	// fall back to its scratch directory for ephemeral worktrees.
+	args = append(append([]string(nil), args...), "--add-dir", repoPath)
+
 	// Choose the prompt-carrying flag by agy version: >= 1.1.1 takes the prompt
 	// as the value of --prompt (stdin is ignored when a prompt flag is present);
 	// older agy reads it from stdin with a bare --print. A bare --print on new
