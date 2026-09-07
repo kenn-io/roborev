@@ -3026,6 +3026,11 @@ func TestQueueShowsPanelMemberNamesWithSameReviewType(t *testing.T) {
 			output := stripTestANSI(m.renderQueueView())
 			assert.Contains(t, output, "bugs")
 			assert.Contains(t, output, "maintainability")
+			for _, paneWidth := range []int{48, 58} {
+				pane := stripTestANSI(strings.Join(m.renderQueuePaneBody(paneWidth, 20), "\n"))
+				assert.Contains(t, pane, "bugs")
+				assert.Contains(t, pane, "maintainability")
+			}
 		})
 	}
 }

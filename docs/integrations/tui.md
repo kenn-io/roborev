@@ -238,9 +238,11 @@ separately from the model. It is visible by default. Jobs with no recorded
 reasoning show `—`.
 
 The Review Type column identifies standard reviews as `default` and shows the
-configured name for specialized or custom reviews. The review detail view shows
-the same value in its metadata header. Panel synthesis rows show `panel`, while
-expanded panel members show their configured review types.
+configured name for specialized or custom reviews. Panel synthesis rows show
+`panel`, while expanded panel members show their configured reviewer names. This
+column stays visible during automatic narrowing while panel members are
+expanded. Review details show the base review type and a separate `Reviewer:`
+label for panel members.
 
 The queue displays two separate status columns:
 
