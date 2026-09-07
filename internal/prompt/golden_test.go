@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,7 +35,29 @@ var (
 func scrubDynamic(s string) string {
 	s = dateScrubber.ReplaceAllString(s, "Current date: GOLDEN_DATE (UTC)")
 	s = tsScrubber.ReplaceAllString(s, "GOLDEN_TIMESTAMP")
-	return s
+	return collapseRepeatedLines(s)
+}
+
+// collapseRepeatedLines folds runs of 3+ identical non-empty lines into the
+// line plus a count marker. Oversized-diff fixtures are hundreds of repeated
+// filler lines; the goldens pin where truncation cuts, not the filler itself.
+func collapseRepeatedLines(s string) string {
+	lines := strings.Split(s, "\n")
+	out := lines[:0]
+	for i := 0; i < len(lines); {
+		j := i
+		for j < len(lines) && lines[j] == lines[i] {
+			j++
+		}
+		if run := j - i; run >= 3 && lines[i] != "" {
+			out = append(out, lines[i],
+				fmt.Sprintf("[golden: previous line repeated %d more times]", run-1))
+		} else {
+			out = append(out, lines[i:j]...)
+		}
+		i = j
+	}
+	return strings.Join(out, "\n")
 }
 
 // assertGolden compares got against testdata/golden/<name>, or rewrites the
@@ -329,10 +352,15 @@ func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
 	large := strings.Repeat("line of content added\n", 800)
 	sha := r.commitFile("big.txt", large, "huge change")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 5500}
+	cfg := &config.Config{DefaultMaxPromptSize: 9000}
 	b := NewBuilderWithConfig(nil, cfg)
 	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)
+
+	// Behavioral invariant, independent of the golden: truncation must not
+	// consume the commit identity or the diff-access fallback.
+	assert.Contains(t, prompt, "## Current Commit")
+	assert.Contains(t, prompt, "View with:")
 
 	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff.golden")
 }
@@ -344,10 +372,13 @@ func TestGoldenPrompt_SingleTruncatedDiffCodex(t *testing.T) {
 	large := strings.Repeat("line of content added\n", 800)
 	sha := r.commitFile("big.txt", large, "huge change")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	cfg := &config.Config{DefaultMaxPromptSize: 9000}
 	b := NewBuilderWithConfig(nil, cfg)
 	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "codex", "", "")
 	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "## Current Commit")
+	assert.Contains(t, prompt, "For Codex in read-only review mode, inspect the commit locally")
 
 	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff_codex.golden")
 }
@@ -360,10 +391,13 @@ func TestGoldenPrompt_RangeTruncated(t *testing.T) {
 	r.commitFile("big1.txt", large, "first large addition")
 	headSHA := r.commitFile("big2.txt", large, "second large addition")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 5000}
+	cfg := &config.Config{DefaultMaxPromptSize: 9000}
 	b := NewBuilderWithConfig(nil, cfg)
 	prompt, err := b.ForRepo(r.dir, 0).Build(baseSHA+".."+headSHA, 0, "test", "", "")
 	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "## Commit Range")
+	assert.Contains(t, prompt, "View with:")
 
 	assertGolden(t, scrubDynamic(prompt), "range_truncated.golden")
 }
@@ -376,10 +410,13 @@ func TestGoldenPrompt_DirtyTruncated(t *testing.T) {
 		"index 0000000..1111111\n--- /dev/null\n+++ b/big.txt\n@@ -0,0 +1,500 @@\n" +
 		strings.Repeat("+a line of content\n", 500)
 
-	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	cfg := &config.Config{DefaultMaxPromptSize: 9000}
 	b := NewBuilderWithConfig(nil, cfg)
 	prompt, err := b.ForRepo(r.dir, 0).BuildDirty(diff, 0, "test", "", "")
 	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "## Uncommitted Changes")
+	assert.Contains(t, prompt, "(Diff too large to include in full)")
 
 	assertGolden(t, scrubDynamic(prompt), "dirty_truncated.golden")
 }
@@ -401,7 +438,7 @@ func TestGoldenPrompt_RangeTruncatedCodexPreservesInRangeReviews(t *testing.T) {
 	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
 		"No issues found.\n\nVerdict: PASS")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 6000}
+	cfg := &config.Config{DefaultMaxPromptSize: 10500}
 	b := NewBuilderWithConfig(db, cfg)
 	prompt, err := b.ForRepo(r.dir, repo.ID).Build(baseSHA+".."+commit2, 0, "codex", "", "")
 	require.NoError(t, err)
