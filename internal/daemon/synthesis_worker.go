@@ -381,7 +381,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 	agentOutput = sessionWriter
 
 	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
-		ConfigRepoPath: job.RepoPath,
+		ConfigRepoPath: resolveEffectiveRepoPath(workerID, job),
 		GlobalConfig:   wp.cfgGetter.Config(),
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.

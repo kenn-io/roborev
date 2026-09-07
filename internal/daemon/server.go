@@ -382,6 +382,9 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	}
 	s.browserMu.Lock()
@@ -390,7 +393,7 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
-		return fmt.Errorf("server stopped during browser startup")
+		return nil
 	}
 	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)

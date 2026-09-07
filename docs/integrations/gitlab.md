@@ -16,6 +16,11 @@ runs.
     support for the poller is coming separately; until then, use the pipeline mode
     described on this page.
 
+Comment bodies that exceed the per-comment size limit are posted as multiple
+comments, preserving the complete body, including raw reviews when synthesis
+fails. With comment updates enabled, each continuation is updated too; unused
+continuations are marked as superseded when a later review is shorter.
+
 ## How It Works
 
 On each merge request pipeline, the job:

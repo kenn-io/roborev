@@ -1200,6 +1200,8 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	).CombinedOutput()
 	require.NoError(t, err, "git worktree add failed: %s", out)
 
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".roborev.toml"), []byte("max_prompt_size = 4096\nsnapshot_dir = \".review-inputs\"\n"), 0o600))
+
 	const memberAgent = "panel-wt-member"
 	registerPassingAgent(t, memberAgent)
 
@@ -1207,8 +1209,17 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	const synthAgent = "synth-wt"
 	agent.Register(&agent.FakeAgent{
 		NameStr: synthAgent,
-		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+		ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
+			assert.Contains(prompt, "Read every referenced review file in full")
+			files, err := filepath.Glob(filepath.Join(worktreePath, ".review-inputs", "*", "review.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 2)
+			for _, file := range files {
+				content, err := os.ReadFile(file)
+				require.NoError(t, err)
+				assert.Contains(string(content), strings.Repeat("finding ", 1000))
+			}
 			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
@@ -1225,8 +1236,8 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
-	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.Repeat("finding ", 1000))
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.Repeat("finding ", 1000))
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")

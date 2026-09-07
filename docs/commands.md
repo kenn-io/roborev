@@ -231,8 +231,8 @@ roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
 
 `roborev export reviews` emits one JSON document containing completed reviews.
 The default `content` profile includes the raw review output text exactly as
-stored, subject to a large size cap. The `metadata` profile keeps the same
-review metadata but sets `content` fields to `null`.
+stored. The `metadata` profile keeps the same review metadata but sets `content`
+fields to `null`.
 
 Each top-level review has an `experiments` field. It is an array of assignments
 when an experiment applies and `null` otherwise. Every assignment contains the

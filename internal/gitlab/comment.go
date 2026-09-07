@@ -72,9 +72,13 @@ func (c *Client) MergeRequestRefs(
 // FindExistingMRComment searches for an existing roborev note on the given
 // merge request. It returns the note ID if found, or 0 if no match exists.
 func (c *Client) FindExistingMRComment(ctx context.Context, project string, mrIID int) (int64, error) {
+	return c.findCommentPart(ctx, project, mrIID, CommentMarker)
+}
+
+func (c *Client) findCommentPart(ctx context.Context, project string, mrIID int, marker string) (int64, error) {
 	var lastID int64
 	err := c.eachMRNote(ctx, project, mrIID, func(note *gogitlab.Note) {
-		if strings.Contains(note.Body, CommentMarker) {
+		if strings.Contains(note.Body, marker) {
 			lastID = note.ID
 		}
 	})
@@ -181,26 +185,51 @@ func escapeQuickAction(line string) string {
 	return line[:slash] + `\` + line[slash:]
 }
 
-// prepareBody prepends the CommentMarker, neutralizes GitLab quick actions,
-// and truncates to review.MaxCommentLen, preserving UTF-8 safety.
-func prepareBody(body string) string {
-	return review.TruncateComment(CommentMarker + "\n" + neutralizeQuickActions(body))
+// prepareBodies measures provider formatting and preserves every input byte
+// across as many comments as needed.
+func prepareBodies(body string) []string {
+	return review.CommentParts(body, func(body string, part int) string {
+		return review.CommentPartMarker(CommentMarker, part) + "\n" + neutralizeQuickActions(body)
+	})
 }
 
-// CreateMRComment posts a new roborev merge request note. It prepends the
-// CommentMarker and truncates to review.MaxCommentLen, then always creates a
-// new note (no find/update).
+// CreateMRComment posts the complete review as one or more new comments.
 func (c *Client) CreateMRComment(ctx context.Context, project string, mrIID int, body string) error {
-	return c.createPreparedComment(ctx, project, mrIID, prepareBody(body))
+	for _, body := range prepareBodies(body) {
+		if err := c.createPreparedComment(ctx, project, mrIID, body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// UpsertMRComment creates or updates a roborev merge request note. It prepends
-// the CommentMarker, truncates to review.MaxCommentLen, and either updates an
-// existing marker note or creates a new one.
+// UpsertMRComment updates the primary comment and its continuations. When
+// a later review is shorter, surplus continuations no longer show stale findings.
 func (c *Client) UpsertMRComment(ctx context.Context, project string, mrIID int, body string) error {
-	body = prepareBody(body)
+	parts := prepareBodies(body)
+	for part, body := range parts {
+		if err := c.upsertPreparedComment(ctx, project, mrIID, body, review.CommentPartMarker(CommentMarker, part)); err != nil {
+			return err
+		}
+	}
+	for part := len(parts); ; part++ {
+		marker := review.CommentPartMarker(CommentMarker, part)
+		id, err := c.findCommentPart(ctx, project, mrIID, marker)
+		if err != nil {
+			return err
+		}
+		if id == 0 {
+			return nil
+		}
+		body := marker + "\nThis continuation has been superseded by the updated review."
+		if err := c.updateComment(ctx, project, mrIID, id, body); err != nil {
+			return err
+		}
+	}
+}
 
-	existingID, err := c.FindExistingMRComment(ctx, project, mrIID)
+func (c *Client) upsertPreparedComment(ctx context.Context, project string, mrIID int, body, marker string) error {
+	existingID, err := c.findCommentPart(ctx, project, mrIID, marker)
 	if err != nil {
 		return fmt.Errorf("find existing comment: %w", err)
 	}

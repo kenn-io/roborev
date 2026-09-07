@@ -126,7 +126,7 @@ func TestBrowserServerCannotStartAfterStop(t *testing.T) {
 	server.allowWebCompilationStub = true
 	require.NoError(t, server.Stop())
 	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
-	require.Error(t, err)
+	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 }
 
@@ -142,7 +142,7 @@ func TestBrowserServerClosesListenerWhenStartupRacesWithStop(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = address
 	runtime, err := server.startBrowserServer(cfg.Web)
-	require.Error(t, err)
+	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 
 	rebound, err := net.Listen("tcp", address)

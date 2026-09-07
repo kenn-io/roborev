@@ -190,7 +190,7 @@ max_chars = 50000
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
-| `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 200000) |
+| `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 204800) |
 | `snapshot_dir` | string | Repo-relative directory for diff and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
 
 ### Fix Commit Metadata
@@ -935,7 +935,7 @@ column_borders = true             # Show separators between TUI columns
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |
 | `grok_cmd` | string | `grok` | Custom path or name for the Grok Build binary | Yes |
 | `exclude_patterns` | array | `[]` | Filenames or glob patterns to exclude from review diffs globally | Yes |
-| `default_max_prompt_size` | int | 200000 | Default maximum prompt size in bytes for review prompts | Yes |
+| `default_max_prompt_size` | int | 204800 | Default maximum prompt size in bytes for review prompts | Yes |
 
 !!! note
 

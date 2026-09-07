@@ -194,6 +194,18 @@ Test conventions:
 
 ## Development Preferences
 
+- Before adding or tightening a size, count, memory, or time limit, cite the
+  actual constraint: upstream source at a pinned revision, an authoritative
+  protocol requirement, or a measured failure on a representative workload.
+  State the value, units, affected operation, and why that evidence requires
+  that limit in the code and PR rationale. A review recommendation, a round
+  number, or speculative hardening is not evidence. Do not invent limits.
+- Preserve complete requested data. Memory use alone is not a defect. Reuse
+  existing prompt sizing and file handoff for oversized inputs, including
+  synthesis reviews. Enforce proven provider limits at the provider boundary
+  without silently discarding data.
+- Use `testing/synctest` for Go timeout and retry tests. Assert behavior under
+  virtual time rather than sleeps or wall-clock completion thresholds.
 - Keep changes simple; avoid over-engineering.
 - Prefer Go stdlib over new dependencies.
 - No emojis in code or output (commit messages are fine).
