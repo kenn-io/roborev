@@ -36,7 +36,7 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 	out = append(out, xansi.Truncate(titleStyle.Render(title), innerW, ""))
 
 	verdictParts := []string{
-		statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)),
+		statusStyle.Render(reviewTypeMetadata(*review.Job)),
 		statusStyle.Render("| Reasoning: " + displayReasoning(review.Job.Reasoning)),
 	}
 	if review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob() {
@@ -318,6 +318,9 @@ func (m model) renderJobStatusCard(job storage.ReviewJob, innerW int) []string {
 	add("Ref", shortJobRef(job))
 	add("Branch", m.getBranchForJob(job))
 	add("Agent", formatAgentLabel(job.Agent, job.Model))
+	if job.PanelRole == storage.PanelRoleMember {
+		add("Reviewer", stripControlChars(job.PanelMemberName))
+	}
 	add("Review type", displayReviewType(job.ReviewType, job.PanelRole))
 	if job.StartedAt != nil {
 		add("Elapsed", m.jobElapsedCell(job))

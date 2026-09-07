@@ -82,7 +82,8 @@ reviewers.
 For expanded panel members, the Review Type column shows the configured reviewer
 name so members with different instructions are distinguishable even when they
 share a base review type. Standalone reviews show their review type as usual.
-Press `p` on a member to inspect its prompt.
+Press `p` on a member to inspect its prompt. The review detail view, split pane,
+and job status card also show the reviewer name alongside the base review type.
 
 The parent review is what you close, fix, cancel, rerun, and wait on. Member
 jobs are implementation details for the panel run. Rerunning the parent starts a
