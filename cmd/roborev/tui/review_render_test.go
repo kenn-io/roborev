@@ -445,6 +445,23 @@ func TestRenderReviewShowsReviewType(t *testing.T) {
 	assert.Contains(t, out, "Review type: project-conventions")
 }
 
+func TestReviewDetailsIdentifyPanelMember(t *testing.T) {
+	for _, name := range []string{"bugs", "maintainability"} {
+		t.Run(name, func(t *testing.T) {
+			job := makeJob(42, withPanelMember("R", name, 0), withReviewType("default"))
+			m := setupRenderModel(viewReview, makeReview(1, &job, withReviewOutput("Review output")))
+			for _, output := range []string{
+				m.renderReviewView(),
+				strings.Join(m.reviewPaneHeaderLines(120), "\n"),
+				strings.Join(m.renderJobStatusCard(job, 120), "\n"),
+			} {
+				assert.Contains(t, stripANSI(output), "Reviewer: "+name)
+				assert.Contains(t, stripANSI(output), "Review type: default")
+			}
+		})
+	}
+}
+
 func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 	reviewType := strings.Repeat("a", 64)
 	verdict := "P"

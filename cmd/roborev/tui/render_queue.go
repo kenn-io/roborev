@@ -1032,6 +1032,11 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		agentName = "claude"
 	}
 	reviewType := displayReviewType(job.ReviewType, job.PanelRole)
+	if job.PanelRole == storage.PanelRoleMember {
+		if name := stripControlChars(job.PanelMemberName); name != "" {
+			reviewType = name
+		}
+	}
 
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 

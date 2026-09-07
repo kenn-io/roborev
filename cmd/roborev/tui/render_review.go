@@ -66,6 +66,16 @@ func (m model) reviewContentString(review *storage.Review) string {
 	return content.String()
 }
 
+func reviewTypeMetadata(job storage.ReviewJob) string {
+	label := "Review type: " + displayReviewType(job.ReviewType, job.PanelRole)
+	if job.PanelRole == storage.PanelRoleMember {
+		if name := stripControlChars(job.PanelMemberName); name != "" {
+			label = "Reviewer: " + name + " | " + label
+		}
+	}
+	return label
+}
+
 func (m model) renderReviewView() string {
 	var b strings.Builder
 
@@ -120,7 +130,7 @@ func (m model) renderReviewView() string {
 			tokenSummary = tu.FormatSummary()
 		}
 		var metadata strings.Builder
-		metadata.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)))
+		metadata.WriteString(statusStyle.Render(reviewTypeMetadata(*review.Job)))
 		metadata.WriteString(statusStyle.Render(" | Reasoning: " + displayReasoning(review.Job.Reasoning)))
 		if hasVerdict {
 			metadata.WriteString(" ")

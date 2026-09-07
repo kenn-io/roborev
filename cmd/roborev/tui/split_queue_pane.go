@@ -3,12 +3,19 @@ package tui
 // queuePaneColumns returns the visible queue columns that fit paneW,
 // dropping from the end of the user's configured column order (rightmost-
 // configured drops first). colSel, colJobID, and colRef always survive.
+// Expanded panel members also retain colReviewType to identify each reviewer.
 // Estimation: fixed columns use their minimum fixed widths; flex columns
 // (ref/branch/repo) count a floor of min(content, 12); +1 spacing per
 // non-first column. This mirrors renderQueueTable's sizing closely enough
 // to decide fit; renderQueueTable does the exact layout afterward.
 func (m model) queuePaneColumns(paneW int, contentWidth map[int]int) []int {
 	core := map[int]bool{colSel: true, colJobID: true, colRef: true}
+	for _, row := range m.visibleQueueRows() {
+		if row.depth == 1 {
+			core[colReviewType] = true
+			break
+		}
+	}
 	estimate := func(c int) int {
 		w := contentWidth[c]
 		switch c {
