@@ -1131,7 +1131,7 @@ func (m *model) getDisplayName(repoPath, defaultName string) string {
 		return defaultName
 	}
 	// Cache miss - load from config (handles reviews for repos not in jobs list)
-	displayName := config.GetDisplayName(repoPath)
+	displayName := config.GetDisplayName(repoPath, m.globalCfg)
 	m.displayNames[repoPath] = displayName
 	if displayName != "" {
 		return displayName
@@ -1144,7 +1144,7 @@ func (m *model) getDisplayName(repoPath, defaultName string) string {
 func (m *model) updateDisplayNameCache(jobs []storage.ReviewJob) {
 	for _, repoPath := range uniqueJobRepoPaths(jobs) {
 		// Always refresh to pick up config changes
-		m.displayNames[repoPath] = config.GetDisplayName(repoPath)
+		m.displayNames[repoPath] = config.GetDisplayName(repoPath, m.globalCfg)
 	}
 }
 

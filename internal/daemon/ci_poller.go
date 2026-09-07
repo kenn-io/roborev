@@ -537,6 +537,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	}
 
 	// Load repo config off the PR's default branch (never the working tree, F1).
+	cfg = cfg.ForRepo(repo.RootPath)
 	repoConfig, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
 		if config.IsExperimentConfigError(err) || config.IsConfigValidationError(err) {

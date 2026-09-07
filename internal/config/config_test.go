@@ -1553,7 +1553,7 @@ connect_timeout = "10s"
 func TestGetDisplayName(t *testing.T) {
 	t.Run("no config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		name := GetDisplayName(tmpDir)
+		name := GetDisplayName(tmpDir, nil)
 		if name != "" {
 			assert.Condition(t, func() bool {
 				return false
@@ -1563,7 +1563,7 @@ func TestGetDisplayName(t *testing.T) {
 
 	t.Run("display_name not set", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `agent = "codex"`)
-		name := GetDisplayName(tmpDir)
+		name := GetDisplayName(tmpDir, nil)
 		if name != "" {
 			assert.Condition(t, func() bool {
 				return false
@@ -1573,7 +1573,7 @@ func TestGetDisplayName(t *testing.T) {
 
 	t.Run("display_name is set", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `display_name = "My Cool Project"`)
-		name := GetDisplayName(tmpDir)
+		name := GetDisplayName(tmpDir, nil)
 		if name != "My Cool Project" {
 			assert.Condition(t, func() bool {
 				return false
@@ -1587,7 +1587,7 @@ agent = "claude-code"
 display_name = "Backend Service"
 excluded_branches = ["wip"]
 `)
-		name := GetDisplayName(tmpDir)
+		name := GetDisplayName(tmpDir, nil)
 		if name != "Backend Service" {
 			assert.Condition(t, func() bool {
 				return false

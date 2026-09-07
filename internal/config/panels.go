@@ -226,6 +226,7 @@ type SynthesisSpec struct {
 // panel is undefined, has no members, references an undefined subagent, or a
 // member has an invalid review_type/reasoning.
 func ResolvePanel(panelName, repoPath string, globalCfg *Config) ([]ResolvedMember, SynthesisSpec, error) {
+	globalCfg = globalCfg.ForRepo(repoPath)
 	merged := MergedReviewConfig(repoPath, globalCfg)
 	panel, ok := merged.Panels[panelName]
 	if !ok {

@@ -596,6 +596,7 @@ func HasWorkflowAgentOverrideFromConfig(
 // ResolveModelForWorkflow determines which model to use based on workflow and level.
 // Same priority as ResolveAgentForWorkflow, but returns empty string as default.
 func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {
+	globalCfg = globalCfg.ForRepo(repoPath)
 	repoCfg, _ := LoadRepoConfig(repoPath)
 	return ResolveModelForWorkflowFromConfig(cli, repoCfg, globalCfg, workflow, level)
 }
@@ -623,6 +624,7 @@ func ResolveModelForWorkflowFromConfig(
 // when the agent was overridden from a different source (e.g., CLI --agent)
 // and the generic model is likely paired with a different default agent.
 func ResolveWorkflowModel(repoPath string, globalCfg *Config, workflow, level string) string {
+	globalCfg = globalCfg.ForRepo(repoPath)
 	repoCfg, _ := LoadRepoConfig(repoPath)
 	return ResolveWorkflowModelFromConfig(repoCfg, globalCfg, workflow, level)
 }
@@ -978,6 +980,11 @@ func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) stri
 func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string {
 	if g == nil {
 		return ""
+	}
+	if !isAgent && workflow == "review" {
+		if model := strings.TrimSpace(g.project.ReviewModel); model != "" {
+			return model
+		}
 	}
 	return lookupWorkflowField(reflect.ValueOf(*g), workflow, level, isAgent)
 }
