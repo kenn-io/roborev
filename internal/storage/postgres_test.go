@@ -1109,6 +1109,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
+	zero, excluded := 0, 4
 
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-reviews-test.git"})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-reviews-sha"})
@@ -1131,6 +1132,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Closed:             false,
 			VerdictBool:        new(true),
 			StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
+			ReviewedFileCount:  &zero,
+			ExcludedFileCount:  &excluded,
 			UpdatedByMachineID: defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
@@ -1158,6 +1161,19 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	).Scan(&verdict, &structuredOutput))
 	assert.True(t, verdict)
 	assert.JSONEq(t, string(reviews[0].StructuredOutput), string(structuredOutput))
+	var reviewedFileCount, excludedFileCount *int
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE uuid = $1`, reviews[0].UUID,
+	).Scan(&reviewedFileCount, &excludedFileCount))
+	require.NotNil(t, reviewedFileCount)
+	require.NotNil(t, excludedFileCount)
+	assert.Equal(t, 0, *reviewedFileCount)
+	assert.Equal(t, 4, *excludedFileCount)
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE uuid = $1`, reviews[1].UUID,
+	).Scan(&reviewedFileCount, &excludedFileCount))
+	assert.Nil(t, reviewedFileCount)
+	assert.Nil(t, excludedFileCount)
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})

@@ -1138,6 +1138,7 @@ type ReviewCompletion struct {
 	Verdict          Verdict
 	StructuredOutput json.RawMessage
 	MinSeverity      string
+	FileCoverage     *ReviewFileCoverage
 }
 
 // CompleteJobResult marks a job done and stores the result produced by the
@@ -1226,9 +1227,20 @@ func (db *DB) completeJob(
 	} else if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	coverage := NormalizeReviewFileCoverage(completion.FileCoverage)
+	var reviewedFileCount, excludedFileCount any
+	if coverage != nil {
+		if coverage.Reviewed != nil {
+			reviewedFileCount = *coverage.Reviewed
+		}
+		if coverage.Excluded != nil {
+			excludedFileCount = *coverage.Excluded
+		}
+	}
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal,
-		nullString(string(completion.StructuredOutput)), reviewUUID, machineID, now)
+		nullString(string(completion.StructuredOutput)), reviewedFileCount, excludedFileCount,
+		reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}

@@ -164,6 +164,13 @@ completes.
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
+When the daemon measured the review input, review details report the reviewed
+and excluded file counts. The counts describe change-set paths supplied to and
+filtered out of the review input, and a rename counts as two paths. Older
+reviews, dirty reviews, prebuilt CI prompts, prompt-native jobs, fix jobs, and
+panel synthesis records have no coverage. The prompt sent to the agent remains
+unchanged.
+
 `roborev ui` starts the daemon when needed, reads the browser origin and path
 prefix from the live daemon runtime, and opens `/reviews` below that prefix when
 one is configured. An optional positive numeric job ID opens `/reviews/<job-id>`

@@ -2506,6 +2506,8 @@ components:
         created_at:
           format: date-time
           type: string
+        file_coverage:
+          $ref: "#/components/schemas/ReviewFileCoverage"
         id:
           format: int64
           type: integer
@@ -2544,6 +2546,16 @@ components:
         - output
         - created_at
         - closed
+      type: object
+    ReviewFileCoverage:
+      additionalProperties: false
+      properties:
+        excluded:
+          format: int64
+          type: integer
+        reviewed:
+          format: int64
+          type: integer
       type: object
     ReviewJob:
       additionalProperties: false
