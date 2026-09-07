@@ -9,7 +9,6 @@ import (
 	"log"
 	"strings"
 	"time"
-	"unicode/utf8"
 	"uuid"
 )
 
@@ -20,11 +19,8 @@ const (
 	ExportProfileMetadata ExportProfile = "metadata"
 
 	exportCursorVersion     = 1
-	exportContentMaxBytes   = 1 << 20
 	exportDefaultPageLimit  = 500
 	exportMaxPageLimit      = 5000
-	exportStringMaxBytes    = 4096
-	exportTruncationMarker  = "...[truncated]"
 	exportReviewStatusDone  = "done"
 	exportReviewVerdictPass = "pass"
 	exportReviewVerdictFail = "fail"
@@ -297,17 +293,17 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 	}
 	review := ExportReview{
 		ReviewID:            row.reviewID,
-		Status:              capExportString(row.status),
+		Status:              row.status,
 		Verdict:             exportVerdict(row.verdictBool),
 		CreatedAt:           formatExportTime(parseSQLiteTime(row.enqueuedAt)),
 		CompletedAt:         formatExportTime(completed),
 		DurationMS:          exportDurationMS(row.startedAt, row.finishedAt),
-		Project:             capExportString(row.project),
-		Repo:                capExportString(repo),
+		Project:             row.project,
+		Repo:                repo,
 		Branch:              stringPtrNonEmpty(firstNonEmpty(row.branch, row.ciBaseBranch)),
 		CommitSHA:           stringPtrNonEmpty(row.exportCommitSHA()),
 		PRNumber:            int64PtrValid(row.ciPRNumber),
-		Agent:               capExportString(row.agent),
+		Agent:               row.agent,
 		Model:               stringPtrNonEmpty(nullStringValue(row.model)),
 		Cost:                parseExportCost(row.tokenUsage),
 		Subagents:           []ExportSubagent{},
@@ -318,10 +314,10 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		review.ResumeSourceJobUUID = &row.resumeSourceJobUUID.V
 	}
 	if review.PRNumber != nil && row.ciGitHubRepo.Valid && row.ciGitHubRepo.String != "" {
-		review.PRURL = stringPtrNonEmpty("https://github.com/" + capExportString(row.ciGitHubRepo.String) + "/pull/" + fmt.Sprint(*review.PRNumber))
+		review.PRURL = stringPtrNonEmpty("https://github.com/" + row.ciGitHubRepo.String + "/pull/" + fmt.Sprint(*review.PRNumber))
 	}
 	if profile == ExportProfileContent && row.output.Valid {
-		review.Content = exportContentPtr(row.output.String)
+		review.Content = new(row.output.String)
 	}
 	return review
 }
@@ -392,8 +388,8 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		}
 		sub := ExportSubagent{
 			ReviewID:    reviewID,
-			Name:        capExportString(name),
-			Agent:       capExportString(agentName),
+			Name:        name,
+			Agent:       agentName,
 			Model:       stringPtrNonEmpty(nullStringValue(model)),
 			ReviewType:  stringPtrNonEmpty(nullStringValue(reviewType)),
 			Verdict:     exportVerdict(verdictBool),
@@ -405,7 +401,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 			sub.ResumeSourceJobUUID = &resumeSource.V
 		}
 		if profile == ExportProfileContent && output.Valid {
-			sub.Content = exportContentPtr(output.String)
+			sub.Content = new(output.String)
 		}
 		out = append(out, sub)
 	}
@@ -469,16 +465,11 @@ func int64PtrValid(v sql.NullInt64) *int64 {
 }
 
 func stringPtrNonEmpty(v string) *string {
-	v = capExportString(strings.TrimSpace(v))
+	v = strings.TrimSpace(v)
 	if v == "" {
 		return nil
 	}
 	return &v
-}
-
-func exportContentPtr(v string) *string {
-	capped := capExportContent(v)
-	return &capped
 }
 
 func exportDurationMS(startedAt, finishedAt sql.NullString) *int64 {
@@ -522,39 +513,6 @@ func nullStringValue(v sql.NullString) string {
 		return ""
 	}
 	return v.String
-}
-
-func capExportString(s string) string {
-	return capUTF8Bytes(s, exportStringMaxBytes, "")
-}
-
-func capExportContent(s string) string {
-	if len(s) <= exportContentMaxBytes {
-		return s
-	}
-	return capUTF8Bytes(s, exportContentMaxBytes, exportTruncationMarker)
-}
-
-func capUTF8Bytes(s string, maxBytes int, marker string) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
-	}
-	limit := maxBytes
-	if marker != "" {
-		limit -= len(marker)
-	}
-	if limit < 0 {
-		limit = 0
-	}
-	for limit > 0 && !utf8.ValidString(s[:limit]) {
-		_, size := utf8.DecodeLastRuneInString(s[:limit])
-		if size <= 0 {
-			limit--
-		} else {
-			limit -= size
-		}
-	}
-	return s[:limit] + marker
 }
 
 func rangeEndSHA(ref string) string {

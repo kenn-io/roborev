@@ -166,8 +166,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		_, _, synth := enqueuePanelRun(t, tc, "checkout-fail-panel", []memberSpec{
 			{name: "m0", agent: "test"},
 		})
-		// The passing agent is not a SynthesisAgent, so the regular Review path
-		// runs prepareJobCheckout. Force a CI exact checkout (source=ci) at a head
+		// Synthesis uses the regular Review path, which runs prepareJobCheckout. Force a CI exact checkout (source=ci) at a head
 		// that cannot resolve so the checkout fails before the agent runs, with
 		// retries pre-exhausted and no backup so the failure is terminal: FailJob
 		// preserves agent_invoked, whereas a requeue would clear it and mask a
@@ -230,22 +229,18 @@ type synthesisEntrypointTestAgent struct {
 
 func (a *synthesisEntrypointTestAgent) Name() string { return a.name }
 
-func (a *synthesisEntrypointTestAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
+func (a *synthesisEntrypointTestAgent) Review(_ context.Context, _, _, prompt string, output io.Writer) (string, error) {
 	a.reviewCalled = true
-	return "", fmt.Errorf("review entrypoint should not be used for synthesis")
-}
-
-func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
 	a.synthPrompt = prompt
 	if output != nil && a.streamLine != "" {
 		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	if a.result != "" {
-		return json.RawMessage(a.result), nil
+		return a.result, nil
 	}
-	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -806,7 +801,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
 }
 
-func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
+func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -834,7 +829,7 @@ func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
 	assert.Contains(review.Output, "combined")
 	require.NotNil(t, review.VerdictBool)
 	assert.Equal(0, *review.VerdictBool)
-	assert.False(synthAgent.reviewCalled, "synthesis must not use the code-review entrypoint")
+	assert.True(synthAgent.reviewCalled, "synthesis uses the ordinary review entrypoint")
 	assert.Contains(synthAgent.synthPrompt, "Review #1")
 	assert.NotContains(synthAgent.synthPrompt, "Review the code changes in commit")
 }
@@ -1026,7 +1021,6 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 	assert.Contains(review.Output, "Consolidated finding.")
 	assert.Contains(review.Output, "**Reported by:** "+memberAgent)
 
-	assert.Contains(captured, "Do not call tools or run commands")
 	assert.Contains(captured, "Only combine the input review results according to these rules")
 	assert.Contains(captured, "Finding A in alpha.go")
 	assert.Contains(captured, "Finding B in beta.go")
@@ -1200,6 +1194,8 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	).CombinedOutput()
 	require.NoError(t, err, "git worktree add failed: %s", out)
 
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".roborev.toml"), []byte("max_prompt_size = 4096\nsnapshot_dir = \".review-inputs\"\n"), 0o600))
+
 	const memberAgent = "panel-wt-member"
 	registerPassingAgent(t, memberAgent)
 
@@ -1207,8 +1203,17 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	const synthAgent = "synth-wt"
 	agent.Register(&agent.FakeAgent{
 		NameStr: synthAgent,
-		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+		ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
+			assert.Contains(prompt, "Read the complete task prompt")
+			files, err := filepath.Glob(filepath.Join(worktreePath, ".review-inputs", "*", "prompt.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			for _, file := range files {
+				content, err := os.ReadFile(file)
+				require.NoError(t, err)
+				assert.Contains(string(content), strings.Repeat("finding ", 1000))
+			}
 			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
@@ -1225,8 +1230,8 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
-	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.Repeat("finding ", 1000))
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.Repeat("finding ", 1000))
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")

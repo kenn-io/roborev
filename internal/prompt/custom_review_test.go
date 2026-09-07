@@ -77,7 +77,7 @@ func TestCustomReviewReadsRepoFilesFromConfiguredRef(t *testing.T) {
 	got, custom, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+		resolveSystemPrompt("codex", "custom", "custom")
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted base rubric.")
@@ -99,7 +99,7 @@ func TestCustomReviewReadsGlobalRelativeFilesFromConfiguredRef(t *testing.T) {
 	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+		resolveSystemPrompt("codex", "custom", "custom")
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
@@ -129,7 +129,7 @@ func TestCustomReviewReadsExternalSymlinkFromConfiguredRef(t *testing.T) {
 	got, custom, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+		resolveSystemPrompt("codex", "custom", "custom")
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "External rubric.")
@@ -157,7 +157,7 @@ func TestCustomReviewReadsThroughDirectorySymlinkFromConfiguredRef(t *testing.T)
 	got, custom, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+		resolveSystemPrompt("codex", "custom", "custom")
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted directory-link rubric.")
@@ -179,7 +179,7 @@ func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {
 	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+		resolveSystemPrompt("codex", "custom", "custom")
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
@@ -189,11 +189,11 @@ func TestCustomReviewMissingDefinitionFails(t *testing.T) {
 	_, _, err := NewBuilder(nil).
 		ForRepo(t.TempDir(), 0).
 		WithRepoConfig(&config.RepoConfig{}, "").
-		resolveSystemPrompt("codex", "removed-type", "removed-type", MaxPromptSize)
+		resolveSystemPrompt("codex", "removed-type", "removed-type")
 	require.ErrorContains(t, err, `custom review type "removed-type" is not configured`)
 }
 
-func TestCustomReviewFilesUsePromptLimit(t *testing.T) {
+func TestCustomReviewFilesPreserveCompleteTemplate(t *testing.T) {
 	repoPath := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoPath, "review.tmpl"),
@@ -205,13 +205,14 @@ func TestCustomReviewFilesUsePromptLimit(t *testing.T) {
 		},
 	}}
 
-	_, _, err := NewBuilder(nil).
+	rendered, _, err := NewBuilder(nil).
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
 		resolveSystemPrompt(
-			"codex", "custom", "custom", 512,
+			"codex", "custom", "custom",
 		)
-	require.ErrorContains(t, err, "prompt limit")
+	require.NoError(t, err)
+	assert.Contains(t, rendered, strings.Repeat("x", 1024))
 }
 
 func TestBuiltInReviewPromptStructuredOutputInstruction(t *testing.T) {

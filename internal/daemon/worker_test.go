@@ -14,12 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -51,7 +51,8 @@ type structuredWorkerTestAgent struct {
 	name   string
 	result json.RawMessage
 	// prompt records the last prompt passed to ReviewWithSchema.
-	prompt string
+	prompt   string
+	onPrompt func(string, string)
 }
 
 func (a *structuredWorkerTestAgent) Name() string { return a.name }
@@ -63,11 +64,14 @@ func (a *structuredWorkerTestAgent) Review(
 
 func (a *structuredWorkerTestAgent) ReviewWithSchema(
 	_ context.Context,
-	_, _, reviewPrompt string,
+	repoPath, _, reviewPrompt string,
 	_ json.RawMessage,
 	_ io.Writer,
 ) (json.RawMessage, error) {
 	a.prompt = reviewPrompt
+	if a.onPrompt != nil {
+		a.onPrompt(repoPath, reviewPrompt)
+	}
 	return a.result, nil
 }
 
@@ -737,16 +741,15 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 		snapshotPath    string
 		snapshotContent string
 	)
-	snapshotRE := regexp.MustCompile("`([^`]+roborev-snapshot-[^`]+\\.diff)`")
 	agent.Register(&agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			agentRepoPath = repoPath
-			match := snapshotRE.FindStringSubmatch(reviewPrompt)
-			if match == nil {
-				return "", fmt.Errorf("review prompt did not reference a snapshot file")
-			}
-			snapshotPath = match[1]
+			files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			snapshotPath = files[0]
+			assert.Contains(t, reviewPrompt, "Read the complete task prompt")
 			data, err := os.ReadFile(snapshotPath)
 			if err != nil {
 				return "", err
@@ -1302,6 +1305,26 @@ func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T
 	assert.Less(t, time.Since(started), 100*time.Millisecond)
 }
 
+func TestFetchFreshSessionUsageStopsRetryingAtDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pool := &WorkerPool{
+			tokenUsageIndexRetryWindow:   time.Minute,
+			tokenUsageIndexRetryInterval: time.Second,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		defer cancel()
+		attempts := 0
+		usage, err := pool.fetchFreshSessionUsage(ctx, func(context.Context, string) (*tokens.Usage, error) {
+			attempts++
+			return nil, nil
+		}, "test-session")
+		require.NoError(t, err)
+		assert.Nil(t, usage)
+		assert.Equal(t, 3, attempts)
+		assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	})
+}
+
 func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
@@ -1318,14 +1341,14 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	), 0o600))
 
 	var attempts atomic.Int32
-	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+	tc.Pool.tokenUsageFetcher = func(ctx context.Context, _ string) (*tokens.Usage, error) {
 		attempts.Add(1)
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
 	defer cancel()
-	started := time.Now()
+	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	tc.Pool.captureTokenUsageForSession(
 		ctx, testWorkerID, job, "fresh-session-456",
 	)
@@ -1334,8 +1357,7 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(updated.TokenUsage)
 	require.NotNil(t, usage)
-	assert.GreaterOrEqual(t, attempts.Load(), int32(2))
-	assert.Less(t, time.Since(started), 250*time.Millisecond)
+	assert.Equal(t, int32(1), attempts.Load())
 	assert.Equal(t, int64(1024), usage.InputTokens)
 	assert.Equal(t, int64(64), usage.OutputTokens)
 	assert.False(t, usage.HasCost)
@@ -1449,7 +1471,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		assert.Contains(t, fake.prompt, instruction)
 	})
 
-	t.Run("cap-sized prompt runs without the instruction instead of failing", func(t *testing.T) {
+	t.Run("budget-sized prompt preserves the output instruction in a file", func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
 		cfg := config.DefaultConfig()
 		cfg.DefaultMaxPromptSize = 4096
@@ -1458,6 +1480,15 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		fake := &structuredWorkerTestAgent{
 			name:   agentName,
 			result: json.RawMessage(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+			onPrompt: func(repoPath, prepared string) {
+				files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
+				require.NoError(t, err)
+				require.Len(t, files, 1)
+				full, err := os.ReadFile(files[0])
+				require.NoError(t, err)
+				assert.Contains(t, string(full), instruction)
+				assert.Contains(t, string(full), strings.Repeat("x", 4096-len("review body\n")))
+			},
 		}
 		agent.Register(fake)
 		t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1467,7 +1498,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		job := enqueuePrebuilt(t, tc, agentName, body)
 
 		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-		assert.Equal(t, body, fake.prompt, "the prompt is sent unchanged rather than over the cap")
+		assert.Contains(t, fake.prompt, "Read the complete task prompt")
 	})
 }
 
@@ -2230,16 +2261,16 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 
 	agentCalled := false
 	var capturedPrompt string
-	snapshotRE := regexp.MustCompile("`([^`]+roborev-snapshot-[^`]+\\.diff)`")
 	agent.Register(&agent.FakeAgent{
 		NameStr: "test",
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
 			agentCalled = true
 			capturedPrompt = p
 			require.LessOrEqual(t, len(p), 6000, "submitted prompt must stay within configured cap")
-			match := snapshotRE.FindStringSubmatch(p)
-			require.NotNil(t, match, "large diff prompt should reference a snapshot file")
-			snapshotPath := match[1]
+			files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			snapshotPath := files[0]
 			assert.NotContains(t, snapshotPath, string(filepath.Separator)+".git"+string(filepath.Separator))
 			data, readErr := os.ReadFile(snapshotPath)
 			require.NoError(t, readErr)
@@ -2287,7 +2318,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 	assert.NotContains(t, capturedPrompt, "```diff")
 }
 
-func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
+func TestProcessJob_OversizedTaskUsesSharedPromptFile(t *testing.T) {
 	originalTest, err := agent.Get("test")
 	require.NoError(t, err)
 
@@ -2295,6 +2326,12 @@ func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: "test",
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
+			files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			saved, err := os.ReadFile(files[0])
+			require.NoError(t, err)
+			assert.Contains(t, string(saved), strings.Repeat("x", 2048))
 			agentCalled = true
 			return "No issues found.", nil
 		},
@@ -2324,10 +2361,9 @@ func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
 	tc.Pool.processJob(testWorkerID, claimed)
 
 	requireOutputChannelClosed(t, output)
-	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
-	assert.False(t, agentCalled, "oversized final prompt must not be submitted")
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.True(t, agentCalled)
 	assert.Equal(t, 0, updated.RetryCount)
-	assert.Contains(t, updated.Error, "prompt exceeds size limit before agent submission")
 }
 
 func TestProcessJob_TaskAllowsFreeFormOutputWithUnknownVerdict(t *testing.T) {

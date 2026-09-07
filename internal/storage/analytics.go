@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -10,12 +9,7 @@ import (
 	"time"
 )
 
-const (
-	AnalyticsSchemaVersion  = 1
-	MaxAnalyticsTimeBuckets = 1000
-)
-
-var ErrAnalyticsRangeTooLarge = errors.New("analytics range has too many time buckets")
+const AnalyticsSchemaVersion = 1
 
 type AnalyticsBucket string
 
@@ -311,9 +305,6 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		seriesUntil = analyticsBucketEnd(starts[len(starts)-1], opts.Bucket)
 	}
 	for start := seriesStart; !start.IsZero() && start.Before(seriesUntil); start = analyticsBucketEnd(start, opts.Bucket) {
-		if len(snapshot.TimeSeries) >= MaxAnalyticsTimeBuckets {
-			return nil, ErrAnalyticsRangeTooLarge
-		}
 		acc := buckets[start]
 		if acc == nil {
 			acc = &analyticsAccumulator{}

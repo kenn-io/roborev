@@ -84,17 +84,11 @@ func newSynthesisEntrypointAgent() *synthesisEntrypointAgent {
 
 func (a *synthesisEntrypointAgent) Name() string { return "synthesis-entrypoint" }
 func (a *synthesisEntrypointAgent) Review(
-	_ context.Context, _, _, _ string, _ io.Writer,
+	_ context.Context, _, _, prompt string, _ io.Writer,
 ) (string, error) {
 	a.reviewCalled = true
-	return "", errors.New("review entrypoint should not be used for synthesis")
-}
-
-func (a *synthesisEntrypointAgent) Synthesize(
-	_ context.Context, prompt string, _ io.Writer,
-) (json.RawMessage, error) {
 	a.synthPrompt = prompt
-	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -117,6 +111,10 @@ func (a *structuredSynthesisAgent) Review(
 ) (string, error) {
 	a.reviewCalled = true
 	return "", errors.New("plain review must not be used when ReviewWithSchema exists")
+}
+
+func (a *structuredSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, json.RawMessage, io.Writer) (json.RawMessage, error) {
+	return nil, errors.New("synthesis uses the ordinary review entrypoint")
 }
 
 func (a *structuredSynthesisAgent) ReviewWithSchema(
@@ -475,7 +473,7 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 	assert.Equal(t, "aaa111..bbb222", cap.capturedGitRef, "gitRef")
 }
 
-func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
+func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
 	synth := newSynthesisEntrypointAgent()
 	agent.Register(synth)
 	t.Cleanup(func() { agent.Unregister("synthesis-entrypoint") })
@@ -502,7 +500,7 @@ func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assertContains(t, comment, "synthesized output")
-	assert.False(t, synth.reviewCalled, "standalone synthesis must not use code-review entrypoint")
+	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 	assertContains(t, synth.synthPrompt, "Found issue A")
 	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
 }
@@ -563,7 +561,7 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assertContains(t, comment, "synthesized output")
-	assert.False(t, synth.reviewCalled, "standalone synthesis must not use code-review entrypoint")
+	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 }
 
 func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {

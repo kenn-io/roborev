@@ -28,7 +28,7 @@ func TestParsePiJSON(t *testing.T) {
 }
 
 func TestParsePiJSONLargeMessage(t *testing.T) {
-	bigText := strings.Repeat("x", 128*1024)
+	bigText := strings.Repeat("x", 5*1024*1024)
 	input := `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}` + "\n"
 
 	result, err := parsePiJSON(strings.NewReader(input))

@@ -86,7 +86,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	if s.browserStopping {
 		s.browserMu.Unlock()
 		cancelRequests()
-		return fail(fmt.Errorf("server stopped during browser startup"))
+		return fail(http.ErrServerClosed)
 	}
 	s.browserServer = server
 	s.browserListener = endpoint.Listener

@@ -205,24 +205,14 @@ func (s *Server) descriptorForPrompt(in freezeInputs) targetDescriptor {
 	}
 }
 
-// descriptorForDirty freezes an uncommitted-changes target. The diff-size and
-// required-diff checks stay here as early returns. sessionSHA is HEAD so session
-// reuse keys on the working-tree base commit.
+// descriptorForDirty freezes an uncommitted-changes target. sessionSHA is HEAD
+// so session reuse keys on the working-tree base commit.
 func (s *Server) descriptorForDirty(
 	ctx context.Context, in freezeInputs,
 ) (targetDescriptor, *RawJSONOutput) {
 	if in.req.DiffContent == "" && !prompt.HasDependencyMetadataFiles(in.req.DirtyFiles) {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: "diff_content required for dirty review"})
-		return targetDescriptor{}, out
-	}
-	const maxDiffSize = 200 * 1024
-	if len(in.req.DiffContent) > maxDiffSize {
-		out, _ := rawJSONOutput(http.StatusBadRequest,
-			ErrorResponse{Error: fmt.Sprintf(
-				"diff_content too large (%d bytes, max %d)",
-				len(in.req.DiffContent), maxDiffSize,
-			)})
 		return targetDescriptor{}, out
 	}
 

@@ -432,18 +432,6 @@ func TestACPAuthEdgeCases(t *testing.T) {
 			Path: "",
 		})
 		require.Error(t, err, "Expected error for empty path, got nil")
-
-		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
-			Path: "test.txt",
-			Line: new(2000000),
-		})
-		require.Error(t, err, "Expected error for excessively large line number, got nil")
-
-		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
-			Path:  "test.txt",
-			Limit: new(2000000),
-		})
-		require.Error(t, err, "Expected error for excessively large limit, got nil")
 	})
 
 	t.Run("WriteTextFile input validation", func(t *testing.T) {
@@ -454,13 +442,6 @@ func TestACPAuthEdgeCases(t *testing.T) {
 			Content: "test content",
 		})
 		require.Error(t, err, "Expected error for empty path, got nil")
-
-		largeContent := string(make([]byte, 11000000)) // 11MB > 10MB limit
-		_, err = validationClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
-			Path:    "test.txt",
-			Content: largeContent,
-		})
-		require.Error(t, err, "Expected error for excessively large content, got nil")
 	})
 
 	t.Run("Permission logic defaults to deny", func(t *testing.T) {
@@ -474,4 +455,18 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Run("Read-only mode allows non-destructive operations", func(t *testing.T) {
 		assertPermissionOutcome(t, client, toolKindPtr("read"), authAllowAlwaysOptionID)
 	})
+}
+
+func TestACPFileOperationsPreserveLargeContent(t *testing.T) {
+	root := t.TempDir()
+	client := setupTestClient("auto-approve", root)
+	content := strings.Repeat("x", 11_000_000) + "\n" + strings.Repeat("\n", 1_000_000) + "target\n"
+	_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{Path: "large.txt", Content: content})
+	require.NoError(t, err)
+	response, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "large.txt"})
+	require.NoError(t, err)
+	require.Equal(t, content, response.Content)
+	response, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "large.txt", Line: new(1_000_002), Limit: new(2_000_000)})
+	require.NoError(t, err)
+	require.Equal(t, "target\n", response.Content)
 }

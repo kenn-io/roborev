@@ -315,38 +315,13 @@ func TestDaemonSignalCleanup(t *testing.T) {
 		errCh <- cmd.Execute()
 	}()
 
-	// Wait for the signal handler to be installed (race-free).
-	// Allow for database initialization overhead under the race detector.
-	var sigCh chan os.Signal
-	select {
-	case sigCh = <-sigReady:
-	case <-time.After(10 * time.Second):
-		require.Condition(t, func() bool {
-			return false
-		}, "timed out waiting for signal handler setup")
-	}
-
-	// Trigger shutdown via signal.
+	// The channel establishes that the handler is installed before the signal.
+	// Joining Execute establishes that cleanup has finished before inspecting it.
+	sigCh := <-sigReady
 	sigCh <- os.Interrupt
+	require.NoError(t, <-errCh)
+	assert.True(t, cleanupCalled, "signal cleanup must run before Execute returns")
 
-	select {
-	case err := <-errCh:
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "daemon exited with error: %v", err)
-		}
-		if !cleanupCalled {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected signal.Stop (cleanup) to be"+
-				" called after signal shutdown")
-		}
-	case <-time.After(5 * time.Second):
-		require.Condition(t, func() bool {
-			return false
-		}, "daemon did not exit within timeout")
-	}
 }
 
 // syncBuffer is a goroutine-safe bytes.Buffer for capturing subprocess

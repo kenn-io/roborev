@@ -38,10 +38,10 @@ type integrationEnv struct {
 
 // newIntegrationEnv creates a test environment: connects to Postgres, wipes and recreates the schema,
 // and provides a temp directory for SQLite databases.
-func newIntegrationEnv(t *testing.T, timeout time.Duration) *integrationEnv {
+func newIntegrationEnv(t *testing.T) *integrationEnv {
 	t.Helper()
 	url := getIntegrationPostgresURL()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithCancel(t.Context())
 
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
 	if err != nil {
@@ -462,7 +462,7 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 }
 
 func TestIntegration_SyncFullCycle(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/integration.git")
@@ -491,7 +491,7 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 }
 
 func TestIntegration_SyncMultipleRepos(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	repo1, _ := db.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo1"), "git@github.com:test/repo1.git")
@@ -508,7 +508,7 @@ func TestIntegration_SyncMultipleRepos(t *testing.T) {
 }
 
 func TestIntegration_PullFromRemote(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	// Insert data directly into postgres (simulating another machine's sync)
 	remoteMachineUUID := testUUID("pull-from-remote-machine")
@@ -574,7 +574,7 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 }
 
 func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	repoIdentity := "git@github.com:test/late-visible.git"
 	nodeA := env.setupNode("late-visible-a", repoIdentity, "1h")
@@ -615,7 +615,7 @@ func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {
 
 func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
 	t.Setenv(syncCursorLookbackEnv, "1h")
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	repoIdentity := "git@github.com:test/lookback-applied.git"
 	nodeA := env.setupNode("lookback-applied-a", repoIdentity, "1h")
@@ -653,7 +653,7 @@ func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
 }
 
 func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	repoIdentity := "git@github.com:test/late-response.git"
 	nodeA := env.setupNode("late-response-a", repoIdentity, "1h")
@@ -711,7 +711,7 @@ func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
 }
 
 func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	assignedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	machineID := testUUID("experiment-assignment-machine")
 
@@ -763,7 +763,7 @@ func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 }
 
 func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	sourceMachineID := testUUID("experiment-source-machine")
 	excludeMachineID := testUUID("experiment-excluded-machine")
 	assignedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
@@ -820,7 +820,7 @@ func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) 
 }
 
 func TestIntegration_FinalPush(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush.git")
@@ -852,7 +852,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 }
 
 func TestIntegration_FinalPush_NoCommit(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush-nocommit.git")
@@ -886,7 +886,7 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 }
 
 func TestIntegration_SchemaCreation(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	tables := []string{"machines", "repos", "commits", "review_jobs", "reviews", "responses"}
 	for _, table := range tables {
@@ -911,7 +911,7 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 }
 
 func TestIntegration_Multiplayer(t *testing.T) {
-	env := newIntegrationEnv(t, 60*time.Second)
+	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:test/multiplayer-repo.git"
 
@@ -1047,7 +1047,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 }
 
 func TestIntegration_MultiplayerSameCommit(t *testing.T) {
-	env := newIntegrationEnv(t, 60*time.Second)
+	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:test/same-commit-repo.git"
 	sharedCommitSHA := "cccc3333"
@@ -1233,7 +1233,7 @@ func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefi
 }
 
 func TestIntegration_MultiplayerRealistic(t *testing.T) {
-	env := newIntegrationEnv(t, 120*time.Second)
+	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:team/shared-project.git"
 
@@ -1497,7 +1497,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 }
 
 func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
-	env := newIntegrationEnv(t, 60*time.Second)
+	env := newIntegrationEnv(t)
 
 	dbA := env.openDB("machine_a.db")
 
@@ -1580,7 +1580,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 }
 
 func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
-	env := newIntegrationEnv(t, 60*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	// Start sync worker FIRST, before creating jobs
@@ -1679,7 +1679,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 }
 
 func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
 	worker := startSyncWorker(t, db, env.pgURL, "", "1h")
@@ -1733,7 +1733,7 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 }
 
 func TestIntegration_TickerSync(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t)
 
 	dbA := env.openDB("machine_a.db")
 	dbB := env.openDB("machine_b.db")

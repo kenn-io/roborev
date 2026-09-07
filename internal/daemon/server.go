@@ -190,32 +190,10 @@ func newServerWithLogs(
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
-		Handler: s.withRequestGuards(mux),
+		Handler: mux,
 	}
 
 	return s
-}
-
-func (s *Server) withRequestGuards(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/api/enqueue" {
-			maxPromptSize := config.DefaultMaxPromptSize
-			if cfg := s.configWatcher.Config(); cfg != nil && cfg.DefaultMaxPromptSize > 0 {
-				maxPromptSize = cfg.DefaultMaxPromptSize
-			}
-			maxBodySize := int64(maxPromptSize) + 50*1024
-			if r.ContentLength > maxBodySize {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusRequestEntityTooLarge)
-				_ = json.NewEncoder(w).Encode(ErrorResponse{
-					Error: fmt.Sprintf("request body too large (max %dKB)", maxBodySize/1024),
-				})
-				return
-			}
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }
 
 // Start begins the server and worker pool
@@ -404,6 +382,9 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	}
 	s.browserMu.Lock()
@@ -412,7 +393,7 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
-		return fmt.Errorf("server stopped during browser startup")
+		return nil
 	}
 	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)

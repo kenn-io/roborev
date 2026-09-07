@@ -63,7 +63,7 @@ dd if=/dev/zero bs=65536 count=1 2>/dev/null
 	assert.Equal(t, 65536, resultLen)
 }
 
-func TestRunStreamingCLIFailsWhenStdoutBacklogExceedsLimit(t *testing.T) {
+func TestRunStreamingCLIPreservesLargeOutputBurst(t *testing.T) {
 	skipIfWindows(t)
 
 	cmdPath := writeTempCommand(t, `#!/bin/sh
@@ -81,8 +81,9 @@ dd if=/dev/zero bs=2097152 count=1 2>/dev/null
 	})
 
 	require.NoError(t, err)
-	require.Error(t, result.WaitErr)
-	assert.ErrorContains(t, result.WaitErr, "stdout backlog exceeded 1 MiB limit")
+	require.NoError(t, result.WaitErr)
+	require.NoError(t, result.ParseErr)
+	assert.Equal(t, string(make([]byte, 2097152)), result.Result)
 }
 
 func TestRunStreamingCLIPreservesWaitErrWhenContextCancelsAfterParse(t *testing.T) {

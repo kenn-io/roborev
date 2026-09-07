@@ -26,9 +26,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// MaxDirtyDiffSize is the maximum size of a dirty diff in bytes (200KB)
-const MaxDirtyDiffSize = 200 * 1024
-
 // describeEnqueue formats the post-enqueue confirmation line. The
 // "Enqueued job <id>" token is preserved verbatim (skills parse it). For a
 // panel run the id is the synthesis (parent) job and the line notes the panel
@@ -311,12 +308,6 @@ Examples:
 				diffContent, err = git.GetDirtyDiff(root, excludes...)
 				if err != nil {
 					return fmt.Errorf("get dirty diff: %w", err)
-				}
-
-				// Check size limit
-				if len(diffContent) > MaxDirtyDiffSize {
-					return fmt.Errorf("dirty diff too large (%d bytes, max %d bytes)\nConsider committing changes in smaller chunks",
-						len(diffContent), MaxDirtyDiffSize)
 				}
 
 				if diffContent == "" && !prompt.HasDependencyMetadataFiles(dirtyFiles) {

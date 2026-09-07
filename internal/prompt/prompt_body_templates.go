@@ -154,27 +154,6 @@ func inRangeReviewsFromView(views []InRangeReviewTemplateContext) []InRangeRevie
 	return reviews
 }
 
-type commitInspectionFallbackView struct {
-	SHA         string
-	StatCmd     string
-	DiffCmd     string
-	FilesCmd    string
-	ShowPathCmd string
-}
-
-type rangeInspectionFallbackView struct {
-	RangeRef string
-	LogCmd   string
-	StatCmd  string
-	DiffCmd  string
-	FilesCmd string
-	ViewCmd  string
-}
-
-type genericDiffFallbackView struct {
-	ViewCmd string
-}
-
 func fallbackContextFromDiffSection(view diffSectionView) FallbackContext {
 	if view.Fallback == "" {
 		return FallbackContext{}
@@ -454,32 +433,12 @@ func renderOptionalSectionsFromView(view optionalSectionsView) (string, error) {
 	return strings.TrimSpace(body), nil
 }
 
-func renderOptionalSectionsPrefix(view optionalSectionsView) (string, error) {
-	body, err := renderOptionalSectionsFromView(view)
-	if err != nil || body == "" {
-		return body, err
-	}
-	return body + "\n\n", nil
-}
-
-func renderCurrentCommitRequired(view currentCommitSectionView) (string, error) {
-	return executePromptTemplate("current_commit_required", view)
-}
-
-func renderCurrentCommitOverflow(view currentCommitSectionView) (string, error) {
-	return executePromptTemplate("current_commit_overflow", view)
-}
-
 func renderCommitRangeRequired(view commitRangeSectionView) (string, error) {
 	return executePromptTemplate("commit_range_required", view)
 }
 
 func renderCommitRangeOverflow(view commitRangeSectionView) (string, error) {
 	return executePromptTemplate("commit_range_overflow", view)
-}
-
-func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
-	return executePromptTemplate("dirty_changes", view)
 }
 
 func renderDiffBlock(view diffSectionView) (string, error) {
@@ -495,22 +454,6 @@ func renderInlineDiff(body string) (string, error) {
 		body += "\n"
 	}
 	return executePromptTemplate("inline_diff", inlineDiffView{Body: body})
-}
-
-func renderCommitInspectionFallback(name string, view commitInspectionFallbackView) (string, error) {
-	return executePromptTemplate(name, view)
-}
-
-func renderRangeInspectionFallback(name string, view rangeInspectionFallbackView) (string, error) {
-	return executePromptTemplate(name, view)
-}
-
-func renderGenericCommitFallback(viewCmd string) (string, error) {
-	return executePromptTemplate("generic_commit_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
-}
-
-func renderGenericRangeFallback(viewCmd string) (string, error) {
-	return executePromptTemplate("generic_range_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
 }
 
 func renderDirtyTruncatedDiffFallback(body string) (string, error) {

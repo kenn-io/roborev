@@ -15,7 +15,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 )
 
-func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (string, error) {
+func readTextFileWindow(path string, startLine int, limit *int) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -30,58 +30,18 @@ func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (s
 	wroteLine := false
 	endedWithNewline := false
 
-	appendLine := func(line []byte) error {
-		additionalBytes := len(line)
-		if wroteLine {
-			additionalBytes++
-		}
-		if out.Len()+additionalBytes > maxBytes {
-			return fmt.Errorf("file content too large: exceeds max %d bytes", maxBytes)
-		}
-		if wroteLine {
-			out.WriteByte('\n')
-		}
-		if len(line) > 0 {
-			out.Write(line)
-		}
-		wroteLine = true
-		selectedLines++
-		return nil
-	}
-
-	lineBufferBudget := func() int {
-		budget := maxBytes - out.Len()
-		if wroteLine {
-			budget--
-		}
-		return budget
-	}
-
-	appendLineChunk := func(chunk []byte) error {
-		if len(chunk) == 0 {
-			return nil
-		}
-		if lineBufferBudget() < lineBuf.Len()+len(chunk) {
-			return fmt.Errorf("file content too large: exceeds max %d bytes", maxBytes)
-		}
-		_, err := lineBuf.Write(chunk)
-		return err
-	}
-
 	for {
 		chunk, readErr := reader.ReadSlice('\n')
 		if errors.Is(readErr, bufio.ErrBufferFull) {
 			if currentLine >= startLine && (limit == nil || selectedLines < *limit) {
-				if err := appendLineChunk(chunk); err != nil {
-					return "", err
-				}
+				lineBuf.Write(chunk)
 			}
 			continue
 		}
 		if readErr != nil && readErr != io.EOF {
 			return "", readErr
 		}
-		if len(chunk) == 0 && readErr == io.EOF {
+		if len(chunk) == 0 && readErr == io.EOF && lineBuf.Len() == 0 {
 			break
 		}
 
@@ -92,12 +52,13 @@ func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (s
 			if hasTrailingNewline {
 				chunk = chunk[:len(chunk)-1]
 			}
-			if err := appendLineChunk(chunk); err != nil {
-				return "", err
+			lineBuf.Write(chunk)
+			if wroteLine {
+				out.WriteByte('\n')
 			}
-			if err := appendLine(lineBuf.Bytes()); err != nil {
-				return "", err
-			}
+			out.Write(lineBuf.Bytes())
+			wroteLine = true
+			selectedLines++
 			lineBuf.Reset()
 			if limit != nil && selectedLines >= *limit {
 				return out.String(), nil
@@ -113,9 +74,6 @@ func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (s
 	// strings.Split preserves a trailing empty line when the file ends with '\n'.
 	if endedWithNewline && currentLine >= startLine && (limit == nil || selectedLines < *limit) {
 		if wroteLine {
-			if out.Len()+1 > maxBytes {
-				return "", fmt.Errorf("file content too large: exceeds max %d bytes", maxBytes)
-			}
 			out.WriteByte('\n')
 		}
 	}
@@ -227,14 +185,6 @@ func (c *acpClient) ReadTextFile(ctx context.Context, params acp.ReadTextFileReq
 		return acp.ReadTextFileResponse{}, fmt.Errorf("invalid limit: %d (must be >= 0)", *params.Limit)
 	}
 
-	// Validate that line and limit are reasonable to prevent resource exhaustion
-	if params.Line != nil && *params.Line > 1000000 {
-		return acp.ReadTextFileResponse{}, fmt.Errorf("line number too large: %d (max 1,000,000)", *params.Line)
-	}
-	if params.Limit != nil && *params.Limit > 1000000 {
-		return acp.ReadTextFileResponse{}, fmt.Errorf("limit too large: %d (max 1,000,000)", *params.Limit)
-	}
-
 	var fileContent string
 
 	startLine := 0
@@ -242,7 +192,7 @@ func (c *acpClient) ReadTextFile(ctx context.Context, params acp.ReadTextFileReq
 		startLine = max(*params.Line-1, 0) // Convert to 0-based index
 	}
 
-	fileContent, err = readTextFileWindow(validatedPath, startLine, params.Limit, maxACPTextFileBytes)
+	fileContent, err = readTextFileWindow(validatedPath, startLine, params.Limit)
 	if err != nil {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("failed to read file %s: %w", validatedPath, err)
 	}
@@ -275,11 +225,6 @@ func (c *acpClient) WriteTextFile(ctx context.Context, params acp.WriteTextFileR
 	validatedPath, err := c.validateAndResolvePath(params.Path, true) // true = write operation
 	if err != nil {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("failed to validate write path %s: %w", params.Path, err)
-	}
-
-	// Validate content size to prevent resource exhaustion
-	if len(params.Content) > maxACPTextFileBytes {
-		return acp.WriteTextFileResponse{}, fmt.Errorf("content too large: %d bytes (max %d)", len(params.Content), maxACPTextFileBytes)
 	}
 
 	// Write via temp file + rename to avoid validate-then-write races.

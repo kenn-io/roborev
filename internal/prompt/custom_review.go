@@ -3,7 +3,6 @@ package prompt
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -50,7 +49,6 @@ type customReviewTemplateData struct {
 
 func (b *Builder) resolveSystemPrompt(
 	agentName, reviewType, promptType string,
-	limit int,
 ) (string, bool, error) {
 	if config.IsBuiltInReviewType(reviewType) {
 		return GetSystemPrompt(agentName, promptType), false, nil
@@ -67,13 +65,11 @@ func (b *Builder) resolveSystemPrompt(
 			"custom review type %q is not configured", reviewType,
 		)
 	}
-	remaining := limit
 	read := func(filePath string) (string, error) {
-		data, readErr := b.readCustomReviewFile(filePath, remaining)
+		data, readErr := b.readCustomReviewFile(filePath)
 		if readErr != nil {
 			return "", readErr
 		}
-		remaining -= len(data)
 		return string(data), nil
 	}
 
@@ -114,12 +110,6 @@ func (b *Builder) resolveSystemPrompt(
 	}
 	result := strings.TrimSpace(rendered.String()) +
 		structuredReviewOutputInstruction
-	if len(result)+1 > limit {
-		return "", true, fmt.Errorf(
-			"review type %q rendered prompt is %d bytes but prompt limit is %d bytes",
-			reviewType, len(result)+1, limit,
-		)
-	}
 	return result, true, nil
 }
 
@@ -135,12 +125,8 @@ func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
 
 func (b *Builder) readCustomReviewFile(
 	filePath string,
-	limit int,
 ) ([]byte, error) {
 	filePath = strings.TrimSpace(filePath)
-	if limit <= 0 {
-		return nil, fmt.Errorf("custom review files exceed prompt limit")
-	}
 	resolvedPath := filePath
 	if filePath == "~" || strings.HasPrefix(filePath, "~/") ||
 		strings.HasPrefix(filePath, `~\`) {
@@ -152,18 +138,17 @@ func (b *Builder) readCustomReviewFile(
 	} else if !filepath.IsAbs(filePath) && b.repoCfgRef != "" {
 		clean := path.Clean(filepath.ToSlash(filePath))
 		if clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") {
-			return b.readCustomReviewRefFile(clean, limit)
+			return b.readCustomReviewRefFile(clean)
 		}
 		resolvedPath = filepath.Join(b.repoPath, filePath)
 	} else if !filepath.IsAbs(filePath) {
 		resolvedPath = filepath.Join(b.repoPath, filePath)
 	}
-	return readCustomReviewFilesystemFile(resolvedPath, limit)
+	return os.ReadFile(resolvedPath)
 }
 
 func (b *Builder) readCustomReviewRefFile(
 	filePath string,
-	limit int,
 ) ([]byte, error) {
 	seen := make(map[string]struct{})
 	for {
@@ -194,7 +179,7 @@ func (b *Builder) readCustomReviewRefFile(
 						b.repoCfgRef, candidate,
 					)
 				}
-				return enforceCustomFileLimit(candidateEntry.Data, limit)
+				return candidateEntry.Data, nil
 			}
 			entry = candidateEntry
 			linkPath = candidate
@@ -204,10 +189,7 @@ func (b *Builder) readCustomReviewRefFile(
 
 		linkTarget := string(entry.Data)
 		if path.IsAbs(filepath.ToSlash(linkTarget)) || filepath.IsAbs(linkTarget) {
-			return readCustomReviewFilesystemFile(
-				filepath.Join(linkTarget, filepath.FromSlash(remaining)),
-				limit,
-			)
+			return os.ReadFile(filepath.Join(linkTarget, filepath.FromSlash(remaining)))
 		}
 		filesystemTarget := filepath.Clean(filepath.Join(
 			b.repoPath,
@@ -218,35 +200,8 @@ func (b *Builder) readCustomReviewRefFile(
 		relativeTarget, relErr := filepath.Rel(b.repoPath, filesystemTarget)
 		if relErr != nil || relativeTarget == ".." ||
 			strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) {
-			return readCustomReviewFilesystemFile(filesystemTarget, limit)
+			return os.ReadFile(filesystemTarget)
 		}
 		filePath = filepath.ToSlash(relativeTarget)
 	}
-}
-
-func readCustomReviewFilesystemFile(filePath string, limit int) ([]byte, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return readCustomFile(file, limit)
-}
-
-func readCustomFile(r io.Reader, limit int) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
-	if err != nil {
-		return nil, err
-	}
-	return enforceCustomFileLimit(data, limit)
-}
-
-func enforceCustomFileLimit(data []byte, limit int) ([]byte, error) {
-	if len(data) > limit {
-		return nil, fmt.Errorf(
-			"file is %d bytes but only %d bytes remain in the prompt limit",
-			len(data), limit,
-		)
-	}
-	return data, nil
 }

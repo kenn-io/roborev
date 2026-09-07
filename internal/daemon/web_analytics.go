@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -68,11 +67,6 @@ func (s *Server) humaGetWebAnalytics(
 	}
 	snapshot, err := s.db.GetAnalytics(opts)
 	if err != nil {
-		if errors.Is(err, storage.ErrAnalyticsRangeTooLarge) {
-			return nil, huma.Error400BadRequest(
-				"analytics range is too large for the selected time bucket",
-			)
-		}
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("get analytics: %v", err))
 	}
 	return &WebAnalyticsOutput{Body: snapshot}, nil

@@ -6,10 +6,12 @@ import (
 	"io"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
+	promptpkg "go.kenn.io/roborev/internal/prompt"
 )
 
-// SynthesisCheckout is the reviewed checkout a plain review agent needs to
-// verify findings. Cleanup may be nil.
+// SynthesisCheckout is the checkout used for agent execution and prompt file
+// handoff. Cleanup may be nil.
 type SynthesisCheckout struct {
 	RepoPath string
 	GitRef   string
@@ -17,7 +19,7 @@ type SynthesisCheckout struct {
 }
 
 // SynthesisCheckoutError wraps a failure to prepare the checkout for the
-// plain review fallback so callers can retry it as infrastructure rather than
+// review invocation so callers can retry it as infrastructure rather than
 // as an agent error.
 type SynthesisCheckoutError struct {
 	Err error
@@ -28,21 +30,20 @@ func (e *SynthesisCheckoutError) Unwrap() error { return e.Err }
 
 // SynthesisHooks lets a caller observe the dispatch without duplicating it.
 type SynthesisHooks struct {
+	// ConfigRepoPath resolves the prompt budget and snapshot directory from the trusted checkout.
+	ConfigRepoPath string
+	GlobalConfig   *config.Config
 	// BeforeInvoke runs once, immediately before the agent is called. The
 	// daemon uses it to record that an agent actually ran, so it must fire
 	// after any checkout preparation that could still fail.
 	BeforeInvoke func()
-	// Checkout resolves where a plain review agent runs. It is called only
-	// when the agent implements neither SchemaAgent nor SynthesisAgent.
+	// Checkout resolves where read-capable agents run, including when
+	// oversized synthesis inputs need repo-local files.
 	Checkout func() (SynthesisCheckout, error)
 }
 
-// RunSynthesisAgent sends the synthesis prompt to the most capable interface
-// the agent implements, decodes the schema-validated document against the
-// reviews it combined, and drops findings below minSeverity so the threshold
-// holds even if the agent ignored the instruction. Classifier and synthesis
-// agents run without a checkout; schema-constrained and plain review agents
-// run against the checkout returned by hooks.Checkout.
+// RunSynthesisAgent combines complete reviews and validates source references.
+// It uses the same prompt preparation and read-capable invocation as ordinary reviews.
 func RunSynthesisAgent(
 	ctx context.Context,
 	a agent.Agent,
@@ -71,40 +72,31 @@ func RunSynthesisAgent(
 		return checkout, nil
 	}
 
-	var raw json.RawMessage
-	var err error
-	switch sa := a.(type) {
-	case agent.SchemaAgent:
-		invoke()
-		raw, err = sa.ClassifyWithSchema(ctx, "", "", prompt, SynthesisSchema, out)
-	case agent.StructuredReviewAgent:
-		// Codex and similar agents constrain review output to a schema but
-		// expose no classifier entry point.
-		checkout, cerr := resolveCheckout()
-		if cerr != nil {
-			return SynthesisDocument{}, cerr
-		}
-		if checkout.Cleanup != nil {
-			defer checkout.Cleanup()
-		}
-		invoke()
-		raw, err = sa.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-	case agent.SynthesisAgent:
-		invoke()
-		raw, err = sa.Synthesize(ctx, prompt, out)
-	default:
-		checkout, cerr := resolveCheckout()
-		if cerr != nil {
-			return SynthesisDocument{}, cerr
-		}
-		if checkout.Cleanup != nil {
-			defer checkout.Cleanup()
-		}
-		invoke()
-		var output string
-		output, err = a.Review(ctx, checkout.RepoPath, checkout.GitRef, prompt, out)
-		raw = json.RawMessage(output)
+	checkout, err := resolveCheckout()
+	if err != nil {
+		return SynthesisDocument{}, err
 	}
+	if checkout.Cleanup != nil {
+		defer checkout.Cleanup()
+	}
+	builder := promptpkg.NewBuilderWithConfig(nil, hooks.GlobalConfig).ForRepo(hooks.ConfigRepoPath, 0)
+	prepared, err := builder.Prepare(prompt, promptpkg.SnapshotTarget{
+		RepoPath: checkout.RepoPath, ConfigRepoPath: hooks.ConfigRepoPath,
+	})
+	if err != nil {
+		return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}
+	}
+	if prepared.Cleanup != nil {
+		defer prepared.Cleanup()
+	}
+	prompt = prepared.Prompt
+
+	invoke()
+	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
+	return decodeSynthesisResult(a, reviews, json.RawMessage(output), err)
+}
+
+func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw json.RawMessage, err error) (SynthesisDocument, error) {
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
@@ -120,6 +112,5 @@ func RunSynthesisAgent(
 	}
 	// minSeverity never removes findings; callers apply it when rendering
 	// and deriving the verdict.
-	_ = minSeverity
 	return doc, nil
 }

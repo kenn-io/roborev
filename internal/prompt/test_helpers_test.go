@@ -154,93 +154,6 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	return r.dir, commits
 }
 
-func setupLargeDiffRepo(t *testing.T) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	r.fastCommitFile("base.txt", "base\n", "initial")
-
-	var content strings.Builder
-	for range 20000 {
-		content.WriteString("line ")
-		content.WriteString(strings.Repeat("x", 20))
-		content.WriteString(" ")
-		content.WriteString(strings.Repeat("y", 20))
-		content.WriteString("\n")
-	}
-
-	return r.dir, r.fastCommitFile("large.txt", content.String(), "large change")
-}
-
-func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	r.fastCommitFile("base.txt", "base\n", "initial")
-
-	var content strings.Builder
-	for range 20000 {
-		content.WriteString("line ")
-		content.WriteString(strings.Repeat("x", 20))
-		content.WriteString(" ")
-		content.WriteString(strings.Repeat("y", 20))
-		content.WriteString("\n")
-	}
-
-	return r.dir, r.fastCommitFiles(map[string]string{
-		"large.txt":  content.String(),
-		"custom.dat": content.String(),
-	}, "large change")
-}
-
-func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, string) {
-	t.Helper()
-	r := newTestRepoWithBranch(t, "main")
-
-	guidelines := strings.Repeat("g", guidelineLen)
-	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
-	r.fastCommitFiles(map[string]string{
-		".roborev.toml": toml,
-		"base.txt":      "base\n",
-	}, "initial")
-
-	r.git("remote", "add", "origin", r.dir)
-	r.git("fetch", "origin")
-	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-
-	var content strings.Builder
-	for range 20000 {
-		content.WriteString("line ")
-		content.WriteString(strings.Repeat("x", 20))
-		content.WriteString(" ")
-		content.WriteString(strings.Repeat("y", 20))
-		content.WriteString("\n")
-	}
-
-	return r.dir, r.fastCommitFile("large.txt", content.String(), "large change")
-}
-
-func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	r.fastCommitFile("base.txt", "base\n", "initial")
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\nnext\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-
-	msgPath := filepath.Join(r.dir, "commit-message.txt")
-	body := strings.Repeat("body line\n", max(1, bodyLen/len("body line\n")))
-	message := "large change\n\n" + body
-	require.NoError(t, os.WriteFile(msgPath, []byte(message), 0o644))
-	r.git("commit", "-F", msgPath)
-
-	return r.dir, r.git("rev-parse", "HEAD")
-}
-
 func commitWithRepoConfig(t *testing.T, repoDir, messageFile string) {
 	t.Helper()
 	cmd := exec.Command("git", "commit", "-F", messageFile)
@@ -268,26 +181,6 @@ func setConfiguredUserName(t *testing.T, repoDir, authorName string) {
 	require.NoError(t, os.WriteFile(configPath, []byte(updated), 0o644), "write git config: %v", err)
 }
 
-func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	r.fastCommitFile("base.txt", "base\n", "initial")
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\nnext\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-
-	msgPath := filepath.Join(r.dir, "commit-message.txt")
-	message := strings.Repeat("s", subjectLen) + "\n"
-	require.NoError(t, os.WriteFile(msgPath, []byte(message), 0o644))
-	r.git("commit", "-F", msgPath)
-
-	return r.dir, r.git("rev-parse", "HEAD")
-}
-
 func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
@@ -306,20 +199,6 @@ func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
 	commitWithRepoConfig(t, r.dir, msgPath)
 
 	return r.dir, r.git("rev-parse", "HEAD")
-}
-
-func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	startSHA := r.fastCommitFile("base.txt", "base\n", "initial")
-	subject := strings.Repeat("s", subjectLen)
-	for i := range commitCount {
-		r.fastCommitFile("base.txt", strings.Repeat("x\n", i+2), subject+"\n")
-	}
-
-	endSHA := r.git("rev-parse", "HEAD")
-	return r.dir, startSHA + ".." + endSHA
 }
 
 func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {

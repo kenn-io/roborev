@@ -231,8 +231,8 @@ roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
 
 `roborev export reviews` emits one JSON document containing completed reviews.
 The default `content` profile includes the raw review output text exactly as
-stored, subject to a large size cap. The `metadata` profile keeps the same
-review metadata but sets `content` fields to `null`.
+stored. The `metadata` profile keeps the same review metadata but sets `content`
+fields to `null`.
 
 Each top-level review has an `experiments` field. It is an array of assignments
 when an experiment applies and `null` otherwise. Every assignment contains the
@@ -255,6 +255,9 @@ Export documents use `schema_version: 1` and include a stable `database_id` for
 the local review database. Adding `database_id` does not bump `schema_version`
 because it is an additive header field and existing consumers must continue to
 ignore unknown header keys.
+
+Review exports preserve complete content and metadata strings. Pagination limits
+control the number of rows returned; they do not truncate individual fields.
 
 Rows are ordered by `(completed_at, review_id)` ascending. `next_cursor` is an
 opaque, internally versioned token containing that compound position and the

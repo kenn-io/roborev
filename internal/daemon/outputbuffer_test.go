@@ -310,90 +310,26 @@ func TestOutputWriter_NormalizeFilters(t *testing.T) {
 	require.Len(lines, 2, "expected 2 lines (empty filtered)")
 }
 
-func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	// Per-job limit: 50 bytes
+func TestOutputWriterNormalizesCompleteLargeRecords(t *testing.T) {
 	ob := NewOutputBuffer(50, 1000)
-	w := ob.Writer(1, simpleNormalizer)
-
-	// Write a very long line without newline - should be force-flushed with truncation
-	longLine := strings.Repeat("x", 100)
-	w.Write([]byte(longLine))
-
-	lines := ob.GetLines(1)
-	// Should have at least one line from forced flush
-	require.NotEmpty(lines, "expected at least 1 line after forced flush")
-
-	// First line should be truncated to maxLine-3 + "..." = 50 bytes total
-	assert.Len(lines[0].Text, 50, "expected truncated line length")
-	assert.True(strings.HasSuffix(lines[0].Text, "..."), "expected line to end with ellipsis")
-}
-
-func TestOutputWriter_SmallMaxLine(t *testing.T) {
-	// Test that truncation works correctly with very small maxLine values
-	// where there's no room for "..." suffix
-	tests := []struct {
-		name        string
-		maxLine     int
-		input       string
-		expectLen   int
-		expectNoEll bool // true if no ellipsis expected
-	}{
-		{"maxLine=3", 3, "abcdefgh", 3, true},           // No room for ellipsis
-		{"maxLine=4", 4, "abcdefgh", 4, false},          // Just enough: 1 char + "..."
-		{"maxLine=5", 5, "abcdefgh", 5, false},          // 2 chars + "..."
-		{"maxLine=10", 10, "abcdefghijklmn", 10, false}, // 7 chars + "..."
+	_, updates, cancel := ob.Subscribe(1)
+	defer cancel()
+	content := strings.Repeat("x", 200)
+	var normalized string
+	w := ob.Writer(1, func(line string) *OutputLine {
+		normalized = line
+		return &OutputLine{Text: line, Type: "text"}
+	})
+	for range 4 {
+		_, err := w.Write([]byte(strings.Repeat("x", 50)))
+		require.NoError(t, err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			ob := NewOutputBuffer(tt.maxLine, 10000)
-			w := ob.Writer(1, simpleNormalizer)
-			w.Write([]byte(tt.input)) // No newline, triggers truncation
-
-			lines := ob.GetLines(1)
-			require.Len(lines, 1)
-
-			assert.Len(lines[0].Text, tt.expectLen)
-
-			hasEllipsis := strings.HasSuffix(lines[0].Text, "...")
-			if tt.expectNoEll {
-				assert.False(hasEllipsis, "expected no ellipsis for maxLine=%d", tt.maxLine)
-			} else {
-				assert.True(hasEllipsis, "expected ellipsis for maxLine=%d", tt.maxLine)
-			}
-		})
-	}
-}
-
-func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	// Test that after truncating a long line, subsequent writes for the
-	// same line are discarded until a newline is seen.
-	// Key invariant: repeated writes without newlines produce at most ONE truncated line
-	ob := NewOutputBuffer(100, 10000)
-	w := ob.Writer(1, simpleNormalizer)
-
-	// Write data exceeding maxLine (100 bytes) multiple times WITHOUT a newline
-	// This simulates a single very long line being written in chunks
-	for range 5 {
-		w.Write([]byte(strings.Repeat("x", 50))) // 5 * 50 = 250 bytes total
-	}
-
-	// Should only have 1 line (the truncated one), not 5 fragments
-	lines := ob.GetLines(1)
-	require.Len(lines, 1, "expected exactly 1 truncated line")
-	assert.
-
-		// Verify it's truncated
-		True(strings.HasSuffix(lines[0].Text, "..."), "expected truncated line to end with ellipsis")
+	assert.Empty(t, normalized)
+	_, err := w.Write([]byte("\n"))
+	require.NoError(t, err)
+	assert.Equal(t, content, normalized)
+	require.Len(t, updates, 1)
+	assert.Equal(t, content, (<-updates).Text)
 }
 
 func TestOutputBuffer_Concurrent(t *testing.T) {

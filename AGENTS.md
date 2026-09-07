@@ -29,7 +29,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 ```
 
 - The daemon is the long-lived control plane. Many CLI commands are thin HTTP clients.
-- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized diffs. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
+- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.
 
@@ -194,6 +194,22 @@ Test conventions:
 
 ## Development Preferences
 
+- Before adding or tightening a size, count, memory, or time limit, cite the
+  actual constraint: upstream source at a pinned revision, an authoritative
+  protocol requirement, or a measured failure on a representative workload.
+  State the value, units, affected operation, and why that evidence requires
+  that limit in the code and PR rationale. A review recommendation, a round
+  number, or speculative hardening is not evidence. Do not invent limits.
+- Preserve complete requested data. Memory use alone is not a defect. Reuse
+  existing prompt sizing and file handoff for oversized inputs, including
+  synthesis reviews. Enforce proven provider limits at the provider boundary
+  without silently discarding data.
+- Assemble complete prompt content before sizing it. Use the shared
+  `prompt.Builder.Prepare` method for inline versus file transport; ordinary
+  reviews, dirty reviews, stored prompts, and synthesis must not implement
+  separate clipping, rejection, or snapshot policies.
+- Use `testing/synctest` for Go timeout and retry tests. Assert behavior under
+  virtual time rather than sleeps or wall-clock completion thresholds.
 - Keep changes simple; avoid over-engineering.
 - Prefer Go stdlib over new dependencies.
 - No emojis in code or output (commit messages are fine).
@@ -247,7 +263,7 @@ When reviewing or fixing issues:
 - Focus on correctness, concurrency safety, and error handling in daemon/worker code.
 - For storage changes, keep migrations minimal and validate schema and queries.
 - For API changes, preserve HTTP/JSON conventions.
-- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized diff handoff and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
+- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized prompt or diff handoff and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
 - When addressing review feedback, update tests if behavior changes.
 - If the user pastes review findings or review text directly into the prompt, treat that as direct fix input and work from the pasted content.
 - Do not invoke review-fetching skills for pasted review text unless the user explicitly asks for that skill or provides only a review/job ID that must be fetched first.

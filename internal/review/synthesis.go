@@ -104,18 +104,15 @@ func BuildSynthesisPrompt(
 			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
 			"that reported the finding.\nRules:\n" +
-			"- Do not call tools or run commands\n" +
 			"- Only combine the input review results according to these rules\n" +
+			"- Do not independently review source code or inspect the repository\n" +
+			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references in `location`\n" +
 			"- No preamble about yourself\n")
 
 	b.WriteString("\n")
-
-	// Truncate per-review output to avoid blowing the synthesis
-	// agent's context window.
-	const maxPerReview = 15000
 
 	for i, r := range reviews {
 		fmt.Fprintf(&b, "---\n### Review %d", i+1)
@@ -129,30 +126,36 @@ func BuildSynthesisPrompt(
 			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
-		if r.Skipped || r.Status == ResultSkipped {
-			reason := r.SkipReason
-			if reason == "" {
-				reason = "no reason recorded"
-			}
-			b.WriteString("Review skipped: " + reason)
-		} else if IsQuotaFailure(r) {
-			b.WriteString(
-				"(review skipped — quota exhausted)")
-		} else if IsTransientFailure(r) {
-			b.WriteString(
-				"(review skipped — provider unavailable)")
-		} else if r.Structured != nil {
-			// Render without the threshold so the synthesis agent never
-			// learns which severities are informational.
-			b.WriteString(TruncateOutput(r.Structured.Markdown(""), maxPerReview))
-		} else if r.Output != "" {
-			b.WriteString(TruncateOutput(r.Output, maxPerReview))
-		} else if r.Status == ResultFailed {
-			b.WriteString("(no output — review failed)")
-		}
+		b.WriteString(synthesisReviewContent(r))
 		b.WriteString("\n\n")
 	}
 
+	return b.String()
+}
+
+func synthesisReviewContent(r ReviewResult) string {
+	var b strings.Builder
+	if r.Skipped || r.Status == ResultSkipped {
+		reason := r.SkipReason
+		if reason == "" {
+			reason = "no reason recorded"
+		}
+		b.WriteString("Review skipped: " + reason)
+	} else if IsQuotaFailure(r) {
+		b.WriteString(
+			"(review skipped — quota exhausted)")
+	} else if IsTransientFailure(r) {
+		b.WriteString(
+			"(review skipped — provider unavailable)")
+	} else if r.Structured != nil {
+		// Render without the threshold so the synthesis agent never
+		// learns which severities are informational.
+		b.WriteString(r.Structured.Markdown(""))
+	} else if r.Output != "" {
+		b.WriteString(r.Output)
+	} else if r.Status == ResultFailed {
+		b.WriteString("(no output — review failed)")
+	}
 	return b.String()
 }
 
@@ -226,11 +229,7 @@ func FormatRawBatchComment(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
-			// This body is posted as a real PR/MR comment, so the cut has to be
-			// UTF-8 safe: a raw slice can split a multi-byte rune and the API
-			// receives U+FFFD.
-			const maxLen = 15000
-			b.WriteString(TruncateOutput(r.Output, maxLen))
+			b.WriteString(r.Output)
 			b.WriteString("\n\n")
 		} else {
 			b.WriteString("(no output)\n\n")

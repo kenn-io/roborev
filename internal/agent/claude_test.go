@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"slices"
@@ -958,4 +959,14 @@ func TestClaudeClassify_ParseResult_InvalidStructuredOutput(t *testing.T) {
 	stream := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":"not valid classifier JSON","caller":{"type":"direct"}}]}}` + "\n"
 	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
 	assert.ErrorContains(t, err, "claude structured output is not a JSON object")
+}
+
+func TestClaudeClassifyPreservesLargeStructuredResult(t *testing.T) {
+	content := strings.Repeat("x", 5*1024*1024)
+	result := `{"text":"` + content + `"}`
+	event, err := json.Marshal(map[string]string{"type": "result", "result": result})
+	require.NoError(t, err)
+	got, err := parseClaudeClassifyStream(bytes.NewReader(event))
+	require.NoError(t, err)
+	assert.JSONEq(t, result, string(got))
 }

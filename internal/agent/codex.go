@@ -445,7 +445,6 @@ const codexDiagnosticClassificationChunk = 4096
 type codexDiagnosticCapture struct {
 	rendered       strings.Builder
 	tail           string
-	truncated      bool
 	classification LimitClassification
 }
 
@@ -455,17 +454,7 @@ func newCodexDiagnosticCapture() *codexDiagnosticCapture {
 
 func (c *codexDiagnosticCapture) Write(p []byte) (int, error) {
 	written := len(p)
-	captured := 0
-	if remaining := cliWaitErrorOutputLimit - c.rendered.Len(); remaining > 0 {
-		if len(p) < remaining {
-			remaining = len(p)
-		}
-		_, _ = c.rendered.Write(p[:remaining])
-		captured = remaining
-	}
-	if written > captured {
-		c.truncated = true
-	}
+	_, _ = c.rendered.Write(p)
 
 	for len(p) > 0 {
 		chunkLen := min(len(p), codexDiagnosticClassificationChunk)
@@ -491,9 +480,6 @@ func (c *codexDiagnosticCapture) classifyChunk(chunk string) {
 }
 
 func (c *codexDiagnosticCapture) String() string {
-	if c.truncated {
-		return c.rendered.String() + "..."
-	}
 	return c.rendered.String()
 }
 
@@ -562,10 +548,10 @@ func formatCodexNoJSONError(runResult streamingCLIResult) error {
 
 func codexNoJSONDiagnostics(runResult streamingCLIResult) string {
 	var detail strings.Builder
-	if stderr := truncateCLIWaitErrorOutput(runResult.Stderr); stderr != "" {
+	if stderr := runResult.Stderr; stderr != "" {
 		fmt.Fprintf(&detail, "\nstderr: %s", stderr)
 	}
-	if stdout := truncateCLIWaitErrorOutput(runResult.Stdout); stdout != "" {
+	if stdout := runResult.Stdout; stdout != "" {
 		fmt.Fprintf(&detail, "\nstdout: %s", stdout)
 	}
 	return detail.String()

@@ -190,8 +190,8 @@ max_chars = 50000
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
-| `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 200000) |
-| `snapshot_dir` | string | Repo-relative directory for diff and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
+| `max_prompt_size` | int | Inline prompt budget in bytes before file handoff (default: 204800) |
+| `snapshot_dir` | string | Repo-relative directory for prompt and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
 
 ### Fix Commit Metadata
 
@@ -758,9 +758,9 @@ are appended to the built-in exclusion list.
 ### Prompt Size Budget
 
 The `max_prompt_size` (per repo) and `default_max_prompt_size` (global) settings
-control the maximum size in bytes of the prompt sent to review agents. The
-per-repo value takes precedence over the global default. The default is 200,000
-bytes (~200 KB).
+control the inline prompt budget in bytes before file handoff. The per-repo
+value takes precedence over the global default. The default is 204,800 bytes
+(200 KiB).
 
 ```toml
 # ~/.roborev/config.toml
@@ -770,19 +770,20 @@ default_max_prompt_size = 300000   # 300 KB global default
 max_prompt_size = 500000           # 500 KB for this repo only
 ```
 
-This limit applies to all review commands (`review`, `compact`, `ci review`) and
-all agents. When a diff exceeds the budget, roborev writes the full diff to an
-external snapshot file in a per-snapshot directory and includes fallback
-instructions in the prompt pointing the agent at the snapshot path. Codex
-receives the snapshot directory via `--add-dir`. Optional context (prior
-reviews, guidelines) is trimmed first to preserve as much inline diff as
-possible. Final prompt size is checked before submission, and context-window
-failures fail or fail over rather than retrying the same oversized prompt.
+Ordinary reviews, dirty reviews, stored task prompts, and synthesis use the same
+prompt preparation. roborev first assembles the complete prompt, including its
+discussion, instructions, and review content. If it exceeds the configured
+inline budget, roborev writes that complete string to a repo-local `prompt.md`
+snapshot and asks the agent to read it in full. The budget selects transport; it
+does not reject the task or discard context. Synthesis uses the same
+read-capable agent invocation as ordinary reviews for both inline prompts and
+prompt files. Its instructions restrict the task to combining the supplied
+reviews, with tools used only to read referenced prompt or review-input files.
 
-Prior same-base range reviews are written to a separate XML snapshot, with an
-optional file reference in the prompt. Review text does not consume the initial
-prompt budget. The agent may read the document as historical context. Both diff
-and prior-review files are removed after the agent finishes.
+Prior same-base range reviews may also use a separate XML snapshot. Those files
+and the complete prompt snapshot stay available until the invocation finishes,
+then are cleaned up together. Agents' actual context-window errors still follow
+the normal failure or failover path.
 
 By default, snapshots are written to `.roborev/` under the repo root so the
 agent sandbox does not need broader filesystem access. Override the location
@@ -930,7 +931,7 @@ column_borders = true             # Show separators between TUI columns
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |
 | `grok_cmd` | string | `grok` | Custom path or name for the Grok Build binary | Yes |
 | `exclude_patterns` | array | `[]` | Filenames or glob patterns to exclude from review diffs globally | Yes |
-| `default_max_prompt_size` | int | 200000 | Default maximum prompt size in bytes for review prompts | Yes |
+| `default_max_prompt_size` | int | 204800 | Default inline prompt budget in bytes before file handoff | Yes |
 
 !!! note
 

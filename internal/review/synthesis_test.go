@@ -150,7 +150,6 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 		"combining multiple code review outputs",
 		`"sources":[1]`,
 		"### Review N",
-		"Do not call tools or run commands",
 		"Only combine the input review results according to these rules",
 		"### Review 1",
 		"### Review 2",
@@ -328,7 +327,7 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 	assert.NotContains(t, prompt, "agent quota")
 }
 
-func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
+func TestBuildSynthesisPrompt_PreservesFullReviews(t *testing.T) {
 	const promptLimit = 20000
 	longOutput := strings.Repeat("x", promptLimit)
 	reviews := []ReviewResult{
@@ -341,8 +340,7 @@ func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
 	}
 	prompt := BuildSynthesisPrompt(reviews, "")
 
-	assertContainsAll(t, prompt, []string{"...(truncated)"})
-	assert.LessOrEqual(t, len(prompt), promptLimit, "prompt should be truncated")
+	assert.Contains(t, prompt, longOutput)
 }
 
 func TestFormatSingleResult_Truncation(t *testing.T) {
@@ -398,11 +396,8 @@ func TestFormatSynthesizedComment(t *testing.T) {
 	assert.NotContains(t, comment, "design")
 }
 
-// Both per-review truncations cut at a fixed byte offset, so a multi-byte rune
-// straddling it must not be split. FormatRawBatchComment's output is posted as a
-// real PR/MR comment, and BuildSynthesisPrompt's feeds the synthesis agent.
-func TestPerReviewTruncationIsUTF8Safe(t *testing.T) {
-	// Place a 4-byte emoji so it straddles the 15000-byte cut.
+func TestFullReviewContentPreservesUTF8(t *testing.T) {
+	// Keep multibyte content intact across the former 15,000-byte cutoff.
 	const maxPerReview = 15000
 	oversized := strings.Repeat("x", maxPerReview-2) + "😀" + strings.Repeat("y", 100)
 	reviews := []ReviewResult{{
@@ -416,14 +411,14 @@ func TestPerReviewTruncationIsUTF8Safe(t *testing.T) {
 		comment := FormatRawBatchComment(reviews, "def456789012")
 		require.True(t, utf8.ValidString(comment),
 			"posted comment must not contain a split rune")
-		assert.Contains(t, comment, OutputTruncSuffix)
+		assert.Contains(t, comment, oversized)
 	})
 
 	t.Run("BuildSynthesisPrompt", func(t *testing.T) {
 		prompt := BuildSynthesisPrompt(reviews, "medium")
 		require.True(t, utf8.ValidString(prompt),
 			"synthesis prompt must not contain a split rune")
-		assert.Contains(t, prompt, OutputTruncSuffix)
+		assert.Contains(t, prompt, oversized)
 	})
 }
 

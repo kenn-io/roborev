@@ -80,10 +80,10 @@ func TestWebAnalyticsRejectsInvalidBoundsAndBucket(t *testing.T) {
 	}
 }
 
-func TestWebAnalyticsRejectsExcessiveTimeBuckets(t *testing.T) {
+func TestWebAnalyticsAcceptsLongHourlyRange(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	since := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	until := since.Add((storage.MaxAnalyticsTimeBuckets + 1) * time.Hour)
+	until := since.Add(1001 * time.Hour)
 	query := url.Values{
 		"since":  {since.Format(time.RFC3339)},
 		"until":  {until.Format(time.RFC3339)},
@@ -92,7 +92,7 @@ func TestWebAnalyticsRejectsExcessiveTimeBuckets(t *testing.T) {
 
 	response := serveHuma(t, server, http.MethodGet,
 		"/api/ui/analytics?"+query.Encode(), nil)
-	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 func TestWebAnalyticsExplicitUntilWithoutSinceIsAllTime(t *testing.T) {

@@ -56,7 +56,7 @@ func (bw *boundedWriter) Write(p []byte) (n int, err error) {
 	bw.writer.mutex.Lock()
 	defer bw.writer.mutex.Unlock()
 
-	if bw.maxSize <= 0 {
+	if bw.maxSize == 0 {
 		if len(p) > 0 {
 			bw.truncated = true
 		}
@@ -67,7 +67,9 @@ func (bw *boundedWriter) Write(p []byte) (n int, err error) {
 		return 0, err
 	}
 
-	bw.trimToMaxSizeLocked()
+	if bw.maxSize > 0 {
+		bw.trimToMaxSizeLocked()
+	}
 	return len(p), nil
 }
 
@@ -148,17 +150,12 @@ func (c *acpClient) generateTerminalID() string {
 // truncateOutput ensures output stays within byte limits, truncating from the beginning
 // while maintaining character boundaries as required by ACP spec
 func truncateOutput(output *bytes.Buffer, limit int, outputMutex *sync.Mutex) (string, bool) {
-	// Validate limit to prevent panics
-	if limit < 0 {
-		limit = 0
-	}
-
 	outputMutex.Lock()
 	defer outputMutex.Unlock()
 
 	currentOutput := output.Bytes()
 
-	if len(currentOutput) <= limit {
+	if limit < 0 || len(currentOutput) <= limit {
 		return string(currentOutput), false
 	}
 
@@ -371,7 +368,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	}
 
 	// Create bounded writer to enforce output limits
-	outputLimit := 1024 * 1024 // Default 1MB limit
+	outputLimit := -1 // No limit unless requested by the agent
 	if params.OutputByteLimit != nil {
 		outputLimit = max(0, *params.OutputByteLimit) // Clamp negative values to 0
 	}
