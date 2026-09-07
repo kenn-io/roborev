@@ -11,25 +11,19 @@ import (
 	"time"
 )
 
-const (
-	// Give os/exec a short output-drain window, then close descriptors inherited
-	// by descendants so they cannot keep an exited agent's stream open.
-	streamingCLIWaitDelay = 250 * time.Millisecond
-	// Bound unread stdout per agent so a stalled parser cannot exhaust daemon
-	// memory. The total stream remains unlimited when the parser keeps up.
-	streamingCLIMaxBufferedOutput = 1 << 20
-)
-
-var errStreamingCLIOutputBacklog = errors.New("agent stdout backlog exceeded 1 MiB limit")
+// Give os/exec a short output-drain window, then close descriptors inherited
+// by descendants so they cannot keep an exited agent's stream open.
+const streamingCLIWaitDelay = 250 * time.Millisecond
 
 // streamingBuffer lets os/exec drain the process pipe without waiting for the
 // parser. That keeps WaitDelay focused on descriptors held by descendants.
+// Unread output can grow with agent bursts; parser speed must not turn valid
+// output into an agent failure.
 type streamingBuffer struct {
 	mu     sync.Mutex
 	ready  *sync.Cond
 	buf    bytes.Buffer
 	closed bool
-	err    error
 }
 
 func newStreamingBuffer() *streamingBuffer {
@@ -46,9 +40,6 @@ func (b *streamingBuffer) Read(p []byte) (int, error) {
 		b.ready.Wait()
 	}
 	if b.buf.Len() == 0 {
-		if b.err != nil {
-			return 0, b.err
-		}
 		return 0, io.EOF
 	}
 	return b.buf.Read(p)
@@ -61,12 +52,6 @@ func (b *streamingBuffer) Write(p []byte) (int, error) {
 	if b.closed {
 		return 0, io.ErrClosedPipe
 	}
-	if len(p) > streamingCLIMaxBufferedOutput-b.buf.Len() {
-		b.err = errStreamingCLIOutputBacklog
-		b.closed = true
-		b.ready.Broadcast()
-		return 0, b.err
-	}
 	n, err := b.buf.Write(p)
 	b.ready.Signal()
 	return n, err
@@ -78,12 +63,6 @@ func (b *streamingBuffer) Close() error {
 	b.ready.Broadcast()
 	b.mu.Unlock()
 	return nil
-}
-
-func (b *streamingBuffer) Err() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.err
 }
 
 type streamingCLISpec struct {
@@ -165,9 +144,6 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 
 	<-waitDone
 	result.WaitErr = waitErr
-	if stdoutErr := stdout.Err(); stdoutErr != nil {
-		result.WaitErr = stdoutErr
-	}
 	result.Stderr = stderrBuf.String()
 	result.Stdout = stdoutBuf.String()
 
