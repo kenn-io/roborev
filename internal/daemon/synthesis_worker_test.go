@@ -166,8 +166,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		_, _, synth := enqueuePanelRun(t, tc, "checkout-fail-panel", []memberSpec{
 			{name: "m0", agent: "test"},
 		})
-		// The passing agent is not a SynthesisAgent, so the regular Review path
-		// runs prepareJobCheckout. Force a CI exact checkout (source=ci) at a head
+		// Synthesis uses the regular Review path, which runs prepareJobCheckout. Force a CI exact checkout (source=ci) at a head
 		// that cannot resolve so the checkout fails before the agent runs, with
 		// retries pre-exhausted and no backup so the failure is terminal: FailJob
 		// preserves agent_invoked, whereas a requeue would clear it and mask a
@@ -230,22 +229,18 @@ type synthesisEntrypointTestAgent struct {
 
 func (a *synthesisEntrypointTestAgent) Name() string { return a.name }
 
-func (a *synthesisEntrypointTestAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
+func (a *synthesisEntrypointTestAgent) Review(_ context.Context, _, _, prompt string, output io.Writer) (string, error) {
 	a.reviewCalled = true
-	return "", fmt.Errorf("review entrypoint should not be used for synthesis")
-}
-
-func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
 	a.synthPrompt = prompt
 	if output != nil && a.streamLine != "" {
 		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	if a.result != "" {
-		return json.RawMessage(a.result), nil
+		return a.result, nil
 	}
-	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -806,7 +801,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
 }
 
-func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
+func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -834,7 +829,7 @@ func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
 	assert.Contains(review.Output, "combined")
 	require.NotNil(t, review.VerdictBool)
 	assert.Equal(0, *review.VerdictBool)
-	assert.False(synthAgent.reviewCalled, "synthesis must not use the code-review entrypoint")
+	assert.True(synthAgent.reviewCalled, "synthesis uses the ordinary review entrypoint")
 	assert.Contains(synthAgent.synthPrompt, "Review #1")
 	assert.NotContains(synthAgent.synthPrompt, "Review the code changes in commit")
 }

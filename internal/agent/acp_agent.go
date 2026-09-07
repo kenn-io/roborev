@@ -3,11 +3,9 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -180,18 +178,11 @@ func (a *ACPAgent) WithModel(model string) Agent {
 func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	reviewPrompt := fmt.Sprintf("Review the code changes in commit %s.\n\nRepository: %s\n\nPrompt: %s",
 		commitSHA, repoPath, prompt)
-	return a.runPrompt(ctx, repoPath, reviewPrompt, output, true)
-}
-
-// Synthesize combines supplied review outputs without wrapping the prompt as a
-// code review or advertising repository capabilities.
-func (a *ACPAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
-	result, err := a.runPrompt(ctx, "", prompt, output, false)
-	return json.RawMessage(result), err
+	return a.runPrompt(ctx, repoPath, reviewPrompt, output)
 }
 
 func (a *ACPAgent) runPrompt(
-	ctx context.Context, repoPath, prompt string, output io.Writer, exposeRepo bool,
+	ctx context.Context, repoPath, prompt string, output io.Writer,
 ) (string, error) {
 	// Set timeout context
 	var cancel context.CancelFunc
@@ -252,19 +243,11 @@ func (a *ACPAgent) runPrompt(
 		return "", fmt.Errorf("failed to start ACP agent: %w", err)
 	}
 
-	repoRoot := ""
-	cwd := os.TempDir()
-	clientCapabilities := acp.ClientCapabilities{}
-	if exposeRepo {
-		repoRoot = repoPath
-		cwd = repoPath
-		clientCapabilities = acp.ClientCapabilities{
-			Fs: acp.FileSystemCapabilities{
-				ReadTextFile:  true,
-				WriteTextFile: true,
-			},
-			Terminal: true,
-		}
+	repoRoot := repoPath
+	cwd := repoPath
+	clientCapabilities := acp.ClientCapabilities{
+		Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
+		Terminal: true,
 	}
 
 	// Defer cleanup in proper order: terminals -> pipes -> process

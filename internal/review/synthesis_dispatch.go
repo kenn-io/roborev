@@ -10,7 +10,7 @@ import (
 	promptpkg "go.kenn.io/roborev/internal/prompt"
 )
 
-// SynthesisCheckout is the reviewed checkout a plain review agent needs to
+// SynthesisCheckout is the reviewed checkout a review agent needs to
 // verify findings. Cleanup may be nil.
 type SynthesisCheckout struct {
 	RepoPath string
@@ -19,7 +19,7 @@ type SynthesisCheckout struct {
 }
 
 // SynthesisCheckoutError wraps a failure to prepare the checkout for the
-// plain review fallback so callers can retry it as infrastructure rather than
+// review invocation so callers can retry it as infrastructure rather than
 // as an agent error.
 type SynthesisCheckoutError struct {
 	Err error
@@ -43,8 +43,7 @@ type SynthesisHooks struct {
 }
 
 // RunSynthesisAgent combines complete reviews and validates source references.
-// Oversized inputs use repo-local files and a read-capable review invocation;
-// inline inputs may use tool-free classifier or synthesis entry points.
+// It uses the same prompt preparation and read-capable invocation as ordinary reviews.
 func RunSynthesisAgent(
 	ctx context.Context,
 	a agent.Agent,
@@ -92,24 +91,9 @@ func RunSynthesisAgent(
 	}
 	prompt = prepared.Prompt
 
-	schemaAgent, hasClassifier := a.(agent.SchemaAgent)
-	structuredAgent, hasStructuredReview := a.(agent.StructuredReviewAgent)
-	synthesisAgent, hasSynthesis := a.(agent.SynthesisAgent)
 	invoke()
-	var raw json.RawMessage
-	switch {
-	case hasClassifier && prepared.FilePath == "":
-		raw, err = schemaAgent.ClassifyWithSchema(ctx, "", "", prompt, SynthesisSchema, out)
-	case hasStructuredReview:
-		raw, err = structuredAgent.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-	case hasSynthesis && prepared.FilePath == "":
-		raw, err = synthesisAgent.Synthesize(ctx, prompt, out)
-	default:
-		var output string
-		output, err = a.Review(ctx, checkout.RepoPath, checkout.GitRef, prompt, out)
-		raw = json.RawMessage(output)
-	}
-	return decodeSynthesisResult(a, reviews, raw, err)
+	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
+	return decodeSynthesisResult(a, reviews, json.RawMessage(output), err)
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw json.RawMessage, err error) (SynthesisDocument, error) {

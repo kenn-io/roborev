@@ -775,8 +775,9 @@ prompt preparation. roborev first assembles the complete prompt, including its
 discussion, instructions, and review content. If it exceeds the configured
 inline budget, roborev writes that complete string to a repo-local `prompt.md`
 snapshot and asks the agent to read it in full. The budget selects transport; it
-does not reject the task or discard context. Synthesis uses a read-capable agent
-invocation when the prepared prompt references a file.
+does not reject the task or discard context. Synthesis uses the same
+read-capable agent invocation as ordinary reviews for both inline prompts and
+prompt files.
 
 Prior same-base range reviews may also use a separate XML snapshot. Those files
 and the complete prompt snapshot stay available until the invocation finishes,

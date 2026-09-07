@@ -30,10 +30,6 @@ func (a *fileSynthesisAgent) Review(_ context.Context, repo, _, prompt string, _
 	return a.read(repo, prompt)
 }
 
-func (a *fileSynthesisAgent) Synthesize(context.Context, string, io.Writer) (json.RawMessage, error) {
-	return nil, errors.New("file inputs require read tools")
-}
-
 type fileSchemaSynthesisAgent struct{ *fileSynthesisAgent }
 
 func (a *fileSchemaSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, json.RawMessage, io.Writer) (json.RawMessage, error) {

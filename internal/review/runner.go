@@ -11,6 +11,16 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// invokeReview uses the same read-capable agent entry point for ordinary and
+// synthesis reviews. The caller supplies the prompt and output schema.
+func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt string, schema json.RawMessage, out io.Writer) (string, error) {
+	if structured, ok := a.(agent.StructuredReviewAgent); ok {
+		raw, err := structured.ReviewWithSchema(ctx, repoPath, gitRef, prompt, schema, out)
+		return string(raw), err
+	}
+	return a.Review(ctx, repoPath, gitRef, prompt, out)
+}
+
 // RunAgentReview owns the structured versus prose review execution contract.
 // Agents that support schema-constrained output return structured findings
 // for every review type, so the verdict comes from the reported severities
@@ -24,14 +34,14 @@ func RunAgentReview(
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
 	out io.Writer,
 ) (ReviewResult, error) {
-	structuredAgent, ok := a.(agent.StructuredReviewAgent)
+	_, ok := a.(agent.StructuredReviewAgent)
 	if !ok {
 		if !config.IsBuiltInReviewType(reviewType) {
 			return ReviewResult{}, fmt.Errorf(
 				"agent %q does not support schema-constrained reviews", a.Name(),
 			)
 		}
-		output, err := a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
+		output, err := invokeReview(ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out)
 		if err != nil {
 			return ReviewResult{}, err
 		}
@@ -43,13 +53,13 @@ func RunAgentReview(
 		return result, nil
 	}
 
-	raw, err := structuredAgent.ReviewWithSchema(
-		ctx, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
+	raw, err := invokeReview(
+		ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
 	)
 	if err != nil {
 		return ReviewResult{}, err
 	}
-	structured, err := DecodeStructuredReview(raw)
+	structured, err := DecodeStructuredReview(json.RawMessage(raw))
 	if err != nil {
 		return ReviewResult{}, err
 	}

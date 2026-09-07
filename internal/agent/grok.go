@@ -354,12 +354,6 @@ func (a *GrokAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	return a.run(ctx, repoPath, prompt, output)
 }
 
-// Synthesize combines review outputs without wrapping them as a code-review prompt.
-func (a *GrokAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
-	result, err := a.run(ctx, "", prompt, output)
-	return json.RawMessage(result), err
-}
-
 func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.Writer) (string, error) {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
