@@ -3016,6 +3016,13 @@ func TestQueueShowsPanelMemberNamesWithSameReviewType(t *testing.T) {
 				makeJob(11, withRef("abcdef0"), withPanelMember("R", "bugs", 0)),
 				makeJob(12, withRef("abcdef0"), withPanelMember("R", "maintainability", 1)),
 			}
+			for _, row := range m.visibleQueueRows() {
+				if row.depth == 1 {
+					cells := m.queueFullRowCells(row, true, false)
+					assert.Equal(t, row.job.PanelMemberName, cells[colReviewType])
+					assert.Equal(t, queueTreeSlot(row, false)+"abcdef0", cells[colRef])
+				}
+			}
 			output := stripTestANSI(m.renderQueueView())
 			assert.Contains(t, output, "bugs")
 			assert.Contains(t, output, "maintainability")
