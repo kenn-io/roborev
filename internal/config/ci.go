@@ -661,6 +661,17 @@ func ResolveCISynthesisAgent(
 	return resolve("", strings.TrimSpace(explicit), globalVal)
 }
 
+// ResolveCISynthesisModel returns the configured synthesis model override.
+// A scoped project override takes precedence over global [ci].synthesis_model.
+// An empty result leaves model selection to the synthesis agent.
+func ResolveCISynthesisModel(globalCfg *Config) string {
+	if globalCfg == nil {
+		return ""
+	}
+	return resolve("", strings.TrimSpace(globalCfg.project.SynthesisModel),
+		strings.TrimSpace(globalCfg.CI.SynthesisModel))
+}
+
 // ResolveCIUpsertComments determines whether CI should update an existing PR comment.
 // Priority: repo [ci].upsert_comments > global [ci].upsert_comments > false.
 func ResolveCIUpsertComments(

@@ -309,7 +309,7 @@ func ResolveCISynthesis(
 	panel := PanelSpec{}
 	if globalCfg != nil {
 		panel.SynthesisAgent = globalCfg.CI.SynthesisAgent
-		panel.SynthesisModel = globalCfg.CI.SynthesisModel
+		panel.SynthesisModel = ResolveCISynthesisModel(globalCfg)
 		panel.SynthesisBackupAgent = globalCfg.CI.SynthesisBackupAgent
 	}
 	synth, err := resolveSynthesisFromConfig(panel, repoCfg, globalCfg)

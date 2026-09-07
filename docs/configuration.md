@@ -167,6 +167,10 @@ The separate project `synthesis_model`, when set, overrides a panel's explicit
 `override_panel_models`. When omitted, synthesis keeps its existing resolution;
 changing reviewer models alone does not change synthesis.
 
+Daemon-free `roborev ci review` also honors the project `synthesis_model`, ahead
+of global `[ci].synthesis_model`, in GitHub and GitLab CI runs. If neither is
+set, it leaves synthesis model selection to the agent.
+
 These settings change models, not agents or providers. Use a model accepted by
 each affected agent when overriding a mixed-agent panel. Backup models retain
 their existing failover behavior. Settings for other projects are unaffected.
