@@ -140,6 +140,9 @@ skill fetches that branch if the ref is missing locally, then validates it again
 before requesting the review. Refs that already resolve locally do not trigger a
 fetch. If the remote is not configured, the branch does not exist, or fetching
 fails, the skill reports the Git error and stops without requesting a review.
+After recovery, the review uses the exact remote-tracking branch ref so a tag
+fetched alongside it cannot change the base. Tag fetching remains enabled, and
+existing tag refs can be used with `--base`.
 
 ### Design review
 

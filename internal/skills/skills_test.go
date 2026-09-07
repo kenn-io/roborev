@@ -1134,6 +1134,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
   if [ -n "$remote" ]; then
     git check-ref-format --branch "$remote_branch" >/dev/null || exit 1
     git fetch --quiet --refmap= -- "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1
+    branch="refs/remotes/$remote/$remote_branch"
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
@@ -1239,6 +1240,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 	upstreamRepo.CommitFile("nested-feature.txt", "nested feature", "nested feature commit")
 	upstreamMainSHA := upstreamRepo.RevParse("main")
 	upstreamFeatureSHA := upstreamRepo.HeadSHA()
+	upstreamRepo.RunGit("tag", "upstream/feature/x", upstreamMainSHA)
 
 	snippets := reviewBranchRefSnippets(t, AgentCodex)
 	require.Len(t, snippets, 1)
@@ -1248,6 +1250,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 		name                      string
 		ref                       string
 		prepareFetchedRef         bool
+		localTag                  bool
 		maliciousFetchDestination bool
 		wantSuccess               bool
 		wantRun                   bool
@@ -1261,6 +1264,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 		{name: "malicious_remote_fetch_destination", ref: "origin/main", maliciousFetchDestination: true, wantFetches: 1, wantSuccess: true, wantRun: true, wantRemoteRefs: map[string]string{"refs/remotes/origin/main": upstreamMainSHA}},
 		{name: "feat", ref: "feat", wantSuccess: true, wantRun: true},
 		{name: "main", ref: "main", wantSuccess: true, wantRun: true},
+		{name: "local_tag", ref: "release-v1", localTag: true, wantSuccess: true, wantRun: true},
 		{name: "develop", ref: "develop"},
 		{name: "upstream_ghost", ref: "upstream/ghost", wantFetches: 1},
 		{name: "release_1_2", ref: "release/1.2"},
@@ -1297,6 +1301,9 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				precondition.Dir = work.Path()
 				require.Error(t, precondition.Run(), "%s must start unfetched", ref)
 			}
+			if tc.localTag {
+				work.RunGit("tag", tc.ref, "main")
+			}
 			if tc.prepareFetchedRef {
 				work.RunGit("fetch", "--quiet", "--", "origin", "main")
 			}
@@ -1322,7 +1329,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				"  command git \"$@\"\n" +
 				"}\n" +
 				strings.Replace(snippets[0], "<branch>", tc.ref, 1)
-			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", "echo ROBOREV_WOULD_RUN", 1)
+			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", `printf "ROBOREV_WOULD_RUN %s\n" "$branch"; git rev-parse --verify --end-of-options "$branch" > .review-base-sha`, 1)
 			scriptPath := filepath.Join(t.TempDir(), "review-branch.sh")
 			require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
 
@@ -1334,6 +1341,21 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			runErr := cmd.Run()
 			assert.Equal(t, tc.wantSuccess, runErr == nil, "stderr: %s", stderr.String())
 			assert.Equal(t, tc.wantRun, strings.Contains(stdout.String(), "ROBOREV_WOULD_RUN"), "stdout: %s", stdout.String())
+
+			if tc.wantRun {
+				wantBase := tc.ref
+				if tc.wantFetches > 0 {
+					wantBase = "refs/remotes/" + tc.ref
+				}
+				assert.Equal(t, "ROBOREV_WOULD_RUN "+wantBase+"\n", stdout.String())
+				baseSHA, err := os.ReadFile(filepath.Join(work.Path(), ".review-base-sha"))
+				require.NoError(t, err)
+				assert.Equal(t, work.RevParse(wantBase), strings.TrimSpace(string(baseSHA)))
+			}
+			if tc.name == "upstream_feature_x" {
+				assert.Equal(t, upstreamMainSHA, work.RevParse("refs/tags/upstream/feature/x"))
+				assert.NotEqual(t, upstreamMainSHA, upstreamFeatureSHA)
+			}
 
 			for _, ref := range []string{
 				"refs/remotes/upstream/main",
