@@ -176,7 +176,8 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		builder := prompt.NewBuilderWithConfig(p.db, cfg).
 			WithContext(ctx).
 			ForRepo(repoPath, repoID).
-			WithRepoConfig(repoCfg, repoCfgRef)
+			WithRepoConfig(repoCfg, repoCfgRef).
+			WithStructuredOutput(agent.SupportsStructuredReview(agentName))
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -3192,7 +3193,8 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 	builder := prompt.NewBuilderWithConfig(p.db, cfg).
 		WithContext(ctx).
 		ForRepo(repoPath, repoID).
-		WithRepoConfig(repoCfg, repoCfgRef)
+		WithRepoConfig(repoCfg, repoCfgRef).
+		WithStructuredOutput(agent.SupportsStructuredReview(agentName))
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,
@@ -3535,10 +3537,10 @@ func toReviewResult(
 		SkipReason:       br.SkipReason,
 		AllowFailure:     member.AllowFailure,
 	}
+	result.MinSeverity = br.MinSeverity
 	if len(br.StructuredOutput) != 0 {
 		if structured, err := reviewpkg.DecodeStructuredReview(br.StructuredOutput); err == nil {
 			result.Structured = &structured
-			result.StructuredMinSeverity = br.MinSeverity
 		}
 	}
 	return result

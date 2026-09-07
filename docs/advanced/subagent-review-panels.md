@@ -85,7 +85,10 @@ fresh panel run; member rows cannot be rerun directly.
 
 Synthesis avoids extra agent work when it can:
 
-- If all successful members pass, the parent output is `No issues found.`
+- If all successful members pass and none of them reported a finding, the parent
+    output is `No issues found.` Members that pass only because their findings
+    fall below `min_severity` still go through synthesis so those findings reach
+    the combined output.
 - If exactly one member produced output, that output can be passed through
     directly.
 - If multiple members produced findings, a read only synthesis agent verifies,
@@ -94,8 +97,9 @@ Synthesis avoids extra agent work when it can:
 - If no member succeeds, roborev records a durable all failed review instead of
     pretending the code passed.
 
-When a panel uses `min_severity`, synthesis may still run for a single failed
-member so findings below the threshold can be filtered consistently.
+When a panel uses `min_severity`, member findings below the threshold stay in
+the combined output. The threshold only decides whether the panel passes or
+fails.
 
 ## Selection Rules
 

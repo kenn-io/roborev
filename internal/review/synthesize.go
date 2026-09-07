@@ -35,7 +35,8 @@ type SynthesizeOpts struct {
 	Agent string
 	// Model override for the synthesis agent.
 	Model string
-	// MinSeverity filters findings below this level.
+	// MinSeverity is the lowest severity that fails the combined review.
+	// Findings below it are kept in the output as information.
 	MinSeverity string
 	// RepoPath is the working directory for the synthesis agent.
 	RepoPath string
@@ -60,7 +61,7 @@ func Synthesize(
 	opts SynthesizeOpts,
 ) (string, error) {
 	for i := range results {
-		results[i] = results[i].FilterStructured(opts.MinSeverity)
+		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
 
 	successCount := 0
@@ -88,12 +89,9 @@ func Synthesize(
 		return comment, ErrAllFailed
 	}
 
-	// Single result — return directly unless CI min-severity
-	// filtering is needed (synthesis applies the filter).
-	// "low" means no filtering, so treat same as empty.
-	if len(results) == 1 && successCount == 1 &&
-		(opts.MinSeverity == "" || opts.MinSeverity == "low" ||
-			results[0].Structured != nil) {
+	// Single result — return directly. Its verdict already honors
+	// opts.MinSeverity, so there is nothing for a synthesis agent to add.
+	if len(results) == 1 && successCount == 1 {
 		return formatSingleResult(
 			results[0], opts.HeadSHA), nil
 	}
@@ -164,5 +162,5 @@ func runSynthesis(
 	}
 
 	return FormatSynthesizedComment(
-		doc.Markdown(), results, opts.HeadSHA), nil
+		doc.Markdown(opts.MinSeverity), results, opts.HeadSHA), nil
 }

@@ -744,7 +744,7 @@ set, it takes priority over the matrix fields for that repo.
 | `review_types` | array | global `review_types` | Review types for CI reviews of this repo |
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
-| `min_severity` | string | `"low"` | Minimum severity to include: `low`, `medium`, `high`, or `critical` |
+| `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings are still reported |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 
@@ -765,7 +765,7 @@ set, it takes priority over the matrix fields for that repo.
 | `agents` | array | auto-detect | Agents to run for each PR (e.g., `["codex", "gemini"]`) |
 | `reviews` | table | | Granular agent-to-review-type map. Overrides `agents` and `review_types` when set. See [Granular Review Matrix](#granular-review-matrix). |
 | `model` | string | | Model override for CI reviews |
-| `min_severity` | string | `"low"` | Minimum severity to include in output: `low`, `medium`, `high`, or `critical` |
+| `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings are still reported |
 | `throttle_interval` | string | `"1h"` | Minimum time between reviews of the same PR. Set `"0"` to disable. |
 | `throttle_bypass_users` | array | `[]` | GitHub usernames that bypass throttling (case-insensitive) |
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
@@ -1167,7 +1167,7 @@ min_severity = "medium"
 |--------|------|---------|-------------|
 | `review_types` | array | `["security"]` | Review types to run |
 | `reasoning` | string | `"thorough"` | Reasoning level |
-| `min_severity` | string | `"low"` | Minimum severity to include in output |
+| `min_severity` | string | `"low"` | Lowest severity that fails the review; lower findings are still reported |
 
 ### Manual Workflow Setup
 

@@ -37,7 +37,8 @@ type BatchConfig struct {
 	// AgentRegistry is an optional registry for dependency injection in testing.
 	// If nil, the global agent registry is used.
 	AgentRegistry map[string]agent.Agent
-	// MinSeverity is the minimum severity threshold for the review prompt.
+	// MinSeverity is the lowest severity that fails a review. Lower
+	// findings are still reported.
 	// When non-empty (and not "low"), agents are instructed to filter findings.
 	MinSeverity string
 }
@@ -192,7 +193,8 @@ func runSingle(
 	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).
 		WithContext(ctx).
 		ForRepo(cfg.RepoPath, 0).
-		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef)
+		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef).
+		WithStructuredOutput(agent.IsStructuredReviewAgent(resolvedAgent))
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
@@ -236,7 +238,7 @@ func runSingle(
 	result.Output = agentReview.Output
 	result.Structured = agentReview.Structured
 	result.StructuredOutput = agentReview.StructuredOutput
-	result.StructuredMinSeverity = agentReview.StructuredMinSeverity
+	result.MinSeverity = agentReview.MinSeverity
 	result.Verdict = agentReview.Verdict
 	return result
 }
