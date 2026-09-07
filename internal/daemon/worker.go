@@ -919,15 +919,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if cleanup != nil {
 			defer cleanup()
 		}
-		if err == nil {
-			priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
-				reviewPrompt, job.GitRef, cfg.ReviewContextCount, checkout.snapshotTarget,
-			)
-			if priorResult.Cleanup != nil {
-				defer priorResult.Cleanup()
-			}
-			reviewPrompt, err = priorResult.Prompt, priorErr
-		}
 		if err != nil {
 			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
@@ -975,30 +966,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			if job.DiffContent != nil {
 				diffContent = *job.DiffContent
 			}
-			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotTargetAndFiles(
+			reviewPrompt, err = pb.BuildDirtyWithFiles(
 				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
-				checkout.snapshotTarget,
 			)
-			if dirtyResult.Cleanup != nil {
-				defer dirtyResult.Cleanup()
-			}
-			reviewPrompt = dirtyResult.Prompt
-			err = dirtyErr
 		} else {
-			// Normal job - build prompt from git ref, writing a diff
-			// snapshot file when the diff is too large to inline.
+			// Build the complete prompt; preparation happens after all additions.
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 			)
-			snapResult, snapErr := pb.BuildWithSnapshotTarget(
-				job.GitRef, cfg.ReviewContextCount, job.Agent,
-				job.ReviewType, effectiveMinSeverity, excludes, checkout.snapshotTarget,
+			reviewPrompt, err = pb.Build(
+				job.GitRef, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
-			if snapResult.Cleanup != nil {
-				defer snapResult.Cleanup()
-			}
-			reviewPrompt = snapResult.Prompt
-			err = snapErr
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
 			}
@@ -1070,33 +1048,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
-	maxPromptSize := config.ResolveMaxPromptSize(checkout.promptRepoPath, cfg)
-
-	// A prebuilt CI prompt was written for the agent configured at enqueue
-	// time. After failover the running agent may parse output differently,
-	// so align the output instruction with the agent that will answer. A
-	// prompt already at the size limit keeps running without the appended
-	// guidance rather than failing before the backup agent ever runs; the
-	// schema still constrains the answer.
+	// Reconcile the actual agent's output contract before shared preparation.
 	if job.PromptPrebuilt && job.IsReviewJob() {
 		_, structured := a.(agent.StructuredReviewAgent)
-		reconciled := prompt.ReconcileStructuredOutputInstruction(reviewPrompt, structured)
-		if maxPromptSize > 0 && len(reconciled) > maxPromptSize && len(reviewPrompt) <= maxPromptSize {
-			log.Printf("[%s] Prompt for job %d is at the size limit; running %s without the structured output instruction", workerID, job.ID, agentName)
-		} else {
-			reviewPrompt = reconciled
-		}
-	}
-
-	// Enforce the final submission size after all prompt transformations.
-	// Oversized prompts are deterministic and should never be sent to any
-	// agent just to discover a context-window failure.
-	if maxPromptSize > 0 && len(reviewPrompt) > maxPromptSize {
-		wp.failoverOrFailNonRetryableAgentContext(
-			ctx, workerID, job, agentName,
-			fmt.Sprintf("prompt exceeds size limit before agent submission: prompt is %d bytes, limit is %d bytes; use a backup agent that can read snapshot diff files or review a smaller range", len(reviewPrompt), maxPromptSize),
-		)
-		return
+		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, structured)
 	}
 
 	eventWorktreePath := checkout.eventWorktreePath
@@ -1169,8 +1124,34 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
 
+	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
+		reviewPrompt, job.GitRef, cfg.ReviewContextCount, prompt.SnapshotTarget{
+			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+		},
+	)
+	if priorErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prior reviews: %v", priorErr))
+		return
+	}
+	if priorResult.Cleanup != nil {
+		defer priorResult.Cleanup()
+	}
+	reviewPrompt = priorResult.Prompt
+
+	preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
+		RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+	})
+	if prepareErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
+		return
+	}
+	if preparedPrompt.Cleanup != nil {
+		defer preparedPrompt.Cleanup()
+	}
+	reviewPrompt = preparedPrompt.Prompt
+
 	// Record that an agent is being invoked, now that all pre-agent gates
-	// (prompt size, worktree creation) have passed.
+	// (prompt preparation, worktree creation) have passed.
 	wp.markAgentInvoked(workerID, job, a)
 
 	// Run the agent. Tasks, insights, fixes, and compact jobs use their stored

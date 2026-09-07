@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -62,20 +61,15 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 				a.read = func(gotRepo, prompt string) (string, error) {
 					assert.Equal(t, repo, gotRepo)
 					assert.Less(t, len(prompt), 4096)
-					assert.Contains(t, prompt, "Read every referenced review file in full")
-					matches := regexp.MustCompile(`Read the complete review from ("(?:[^"\\]|\\.)*")\.`).FindAllStringSubmatch(prompt, -1)
-					require.Len(t, matches, len(reviews))
-					for i, match := range matches {
-						file, err := strconv.Unquote(match[1])
-						require.NoError(t, err)
-						files = append(files, file)
-						rel, err := filepath.Rel(repo, file)
-						require.NoError(t, err)
-						require.True(t, filepath.IsLocal(rel))
-						content, err := os.ReadFile(file)
-						require.NoError(t, err)
-						assert.Equal(t, reviews[i].Output, string(content))
-					}
+					assert.Contains(t, prompt, "Read the complete task prompt")
+					found, err := filepath.Glob(filepath.Join(repo, ".roborev", "*", "prompt.md"))
+					require.NoError(t, err)
+					files = found
+					require.Len(t, files, 1)
+					content, err := os.ReadFile(files[0])
+					require.NoError(t, err)
+					assert.Equal(t, BuildSynthesisPrompt(reviews, ""), string(content))
+
 					if fail {
 						return "", errors.New("agent failed")
 					}
@@ -97,7 +91,7 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 					require.Len(t, doc.Findings, 1)
 					assert.Equal(t, []int{2}, doc.Findings[0].Sources)
 				}
-				require.Len(t, files, 2)
+				require.Len(t, files, 1)
 				for _, file := range files {
 					_, err := os.Stat(file)
 					require.ErrorIs(t, err, os.ErrNotExist)

@@ -1383,7 +1383,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 	assert.Empty(t, members[0].Prompt)
 }
 
-func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *testing.T) {
+func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
@@ -1427,8 +1427,8 @@ func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *
 
 	assert := assert.New(t)
 	assert.Contains(prompt, "## Pull Request Discussion")
-	assert.Contains(prompt, "The full diff has been written to a file for review.")
-	assert.Contains(prompt, "Read the diff from: `")
+	assert.Contains(prompt, "large.txt")
+	assert.Contains(prompt, strings.Repeat("y", 20))
 	assert.NotContains(prompt, "inspect the commit range locally with read-only git commands")
 	assert.NotContains(prompt, "git diff --unified=80")
 }

@@ -5,14 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -316,104 +314,6 @@ func TestGoldenPrompt_SingleWithSeverityFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_with_severity_filter.golden")
-}
-
-func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
-	r := newGoldenTestRepo(t)
-	r.commitFile("base.txt", "base\n", "initial")
-
-	// A large change that exceeds the prompt cap and triggers the commit
-	// fallback rendering. The cap is kept above the system-prompt size so the
-	// truncated prompt still carries commit metadata and a diff view command,
-	// rather than truncating the system prompt itself.
-	large := strings.Repeat("line of content added\n", 800)
-	sha := r.commitFile("big.txt", large, "huge change")
-
-	cfg := &config.Config{DefaultMaxPromptSize: 5500}
-	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
-	require.NoError(t, err)
-
-	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff.golden")
-}
-
-func TestGoldenPrompt_SingleTruncatedDiffCodex(t *testing.T) {
-	r := newGoldenTestRepo(t)
-	r.commitFile("base.txt", "base\n", "initial")
-
-	large := strings.Repeat("line of content added\n", 800)
-	sha := r.commitFile("big.txt", large, "huge change")
-
-	cfg := &config.Config{DefaultMaxPromptSize: 4000}
-	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "codex", "", "")
-	require.NoError(t, err)
-
-	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff_codex.golden")
-}
-
-func TestGoldenPrompt_RangeTruncated(t *testing.T) {
-	r := newGoldenTestRepo(t)
-	baseSHA := r.commitFile("base.txt", "base\n", "initial")
-
-	large := strings.Repeat("a content line\n", 500)
-	r.commitFile("big1.txt", large, "first large addition")
-	headSHA := r.commitFile("big2.txt", large, "second large addition")
-
-	cfg := &config.Config{DefaultMaxPromptSize: 5000}
-	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.ForRepo(r.dir, 0).Build(baseSHA+".."+headSHA, 0, "test", "", "")
-	require.NoError(t, err)
-
-	assertGolden(t, scrubDynamic(prompt), "range_truncated.golden")
-}
-
-func TestGoldenPrompt_DirtyTruncated(t *testing.T) {
-	r := newGoldenTestRepo(t)
-	r.commitFile("base.txt", "base\n", "initial")
-
-	diff := "diff --git a/big.txt b/big.txt\nnew file mode 100644\n" +
-		"index 0000000..1111111\n--- /dev/null\n+++ b/big.txt\n@@ -0,0 +1,500 @@\n" +
-		strings.Repeat("+a line of content\n", 500)
-
-	cfg := &config.Config{DefaultMaxPromptSize: 4000}
-	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.ForRepo(r.dir, 0).BuildDirty(diff, 0, "test", "", "")
-	require.NoError(t, err)
-
-	assertGolden(t, scrubDynamic(prompt), "dirty_truncated.golden")
-}
-
-func TestGoldenPrompt_RangeTruncatedCodexPreservesInRangeReviews(t *testing.T) {
-	r := newGoldenTestRepo(t)
-	baseSHA := r.commitFile("base.txt", "base\n", "initial")
-
-	large := strings.Repeat("a content line\n", 500)
-	commit1 := r.commitFile("big1.txt", large, "first large addition")
-	commit2 := r.commitFile("big2.txt", large, "second large addition")
-
-	db := testutil.OpenTestDB(t)
-	repo, err := db.GetOrCreateRepo(r.dir)
-	require.NoError(t, err)
-
-	testutil.CreateCompletedReview(t, db, repo.ID, commit1, "test",
-		"Found null-deref in big1.txt\n\nVerdict: FAIL")
-	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
-		"No issues found.\n\nVerdict: PASS")
-
-	cfg := &config.Config{DefaultMaxPromptSize: 6000}
-	b := NewBuilderWithConfig(db, cfg)
-	prompt, err := b.ForRepo(r.dir, repo.ID).Build(baseSHA+".."+commit2, 0, "codex", "", "")
-	require.NoError(t, err)
-
-	// Narrow invariant checks first — these are the regression we just
-	// fixed: the truncated codex range path must not drop InRangeReviews,
-	// and it must still select the codex-specific inspection fallback.
-	assert.Contains(t, prompt, "Per-Commit Reviews in This Range")
-	assert.Contains(t, prompt, "Found null-deref in big1.txt")
-	assert.Contains(t, prompt, "For Codex in read-only review mode, inspect the commit range locally")
-
-	assertGolden(t, scrubDynamic(prompt), "range_truncated_codex_in_range.golden")
 }
 
 func TestGoldenPrompt_AddressWithoutSeverity(t *testing.T) {

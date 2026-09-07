@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -74,74 +73,38 @@ func RunSynthesisAgent(
 		return checkout, nil
 	}
 
-	// The configured inline budget chooses transport, never which findings survive.
-	// File inputs need the review interface because classifier/synthesis entry
-	// points may disable filesystem tools entirely.
-	if len(prompt) > config.ResolveMaxPromptSize(hooks.ConfigRepoPath, hooks.GlobalConfig) {
-		checkout, err := resolveCheckout()
-		if err != nil {
-			return SynthesisDocument{}, err
-		}
-		if checkout.Cleanup != nil {
-			defer checkout.Cleanup()
-		}
-		builder := promptpkg.NewBuilder(nil).ForRepo(checkout.RepoPath, 0)
-		files := make([]string, 0, len(reviews))
-		for _, r := range reviews {
-			// Keep the same status handling and threshold-free rendering as inline inputs.
-			content := synthesisReviewContent(r)
-			file, cleanup, err := builder.WriteSynthesisReviewSnapshot(content, promptpkg.SnapshotTarget{
-				ConfigRepoPath: hooks.ConfigRepoPath,
-			})
-			if err != nil {
-				return SynthesisDocument{}, &SynthesisCheckoutError{Err: fmt.Errorf("write synthesis review: %w", err)}
-			}
-			defer cleanup()
-			files = append(files, file)
-		}
-		prompt = buildSynthesisPrompt(reviews, files)
-		invoke()
-		var raw json.RawMessage
-		if sa, ok := a.(agent.StructuredReviewAgent); ok {
-			raw, err = sa.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-		} else {
-			var result string
-			result, err = a.Review(ctx, checkout.RepoPath, checkout.GitRef, prompt, out)
-			raw = json.RawMessage(result)
-		}
-		return decodeSynthesisResult(a, reviews, raw, err)
+	checkout, err := resolveCheckout()
+	if err != nil {
+		return SynthesisDocument{}, err
 	}
+	if checkout.Cleanup != nil {
+		defer checkout.Cleanup()
+	}
+	builder := promptpkg.NewBuilderWithConfig(nil, hooks.GlobalConfig).ForRepo(hooks.ConfigRepoPath, 0)
+	prepared, err := builder.Prepare(prompt, promptpkg.SnapshotTarget{
+		RepoPath: checkout.RepoPath, ConfigRepoPath: hooks.ConfigRepoPath,
+	})
+	if err != nil {
+		return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}
+	}
+	if prepared.Cleanup != nil {
+		defer prepared.Cleanup()
+	}
+	prompt = prepared.Prompt
 
+	schemaAgent, hasClassifier := a.(agent.SchemaAgent)
+	structuredAgent, hasStructuredReview := a.(agent.StructuredReviewAgent)
+	synthesisAgent, hasSynthesis := a.(agent.SynthesisAgent)
+	invoke()
 	var raw json.RawMessage
-	var err error
-	switch sa := a.(type) {
-	case agent.SchemaAgent:
-		invoke()
-		raw, err = sa.ClassifyWithSchema(ctx, "", "", prompt, SynthesisSchema, out)
-	case agent.StructuredReviewAgent:
-		// Codex and similar agents constrain review output to a schema but
-		// expose no classifier entry point.
-		checkout, cerr := resolveCheckout()
-		if cerr != nil {
-			return SynthesisDocument{}, cerr
-		}
-		if checkout.Cleanup != nil {
-			defer checkout.Cleanup()
-		}
-		invoke()
-		raw, err = sa.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-	case agent.SynthesisAgent:
-		invoke()
-		raw, err = sa.Synthesize(ctx, prompt, out)
+	switch {
+	case hasClassifier && prepared.FilePath == "":
+		raw, err = schemaAgent.ClassifyWithSchema(ctx, "", "", prompt, SynthesisSchema, out)
+	case hasStructuredReview:
+		raw, err = structuredAgent.ReviewWithSchema(ctx, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
+	case hasSynthesis && prepared.FilePath == "":
+		raw, err = synthesisAgent.Synthesize(ctx, prompt, out)
 	default:
-		checkout, cerr := resolveCheckout()
-		if cerr != nil {
-			return SynthesisDocument{}, cerr
-		}
-		if checkout.Cleanup != nil {
-			defer checkout.Cleanup()
-		}
-		invoke()
 		var output string
 		output, err = a.Review(ctx, checkout.RepoPath, checkout.GitRef, prompt, out)
 		raw = json.RawMessage(output)

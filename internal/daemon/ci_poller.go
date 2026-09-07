@@ -176,14 +176,13 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 			ForRepo(repoPath, repoID).
 			WithRepoConfig(repoCfg, repoCfgRef).
 			WithStructuredOutput(agent.SupportsStructuredReview(agentName))
-		return builder.BuildWithAdditionalContextAndDiffFile(
+		return builder.BuildWithAdditionalContext(
 			gitRef,
 			contextCount,
 			agentName,
 			reviewType,
 			minSeverity,
 			additionalContext,
-			prompt.DiffFilePathPlaceholder,
 		)
 	}
 	p.postPRCommentFn = p.postPRComment
@@ -3193,14 +3192,13 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 		ForRepo(repoPath, repoID).
 		WithRepoConfig(repoCfg, repoCfgRef).
 		WithStructuredOutput(agent.SupportsStructuredReview(agentName))
-	return builder.BuildWithAdditionalContextAndDiffFile(
+	return builder.BuildWithAdditionalContext(
 		gitRef,
 		contextCount,
 		agentName,
 		reviewType,
 		minSeverity,
 		additionalContext,
-		prompt.DiffFilePathPlaceholder,
 	)
 }
 

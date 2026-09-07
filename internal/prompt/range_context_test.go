@@ -47,7 +47,9 @@ func TestBuildRangePrompt_PriorReviewsDocument(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Cleanup)
 	t.Cleanup(result.Cleanup)
-	path, reviews := readPriorRangeReviewsDocument(t, result.Prompt)
+	fullPrompt, err := os.ReadFile(result.FilePath)
+	require.NoError(t, err)
+	path, reviews := readPriorRangeReviewsDocument(t, string(fullPrompt))
 	require.Len(t, reviews, 2)
 	assert.Equal(base[:7]+".."+first[:7], reviews[0].Range)
 	assert.Equal("prior synthesis review", reviews[0].Output)
@@ -59,7 +61,7 @@ func TestBuildRangePrompt_PriorReviewsDocument(t *testing.T) {
 	assert.NotContains(result.Prompt, "prior range review </output>")
 	assert.NotContains(result.Prompt, "prior synthesis review")
 	assert.NotContains(result.Prompt, comment)
-	assert.Contains(result.Prompt, "Read the diff from:")
+	assert.Contains(string(fullPrompt), "large current diff")
 	assert.LessOrEqual(len(result.Prompt), MaxPromptSize)
 
 	// Both files stay available until the caller releases this execution.
@@ -170,16 +172,23 @@ func TestPrebuiltPriorRangeReviewsDocument_TargetAndRetry(t *testing.T) {
 	}
 	assert.Contains(prebuilt, PriorRangeReviewsFilePathPlaceholder)
 
-	// A longer execution path must not push optional context over the budget.
+	// A longer reference is preserved, then the complete prompt uses file transport.
 	limited := NewBuilderWithConfig(db, &config.Config{DefaultMaxPromptSize: len(prebuilt)}).ForRepo(repo.Path(), dbRepo.ID)
 	result, err := limited.PreparePriorRangeReviewsSnapshot(prebuilt, base+".."+second, 2, target)
 	require.NoError(t, err)
-	if result.Cleanup != nil {
-		t.Cleanup(result.Cleanup)
-	}
-	assert.LessOrEqual(len(result.Prompt), len(prebuilt))
-	assert.NotContains(result.Prompt, "<prior-range-reviews")
-	assert.Contains(result.Prompt, "```diff")
+	require.NotNil(t, result.Cleanup)
+	t.Cleanup(result.Cleanup)
+	prepared, err := limited.Prepare(result.Prompt, target)
+	require.NoError(t, err)
+	require.NotNil(t, prepared.Cleanup)
+	t.Cleanup(prepared.Cleanup)
+	full, err := os.ReadFile(prepared.FilePath)
+	require.NoError(t, err)
+	assert.Equal(result.Prompt, string(full))
+	assert.Contains(string(full), "<prior-range-reviews")
+	assert.Contains(string(full), "```diff")
+	prepared.Cleanup()
+	result.Cleanup()
 	snapshots, err := filepath.Glob(filepath.Join(agentPath, "review-context", "roborev-snapshot-*"))
 	require.NoError(t, err)
 	assert.Empty(snapshots)

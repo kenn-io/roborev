@@ -72,20 +72,7 @@ func (b *Builder) PreparePriorRangeReviewsSnapshot(reviewPrompt, rangeRef string
 		return SnapshotResult{}, err
 	}
 	prepared := strings.ReplaceAll(reviewPrompt, PriorRangeReviewsFilePathPlaceholder, escapeXML(path))
-	if len(prepared) > b.resolveMaxPromptSize() {
-		// The longer execution path may exhaust a prebuilt prompt's remaining
-		// budget. Drop the optional reference as a whole, leaving the diff intact.
-		reference, renderErr := renderOptionalSectionsFromView(optionalSectionsView{PriorRangeReviewsFile: path})
-		if renderErr != nil {
-			cleanup()
-			return SnapshotResult{}, renderErr
-		}
-		trimmed := strings.ReplaceAll(prepared, reference, "")
-		if trimmed != prepared {
-			cleanup()
-			return SnapshotResult{Prompt: trimmed}, nil
-		}
-	}
+
 	return SnapshotResult{Prompt: prepared, Cleanup: cleanup}, nil
 }
 

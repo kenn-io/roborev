@@ -150,7 +150,6 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 		"combining multiple code review outputs",
 		`"sources":[1]`,
 		"### Review N",
-		"Do not call tools or run commands",
 		"Only combine the input review results according to these rules",
 		"### Review 1",
 		"### Review 2",

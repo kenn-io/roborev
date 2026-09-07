@@ -1026,7 +1026,6 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 	assert.Contains(review.Output, "Consolidated finding.")
 	assert.Contains(review.Output, "**Reported by:** "+memberAgent)
 
-	assert.Contains(captured, "Do not call tools or run commands")
 	assert.Contains(captured, "Only combine the input review results according to these rules")
 	assert.Contains(captured, "Finding A in alpha.go")
 	assert.Contains(captured, "Finding B in beta.go")
@@ -1211,10 +1210,10 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
-			assert.Contains(prompt, "Read every referenced review file in full")
-			files, err := filepath.Glob(filepath.Join(worktreePath, ".review-inputs", "*", "review.md"))
+			assert.Contains(prompt, "Read the complete task prompt")
+			files, err := filepath.Glob(filepath.Join(worktreePath, ".review-inputs", "*", "prompt.md"))
 			require.NoError(t, err)
-			require.Len(t, files, 2)
+			require.Len(t, files, 1)
 			for _, file := range files {
 				content, err := os.ReadFile(file)
 				require.NoError(t, err)
