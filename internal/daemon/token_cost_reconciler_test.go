@@ -99,6 +99,12 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 			`{"type":"turn.completed","usage":{"input_tokens":1024,`+
 			`"output_tokens":64}}`+"\n",
 	), 0o600))
+	// Filesystem write timestamps can lag the nanosecond-precision job start.
+	// Give this current-attempt fixture an explicit, whole-second timestamp.
+	require.NotNil(t, job.StartedAt)
+	logTime := job.StartedAt.Add(time.Second).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
+
 	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
 		assert.Equal(t, "recovered-session", sessionID)
 		return &tokens.Usage{HasCost: true, CostUSD: 0.21}, nil

@@ -94,6 +94,12 @@ func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
 			`"cached_input_tokens":2560,"output_tokens":3389}}`+"\n",
 	), 0o600))
 
+	// Filesystem write timestamps can lag the nanosecond-precision job start.
+	// Give this current-attempt fixture an explicit, whole-second timestamp.
+	require.NotNil(t, claimed.StartedAt)
+	logTime := claimed.StartedAt.Add(time.Second).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
+
 	cmd := backfillTokensCmd()
 	cmd.SetArgs(nil)
 	require.NoError(t, cmd.Execute())
