@@ -17,32 +17,6 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout time.Duration) Event {
-	t.Helper()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for {
-		select {
-		case e, ok := <-ch:
-			if !ok {
-				require.Condition(t, func() bool {
-					return false
-				}, "channel closed waiting for event type: %s", eventType)
-				return Event{}
-			}
-			if e.Type == eventType {
-				return e
-			}
-		case <-timer.C:
-			require.Condition(t, func() bool {
-				return false
-			}, "timed out waiting for event type: %s", eventType)
-			return Event{}
-		}
-	}
-}
-
 func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
@@ -102,36 +76,26 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	broadcaster, eventCh := setupBroadcaster(t)
 	job := setupRepoAndJob(t, db, tmpDir)
 
-	// Create worker pool with our broadcaster
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil, nil)
-	pool.Start()
-	defer pool.Stop()
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	pool.processJob(testWorkerID, claimed)
 
-	// Wait for job to finish (done or failed)
-	finalJob := testutil.WaitForJobStatus(t, db, job.ID, 10*time.Second, storage.JobStatusDone, storage.JobStatusFailed)
+	finalJob, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusDone, finalJob.Status)
 
-	if finalJob.Status != storage.JobStatusDone {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected job to succeed, got status %s", finalJob.Status)
+	// processJob has returned, so all completion events have been published.
+	var completed Event
+	for len(eventCh) > 0 {
+		event := <-eventCh
+		if event.Type == "review.completed" {
+			completed = event
+		}
 	}
-
-	// Drain events until we find the review.completed event (bounded to prevent misleading timeout errors)
-	event := waitForEventType(t, eventCh, "review.completed", 2*time.Second)
-
-	if event.JobID != job.ID {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected JobID %d, got %d", job.ID, event.JobID)
-	}
-	if event.Agent != "test" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected agent 'test', got %s", event.Agent)
-	}
-	if event.Verdict == "" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected verdict to be set")
-	}
+	require.Equal(t, "review.completed", completed.Type)
+	assert.Equal(t, job.ID, completed.JobID)
+	assert.Equal(t, "test", completed.Agent)
+	assert.NotEmpty(t, completed.Verdict)
 }
