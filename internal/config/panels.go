@@ -199,7 +199,7 @@ type ResolvedMember struct {
 	Agent         string `json:"agent"`
 	AgentExplicit bool   `json:"agent_explicit,omitempty"`
 	Model         string `json:"model"`
-	ModelExplicit bool   `json:"model_explicit,omitempty"`
+	ModelExplicit bool   `json:"model_explicit,omitempty"` // Set by a member model or project panel override.
 	Provider      string `json:"provider"`
 	Reasoning     string `json:"reasoning"`
 	ReviewType    string `json:"review_type"`
@@ -364,6 +364,7 @@ func resolveMemberFromConfig(
 		agent = ResolveAgentForWorkflowFromConfig("", repoCfg, globalCfg, workflow, reasoning)
 	}
 	model := spec.Model
+	modelExplicit := strings.TrimSpace(spec.Model) != ""
 	if model == "" {
 		if spec.Agent != "" {
 			model = resolveExplicitPanelAgentModelFromConfig(
@@ -373,13 +374,17 @@ func resolveMemberFromConfig(
 			model = ResolveModelForWorkflowFromConfig("", repoCfg, globalCfg, workflow, reasoning)
 		}
 	}
+	if override := globalCfg.PanelModelOverride(); override != "" {
+		model = override
+		modelExplicit = true
+	}
 	return ResolvedMember{
 		Name:          name,
 		Index:         index,
 		Agent:         agent,
 		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
 		Model:         model,
-		ModelExplicit: strings.TrimSpace(spec.Model) != "",
+		ModelExplicit: modelExplicit,
 		Provider:      spec.Provider,
 		Reasoning:     reasoning,
 		ReviewType:    reviewType,
@@ -429,6 +434,11 @@ func resolveSynthesisFromConfig(
 		agent = ResolveAgentForWorkflowFromConfig("", repoCfg, globalCfg, "fix", reasoning)
 	}
 	model := panel.SynthesisModel
+	if globalCfg != nil {
+		if override := strings.TrimSpace(globalCfg.project.SynthesisModel); override != "" {
+			model = override
+		}
+	}
 	if model == "" {
 		_, configuredACP := ResolveACPAgentConfigFromConfig(
 			agent, repoCfg, globalCfg,

@@ -3935,6 +3935,10 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	repo.AddRemote("origin", "git@github.com:acme/api.git")
+	cfg.Projects = map[string]config.ProjectConfig{
+		"github.com/acme/api": {ReviewModel: "project-model", OverridePanelModels: true},
+	}
 
 	const primaryAgent = "ci-design-unavailable-primary"
 	agent.Register(&unavailableSynthesisCommandAgent{
@@ -4267,6 +4271,10 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	repo.AddRemote("origin", "git@github.com:acme/api.git")
+	cfg.Projects = map[string]config.ProjectConfig{
+		"github.com/acme/api": {ReviewModel: "project-model", OverridePanelModels: true},
+	}
 
 	const primaryAgent = "ci-panel-unavailable-primary"
 	agent.Register(&unavailableSynthesisCommandAgent{

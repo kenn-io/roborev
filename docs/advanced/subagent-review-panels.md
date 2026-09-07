@@ -123,6 +123,13 @@ analysis tasks, `compact`, and `insights`, do not fan out into panels.
 
 ## Configuration Reference
 
+To change all primary member models for selected projects without duplicating
+panels, use global
+[project model overrides](/docs/configuration/#overriding-panel-models).
+`override_panel_models = true` makes the project's `review_model` override each
+member's model, including security and design reviewers. An optional project
+`synthesis_model` overrides synthesis separately.
+
 ### Review Table
 
 | Key | Type | Description |

@@ -9,8 +9,19 @@ import (
 
 // ProjectConfig supplies machine-local defaults shared by checkouts of a remote.
 type ProjectConfig struct {
-	ReviewModel string `toml:"review_model"`
-	DisplayName string `toml:"display_name"`
+	ReviewModel         string `toml:"review_model"`
+	DisplayName         string `toml:"display_name"`
+	OverridePanelModels bool   `toml:"override_panel_models"`
+	SynthesisModel      string `toml:"synthesis_model"`
+}
+
+// PanelModelOverride returns the explicit project policy for primary panel
+// members, regardless of their review type or individual model setting.
+func (c *Config) PanelModelOverride() string {
+	if c == nil || !c.project.OverridePanelModels {
+		return ""
+	}
+	return strings.TrimSpace(c.project.ReviewModel)
 }
 
 // ForRepo returns global configuration scoped to the repository's remote.

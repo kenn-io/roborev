@@ -531,6 +531,11 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	var review ReviewConfig
 	switch typed := cfg.(type) {
 	case *Config:
+		for identity, project := range typed.Projects {
+			if project.OverridePanelModels && strings.TrimSpace(project.ReviewModel) == "" {
+				return fmt.Errorf("projects.%q: override_panel_models requires review_model", identity)
+			}
+		}
 		review = typed.Review
 	case *RepoConfig:
 		review = typed.Review
