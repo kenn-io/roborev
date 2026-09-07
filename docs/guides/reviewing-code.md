@@ -34,8 +34,16 @@ form treats `name` as a positional commit argument.
 
 1. roborev detects the merge-base between the target branch and the base branch
 1. The merge-base to branch tip range is queued as one review target
-1. The AI agent reviews the branch range with per-commit context
+1. The AI agent reviews the branch range with per-commit context and prior
+    reviews from the same base available in an optional XML document
 1. Results are stored and can be viewed in the TUI
+
+Prior range reviews live in a temporary file referenced by a structured marker
+in the prompt. The agent may read it to check earlier feedback against the
+current code. The file contains review outputs and developer responses, not
+previous prompts. `review_context_count` limits the number of earlier endpoints
+included, with one review per endpoint. Repeated reviews of the current endpoint
+are excluded from this document. The file is removed when the review finishes.
 
 ### Pre-Merge Review
 

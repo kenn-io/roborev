@@ -191,7 +191,7 @@ max_chars = 50000
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
 | `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 200000) |
-| `snapshot_dir` | string | Repo-relative directory for oversized diff snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
+| `snapshot_dir` | string | Repo-relative directory for diff and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
 
 ### Fix Commit Metadata
 
@@ -778,6 +778,11 @@ receives the snapshot directory via `--add-dir`. Optional context (prior
 reviews, guidelines) is trimmed first to preserve as much inline diff as
 possible. Final prompt size is checked before submission, and context-window
 failures fail or fail over rather than retrying the same oversized prompt.
+
+Prior same-base range reviews are written to a separate XML snapshot, with an
+optional file reference in the prompt. Review text does not consume the initial
+prompt budget. The agent may read the document as historical context. Both diff
+and prior-review files are removed after the agent finishes.
 
 By default, snapshots are written to `.roborev/` under the repo root so the
 agent sandbox does not need broader filesystem access. Override the location

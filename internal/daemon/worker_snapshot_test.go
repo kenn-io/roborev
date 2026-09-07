@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/xml"
 	"io"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	promptpkg "go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -257,4 +259,62 @@ func TestSnapshotFlow_ExcludePatternsAppliedToSnapshot(t *testing.T) {
 		"snapshot should contain non-excluded file")
 	assert.NotContains(t, fileContent, "generated.dat",
 		"snapshot should exclude configured patterns")
+}
+
+func TestSnapshotFlow_PriorRangeReviews(t *testing.T) {
+	for _, prebuilt := range []bool{false, true} {
+		name := "built by worker"
+		if prebuilt {
+			name = "prebuilt prompt"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			base := testutil.GetHeadSHA(t, tc.TmpDir)
+			first := tc.GitRepo.CommitFile("first.go", "package first\n", "first")
+			second := tc.GitRepo.CommitFile("second.go", "package second\n", "second")
+			prior, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: base + ".." + first, Agent: "test", JobType: storage.JobTypeRange})
+			require.NoError(t, err)
+			_, err = tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NoError(t, tc.DB.CompleteJob(prior.ID, "test", "old prompt", "earlier range finding"))
+			ref := base + ".." + second
+			var storedPrompt string
+			if prebuilt {
+				storedPrompt, err = promptpkg.NewBuilder(tc.DB).ForRepo(tc.TmpDir, tc.Repo.ID).Build(ref, 3, "test", "", "")
+				require.NoError(t, err)
+				require.Contains(t, storedPrompt, promptpkg.PriorRangeReviewsFilePathPlaceholder)
+			}
+			var snapshotPath string
+			registerFakeAgent(t, "test", func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+				start := strings.Index(p, "<prior-range-reviews ")
+				require.NotEqual(t, -1, start)
+				var reference struct {
+					File string `xml:"file,attr"`
+				}
+				require.NoError(t, xml.NewDecoder(strings.NewReader(p[start:])).Decode(&reference))
+				snapshotPath = reference.File
+				content, err := os.ReadFile(snapshotPath)
+				require.NoError(t, err)
+				assert.Contains(string(content), "earlier range finding")
+				assert.NotContains(p, "earlier range finding")
+				return "No issues found.", nil
+			})
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: ref, Agent: "test", JobType: storage.JobTypeRange, Prompt: storedPrompt, PromptPrebuilt: prebuilt})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			tc.Pool.processJob(testWorkerID, claimed)
+			tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+			require.NotEmpty(t, snapshotPath)
+			_, err = os.Stat(snapshotPath)
+			assert.ErrorIs(err, os.ErrNotExist)
+			if prebuilt {
+				saved, err := tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				assert.Equal(storedPrompt, saved.Prompt)
+			}
+		})
+	}
 }

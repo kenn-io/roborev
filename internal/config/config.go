@@ -634,7 +634,7 @@ type RepoConfig struct {
 	FixCommitAuthor                 string                          `toml:"fix_commit_author" comment:"Author for roborev-owned fix commits in this repo, formatted as Name <email>."`
 	FixCommitCoAuthoredBy           []string                        `toml:"fix_commit_co_authored_by" comment:"Co-authored-by trailers for roborev-owned fix commits in this repo, each formatted as Name <email>."`
 	ExcludePatterns                 []string                        `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
-	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
+	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary diff and prior-review snapshots."`
 	PostCommitReview                string                          `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
 	ReuseReviewSession              *bool                           `toml:"reuse_review_session"`
@@ -1989,7 +1989,7 @@ func clampKataMaxChars(n int) int {
 }
 
 // ResolveSnapshotDir returns the absolute repo-local directory used for
-// temporary oversized diff snapshots.
+// temporary diff and prior-review snapshots.
 func ResolveSnapshotDir(repoPath string) (string, error) {
 	dir := DefaultSnapshotDir
 	if repoCfg, err := LoadRepoConfig(repoPath); err != nil {
