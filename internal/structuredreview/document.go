@@ -5,12 +5,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
 const SchemaVersion = 1
 
-var Schema = json.RawMessage(fmt.Sprintf(`{
+// Schema constrains a single reviewer's output.
+var Schema = schema(false)
+
+// SourcedSchema additionally requires every finding to cite the 1-based
+// numbers of the input reviews that reported it. Synthesis uses it so a
+// combined finding keeps its provenance.
+var SourcedSchema = schema(true)
+
+func schema(withSources bool) json.RawMessage {
+	required := `["severity", "problem", "fix", "location"]`
+	sources := ""
+	if withSources {
+		required = `["severity", "problem", "fix", "location", "sources"]`
+		sources = `,
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "integer", "minimum": 1}
+          }`
+	}
+	return json.RawMessage(fmt.Sprintf(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "summary", "findings"],
@@ -22,7 +43,7 @@ var Schema = json.RawMessage(fmt.Sprintf(`{
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["severity", "problem", "fix", "location"],
+        "required": %s,
         "properties": {
           "severity": {
             "type": "string",
@@ -30,17 +51,22 @@ var Schema = json.RawMessage(fmt.Sprintf(`{
           },
           "problem": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1},
-          "location": {"type": ["string", "null"]}
+          "location": {"type": ["string", "null"]}%s
         }
       }
     }
   }
-}`, SchemaVersion))
+}`, SchemaVersion, required, sources))
+}
 
 type Document struct {
 	SchemaVersion int       `json:"schema_version"`
 	Summary       string    `json:"summary"`
 	Findings      []Finding `json:"findings"`
+	// SourceLabels names the input reviews a sourced document cites, indexed
+	// by review number minus one. It is caller-provided, never decoded, and
+	// only used when rendering Markdown.
+	SourceLabels []string `json:"-"`
 }
 
 type Finding struct {
@@ -48,6 +74,25 @@ type Finding struct {
 	Problem  string `json:"problem"`
 	Fix      string `json:"fix"`
 	Location string `json:"location,omitempty"`
+	// Sources holds 1-based input review numbers for a sourced document.
+	Sources []int `json:"sources,omitempty"`
+}
+
+// MarshalJSON emits an empty Location as JSON null so an encoded document
+// stays valid under Schema, which requires the field on every finding.
+func (f Finding) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Severity string  `json:"severity"`
+		Problem  string  `json:"problem"`
+		Fix      string  `json:"fix"`
+		Location *string `json:"location"`
+		Sources  []int   `json:"sources,omitempty"`
+	}
+	w := wire{Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Sources: f.Sources}
+	if f.Location != "" {
+		w.Location = &f.Location
+	}
+	return json.Marshal(w)
 }
 
 type documentWire struct {
@@ -61,6 +106,7 @@ type findingWire struct {
 	Problem  string          `json:"problem"`
 	Fix      string          `json:"fix"`
 	Location json.RawMessage `json:"location"`
+	Sources  []int           `json:"sources"`
 }
 
 func Decode(raw json.RawMessage) (Document, error) {
@@ -100,6 +146,7 @@ func Decode(raw json.RawMessage) (Document, error) {
 			Problem:  finding.Problem,
 			Fix:      finding.Fix,
 			Location: location,
+			Sources:  finding.Sources,
 		}
 	}
 	if result.SchemaVersion != SchemaVersion {
@@ -138,6 +185,26 @@ func Decode(raw json.RawMessage) (Document, error) {
 	return result, nil
 }
 
+// RequireSources validates a sourced document: every finding must cite at
+// least one input review, and every citation must fall within the count of
+// input reviews.
+func (r Document) RequireSources(reviewCount int) error {
+	for i, finding := range r.Findings {
+		if len(finding.Sources) == 0 {
+			return fmt.Errorf("structured review finding %d cites no source review", i+1)
+		}
+		for _, n := range finding.Sources {
+			if n < 1 || n > reviewCount {
+				return fmt.Errorf(
+					"structured review finding %d cites review %d, but only %d reviews were provided",
+					i+1, n, reviewCount,
+				)
+			}
+		}
+	}
+	return nil
+}
+
 func ensureEOF(dec *json.Decoder) error {
 	var extra any
 	err := dec.Decode(&extra)
@@ -159,6 +226,7 @@ func (r Document) Filter(minSeverity string) Document {
 		SchemaVersion: r.SchemaVersion,
 		Summary:       r.Summary,
 		Findings:      make([]Finding, 0, len(r.Findings)),
+		SourceLabels:  r.SourceLabels,
 	}
 	for _, finding := range r.Findings {
 		if severityRank(finding.Severity) >= threshold {
@@ -188,8 +256,28 @@ func (r Document) Markdown() string {
 		}
 		fmt.Fprintf(&out, "**Problem:** %s\n\n", finding.Problem)
 		fmt.Fprintf(&out, "**Fix:** %s\n", finding.Fix)
+		if labels := r.sourceLabels(finding); len(labels) > 0 {
+			fmt.Fprintf(&out, "\n**Reported by:** %s\n", strings.Join(labels, ", "))
+		}
 	}
 	return out.String()
+}
+
+// sourceLabels resolves a finding's review numbers to caller-provided labels,
+// in citation order without duplicates. Numbers without a label are skipped.
+func (r Document) sourceLabels(finding Finding) []string {
+	labels := make([]string, 0, len(finding.Sources))
+	for _, n := range finding.Sources {
+		if n < 1 || n > len(r.SourceLabels) {
+			continue
+		}
+		label := r.SourceLabels[n-1]
+		if label == "" || slices.Contains(labels, label) {
+			continue
+		}
+		labels = append(labels, label)
+	}
+	return labels
 }
 
 func severityRank(severity string) int {

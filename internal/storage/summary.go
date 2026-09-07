@@ -498,7 +498,9 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 // but a NULL verdict_bool, and clears verdict_bool on empty-output rows
 // (written by older CompleteFixJob versions). Listings rely on a non-NULL
 // verdict_bool implying a non-empty output so they can skip reading the
-// output column. Returns the number of rows updated.
+// output column. It also clears verdict_bool on rows whose output says the
+// agent never read its diff; older parsers recorded those as failed reviews.
+// Returns the number of rows updated.
 func (db *DB) BackfillVerdictBool() (int, error) {
 	cleared, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE verdict_bool IS NOT NULL AND output = ''`)
 	if err != nil {
@@ -508,12 +510,36 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	unreadable, err := db.clearUnreadableVerdicts()
+	if err != nil {
+		return 0, err
+	}
+	clearedCount += unreadable
+
+	// Task and insights output is free-form prose and never carries a
+	// verdict. Clear any verdict an older release parsed out of it, and keep
+	// those rows out of the re-parse below so a restart cannot add one back.
+	freeForm, err := db.Exec(`
+		UPDATE reviews SET verdict_bool = NULL
+		WHERE verdict_bool IS NOT NULL
+		  AND job_id IN (SELECT id FROM review_jobs WHERE job_type IN (?, ?))
+	`, JobTypeTask, JobTypeInsights)
+	if err != nil {
+		return 0, err
+	}
+	freeFormCount, err := freeForm.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	clearedCount += freeFormCount
 
 	rows, err := db.Query(`
 		SELECT rv.id, rv.output
 		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE rv.verdict_bool IS NULL AND rv.output != ''
-	`)
+		  AND j.job_type NOT IN (?, ?)
+	`, JobTypeTask, JobTypeInsights)
 	if err != nil {
 		return 0, err
 	}
@@ -530,9 +556,13 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		if err := rows.Scan(&id, &output); err != nil {
 			return 0, err
 		}
+		verdict := ParseVerdict(output)
+		if verdict == VerdictUnknown {
+			continue
+		}
 		updates = append(updates, pending{
 			id:      id,
-			verdict: verdictToBool(ParseVerdict(output)),
+			verdict: verdictToBool(verdict),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -603,4 +633,46 @@ func percentile(values []float64, p float64) float64 {
 	}
 	frac := rank - float64(lower)
 	return values[lower] + frac*(values[upper]-values[lower])
+}
+
+// clearUnreadableVerdicts nulls verdict_bool on rows that an older parser
+// recorded as a verdict but that ClassifyOutput now says were never reviewed.
+// The SQL LIKE prefilter keeps the per-startup scan cheap; the Go parser
+// makes the final call so a labelled finding is never cleared.
+func (db *DB) clearUnreadableVerdicts() (int64, error) {
+	where, args := NoReviewLikeClauses("output")
+	rows, err := db.Query(`SELECT id, output FROM reviews WHERE verdict_bool IS NOT NULL AND (`+where+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var output string
+		if err := rows.Scan(&id, &output); err != nil {
+			return 0, err
+		}
+		if ParseVerdict(output) == VerdictUnknown {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	var cleared int64
+	for _, id := range ids {
+		res, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE id = ?`, id)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		cleared += n
+	}
+	return cleared, nil
 }

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -65,7 +66,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return "synthesized output", nil
+	return `{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -91,11 +92,78 @@ func (a *synthesisEntrypointAgent) Review(
 
 func (a *synthesisEntrypointAgent) Synthesize(
 	_ context.Context, prompt string, _ io.Writer,
-) (string, error) {
+) (json.RawMessage, error) {
 	a.synthPrompt = prompt
-	return "synthesized output", nil
+	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
+
+type structuredSynthesisAgent struct {
+	commonMockAgent
+	schema       json.RawMessage
+	repoPath     string
+	reviewCalled bool
+}
+
+func newStructuredSynthesisAgent() *structuredSynthesisAgent {
+	a := &structuredSynthesisAgent{}
+	a.self = a
+	return a
+}
+
+func (a *structuredSynthesisAgent) Name() string { return "structured-synthesis" }
+func (a *structuredSynthesisAgent) Review(
+	context.Context, string, string, string, io.Writer,
+) (string, error) {
+	a.reviewCalled = true
+	return "", errors.New("plain review must not be used when ReviewWithSchema exists")
+}
+
+func (a *structuredSynthesisAgent) ReviewWithSchema(
+	_ context.Context, repoPath, _, _ string, schema json.RawMessage, _ io.Writer,
+) (json.RawMessage, error) {
+	a.schema = schema
+	a.repoPath = repoPath
+	return json.RawMessage(`{"schema_version":1,"summary":"synthesized output","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+}
+func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
+
+func TestRunSynthesisAgentPrefersSchemaReviewOverPlainReview(t *testing.T) {
+	a := newStructuredSynthesisAgent()
+	reviews := []ReviewResult{{Agent: "codex", Status: ResultDone, Output: "Found issue A"}}
+	cleaned := false
+
+	doc, err := RunSynthesisAgent(context.Background(), a, reviews, "prompt", "", nil, SynthesisHooks{
+		Checkout: func() (SynthesisCheckout, error) {
+			return SynthesisCheckout{RepoPath: "/repo", GitRef: "HEAD", Cleanup: func() { cleaned = true }}, nil
+		},
+	})
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.False(a.reviewCalled)
+	assert.JSONEq(string(SynthesisSchema), string(a.schema))
+	assert.Equal("/repo", a.repoPath, "schema review runs against the reviewed checkout")
+	assert.True(cleaned, "checkout cleanup must run after the agent")
+	assert.Equal([]int{1}, doc.Findings[0].Sources)
+}
+
+type invalidSynthesisAgent struct {
+	commonMockAgent
+}
+
+func newInvalidSynthesisAgent() *invalidSynthesisAgent {
+	a := &invalidSynthesisAgent{}
+	a.self = a
+	return a
+}
+
+func (a *invalidSynthesisAgent) Name() string { return "invalid-synthesis" }
+func (a *invalidSynthesisAgent) Review(
+	context.Context, string, string, string, io.Writer,
+) (string, error) {
+	return "Markdown without structured synthesis JSON.", nil
+}
+func (a *invalidSynthesisAgent) CommandLine() string { return a.Name() }
 
 func TestSynthesize_Formatting(t *testing.T) {
 	tests := []struct {
@@ -329,6 +397,24 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	assert.NotContains(t, comment, "codex —")
 	assert.NotContains(t, comment, "security")
 	assert.NotContains(t, comment, "design")
+}
+
+func TestSynthesize_InvalidJSONFallsBackToRaw(t *testing.T) {
+	ag := newInvalidSynthesisAgent()
+	agent.Register(ag)
+	t.Cleanup(func() { agent.Unregister(ag.Name()) })
+
+	results := []ReviewResult{
+		{Status: ResultDone, Output: "Finding A"},
+		{Status: ResultDone, Output: "Finding B"},
+	}
+	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+		Agent: ag.Name(), HeadSHA: "def456789012",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, comment, "Synthesis unavailable")
+	assert.Contains(t, comment, "Finding A")
+	assert.Contains(t, comment, "Finding B")
 }
 
 func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {

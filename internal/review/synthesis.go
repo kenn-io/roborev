@@ -1,11 +1,66 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/structuredreview"
 )
+
+// SynthesisSchema is the structured review schema with one addition: every
+// finding cites the input review numbers that reported it.
+var SynthesisSchema = structuredreview.SourcedSchema
+
+// SynthesisDocument is the structured result returned by a synthesis agent.
+// It has the same shape as a single structured review, so the verdict derives
+// from the findings instead of being asserted separately, and each finding
+// keeps the reviews it came from.
+type SynthesisDocument = structuredreview.Document
+
+// DecodeSynthesisDocument validates one complete synthesis JSON document
+// against the input reviews it combined and attaches reviewer labels so the
+// rendered Markdown can say where each finding came from.
+func DecodeSynthesisDocument(raw json.RawMessage, reviews []ReviewResult) (SynthesisDocument, error) {
+	doc, err := structuredreview.Decode(raw)
+	if err != nil {
+		return SynthesisDocument{}, fmt.Errorf("decode synthesis output: %w", err)
+	}
+	if err := doc.RequireSources(len(reviews)); err != nil {
+		return SynthesisDocument{}, fmt.Errorf("decode synthesis output: %w", err)
+	}
+	doc.SourceLabels = SynthesisSourceLabels(reviews)
+	return doc, nil
+}
+
+// SynthesisVerdict is the canonical verdict of a synthesis document: pass when
+// no finding survived the severity threshold, otherwise fail.
+func SynthesisVerdict(doc SynthesisDocument) storage.Verdict {
+	return storage.VerdictFromPassed(doc.Passed())
+}
+
+// SynthesisSourceLabels names each input review for readers: the agent, plus
+// the review type when it is not the default review. The prompt itself keeps
+// reviewers anonymous as "Review N" so the synthesizer weighs findings on
+// their merits; the labels are applied only when rendering.
+func SynthesisSourceLabels(reviews []ReviewResult) []string {
+	labels := make([]string, len(reviews))
+	for i, r := range reviews {
+		label := strings.TrimSpace(r.Agent)
+		if label == "" {
+			label = fmt.Sprintf("review %d", i+1)
+		}
+		if rt := strings.TrimSpace(r.ReviewType); rt != "" && !config.IsDefaultReviewType(rt) {
+			label += " (" + rt + ")"
+		}
+		labels[i] = label
+	}
+	return labels
+}
 
 // severityAbove maps a minimum severity to the instruction
 // describing which levels to include in synthesis output.
@@ -48,15 +103,19 @@ func BuildSynthesisPrompt(
 	var b strings.Builder
 	b.WriteString(
 		"You are combining multiple code review outputs " +
-			"into a single GitHub PR comment.\nRules:\n" +
+			"into a single GitHub PR comment.\n" +
+			"Return exactly one JSON object with this shape and no code fence: " +
+			`{"schema_version":1,"summary":"...","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
+			"Put a one-line overall summary in `summary`. " +
+			"List every finding that requires changes in `findings`; " +
+			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
+			"In `sources`, list the numbers of the reviews below (### Review N) " +
+			"that reported the finding.\nRules:\n" +
 			"- Do not call tools or run commands\n" +
 			"- Only combine the input review results according to these rules\n" +
-			"- Deduplicate findings reported by multiple reviewers\n" +
-			"- Organize by severity (Critical > High > Medium > Low)\n" +
-			"- Preserve file/line references\n" +
-			"- If all reviewers agree code is clean, say so concisely\n" +
-			"- Start with a one-line summary verdict\n" +
-			"- Use markdown formatting\n" +
+			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
+			"- Order findings by severity (Critical > High > Medium > Low)\n" +
+			"- Preserve file/line references in `location`\n" +
 			"- No preamble about yourself\n")
 
 	if instruction, ok := severityAbove[minSeverity]; ok {

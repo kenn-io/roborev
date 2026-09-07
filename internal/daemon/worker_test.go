@@ -369,6 +369,56 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	assert.Equal(t, 0, *stored.VerdictBool)
 }
 
+func registerUnreadableDiffAgent(t *testing.T, name string) {
+	t.Helper()
+	agent.Register(&agent.FakeAgent{
+		NameStr: name,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(name) })
+}
+
+func TestWorkerFailsReviewWithoutVerdictKeepingOutput(t *testing.T) {
+	const agentName = "unreadable-diff-test"
+	registerUnreadableDiffAgent(t, agentName)
+
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert := assert.New(t)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.True(strings.HasPrefix(updated.Error, review.NoVerdictErrorPrefix), updated.Error)
+	assert.Contains(updated.Error, "review produced no recognizable verdict")
+	assert.Contains(updated.Error, "unable to read the diff file")
+	assert.Equal(0, updated.RetryCount, "no-verdict output must not burn same-agent retries")
+	_, err := tc.DB.GetReviewByJobID(job.ID)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestWorkerFailsOverReviewWithoutVerdictWithoutRetry(t *testing.T) {
+	const agentName = "unreadable-diff-failover-test"
+	registerUnreadableDiffAgent(t, agentName)
+
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert := assert.New(t)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal("test", updated.Agent)
+	assert.Equal(0, updated.RetryCount)
+}
+
 func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	agentName := "structured-review-config-severity-test"
@@ -2185,6 +2235,39 @@ func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
 	assert.Contains(t, updated.Error, "prompt exceeds size limit before agent submission")
 }
 
+func TestProcessJob_TaskAllowsFreeFormOutputWithUnknownVerdict(t *testing.T) {
+	const agentName = "task-free-form"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return "Task completed successfully.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	tc := newWorkerTestContext(t, 1)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: "run:free-form", Agent: agentName,
+		Prompt: "Do the task", JobType: storage.JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	reviewRow, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Task completed successfully.", reviewRow.Output)
+
+	var verdict sql.NullInt64
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid)
+}
+
 func TestProcessJob_NonzeroAgentExitFailsPromptly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("synthetic agent uses a POSIX shell")
@@ -3730,6 +3813,46 @@ func TestAutoClosePassingReviews(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, review.Closed, "task job should not be auto-closed")
 	})
+}
+
+func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+	const agentName = "compact-verdict-agent"
+	const output = "## Critical Issues\n\n1. SQL injection in main.go:42"
+
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return output, nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:  tc.Repo.ID,
+		GitRef:  "main",
+		Agent:   agentName,
+		JobType: storage.JobTypeCompact,
+		Prompt:  "Consolidate the open review findings.",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		compactMetadataPath(job.ID), []byte(`{"source_job_ids":[]}`), 0o600,
+	))
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	var verdict sql.NullInt64
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	require.True(t, verdict.Valid)
+	assert.Equal(t, int64(0), verdict.Int64)
 }
 
 func TestProcessJob_MinSeverityCascade(t *testing.T) {

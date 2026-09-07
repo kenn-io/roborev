@@ -440,19 +440,27 @@ func TestBackfillVerdictBool(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug"))
 
+	j3 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j3.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns."))
+
 	// Simulate legacy rows by nullifying verdict_bool
 	_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL`)
 	require.NoError(t, err)
+	// Older parsers recorded unreadable-diff output as a failed review.
+	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, j3.ID)
+	require.NoError(t, err)
 
-	// Verify summary sees nothing before backfill
+	// Before backfill the summary sees only the bogus fail on the unreadable row
 	s, err := db.GetSummary(SummaryOptions{Since: time.Now().Add(-1 * time.Hour)})
 	require.NoError(t, err)
-	assert.Equal(t, 0, s.Verdicts.Total)
+	assert.Equal(t, 1, s.Verdicts.Total)
+	assert.Equal(t, 1, s.Verdicts.Failed)
 
-	// Backfill
+	// Backfill: two legacy rows gain a verdict, one unreadable row loses its bogus fail
 	count, err := db.BackfillVerdictBool()
 	require.NoError(t, err)
-	assert.Equal(t, 2, count)
+	assert.Equal(t, 3, count)
 
 	// Verify summary now sees the verdicts
 	s, err = db.GetSummary(SummaryOptions{Since: time.Now().Add(-1 * time.Hour)})
@@ -460,6 +468,12 @@ func TestBackfillVerdictBool(t *testing.T) {
 	assert.Equal(t, 2, s.Verdicts.Total)
 	assert.Equal(t, 1, s.Verdicts.Passed)
 	assert.Equal(t, 1, s.Verdicts.Failed)
+
+	var unknownVerdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, j3.ID,
+	).Scan(&unknownVerdict))
+	assert.False(t, unknownVerdict.Valid, "unknown verdict must remain NULL")
 
 	// Running again is a no-op
 	count, err = db.BackfillVerdictBool()
@@ -470,6 +484,35 @@ func TestBackfillVerdictBool(t *testing.T) {
 // Older CompleteFixJob stored verdict_bool even for empty outputs. Listings
 // rely on non-NULL verdict_bool implying a non-empty output, so the startup
 // backfill pass must clear those legacy rows.
+func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, "/tmp/backfill-freeform-repo")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "summarize the module", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+	// An older release parsed a verdict out of this prose.
+	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	require.NoError(t, err)
+
+	count, err := db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "the legacy task verdict is cleared")
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must not be re-parsed into a verdict")
+
+	count, err = db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "a second run is a no-op")
+}
+
 func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

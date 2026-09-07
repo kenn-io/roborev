@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -185,8 +186,9 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 
 // Synthesize combines supplied review outputs without wrapping the prompt as a
 // code review or advertising repository capabilities.
-func (a *ACPAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (string, error) {
-	return a.runPrompt(ctx, "", prompt, output, false)
+func (a *ACPAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
+	result, err := a.runPrompt(ctx, "", prompt, output, false)
+	return json.RawMessage(result), err
 }
 
 func (a *ACPAgent) runPrompt(

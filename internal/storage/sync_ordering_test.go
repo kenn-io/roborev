@@ -595,6 +595,83 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	assert.Equal(t, VerdictFail, review.Verdict())
 }
 
+func TestUpsertPulledReviewDropsVerdictOnUnreadableOutput(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("unreadable-pulled-verdict")
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID:               testUUID("unreadable-pulled-verdict"),
+		JobUUID:            *job.UUID,
+		Agent:              "test",
+		Prompt:             "prompt",
+		Output:             "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+		VerdictBool:        new(false),
+		UpdatedByMachineID: testUUID("unreadable-pulled-machine"),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "a remote fail verdict on unreadable output must not be imported")
+}
+
+func TestUpsertPulledReviewClearsLegacyVerdictOnUnreadableUpdate(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("unreadable-pulled-conflict")
+	const unreadable = "I am unable to read the diff file because it is ignored by configured ignore patterns."
+	first := time.Now().Add(-time.Minute)
+
+	// A legacy row stored the unreadable output with a fail verdict.
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID: testUUID("unreadable-pulled-conflict"), JobUUID: *job.UUID,
+		Agent: "test", Prompt: "prompt", Output: "- High: placeholder finding",
+		VerdictBool: new(false), UpdatedByMachineID: testUUID("legacy-machine"),
+		CreatedAt: first, UpdatedAt: first,
+	}))
+	_, err := h.db.Exec(`UPDATE reviews SET output = ?, verdict_bool = 0 WHERE uuid = ?`,
+		unreadable, testUUID("unreadable-pulled-conflict"))
+	require.NoError(t, err)
+
+	// A newer version of the same review arrives with the unreadable output.
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID: testUUID("unreadable-pulled-conflict"), JobUUID: *job.UUID,
+		Agent: "test", Prompt: "prompt", Output: unreadable,
+		VerdictBool: new(false), UpdatedByMachineID: testUUID("legacy-machine"),
+		CreatedAt: first, UpdatedAt: time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "conflict update must clear a legacy verdict on unreadable output")
+}
+
+func TestUpsertPulledReviewLeavesUnknownVerdictUnset(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("unknown-review-verdict")
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID:               testUUID("unknown-review-verdict"),
+		JobUUID:            *job.UUID,
+		Agent:              "test",
+		Prompt:             "prompt",
+		Output:             "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+		UpdatedByMachineID: testUUID("unknown-review-machine"),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "unknown verdict must remain NULL")
+}
+
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only
 // returned when their parent job has been synced (j.synced_at IS NOT NULL).
 func TestGetCommentsToSync_RequiresJobSynced(t *testing.T) {
@@ -742,4 +819,45 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 	require.NoError(t, err, "GetCommentsToSync failed: %v")
 
 	assert.Len(t, responses, 3)
+}
+
+func TestSyncedReviewVerdictDropsVerdictOnNonReviewOutput(t *testing.T) {
+	assert := assert.New(t)
+	fail := false
+
+	verdict, noReview := syncedReviewVerdict(SyncableReview{Output: "- High: bug in a.go:1", VerdictBool: &fail})
+	assert.False(noReview)
+	assert.Equal(&fail, verdict)
+
+	verdict, noReview = syncedReviewVerdict(SyncableReview{
+		Output: "I am unable to read the diff file because it is ignored by configured ignore patterns.", VerdictBool: &fail,
+	})
+	assert.True(noReview)
+	assert.Nil(verdict)
+
+	verdict, noReview = syncedReviewVerdict(SyncableReview{Output: "No review output generated", VerdictBool: &fail})
+	assert.True(noReview)
+	assert.Nil(verdict)
+}
+
+func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
+	h := newSyncTestHelper(t)
+	repo := createRepo(t, h.db, "/tmp/sync-task-repo")
+	job, err := h.db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "summarize", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, job.UUID)
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID: testUUID("task-pulled-review"), JobUUID: *job.UUID,
+		Agent: "test", Prompt: "prompt", Output: "Task done. No issues found.",
+		VerdictBool: new(true), UpdatedByMachineID: testUUID("task-machine"),
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	assert.False(t, verdict.Valid, "task output must stay unrated on pull, as it does locally")
 }

@@ -286,8 +286,8 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			name: "oldest first",
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("oldest123", 100, "No issues found.", false).
-					WithReview("middle456", 200, "Found a bug in the code.", false).
-					WithReview("newest789", 300, "Security vulnerability detected.", false)
+					WithReview("middle456", 200, "Verdict: FAIL\n\nFound a bug in the code.", false).
+					WithReview("newest789", 300, "Verdict: FAIL\n\nSecurity vulnerability detected.", false)
 			},
 			commits:       []string{"oldest123", "middle456", "newest789"},
 			wantJobID:     200,
@@ -305,9 +305,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		{
 			name: "skips closed",
 			setup: func(c *mockDaemonClient) {
-				c.WithReview("commit1", 100, "Bug found.", false).
-					WithReview("commit2", 200, "Another bug.", true).
-					WithReview("commit3", 300, "More issues.", false)
+				c.WithReview("commit1", 100, "Verdict: FAIL\n\nBug found.", false).
+					WithReview("commit2", 200, "Verdict: FAIL\n\nAnother bug.", true).
+					WithReview("commit3", 300, "Verdict: FAIL\n\nMore issues.", false)
 			},
 			commits:   []string{"commit1", "commit2", "commit3"},
 			wantJobID: 100,
@@ -315,8 +315,8 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		{
 			name: "skips given up reviews",
 			setup: func(c *mockDaemonClient) {
-				c.WithReview("commit1", 100, "Bug found.", false).
-					WithReview("commit2", 200, "Another bug.", false).
+				c.WithReview("commit1", 100, "Verdict: FAIL\n\nBug found.", false).
+					WithReview("commit2", 200, "Verdict: FAIL\n\nAnother bug.", false).
 					WithReview("commit3", 300, "No issues found.", false)
 			},
 			commits:   []string{"commit1", "commit2", "commit3"},
@@ -326,8 +326,8 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		{
 			name: "all skipped returns nil",
 			setup: func(c *mockDaemonClient) {
-				c.WithReview("commit1", 100, "Bug found.", false).
-					WithReview("commit2", 200, "Another.", false)
+				c.WithReview("commit1", 100, "Verdict: FAIL\n\nBug found.", false).
+					WithReview("commit2", 200, "Verdict: FAIL\n\nAnother.", false)
 			},
 			commits:   []string{"commit1", "commit2"},
 			skip:      map[int64]bool{1: true, 2: true},
@@ -363,7 +363,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			name: "marks passing before failure",
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("commit1", 100, "No issues found.", false).
-					WithReview("commit2", 200, "Bug found.", false)
+					WithReview("commit2", 200, "Verdict: FAIL\n\nBug found.", false)
 			},
 			commits:       []string{"commit1", "commit2"},
 			wantJobID:     200,
@@ -373,7 +373,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			name: "does not mark already closed",
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("commit1", 100, "No issues found.", true).
-					WithReview("commit2", 200, "Bug found.", false)
+					WithReview("commit2", 200, "Verdict: FAIL\n\nBug found.", false)
 			},
 			commits:   []string{"commit1", "commit2"},
 			wantJobID: 200,
@@ -383,9 +383,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("commit1", 100, "No issues found.", false).
 					WithReview("commit2", 200, "No issues.", true).
-					WithReview("commit3", 300, "Bug found.", true).
+					WithReview("commit3", 300, "Verdict: FAIL\n\nBug found.", true).
 					WithReview("commit4", 400, "No findings detected.", false).
-					WithReview("commit5", 500, "Critical error.", false)
+					WithReview("commit5", 500, "Verdict: FAIL\n\nCritical error.", false)
 			},
 			commits:       []string{"commit1", "commit2", "commit3", "commit4", "commit5"},
 			wantJobID:     500,
@@ -394,9 +394,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		{
 			name: "stops at first failure",
 			setup: func(c *mockDaemonClient) {
-				c.WithReview("commit1", 100, "Bug found.", false).
+				c.WithReview("commit1", 100, "Verdict: FAIL\n\nBug found.", false).
 					WithReview("commit2", 200, "No issues found.", false).
-					WithReview("commit3", 300, "Another bug.", false)
+					WithReview("commit3", 300, "Verdict: FAIL\n\nAnother bug.", false)
 			},
 			commits:   []string{"commit1", "commit2", "commit3"},
 			wantJobID: 100,
