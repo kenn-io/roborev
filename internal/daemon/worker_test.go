@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1302,6 +1303,26 @@ func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T
 	assert.Less(t, time.Since(started), 100*time.Millisecond)
 }
 
+func TestFetchFreshSessionUsageStopsRetryingAtDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pool := &WorkerPool{
+			tokenUsageIndexRetryWindow:   time.Minute,
+			tokenUsageIndexRetryInterval: time.Second,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		defer cancel()
+		attempts := 0
+		usage, err := pool.fetchFreshSessionUsage(ctx, func(context.Context, string) (*tokens.Usage, error) {
+			attempts++
+			return nil, nil
+		}, "test-session")
+		require.NoError(t, err)
+		assert.Nil(t, usage)
+		assert.Equal(t, 3, attempts)
+		assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	})
+}
+
 func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
@@ -1318,14 +1339,14 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	), 0o600))
 
 	var attempts atomic.Int32
-	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+	tc.Pool.tokenUsageFetcher = func(ctx context.Context, _ string) (*tokens.Usage, error) {
 		attempts.Add(1)
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
 	defer cancel()
-	started := time.Now()
+	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	tc.Pool.captureTokenUsageForSession(
 		ctx, testWorkerID, job, "fresh-session-456",
 	)
@@ -1334,8 +1355,7 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(updated.TokenUsage)
 	require.NotNil(t, usage)
-	assert.GreaterOrEqual(t, attempts.Load(), int32(2))
-	assert.Less(t, time.Since(started), 250*time.Millisecond)
+	assert.Equal(t, int32(1), attempts.Load())
 	assert.Equal(t, int64(1024), usage.InputTokens)
 	assert.Equal(t, int64(64), usage.OutputTokens)
 	assert.False(t, usage.HasCost)
