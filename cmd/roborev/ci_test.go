@@ -46,7 +46,7 @@ func TestCIReviewSynthesisModel(t *testing.T) {
 			require.NoError(t, os.WriteFile(scriptPath, []byte(`#!/bin/sh
 for arg in "$@"; do
   if [ "$arg" = "--help" ]; then
-    printf '%s\n' '--sandbox --output-schema --ignore-user-config'
+    printf '%s\n' '--sandbox --output-schema --ignore-user-config --dangerously-bypass-approvals-and-sandbox'
     exit 0
   fi
 done
