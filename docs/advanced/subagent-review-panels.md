@@ -128,7 +128,11 @@ panels, use global
 [project model overrides](/docs/configuration/#overriding-panel-models).
 `override_panel_models = true` makes the project's `review_model` override each
 member's model, including security and design reviewers. An optional project
-`synthesis_model` overrides synthesis separately.
+`synthesis_model` overrides synthesis separately. For reasoning, set project
+`review_reasoning` and `override_panel_reasoning = true` to replace member pins
+across every review type. Without the override flag, project reasoning supplies
+an inherited default. Project `synthesis_reasoning` controls synthesis
+independently.
 
 ### Review Table
 

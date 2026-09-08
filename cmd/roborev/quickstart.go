@@ -193,6 +193,7 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	}
 	explicit := false
 	global, _ := config.LoadGlobal()
+	global = global.ForRepo(repoRoot)
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil {
 		reasoning := ""
 		if resolved, resolveErr := config.ResolveReviewReasoningFromConfig("", repoCfg, global); resolveErr == nil {

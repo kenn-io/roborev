@@ -22,17 +22,17 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestCIReviewSynthesisModel(t *testing.T) {
+func TestCIReviewSynthesisOverrides(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("synthetic synthesis agent uses a POSIX shell script")
 	}
 	for _, tt := range []struct {
-		name, host, globalModel, projectModel, want string
+		name, host, globalModel, projectModel, want, reasoning, wantReasoning string
 	}{
-		{"agent default", "github.com", "", "", ""},
-		{"global CI model", "github.com", "ci-synthesis", "", "ci-synthesis"},
-		{"GitHub project model", "github.com", "ci-synthesis", "project-synthesis", "project-synthesis"},
-		{"GitLab project model", "gitlab.example.com", "ci-synthesis", "project-synthesis", "project-synthesis"},
+		{"agent default", "github.com", "", "", "", "", ""},
+		{"global CI model", "github.com", "ci-synthesis", "", "ci-synthesis", "", ""},
+		{"GitHub project overrides", "github.com", "ci-synthesis", "project-synthesis", "project-synthesis", "high", "high"},
+		{"GitLab project overrides", "gitlab.example.com", "ci-synthesis", "project-synthesis", "project-synthesis", "low", "low"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clearForgeCIEnv(t)
@@ -42,14 +42,21 @@ func TestCIReviewSynthesisModel(t *testing.T) {
 			t.Chdir(repo.Path())
 			modelPath := filepath.Join(dataDir, "synthesis-model")
 			t.Setenv("TEST_CI_SYNTHESIS_MODEL", modelPath)
+			reasoningPath := filepath.Join(dataDir, "synthesis-reasoning")
+			t.Setenv("TEST_CI_SYNTHESIS_REASONING", reasoningPath)
 			scriptPath := filepath.Join(dataDir, "codex-fixture")
 			require.NoError(t, os.WriteFile(scriptPath, []byte(`#!/bin/sh
+reasoning=''
 for arg in "$@"; do
+  case "$arg" in
+    model_reasoning_effort=*) reasoning="$arg" ;;
+  esac
   if [ "$arg" = "--help" ]; then
     printf '%s\n' '--sandbox --output-schema --ignore-user-config --dangerously-bypass-approvals-and-sandbox'
     exit 0
   fi
 done
+printf '%s' "$reasoning" > "$TEST_CI_SYNTHESIS_REASONING"
 model=''
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-m" ]; then
@@ -69,7 +76,8 @@ codex_cmd = %q
 synthesis_model = %q
 [projects.%q]
 synthesis_model = %q
-`, scriptPath, tt.globalModel, tt.host+"/example/project-a", tt.projectModel)
+synthesis_reasoning = %q
+`, scriptPath, tt.globalModel, tt.host+"/example/project-a", tt.projectModel, tt.reasoning)
 			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(cfg), 0o600))
 			args := []string{"review", "--ref", "HEAD", "--agent", "test", "--review-types", "default,security", "--synthesis-agent", "codex"}
 			if tt.host == "gitlab.example.com" {
@@ -84,6 +92,13 @@ synthesis_model = %q
 			model, err := os.ReadFile(modelPath)
 			require.NoError(t, err, "synthesis must invoke the agent")
 			assert.Equal(t, tt.want, string(model))
+			reasoning, err := os.ReadFile(reasoningPath)
+			require.NoError(t, err)
+			wantReasoning := ""
+			if tt.wantReasoning != "" {
+				wantReasoning = `model_reasoning_effort="` + tt.wantReasoning + `"`
+			}
+			assert.Equal(t, wantReasoning, string(reasoning))
 		})
 	}
 }

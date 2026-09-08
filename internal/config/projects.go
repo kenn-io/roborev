@@ -9,10 +9,13 @@ import (
 
 // ProjectConfig supplies machine-local defaults shared by checkouts of a remote.
 type ProjectConfig struct {
-	ReviewModel         string `toml:"review_model"`
-	DisplayName         string `toml:"display_name"`
-	OverridePanelModels bool   `toml:"override_panel_models"`
-	SynthesisModel      string `toml:"synthesis_model"`
+	ReviewModel            string `toml:"review_model"`
+	DisplayName            string `toml:"display_name"`
+	OverridePanelModels    bool   `toml:"override_panel_models"`
+	SynthesisModel         string `toml:"synthesis_model"`
+	ReviewReasoning        string `toml:"review_reasoning"`
+	OverridePanelReasoning bool   `toml:"override_panel_reasoning"`
+	SynthesisReasoning     string `toml:"synthesis_reasoning"`
 }
 
 // PanelModelOverride returns the explicit project policy for primary panel
@@ -22,6 +25,23 @@ func (c *Config) PanelModelOverride() string {
 		return ""
 	}
 	return strings.TrimSpace(c.project.ReviewModel)
+}
+
+// PanelReasoningOverride returns the project policy for primary panel members.
+func (c *Config) PanelReasoningOverride() string {
+	if c == nil || !c.project.OverridePanelReasoning {
+		return ""
+	}
+	return strings.TrimSpace(c.project.ReviewReasoning)
+}
+
+// ProjectSynthesisReasoning returns an independent project synthesis override.
+// An empty result preserves the caller's existing synthesis default.
+func (c *Config) ProjectSynthesisReasoning() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.project.SynthesisReasoning)
 }
 
 // ForRepo returns global configuration scoped to the repository's remote.

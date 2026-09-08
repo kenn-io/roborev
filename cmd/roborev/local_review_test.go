@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -279,4 +281,29 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	require.NoError(t, err, "Expected --local to work without daemon, got: %v")
+}
+
+func TestLocalReviewProjectReasoning(t *testing.T) {
+	for _, explicit := range []string{"", "high"} {
+		t.Run(explicit, func(t *testing.T) {
+			h := newReviewHarness(t)
+			gitCmd := exec.Command("git", "-C", h.Dir, "remote", "add", "origin", "https://example.com/team/project-a.git")
+			gitOutput, err := gitCmd.CombinedOutput()
+			require.NoError(t, err, "%s", gitOutput)
+			dataDir := testenv.SetDataDir(t)
+			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`
+default_agent = "test"
+review_model_medium = "medium-model"
+review_model_high = "high-model"
+[projects."example.com/team/project-a"]
+review_reasoning = "medium"
+`), 0o600))
+			require.NoError(t, h.run(runOpts{Agent: "test", Reasoning: explicit}))
+			want := "medium"
+			if explicit != "" {
+				want = explicit
+			}
+			h.assertOutputContains("model: " + want + "-model, reasoning: " + want)
+		})
+	}
 }

@@ -566,7 +566,7 @@ func ResolveCIReviewTypes(
 }
 
 // ResolveCIReasoning determines the reasoning level for CI review execution.
-// Priority: explicit > repo [ci].reasoning > "thorough".
+// Priority: explicit > project panel override > repo [ci].reasoning > project default > "thorough".
 func ResolveCIReasoning(
 	explicit string,
 	repoCfg *RepoConfig,
@@ -576,14 +576,23 @@ func ResolveCIReasoning(
 	if repoCfg != nil {
 		repoVal = repoCfg.CI.Reasoning
 	}
-	_ = globalCfg
-	return resolveNormalized("thorough", NormalizeReasoning, explicit, repoVal)
+	if value, ok := experimentOverlayString(repoCfg, "ci", "reasoning"); ok {
+		return resolveNormalized("thorough", NormalizeReasoning, explicit,
+			globalCfg.PanelReasoningOverride(), value)
+	}
+	var projectVal string
+	if globalCfg != nil {
+		projectVal = globalCfg.project.ReviewReasoning
+	}
+	return resolveNormalized("thorough", NormalizeReasoning, explicit,
+		globalCfg.PanelReasoningOverride(), repoVal, projectVal)
 }
 
 // ResolveCIReviewReasoningForType determines the reasoning level for one CI
 // review. An explicit CLI value or repository [ci].reasoning applies to every
-// type. Otherwise a custom type may supply its own reasoning before CI falls
-// back to "thorough".
+// type. A project panel policy overrides repository and type defaults. Otherwise
+// a custom type may supply its own reasoning before the project default and
+// CI fallback to "thorough".
 func ResolveCIReviewReasoningForType(
 	explicit string,
 	repoCfg *RepoConfig,
@@ -594,17 +603,15 @@ func ResolveCIReviewReasoningForType(
 	if repoCfg != nil {
 		repoVal = repoCfg.CI.Reasoning
 	}
-	if strings.TrimSpace(explicit) != "" || strings.TrimSpace(repoVal) != "" {
-		return resolveNormalized(
-			"thorough", NormalizeReasoning, explicit, repoVal,
-		)
+	if strings.TrimSpace(explicit) != "" || globalCfg.PanelReasoningOverride() != "" || strings.TrimSpace(repoVal) != "" {
+		return ResolveCIReasoning(explicit, repoCfg, globalCfg)
 	}
 	if resolved, ok := ResolveCustomReviewTypeFromConfig(
 		reviewType, repoCfg, globalCfg,
 	); ok && strings.TrimSpace(resolved.Spec.Reasoning) != "" {
 		return NormalizeReasoning(resolved.Spec.Reasoning)
 	}
-	return "thorough", nil
+	return ResolveCIReasoning("", repoCfg, globalCfg)
 }
 
 // ResolveCIMinSeverity determines the synthesis severity filter for CI review execution.

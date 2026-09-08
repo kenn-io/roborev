@@ -861,7 +861,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 	members := make([]config.ResolvedMember, 0, len(matrix))
 	for i, entry := range matrix {
 		memberReasoning := reasoning
-		if repoCfg == nil || strings.TrimSpace(repoCfg.CI.Reasoning) == "" {
+		if cfg.PanelReasoningOverride() != "" || repoCfg == nil || strings.TrimSpace(repoCfg.CI.Reasoning) == "" {
 			var err error
 			memberReasoning, err = config.ResolveCIReviewReasoningForType(
 				"", repoCfg, cfg, entry.ReviewType,
@@ -1074,7 +1074,7 @@ func resolveCIMatrix(
 	cfg *config.Config, ghRepo string,
 ) ([]config.AgentReviewType, string) {
 	matrix := cfg.CI.ResolvedReviewMatrix()
-	reasoning := "thorough"
+	reasoning := ciReasoning(repoCfg, cfg)
 	if repoCfg != nil {
 		switch {
 		case config.ExperimentOverridesCIReviews(repoCfg):
@@ -1087,12 +1087,8 @@ func resolveCIMatrix(
 			config.IsKeyInTOMLFile(rawRepoCfg, "ci.review_types"):
 			matrix = matrixFromFlatOverrides(repoCfg, cfg)
 		}
-		if strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
-			if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil && r != "" {
-				reasoning = r
-			} else if err != nil {
-				log.Printf("CI poller: invalid reasoning %q in repo config for %s, using default", repoCfg.CI.Reasoning, ghRepo)
-			}
+		if _, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err != nil {
+			log.Printf("CI poller: invalid reasoning %q in repo config for %s, using default", repoCfg.CI.Reasoning, ghRepo)
 		}
 	}
 	return canonicalizeMatrix(matrix), reasoning
@@ -1162,15 +1158,11 @@ func namedReviewType(reviewType string) string {
 	return reviewType
 }
 
-// ciReasoning returns the effective CI reasoning level for a repo: the repo's
-// [ci].reasoning when valid, else "thorough". Mirrors resolveCIMatrix's
-// reasoning derivation so the appended design member and matrix members share a
-// level.
-func ciReasoning(repoCfg *config.RepoConfig) string {
-	if repoCfg != nil && strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
-		if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil && r != "" {
-			return r
-		}
+// ciReasoning shares CI project and repository reasoning with automatically
+// appended design members, retaining the default for invalid repository values.
+func ciReasoning(repoCfg *config.RepoConfig, cfg *config.Config) string {
+	if reasoning, err := config.ResolveCIReasoning("", repoCfg, cfg); err == nil {
+		return reasoning
 	}
 	return "thorough"
 }
@@ -1180,7 +1172,7 @@ func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (s
 	if cfg != nil {
 		ciModel = cfg.CI.Model
 	}
-	reasoning := ciReasoning(repoCfg)
+	reasoning := ciReasoning(repoCfg, cfg)
 	if config.ExperimentOverridesWorkflowModel(repoCfg, "design", reasoning) {
 		ciModel = ""
 	}
@@ -1226,7 +1218,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 		if !p.commitWarrantsDesign(ctx, repo.RootPath, sha, hh) {
 			continue
 		}
-		reasoning := ciReasoning(repoCfg)
+		reasoning := ciReasoning(repoCfg, cfg)
 		designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
 		designAgent = agent.StorageNameFromConfig(designAgent, repoCfg, cfg)
 		var backupAgent, backupModel string

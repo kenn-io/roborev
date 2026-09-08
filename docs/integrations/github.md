@@ -721,7 +721,11 @@ To select models for repositories centrally, add
 daemon's global config. Set `review_model` and `override_panel_models = true`
 for each selected Git remote to replace even explicitly pinned panel member
 models. The optional project `synthesis_model` controls synthesis independently.
-These overrides apply to named panels and the implicit CI matrix.
+Set project `review_reasoning` and `override_panel_reasoning = true` to also
+replace pinned member reasoning. Project `synthesis_reasoning` selects synthesis
+reasoning independently. These overrides apply to named panels, the implicit CI
+matrix, and automatically added design reviewers. Without the override flag,
+project reasoning supplies the CI default below repository `[ci].reasoning`.
 
 Individual repos can override the global CI settings by adding a `[ci]` section
 to their `.roborev.toml` file. This lets you run different panels, agents,

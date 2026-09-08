@@ -449,6 +449,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	cfg = cfg.ForRepo(repoPath)
 	repoCfg, err := config.LoadRepoConfig(repoPath)
 	if err != nil {
 		return fmt.Errorf("load repository config: %w", err)

@@ -532,6 +532,14 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	switch typed := cfg.(type) {
 	case *Config:
 		for identity, project := range typed.Projects {
+			if project.OverridePanelReasoning && strings.TrimSpace(project.ReviewReasoning) == "" {
+				return fmt.Errorf("projects.%q: override_panel_reasoning requires review_reasoning", identity)
+			}
+			for key, value := range map[string]string{"review_reasoning": project.ReviewReasoning, "synthesis_reasoning": project.SynthesisReasoning} {
+				if _, err := NormalizeReasoning(value); err != nil {
+					return fmt.Errorf("projects.%q.%s: %w", identity, key, err)
+				}
+			}
 			if project.OverridePanelModels && strings.TrimSpace(project.ReviewModel) == "" {
 				return fmt.Errorf("projects.%q: override_panel_models requires review_model", identity)
 			}
