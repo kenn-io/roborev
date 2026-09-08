@@ -28,9 +28,8 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
-- GitHub PR comments again group structured findings by severity and hide
-    findings below the configured minimum. Complete findings remain in stored
-    review data and synthesis inputs.
+- GitHub PR comments again group findings by severity and hide findings below
+    the configured minimum. Full reviews retain all findings.
 
 - Non-agentic Pi reviews can no longer run commands or change files. They use
     Pi's read-only repository tools, while agentic jobs keep the default tool

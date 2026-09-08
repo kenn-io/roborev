@@ -577,34 +577,8 @@ synthesis step into a single well-formatted PR comment. The synthesis agent:
 - Preserves file and line references
 - Produces a one-line summary verdict
 
-PR comments group structured findings under severity headings, with each finding
-showing its location, problem, and fix together. Only findings at or above the
-configured minimum severity appear in the comment. Stored reviews and synthesis
-inputs retain every finding, including lower-severity findings. The comment
-verdict describes the findings that pass this display filter.
-
-For single-review and raw fallback comments, an unset CI `min_severity` retains
-each review's effective minimum severity, including `review_min_severity`.
-Setting the CI threshold explicitly overrides that review-level threshold. When
-only one panel member succeeds, its complete result and effective threshold
-remain together through synthesis completion and publication.
-
-All GitHub review bodies use the same preparation and formatting functions.
-Preparation reads structured JSON or prose and selects visible findings without
-changing the source review. Formatting renders those prepared findings; it does
-not resolve configuration or apply another filter.
-
-Prose reviews are filtered at publication too, including single-review and raw
-fallback comments. The filter keeps each finding's Markdown together, using
-severity labels and the `---` separators requested by the review prompts. It
-omits explicit summary sections when filtering labelled findings, since those
-summaries can describe hidden findings. Text without an identifiable severity
-remains visible; the publisher does not guess its severity. Stored prose stays
-complete.
-
-These display changes apply only to GitHub PR comments. The CLI's stdout retains
-complete review output. GitLab receives output without severity filtering and
-continues to apply its existing note-size handling.
+GitHub comments group structured findings by severity and hide findings below
+the configured minimum. Full reviews retain all findings.
 
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 
