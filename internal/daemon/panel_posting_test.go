@@ -362,9 +362,9 @@ func TestSynthesisCompletedReportsMemberExecutionStatus(t *testing.T) {
 		},
 	}
 
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 			comments := h.CaptureComments()
 			statuses := h.CaptureCommitStatuses()
 			headSHA := fmt.Sprintf("status-%d", i)

@@ -11,15 +11,13 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // setupTestServer creates a temporary DB and Server, handling cleanup automatically.
 func setupTestServer(t *testing.T) *Server {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := storage.Open(dir + "/test.db")
-	require.NoError(t, err, "Failed to open database")
-	t.Cleanup(func() { db.Close() })
+	db := testutil.OpenTestDB(t)
 
 	cfg := config.DefaultConfig()
 	server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
