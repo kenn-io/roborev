@@ -157,6 +157,10 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 Test conventions:
 
 - Prefer fast, isolated tests that use `t.TempDir()`.
+- Use the shared database helpers (`testutil.OpenTestDB`,
+  `testutil.OpenTestDBWithDir`, or storage's `openTestDB`) for ordinary tests.
+  Build databases from scratch only for initialization or migration tests.
+  Reuse fixtures across sequential table cases when their records are independent.
 - Use the `test` agent path to avoid calling real AI agents.
 - Integration tests use `//go:build integration`.
 - PostgreSQL-only tests use `//go:build postgres`.
