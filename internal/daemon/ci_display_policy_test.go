@@ -19,6 +19,9 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
+	// Each case has its own panel run and terminal jobs. Reuse the database
+	// and Git repository instead of rebuilding them for every table row.
+	tc := newWorkerTestContext(t, 1)
 	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix", "sublist fix", "container summary", "list after prose", "quote after prose", "quoted findings"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
@@ -35,7 +38,6 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 			} {
 				t.Run(fmt.Sprintf("%s/%s/%s", format, mode, policy.name), func(t *testing.T) {
 					assert := assert.New(t)
-					tc := newWorkerTestContext(t, 1)
 					runUUID, members, synthJob := enqueuePanelRun(t, tc, "display-policy", []memberSpec{
 						{name: "first", agent: "test"},
 						{name: "second", agent: "test"},
