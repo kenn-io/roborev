@@ -130,11 +130,7 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	output := r.Output
-	if r.Structured != nil {
-		output = r.Structured.CommentMarkdown(r.MinSeverity)
-	}
-	return header + TruncateComment(output)
+	return header + TruncateComment(r.CommentMarkdown())
 }
 
 func runSynthesis(

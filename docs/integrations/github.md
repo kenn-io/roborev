@@ -583,6 +583,14 @@ configured minimum severity appear in the comment. Stored reviews and synthesis
 inputs retain every finding, including lower-severity findings. The comment
 verdict describes the findings that pass this display filter.
 
+Prose reviews are filtered at publication too, including single-review and raw
+fallback comments. The filter keeps each finding's Markdown together, using
+severity labels and the `---` separators requested by the review prompts. It
+omits explicit summary sections when filtering labelled findings, since those
+summaries can describe hidden findings. Text without an identifiable severity
+remains visible; the publisher does not guess its severity. Stored prose stays
+complete.
+
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 
 ```toml

@@ -44,6 +44,18 @@ func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing
 	assert.JSONEq(string(raw), string(stored))
 }
 
+func TestPanelPRCommentFiltersProseWithoutChangingReview(t *testing.T) {
+	prose := "### Low\nMinor naming issue.\n\n---\n\n### High\nState is lost. Persist it."
+	rev := &storage.Review{
+		Output: prose,
+		Job:    &storage.ReviewJob{MinSeverity: "high"},
+	}
+	comment := formatPanelPRCommentWithHead(rev, "F", nil, false, "abc1234")
+	assert.NotContains(t, comment, "Minor naming issue.")
+	assert.Contains(t, comment, "State is lost. Persist it.")
+	assert.Equal(t, prose, rev.Output)
+}
+
 // ciEvent builds a review.completed/failed Event for a synthesis or member job.
 func ciEvent(jobID int64, eventType string) Event {
 	return Event{Type: eventType, JobID: jobID}

@@ -3559,21 +3559,21 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 		}
 	}
 
-	output := review.Output
+	result := reviewpkg.ReviewResult{Output: review.Output}
+	if review.Job != nil {
+		result.MinSeverity = review.Job.MinSeverity
+	}
 	if len(review.StructuredOutput) > 0 {
 		raw, err := json.Marshal(review.StructuredOutput)
 		if err == nil {
 			if doc, err := reviewpkg.DecodeStructuredReview(raw); err == nil {
 				// Synthesis cites only successful members, in their original order.
 				doc.SourceLabels = reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
-				minSeverity := ""
-				if review.Job != nil {
-					minSeverity = review.Job.MinSeverity
-				}
-				output = doc.CommentMarkdown(minSeverity)
+				result.Structured = &doc
 			}
 		}
 	}
+	output := result.CommentMarkdown()
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
