@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -68,10 +69,12 @@ func Synthesize(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (SynthesisResult, error) {
+	results = slices.Clone(results)
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
 	opts.MinSeverity = ResolveSynthesisMinSeverity(results, opts.MinSeverity)
+	commentConfig := CommentConfig{MinSeverity: opts.MinSeverity}
 
 	successCount := 0
 	for _, r := range results {
@@ -102,20 +105,20 @@ func Synthesize(
 	// opts.MinSeverity, so there is nothing for a synthesis agent to add.
 	if len(results) == 1 && successCount == 1 {
 		return SynthesisResult{
-			Output:        formatSingleResult(results[0], opts.HeadSHA, false),
-			GitHubComment: formatSingleResult(results[0], opts.HeadSHA, true),
+			Output:        formatSingleResult(results[0], opts.HeadSHA, nil),
+			GitHubComment: formatSingleResult(results[0], opts.HeadSHA, &commentConfig),
 		}, nil
 	}
 
 	// Multiple results — synthesize with LLM
-	comment, err := runSynthesis(ctx, results, opts)
+	comment, err := runSynthesis(ctx, results, opts, commentConfig)
 	if err != nil {
 		log.Printf(
 			"ci review: synthesis failed: %v "+
 				"(falling back to raw format)", err)
 		return SynthesisResult{
-			Output:        formatRawBatchOutput(results, opts.HeadSHA, false),
-			GitHubComment: FormatRawBatchComment(results, opts.HeadSHA),
+			Output:        formatRawBatchOutput(results, opts.HeadSHA, nil),
+			GitHubComment: FormatRawBatchComment(commentConfig, results, opts.HeadSHA),
 		}, nil
 	}
 	return comment, nil
@@ -124,7 +127,7 @@ func Synthesize(
 func formatSingleResult(
 	r ReviewResult,
 	headSHA string,
-	githubComment bool,
+	commentConfig *CommentConfig,
 ) string {
 	passed := r.Passed()
 	if r.Verdict == storage.VerdictUnknown &&
@@ -143,8 +146,8 @@ func formatSingleResult(
 	}
 
 	output := r.Output
-	if githubComment {
-		output = TruncateComment(FormatComment(PrepareComment(r, nil)))
+	if commentConfig != nil {
+		output = TruncateComment(FormatComment(PrepareComment(*commentConfig, r, nil)))
 	}
 	return header + output
 }
@@ -153,6 +156,7 @@ func runSynthesis(
 	ctx context.Context,
 	results []ReviewResult,
 	opts SynthesizeOpts,
+	commentConfig CommentConfig,
 ) (SynthesisResult, error) {
 	synthAgent, err := getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig)
 	if err != nil {
@@ -191,6 +195,6 @@ func runSynthesis(
 
 	return SynthesisResult{
 		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
-		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(ReviewResult{Structured: &doc, MinSeverity: opts.MinSeverity}, nil)), results, opts.HeadSHA),
+		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(commentConfig, ReviewResult{Structured: &doc}, nil)), results, opts.HeadSHA),
 	}, nil
 }

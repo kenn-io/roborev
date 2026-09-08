@@ -2438,13 +2438,13 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil {
 		return "", fmt.Errorf("load synthesis for PR comment: %w", err)
 	}
+	threshold := ""
+	if synth != nil {
+		threshold = synth.MinSeverity
+	}
+	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
 	raw := func() string {
-		if synth != nil {
-			for i := range results {
-				results[i] = results[i].ApplyMinSeverity(synth.MinSeverity)
-			}
-		}
-		return reviewpkg.FormatRawBatchComment(results, row.HeadSHA)
+		return reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)
 	}
 	if synth == nil || synth.Status != storage.JobStatusDone {
 		return raw(), nil // F4: synthesis agent failed (no review) -> raw member fallback
@@ -2456,7 +2456,7 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
-		rev, string(verdict), members, includeCosts, row.HeadSHA,
+		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
 	), nil
 }
 
@@ -3542,11 +3542,11 @@ func toReviewResult(
 	return result
 }
 
-func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
-	return formatPanelPRCommentWithHead(review, verdict, members, includeCosts, "")
+func formatPanelPRComment(cfg reviewpkg.CommentConfig, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
+	return formatPanelPRCommentWithHead(cfg, review, verdict, members, includeCosts, "")
 }
 
-func formatPanelPRCommentWithHead(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
+func formatPanelPRCommentWithHead(cfg reviewpkg.CommentConfig, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	var b strings.Builder
 
 	if headSHA != "" {
@@ -3564,15 +3564,12 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 	}
 
 	result := reviewpkg.ReviewResult{Output: review.Output}
-	if review.Job != nil {
-		result.MinSeverity = review.Job.MinSeverity
-	}
 	if len(review.StructuredOutput) > 0 {
 		result.StructuredOutput, _ = json.Marshal(review.StructuredOutput)
 	}
 	// Synthesis cites only successful members, in their original order.
 	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
-	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(result, labels))
+	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(cfg, result, labels))
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix

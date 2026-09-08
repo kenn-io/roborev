@@ -21,7 +21,7 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
-			for _, output := range []string{comment, FormatRawBatchComment([]ReviewResult{result}, "abc1234")} {
+			for _, output := range []string{comment, FormatRawBatchComment(CommentConfig{MinSeverity: "high"}, []ReviewResult{result}, "abc1234")} {
 				assert.NotContains(output, "Minor naming issue.")
 				assert.Contains(output, "State is lost.")
 				assert.Contains(output, "Persist it.")
@@ -45,13 +45,13 @@ func TestProseCommentAllFindingsBelowThreshold(t *testing.T) {
 func TestProseCommentKeepsFindingCodeAndUnlabelledText(t *testing.T) {
 	prose := "### High\nState is lost.\n\n```text\nLow: this is example data\n---\n```\nPersist it.\n\n---\n\nAn unlabelled finding.\n\n---\n\n### Low\nMinor naming issue."
 	result := ReviewResult{Output: prose, MinSeverity: "high"}
-	comment := FormatComment(PrepareComment(result, nil))
+	comment := FormatComment(PrepareComment(CommentConfig{MinSeverity: result.MinSeverity}, result, nil))
 	assert := assert.New(t)
 	assert.Contains(comment, "```text\nLow: this is example data\n---\n```\nPersist it.")
 	assert.Contains(comment, "An unlabelled finding.")
 	assert.NotContains(comment, "Minor naming issue.")
 	assert.Equal(prose, result.Output)
-	assert.Equal("Unlabelled review text.", FormatComment(PrepareComment(ReviewResult{Output: "Unlabelled review text.", MinSeverity: "high"}, nil)))
+	assert.Equal("Unlabelled review text.", FormatComment(PrepareComment(CommentConfig{MinSeverity: "high"}, ReviewResult{Output: "Unlabelled review text.", MinSeverity: "high"}, nil)))
 }
 
 func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
@@ -59,7 +59,7 @@ func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
 		Output:      "An unlabelled concern.\n\n### Low\nMinor naming issue.",
 		MinSeverity: "medium",
 	}
-	comment := FormatComment(PrepareComment(result, nil))
+	comment := FormatComment(PrepareComment(CommentConfig{MinSeverity: result.MinSeverity}, result, nil))
 	assert.Contains(t, comment, "An unlabelled concern.")
 	assert.NotContains(t, comment, "Minor naming issue.")
 }

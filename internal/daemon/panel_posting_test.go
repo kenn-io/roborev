@@ -27,13 +27,13 @@ func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing
 	rev := &storage.Review{
 		Output:           "Original complete review.",
 		StructuredOutput: structured,
-		Job:              &storage.ReviewJob{MinSeverity: "medium"},
+		Job:              &storage.ReviewJob{MinSeverity: "low"},
 	}
 	members := []storage.BatchReviewResult{
 		{Agent: "gemini", Status: "failed"},
 		{Agent: "codex", Status: "done", Output: "Found issues."},
 	}
-	comment := formatPanelPRCommentWithHead(rev, "F", members, false, "abc1234")
+	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "medium"}, rev, "F", members, false, "abc1234")
 	assert := assert.New(t)
 	assert.Contains(comment, "### High\n\n- worker.go:10: State is lost. Persist it.")
 	assert.Contains(comment, "Reported by: codex")
@@ -48,9 +48,9 @@ func TestPanelPRCommentFiltersProseWithoutChangingReview(t *testing.T) {
 	prose := "### Low\nMinor naming issue.\n\n---\n\n### High\nState is lost. Persist it."
 	rev := &storage.Review{
 		Output: prose,
-		Job:    &storage.ReviewJob{MinSeverity: "high"},
+		Job:    &storage.ReviewJob{MinSeverity: "low"},
 	}
-	comment := formatPanelPRCommentWithHead(rev, "F", nil, false, "abc1234")
+	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "high"}, rev, "F", nil, false, "abc1234")
 	assert.NotContains(t, comment, "Minor naming issue.")
 	assert.Contains(t, comment, "State is lost. Persist it.")
 	assert.Equal(t, prose, rev.Output)

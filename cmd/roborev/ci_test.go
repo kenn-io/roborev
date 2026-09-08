@@ -1204,7 +1204,7 @@ func TestPostCIReviewComment(t *testing.T) {
 			{Agent: "codex", Status: review.ResultFailed, Error: "agent failed"},
 			{Agent: "gemini", Status: review.ResultDone, Output: "## Findings\n"},
 		}
-		comment := review.FormatRawBatchComment(results, stubMRHead)
+		comment := review.FormatRawBatchComment(review.CommentConfig{}, results, stubMRHead)
 		err := postCIReviewComment(
 			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
 			comment, false, "", stubMRRef,

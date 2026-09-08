@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,7 +169,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 }
 
 func TestPanelProseVerdictAfterRubric(t *testing.T) {
-	for _, boundary := range []string{"Review Findings:", "2. **Review Findings**:", "---"} {
+	for _, boundary := range []string{"Review Findings:", "2. **Review Findings**:", "---", "", "## Details"} {
 		t.Run(boundary, func(t *testing.T) {
 			assert := assert.New(t)
 			tc := newWorkerTestContext(t, 1)
@@ -193,5 +195,83 @@ func TestPanelProseVerdictAfterRubric(t *testing.T) {
 			assert.NotContains(body, "Minor naming issue.")
 			assert.NotContains(body, "High: immediate action.")
 		})
+	}
+}
+
+func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
+	for _, policy := range []struct {
+		name    string
+		ci      string
+		members []string
+		visible []string
+	}{
+		{"inherited mixed", "", []string{"high", "medium"}, []string{"Medium finding.", "High finding."}},
+		{"explicit low", "low", []string{"high", "medium"}, []string{"Low finding.", "Medium finding.", "High finding."}},
+		{"explicit high", "high", []string{"high", "medium"}, []string{"High finding."}},
+		{"unfiltered member", "", []string{"high", ""}, []string{"Low finding.", "Medium finding.", "High finding."}},
+	} {
+		for _, outcome := range []string{"synthesis", "fallback"} {
+			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
+				assert := assert.New(t)
+				tc := newWorkerTestContext(t, 1)
+				doc := reviewpkg.StructuredReview{SchemaVersion: 2, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
+					{Severity: "low", Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "medium", Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "high", Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
+				}}
+				raw, err := json.Marshal(doc)
+				require.NoError(t, err)
+				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: string(raw)}
+				agent.Register(a)
+				t.Cleanup(func() { agent.Unregister(a.Name()) })
+				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
+				setSynthesisAgent(t, tc, runUUID, a.Name())
+				_, err = tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+				require.NoError(t, err)
+				for i, m := range members {
+					completion := storage.ReviewCompletion{Output: "No issues found.", Verdict: storage.VerdictPass, MinSeverity: policy.members[i]}
+					if i == 0 {
+						completion.Output = doc.Markdown("")
+						completion.StructuredOutput = raw
+						completion.Verdict = storage.VerdictFail
+					}
+					markMemberRunning(t, tc, m.ID)
+					require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", "", completion))
+				}
+				synth := releaseAndClaimSynthesis(t, tc, runUUID)
+				if outcome == "synthesis" {
+					tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+					stored, err := tc.DB.GetReviewByJobID(synth.ID)
+					require.NoError(t, err)
+					require.NotNil(t, stored)
+					assert.Contains(stored.Output, "Low finding.")
+					assert.Contains(a.synthPrompt, "Low finding.")
+				} else {
+					failed, err := tc.DB.FailJob(synth.ID, testWorkerID, "Synthesis unavailable.")
+					require.NoError(t, err)
+					require.True(t, failed)
+				}
+				rows, err := tc.DB.GetPanelMemberReviews(runUUID)
+				require.NoError(t, err)
+				p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
+				body, err := p.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
+				require.NoError(t, err)
+				assert.Equal(outcome == "fallback", strings.Contains(body, "Synthesis unavailable."))
+				for _, f := range doc.Findings {
+					assert.Equal(slices.Contains(policy.visible, f.Problem), strings.Contains(body, f.Problem), f.Problem)
+				}
+				for i, m := range members {
+					stored, err := tc.DB.GetReviewByJobID(m.ID)
+					require.NoError(t, err)
+					assert.Equal(policy.members[i], stored.Job.MinSeverity)
+					if i == 0 {
+						assert.Equal(doc.Markdown(""), stored.Output)
+						storedJSON, err := json.Marshal(stored.StructuredOutput)
+						require.NoError(t, err)
+						assert.JSONEq(string(raw), string(storedJSON))
+					}
+				}
+			})
+		}
 	}
 }

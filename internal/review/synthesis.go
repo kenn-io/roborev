@@ -186,13 +186,14 @@ func FormatSynthesizedComment(
 // FormatRawBatchComment formats all review outputs as expanded
 // inline sections. Used as a fallback when synthesis fails.
 func FormatRawBatchComment(
+	cfg CommentConfig,
 	reviews []ReviewResult,
 	headSHA string,
 ) string {
-	return formatRawBatchOutput(reviews, headSHA, true)
+	return formatRawBatchOutput(reviews, headSHA, &cfg)
 }
 
-func formatRawBatchOutput(reviews []ReviewResult, headSHA string, githubComment bool) string {
+func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentConfig) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
@@ -233,8 +234,8 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, githubComment 
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
-			if githubComment {
-				b.WriteString(FormatComment(PrepareComment(r, nil)))
+			if cfg != nil {
+				b.WriteString(FormatComment(PrepareComment(*cfg, r, nil)))
 			} else {
 				b.WriteString(r.Output)
 			}

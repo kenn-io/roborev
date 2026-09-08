@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -736,5 +738,53 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 				assert.NotContains(t, result.GitHubComment, "Minor naming issue.")
 			}
 		})
+	}
+}
+
+func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
+	for _, policy := range []struct {
+		name    string
+		ci      string
+		members []string
+		visible []string
+	}{
+		{"inherited mixed", "", []string{"high", "medium"}, []string{"Medium finding.", "High finding."}},
+		{"explicit low", "low", []string{"high", "medium"}, []string{"Low finding.", "Medium finding.", "High finding."}},
+		{"explicit high", "high", []string{"high", "medium"}, []string{"High finding."}},
+		{"unfiltered member", "", []string{"high", ""}, []string{"Low finding.", "Medium finding.", "High finding."}},
+	} {
+		for _, outcome := range []string{"synthesis", "fallback"} {
+			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
+				doc := StructuredReview{SchemaVersion: 2, Verdict: "fail", Summary: "Review complete.", Findings: []StructuredFinding{
+					{Severity: "low", Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "medium", Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "high", Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
+				}}
+				raw, err := json.Marshal(doc)
+				require.NoError(t, err)
+				a := &structuredBatchAgent{name: "policy-outcome", result: raw}
+				if outcome == "fallback" {
+					a.err = errors.New("synthesis unavailable")
+				}
+				agent.Register(a)
+				t.Cleanup(func() { agent.Unregister(a.Name()) })
+				// Only the high-threshold member reports findings. The second
+				// member contributes its policy and a substantive passing review.
+				results := []ReviewResult{
+					{Status: ResultDone, Output: doc.Markdown(""), Structured: &doc, MinSeverity: policy.members[0]},
+					{Status: ResultDone, Output: "No issues found.", MinSeverity: policy.members[1]},
+				}
+				result, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
+				require.NoError(t, err)
+				assert := assert.New(t)
+				assert.Equal(outcome == "fallback", strings.Contains(result.GitHubComment, "Synthesis unavailable."))
+				for _, finding := range doc.Findings {
+					assert.Contains(result.Output, finding.Problem)
+					assert.Equal(slices.Contains(policy.visible, finding.Problem), strings.Contains(result.GitHubComment, finding.Problem), finding.Problem)
+				}
+				assert.Equal(policy.members[0], results[0].MinSeverity, "publication must not mutate member policy")
+				assert.Len(results[0].Structured.Findings, 3)
+			})
+		}
 	}
 }

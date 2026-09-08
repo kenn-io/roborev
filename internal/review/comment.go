@@ -9,6 +9,12 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// CommentConfig is the resolved publication policy. An empty threshold shows
+// all findings; preparation never inherits policy from review data.
+type CommentConfig struct {
+	MinSeverity string
+}
+
 // PreparedComment is a publication-only copy of a review. Its fields are private
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
@@ -28,9 +34,9 @@ type commentFinding struct {
 }
 
 // PrepareComment ingests structured or prose review data and applies the
-// result's resolved threshold. It never changes the review or its findings.
-func PrepareComment(r ReviewResult, sourceLabels []string) PreparedComment {
-	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(r.MinSeverity))}
+// supplied publication policy. It never changes the review or its findings.
+func PrepareComment(cfg CommentConfig, r ReviewResult, sourceLabels []string) PreparedComment {
+	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity))}
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
 		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
@@ -160,6 +166,7 @@ func splitProseFindings(output string) []proseFinding {
 		severity = ""
 	}
 	inputLines := strings.Split(output, "\n")
+	labels := storage.ProseSeverityLabels(inputLines)
 	for i, line := range inputLines {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
@@ -188,12 +195,13 @@ func splitProseFindings(output string) []proseFinding {
 				collect = true
 				continue
 			}
-			if label, legend := storage.SeverityLabelAt(inputLines, i); label != "" {
+			if labels[i].Legend {
 				flush()
-				if legend {
-					collect = false
-					continue
-				}
+				collect = false
+				continue
+			}
+			if label := labels[i].Severity; label != "" {
+				flush()
 				severity = label
 				collect = true
 			}

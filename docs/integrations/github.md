@@ -579,7 +579,8 @@ synthesis step into a single well-formatted PR comment. The synthesis agent:
 
 GitHub comments group structured findings by severity and hide findings below
 the configured minimum. Full reviews retain all findings. CI `min_severity`
-overrides `review_min_severity` when set.
+overrides `review_min_severity` when set. The same filtering applies when
+synthesis is unavailable.
 
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 
