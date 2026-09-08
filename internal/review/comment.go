@@ -150,12 +150,14 @@ type proseFinding struct {
 }
 
 // splitProseFindings keeps each finding's Markdown intact. A severity label
-// starts a finding; the prompt's horizontal rule ends it. Explicit summary
+// starts a finding; a peer/parent heading or horizontal rule ends it. Nested
+// headings remain part of the finding. Explicit summary
 // sections are excluded because they may describe findings hidden by the filter.
 func splitProseFindings(output string) []proseFinding {
 	var blocks []proseFinding
 	var lines []string
 	severity := ""
+	sectionLevel, findingLevel := 0, 0
 	collect := true
 	fence := ""
 	flush := func() {
@@ -185,6 +187,12 @@ func splitProseFindings(output string) []proseFinding {
 			collect = true
 			continue
 		} else {
+			level := proseHeadingLevel(line)
+			if level > 0 && (severity == "" || findingLevel == 0 || level <= findingLevel) {
+				flush()
+				collect = true
+				sectionLevel = level
+			}
 			section := storage.ProseSection(line)
 			if section == "summary" {
 				flush()
@@ -203,6 +211,10 @@ func splitProseFindings(output string) []proseFinding {
 			if label := labels[i].Severity; label != "" {
 				flush()
 				severity = label
+				findingLevel = sectionLevel
+				if level > 0 {
+					findingLevel = level
+				}
 				collect = true
 			}
 		}
@@ -212,4 +224,19 @@ func splitProseFindings(output string) []proseFinding {
 	}
 	flush()
 	return blocks
+}
+
+// proseHeadingLevel recognizes ATX headings using the CommonMark grammar:
+// https://spec.commonmark.org/0.31.2/#atx-headings
+func proseHeadingLevel(line string) int {
+	content := strings.TrimLeft(line, " ")
+	if len(line)-len(content) > 3 {
+		return 0
+	}
+	text := strings.TrimLeft(content, "#")
+	level := len(content) - len(text)
+	if level == 0 || level > 6 || (text != "" && text[0] != ' ' && text[0] != '\t') {
+		return 0
+	}
+	return level
 }

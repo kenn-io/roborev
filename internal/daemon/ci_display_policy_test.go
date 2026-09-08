@@ -19,7 +19,7 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
-	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured"} {
+	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
 				name          string
@@ -51,6 +51,12 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					}
 					if format == "severity rubric" {
 						output = "Severity levels:\nHigh: immediate action.\nLow: minor concern.\n\nReview Findings:\n" + output
+					}
+					if format == "section headings" {
+						output = "## Summary\nReview notes.\n\n## Findings\n### Low\nMinor naming issue.\n\n### Medium\nMissing cleanup.\n\n#### Fix\nClose the resource.\n\n## Additional considerations\nAn independent concern without a severity.\n\n## More findings\n### High\nState is lost.\n\n#### Fix\nPersist the complete state."
+					}
+					if format == "bulleted sections" {
+						output = "## Summary\nReview notes.\n\n## Feature findings\n- **Low — Minor naming issue.**\n  Rename it.\n\n- **Medium — Missing cleanup.**\n  Close it.\n\n## Additional considerations\nAn independent concern without a severity.\n\n## Implementation findings\n- **High — State is lost.**\n  Persist the complete state."
 					}
 					var document json.RawMessage
 					if format == "structured" {
@@ -98,6 +104,14 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
+					if format == "section headings" || format == "bulleted sections" {
+						assert.Contains(body, "Persist the complete state.")
+						assert.Contains(body, "## Additional considerations\nAn independent concern without a severity.")
+						if format == "section headings" {
+							assert.Equal(policy.mediumVisible, strings.Contains(body, "Close the resource."), "nested fix follows its finding's threshold")
+						}
+					}
+
 					member, err := tc.DB.GetReviewByJobID(members[1].ID)
 					require.NoError(t, err)
 					assert.Equal(output, member.Output, "publication leaves the stored member intact")
