@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -152,6 +155,32 @@ func OpenTestDB(t *testing.T) *storage.DB {
 	return db
 }
 
+// Build the empty schema once per test process. Most callers exercise jobs or
+// daemon behavior, not migrations. Each caller still gets an independent,
+// file-backed database without replaying every migration for each fixture.
+var testDBTemplate = sync.OnceValues(func() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "roborev-test-template-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "template.db")
+	db, err := storage.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	// Open assigns each copy its own identity instead of inheriting the template's.
+	if _, err := db.Exec("DELETE FROM sync_state WHERE key = ?", storage.SyncStateDatabaseID); err != nil {
+		return nil, err
+	}
+	// Closing checkpoints the WAL before we read the database file.
+	if err := db.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+})
+
 // OpenTestDBWithDir creates a test database and returns both the DB and the
 // temporary directory path. Useful when tests need to create repos or other
 // files in the same directory. The database is automatically closed when
@@ -162,10 +191,12 @@ func OpenTestDBWithDir(t *testing.T) (*storage.DB, string) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
+	data, err := testDBTemplate()
+	require.NoError(t, err, "create test database template")
+	require.NoError(t, os.WriteFile(dbPath, data, 0o600), "copy test database template")
+
 	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
+	require.NoError(t, err, "open test database")
 
 	t.Cleanup(func() {
 		db.Close()

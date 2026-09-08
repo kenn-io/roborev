@@ -182,6 +182,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 }
 
 func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
 	for _, policy := range []struct {
 		name      string
 		members   []string
@@ -197,7 +198,6 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			tc := newWorkerTestContext(t, 1)
 			document := json.RawMessage(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
 			agent.Register(a)
@@ -242,10 +242,10 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 }
 
 func TestPanelProseVerdictAfterRubric(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
 	for _, boundary := range []string{"Review Findings:", "2. **Review Findings**:", "---", "", "## Details"} {
 		t.Run(boundary, func(t *testing.T) {
 			assert := assert.New(t)
-			tc := newWorkerTestContext(t, 1)
 			output := "Severity levels:\nHigh: immediate action.\nLow: minor concern.\n\n" + boundary + "\n### Low\nMinor naming issue."
 			a := &agent.FakeAgent{NameStr: "rubric-review", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) { return output, nil }}
 			result, err := reviewpkg.RunAgentReview(context.Background(), a, tc.TmpDir, "HEAD", "Review the change.", "default", "medium", nil)
@@ -272,6 +272,7 @@ func TestPanelProseVerdictAfterRubric(t *testing.T) {
 }
 
 func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
 	for _, policy := range []struct {
 		name    string
 		ci      string
@@ -286,7 +287,6 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 		for _, outcome := range []string{"synthesis", "fallback"} {
 			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
 				assert := assert.New(t)
-				tc := newWorkerTestContext(t, 1)
 				doc := reviewpkg.StructuredReview{SchemaVersion: 2, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
 					{Severity: "low", Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
 					{Severity: "medium", Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
