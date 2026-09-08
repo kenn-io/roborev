@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -374,37 +375,49 @@ func TestInterruptDrainWaitsUntilEveryTargetUnwinds(t *testing.T) {
 		storage.JobStatusQueued,
 	} {
 		t.Run(string(terminal), func(t *testing.T) {
-			server, db, dir := newTestServer(t)
-			job := createTestJob(t, db, dir, "interrupt-"+string(terminal), "test")
-			claimed, err := db.ClaimJob("worker-update")
-			require.NoError(t, err)
-			require.Equal(t, job.ID, claimed.ID)
-			server.workerPool.activeWorkers.Store(1)
-			lease := prepareUpdateDrain(t, server, "owner-interrupt", "interrupt")
-
-			firstRelease := releaseUpdateDrain(t, server, lease.LeaseToken)
-			require.Equal(t, http.StatusOK, firstRelease.Code, firstRelease.Body.String())
-			assert.Contains(t, firstRelease.Body.String(), `"released":false`)
-			active, policy, expiresAt := server.updateDrainStatus()
-			assert.True(t, active)
-			assert.Equal(t, "interrupt", policy)
-			assert.False(t, expiresAt.After(time.Now()))
-
-			if terminal == storage.JobStatusQueued {
-				_, err = db.Exec(`
-					UPDATE review_jobs
-					SET status = 'queued', worker_id = NULL, started_at = NULL
-					WHERE id = ?
-				`, job.ID)
+			synctest.Test(t, func(t *testing.T) {
+				server, db, dir := newTestServer(t)
+				job := createTestJob(t, db, dir, "interrupt-"+string(terminal), "test")
+				claimed, err := db.ClaimJob("worker-update")
 				require.NoError(t, err)
-			} else {
-				setJobStatus(t, db, job.ID, terminal)
-			}
-			server.workerPool.activeWorkers.Store(0)
-			require.Eventually(t, func() bool {
-				draining, drainErr := db.IsShutdownDraining()
-				return drainErr == nil && !draining
-			}, time.Second, 10*time.Millisecond)
+				require.Equal(t, job.ID, claimed.ID)
+				server.workerPool.activeWorkers.Store(1)
+				lease := prepareUpdateDrain(t, server, "owner-interrupt", "interrupt")
+
+				firstRelease := releaseUpdateDrain(t, server, lease.LeaseToken)
+				require.Equal(t, http.StatusOK, firstRelease.Code, firstRelease.Body.String())
+				assert.Contains(t, firstRelease.Body.String(), `"released":false`)
+				active, policy, expiresAt := server.updateDrainStatus()
+				assert.True(t, active)
+				assert.Equal(t, "interrupt", policy)
+				assert.False(t, expiresAt.After(time.Now()))
+
+				if terminal == storage.JobStatusQueued {
+					_, err = db.Exec(`
+						UPDATE review_jobs
+						SET status = 'queued', worker_id = NULL, started_at = NULL
+						WHERE id = ?
+					`, job.ID)
+					require.NoError(t, err)
+				} else {
+					setJobStatus(t, db, job.ID, terminal)
+				}
+				// A terminal job still holds the drain until its worker unwinds.
+				time.Sleep(updateRecoveryRetryInterval)
+				synctest.Wait()
+				draining, err := db.IsShutdownDraining()
+				require.NoError(t, err)
+				assert.True(t, draining)
+
+				server.workerPool.activeWorkers.Store(0)
+				// Advance the retry timer without imposing a wall-clock deadline
+				// on the database write, which can be slow on Windows runners.
+				time.Sleep(updateRecoveryRetryInterval)
+				synctest.Wait()
+				draining, err = db.IsShutdownDraining()
+				require.NoError(t, err)
+				assert.False(t, draining)
+			})
 		})
 	}
 }
