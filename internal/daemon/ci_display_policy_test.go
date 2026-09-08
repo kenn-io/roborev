@@ -19,7 +19,7 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
-	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix", "sublist fix", "container summary"} {
+	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix", "sublist fix", "container summary", "list after prose", "quote after prose", "quoted findings"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
 				name          string
@@ -79,6 +79,15 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					if format == "container summary" {
 						output = "## Summary\n- Overview\n\n  ## Nested list heading\n\n  High: Summary-only list detail.\n\n> ## Nested quote heading\n>\n> High: Summary-only quote detail.\n\n## Findings\n" + output
 					}
+					if format == "list after prose" {
+						output = "Low: Minor naming issue.\n\n- **Medium — Missing cleanup.**\n  Close the resource.\n\n- **High — State is lost.**\n  Persist the complete state."
+					}
+					if format == "quote after prose" {
+						output = "Low: Minor naming issue.\n\n> ### Medium\n> Missing cleanup.\n> Close the resource.\n>\n> ### High\n> State is lost.\n> Persist the complete state."
+					}
+					if format == "quoted findings" {
+						output = "> Low: Minor naming issue.\n>\n> ### Medium\n> Missing cleanup.\n> Close the resource.\n>\n> ### High\n> State is lost.\n> Persist the complete state."
+					}
 					var document json.RawMessage
 					if format == "structured" {
 						document = json.RawMessage(`{"schema_version":2,"summary":"Review complete.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null},{"severity":"medium","problem":"Missing cleanup.","fix":"Close it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`)
@@ -125,6 +134,10 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
+					if format == "list after prose" || format == "quote after prose" || format == "quoted findings" {
+						assert.Equal(policy.mediumVisible, strings.Contains(body, "Close the resource."))
+						assert.Contains(body, "Persist the complete state.")
+					}
 					if format == "colon title" {
 						assert.Contains(body, "High: Incorrect severity level:")
 						assert.Contains(body, "The severity setting is ignored.")

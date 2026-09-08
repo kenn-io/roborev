@@ -174,9 +174,9 @@ func splitProseFindings(output string) []proseFinding {
 			}
 			start, summary = boundary.start, nil
 		}
-		// A finding's nested blocks stay attached, including headings and
-		// examples that happen to contain severity words.
-		if finding != nil && boundary.nestedIn(finding) {
+		// Explicit finding labels start a new finding even inside a later
+		// list or quote. Unlabelled nested details retain their owner.
+		if finding != nil && boundary.severity == "" && boundary.nestedIn(finding) {
 			continue
 		}
 		switch {
@@ -228,7 +228,7 @@ func proseBoundaries(output string) []proseBoundary {
 	for i := 1; i < len(lines); i++ {
 		offsets[i] = offsets[i-1] + len(lines[i-1]) + 1
 	}
-	labels := storage.ProseSeverityLabels(lines)
+	semanticLines := make([]string, len(lines))
 	lineAt := func(pos int) int {
 		line, exact := slices.BinarySearch(offsets, pos)
 		if !exact {
@@ -249,22 +249,23 @@ func proseBoundaries(output string) []proseBoundary {
 			block := node.(ast.BlockNode)
 			for _, segment := range block.Source() {
 				line := lineAt(segment.Start)
+				// Source excludes list and quote markers. Classify that text,
+				// while retaining the original offsets for publication.
+				semanticLines[line] = strings.TrimSuffix(output[segment.Start:segment.Stop], "\n")
 				b := proseBoundary{
 					start: offsets[line], end: min(offsets[line]+len(lines[line])+1, len(output)),
-					container: node.Parent(), section: storage.ProseSection(lines[line]),
-					severity: labels[line].Severity, legend: labels[line].Legend,
+					container: node.Parent(),
 				}
 				if heading, ok := node.(*ast.Heading); ok {
 					b.level = heading.Level
+					semanticLines[line] = "# " + semanticLines[line]
 					lastLine := lineAt(block.Source()[len(block.Source())-1].Start)
 					if heading.HeadingKind == ast.HeadingKindSetext {
 						lastLine++ // Include the parsed heading's underline.
 					}
 					b.end = min(offsets[lastLine]+len(lines[lastLine])+1, len(output))
 				}
-				if b.level > 0 || b.section != "" || b.severity != "" || b.legend {
-					boundaries = append(boundaries, b)
-				}
+				boundaries = append(boundaries, b)
 				if b.level > 0 {
 					break // A multiline heading is one section boundary.
 				}
@@ -279,5 +280,15 @@ func proseBoundaries(output string) []proseBoundary {
 		}
 		return ast.WalkContinue, nil
 	})
-	return boundaries
+	labels := storage.ProseSeverityLabels(semanticLines)
+	markers := boundaries[:0]
+	for _, b := range boundaries {
+		line := lineAt(b.start)
+		b.section = storage.ProseSection(semanticLines[line])
+		b.severity, b.legend = labels[line].Severity, labels[line].Legend
+		if b.level > 0 || b.section != "" || b.severity != "" || b.legend || b.separator {
+			markers = append(markers, b)
+		}
+	}
+	return markers
 }
