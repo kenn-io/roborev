@@ -714,6 +714,9 @@ func resolvePanelMemberExecution(
 	if !m.ModelExplicit || !resolution.AgentMatches(selectedName, m.Agent) {
 		model = resolution.ModelForSelectedAgent(selectedName, "")
 	}
+	if override := cfg.PanelModelOverride(); override != "" && !resolution.UsesBackupAgent(selectedName) {
+		model = override
+	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, selectedName, repoCfg, cfg,
 	)

@@ -238,7 +238,7 @@ func (m *model) reconcileAutoRepoFilter() bool {
 		rootPaths = m.repoIdentities[m.cwdRepoIdentity]
 	}
 	if len(rootPaths) == 0 {
-		displayName := config.GetDisplayName(m.cwdRepoRoot)
+		displayName := config.GetDisplayName(m.cwdRepoRoot, m.globalCfg)
 		if displayName == "" {
 			displayName = filepath.Base(m.cwdRepoRoot)
 		}

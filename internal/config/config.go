@@ -171,6 +171,10 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 
 // Config holds the daemon configuration
 type Config struct {
+	// project holds the remote-specific defaults selected by ForRepo.
+	project ProjectConfig
+
+	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	ServerAddr                 string                          `toml:"server_addr"`
 	MaxWorkers                 int                             `toml:"max_workers"`
 	ReviewContextCount         int                             `toml:"review_context_count"`
@@ -527,6 +531,11 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	var review ReviewConfig
 	switch typed := cfg.(type) {
 	case *Config:
+		for identity, project := range typed.Projects {
+			if project.OverridePanelModels && strings.TrimSpace(project.ReviewModel) == "" {
+				return fmt.Errorf("projects.%q: override_panel_models requires review_model", identity)
+			}
+		}
 		review = typed.Review
 	case *RepoConfig:
 		review = typed.Review
@@ -1861,12 +1870,15 @@ func messageMatchesPatterns(
 }
 
 // GetDisplayName returns the display name for a repo, or empty if not set
-func GetDisplayName(repoPath string) string {
+func GetDisplayName(repoPath string, globalCfg *Config) string {
 	repoCfg, err := LoadRepoConfig(repoPath)
-	if err != nil || repoCfg == nil {
-		return ""
+	if err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.DisplayName) != "" {
+		return repoCfg.DisplayName
 	}
-	return repoCfg.DisplayName
+	if cfg := globalCfg.ForRepo(repoPath); cfg != nil {
+		return strings.TrimSpace(cfg.project.DisplayName)
+	}
+	return ""
 }
 
 // ResolveModel determines which model to use based on config priority:

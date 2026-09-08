@@ -435,7 +435,7 @@ func (m model) fetchRepoNames() tea.Cmd {
 		names := make(map[string][]string)
 		identities := make(map[string][]string)
 		for _, r := range result.Repos {
-			displayName := config.GetDisplayName(r.RootPath)
+			displayName := config.GetDisplayName(r.RootPath, m.globalCfg)
 			if displayName == "" {
 				displayName = r.Name
 			}
@@ -462,7 +462,7 @@ func (m model) fetchRepos() tea.Cmd {
 		identities := make(map[string][]string)
 		var displayNameOrder []string // Preserve order for stable display
 		for _, r := range reposResult.Repos {
-			displayName := config.GetDisplayName(r.RootPath)
+			displayName := config.GetDisplayName(r.RootPath, m.globalCfg)
 			if displayName == "" {
 				displayName = r.Name
 			}

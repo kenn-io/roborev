@@ -234,7 +234,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Load configs (warn on error, don't fail). Repository configuration and
 	// its relative custom-review files come from the trusted side of the
 	// reviewed range, never from the checkout under review.
-	globalCfg := loadCIGlobalConfig(root)
+	globalCfg := loadCIGlobalConfig(root).ForRepo(root)
 	repoCfgRef, refErr := trustedCIRepoConfigRef(root, gitRef)
 	if refErr != nil {
 		// Preserve the flag-validation diagnostic when a plainly unknown type
@@ -352,6 +352,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	comment, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
 			Agent:        synthAgent,
+			Model:        config.ResolveCISynthesisModel(globalCfg),
 			MinSeverity:  ciMinSev,
 			RepoPath:     root,
 			GitRef:       gitRef,

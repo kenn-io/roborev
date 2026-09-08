@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,8 +18,75 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
 	"go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestCIReviewSynthesisModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("synthetic synthesis agent uses a POSIX shell script")
+	}
+	for _, tt := range []struct {
+		name, host, globalModel, projectModel, want string
+	}{
+		{"agent default", "github.com", "", "", ""},
+		{"global CI model", "github.com", "ci-synthesis", "", "ci-synthesis"},
+		{"GitHub project model", "github.com", "ci-synthesis", "project-synthesis", "project-synthesis"},
+		{"GitLab project model", "gitlab.example.com", "ci-synthesis", "project-synthesis", "project-synthesis"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearForgeCIEnv(t)
+			dataDir := testenv.SetDataDir(t)
+			repo := testutil.NewTestRepoWithCommit(t)
+			repo.AddRemote("origin", "https://"+tt.host+"/example/project-a.git")
+			t.Chdir(repo.Path())
+			modelPath := filepath.Join(dataDir, "synthesis-model")
+			t.Setenv("TEST_CI_SYNTHESIS_MODEL", modelPath)
+			scriptPath := filepath.Join(dataDir, "codex-fixture")
+			require.NoError(t, os.WriteFile(scriptPath, []byte(`#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--help" ]; then
+    printf '%s\n' '--sandbox --output-schema --ignore-user-config --dangerously-bypass-approvals-and-sandbox'
+    exit 0
+  fi
+done
+model=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-m" ]; then
+    shift
+    model="$1"
+  fi
+  shift
+done
+printf '%s' "$model" > "$TEST_CI_SYNTHESIS_MODEL"
+cat > /dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"Combined test reviews\",\"verdict\":\"pass\",\"findings\":[]}"}}'
+`), 0o755))
+			cfg := fmt.Sprintf(`
+default_model = "unrelated-review-model"
+codex_cmd = %q
+[ci]
+synthesis_model = %q
+[projects.%q]
+synthesis_model = %q
+`, scriptPath, tt.globalModel, tt.host+"/example/project-a", tt.projectModel)
+			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(cfg), 0o600))
+			args := []string{"review", "--ref", "HEAD", "--agent", "test", "--review-types", "default,security", "--synthesis-agent", "codex"}
+			if tt.host == "gitlab.example.com" {
+				args = append(args, "--gl-repo", "example/project-a")
+			} else {
+				args = append(args, "--gh-repo", "example/project-a")
+			}
+			cmd := ciCmd()
+			cmd.SetArgs(args)
+			output := captureOutput(t, cmd.Execute)
+			assert.Contains(t, output, "Combined test reviews")
+			model, err := os.ReadFile(modelPath)
+			require.NoError(t, err, "synthesis must invoke the agent")
+			assert.Equal(t, tt.want, string(model))
+		})
+	}
+}
 
 func installFakeGHAuthToken(t *testing.T, token string) {
 	t.Helper()

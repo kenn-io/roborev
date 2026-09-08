@@ -9,6 +9,7 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **CLI flags** (`--agent`, `--model`, `--reasoning`)
 1. **Experiment overlay** for an enrolled review
 1. **Per-repo** `.roborev.toml` in your repository root
+1. **Project defaults** in global `projects` tables, matched by Git remote
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
 
@@ -96,6 +97,83 @@ overlays before any review is queued. The merged command also checks repository
 enablement overrides against their global experiment definitions. All complete
 experiment definitions are checked, including disabled experiments, so a new
 definition can be validated before it is enabled.
+
+## Project Defaults by Git Remote
+
+To use a different review model for selected projects without editing each
+checkout, add project tables to `~/.roborev/config.toml`:
+
+```toml
+review_model = "gpt-5.6-luna"
+
+[projects."github.com/example/project-a"]
+review_model = "gpt-5.6-sol"
+display_name = "Project A"
+
+[projects."github.com/example/project-b"]
+review_model = "gpt-6-astra"
+display_name = "Project B"
+```
+
+Edit these tables directly in TOML; `config set` does not traverse project map
+entries. Put top-level settings before the tables, as required by TOML.
+
+The table key is `host/owner/repository`, without a URL scheme, SSH username, or
+`.git` suffix. Matching uses `origin`, falling back to another remote when there
+is no origin. SSH and HTTPS URLs match the same key. Hostnames are lowercase;
+repository paths are case-sensitive. For example,
+`git@github.com:example/project-a.git` and
+`https://github.com/example/project-a.git` both match the first entry above.
+Repositories with only local-path remotes do not match these tables.
+
+Every checkout with that remote receives the same project settings, including
+linked worktrees created from a bare repository. Matching does not depend on the
+checkout directory name, branch name, or `.roborev-id`. The optional
+`display_name` groups these checkouts under one project name in the TUI and its
+repository filter. An explicit repository `display_name` takes precedence.
+
+By default, project `review_model` applies to ordinary reviews at every
+reasoning level, including reviews from hooks and default-type panel/CI members
+that inherit a model. CLI models, experiment overrides, repository models, and
+explicit panel member models keep their priority. The project model takes
+precedence over global `review_model_<level>`, `review_model`, and
+`default_model`. Unmatched projects keep the general global defaults. Other
+standalone workflows (such as fix, security, and design) retain their existing
+settings.
+
+### Overriding Panel Models
+
+A panel can pin a model on each member, so changing `default_model` or a project
+default alone will not change those members. To use a different model for all
+primary reviewers of selected projects, explicitly enable the override:
+
+```toml
+[projects."github.com/example/project-a"]
+review_model = "gpt-5.6-sol"
+override_panel_models = true
+synthesis_model = "gpt-6-astra" # Optional, independent synthesis override
+```
+
+`override_panel_models = true` makes the project `review_model` take precedence
+over individual panel member models and workflow defaults, including member
+models supplied by repository configuration or experiments. It applies to every
+review type, including security, design, and custom types, in both local and CI
+panels. The daemon CI poller's review matrices and automatically added design
+members follow the same policy. Enabling it without a nonempty project
+`review_model` is an error.
+
+The separate project `synthesis_model`, when set, overrides a panel's explicit
+`synthesis_model` or the CI synthesis setting. It does not require
+`override_panel_models`. When omitted, synthesis keeps its existing resolution;
+changing reviewer models alone does not change synthesis.
+
+Daemon-free `roborev ci review` also honors the project `synthesis_model`, ahead
+of global `[ci].synthesis_model`, in GitHub and GitLab CI runs. If neither is
+set, it leaves synthesis model selection to the agent.
+
+These settings change models, not agents or providers. Use a model accepted by
+each affected agent when overriding a mixed-agent panel. Backup models retain
+their existing failover behavior. Settings for other projects are unaffected.
 
 ## Per-Repository Configuration
 

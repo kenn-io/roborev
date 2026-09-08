@@ -2592,7 +2592,7 @@ func (s *Server) humaEnqueue(
 	if filepath.Clean(checkoutRoot) != filepath.Clean(repoRoot) {
 		worktreePath = filepath.Clean(checkoutRoot)
 	}
-	cfg := s.configWatcher.Config()
+	cfg := s.configWatcher.Config().ForRepo(checkoutRoot)
 	repoCfg, err := config.LoadRepoConfig(checkoutRoot)
 	if err != nil {
 		return rawJSONOutput(

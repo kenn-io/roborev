@@ -30,6 +30,7 @@ func ResolveWorkflowConfig(
 	globalCfg *config.Config,
 	workflow, reasoning string,
 ) (WorkflowConfig, error) {
+	globalCfg = globalCfg.ForRepo(repoPath)
 	repoCfg, _ := config.LoadRepoConfig(repoPath)
 	resolution, err := ResolveWorkflowConfigFromConfig(
 		cliAgent, repoCfg, globalCfg, workflow, reasoning,
@@ -220,6 +221,7 @@ func ResolveWorkflowModelForAgent(
 	globalCfg *config.Config,
 	workflow, level string,
 ) string {
+	globalCfg = globalCfg.ForRepo(repoPath)
 	repoCfg, _ := config.LoadRepoConfig(repoPath)
 	return ResolveWorkflowModelForAgentFromConfig(
 		selectedAgent, cliModel, repoCfg, globalCfg, workflow, level,

@@ -537,6 +537,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	}
 
 	// Load repo config off the PR's default branch (never the working tree, F1).
+	cfg = cfg.ForRepo(repo.RootPath)
 	repoConfig, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
 		if config.IsExperimentConfigError(err) || config.IsConfigValidationError(err) {
@@ -973,6 +974,9 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
 		model = resolution.ModelForSelectedAgent(resolvedAgent, "")
 	}
+	if override := cfg.PanelModelOverride(); override != "" && !resolution.UsesBackupAgent(resolvedAgent) {
+		model = override
+	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
 	)
@@ -1053,6 +1057,9 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	ciModel := cfg.CI.Model
 	if config.ExperimentOverridesWorkflowModel(repoCfg, workflow, reasoning) {
 		ciModel = ""
+	}
+	if override := cfg.PanelModelOverride(); override != "" && !resolution.UsesBackupAgent(resolvedAgent) {
+		ciModel = override
 	}
 	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, ciModel),
 		backupAgent, backupModel, nil
@@ -1224,8 +1231,11 @@ func (p *CIPoller) maybeAppendDesignMember(
 		designAgent = agent.StorageNameFromConfig(designAgent, repoCfg, cfg)
 		var backupAgent, backupModel string
 		if resolution, err := agent.ResolveWorkflowConfigFromConfig(
-			designAgent, repoCfg, cfg, "design", reasoning,
+			"", repoCfg, cfg, "design", reasoning,
 		); err == nil {
+			if override := cfg.PanelModelOverride(); override != "" && !resolution.UsesBackupAgent(designAgent) {
+				designModel = override
+			}
 			backupAgent, backupModel = backupExecutionForSelectedAgent(
 				resolution, designAgent, repoCfg, cfg,
 			)

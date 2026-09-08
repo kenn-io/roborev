@@ -716,6 +716,13 @@ does not rewrite the retry's configured review plan.
 
 ## Per-Repo Overrides
 
+To select models for repositories centrally, add
+[project overrides](/docs/configuration/#overriding-panel-models) to the
+daemon's global config. Set `review_model` and `override_panel_models = true`
+for each selected Git remote to replace even explicitly pinned panel member
+models. The optional project `synthesis_model` controls synthesis independently.
+These overrides apply to named panels and the implicit CI matrix.
+
 Individual repos can override the global CI settings by adding a `[ci]` section
 to their `.roborev.toml` file. This lets you run different panels, agents,
 review types, or reasoning levels for different repos.
