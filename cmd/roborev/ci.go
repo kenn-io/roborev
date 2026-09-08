@@ -46,6 +46,7 @@ func ciReviewCmd() *cobra.Command {
 		reasoning      string
 		minSeverity    string
 		synthesisAgent string
+		outputFile     string
 	)
 
 	cmd := &cobra.Command{
@@ -85,6 +86,7 @@ Flags override config values. When run inside GitHub ` +
 					reasoning:      reasoning,
 					minSeverity:    minSeverity,
 					synthesisAgent: synthesisAgent,
+					outputFile:     outputFile,
 				})
 		},
 	}
@@ -123,10 +125,14 @@ Flags override config values. When run inside GitHub ` +
 	cmd.Flags().StringVar(&synthesisAgent, "synthesis-agent", "",
 		"agent for synthesis (overrides config)")
 
+	cmd.Flags().StringVar(&outputFile, "output-file", "",
+		"write the GitHub comment to a file for a separate publishing job (empty without substantive output)")
+
 	return cmd
 }
 
 type ciReviewOpts struct {
+	outputFile     string
 	ref            string
 	comment        bool
 	ghRepo         string
@@ -162,6 +168,13 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	if opts.pr < 0 {
 		return fmt.Errorf(
 			"--pr must be a positive number (got %d)", opts.pr)
+	}
+	// Clear an earlier result even when this run has no changes or fails
+	// before synthesis. Publishers must never reuse a stale comment.
+	if opts.outputFile != "" {
+		if err := os.WriteFile(opts.outputFile, nil, 0o600); err != nil {
+			return fmt.Errorf("prepare review output: %w", err)
+		}
 	}
 
 	// Determine which forge this run targets before anything
@@ -367,6 +380,16 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 
 	// Output to stdout (even on all-failed, for CI logs)
 	fmt.Println(synthesis.Output)
+
+	if opts.outputFile != "" {
+		comment := ""
+		if review.HasSubstantiveOutput(results) {
+			comment = synthesis.GitHubComment
+		}
+		if err := os.WriteFile(opts.outputFile, []byte(comment), 0o600); err != nil {
+			return fmt.Errorf("write review output: %w", err)
+		}
+	}
 
 	// Post as PR/MR comment if requested
 	if opts.comment {

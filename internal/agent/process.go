@@ -78,6 +78,7 @@ func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTra
 		stripUntrustedEnv(cmd.Env, cfg.keepGitHubCredentials),
 		"agent "+filepath.Base(cmd.Path))
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
+	isolateCICommand(cmd)
 
 	tracker := &subprocessTracker{}
 	// Ensure Cancel is always set. Go's exec.CommandContext only provides a
@@ -121,6 +122,7 @@ func configureCapabilityProbe(cmd *exec.Cmd) {
 		}
 	}
 	cmd.Dir = os.TempDir()
+	isolateCICommand(cmd)
 }
 
 // closeOnContextDone closes c when ctx fires (unless stopped first). When

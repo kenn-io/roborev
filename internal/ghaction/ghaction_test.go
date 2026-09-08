@@ -17,6 +17,52 @@ func TestDefaultConfig(t *testing.T) {
 	require.Equal(t, "codex", cfg.Agents[0], "expected default agent to be codex")
 }
 
+func TestGenerateCredentialSeparation(t *testing.T) {
+	for _, name := range append([]string{"copilot", "kiro"}, allowedAgents...) {
+		t.Run(name, func(t *testing.T) {
+			out, err := Generate(WorkflowConfig{Agents: []string{name}})
+			if name == "copilot" || name == "kiro" {
+				require.ErrorContains(t, err, "requires GitHub credentials")
+				return
+			}
+			require.NoError(t, err)
+			var workflow struct {
+				Permissions map[string]string `yaml:"permissions"`
+				Jobs        map[string]struct {
+					Needs       string            `yaml:"needs"`
+					Permissions map[string]string `yaml:"permissions"`
+					Steps       []struct {
+						Name string            `yaml:"name"`
+						Uses string            `yaml:"uses"`
+						Env  map[string]string `yaml:"env"`
+						With map[string]any    `yaml:"with"`
+					} `yaml:"steps"`
+				} `yaml:"jobs"`
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(out), &workflow))
+			assert := assert.New(t)
+			assert.Equal(map[string]string{"contents": "read"}, workflow.Permissions)
+			for _, step := range workflow.Jobs["review"].Steps {
+				assert.NotContains(step.Env, "GH_TOKEN")
+				assert.NotContains(step.Env, "GITHUB_TOKEN")
+				if step.Name == "Checkout" {
+					assert.Equal(false, step.With["persist-credentials"])
+				}
+				if step.Name == "Run review" {
+					assert.Equal("roborev-ci-agent", step.Env["ROBOREV_CI_AGENT_IMAGE"])
+				}
+			}
+			publisher := workflow.Jobs["publish"]
+			assert.Equal("review", publisher.Needs)
+			assert.Equal(map[string]string{"pull-requests": "write"}, publisher.Permissions)
+			for _, step := range publisher.Steps {
+				assert.NotContains(step.Uses, "actions/checkout")
+				assert.NotContains(step.Env, AgentEnvVar(name))
+			}
+		})
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -34,8 +80,9 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "valid kiro agent",
-			cfg:  WorkflowConfig{Agents: []string{"kiro"}},
+			name:    "kiro requires forge credentials",
+			cfg:     WorkflowConfig{Agents: []string{"kiro"}},
+			wantErr: "requires GitHub credentials",
 		},
 		{
 			name: "valid kilo agent",
@@ -79,8 +126,8 @@ func TestValidate(t *testing.T) {
 				require.Error(t, err, "expected error")
 				require.ErrorContains(t, err, tt.wantErr, "unexpected error")
 
-			} else if err != nil {
-				require.Failf(t, "unexpected error", "%v", err)
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -105,9 +152,7 @@ func TestGenerate(t *testing.T) {
 				"Run review",
 				"roborev ci review",
 				"--ref",
-				"--comment",
-				"--gh-repo",
-				"--pr",
+				"--output-file",
 				"OPENAI_API_KEY",
 				"actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
 				"sha256sum --check",
@@ -185,19 +230,6 @@ func TestGenerate(t *testing.T) {
 			},
 		},
 		{
-			name: "copilot agent",
-			cfg: WorkflowConfig{
-				Agents: []string{"copilot"},
-			},
-			wantStrs: []string{
-				"@github/copilot@latest",
-				"GH_TOKEN:",
-			},
-			envChecks: func(t *testing.T, env map[string]string) {
-				assert.NotContains(t, env, "GITHUB_TOKEN", "env block should not contain bare GITHUB_TOKEN: entry for copilot")
-			},
-		},
-		{
 			name: "pinned version",
 			cfg: WorkflowConfig{
 				Agents:         []string{"codex"},
@@ -245,20 +277,6 @@ func TestGenerate(t *testing.T) {
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
 				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")
-			},
-		},
-		{
-			name: "kiro skipped from env entries",
-			cfg: WorkflowConfig{
-				Agents: []string{"kiro"},
-			},
-			wantStrs: []string{
-				"kiro.dev",
-			},
-			notWantStrs: []string{
-				"OPENAI_API_KEY",
-				"ANTHROPIC_API_KEY",
-				"AWS_ACCESS_KEY_ID",
 			},
 		},
 		{

@@ -85,11 +85,17 @@ synthesis_reasoning = %q
 			} else {
 				args = append(args, "--gh-repo", "example/project-a")
 			}
+			commentPath := filepath.Join(dataDir, "comment.md")
+			args = append(args, "--output-file", commentPath)
 			cmd := ciCmd()
 			cmd.SetArgs(args)
 			output := captureOutput(t, cmd.Execute)
 			assert.Contains(t, output, "Combined test reviews")
 			assert.Contains(t, output, "Minor naming issue.", "stdout keeps below-threshold findings")
+			comment, err := os.ReadFile(commentPath)
+			require.NoError(t, err)
+			assert.NotContains(t, string(comment), "Minor naming issue.", "artifact uses the severity-filtered GitHub comment")
+			assert.NotEmpty(t, string(comment))
 			model, err := os.ReadFile(modelPath)
 			require.NoError(t, err, "synthesis must invoke the agent")
 			assert.Equal(t, tt.want, string(model))
@@ -102,6 +108,23 @@ synthesis_reasoning = %q
 			assert.Equal(t, wantReasoning, string(reasoning))
 		})
 	}
+}
+
+func TestCIReviewFailedBatchClearsOutputFile(t *testing.T) {
+	clearForgeCIEnv(t)
+	dataDir := testenv.SetDataDir(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	t.Chdir(repo.Path())
+	outputPath := filepath.Join(dataDir, "comment.md")
+	require.NoError(t, os.WriteFile(outputPath, []byte("previous review"), 0o600))
+	err := runCIReview(context.Background(), ciReviewOpts{
+		ref: "HEAD", agents: "nonexistent-ci-agent", reviewTypes: "default",
+		outputFile: outputPath,
+	})
+	require.ErrorIs(t, err, review.ErrAllFailed)
+	output, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	assert.Empty(t, output)
 }
 
 func installFakeGHAuthToken(t *testing.T, token string) {

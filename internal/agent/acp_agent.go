@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -184,6 +185,9 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 func (a *ACPAgent) runPrompt(
 	ctx context.Context, repoPath, prompt string, output io.Writer,
 ) (string, error) {
+	if os.Getenv("ROBOREV_CI_AGENT_IMAGE") != "" {
+		return "", fmt.Errorf("ACP terminal tools are not supported in isolated CI reviews")
+	}
 	// Set timeout context
 	var cancel context.CancelFunc
 	var err error
