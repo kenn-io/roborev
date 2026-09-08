@@ -2430,10 +2430,15 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if !reviewpkg.HasSubstantiveOutput(results) {
 		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA)
 	}
+	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
 	raw := func() string {
+		if synth != nil {
+			for i := range results {
+				results[i] = results[i].ApplyMinSeverity(synth.MinSeverity)
+			}
+		}
 		return reviewpkg.FormatRawBatchComment(results, row.HeadSHA)
 	}
-	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
 	if err != nil || synth == nil || synth.Status != storage.JobStatusDone {
 		return raw() // F4: synthesis agent failed (no review) -> raw member fallback
 	}
@@ -3555,6 +3560,20 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 	}
 
 	output := review.Output
+	if len(review.StructuredOutput) > 0 {
+		raw, err := json.Marshal(review.StructuredOutput)
+		if err == nil {
+			if doc, err := reviewpkg.DecodeStructuredReview(raw); err == nil {
+				// Synthesis cites only successful members, in their original order.
+				doc.SourceLabels = reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
+				minSeverity := ""
+				if review.Job != nil {
+					minSeverity = review.Job.MinSeverity
+				}
+				output = doc.CommentMarkdown(minSeverity)
+			}
+		}
+	}
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix

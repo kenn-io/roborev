@@ -12,9 +12,10 @@ All notable changes to roborev, grouped by minor release.
 - Reviews with a minimum severity now keep every finding instead of dropping the
     ones below the threshold. The threshold only decides the verdict: a review
     fails when any finding is at or above it and passes otherwise, so
-    low-severity notes stay visible without failing your commit or pull request.
-    This applies to `review_min_severity`, `--min-severity`, and the CI poller's
-    `min_severity`. See
+    low-severity notes remain in stored reviews without failing your commit or
+    pull request. GitHub comments display only findings at or above the
+    threshold. This applies to `review_min_severity`, `--min-severity`, and the
+    CI poller's `min_severity`. See
     [Severity Filtering](/guides/reviewing-code/#severity-filtering).
 - Codex, Claude Code, Pi, and Grok now return structured findings for every
     review type, not only custom ones. Verdicts come from the reported
@@ -26,6 +27,10 @@ All notable changes to roborev, grouped by minor release.
     [Custom Review Types](/advanced/custom-review-types/#structured-results-and-compatible-agents).
 
 **Bug fixes**
+
+- GitHub PR comments again group structured findings by severity and hide
+    findings below the configured minimum. Complete findings remain in stored
+    review data and synthesis inputs.
 
 - Non-agentic Pi reviews can no longer run commands or change files. They use
     Pi's read-only repository tools, while agentic jobs keep the default tool

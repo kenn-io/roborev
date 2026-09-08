@@ -229,7 +229,11 @@ func FormatRawBatchComment(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
-			b.WriteString(r.Output)
+			if r.Structured != nil {
+				b.WriteString(r.Structured.CommentMarkdown(r.MinSeverity))
+			} else {
+				b.WriteString(r.Output)
+			}
 			b.WriteString("\n\n")
 		} else {
 			b.WriteString("(no output)\n\n")

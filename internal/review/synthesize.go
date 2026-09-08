@@ -38,7 +38,7 @@ type SynthesizeOpts struct {
 	// Reasoning override (empty preserves the agent default).
 	Reasoning string
 	// MinSeverity is the lowest severity that fails the combined review.
-	// Findings below it are kept in the output as information.
+	// Findings below it are hidden in the comment but retained in review data.
 	MinSeverity string
 	// RepoPath is the working directory for the synthesis agent.
 	RepoPath string
@@ -130,7 +130,11 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	return header + TruncateComment(r.Output)
+	output := r.Output
+	if r.Structured != nil {
+		output = r.Structured.CommentMarkdown(r.MinSeverity)
+	}
+	return header + TruncateComment(output)
 }
 
 func runSynthesis(
@@ -174,5 +178,5 @@ func runSynthesis(
 	}
 
 	return FormatSynthesizedComment(
-		doc.Markdown(opts.MinSeverity), results, opts.HeadSHA), nil
+		doc.CommentMarkdown(opts.MinSeverity), results, opts.HeadSHA), nil
 }

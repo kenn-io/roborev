@@ -88,7 +88,7 @@ synthesis_reasoning = %q
 			cmd := ciCmd()
 			cmd.SetArgs(args)
 			output := captureOutput(t, cmd.Execute)
-			assert.Contains(t, output, "Combined test reviews")
+			assert.Contains(t, output, "**Verdict:** No issues found.")
 			model, err := os.ReadFile(modelPath)
 			require.NoError(t, err, "synthesis must invoke the agent")
 			assert.Equal(t, tt.want, string(model))

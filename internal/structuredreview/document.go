@@ -313,6 +313,51 @@ func (r Document) Markdown(minSeverity string) string {
 	return out.String()
 }
 
+// CommentMarkdown renders a compact PR comment grouped by severity. Filtering
+// is presentation-only: the document retains every finding for other consumers.
+// The verdict describes visible findings rather than the unfiltered agent summary.
+func (r Document) CommentMarkdown(minSeverity string) string {
+	threshold := thresholdRank(minSeverity)
+	var findings strings.Builder
+	count := 0
+	for _, severity := range []string{"critical", "high", "medium", "low"} {
+		if severityRank(severity) < threshold {
+			continue
+		}
+		heading := false
+		for _, finding := range r.Findings {
+			if finding.Severity != severity {
+				continue
+			}
+			if !heading {
+				fmt.Fprintf(&findings, "\n\n### %s\n", titleSeverity(severity))
+				heading = true
+			}
+			findings.WriteString("\n- ")
+			if finding.Location != "" {
+				fmt.Fprintf(&findings, "%s: ", finding.Location)
+			}
+			fmt.Fprintf(&findings, "%s %s", finding.Problem, finding.Fix)
+			if labels := r.sourceLabels(finding); len(labels) > 0 {
+				fmt.Fprintf(&findings, "\n\n  *Reported by: %s*", strings.Join(labels, ", "))
+			}
+			findings.WriteString("\n")
+			count++
+		}
+	}
+	if count == 0 {
+		if threshold > severityRank("low") {
+			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", strings.ToLower(strings.TrimSpace(minSeverity)))
+		}
+		return "**Verdict:** No issues found.\n"
+	}
+	noun := "findings"
+	if count == 1 {
+		noun = "finding"
+	}
+	return fmt.Sprintf("**Verdict:** Changes require fixes for %d %s.%s", count, noun, findings.String())
+}
+
 // sourceLabels resolves a finding's review numbers to caller-provided labels,
 // in citation order without duplicates. Numbers without a label are skipped.
 func (r Document) sourceLabels(finding Finding) []string {

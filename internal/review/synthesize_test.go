@@ -499,7 +499,7 @@ func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
 		HeadSHA: "bbb222",
 	})
 	require.NoError(t, err)
-	assertContains(t, comment, "synthesized output")
+	assertContains(t, comment, "file.go:1: combined fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 	assertContains(t, synth.synthPrompt, "Found issue A")
 	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
@@ -530,7 +530,53 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
 	assert.Contains(t, comment, "No findings at or above high severity.")
-	assert.Contains(t, comment, "Name is vague", "low findings stay in the comment")
+	assert.NotContains(t, comment, "Name is vague", "CI comments hide findings below the threshold")
+}
+
+func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
+	doc := StructuredReview{
+		SchemaVersion: 2,
+		Summary:       "Review summary includes a minor naming issue.",
+		Verdict:       "fail",
+		Findings: []StructuredFinding{
+			{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."},
+			{Severity: "medium", Location: "worker.go:20", Problem: "Missing cleanup.", Fix: "Close the resource."},
+			{Severity: "high", Location: "worker.go:10", Problem: "State is lost.", Fix: "Persist it."},
+			{Severity: "medium", Problem: "Errors are ignored.", Fix: "Return the error."},
+		},
+	}
+	for i := range doc.Findings {
+		doc.Findings[i].Sources = []int{1}
+	}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	for _, mode := range []string{"single", "synthesis", "fallback"} {
+		t.Run(mode, func(t *testing.T) {
+			synth := &structuredBatchAgent{result: raw}
+			synth.name = "comment-synth"
+			if mode == "fallback" {
+				synth.err = errors.New("synthesis failed")
+			}
+			agent.Register(synth)
+			t.Cleanup(func() { agent.Unregister(synth.Name()) })
+			result := ReviewResult{Agent: "codex", Status: ResultDone, Structured: &doc}.ApplyMinSeverity("low")
+			results := []ReviewResult{result}
+			if mode != "single" {
+				results = append(results, result)
+			}
+			comment, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: synth.Name(), MinSeverity: "medium"})
+			require.NoError(t, err)
+			assert := assert.New(t)
+			assert.Contains(comment, "### High\n\n- worker.go:10")
+			assert.Contains(comment, "### Medium\n\n- worker.go:20")
+			assert.Contains(comment, "Missing cleanup. Close the resource.")
+			assert.Contains(comment, "- Errors are ignored. Return the error.")
+			assert.NotContains(comment, "Minor naming issue.")
+			assert.NotContains(comment, "Agent assessment")
+			assert.Len(doc.Findings, 4, "presentation must preserve the stored findings")
+			assert.Contains(doc.Markdown("medium"), "Minor naming issue.")
+		})
+	}
 }
 
 func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
@@ -560,7 +606,7 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 		HeadSHA: "bbb222",
 	})
 	require.NoError(t, err)
-	assertContains(t, comment, "synthesized output")
+	assertContains(t, comment, "file.go:1: combined fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 }
 
@@ -606,5 +652,5 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "custom-acp", seenAgent, "resolver agent")
 	require.Same(t, cfg, seenCfg, "resolver cfg pointer mismatch")
-	assertContains(t, comment, "synthesized output")
+	assertContains(t, comment, "file.go:1: combined fix")
 }

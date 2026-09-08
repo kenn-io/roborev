@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +19,30 @@ import (
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing.T) {
+	raw := []byte(`{"schema_version":2,"summary":"Includes a minor naming issue.","verdict":"fail","findings":[{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":"worker.go:10","sources":[1]},{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1]}]}`)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	rev := &storage.Review{
+		Output:           "Original complete review.",
+		StructuredOutput: structured,
+		Job:              &storage.ReviewJob{MinSeverity: "medium"},
+	}
+	members := []storage.BatchReviewResult{
+		{Agent: "gemini", Status: "failed"},
+		{Agent: "codex", Status: "done", Output: "Found issues."},
+	}
+	comment := formatPanelPRCommentWithHead(rev, "F", members, false, "abc1234")
+	assert := assert.New(t)
+	assert.Contains(comment, "### High\n\n- worker.go:10: State is lost. Persist it.")
+	assert.Contains(comment, "Reported by: codex")
+	assert.NotContains(comment, "Minor naming issue.")
+	assert.Equal("Original complete review.", rev.Output)
+	stored, err := json.Marshal(rev.StructuredOutput)
+	require.NoError(t, err)
+	assert.JSONEq(string(raw), string(stored))
+}
 
 // ciEvent builds a review.completed/failed Event for a synthesis or member job.
 func ciEvent(jobID int64, eventType string) Event {
