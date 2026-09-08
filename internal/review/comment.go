@@ -91,9 +91,7 @@ func splitProseFindings(output string) []proseFinding {
 				continue
 			}
 			if label := storage.HighestSeverityLabel(line); label != "" {
-				if severity != "" {
-					flush()
-				}
+				flush()
 				severity = label
 				collect = true
 			}

@@ -548,6 +548,37 @@ func TestSynthesizePreservesCompleteOutput(t *testing.T) {
 	assert.Contains(t, output.Output, "Minor naming issue.")
 }
 
+func TestSynthesizeCommentsInheritReviewThreshold(t *testing.T) {
+	doc := StructuredReview{SchemaVersion: 2, Summary: "Complete review.", Findings: []StructuredFinding{
+		{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."},
+	}}
+	for _, structured := range []bool{false, true} {
+		for _, fallback := range []bool{false, true} {
+			for _, ciSeverity := range []string{"", "low"} {
+				result := ReviewResult{Status: ResultDone, Output: "### Low\nMinor naming issue."}
+				if structured {
+					result.Structured = &doc
+				}
+				result = result.ApplyMinSeverity("medium")
+				results := []ReviewResult{result}
+				if fallback {
+					results = append(results, result)
+				}
+				synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+					Agent: "nonexistent-synthesis-agent", MinSeverity: ciSeverity,
+				})
+				require.NoError(t, err)
+				if ciSeverity == "" {
+					assert.NotContains(t, synthesis.GitHubComment, "Minor naming issue.", "empty CI threshold inherits medium")
+				} else {
+					assert.Contains(t, synthesis.GitHubComment, "Minor naming issue.", "explicit low overrides medium")
+				}
+				assert.Contains(t, synthesis.Output, "Minor naming issue.")
+			}
+		}
+	}
+}
+
 func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 	doc := StructuredReview{
 		SchemaVersion: 2,

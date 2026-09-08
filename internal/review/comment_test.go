@@ -53,3 +53,13 @@ func TestProseCommentKeepsFindingCodeAndUnlabelledText(t *testing.T) {
 	assert.Equal(prose, result.Output)
 	assert.Equal("Unlabelled review text.", (ReviewResult{Output: "Unlabelled review text.", MinSeverity: "high"}).CommentMarkdown())
 }
+
+func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
+	result := ReviewResult{
+		Output:      "An unlabelled concern.\n\n### Low\nMinor naming issue.",
+		MinSeverity: "medium",
+	}
+	comment := result.CommentMarkdown()
+	assert.Contains(t, comment, "An unlabelled concern.")
+	assert.NotContains(t, comment, "Minor naming issue.")
+}

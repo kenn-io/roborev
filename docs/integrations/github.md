@@ -583,6 +583,10 @@ configured minimum severity appear in the comment. Stored reviews and synthesis
 inputs retain every finding, including lower-severity findings. The comment
 verdict describes the findings that pass this display filter.
 
+For single-review and raw fallback comments, an unset CI `min_severity` retains
+each review's effective minimum severity, including `review_min_severity`.
+Setting the CI threshold explicitly overrides that review-level threshold.
+
 Prose reviews are filtered at publication too, including single-review and raw
 fallback comments. The filter keeps each finding's Markdown together, using
 severity labels and the `---` separators requested by the review prompts. It
