@@ -50,8 +50,14 @@ type SynthesizeOpts struct {
 	GlobalConfig *config.Config
 }
 
-// Synthesize combines multiple review results into a single
-// formatted comment string.
+// SynthesisResult separates complete review output from GitHub presentation.
+type SynthesisResult struct {
+	Output        string
+	GitHubComment string
+}
+
+// Synthesize combines reviews once and renders both complete output and the
+// filtered GitHub comment. Callers choose the appropriate publication channel.
 //
 // Single successful result: returns it directly (no LLM call).
 // All failed: returns failure comment.
@@ -61,7 +67,7 @@ func Synthesize(
 	ctx context.Context,
 	results []ReviewResult,
 	opts SynthesizeOpts,
-) (string, error) {
+) (SynthesisResult, error) {
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
@@ -86,16 +92,18 @@ func Synthesize(
 			}
 		}
 		if len(results) > 0 && nonActionable == len(results) {
-			return comment, nil
+			return SynthesisResult{Output: comment, GitHubComment: comment}, nil
 		}
-		return comment, ErrAllFailed
+		return SynthesisResult{Output: comment, GitHubComment: comment}, ErrAllFailed
 	}
 
 	// Single result — return directly. Its verdict already honors
 	// opts.MinSeverity, so there is nothing for a synthesis agent to add.
 	if len(results) == 1 && successCount == 1 {
-		return formatSingleResult(
-			results[0], opts.HeadSHA), nil
+		return SynthesisResult{
+			Output:        formatSingleResult(results[0], opts.HeadSHA, false),
+			GitHubComment: formatSingleResult(results[0], opts.HeadSHA, true),
+		}, nil
 	}
 
 	// Multiple results — synthesize with LLM
@@ -104,8 +112,10 @@ func Synthesize(
 		log.Printf(
 			"ci review: synthesis failed: %v "+
 				"(falling back to raw format)", err)
-		return FormatRawBatchComment(
-			results, opts.HeadSHA), nil
+		return SynthesisResult{
+			Output:        formatRawBatchOutput(results, opts.HeadSHA, false),
+			GitHubComment: FormatRawBatchComment(results, opts.HeadSHA),
+		}, nil
 	}
 	return comment, nil
 }
@@ -113,6 +123,7 @@ func Synthesize(
 func formatSingleResult(
 	r ReviewResult,
 	headSHA string,
+	githubComment bool,
 ) string {
 	passed := r.Passed()
 	if r.Verdict == storage.VerdictUnknown &&
@@ -130,17 +141,21 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	return header + TruncateComment(r.CommentMarkdown())
+	output := r.Output
+	if githubComment {
+		output = TruncateComment(r.CommentMarkdown())
+	}
+	return header + output
 }
 
 func runSynthesis(
 	ctx context.Context,
 	results []ReviewResult,
 	opts SynthesizeOpts,
-) (string, error) {
+) (SynthesisResult, error) {
 	synthAgent, err := getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig)
 	if err != nil {
-		return "", fmt.Errorf("get synthesis agent: %w", err)
+		return SynthesisResult{}, fmt.Errorf("get synthesis agent: %w", err)
 	}
 
 	if opts.Model != "" {
@@ -150,7 +165,7 @@ func runSynthesis(
 	if opts.Reasoning != "" {
 		reasoning, err := config.NormalizeReasoning(opts.Reasoning)
 		if err != nil {
-			return "", fmt.Errorf("synthesis reasoning: %w", err)
+			return SynthesisResult{}, fmt.Errorf("synthesis reasoning: %w", err)
 		}
 		synthAgent = synthAgent.WithReasoning(agent.ParseReasoningLevel(reasoning))
 	}
@@ -170,9 +185,11 @@ func runSynthesis(
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("synthesis review: %w", err)
+		return SynthesisResult{}, fmt.Errorf("synthesis review: %w", err)
 	}
 
-	return FormatSynthesizedComment(
-		doc.CommentMarkdown(opts.MinSeverity), results, opts.HeadSHA), nil
+	return SynthesisResult{
+		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
+		GitHubComment: FormatSynthesizedComment(doc.CommentMarkdown(opts.MinSeverity), results, opts.HeadSHA),
+	}, nil
 }

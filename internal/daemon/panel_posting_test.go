@@ -56,6 +56,31 @@ func TestPanelPRCommentFiltersProseWithoutChangingReview(t *testing.T) {
 	assert.Equal(t, prose, rev.Output)
 }
 
+func TestPanelCommentLookupErrorDoesNotPostFallback(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	h.CaptureCommitStatuses()
+	panel, _, _ := h.seedCIPanelRun(t, "acme/api", 1, "lookup-test", "base..lookup-test", []jobSpec{
+		{Agent: "test", Status: "done", Output: "### Low\nMinor naming issue."},
+	})
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	require.True(t, won)
+	// Make the synthesis query fail while the posting-claim table stays usable.
+	_, err = h.DB.Exec("ALTER TABLE review_jobs RENAME COLUMN min_severity TO unavailable_severity")
+	require.NoError(t, err)
+	_, err = h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.Error(t, err)
+	h.Poller.postPanelComment(panel, members, storage.PanelOutcomeReviewPosted)
+	assert.Empty(t, *comments)
+	assert.False(t, h.panelPostedAt(t, panel.ID))
+	won, err = h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	assert.True(t, won, "lookup errors release the claim for retry")
+}
+
 // ciEvent builds a review.completed/failed Event for a synthesis or member job.
 func ciEvent(jobID int64, eventType string) Event {
 	return Event{Type: eventType, JobID: jobID}

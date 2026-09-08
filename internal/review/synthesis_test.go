@@ -350,7 +350,7 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 		Status:     ResultDone,
 		Output:     strings.Repeat("x", MaxCommentLen+500),
 	}
-	comment := formatSingleResult(r, "abc123456789")
+	comment := formatSingleResult(r, "abc123456789", true)
 
 	// The header and footer add some overhead, but the output
 	// portion must not exceed MaxCommentLen.
@@ -371,7 +371,7 @@ func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
 		Status:     ResultDone,
 		Output:     strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100),
 	}
-	comment := formatSingleResult(r, "abc123456789")
+	comment := formatSingleResult(r, "abc123456789", true)
 	require.True(t, utf8.ValidString(comment), "truncated comment is not valid UTF-8")
 	assert.Contains(t, comment, "truncated", "expected truncation suffix")
 }

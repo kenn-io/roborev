@@ -340,10 +340,11 @@ func TestSynthesize_Formatting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			comment, err := Synthesize(
+			synthesis, err := Synthesize(
 				context.Background(), tt.results, SynthesizeOpts{
 					HeadSHA: "abc123456789",
 				})
+			comment := synthesis.GitHubComment
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 			} else {
@@ -381,11 +382,12 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 		},
 	}
 
-	comment, err := Synthesize(
+	synthesis, err := Synthesize(
 		context.Background(), results, SynthesizeOpts{
 			Agent:   "failing-synth",
 			HeadSHA: "def456789012",
 		})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 
 	// Should fall back to raw format
@@ -406,9 +408,10 @@ func TestSynthesize_InvalidJSONFallsBackToRaw(t *testing.T) {
 		{Status: ResultDone, Output: "Finding A"},
 		{Status: ResultDone, Output: "Finding B"},
 	}
-	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
 		Agent: ag.Name(), HeadSHA: "def456789012",
 	})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Synthesis unavailable")
 	assert.Contains(t, comment, "Finding A")
@@ -431,11 +434,12 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 		},
 	}
 
-	comment, err := Synthesize(
+	synthesis, err := Synthesize(
 		context.Background(), results, SynthesizeOpts{
 			Agent:   "nonexistent-synthesis-agent",
 			HeadSHA: "abc123456789",
 		})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 
 	// Should fall back to raw format since synthesis agent
@@ -493,11 +497,12 @@ func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
 		},
 	}
 
-	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
 		Agent:   "synthesis-entrypoint",
 		GitRef:  "aaa111..bbb222",
 		HeadSHA: "bbb222",
 	})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	assertContains(t, comment, "file.go:1: combined fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
@@ -522,15 +527,25 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 		Structured: &structured,
 	}.ApplyMinSeverity("low")
 
-	comment, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{
+	synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{
 		MinSeverity: "high",
 		HeadSHA:     "abc123",
 	})
+	comment := synthesis.GitHubComment
 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
 	assert.Contains(t, comment, "No findings at or above high severity.")
 	assert.NotContains(t, comment, "Name is vague", "CI comments hide findings below the threshold")
+}
+
+func TestSynthesizePreservesCompleteOutput(t *testing.T) {
+	doc := StructuredReview{SchemaVersion: 2, Summary: "Complete review.", Findings: []StructuredFinding{
+		{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."},
+	}}
+	output, err := Synthesize(context.Background(), []ReviewResult{{Status: ResultDone, Structured: &doc}}, SynthesizeOpts{MinSeverity: "high"})
+	require.NoError(t, err)
+	assert.Contains(t, output.Output, "Minor naming issue.")
 }
 
 func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
@@ -564,7 +579,8 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			if mode != "single" {
 				results = append(results, result)
 			}
-			comment, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: synth.Name(), MinSeverity: "medium"})
+			synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: synth.Name(), MinSeverity: "medium"})
+			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
 			assert.Contains(comment, "### High\n\n- worker.go:10")
@@ -572,6 +588,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			assert.Contains(comment, "Missing cleanup. Close the resource.")
 			assert.Contains(comment, "- Errors are ignored. Return the error.")
 			assert.NotContains(comment, "Minor naming issue.")
+			assert.Contains(synthesis.Output, "Minor naming issue.", "complete output retains low findings in every path")
 			assert.NotContains(comment, "Agent assessment")
 			assert.Len(doc.Findings, 4, "presentation must preserve the stored findings")
 			assert.Contains(doc.Markdown("medium"), "Minor naming issue.")
@@ -601,10 +618,11 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 		},
 	}
 
-	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
 		GitRef:  "aaa111..bbb222",
 		HeadSHA: "bbb222",
 	})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	assertContains(t, comment, "file.go:1: combined fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
@@ -643,12 +661,13 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 		},
 	}
 
-	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
 		Agent:        "custom-acp",
 		GlobalConfig: cfg,
 		HeadSHA:      "abc123",
 		GitRef:       "abc123..def456",
 	})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	require.Equal(t, "custom-acp", seenAgent, "resolver agent")
 	require.Same(t, cfg, seenCfg, "resolver cfg pointer mismatch")

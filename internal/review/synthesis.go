@@ -189,6 +189,10 @@ func FormatRawBatchComment(
 	reviews []ReviewResult,
 	headSHA string,
 ) string {
+	return formatRawBatchOutput(reviews, headSHA, true)
+}
+
+func formatRawBatchOutput(reviews []ReviewResult, headSHA string, githubComment bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
@@ -229,7 +233,11 @@ func FormatRawBatchComment(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
-			b.WriteString(r.CommentMarkdown())
+			if githubComment {
+				b.WriteString(r.CommentMarkdown())
+			} else {
+				b.WriteString(r.Output)
+			}
 			b.WriteString("\n\n")
 		} else {
 			b.WriteString("(no output)\n\n")

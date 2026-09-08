@@ -17,7 +17,8 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 	} {
 		t.Run(strings.Split(prose, "\n")[0], func(t *testing.T) {
 			result := ReviewResult{Status: ResultDone, Output: prose}.ApplyMinSeverity("high")
-			comment, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+			synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
 			for _, output := range []string{comment, FormatRawBatchComment([]ReviewResult{result}, "abc1234")} {
@@ -25,6 +26,7 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 				assert.Contains(output, "State is lost.")
 				assert.Contains(output, "Persist it.")
 			}
+			assert.Contains(synthesis.Output, "Minor naming issue.")
 			assert.Equal(prose, result.Output)
 		})
 	}
@@ -32,7 +34,8 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 
 func TestProseCommentAllFindingsBelowThreshold(t *testing.T) {
 	result := ReviewResult{Status: ResultDone, Output: "### Low\n\nMinor naming issue."}
-	comment, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+	synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
 	assert.Contains(t, comment, "No findings at or above high severity.")

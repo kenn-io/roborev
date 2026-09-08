@@ -2328,7 +2328,11 @@ func (p *CIPoller) ensureReviewAttempt(row *storage.CIPanel) (*storage.ReviewAtt
 // This is the pre-existing posting path, now invoked only for
 // OutcomePost/OutcomeAllSkip.
 func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.BatchReviewResult, outcome string) {
-	body := p.panelCommentBody(row, members)
+	body, err := p.panelCommentBody(row, members)
+	if err != nil {
+		p.handlePanelPostError(row, err)
+		return
+	}
 	if err := p.callPostPRComment(row.GithubRepo, row.PRNumber, body); err != nil {
 		p.handlePanelPostError(row, err)
 		return
@@ -2425,12 +2429,15 @@ func (p *CIPoller) recordDeferral(
 // a panel footer); synthesis failed or its review missing -> the raw-member
 // fallback, which already carries the header and renders row.HeadSHA. SHAs
 // always come from row.HeadSHA.
-func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) string {
+func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) (string, error) {
 	results := toReviewResults(members)
 	if !reviewpkg.HasSubstantiveOutput(results) {
-		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA)
+		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA), nil
 	}
 	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
+	if err != nil {
+		return "", fmt.Errorf("load synthesis for PR comment: %w", err)
+	}
 	raw := func() string {
 		if synth != nil {
 			for i := range results {
@@ -2439,21 +2446,21 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 		}
 		return reviewpkg.FormatRawBatchComment(results, row.HeadSHA)
 	}
-	if err != nil || synth == nil || synth.Status != storage.JobStatusDone {
-		return raw() // F4: synthesis agent failed (no review) -> raw member fallback
+	if synth == nil || synth.Status != storage.JobStatusDone {
+		return raw(), nil // F4: synthesis agent failed (no review) -> raw member fallback
 	}
 	rev, err := p.db.GetReviewByJobID(synth.ID)
 	if err != nil || rev == nil {
-		return raw() // review unexpectedly missing -> raw fallback
+		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return appendPanelPRFooter(rev.Output, rev, members, includeCosts)
+		return appendPanelPRFooter(rev.Output, rev, members, includeCosts), nil
 	}
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
 		rev, string(verdict), members, includeCosts, row.HeadSHA,
-	)
+	), nil
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access

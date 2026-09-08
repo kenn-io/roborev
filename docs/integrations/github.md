@@ -591,6 +591,10 @@ summaries can describe hidden findings. Text without an identifiable severity
 remains visible; the publisher does not guess its severity. Stored prose stays
 complete.
 
+These display changes apply only to GitHub PR comments. The CLI's stdout and
+GitLab merge request notes retain complete review output, including findings
+below the threshold.
+
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 
 ```toml
