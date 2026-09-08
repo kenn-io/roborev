@@ -31,6 +31,7 @@ require (
 	github.com/sourcegraph/go-diff v0.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/yuin/goldmark/v2 v2.0.1
 	gitlab.com/gitlab-org/api/client-go/v2 v2.58.0
 	go.kenn.io/kit v0.21.1
 	golang.org/x/sys v0.47.0

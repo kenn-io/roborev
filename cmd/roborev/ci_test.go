@@ -67,7 +67,7 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s' "$model" > "$TEST_CI_SYNTHESIS_MODEL"
 cat > /dev/null
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"Combined test reviews\",\"verdict\":\"pass\",\"findings\":[]}"}}'
+printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 2, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"location\": null, \"sources\": [1]}]}"}}'
 `), 0o755))
 			cfg := fmt.Sprintf(`
 default_model = "unrelated-review-model"
@@ -79,7 +79,7 @@ synthesis_model = %q
 synthesis_reasoning = %q
 `, scriptPath, tt.globalModel, tt.host+"/example/project-a", tt.projectModel, tt.reasoning)
 			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(cfg), 0o600))
-			args := []string{"review", "--ref", "HEAD", "--agent", "test", "--review-types", "default,security", "--synthesis-agent", "codex"}
+			args := []string{"review", "--ref", "HEAD", "--agent", "test", "--review-types", "default,security", "--synthesis-agent", "codex", "--min-severity", "high"}
 			if tt.host == "gitlab.example.com" {
 				args = append(args, "--gl-repo", "example/project-a")
 			} else {
@@ -89,6 +89,7 @@ synthesis_reasoning = %q
 			cmd.SetArgs(args)
 			output := captureOutput(t, cmd.Execute)
 			assert.Contains(t, output, "Combined test reviews")
+			assert.Contains(t, output, "Minor naming issue.", "stdout keeps below-threshold findings")
 			model, err := os.ReadFile(modelPath)
 			require.NoError(t, err, "synthesis must invoke the agent")
 			assert.Equal(t, tt.want, string(model))
@@ -1203,7 +1204,7 @@ func TestPostCIReviewComment(t *testing.T) {
 			{Agent: "codex", Status: review.ResultFailed, Error: "agent failed"},
 			{Agent: "gemini", Status: review.ResultDone, Output: "## Findings\n"},
 		}
-		comment := review.FormatRawBatchComment(results, stubMRHead)
+		comment := review.FormatRawBatchComment(review.CommentConfig{}, results, stubMRHead)
 		err := postCIReviewComment(
 			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
 			comment, false, "", stubMRRef,

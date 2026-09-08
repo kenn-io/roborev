@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -81,6 +82,29 @@ func (r ReviewResult) ApplyMinSeverity(minSeverity string) ReviewResult {
 	r.MinSeverity = effective
 	r.Verdict = storage.ParseVerdictAtSeverity(r.Output, effective)
 	return r
+}
+
+// ResolveSynthesisMinSeverity selects the policy for a combined result. An
+// explicit CI threshold wins. Otherwise use the least restrictive successful
+// member threshold, so synthesis cannot hide findings actionable to a member.
+// Failed and skipped members do not contribute a review policy.
+func ResolveSynthesisMinSeverity(results []ReviewResult, explicit string) string {
+	if explicit = strings.ToLower(strings.TrimSpace(explicit)); explicit != "" {
+		return explicit
+	}
+	effective := ""
+	found := false
+	for _, result := range results {
+		if !IsSubstantiveOutput(result) {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSpace(result.MinSeverity))
+		if !found || max(config.SeverityRank(candidate), 1) < max(config.SeverityRank(effective), 1) {
+			effective = candidate
+			found = true
+		}
+	}
+	return effective
 }
 
 // Result status values for ReviewResult.Status.

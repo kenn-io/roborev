@@ -350,7 +350,7 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 		Status:     ResultDone,
 		Output:     strings.Repeat("x", MaxCommentLen+500),
 	}
-	comment := formatSingleResult(r, "abc123456789")
+	comment := formatSingleResult(r, "abc123456789", &CommentConfig{})
 
 	// The header and footer add some overhead, but the output
 	// portion must not exceed MaxCommentLen.
@@ -371,7 +371,7 @@ func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
 		Status:     ResultDone,
 		Output:     strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100),
 	}
-	comment := formatSingleResult(r, "abc123456789")
+	comment := formatSingleResult(r, "abc123456789", &CommentConfig{})
 	require.True(t, utf8.ValidString(comment), "truncated comment is not valid UTF-8")
 	assert.Contains(t, comment, "truncated", "expected truncation suffix")
 }
@@ -408,7 +408,7 @@ func TestFullReviewContentPreservesUTF8(t *testing.T) {
 	}}
 
 	t.Run("FormatRawBatchComment", func(t *testing.T) {
-		comment := FormatRawBatchComment(reviews, "def456789012")
+		comment := FormatRawBatchComment(CommentConfig{}, reviews, "def456789012")
 		require.True(t, utf8.ValidString(comment),
 			"posted comment must not contain a split rune")
 		assert.Contains(t, comment, oversized)
@@ -437,7 +437,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 			Error:      "crashed",
 		},
 	}
-	comment := FormatRawBatchComment(
+	comment := FormatRawBatchComment(CommentConfig{},
 		reviews, "def456789012")
 
 	assertContainsAll(t, comment, []string{
@@ -623,7 +623,7 @@ func TestTransientMemberRendersSkipped(t *testing.T) {
 		Agent: "codex", ReviewType: "default",
 		Status: ResultFailed, Error: OutageErrorPrefix + "429",
 	}
-	out := FormatRawBatchComment([]ReviewResult{r}, "abc1234def")
+	out := FormatRawBatchComment(CommentConfig{}, []ReviewResult{r}, "abc1234def")
 	assert.Contains(t, out, "provider unavailable")
 	assert.NotContains(t, out, "Review failed. Check CI logs")
 }

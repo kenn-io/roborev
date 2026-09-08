@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +19,67 @@ import (
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing.T) {
+	raw := []byte(`{"schema_version":2,"summary":"Includes a minor naming issue.","verdict":"fail","findings":[{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":"worker.go:10","sources":[1]},{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1]}]}`)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	rev := &storage.Review{
+		Output:           "Original complete review.",
+		StructuredOutput: structured,
+		Job:              &storage.ReviewJob{MinSeverity: "low"},
+	}
+	members := []storage.BatchReviewResult{
+		{Agent: "gemini", Status: "failed"},
+		{Agent: "codex", Status: "done", Output: "Found issues."},
+	}
+	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "medium"}, rev, "F", members, false, "abc1234")
+	assert := assert.New(t)
+	assert.Contains(comment, "### High\n\n- worker.go:10: State is lost. Persist it.")
+	assert.Contains(comment, "Reported by: codex")
+	assert.NotContains(comment, "Minor naming issue.")
+	assert.Equal("Original complete review.", rev.Output)
+	stored, err := json.Marshal(rev.StructuredOutput)
+	require.NoError(t, err)
+	assert.JSONEq(string(raw), string(stored))
+}
+
+func TestPanelPRCommentFiltersProseWithoutChangingReview(t *testing.T) {
+	prose := "### Low\nMinor naming issue.\n\n---\n\n### High\nState is lost. Persist it."
+	rev := &storage.Review{
+		Output: prose,
+		Job:    &storage.ReviewJob{MinSeverity: "low"},
+	}
+	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "high"}, rev, "F", nil, false, "abc1234")
+	assert.NotContains(t, comment, "Minor naming issue.")
+	assert.Contains(t, comment, "State is lost. Persist it.")
+	assert.Equal(t, prose, rev.Output)
+}
+
+func TestPanelCommentLookupErrorDoesNotPostFallback(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	h.CaptureCommitStatuses()
+	panel, _, _ := h.seedCIPanelRun(t, "acme/api", 1, "lookup-test", "base..lookup-test", []jobSpec{
+		{Agent: "test", Status: "done", Output: "### Low\nMinor naming issue."},
+	})
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	require.True(t, won)
+	// Make the synthesis query fail while the posting-claim table stays usable.
+	_, err = h.DB.Exec("ALTER TABLE review_jobs RENAME COLUMN min_severity TO unavailable_severity")
+	require.NoError(t, err)
+	_, err = h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.Error(t, err)
+	h.Poller.postPanelComment(panel, members, storage.PanelOutcomeReviewPosted)
+	assert.Empty(t, *comments)
+	assert.False(t, h.panelPostedAt(t, panel.ID))
+	won, err = h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	assert.True(t, won, "lookup errors release the claim for retry")
+}
 
 // ciEvent builds a review.completed/failed Event for a synthesis or member job.
 func ciEvent(jobID int64, eventType string) Event {

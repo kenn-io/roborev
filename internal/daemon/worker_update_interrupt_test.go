@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -313,7 +314,7 @@ func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 
 	tc.Pool.completeSynthesisContext("worker-update", job, synthesisResult{
-		agentName: "test", prompt: "prompt", output: "No issues found.",
+		review: reviewpkg.ReviewResult{Agent: "test", Output: "No issues found."}, prompt: "prompt",
 	})
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)

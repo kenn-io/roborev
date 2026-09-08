@@ -23,7 +23,7 @@ var errSynthesisCanceled = errors.New("synthesis canceled")
 // processSynthesisJob executes a panel synthesis job against the run's member
 // reviews. It picks one of three branches: all members failed -> durable fail
 // review (no agent); exactly one member succeeded -> passthrough that member's
-// output unless min-severity filtering requires a synthesis pass; two or more
+// output and effective threshold; two or more
 // succeeded -> a single verify+dedupe agent call.
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
@@ -45,6 +45,11 @@ func (wp *WorkerPool) processSynthesisJob(
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(job.MinSeverity)
 	}
+	// Keep the configured job immutable while carrying the effective policy
+	// through every synthesis outcome and its persisted completion.
+	resolvedJob := *job
+	resolvedJob.MinSeverity = reviewpkg.ResolveSynthesisMinSeverity(results, job.MinSeverity)
+	job = &resolvedJob
 	succeeded := filterSucceeded(results)
 
 	switch len(succeeded) {
@@ -57,26 +62,29 @@ func (wp *WorkerPool) processSynthesisJob(
 		// The comment renders the head SHA (FormatAllFailedComment short-SHAs its
 		// arg), so pass the head side of the frozen mergeBase..headSHA range.
 		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			agentName: job.Agent,
-			output:    reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)),
-			verdict:   storage.VerdictFail,
+			review: reviewpkg.ReviewResult{
+				Agent:       job.Agent,
+				Output:      reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)),
+				Verdict:     storage.VerdictFail,
+				MinSeverity: job.MinSeverity,
+			},
 		})
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
 		// label the review with that member's agent. Its verdict already
 		// honors the panel threshold, so no synthesis agent is needed.
 		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			agentName:        succeeded[0].Agent,
-			output:           succeeded[0].Output,
-			verdict:          succeeded[0].Verdict,
-			structuredOutput: succeeded[0].StructuredOutput,
+			review: succeeded[0],
 		})
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
-				agentName: job.Agent,
-				output:    "No issues found.",
-				verdict:   storage.VerdictPass,
+				review: reviewpkg.ReviewResult{
+					Agent:       job.Agent,
+					Output:      "No issues found.",
+					Verdict:     storage.VerdictPass,
+					MinSeverity: job.MinSeverity,
+				},
 			})
 			return
 		}
@@ -133,13 +141,16 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		log.Printf("[%s] Error encoding synthesis document for job %d: %v", workerID, job.ID, err)
 	}
 	wp.completeSynthesisContext(workerID, job, synthesisResult{
-		agentName:        resolvedAgent,
-		prompt:           prompt,
-		output:           doc.Markdown(job.MinSeverity),
-		verdict:          reviewpkg.SynthesisVerdict(doc, job.MinSeverity),
-		structuredOutput: structured,
-		capturedSession:  capturedSession,
-		captureUsage:     true,
+		review: reviewpkg.ReviewResult{
+			Agent:            resolvedAgent,
+			Output:           doc.Markdown(job.MinSeverity),
+			Verdict:          reviewpkg.SynthesisVerdict(doc, job.MinSeverity),
+			StructuredOutput: structured,
+			MinSeverity:      job.MinSeverity,
+		},
+		prompt:          prompt,
+		capturedSession: capturedSession,
+		captureUsage:    true,
 	})
 }
 
@@ -238,15 +249,11 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 // capture must happen after the terminal write but before the completion
 // broadcast so a CI cost footer never renders an unpriced synthesis row.
 type synthesisResult struct {
-	agentName string
-	prompt    string
-	output    string
-	verdict   storage.Verdict
-	// structuredOutput carries a passed-through member's findings document
-	// so the synthesis review is as machine-readable as the member review.
-	structuredOutput json.RawMessage
-	capturedSession  string
-	captureUsage     bool
+	// Keep the review and its effective policy together across completion.
+	review          reviewpkg.ReviewResult
+	prompt          string
+	capturedSession string
+	captureUsage    bool
 }
 
 // completeSynthesisContext stores the synthesis review, guards against the
@@ -263,15 +270,15 @@ func (wp *WorkerPool) completeSynthesisContext(
 func (wp *WorkerPool) completeSynthesisLocked(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
-	agentName, prompt, output := res.agentName, res.prompt, res.output
+	agentName, prompt, output := res.review.Agent, res.prompt, res.review.Output
 	var completeErr error
-	if res.verdict != storage.VerdictUnknown {
+	if res.review.Verdict != storage.VerdictUnknown {
 		completeErr = wp.db.CompleteJobResult(
 			job.ID, agentName, prompt, storage.ReviewCompletion{
 				Output:           output,
-				Verdict:          res.verdict,
-				StructuredOutput: res.structuredOutput,
-				MinSeverity:      job.MinSeverity,
+				Verdict:          res.review.Verdict,
+				StructuredOutput: res.review.StructuredOutput,
+				MinSeverity:      res.review.MinSeverity,
 			},
 		)
 	} else {
@@ -305,7 +312,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 			context.Background(), workerID, job, res.capturedSession,
 		)
 	}
-	verdict := res.verdict
+	verdict := res.review.Verdict
 	if verdict == storage.VerdictUnknown {
 		verdict = storage.ParseVerdict(output)
 	}

@@ -371,148 +371,132 @@ func stripFieldLabel(s string) string {
 // Requires separators to be followed by space to avoid "High-level overview".
 // Skips lines that appear to be part of a severity legend/rubric.
 func HighestSeverityLabel(output string) string {
-	lc := strings.ToLower(output)
-	severities := []string{"critical", "high", "medium", "low"}
-	lines := strings.Split(lc, "\n")
+	lines := strings.Split(output, "\n")
 	highest := ""
-	record := func(sev string) {
-		if config.SeverityRank(sev) > config.SeverityRank(highest) {
-			highest = sev
-		}
-	}
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) == 0 {
-			continue
-		}
-
-		// Check if line starts with bullet/number - if so, strip it
-		first := trimmed[0]
-		hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
-			strings.HasPrefix(trimmed, "•")
-
-		checkText := trimmed
-		if hasBullet {
-			// Strip leading bullets/asterisks/numbers
-			checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
-			checkText = strings.TrimSpace(checkText)
-		}
-
-		// Strip markdown formatting (bold, headers) before checking
-		checkText = stripMarkdown(checkText)
-
-		// Structured reviews render each finding as a numbered heading whose
-		// whole text is the severity: "### 1. Low". Recognize that form so
-		// rendered structured output parses the same way as prose findings.
-		// Any other heading falls through to the prose checks below, so
-		// "### High — crash" still counts.
-		if first == '#' {
-			heading := stripListMarker(checkText)
-			if slices.Contains(severities, heading) {
-				if !isLegendEntry(lines, i) {
-					record(heading)
-				}
-				continue
-			}
-		}
-
-		// Check if text starts with a severity word
-		for _, sev := range severities {
-			if !strings.HasPrefix(checkText, sev) {
-				continue
-			}
-
-			// Check if followed by separator (dash, em-dash, colon, pipe)
-			rest := checkText[len(sev):]
-			rest = strings.TrimSpace(rest)
-			if len(rest) == 0 {
-				continue
-			}
-
-			// Check for valid separator
-			hasValidSep := false
-			// Check for em-dash or en-dash (these are unambiguous)
-			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
-				hasValidSep = true
-			}
-			// Check for colon or pipe (unambiguous separators)
-			if rest[0] == ':' || rest[0] == '|' {
-				hasValidSep = true
-			}
-			// For hyphen, require space after to avoid "High-level"
-			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
-				hasValidSep = true
-			}
-
-			if !hasValidSep {
-				continue
-			}
-
-			// Skip if this looks like a legend/rubric entry
-			// Check if previous non-empty line is a legend header
-			if isLegendEntry(lines, i) {
-				continue
-			}
-
-			record(sev)
-			break
-		}
-
-		// Check for "severity: <level>" pattern (e.g., "**Severity**: High")
-		if strings.HasPrefix(checkText, "severity") {
-			rest := checkText[len("severity"):]
-			rest = strings.TrimSpace(rest)
-			hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
-				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–"))
-			// Accept hyphen-minus when followed by space (mirrors the severity-word branch)
-			if !hasSep && len(rest) > 1 && rest[0] == '-' && rest[1] == ' ' {
-				hasSep = true
-			}
-			if hasSep {
-				// Skip separator and whitespace
-				rest = strings.TrimLeft(rest, ":-–—| ")
-				rest = strings.TrimSpace(rest)
-				for _, sev := range severities {
-					if strings.HasPrefix(rest, sev) {
-						if !isLegendEntry(lines, i) {
-							record(sev)
-						}
-						break
-					}
-				}
-			}
+	for _, label := range ProseSeverityLabels(lines) {
+		if !label.Legend && config.SeverityRank(label.Severity) > config.SeverityRank(highest) {
+			highest = label.Severity
 		}
 	}
 	return highest
 }
 
-// isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
-// by looking at preceding lines for legend indicators. Scans up to 10 lines back,
-// skipping empty lines, severity lines, and description lines that may appear
-// between legend entries.
-func isLegendEntry(lines []string, i int) bool {
-	for j := i - 1; j >= 0 && j >= i-10; j-- {
-		prev := strings.TrimSpace(lines[j])
-		if len(prev) == 0 {
+// ProseLabel identifies a severity and whether its line belongs to a rubric.
+type ProseLabel struct {
+	Severity string
+	Legend   bool
+}
+
+// ProseSeverityLabels reads rubric context once, in document order. Rubrics
+// contain contiguous label entries and indented descriptions. A new paragraph,
+// heading, or review section ends the rubric, regardless of its length or title.
+// Blank space between a rubric header and its first entry is allowed.
+func ProseSeverityLabels(lines []string) []ProseLabel {
+	labels := make([]ProseLabel, len(lines))
+	legend, entries := false, false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		severity := proseSeverityLabel(line)
+		switch {
+		case severity == "" && isLegendHeader(line):
+			legend, entries = true, false
+		case trimmed == "":
+			if entries {
+				legend = false
+			}
+		case strings.HasPrefix(trimmed, "#"), ProseSection(line) != "":
+			legend = false
+		case severity != "":
+			entries = true
+		case line == strings.TrimLeft(line, " \t"):
+			legend = false
+		}
+		labels[i] = ProseLabel{Severity: severity, Legend: legend}
+	}
+	return labels
+}
+
+func proseSeverityLabel(line string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(line))
+	if len(trimmed) == 0 {
+		return ""
+	}
+	severities := []string{"critical", "high", "medium", "low"}
+	first := trimmed[0]
+	hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
+		strings.HasPrefix(trimmed, "•")
+	checkText := trimmed
+	if hasBullet {
+		checkText = strings.TrimSpace(strings.TrimLeft(trimmed, "-*•0123456789.) "))
+	}
+	checkText = stripMarkdown(checkText)
+
+	// Structured prose headings contain only a numbered severity label.
+	if first == '#' {
+		heading := stripListMarker(checkText)
+		if slices.Contains(severities, heading) {
+			return heading
+		}
+	}
+	for _, sev := range severities {
+		if !strings.HasPrefix(checkText, sev) {
 			continue
 		}
-
-		// Strip markdown and list markers so bolded headers like
-		// "**Severity levels:**" are recognized the same as plain text.
-		prev = stripMarkdown(stripListMarker(prev))
-
-		// Check for legend header patterns (ends with ":" and contains indicator word)
-		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
-			if strings.Contains(prev, "severity") ||
-				strings.Contains(prev, "level") ||
-				strings.Contains(prev, "legend") ||
-				strings.Contains(prev, "priority") ||
-				strings.Contains(prev, "rubric") ||
-				strings.Contains(prev, "rating") ||
-				strings.Contains(prev, "scale") {
-				return true
+		rest := strings.TrimSpace(checkText[len(sev):])
+		if len(rest) == 0 {
+			continue
+		}
+		// A hyphen requires a following space to exclude "High-level".
+		if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") ||
+			rest[0] == ':' || rest[0] == '|' || strings.HasPrefix(rest, "- ") {
+			return sev
+		}
+	}
+	if strings.HasPrefix(checkText, "severity") {
+		rest := strings.TrimSpace(checkText[len("severity"):])
+		hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
+			strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") || strings.HasPrefix(rest, "- "))
+		if hasSep {
+			rest = strings.TrimSpace(strings.TrimLeft(rest, ":-–—| "))
+			for _, sev := range severities {
+				if strings.HasPrefix(rest, sev) {
+					return sev
+				}
 			}
+		}
+	}
+	return ""
+}
+
+// ProseSection identifies explicit review section boundaries. The return
+// value is "summary", "findings", "separator", or empty for ordinary prose.
+// Verdict parsing and comment preparation use the same boundaries.
+func ProseSection(line string) string {
+	line = strings.ToLower(strings.TrimSpace(line))
+	if line == "---" {
+		return "separator"
+	}
+	line = stripListMarker(stripMarkdown(line))
+	if line == "summary" || strings.HasPrefix(line, "summary:") {
+		return "summary"
+	}
+	switch line {
+	case "findings", "findings:", "review findings", "review findings:":
+		return "findings"
+	default:
+		return ""
+	}
+}
+
+// isLegendHeader recognizes the rubric introduction, not its entries.
+func isLegendHeader(line string) bool {
+	line = stripMarkdown(stripListMarker(strings.ToLower(strings.TrimSpace(line))))
+	if !strings.HasSuffix(line, ":") && !strings.HasSuffix(line, "：") {
+		return false
+	}
+	for _, indicator := range []string{"severity", "level", "legend", "priority", "rubric", "rating", "scale"} {
+		if strings.Contains(line, indicator) {
+			return true
 		}
 	}
 	return false

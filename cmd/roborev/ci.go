@@ -349,7 +349,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	headSHA := extractHeadSHA(gitRef)
 
 	// Synthesize
-	comment, synthErr := review.Synthesize(
+	synthesis, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
 			Agent:        synthAgent,
 			Model:        config.ResolveCISynthesisModel(globalCfg),
@@ -366,10 +366,14 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Output to stdout (even on all-failed, for CI logs)
-	fmt.Println(comment)
+	fmt.Println(synthesis.Output)
 
 	// Post as PR/MR comment if requested
 	if opts.comment {
+		comment := synthesis.Output
+		if forge == ciForgeGitHub {
+			comment = synthesis.GitHubComment
+		}
 		upsert := resolveCIUpsert(opts, repoCfg, globalCfg)
 		switch err := postCIReviewComment(
 			ctx, forge, opts, results, comment, upsert, root, gitRef,

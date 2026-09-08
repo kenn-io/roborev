@@ -465,7 +465,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 		{Agent: "gemini", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	comment := review.FormatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(review.CommentConfig{}, reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Combined Review (`abc123d`)",
@@ -712,7 +712,7 @@ func TestFormatRawBatchComment_PreservesFullOutput(t *testing.T) {
 		{Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},
 	}
 
-	comment := review.FormatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(review.CommentConfig{}, reviews, "abc123def456")
 	assert.Contains(t, comment, reviews[0].Output)
 }
 
@@ -727,7 +727,7 @@ func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
 		},
 	}
 
-	comment := formatPanelPRComment(storedReview, "F", nil, false)
+	comment := formatPanelPRComment(review.CommentConfig{}, storedReview, "F", nil, false)
 
 	require.True(t, utf8.ValidString(comment), "truncated panel comment is not valid UTF-8")
 	assert.Contains(t, comment, "...(truncated)", "expected truncation suffix")
@@ -743,7 +743,7 @@ func TestFormatPanelPRComment_DoesNotTruncateWhenCommentFits(t *testing.T) {
 		},
 	}
 
-	comment := formatPanelPRComment(storedReview, "F", nil, false)
+	comment := formatPanelPRComment(review.CommentConfig{}, storedReview, "F", nil, false)
 
 	assert.LessOrEqual(t, len(comment), review.MaxCommentLen)
 	assert.NotContains(t, comment, "...(truncated)")
@@ -2775,7 +2775,7 @@ func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	comment := review.FormatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(review.CommentConfig{}, reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"skipped (quota)",

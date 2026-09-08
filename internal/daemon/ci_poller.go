@@ -2328,7 +2328,11 @@ func (p *CIPoller) ensureReviewAttempt(row *storage.CIPanel) (*storage.ReviewAtt
 // This is the pre-existing posting path, now invoked only for
 // OutcomePost/OutcomeAllSkip.
 func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.BatchReviewResult, outcome string) {
-	body := p.panelCommentBody(row, members)
+	body, err := p.panelCommentBody(row, members)
+	if err != nil {
+		p.handlePanelPostError(row, err)
+		return
+	}
 	if err := p.callPostPRComment(row.GithubRepo, row.PRNumber, body); err != nil {
 		p.handlePanelPostError(row, err)
 		return
@@ -2420,35 +2424,40 @@ func (p *CIPoller) recordDeferral(
 }
 
 // panelCommentBody picks the PR comment body from the synthesis job status,
-// applying the F11 wrapper rule. Synthesis done -> the persisted review (wrapped
-// with a verdict header only when it lacks a `## roborev:` one, but always with
-// a panel footer); synthesis failed or its review missing -> the raw-member
+// applying the F11 wrapper rule. Synthesis done -> the persisted review through
+// shared comment preparation and formatting, with one header and a panel footer;
+// synthesis failed or its review missing -> the raw-member
 // fallback, which already carries the header and renders row.HeadSHA. SHAs
 // always come from row.HeadSHA.
-func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) string {
+func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) (string, error) {
 	results := toReviewResults(members)
 	if !reviewpkg.HasSubstantiveOutput(results) {
-		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA)
-	}
-	raw := func() string {
-		return reviewpkg.FormatRawBatchComment(results, row.HeadSHA)
+		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA), nil
 	}
 	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
-	if err != nil || synth == nil || synth.Status != storage.JobStatusDone {
-		return raw() // F4: synthesis agent failed (no review) -> raw member fallback
+	if err != nil {
+		return "", fmt.Errorf("load synthesis for PR comment: %w", err)
+	}
+	threshold := ""
+	if synth != nil {
+		threshold = synth.MinSeverity
+	}
+	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
+	raw := func() string {
+		return reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)
+	}
+	if synth == nil || synth.Status != storage.JobStatusDone {
+		return raw(), nil // F4: synthesis agent failed (no review) -> raw member fallback
 	}
 	rev, err := p.db.GetReviewByJobID(synth.ID)
 	if err != nil || rev == nil {
-		return raw() // review unexpectedly missing -> raw fallback
+		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
-	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return appendPanelPRFooter(rev.Output, rev, members, includeCosts)
-	}
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
-		rev, string(verdict), members, includeCosts, row.HeadSHA,
-	)
+		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
+	), nil
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
@@ -3533,11 +3542,11 @@ func toReviewResult(
 	return result
 }
 
-func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
-	return formatPanelPRCommentWithHead(review, verdict, members, includeCosts, "")
+func formatPanelPRComment(cfg reviewpkg.CommentConfig, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
+	return formatPanelPRCommentWithHead(cfg, review, verdict, members, includeCosts, "")
 }
 
-func formatPanelPRCommentWithHead(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
+func formatPanelPRCommentWithHead(cfg reviewpkg.CommentConfig, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	var b strings.Builder
 
 	if headSHA != "" {
@@ -3554,7 +3563,13 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 		}
 	}
 
-	output := review.Output
+	result := reviewpkg.ReviewResult{Output: review.Output}
+	if len(review.StructuredOutput) > 0 {
+		result.StructuredOutput, _ = json.Marshal(review.StructuredOutput)
+	}
+	// Synthesis cites only successful members, in their original order.
+	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
+	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(cfg, result, labels))
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
