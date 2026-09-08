@@ -288,6 +288,127 @@ func TestGetAnalyticsPreservesRequestedTimeRange(t *testing.T) {
 	require.Len(t, got.TimeSeries, 1001)
 }
 
+func TestGetAnalyticsAlignsBucketBoundaries(t *testing.T) {
+	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		seed        func(t *testing.T, db *DB)
+		opts        AnalyticsOptions
+		wantLen     int
+		wantFirst   time.Time
+		wantLast    time.Time
+		wantLastEnd time.Time
+	}{
+		{
+			name: "1001-hour",
+			opts: AnalyticsOptions{
+				Since: base, Until: base.Add(1001 * time.Hour), Bucket: AnalyticsBucketHour,
+			},
+			wantLen: 1001, wantFirst: base, wantLast: base.Add(1000 * time.Hour),
+			wantLastEnd: base.Add(1001 * time.Hour),
+		},
+		{
+			name: "hour",
+			opts: AnalyticsOptions{
+				Since: time.Date(2026, time.August, 1, 0, 30, 0, 0, time.UTC),
+				Until: time.Date(2026, time.August, 1, 3, 15, 0, 0, time.UTC), Bucket: AnalyticsBucketHour,
+			},
+			wantLen: 4, wantFirst: time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC),
+			wantLast:    time.Date(2026, time.August, 1, 3, 0, 0, 0, time.UTC),
+			wantLastEnd: time.Date(2026, time.August, 1, 4, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "day",
+			opts: AnalyticsOptions{
+				Since: time.Date(2026, time.August, 3, 10, 0, 0, 0, time.UTC),
+				Until: time.Date(2026, time.August, 6, 10, 0, 0, 0, time.UTC), Bucket: AnalyticsBucketDay,
+			},
+			wantLen: 4, wantFirst: time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC),
+			wantLast:    time.Date(2026, time.August, 6, 0, 0, 0, 0, time.UTC),
+			wantLastEnd: time.Date(2026, time.August, 7, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "week",
+			opts: AnalyticsOptions{
+				Since: time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC),
+				Until: time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC), Bucket: AnalyticsBucketWeek,
+			},
+			wantLen: 4, wantFirst: time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC),
+			wantLast:    time.Date(2026, time.August, 24, 0, 0, 0, 0, time.UTC),
+			wantLastEnd: time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "month",
+			opts: AnalyticsOptions{
+				Since: time.Date(2026, time.August, 15, 10, 0, 0, 0, time.UTC),
+				Until: time.Date(2026, time.November, 2, 10, 0, 0, 0, time.UTC), Bucket: AnalyticsBucketMonth,
+			},
+			wantLen: 4, wantFirst: time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC),
+			wantLast:    time.Date(2026, time.November, 1, 0, 0, 0, 0, time.UTC),
+			wantLastEnd: time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "populated-explicit",
+			seed: func(t *testing.T, db *DB) {
+				repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+				seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+					name: "preallocation", jobType: JobTypeReview, status: JobStatusDone,
+					enqueuedAt: base, startedAt: base, finishedAt: base.Add(time.Hour), verdict: new(1),
+				})
+			},
+			opts: AnalyticsOptions{
+				Since: base, Until: base.Add(3 * time.Hour), Bucket: AnalyticsBucketHour,
+			},
+			wantLen: 3, wantFirst: base, wantLast: base.Add(2 * time.Hour),
+			wantLastEnd: base.Add(3 * time.Hour),
+		},
+		{
+			name: "inferred",
+			seed: func(t *testing.T, db *DB) {
+				repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+				seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+					name: "inferred", jobType: JobTypeReview, status: JobStatusDone,
+					enqueuedAt: base, startedAt: base, finishedAt: base.Add(2*time.Hour + 15*time.Minute), verdict: new(1),
+				})
+			},
+			opts:    AnalyticsOptions{Bucket: AnalyticsBucketHour},
+			wantLen: 1, wantFirst: base.Add(2 * time.Hour), wantLast: base.Add(2 * time.Hour),
+			wantLastEnd: base.Add(3 * time.Hour),
+		},
+		{
+			name: "empty", opts: AnalyticsOptions{Bucket: AnalyticsBucketHour}, wantLen: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			if tc.seed != nil {
+				tc.seed(t, db)
+			}
+
+			got, err := db.GetAnalytics(tc.opts)
+			require.NoError(t, err)
+			assert := assert.New(t)
+			assert.Len(got.TimeSeries, tc.wantLen)
+			assert.NotNil(got.TimeSeries)
+			firstStart, lastStart, lastEnd := analyticsTestTimeSeriesEndpoints(got.TimeSeries)
+			assert.Equal(tc.wantFirst, firstStart)
+			assert.Equal(tc.wantLast, lastStart)
+			assert.Equal(tc.wantLastEnd, lastEnd)
+		})
+	}
+}
+
+func analyticsTestTimeSeriesEndpoints(series []AnalyticsTimeBucket) (time.Time, time.Time, time.Time) {
+	if len(series) == 0 {
+		return time.Time{}, time.Time{}, time.Time{}
+	}
+	last := series[len(series)-1]
+	return series[0].Start, last.Start, last.End
+}
+
 func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })

@@ -240,8 +240,8 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	}
 	snapshot := &AnalyticsSnapshot{
 		SchemaVersion: AnalyticsSchemaVersion, Filters: filters,
-		TimeSeries: []AnalyticsTimeBucket{}, Projects: []AnalyticsProjectRow{},
-		Sources: []AnalyticsDimensionRow{}, Agents: []AnalyticsDimensionRow{},
+		Projects: []AnalyticsProjectRow{},
+		Sources:  []AnalyticsDimensionRow{}, Agents: []AnalyticsDimensionRow{},
 		Models: []AnalyticsDimensionRow{}, Options: AnalyticsFilterOptions{
 			Projects: []string{}, Sources: []string{}, Agents: []string{}, Models: []string{},
 		},
@@ -304,6 +304,11 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	if seriesUntil.IsZero() && len(starts) > 0 {
 		seriesUntil = analyticsBucketEnd(starts[len(starts)-1], opts.Bucket)
 	}
+	seriesBuckets := 0
+	for start := seriesStart; !start.IsZero() && start.Before(seriesUntil); start = analyticsBucketEnd(start, opts.Bucket) {
+		seriesBuckets++
+	}
+	snapshot.TimeSeries = make([]AnalyticsTimeBucket, 0, seriesBuckets)
 	for start := seriesStart; !start.IsZero() && start.Before(seriesUntil); start = analyticsBucketEnd(start, opts.Bucket) {
 		acc := buckets[start]
 		if acc == nil {
