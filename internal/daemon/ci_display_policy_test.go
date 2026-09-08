@@ -19,7 +19,7 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
-	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections"} {
+	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
 				name          string
@@ -57,6 +57,21 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					}
 					if format == "bulleted sections" {
 						output = "## Summary\nReview notes.\n\n## Feature findings\n- **Low — Minor naming issue.**\n  Rename it.\n\n- **Medium — Missing cleanup.**\n  Close it.\n\n## Additional considerations\nAn independent concern without a severity.\n\n## Implementation findings\n- **High — State is lost.**\n  Persist the complete state."
+					}
+					if format == "rubric notes" {
+						output = "Severity levels:\nHigh: immediate action.\nLow: minor concern.\n\nAn independent concern after the rubric.\n\n" + output
+					}
+					if format == "nested summary" {
+						output = "## Summary\n\n### Details\nSummary-only detail.\n\nHigh: Summary-only severity mention.\n\n## Findings\n" + output
+					}
+					if format == "colon title" {
+						output = "High: Incorrect severity level:\n  The severity setting is ignored.\n\n" + output
+					}
+					if format == "bullet independent heading" {
+						output = "## Findings\n- **Medium — Missing cleanup.**\n  Close it.\n\n### Additional considerations\nAn independent concern after a bulleted finding.\n\n- **High — State is lost.**\n  Persist it.\n\n- **Low — Minor naming issue.**\n  Rename it."
+					}
+					if format == "bullet nested fix" {
+						output = "- **Medium — Missing cleanup.**\n\n  ### Fix\n  Close the resource.\n\n- **High — State is lost.**\n  Persist it.\n\n- **Low — Minor naming issue.**\n  Rename it."
 					}
 					var document json.RawMessage
 					if format == "structured" {
@@ -104,6 +119,25 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
+					if format == "colon title" {
+						assert.Contains(body, "High: Incorrect severity level:")
+						assert.Contains(body, "The severity setting is ignored.")
+					}
+					if format == "bullet independent heading" {
+						assert.Contains(body, "An independent concern after a bulleted finding.")
+					}
+					if format == "bullet nested fix" {
+						assert.Equal(policy.mediumVisible, strings.Contains(body, "Close the resource."))
+					}
+
+					if format == "rubric notes" {
+						assert.Contains(body, "An independent concern after the rubric.")
+					}
+					if format == "nested summary" {
+						assert.Equal(policy.lowVisible, strings.Contains(body, "Summary-only detail."))
+						assert.Equal(policy.lowVisible, strings.Contains(body, "Summary-only severity mention."))
+					}
+
 					if format == "section headings" || format == "bulleted sections" {
 						assert.Contains(body, "Persist the complete state.")
 						assert.Contains(body, "## Additional considerations\nAn independent concern without a severity.")

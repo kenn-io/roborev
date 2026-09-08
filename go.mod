@@ -31,6 +31,7 @@ require (
 	github.com/sourcegraph/go-diff v0.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/yuin/goldmark v1.8.5
 	gitlab.com/gitlab-org/api/client-go/v2 v2.58.0
 	go.kenn.io/kit v0.21.1
 	golang.org/x/sys v0.47.0
@@ -139,7 +140,6 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
-	github.com/yuin/goldmark v1.8.5 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

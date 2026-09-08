@@ -5,6 +5,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -149,16 +153,17 @@ type proseFinding struct {
 	text     string
 }
 
-// splitProseFindings keeps each finding's Markdown intact. A severity label
-// starts a finding; a peer/parent heading or horizontal rule ends it. Nested
-// headings remain part of the finding. Explicit summary
-// sections are excluded because they may describe findings hidden by the filter.
+// splitProseFindings keeps each finding's Markdown intact. Markdown containers
+// distinguish nested details from independent sections. Summary suppression
+// lasts until a section boundary; rubric suppression comes only from the shared
+// per-line classification, so it cannot spill into subsequent prose.
 func splitProseFindings(output string) []proseFinding {
 	var blocks []proseFinding
 	var lines []string
 	severity := ""
-	sectionLevel, findingLevel := 0, 0
-	collect := true
+	findingLevel := 0
+	var findingItem *ast.ListItem
+	inSummary, summaryLevel := false, 0
 	fence := ""
 	flush := func() {
 		if text := strings.TrimSpace(strings.Join(lines, "\n")); text != "" {
@@ -166,13 +171,16 @@ func splitProseFindings(output string) []proseFinding {
 		}
 		lines = nil
 		severity = ""
+		findingLevel = 0
+		findingItem = nil
 	}
 	inputLines := strings.Split(output, "\n")
 	labels := storage.ProseSeverityLabels(inputLines)
+	layout := proseLineLayout(output, inputLines)
 	for i, line := range inputLines {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
-			if collect {
+			if !inSummary {
 				lines = append(lines, line)
 			}
 			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
@@ -184,41 +192,46 @@ func splitProseFindings(output string) []proseFinding {
 			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, trimmed[:1]))]
 		} else if trimmed == "---" {
 			flush()
-			collect = true
+			inSummary = false
 			continue
 		} else {
-			level := proseHeadingLevel(line)
-			if level > 0 && (severity == "" || findingLevel == 0 || level <= findingLevel) {
-				flush()
-				collect = true
-				sectionLevel = level
-			}
+			level := layout[i].headingLevel
 			section := storage.ProseSection(line)
+			if inSummary {
+				if section == "findings" || (level > 0 && (summaryLevel == 0 || level <= summaryLevel)) {
+					inSummary = false
+				} else {
+					continue
+				}
+			}
 			if section == "summary" {
 				flush()
-				collect = false
-				continue
-			}
-			if section == "findings" {
-				collect = true
+				inSummary, summaryLevel = true, level
 				continue
 			}
 			if labels[i].Legend {
 				flush()
-				collect = false
+				continue
+			}
+			if level > 0 {
+				boundary := severity == "" ||
+					(findingLevel > 0 && level <= findingLevel) ||
+					(findingLevel == 0 && (findingItem == nil || findingItem != layout[i].listItem))
+				if boundary {
+					flush()
+				}
+			}
+			if section == "findings" {
 				continue
 			}
 			if label := labels[i].Severity; label != "" {
 				flush()
 				severity = label
-				findingLevel = sectionLevel
-				if level > 0 {
-					findingLevel = level
-				}
-				collect = true
+				findingLevel = level
+				findingItem = layout[i].listItem
 			}
 		}
-		if collect {
+		if !inSummary {
 			lines = append(lines, line)
 		}
 	}
@@ -226,17 +239,48 @@ func splitProseFindings(output string) []proseFinding {
 	return blocks
 }
 
-// proseHeadingLevel recognizes ATX headings using the CommonMark grammar:
-// https://spec.commonmark.org/0.31.2/#atx-headings
-func proseHeadingLevel(line string) int {
-	content := strings.TrimLeft(line, " ")
-	if len(line)-len(content) > 3 {
-		return 0
+type proseLineContext struct {
+	headingLevel int
+	listItem     *ast.ListItem
+}
+
+// proseLineLayout uses Markdown's parsed containers for structure, while the
+// formatter retains the original source text. A heading indented inside a list
+// item belongs to that item; an unindented heading starts a separate section.
+func proseLineLayout(output string, lines []string) []proseLineContext {
+	layout := make([]proseLineContext, len(lines))
+	offsets := make([]int, len(lines))
+	for i := 1; i < len(lines); i++ {
+		offsets[i] = offsets[i-1] + len(lines[i-1]) + 1
 	}
-	text := strings.TrimLeft(content, "#")
-	level := len(content) - len(text)
-	if level == 0 || level > 6 || (text != "" && text[0] != ' ' && text[0] != '\t') {
-		return 0
-	}
-	return level
+	root := goldmark.DefaultParser().Parse(text.NewReader([]byte(output)))
+	var items []*ast.ListItem
+	// The walker performs no fallible operations and always returns nil.
+	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if item, ok := node.(*ast.ListItem); ok {
+			if entering {
+				items = append(items, item)
+			} else {
+				items = items[:len(items)-1]
+			}
+		}
+		if !entering || node.Type() != ast.TypeBlock {
+			return ast.WalkContinue, nil
+		}
+		segments := node.Lines()
+		for j := 0; j < segments.Len(); j++ {
+			line, exact := slices.BinarySearch(offsets, segments.At(j).Start)
+			if !exact {
+				line--
+			}
+			if len(items) > 0 {
+				layout[line].listItem = items[len(items)-1]
+			}
+			if heading, ok := node.(*ast.Heading); ok {
+				layout[line].headingLevel = heading.Level
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return layout
 }

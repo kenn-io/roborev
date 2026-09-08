@@ -398,7 +398,7 @@ func ProseSeverityLabels(lines []string) []ProseLabel {
 		trimmed := strings.TrimSpace(line)
 		severity := proseSeverityLabel(line)
 		switch {
-		case isLegendHeader(line):
+		case severity == "" && isLegendHeader(line):
 			legend, entries = true, false
 		case trimmed == "":
 			if entries {

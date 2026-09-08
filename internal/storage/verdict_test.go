@@ -852,6 +852,7 @@ func TestParseVerdictAtSeverity(t *testing.T) {
 		{"unknown threshold counts every label", lowOnly, "bogus", VerdictFail},
 		{"unlabeled pass statement still passes", "No issues found.", "high", VerdictPass},
 		{"unlabeled prose finding still fails", "The auth module leaks tokens.", "high", VerdictFail},
+		{"severity-prefixed title is not a rubric", "High: incorrect priority level:\n  Scheduling ignores the requested priority.\n\nLow: naming nit", "high", VerdictFail},
 		{"legend entries are not findings", "Severity levels:\n- High: bad\n- Low: meh\n\nNo issues found.", "medium", VerdictPass},
 		{"structured heading low-only passes medium", "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n", "medium", VerdictPass},
 		{"structured heading low-only fails without threshold", "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** nit\n\n**Fix:** tidy\n", "", VerdictFail},
