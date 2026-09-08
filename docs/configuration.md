@@ -100,14 +100,15 @@ definition can be validated before it is enabled.
 
 ## Project Defaults by Git Remote
 
-To use a different review model for selected projects without editing each
-checkout, add project tables to `~/.roborev/config.toml`:
+To use a different review model or reasoning level for selected projects without
+editing each checkout, add project tables to `~/.roborev/config.toml`:
 
 ```toml
 review_model = "gpt-5.6-luna"
 
 [projects."github.com/example/project-a"]
 review_model = "gpt-5.6-sol"
+review_reasoning = "medium"
 display_name = "Project A"
 
 [projects."github.com/example/project-b"]
@@ -141,6 +142,15 @@ precedence over global `review_model_<level>`, `review_model`, and
 standalone workflows (such as fix, security, and design) retain their existing
 settings.
 
+Project `review_reasoning` supplies a default for reviews, including `--local`
+and CI. CLI reasoning, repository settings, experiment overrides, custom review
+type reasoning, and pinned panel member reasoning keep their priority. It takes
+precedence over general global review reasoning. CI retains its existing
+`thorough` default for unmatched projects. Both exact effort names (`low`,
+`medium`, `high`, `xhigh`, `max`) and legacy levels (`fast`, `standard`,
+`thorough`, `maximum`) are accepted. The effective reasoning level also selects
+reasoning-specific model settings when no model is pinned.
+
 ### Overriding Panel Models
 
 A panel can pin a model on each member, so changing `default_model` or a project
@@ -152,6 +162,9 @@ primary reviewers of selected projects, explicitly enable the override:
 review_model = "gpt-5.6-sol"
 override_panel_models = true
 synthesis_model = "gpt-6-astra" # Optional, independent synthesis override
+review_reasoning = "medium"
+override_panel_reasoning = true
+synthesis_reasoning = "medium" # Optional, independent synthesis override
 ```
 
 `override_panel_models = true` makes the project `review_model` take precedence
@@ -171,9 +184,21 @@ Daemon-free `roborev ci review` also honors the project `synthesis_model`, ahead
 of global `[ci].synthesis_model`, in GitHub and GitLab CI runs. If neither is
 set, it leaves synthesis model selection to the agent.
 
-These settings change models, not agents or providers. Use a model accepted by
-each affected agent when overriding a mixed-agent panel. Backup models retain
-their existing failover behavior. Settings for other projects are unaffected.
+`override_panel_reasoning = true` similarly forces the project
+`review_reasoning` across panel members of every type, including pinned member
+reasoning, CI matrices, and automatically added CI design reviews. It requires a
+nonempty project `review_reasoning`. Explicit CLI reasoning keeps priority in
+daemon-free CI reviews.
+
+Project `synthesis_reasoning` independently overrides panel and CI synthesis
+reasoning, including daemon-free `roborev ci review`. It does not require
+`override_panel_reasoning`. When omitted, synthesis keeps its existing reasoning
+selection.
+
+These settings change models and reasoning, not agents or providers. Use a model
+accepted by each affected agent when overriding a mixed-agent panel. Backup
+models retain their existing failover behavior. Settings for other projects are
+unaffected.
 
 ## Per-Repository Configuration
 

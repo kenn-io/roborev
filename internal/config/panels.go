@@ -316,7 +316,9 @@ func ResolveCISynthesis(
 	if err != nil {
 		return SynthesisSpec{}, err
 	}
-	synth.Reasoning = ciReasoning
+	if globalCfg.ProjectSynthesisReasoning() == "" {
+		synth.Reasoning = ciReasoning
+	}
 	return synth, nil
 }
 
@@ -349,8 +351,12 @@ func resolveMemberFromConfig(
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
+	memberReasoning := spec.Reasoning
+	if override := globalCfg.PanelReasoningOverride(); override != "" {
+		memberReasoning = override
+	}
 	reasoning, err := ResolveReviewReasoningForTypeFromConfig(
-		spec.Reasoning, repoCfg, globalCfg, reviewType,
+		memberReasoning, repoCfg, globalCfg, reviewType,
 	)
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
@@ -425,7 +431,7 @@ func resolveSynthesisFromConfig(
 	repoCfg *RepoConfig,
 	globalCfg *Config,
 ) (SynthesisSpec, error) {
-	reasoning, err := ResolveFixReasoningFromConfig("", repoCfg, globalCfg)
+	reasoning, err := ResolveFixReasoningFromConfig(globalCfg.ProjectSynthesisReasoning(), repoCfg, globalCfg)
 	if err != nil {
 		return SynthesisSpec{}, err
 	}

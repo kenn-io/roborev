@@ -66,7 +66,7 @@ func TestProjectPanelOverrideSurvivesAgentAutoDetection(t *testing.T) {
 	})
 }
 
-func TestCIPollerProjectPanelModelOverride(t *testing.T) {
+func TestCIPollerProjectPanelOverrides(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		for _, override := range []bool{false, true} {
 			t.Run(fmt.Sprintf("named=%t/override=%t", named, override), func(t *testing.T) {
@@ -78,15 +78,15 @@ func TestCIPollerProjectPanelModelOverride(t *testing.T) {
 				cfg.CI.SynthesisModel = "pinned-synthesis"
 				cfg.AutoDesignReview.Enabled = true
 				cfg.DesignAgent = "test"
-				project := config.ProjectConfig{ReviewModel: "project-model", OverridePanelModels: override}
+				project := config.ProjectConfig{ReviewModel: "project-model", OverridePanelModels: override, ReviewReasoning: "medium", OverridePanelReasoning: override, SynthesisReasoning: "low"}
 				if override {
 					project.SynthesisModel = "project-synthesis"
 				}
 				cfg.Projects = map[string]config.ProjectConfig{"github.com/acme/api": project}
 				cfg.Review = config.ReviewConfig{
 					Subagents: map[string]config.SubagentSpec{
-						"general":        {Agent: "test", Model: "pinned-model", ReviewType: "default"},
-						"security-check": {Agent: "test", Model: "pinned-model", ReviewType: "security"},
+						"general":        {Agent: "test", Model: "pinned-model", Reasoning: "high", ReviewType: "default"},
+						"security-check": {Agent: "test", Model: "pinned-model", Reasoning: "high", ReviewType: "security"},
 					},
 					Panels: map[string]config.PanelSpec{
 						"panel-a": {Members: []string{"general", "security-check"}, SynthesisAgent: "test", SynthesisModel: "pinned-synthesis"},
@@ -96,7 +96,7 @@ func TestCIPollerProjectPanelModelOverride(t *testing.T) {
 					cfg.CI.Panel = "panel-a"
 				}
 				p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
-					return ciRepoConfigSource{Config: &config.RepoConfig{}}, nil
+					return ciRepoConfigSource{Config: &config.RepoConfig{CI: config.RepoCIConfig{Reasoning: "high"}}}, nil
 				}
 				base := repo.HeadSHA()
 				head := repo.CommitFile("db/migrations/001_widgets.sql", "CREATE TABLE widgets(id INT);\n", "Add widgets table")
@@ -117,6 +117,11 @@ func TestCIPollerProjectPanelModelOverride(t *testing.T) {
 				}
 				for _, member := range members {
 					assert.Equal(want, member.Model, member.ReviewType)
+					wantReasoning := "high"
+					if override {
+						wantReasoning = "medium"
+					}
+					assert.Equal(wantReasoning, member.Reasoning, member.ReviewType)
 				}
 				require.NotNil(t, panel.SynthesisJobID)
 				synth, err := db.GetJobByID(*panel.SynthesisJobID)
@@ -126,6 +131,7 @@ func TestCIPollerProjectPanelModelOverride(t *testing.T) {
 					wantSynthesis = "project-synthesis"
 				}
 				assert.Equal(wantSynthesis, synth.Model)
+				assert.Equal("low", synth.Reasoning)
 				assert.Equal("pinned-model", cfg.Review.Subagents["general"].Model)
 			})
 		}
@@ -141,7 +147,7 @@ func TestEnqueueProjectModelFromBareWorktrees(t *testing.T) {
 	cfg.DefaultAgent = "test"
 	cfg.ReviewModel = "default-review"
 	cfg.Projects = map[string]config.ProjectConfig{
-		"example.com/team/project-a": {ReviewModel: "project-review", DisplayName: "Project A"},
+		"example.com/team/project-a": {ReviewModel: "project-review", ReviewReasoning: "medium", DisplayName: "Project A"},
 	}
 	db, _ := testutil.OpenTestDBWithDir(t)
 	server := NewServer(db, cfg, "")
@@ -154,8 +160,13 @@ func TestEnqueueProjectModelFromBareWorktrees(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "project-review", resolution.ModelForSelectedAgent("test", ""))
 		for _, explicit := range []string{"", "cli-review"} {
+			var explicitReasoning string
+			wantReasoning := "medium"
+			if explicit != "" {
+				explicitReasoning, wantReasoning = "high", "high"
+			}
 			request := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
-				RepoPath: wt, GitRef: "HEAD", Agent: "test", Model: explicit,
+				RepoPath: wt, GitRef: "HEAD", Agent: "test", Model: explicit, Reasoning: explicitReasoning,
 			})
 			response := httptest.NewRecorder()
 			server.httpServer.Handler.ServeHTTP(response, request)
@@ -170,8 +181,35 @@ func TestEnqueueProjectModelFromBareWorktrees(t *testing.T) {
 			stored, err := db.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, want, stored.Model)
+			assert.Equal(t, wantReasoning, stored.Reasoning)
 		}
 		assert.Equal(t, "Project A", config.GetDisplayName(wt, cfg))
 	}
 	assert.Equal(t, "default-review", config.ResolveModelForWorkflowFromConfig("", nil, cfg, "review", "thorough"))
+}
+
+func TestProjectCIReasoningExperimentSynthesisReset(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.AddRemote("origin", "https://example.com/team/project-a.git")
+	cfg := config.DefaultConfig()
+	cfg.Projects = map[string]config.ProjectConfig{
+		"example.com/team/project-a": {ReviewReasoning: "medium"},
+	}
+	cfg.Experiments = map[string]config.ExperimentDefinition{"reasoning-a": {
+		Enabled: new(true), Ratio: new(1.0),
+		Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+		Config:    map[string]any{"ci": map[string]any{"reasoning": ""}},
+	}}
+	cfg = cfg.ForRepo(repo.Path())
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject:  config.ExperimentSubject{Repository: "example.com/team/project-a", Branch: "feature"},
+		Global:   cfg, Repo: &config.RepoConfig{}, RawRepo: map[string]any{},
+	})
+	require.NoError(t, err)
+	_, reasoning := resolveCIMatrix(selection.RepoConfig, nil, cfg, "team/project-a")
+	assert.Equal(t, "thorough", reasoning)
+	synth, err := config.ResolveCISynthesis(reasoning, selection.RepoConfig, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "thorough", synth.Reasoning)
 }

@@ -35,6 +35,8 @@ type SynthesizeOpts struct {
 	Agent string
 	// Model override for the synthesis agent.
 	Model string
+	// Reasoning override (empty preserves the agent default).
+	Reasoning string
 	// MinSeverity is the lowest severity that fails the combined review.
 	// Findings below it are kept in the output as information.
 	MinSeverity string
@@ -143,6 +145,14 @@ func runSynthesis(
 
 	if opts.Model != "" {
 		synthAgent = synthAgent.WithModel(opts.Model)
+	}
+
+	if opts.Reasoning != "" {
+		reasoning, err := config.NormalizeReasoning(opts.Reasoning)
+		if err != nil {
+			return "", fmt.Errorf("synthesis reasoning: %w", err)
+		}
+		synthAgent = synthAgent.WithReasoning(agent.ParseReasoningLevel(reasoning))
 	}
 
 	synthPrompt := BuildSynthesisPrompt(

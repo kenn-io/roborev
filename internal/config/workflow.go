@@ -230,7 +230,7 @@ func SeverityInstruction(minSeverity string) string {
 }
 
 // ResolveReviewReasoning determines reasoning level for reviews.
-// Priority: explicit > per-repo config > global config > default (thorough)
+// Priority: explicit > per-repo config > project > global config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		if err := validateRepoReasoningOverride(repoPath, func(cfg *RepoConfig) string {
@@ -244,11 +244,11 @@ func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config)
 	if err != nil {
 		return "", err
 	}
-	return ResolveReviewReasoningFromConfig("", repoCfg, globalCfg)
+	return ResolveReviewReasoningFromConfig("", repoCfg, globalCfg.ForRepo(repoPath))
 }
 
 // ResolveReviewReasoningFromConfig is the config-taking core of
-// ResolveReviewReasoning: it resolves explicit > repoCfg > globalCfg > default
+// ResolveReviewReasoning: it resolves explicit > repoCfg > project > globalCfg > default
 // ("thorough") entirely from the passed configs, never reading the working
 // tree. When explicit is set it still validates the repo override field on the
 // passed repoCfg before accepting the explicit value.
@@ -273,6 +273,9 @@ func ResolveReviewReasoningFromConfig(
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.project.ReviewReasoning) != "" {
+		return NormalizeReasoning(globalCfg.project.ReviewReasoning)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(globalCfg.ReviewReasoning)

@@ -353,6 +353,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		ctx, results, review.SynthesizeOpts{
 			Agent:        synthAgent,
 			Model:        config.ResolveCISynthesisModel(globalCfg),
+			Reasoning:    globalCfg.ProjectSynthesisReasoning(),
 			MinSeverity:  ciMinSev,
 			RepoPath:     root,
 			GitRef:       gitRef,
