@@ -71,6 +71,7 @@ func Synthesize(
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
+	opts.MinSeverity = ResolveSynthesisMinSeverity(results, opts.MinSeverity)
 
 	successCount := 0
 	for _, r := range results {

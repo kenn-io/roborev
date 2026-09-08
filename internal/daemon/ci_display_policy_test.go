@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -100,5 +103,95 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
+	for _, policy := range []struct {
+		name      string
+		members   []string
+		ci        string
+		effective string
+		verdict   storage.Verdict
+	}{
+		{"inherited", []string{"medium", "medium"}, "", "medium", storage.VerdictPass},
+		{"explicit low", []string{"medium", "medium"}, "low", "low", storage.VerdictFail},
+		{"explicit high", []string{"medium", "medium"}, "high", "high", storage.VerdictPass},
+		{"different thresholds", []string{"high", "medium"}, "", "medium", storage.VerdictPass},
+		{"unfiltered member", []string{"medium", ""}, "", "", storage.VerdictFail},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			document := json.RawMessage(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)
+			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
+			agent.Register(a)
+			t.Cleanup(func() { agent.Unregister(a.name) })
+			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
+			setSynthesisAgent(t, tc, runUUID, a.name)
+			_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+			require.NoError(t, err)
+			for i, m := range members {
+				markMemberRunning(t, tc, m.ID)
+				require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", "", storage.ReviewCompletion{Output: "### Low\nMinor naming issue.", StructuredOutput: document, Verdict: storage.ParseVerdictAtSeverity("### Low\nMinor naming issue.", policy.members[i]), MinSeverity: policy.members[i]}))
+			}
+			synth := releaseAndClaimSynthesis(t, tc, runUUID)
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			stored, err := tc.DB.GetReviewByJobID(synth.ID)
+			require.NoError(t, err)
+			assert.Contains(a.synthPrompt, "Minor naming issue.", "successful synthesis uses the full member review")
+			assert.Contains(stored.Output, "Minor naming issue.")
+			assert.Equal(policy.effective, stored.Job.MinSeverity)
+			assert.Equal(policy.verdict, stored.Verdict())
+			raw, err := json.Marshal(stored.StructuredOutput)
+			require.NoError(t, err)
+			assert.JSONEq(string(document), string(raw))
+			rows, err := tc.DB.GetPanelMemberReviews(runUUID)
+			require.NoError(t, err)
+			p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
+			body, err := p.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
+			require.NoError(t, err)
+			if policy.verdict == storage.VerdictFail {
+				assert.Contains(body, "Minor naming issue.")
+			} else {
+				assert.NotContains(body, "Minor naming issue.")
+			}
+			for i, m := range members {
+				original, err := tc.DB.GetReviewByJobID(m.ID)
+				require.NoError(t, err)
+				assert.Equal("### Low\nMinor naming issue.", original.Output)
+				assert.Equal(policy.members[i], original.Job.MinSeverity)
+			}
+		})
+	}
+}
+
+func TestPanelProseVerdictAfterRubric(t *testing.T) {
+	for _, boundary := range []string{"Review Findings:", "2. **Review Findings**:", "---"} {
+		t.Run(boundary, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			output := "Severity levels:\nHigh: immediate action.\nLow: minor concern.\n\n" + boundary + "\n### Low\nMinor naming issue."
+			a := &agent.FakeAgent{NameStr: "rubric-review", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) { return output, nil }}
+			result, err := reviewpkg.RunAgentReview(context.Background(), a, tc.TmpDir, "HEAD", "Review the change.", "default", "medium", nil)
+			require.NoError(t, err)
+			assert.Equal(storage.VerdictPass, result.Verdict)
+			runUUID, members, _ := enqueuePanelRun(t, tc, "rubric-review", []memberSpec{{name: "first", agent: "test"}})
+			markMemberRunning(t, tc, members[0].ID)
+			require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, a.Name(), "", storage.ReviewCompletion{Output: result.Output, Verdict: result.Verdict, MinSeverity: result.MinSeverity}))
+			synth := releaseAndClaimSynthesis(t, tc, runUUID)
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			stored, err := tc.DB.GetReviewByJobID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(storage.VerdictPass, stored.Verdict())
+			assert.Equal(output, stored.Output)
+			rows, err := tc.DB.GetPanelMemberReviews(runUUID)
+			require.NoError(t, err)
+			p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
+			body, err := p.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
+			require.NoError(t, err)
+			assert.NotContains(body, "Minor naming issue.")
+			assert.NotContains(body, "High: immediate action.")
+		})
 	}
 }

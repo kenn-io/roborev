@@ -437,12 +437,35 @@ func SeverityLabelAt(lines []string, i int) (severity string, legend bool) {
 	return "", false
 }
 
+// ProseSection identifies explicit review section boundaries. The return
+// value is "summary", "findings", "separator", or empty for ordinary prose.
+// Verdict parsing and comment preparation use the same boundaries.
+func ProseSection(line string) string {
+	line = strings.ToLower(strings.TrimSpace(line))
+	if line == "---" {
+		return "separator"
+	}
+	line = stripListMarker(stripMarkdown(line))
+	if line == "summary" || strings.HasPrefix(line, "summary:") {
+		return "summary"
+	}
+	switch line {
+	case "findings", "findings:", "review findings", "review findings:":
+		return "findings"
+	default:
+		return ""
+	}
+}
+
 // isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
 // by looking at preceding lines for legend indicators. Scans up to 10 lines back,
 // skipping empty lines, severity lines, and description lines that may appear
 // between legend entries.
 func isLegendEntry(lines []string, i int) bool {
 	for j := i - 1; j >= 0 && j >= i-10; j-- {
+		if ProseSection(lines[j]) != "" {
+			return false
+		}
 		prev := strings.TrimSpace(strings.ToLower(lines[j]))
 		if len(prev) == 0 {
 			continue

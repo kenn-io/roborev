@@ -704,3 +704,37 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	require.Same(t, cfg, seenCfg, "resolver cfg pointer mismatch")
 	assertContains(t, comment, "file.go:1: combined fix")
 }
+
+func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
+	for _, policy := range []struct {
+		name    string
+		members []string
+		ci      string
+		visible bool
+	}{
+		{"inherited", []string{"medium", "medium"}, "", false},
+		{"explicit low", []string{"medium", "medium"}, "low", true},
+		{"explicit high", []string{"medium", "medium"}, "high", false},
+		{"different thresholds", []string{"high", "medium"}, "", false},
+		{"unfiltered member", []string{"medium", ""}, "", true},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)}
+			agent.Register(a)
+			t.Cleanup(func() { agent.Unregister(a.Name()) })
+			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
+			results := make([]ReviewResult, len(policy.members))
+			for i, threshold := range policy.members {
+				results[i] = ReviewResult{Status: ResultDone, Structured: &doc}.ApplyMinSeverity(threshold)
+			}
+			result, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
+			require.NoError(t, err)
+			assert.Contains(t, result.Output, "Minor naming issue.")
+			if policy.visible {
+				assert.Contains(t, result.GitHubComment, "Minor naming issue.")
+			} else {
+				assert.NotContains(t, result.GitHubComment, "Minor naming issue.")
+			}
+		})
+	}
+}

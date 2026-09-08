@@ -45,6 +45,11 @@ func (wp *WorkerPool) processSynthesisJob(
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(job.MinSeverity)
 	}
+	// Keep the configured job immutable while carrying the effective policy
+	// through every synthesis outcome and its persisted completion.
+	resolvedJob := *job
+	resolvedJob.MinSeverity = reviewpkg.ResolveSynthesisMinSeverity(results, job.MinSeverity)
+	job = &resolvedJob
 	succeeded := filterSucceeded(results)
 
 	switch len(succeeded) {

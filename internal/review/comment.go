@@ -160,7 +160,6 @@ func splitProseFindings(output string) []proseFinding {
 		severity = ""
 	}
 	inputLines := strings.Split(output, "\n")
-	sectionStart := 0
 	for i, line := range inputLines {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
@@ -177,23 +176,19 @@ func splitProseFindings(output string) []proseFinding {
 		} else if trimmed == "---" {
 			flush()
 			collect = true
-			sectionStart = i + 1
 			continue
 		} else {
-			heading := strings.ToLower(strings.TrimSpace(strings.TrimLeft(trimmed, "#")))
-			heading = strings.ReplaceAll(heading, "**", "")
-			heading = strings.TrimSpace(strings.TrimLeft(heading, "-*•0123456789.) "))
-			if heading == "summary" || strings.HasPrefix(heading, "summary:") {
+			section := storage.ProseSection(line)
+			if section == "summary" {
 				flush()
 				collect = false
 				continue
 			}
-			if heading == "findings" || heading == "review findings" || heading == "review findings:" {
+			if section == "findings" {
 				collect = true
-				sectionStart = i + 1
 				continue
 			}
-			if label, legend := storage.SeverityLabelAt(inputLines[sectionStart:], i-sectionStart); label != "" {
+			if label, legend := storage.SeverityLabelAt(inputLines, i); label != "" {
 				flush()
 				if legend {
 					collect = false
