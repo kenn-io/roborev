@@ -45,13 +45,13 @@ func TestProseCommentAllFindingsBelowThreshold(t *testing.T) {
 func TestProseCommentKeepsFindingCodeAndUnlabelledText(t *testing.T) {
 	prose := "### High\nState is lost.\n\n```text\nLow: this is example data\n---\n```\nPersist it.\n\n---\n\nAn unlabelled finding.\n\n---\n\n### Low\nMinor naming issue."
 	result := ReviewResult{Output: prose, MinSeverity: "high"}
-	comment := result.CommentMarkdown()
+	comment := FormatComment(PrepareComment(result, nil))
 	assert := assert.New(t)
 	assert.Contains(comment, "```text\nLow: this is example data\n---\n```\nPersist it.")
 	assert.Contains(comment, "An unlabelled finding.")
 	assert.NotContains(comment, "Minor naming issue.")
 	assert.Equal(prose, result.Output)
-	assert.Equal("Unlabelled review text.", (ReviewResult{Output: "Unlabelled review text.", MinSeverity: "high"}).CommentMarkdown())
+	assert.Equal("Unlabelled review text.", FormatComment(PrepareComment(ReviewResult{Output: "Unlabelled review text.", MinSeverity: "high"}, nil)))
 }
 
 func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
@@ -59,7 +59,7 @@ func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
 		Output:      "An unlabelled concern.\n\n### Low\nMinor naming issue.",
 		MinSeverity: "medium",
 	}
-	comment := result.CommentMarkdown()
+	comment := FormatComment(PrepareComment(result, nil))
 	assert.Contains(t, comment, "An unlabelled concern.")
 	assert.NotContains(t, comment, "Minor naming issue.")
 }

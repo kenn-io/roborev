@@ -234,7 +234,7 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, githubComment 
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			if githubComment {
-				b.WriteString(r.CommentMarkdown())
+				b.WriteString(FormatComment(PrepareComment(r, nil)))
 			} else {
 				b.WriteString(r.Output)
 			}

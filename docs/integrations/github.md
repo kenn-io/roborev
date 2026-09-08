@@ -585,7 +585,14 @@ verdict describes the findings that pass this display filter.
 
 For single-review and raw fallback comments, an unset CI `min_severity` retains
 each review's effective minimum severity, including `review_min_severity`.
-Setting the CI threshold explicitly overrides that review-level threshold.
+Setting the CI threshold explicitly overrides that review-level threshold. When
+only one panel member succeeds, its complete result and effective threshold
+remain together through synthesis completion and publication.
+
+All GitHub review bodies use the same preparation and formatting functions.
+Preparation reads structured JSON or prose and selects visible findings without
+changing the source review. Formatting renders those prepared findings; it does
+not resolve configuration or apply another filter.
 
 Prose reviews are filtered at publication too, including single-review and raw
 fallback comments. The filter keeps each finding's Markdown together, using

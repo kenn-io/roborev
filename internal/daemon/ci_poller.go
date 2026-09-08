@@ -2424,9 +2424,9 @@ func (p *CIPoller) recordDeferral(
 }
 
 // panelCommentBody picks the PR comment body from the synthesis job status,
-// applying the F11 wrapper rule. Synthesis done -> the persisted review (wrapped
-// with a verdict header only when it lacks a `## roborev:` one, but always with
-// a panel footer); synthesis failed or its review missing -> the raw-member
+// applying the F11 wrapper rule. Synthesis done -> the persisted review through
+// shared comment preparation and formatting, with one header and a panel footer;
+// synthesis failed or its review missing -> the raw-member
 // fallback, which already carries the header and renders row.HeadSHA. SHAs
 // always come from row.HeadSHA.
 func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) (string, error) {
@@ -2454,9 +2454,6 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
-	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return appendPanelPRFooter(rev.Output, rev, members, includeCosts), nil
-	}
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
 		rev, string(verdict), members, includeCosts, row.HeadSHA,
@@ -3571,16 +3568,11 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 		result.MinSeverity = review.Job.MinSeverity
 	}
 	if len(review.StructuredOutput) > 0 {
-		raw, err := json.Marshal(review.StructuredOutput)
-		if err == nil {
-			if doc, err := reviewpkg.DecodeStructuredReview(raw); err == nil {
-				// Synthesis cites only successful members, in their original order.
-				doc.SourceLabels = reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
-				result.Structured = &doc
-			}
-		}
+		result.StructuredOutput, _ = json.Marshal(review.StructuredOutput)
 	}
-	output := result.CommentMarkdown()
+	// Synthesis cites only successful members, in their original order.
+	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
+	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(result, labels))
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix

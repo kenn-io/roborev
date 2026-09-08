@@ -143,7 +143,7 @@ func formatSingleResult(
 
 	output := r.Output
 	if githubComment {
-		output = TruncateComment(r.CommentMarkdown())
+		output = TruncateComment(FormatComment(PrepareComment(r, nil)))
 	}
 	return header + output
 }
@@ -190,6 +190,6 @@ func runSynthesis(
 
 	return SynthesisResult{
 		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
-		GitHubComment: FormatSynthesizedComment(doc.CommentMarkdown(opts.MinSeverity), results, opts.HeadSHA),
+		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(ReviewResult{Structured: &doc, MinSeverity: opts.MinSeverity}, nil)), results, opts.HeadSHA),
 	}, nil
 }
