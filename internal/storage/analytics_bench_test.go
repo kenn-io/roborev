@@ -41,7 +41,6 @@ func BenchmarkAggregateAnalyticsTimeSeries(b *testing.B) {
 			}
 
 			b.ReportAllocs()
-			b.ResetTimer()
 			var result *AnalyticsSnapshot
 			for b.Loop() {
 				var err error
