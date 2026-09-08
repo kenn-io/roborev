@@ -602,9 +602,9 @@ summaries can describe hidden findings. Text without an identifiable severity
 remains visible; the publisher does not guess its severity. Stored prose stays
 complete.
 
-These display changes apply only to GitHub PR comments. The CLI's stdout and
-GitLab merge request notes retain complete review output, including findings
-below the threshold.
+These display changes apply only to GitHub PR comments. The CLI's stdout retains
+complete review output. GitLab receives output without severity filtering and
+continues to apply its existing note-size handling.
 
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 

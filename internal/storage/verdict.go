@@ -371,120 +371,70 @@ func stripFieldLabel(s string) string {
 // Requires separators to be followed by space to avoid "High-level overview".
 // Skips lines that appear to be part of a severity legend/rubric.
 func HighestSeverityLabel(output string) string {
-	lc := strings.ToLower(output)
-	severities := []string{"critical", "high", "medium", "low"}
-	lines := strings.Split(lc, "\n")
+	lines := strings.Split(output, "\n")
 	highest := ""
-	record := func(sev string) {
-		if config.SeverityRank(sev) > config.SeverityRank(highest) {
-			highest = sev
-		}
-	}
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) == 0 {
-			continue
-		}
-
-		// Check if line starts with bullet/number - if so, strip it
-		first := trimmed[0]
-		hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
-			strings.HasPrefix(trimmed, "•")
-
-		checkText := trimmed
-		if hasBullet {
-			// Strip leading bullets/asterisks/numbers
-			checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
-			checkText = strings.TrimSpace(checkText)
-		}
-
-		// Strip markdown formatting (bold, headers) before checking
-		checkText = stripMarkdown(checkText)
-
-		// Structured reviews render each finding as a numbered heading whose
-		// whole text is the severity: "### 1. Low". Recognize that form so
-		// rendered structured output parses the same way as prose findings.
-		// Any other heading falls through to the prose checks below, so
-		// "### High — crash" still counts.
-		if first == '#' {
-			heading := stripListMarker(checkText)
-			if slices.Contains(severities, heading) {
-				if !isLegendEntry(lines, i) {
-					record(heading)
-				}
-				continue
-			}
-		}
-
-		// Check if text starts with a severity word
-		for _, sev := range severities {
-			if !strings.HasPrefix(checkText, sev) {
-				continue
-			}
-
-			// Check if followed by separator (dash, em-dash, colon, pipe)
-			rest := checkText[len(sev):]
-			rest = strings.TrimSpace(rest)
-			if len(rest) == 0 {
-				continue
-			}
-
-			// Check for valid separator
-			hasValidSep := false
-			// Check for em-dash or en-dash (these are unambiguous)
-			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
-				hasValidSep = true
-			}
-			// Check for colon or pipe (unambiguous separators)
-			if rest[0] == ':' || rest[0] == '|' {
-				hasValidSep = true
-			}
-			// For hyphen, require space after to avoid "High-level"
-			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
-				hasValidSep = true
-			}
-
-			if !hasValidSep {
-				continue
-			}
-
-			// Skip if this looks like a legend/rubric entry
-			// Check if previous non-empty line is a legend header
-			if isLegendEntry(lines, i) {
-				continue
-			}
-
-			record(sev)
-			break
-		}
-
-		// Check for "severity: <level>" pattern (e.g., "**Severity**: High")
-		if strings.HasPrefix(checkText, "severity") {
-			rest := checkText[len("severity"):]
-			rest = strings.TrimSpace(rest)
-			hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
-				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–"))
-			// Accept hyphen-minus when followed by space (mirrors the severity-word branch)
-			if !hasSep && len(rest) > 1 && rest[0] == '-' && rest[1] == ' ' {
-				hasSep = true
-			}
-			if hasSep {
-				// Skip separator and whitespace
-				rest = strings.TrimLeft(rest, ":-–—| ")
-				rest = strings.TrimSpace(rest)
-				for _, sev := range severities {
-					if strings.HasPrefix(rest, sev) {
-						if !isLegendEntry(lines, i) {
-							record(sev)
-						}
-						break
-					}
-				}
-			}
+	for i := range lines {
+		severity, legend := SeverityLabelAt(lines, i)
+		if !legend && config.SeverityRank(severity) > config.SeverityRank(highest) {
+			highest = severity
 		}
 	}
 	return highest
+}
+
+// SeverityLabelAt classifies one line with its surrounding prose context.
+// A legend entry has a severity label but is not a finding. Callers provide
+// the whole section and a valid line index so rubric context is preserved.
+func SeverityLabelAt(lines []string, i int) (severity string, legend bool) {
+	trimmed := strings.TrimSpace(strings.ToLower(lines[i]))
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	severities := []string{"critical", "high", "medium", "low"}
+	first := trimmed[0]
+	hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
+		strings.HasPrefix(trimmed, "•")
+	checkText := trimmed
+	if hasBullet {
+		checkText = strings.TrimSpace(strings.TrimLeft(trimmed, "-*•0123456789.) "))
+	}
+	checkText = stripMarkdown(checkText)
+
+	// Structured prose headings contain only a numbered severity label.
+	if first == '#' {
+		heading := stripListMarker(checkText)
+		if slices.Contains(severities, heading) {
+			return heading, isLegendEntry(lines, i)
+		}
+	}
+	for _, sev := range severities {
+		if !strings.HasPrefix(checkText, sev) {
+			continue
+		}
+		rest := strings.TrimSpace(checkText[len(sev):])
+		if len(rest) == 0 {
+			continue
+		}
+		// A hyphen requires a following space to exclude "High-level".
+		if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") ||
+			rest[0] == ':' || rest[0] == '|' || strings.HasPrefix(rest, "- ") {
+			return sev, isLegendEntry(lines, i)
+		}
+	}
+	if strings.HasPrefix(checkText, "severity") {
+		rest := strings.TrimSpace(checkText[len("severity"):])
+		hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
+			strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") || strings.HasPrefix(rest, "- "))
+		if hasSep {
+			rest = strings.TrimSpace(strings.TrimLeft(rest, ":-–—| "))
+			for _, sev := range severities {
+				if strings.HasPrefix(rest, sev) {
+					return sev, isLegendEntry(lines, i)
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
@@ -493,7 +443,7 @@ func HighestSeverityLabel(output string) string {
 // between legend entries.
 func isLegendEntry(lines []string, i int) bool {
 	for j := i - 1; j >= 0 && j >= i-10; j-- {
-		prev := strings.TrimSpace(lines[j])
+		prev := strings.TrimSpace(strings.ToLower(lines[j]))
 		if len(prev) == 0 {
 			continue
 		}

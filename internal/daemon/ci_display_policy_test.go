@@ -14,7 +14,7 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
-	for _, format := range []string{"prose", "prefixed prose", "structured"} {
+	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
 				name          string
@@ -40,6 +40,12 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					output := "### Low\n\nMinor naming issue.\n\n### Medium\n\nMissing cleanup.\n\n### High\n\nState is lost."
 					if format == "prefixed prose" {
 						output = "## roborev: Combined Review (`abcdef1`)\n\n" + output
+					}
+					if format == "numbered sections" {
+						output = "1. **Summary**: Minor naming issue.\n\n2. **Review Findings**:\n\n### High\n\nState is lost.\n\n### Medium\n\nMissing cleanup.\n\n### Low\n\nMinor naming issue."
+					}
+					if format == "severity rubric" {
+						output = "Severity levels:\nHigh: immediate action.\nLow: minor concern.\n\nReview Findings:\n" + output
 					}
 					var document json.RawMessage
 					if format == "structured" {
@@ -79,6 +85,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.Contains(body, "Minor naming issue.")
 					} else {
 						assert.NotContains(body, "Minor naming issue.")
+						assert.NotContains(body, "High: immediate action.", "rubric entries are not findings")
 					}
 					if policy.mediumVisible {
 						assert.Contains(body, "Missing cleanup.")
