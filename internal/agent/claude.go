@@ -710,13 +710,13 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	}
 	args := a.classifyArgs(schema)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
-	configureSubprocess(cmd)
 	cmd.Dir = repoPath
 	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	configureSubprocess(cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
@@ -773,13 +773,13 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	args = append(args, "--json-schema", string(schema))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
-	configureSubprocess(cmd)
 	cmd.Dir = repoPath
 	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	configureSubprocess(cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
