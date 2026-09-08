@@ -92,7 +92,18 @@ func TestWebAnalyticsAcceptsLongHourlyRange(t *testing.T) {
 
 	response := serveHuma(t, server, http.MethodGet,
 		"/api/ui/analytics?"+query.Encode(), nil)
-	assert.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var snapshot storage.AnalyticsSnapshot
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &snapshot))
+	require.Len(t, snapshot.TimeSeries, 1001)
+	assert := assert.New(t)
+	assert.Equal(storage.AnalyticsSchemaVersion, snapshot.SchemaVersion)
+	assert.Equal(since, snapshot.TimeSeries[0].Start)
+	assert.Equal(since.Add(time.Hour), snapshot.TimeSeries[0].End)
+	assert.Equal(since.Add(1000*time.Hour), snapshot.TimeSeries[1000].Start)
+	assert.Equal(until, snapshot.TimeSeries[1000].End)
+	assert.Equal(storage.AnalyticsSummary{}, snapshot.TimeSeries[0].AnalyticsSummary)
+	assert.Equal(storage.AnalyticsSummary{}, snapshot.TimeSeries[1000].AnalyticsSummary)
 }
 
 func TestWebAnalyticsExplicitUntilWithoutSinceIsAllTime(t *testing.T) {
