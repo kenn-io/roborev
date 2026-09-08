@@ -19,7 +19,7 @@ import (
 )
 
 func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
-	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix"} {
+	for _, format := range []string{"prose", "prefixed prose", "numbered sections", "severity rubric", "structured", "section headings", "bulleted sections", "rubric notes", "nested summary", "colon title", "bullet independent heading", "bullet nested fix", "sublist fix", "container summary"} {
 		for _, mode := range []string{"passthrough", "fallback"} {
 			for _, policy := range []struct {
 				name          string
@@ -72,6 +72,12 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					}
 					if format == "bullet nested fix" {
 						output = "- **Medium — Missing cleanup.**\n\n  ### Fix\n  Close the resource.\n\n- **High — State is lost.**\n  Persist it.\n\n- **Low — Minor naming issue.**\n  Rename it."
+					}
+					if format == "sublist fix" {
+						output = "- **Medium — Missing cleanup.**\n  - Implementation detail:\n    ### Fix\n    Close the resource.\n\n- **High — State is lost.**\n  Persist it.\n\n- **Low — Minor naming issue.**\n  Rename it."
+					}
+					if format == "container summary" {
+						output = "## Summary\n- Overview\n\n  ## Nested list heading\n\n  High: Summary-only list detail.\n\n> ## Nested quote heading\n>\n> High: Summary-only quote detail.\n\n## Findings\n" + output
 					}
 					var document json.RawMessage
 					if format == "structured" {
@@ -126,10 +132,14 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					if format == "bullet independent heading" {
 						assert.Contains(body, "An independent concern after a bulleted finding.")
 					}
-					if format == "bullet nested fix" {
+					if format == "bullet nested fix" || format == "sublist fix" {
 						assert.Equal(policy.mediumVisible, strings.Contains(body, "Close the resource."))
 					}
 
+					if format == "container summary" {
+						assert.Equal(policy.lowVisible, strings.Contains(body, "Summary-only list detail."))
+						assert.Equal(policy.lowVisible, strings.Contains(body, "Summary-only quote detail."))
+					}
 					if format == "rubric notes" {
 						assert.Contains(body, "An independent concern after the rubric.")
 					}

@@ -5,9 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -153,134 +152,132 @@ type proseFinding struct {
 	text     string
 }
 
-// splitProseFindings keeps each finding's Markdown intact. Markdown containers
-// distinguish nested details from independent sections. Summary suppression
-// lasts until a section boundary; rubric suppression comes only from the shared
-// per-line classification, so it cannot spill into subsequent prose.
+// splitProseFindings selects complete source spans using parsed Markdown
+// blocks. Goldmark owns headings, containers, separators, and code syntax;
+// the shared prose classifier only identifies review labels and rubrics.
 func splitProseFindings(output string) []proseFinding {
 	var blocks []proseFinding
-	var lines []string
-	severity := ""
-	findingLevel := 0
-	var findingItem *ast.ListItem
-	inSummary, summaryLevel := false, 0
-	fence := ""
-	flush := func() {
-		if text := strings.TrimSpace(strings.Join(lines, "\n")); text != "" {
-			blocks = append(blocks, proseFinding{severity: severity, text: text})
+	start, severity := 0, ""
+	var finding, summary *proseBoundary
+	flush := func(end int) {
+		if body := strings.TrimSpace(output[start:end]); body != "" && summary == nil {
+			blocks = append(blocks, proseFinding{severity: severity, text: body})
 		}
-		lines = nil
-		severity = ""
-		findingLevel = 0
-		findingItem = nil
+		start, severity, finding = end, "", nil
 	}
-	inputLines := strings.Split(output, "\n")
-	labels := storage.ProseSeverityLabels(inputLines)
-	layout := proseLineLayout(output, inputLines)
-	for i, line := range inputLines {
-		trimmed := strings.TrimSpace(line)
-		if fence != "" {
-			if !inSummary {
-				lines = append(lines, line)
+	for _, boundary := range proseBoundaries(output) {
+		if summary != nil {
+			if boundary.nestedIn(summary) ||
+				(boundary.section != "findings" && !boundary.separator &&
+					(boundary.level == 0 || (summary.level > 0 && boundary.level > summary.level))) {
+				continue
 			}
-			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
-				fence = ""
-			}
+			start, summary = boundary.start, nil
+		}
+		// A finding's nested blocks stay attached, including headings and
+		// examples that happen to contain severity words.
+		if finding != nil && boundary.nestedIn(finding) {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, trimmed[:1]))]
-		} else if trimmed == "---" {
-			flush()
-			inSummary = false
-			continue
-		} else {
-			level := layout[i].headingLevel
-			section := storage.ProseSection(line)
-			if inSummary {
-				if section == "findings" || (level > 0 && (summaryLevel == 0 || level <= summaryLevel)) {
-					inSummary = false
-				} else {
-					continue
-				}
-			}
-			if section == "summary" {
-				flush()
-				inSummary, summaryLevel = true, level
-				continue
-			}
-			if labels[i].Legend {
-				flush()
-				continue
-			}
-			if level > 0 {
-				boundary := severity == "" ||
-					(findingLevel > 0 && level <= findingLevel) ||
-					(findingLevel == 0 && (findingItem == nil || findingItem != layout[i].listItem))
-				if boundary {
-					flush()
-				}
-			}
-			if section == "findings" {
-				continue
-			}
-			if label := labels[i].Severity; label != "" {
-				flush()
-				severity = label
-				findingLevel = level
-				findingItem = layout[i].listItem
-			}
-		}
-		if !inSummary {
-			lines = append(lines, line)
+		switch {
+		case boundary.section == "summary":
+			flush(boundary.start)
+			summary = &boundary
+		case boundary.legend || boundary.separator || boundary.section == "findings":
+			flush(boundary.start)
+			start = boundary.end
+		case boundary.severity != "":
+			flush(boundary.start)
+			severity, finding = boundary.severity, &boundary
+		case boundary.level > 0 && (finding == nil || finding.level == 0 || boundary.level <= finding.level):
+			flush(boundary.start)
 		}
 	}
-	flush()
+	flush(len(output))
 	return blocks
 }
 
-type proseLineContext struct {
-	headingLevel int
-	listItem     *ast.ListItem
+// proseBoundary describes a review marker in a parsed block. Offsets include
+// the original Markdown markers, so extraction never needs to re-render it.
+type proseBoundary struct {
+	start, end        int
+	level             int
+	container         ast.Node
+	section, severity string
+	legend, separator bool
 }
 
-// proseLineLayout uses Markdown's parsed containers for structure, while the
-// formatter retains the original source text. A heading indented inside a list
-// item belongs to that item; an unindented heading starts a separate section.
-func proseLineLayout(output string, lines []string) []proseLineContext {
-	layout := make([]proseLineContext, len(lines))
+func (b proseBoundary) nestedIn(section *proseBoundary) bool {
+	if b.container == section.container {
+		// A paragraph introducing a finding inside a list item owns the
+		// other blocks in that item. Document paragraphs do not own later
+		// headings. Separate labels within one paragraph remain separable.
+		return section.level == 0 && b.level > 0 && b.container.Kind() != ast.KindDocument
+	}
+	for parent := b.container.Parent(); parent != nil; parent = parent.Parent() {
+		if parent == section.container {
+			return true
+		}
+	}
+	return false
+}
+
+func proseBoundaries(output string) []proseBoundary {
+	lines := strings.Split(output, "\n")
 	offsets := make([]int, len(lines))
 	for i := 1; i < len(lines); i++ {
 		offsets[i] = offsets[i-1] + len(lines[i-1]) + 1
 	}
-	root := goldmark.DefaultParser().Parse(text.NewReader([]byte(output)))
-	var items []*ast.ListItem
-	// The walker performs no fallible operations and always returns nil.
-	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
-		if item, ok := node.(*ast.ListItem); ok {
-			if entering {
-				items = append(items, item)
-			} else {
-				items = items[:len(items)-1]
-			}
+	labels := storage.ProseSeverityLabels(lines)
+	lineAt := func(pos int) int {
+		line, exact := slices.BinarySearch(offsets, pos)
+		if !exact {
+			line--
 		}
-		if !entering || node.Type() != ast.TypeBlock {
+		return line
+	}
+	var boundaries []proseBoundary
+	root := parser.New().Parse([]byte(output))
+	// Only headings and prose can supply review labels. Code and HTML blocks
+	// remain opaque source spans, regardless of their contents or delimiters.
+	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
 			return ast.WalkContinue, nil
 		}
-		segments := node.Lines()
-		for j := 0; j < segments.Len(); j++ {
-			line, exact := slices.BinarySearch(offsets, segments.At(j).Start)
-			if !exact {
-				line--
+		switch n := node.(type) {
+		case *ast.Heading, *ast.Paragraph:
+			block := node.(ast.BlockNode)
+			for _, segment := range block.Source() {
+				line := lineAt(segment.Start)
+				b := proseBoundary{
+					start: offsets[line], end: min(offsets[line]+len(lines[line])+1, len(output)),
+					container: node.Parent(), section: storage.ProseSection(lines[line]),
+					severity: labels[line].Severity, legend: labels[line].Legend,
+				}
+				if heading, ok := node.(*ast.Heading); ok {
+					b.level = heading.Level
+					lastLine := lineAt(block.Source()[len(block.Source())-1].Start)
+					if heading.HeadingKind == ast.HeadingKindSetext {
+						lastLine++ // Include the parsed heading's underline.
+					}
+					b.end = min(offsets[lastLine]+len(lines[lastLine])+1, len(output))
+				}
+				if b.level > 0 || b.section != "" || b.severity != "" || b.legend {
+					boundaries = append(boundaries, b)
+				}
+				if b.level > 0 {
+					break // A multiline heading is one section boundary.
+				}
 			}
-			if len(items) > 0 {
-				layout[line].listItem = items[len(items)-1]
-			}
-			if heading, ok := node.(*ast.Heading); ok {
-				layout[line].headingLevel = heading.Level
-			}
+			return ast.WalkSkipChildren, nil
+		case *ast.ThematicBreak:
+			line := lineAt(n.Pos())
+			boundaries = append(boundaries, proseBoundary{
+				start: offsets[line], end: min(offsets[line]+len(lines[line])+1, len(output)),
+				container: node.Parent(), separator: true,
+			})
 		}
 		return ast.WalkContinue, nil
 	})
-	return layout
+	return boundaries
 }
