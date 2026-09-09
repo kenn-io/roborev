@@ -273,6 +273,7 @@ const (
 	colRequestedProvider        // Explicitly requested provider
 	colCost                     // Cost estimate (USD)
 	colReasoning                // Recorded reasoning effort
+	colFindings                 // Finding severity counts
 	colCount                    // total number of columns
 )
 
@@ -681,7 +682,7 @@ func (m model) renderQueueView() string {
 // so the cached map stays a superset that any pane-specific column subset
 // can safely index into.
 func (m model) queueContentWidths(rows []queueRow, visCols []int, hasAnyPanel, treeColor bool) map[int]int {
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning"}
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning", "H/M/L"}
 	var contentWidth map[int]int
 	if m.queueColCache.gen == m.queueColGen {
 		contentWidth = m.queueColCache.contentWidths
@@ -712,7 +713,7 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 	compact := m.queueCompact()
 	hasAnyPanel := anyPanelRow(rows)
 	treeColor := queueColorEnabled()
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning"}
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning", "H/M/L"}
 
 	visibleSelectedIdx := visibleSelectedRowIndex(rows, m.selectedJobID)
 	start, end := queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)
@@ -749,7 +750,8 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 		colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
 		colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
 		colReasoning:         min(max(contentWidth[colReasoning], 9), 16),
-		colCost:              max(contentWidth[colCost], 4), // "Cost" header = 4
+		colCost:              max(contentWidth[colCost], 4),     // "Cost" header = 4
+		colFindings:          max(contentWidth[colFindings], 5), // "H/M/L" header = 5
 	}
 
 	// Flexible columns absorb excess space
@@ -982,6 +984,10 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 							s = s.Foreground(queuedStyle.GetForeground())
 						}
 					}
+				case colFindings:
+					if c := findingCountsColor(job.FindingCounts); c != nil {
+						s = s.Foreground(c)
+					}
 				}
 			}
 			return s
@@ -1013,7 +1019,7 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 
 // jobCells returns plain text cell values for a job row.
 // Order: ref, branch, repo, agent, review type, queued, elapsed, status, pf,
-// handled, session, requested model, requested provider, cost.
+// handled, session, requested model, requested provider, cost, findings.
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -1067,8 +1073,34 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
 	cost := m.jobCostCell(job)
+	findings := findingCountsCell(job.FindingCounts)
 
-	return []string{ref, branch, repo, agentName, reviewType, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost, displayReasoning(job.Reasoning)}
+	return []string{ref, branch, repo, agentName, reviewType, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost, displayReasoning(job.Reasoning), findings}
+}
+
+func findingCountsCell(counts *storage.FindingCounts) string {
+	if counts == nil {
+		return "-"
+	}
+	prefix := ""
+	if counts.Approximate {
+		prefix = "~"
+	}
+	return fmt.Sprintf("%s%d/%d/%d", prefix, counts.Critical+counts.High, counts.Medium, counts.Low)
+}
+
+func findingCountsColor(counts *storage.FindingCounts) color.Color {
+	if counts == nil || counts.Critical+counts.High+counts.Medium+counts.Low == 0 {
+		return nil
+	}
+	switch {
+	case counts.Critical > 0 || counts.High > 0:
+		return failStyle.GetForeground()
+	case counts.Medium > 0:
+		return failedStyle.GetForeground()
+	default:
+		return queuedStyle.GetForeground()
+	}
 }
 
 // displayReviewType returns the canonical label shown in the TUI. Synthesis
@@ -1346,7 +1378,7 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colReasoning, colReviewType, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colSessionID, colRequestedModel, colRequestedProvider}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colReasoning, colReviewType, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colFindings, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -1365,6 +1397,7 @@ var columnNames = map[int]string{
 	colRequestedProvider: "Req Provider",
 	colCost:              "Cost",
 	colReasoning:         "Reasoning",
+	colFindings:          "Findings",
 }
 
 // columnConfigNames maps column constants to config file names (lowercase).
@@ -1384,6 +1417,7 @@ var columnConfigNames = map[int]string{
 	colRequestedProvider: "requested_provider",
 	colCost:              "cost",
 	colReasoning:         "reasoning",
+	colFindings:          "findings",
 }
 
 // drainFlexOverflow reduces flex column widths to absorb overflow,

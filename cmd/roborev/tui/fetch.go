@@ -174,6 +174,10 @@ func listJobsQuery(values neturl.Values) *daemonclient.ListJobsQuery {
 		typed := daemonclient.ListJobsQueryOmitPrompt(value)
 		query.OmitPrompt = &typed
 	}
+	if value := values.Get("include_findings"); value != "" {
+		typed := daemonclient.ListJobsQueryIncludeFindings(value)
+		query.IncludeFindings = &typed
+	}
 	setStringParam("repo_prefix", &query.RepoPrefix)
 	setIntParam("limit", &query.Limit)
 	setIntParam("offset", &query.Offset)
@@ -227,6 +231,7 @@ func (m model) fetchJobs() tea.Cmd {
 		// from the queue and dominate the payload. Queued/running jobs
 		// keep their prompt server-side for the prompt view.
 		params.Set("omit_prompt", "true")
+		params.Set("include_findings", "true")
 
 		// Hide auto-design-router byproducts (classify rows + skipped design
 		// rows) unless the user opted in via show_classify_jobs. Resolved at
@@ -273,6 +278,7 @@ func (m model) fetchMoreJobs() tea.Cmd {
 		params.Set("limit", "50")
 		params.Set("offset", fmt.Sprintf("%d", offset))
 		params.Set("omit_prompt", "true")
+		params.Set("include_findings", "true")
 		for _, path := range m.activeRepoFilter {
 			params.Add("repo", path)
 		}
@@ -997,7 +1003,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 	baseURL := m.endpoint.BaseURL()
 	client := m.client
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true", baseURL,
+		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true&include_findings=true", baseURL,
 			neturl.QueryEscape(runUUID.String())) //nolint:forbidigo // HTTP query parameter boundary.
 		resp, err := client.Get(url)
 		if err != nil {

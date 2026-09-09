@@ -82,6 +82,36 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	}
 }
 
+func TestListJobsFindingCountsHTTP(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo, err := db.GetOrCreateRepo("/tmp/daemon-finding-counts")
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "daemon-finding-sha", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "test",
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("daemon-finding-worker")
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "No issues found."))
+	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"critical","problem":"p","fix":"f","location":null},{"severity":"low","problem":"p","fix":"f","location":null}]}`
+	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
+	require.NoError(t, err)
+
+	without := fetchJobs(t, server, "limit=0")
+	require.Len(t, without.Jobs, 1)
+	assert.Nil(t, without.Jobs[0].FindingCounts)
+
+	withCounts := fetchJobs(t, server, "limit=0&include_findings=true")
+	require.Len(t, withCounts.Jobs, 1)
+	assert.Equal(t, &storage.FindingCounts{Critical: 1, Low: 1}, withCounts.Jobs[0].FindingCounts)
+
+	idResponse := fetchJobs(t, server, fmt.Sprintf("id=%d&include_findings=true", job.ID))
+	require.Len(t, idResponse.Jobs, 1)
+	assert.Equal(t, withCounts.Jobs[0].FindingCounts, idResponse.Jobs[0].FindingCounts)
+}
+
 func TestHandleListJobsMultiRepoFilter(t *testing.T) {
 	assert := assert.New(t)
 	server, db, tmpDir := newTestServer(t)

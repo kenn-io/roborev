@@ -1703,6 +1703,7 @@ type listJobsOptions struct {
 	panelRun           uuid.UUID
 	excludePanelRole   string
 	omitPrompt         bool
+	includeFindings    bool
 }
 
 type jobListPosition struct {
@@ -1747,6 +1748,11 @@ func WithClosed(closed bool) ListJobsOption {
 // the TUI prompt view renders it straight from list rows.
 func WithoutPrompt() ListJobsOption {
 	return func(o *listJobsOptions) { o.omitPrompt = true }
+}
+
+// WithFindingCounts requests the nullable finding-count projection for listed jobs.
+func WithFindingCounts() ListJobsOption {
+	return func(o *listJobsOptions) { o.includeFindings = true }
 }
 
 // WithJobType filters jobs by job_type (e.g. "fix", "review").
@@ -1940,6 +1946,18 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if options.omitPrompt {
 		promptExpr = "CASE WHEN j.status IN ('queued', 'running') THEN j.prompt ELSE '' END"
 	}
+	structuredOutputExpr := "''"
+	proseOutputExpr := "''"
+	if options.includeFindings {
+		structuredOutputExpr = "rv.structured_output"
+		proseOutputExpr = `CASE WHEN j.status IN ('done', 'applied', 'rebased')
+			AND COALESCE(j.error, '') = ''
+			AND (COALESCE(j.job_type, '') IN ('review', 'range', 'dirty', 'compact', 'synthesis')
+				OR (COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty'
+					OR j.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0)))
+			AND (rv.structured_output IS NULL OR rv.structured_output = '')
+			THEN rv.output ELSE '' END`
+	}
 	// The review output is only needed to parse a verdict for legacy rows
 	// where verdict_bool is NULL (e.g. synced from older machines); rows with
 	// a stored verdict skip the large TEXT payload and pass the existence
@@ -1954,6 +1972,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       CASE WHEN rv.verdict_bool IS NULL THEN rv.output ELSE '' END,
 		       rv.verdict_bool,
 		       CASE WHEN rv.verdict_bool IS NOT NULL THEN 1 ELSE COALESCE(rv.output != '', 0) END,
+		       ` + structuredOutputExpr + `,
+		       ` + proseOutputExpr + `,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
 		       j.command_line, j.dirty_files, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -1991,12 +2011,14 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var output sql.NullString
 		var verdictBool sql.NullInt64
 		var hasOutput bool
+		var structuredOutput sql.NullString
+		var proseOutput sql.NullString
 		var fields reviewJobScanFields
 
 		err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &fields.ResumeSourceUUID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
 			&fields.Agentic, &fields.PromptPrebuilt, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
-			&verdictBool, &hasOutput, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
+			&verdictBool, &hasOutput, &structuredOutput, &proseOutput, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
 			&fields.CommandLine, &fields.DirtyFiles, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 			&fields.SkipReason, &fields.Source,
@@ -2006,6 +2028,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		applyReviewJobScan(&j, fields)
 		applyJobVerdict(&j, verdictBool, output.String, hasOutput)
+		if options.includeFindings {
+			applyJobFindingCounts(&j, structuredOutput, proseOutput)
+		}
 
 		jobs = append(jobs, j)
 	}

@@ -184,6 +184,27 @@ func (e ListJobsParamsOmitPrompt) Valid() bool {
 	}
 }
 
+// Defines values for ListJobsParamsIncludeFindings.
+const (
+	ListJobsParamsIncludeFindingsEmpty ListJobsParamsIncludeFindings = ""
+	ListJobsParamsIncludeFindingsFalse ListJobsParamsIncludeFindings = "false"
+	ListJobsParamsIncludeFindingsTrue  ListJobsParamsIncludeFindings = "true"
+)
+
+// Valid indicates whether the value is a known member of the ListJobsParamsIncludeFindings enum.
+func (e ListJobsParamsIncludeFindings) Valid() bool {
+	switch e {
+	case ListJobsParamsIncludeFindingsEmpty:
+		return true
+	case ListJobsParamsIncludeFindingsFalse:
+		return true
+	case ListJobsParamsIncludeFindingsTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetSummaryParamsAll.
 const (
 	False GetSummaryParamsAll = "false"
@@ -1184,6 +1205,15 @@ type ReviewFileCoverage struct {
 	Reviewed *int64 `json:"reviewed,omitempty"`
 }
 
+// FindingCounts defines model for FindingCounts.
+type FindingCounts struct {
+	Approximate bool  `json:"approximate"`
+	Critical    int64 `json:"critical"`
+	High        int64 `json:"high"`
+	Low         int64 `json:"low"`
+	Medium      int64 `json:"medium"`
+}
+
 // ReviewJob defines model for ReviewJob.
 type ReviewJob struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1203,6 +1233,7 @@ type ReviewJob struct {
 	EnqueuedAt            time.Time               `json:"enqueued_at"`
 	Error                 *string                 `json:"error,omitempty"`
 	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts          `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
 	GitRef                string                  `json:"git_ref"`
 	Id                    int64                   `json:"id"`
@@ -1655,6 +1686,9 @@ type ListJobsParams struct {
 	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsParamsOmitPrompt `form:"omit_prompt,omitempty" json:"omit_prompt,omitempty"`
 
+	// IncludeFindings Include nullable finding severity counts for eligible completed reviews
+	IncludeFindings *ListJobsParamsIncludeFindings `form:"include_findings,omitempty" json:"include_findings,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `form:"repo_prefix,omitempty" json:"repo_prefix,omitempty"`
 
@@ -1685,6 +1719,9 @@ type ListJobsParamsHideClassifyJobs string
 
 // ListJobsParamsOmitPrompt defines parameters for ListJobs.
 type ListJobsParamsOmitPrompt string
+
+// ListJobsParamsIncludeFindings defines parameters for ListJobs.
+type ListJobsParamsIncludeFindings string
 
 // ListReposParams defines parameters for ListRepos.
 type ListReposParams struct {
@@ -4390,6 +4427,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		if params.OmitPrompt != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "omit_prompt", *params.OmitPrompt, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.IncludeFindings != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "include_findings", *params.IncludeFindings, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

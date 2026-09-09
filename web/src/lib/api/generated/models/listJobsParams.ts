@@ -5,6 +5,7 @@ import type { ListJobsBranchEmpty } from "./listJobsBranchEmpty";
 import type { ListJobsBranchIncludeEmpty } from "./listJobsBranchIncludeEmpty";
 import type { ListJobsClosed } from "./listJobsClosed";
 import type { ListJobsHideClassifyJobs } from "./listJobsHideClassifyJobs";
+import type { ListJobsIncludeFindings } from "./listJobsIncludeFindings";
 import type { ListJobsOmitPrompt } from "./listJobsOmitPrompt";
 
 export type ListJobsParams = {
@@ -60,6 +61,10 @@ export type ListJobsParams = {
    * Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
    */
   omit_prompt?: ListJobsOmitPrompt;
+  /**
+   * Include nullable finding severity counts for eligible completed reviews
+   */
+  include_findings?: ListJobsIncludeFindings;
   /**
    * Filter repos by path prefix
    */

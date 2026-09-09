@@ -157,6 +157,25 @@ func (l ListJobsQueryOmitPrompt) Validate() error {
 	}
 }
 
+// ListJobsQueryIncludeFindings Include nullable finding severity counts for eligible completed reviews
+type ListJobsQueryIncludeFindings string
+
+const (
+	ListJobsQueryIncludeFindingsEmpty ListJobsQueryIncludeFindings = ""
+	ListJobsQueryIncludeFindingsFalse ListJobsQueryIncludeFindings = "false"
+	ListJobsQueryIncludeFindingsTrue  ListJobsQueryIncludeFindings = "true"
+)
+
+// Validate checks if the ListJobsQueryIncludeFindings value is valid
+func (l ListJobsQueryIncludeFindings) Validate() error {
+	switch l {
+	case ListJobsQueryIncludeFindingsEmpty, ListJobsQueryIncludeFindingsFalse, ListJobsQueryIncludeFindingsTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryIncludeFindings value, got: %v", l))
+	}
+}
+
 // GetSummaryQueryAll Include per-repo breakdown
 type GetSummaryQueryAll string
 

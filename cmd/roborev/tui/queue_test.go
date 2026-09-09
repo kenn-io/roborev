@@ -2783,6 +2783,9 @@ func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
 
 	for _, col := range toggleableColumns {
 		name := columnNames[col]
+		if col == colFindings {
+			name = "H/M/L"
+		}
 		assert.Contains(t, headerLine, name,
 			"header missing column %q (col=%d)", name, col)
 	}

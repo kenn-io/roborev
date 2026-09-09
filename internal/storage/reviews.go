@@ -12,6 +12,16 @@ import (
 
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
+	return db.getReviewByJobID(jobID, false)
+}
+
+// GetReviewByJobIDWithFindingCounts loads a review and requests its job's
+// nullable finding-count projection for queue ID lookups.
+func (db *DB) GetReviewByJobIDWithFindingCounts(jobID int64) (*Review, error) {
+	return db.getReviewByJobID(jobID, true)
+}
+
+func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review, error) {
 	var r Review
 	var reviewFields reviewScanFields
 	var job ReviewJob
@@ -44,6 +54,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		return nil, err
 	}
 	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output, r.Output != "")
+	if includeFindingCounts {
+		applyJobFindingCounts(&job, reviewFields.StructuredOutput, sql.NullString{Valid: true, String: r.Output})
+	}
 
 	r.Job = &job
 

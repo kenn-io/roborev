@@ -186,6 +186,9 @@ type ListJobsQuery struct {
 	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsQueryOmitPrompt `json:"omit_prompt,omitempty"`
 
+	// IncludeFindings Include nullable finding severity counts for eligible completed reviews
+	IncludeFindings *ListJobsQueryIncludeFindings `json:"include_findings,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `json:"repo_prefix,omitempty"`
 
@@ -236,6 +239,13 @@ func (l ListJobsQuery) Validate() error {
 		if v, ok := any(l.OmitPrompt).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("OmitPrompt", err)
+			}
+		}
+	}
+	if l.IncludeFindings != nil {
+		if v, ok := any(l.IncludeFindings).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("IncludeFindings", err)
 			}
 		}
 	}
