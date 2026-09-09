@@ -93,14 +93,14 @@ func TestTUIFindingsRenderProof(t *testing.T) {
 		m.width = width
 		output := m.renderQueueView()
 		line := ""
-		for _, candidate := range strings.Split(output, "\n") {
+		for candidate := range strings.SplitSeq(output, "\n") {
 			if strings.Contains(candidate, "H/M/L") || strings.Contains(candidate, "1/2/0") {
 				line = candidate
 				break
 			}
 		}
 		if line == "" {
-			for _, candidate := range strings.Split(output, "\n") {
+			for candidate := range strings.SplitSeq(output, "\n") {
 				if strings.Contains(candidate, "abc1234") {
 					line = candidate
 					break
@@ -108,7 +108,7 @@ func TestTUIFindingsRenderProof(t *testing.T) {
 			}
 		}
 		maxWidth := 0
-		for _, candidate := range strings.Split(output, "\n") {
+		for candidate := range strings.SplitSeq(output, "\n") {
 			maxWidth = max(maxWidth, lipgloss.Width(candidate))
 		}
 		t.Logf("queue width=%d max_display_width=%d header=%t cell=%t line=%q", width, maxWidth, strings.Contains(output, "H/M/L"), strings.Contains(output, "1/2/0"), line)
