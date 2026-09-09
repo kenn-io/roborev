@@ -681,8 +681,12 @@ func (m model) renderQueueView() string {
 // the full m.visibleColumns() set as visCols (never a pane-narrowed subset)
 // so the cached map stays a superset that any pane-specific column subset
 // can safely index into.
+func queueColumnHeaders() [colCount]string {
+	return [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning", "H/M/L"}
+}
+
 func (m model) queueContentWidths(rows []queueRow, visCols []int, hasAnyPanel, treeColor bool) map[int]int {
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning", "H/M/L"}
+	allHeaders := queueColumnHeaders()
 	var contentWidth map[int]int
 	if m.queueColCache.gen == m.queueColGen {
 		contentWidth = m.queueColCache.contentWidths
@@ -713,7 +717,7 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 	compact := m.queueCompact()
 	hasAnyPanel := anyPanelRow(rows)
 	treeColor := queueColorEnabled()
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost", "Reasoning", "H/M/L"}
+	allHeaders := queueColumnHeaders()
 
 	visibleSelectedIdx := visibleSelectedRowIndex(rows, m.selectedJobID)
 	start, end := queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)

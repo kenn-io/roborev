@@ -21,7 +21,7 @@ type FindingCounts struct {
 // ReviewFindingCounts classifies stored review output. A nonnil structured
 // value is authoritative, including when it is malformed.
 func ReviewFindingCounts(structuredOutput *string, proseOutput string) *FindingCounts {
-	if structuredOutput != nil {
+	if structuredOutput != nil && *structuredOutput != "" {
 		document, err := structuredreview.Decode(json.RawMessage(*structuredOutput))
 		if err != nil || document.UnableToReview() {
 			return nil
@@ -77,7 +77,7 @@ func applyJobFindingCounts(job *ReviewJob, structuredOutput, proseOutput sql.Nul
 		return
 	}
 	var structured *string
-	if structuredOutput.Valid {
+	if structuredOutput.Valid && structuredOutput.String != "" {
 		structured = &structuredOutput.String
 	}
 	job.FindingCounts = ReviewFindingCounts(structured, proseOutput.String)

@@ -21,6 +21,7 @@ func TestReviewFindingCounts(t *testing.T) {
 		{name: "structured v2", structured: &structured, want: &FindingCounts{Critical: 1, High: 1, Medium: 1, Low: 1}},
 		{name: "structured v1", structured: &structuredV1, want: &FindingCounts{Low: 1}},
 		{name: "valid empty structured output", structured: new(`{"schema_version":2,"summary":"clean","verdict":"pass","findings":[]}`), want: &FindingCounts{}},
+		{name: "empty structured output falls back to prose", structured: new(""), prose: "- High — old finding", want: &FindingCounts{High: 1, Approximate: true}},
 		{name: "unable to review", structured: new(`{"schema_version":2,"summary":"unavailable","verdict":"unable_to_review","findings":[]}`)},
 		{name: "malformed structured output", structured: new(`{"schema_version":2`)},
 		{name: "non-object structured output", structured: new(`[]`)},
@@ -90,6 +91,12 @@ func TestListJobsFindingCounts(t *testing.T) {
 	assert.Equal(t, &FindingCounts{High: 1, Medium: 1}, jobs[0].FindingCounts)
 
 	_, err = db.Exec("UPDATE reviews SET structured_output = NULL, output = ? WHERE job_id = ?", "- High — old finding", job.ID)
+	require.NoError(t, err)
+	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
+	require.NoError(t, err)
+	assert.Equal(t, &FindingCounts{High: 1, Approximate: true}, jobs[0].FindingCounts)
+
+	_, err = db.Exec("UPDATE reviews SET structured_output = ?, output = ? WHERE job_id = ?", "", "- High — empty structured output", job.ID)
 	require.NoError(t, err)
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
