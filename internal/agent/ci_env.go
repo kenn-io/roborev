@@ -38,7 +38,7 @@ func isCIReview(ctx context.Context) bool { return ciReviewDir(ctx) != "" }
 // and forge credentials. Provider authentication remains available, including
 // Copilot's separate COPILOT_GITHUB_TOKEN with only Copilot Requests permission.
 // These are subprocess defaults; tool permissions still govern agent actions.
-func ciReviewEnv(env []string, dir string) []string {
+func ciReviewEnv(env []string, dir, repoPath string) []string {
 	clean := StripUntrustedEnv(env)
 	clean = filterEnv(clean, "EMAIL", "GPG_AGENT_INFO", "GNUPGHOME",
 		"GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
@@ -61,13 +61,14 @@ func ciReviewEnv(env []string, dir string) []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
 		"GIT_ALLOW_PROTOCOL=",
-		"GIT_CONFIG_COUNT=6",
+		"GIT_CONFIG_COUNT=7",
 		"GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1="+dir,
 		"GIT_CONFIG_KEY_2=core.askPass", "GIT_CONFIG_VALUE_2=",
 		"GIT_CONFIG_KEY_3=user.useConfigOnly", "GIT_CONFIG_VALUE_3=true",
 		"GIT_CONFIG_KEY_4=user.name", "GIT_CONFIG_VALUE_4=",
 		"GIT_CONFIG_KEY_5=user.email", "GIT_CONFIG_VALUE_5=",
+		"GIT_CONFIG_KEY_6=safe.directory", "GIT_CONFIG_VALUE_6="+repoPath,
 	)
 	return filtered
 }

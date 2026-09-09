@@ -60,6 +60,12 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 		})
 	}
 	ctx := ciCtx
+	cmd := exec.CommandContext(ctx, "git", "config", "--get-all", "safe.directory")
+	cmd.Dir = repo.Path()
+	configureSubprocess(ctx, cmd)
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Equal(t, repo.Path()+"\n", string(out))
 	for _, args := range [][]string{{"log", "-1", "--oneline"}, {"diff", "HEAD"}, {"status", "--porcelain"}} {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = repo.Path()

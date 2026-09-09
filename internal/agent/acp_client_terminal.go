@@ -357,7 +357,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 		env = append(env, fmt.Sprintf("%s=%s", envVar.Name, envVar.Value))
 	}
 	if c.ciReviewDir != "" {
-		env = ciReviewEnv(env, c.ciReviewDir)
+		env = ciReviewEnv(env, c.ciReviewDir, c.repoRoot)
 	}
 	cmd.Env = env
 

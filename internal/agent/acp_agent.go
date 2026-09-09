@@ -198,7 +198,7 @@ func (a *ACPAgent) runPrompt(
 	// what was removed to keep a resulting auth failure diagnosable.
 	cmd.Env = StripUntrustedEnvLogged(cmd.Environ(), "acp agent "+a.Command)
 	if isCIReview(ctx) {
-		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx))
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), repoPath)
 	}
 
 	// Set up stdio pipes for communication with the agent

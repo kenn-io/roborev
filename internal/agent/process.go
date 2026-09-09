@@ -78,7 +78,7 @@ func configureSubprocess(ctx context.Context, cmd *exec.Cmd, opts ...subprocessO
 		"agent "+filepath.Base(cmd.Path))
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
 	if isCIReview(ctx) {
-		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx))
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), cmd.Dir)
 	}
 
 	tracker := &subprocessTracker{}
@@ -123,7 +123,7 @@ func configureCapabilityProbe(ctx context.Context, cmd *exec.Cmd) {
 		}
 	}
 	if isCIReview(ctx) {
-		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx))
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), "")
 	}
 	cmd.Dir = os.TempDir()
 }

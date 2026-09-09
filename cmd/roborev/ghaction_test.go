@@ -78,10 +78,10 @@ func TestGhActionCmd(t *testing.T) {
 			expectedContains: []string{"ANTHROPIC_API_KEY", "@kilocode/cli@latest", "different model provider", "default for kilo"},
 		},
 		{
-			name:             "kiro has no secret in env block",
-			flags:            []string{"--agent", "kiro"},
-			expectedContains: []string{"kiro.dev"},
-			notContains:      []string{"OPENAI_API_KEY:", "AWS_ACCESS_KEY_ID:"},
+			name:          "kiro is rejected",
+			flags:         []string{"--agent", "kiro"},
+			expectError:   true,
+			errorContains: "requires GitHub credentials",
 		},
 		{
 			name:             "infers agents from repo CI config",

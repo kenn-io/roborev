@@ -20,7 +20,7 @@ var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",
 		"copilot", "opencode", "cursor",
-		"kiro", "kilo", "droid", "grok",
+		"kilo", "droid", "grok",
 	}
 	safeVersionRE = regexp.MustCompile(
 		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
@@ -62,6 +62,10 @@ func (c *WorkflowConfig) Validate() error {
 		return fmt.Errorf("at least one agent is required")
 	}
 	for _, ag := range c.Agents {
+		if ag == "kiro" {
+			return fmt.Errorf(
+				"agent %q requires GitHub credentials and cannot run in generated CI reviews", ag)
+		}
 		if !contains(allowedAgents, ag) {
 			return fmt.Errorf(
 				"invalid agent %q (valid: %s)",

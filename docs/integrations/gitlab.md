@@ -94,16 +94,15 @@ protected-branch pipeline, the protected ref — so pipeline variables cannot
 rewrite it. Do not expand a variable there (`--gl-host $CI_SERVER_URL` hands the
 choice right back to whoever started the pipeline). The flag also pins the forge
 choice itself: it selects GitLab outright, so an injected `GITHUB_ACTIONS=true`
-cannot steer the run to the GitHub client — which matters for jobs that carry a
-GitHub token for the `copilot` or `kiro` agents, since that client resolves its
-origin from the equally injectable `GITHUB_API_URL`. A pinned run also stops
-consulting `HTTP_PROXY`/`HTTPS_PROXY`: a proxy redirects where the token's bytes
-go without changing the hostname, and those are ordinary variables a pipeline
-starter can set. The trade-off is that a pinned job cannot egress through a
-proxy; drop the pin if your runner requires one, and treat that as choosing the
-unprotected setup below. Independently of the pin, roborev refuses to send the
-token to a plaintext `http` origin (loopback excepted) or to a URL that embeds
-credentials, whichever way the origin was resolved.
+cannot steer the run to the GitHub client and its separate origin and
+authentication resolution. A pinned run also stops consulting
+`HTTP_PROXY`/`HTTPS_PROXY`: a proxy redirects where the token's bytes go without
+changing the hostname, and those are ordinary variables a pipeline starter can
+set. The trade-off is that a pinned job cannot egress through a proxy; drop the
+pin if your runner requires one, and treat that as choosing the unprotected
+setup below. Independently of the pin, roborev refuses to send the token to a
+plaintext `http` origin (loopback excepted) or to a URL that embeds credentials,
+whichever way the origin was resolved.
 
 One environment-controlled knob is deliberately not neutralized: the system
 certificate store still honors `SSL_CERT_FILE` and `SSL_CERT_DIR`, because
@@ -265,11 +264,13 @@ that is where the note is posted from. Treat the strip as removing the casual
 path, and the choice of setup below — not the strip — as what decides whether an
 untrusted author's content is reviewed by a job holding a token worth stealing.
 Non-secret identity such as `CI_SERVER_URL`, `CI_PROJECT_PATH`, and
-`CI_REGISTRY_USER` stays. `GH_TOKEN` and `GITHUB_TOKEN` are removed too, except
-for the `copilot` and `kiro` CLIs, which authenticate with a GitHub token and
-cannot run without it; agents launched over ACP have no such exemption, and
-roborev logs the variables it removed so a resulting auth failure is
-diagnosable.
+`CI_REGISTRY_USER` stays. `GH_TOKEN` and `GITHUB_TOKEN` are also removed from
+every CI review agent. Copilot can use the provider-only `COPILOT_GITHUB_TOKEN`
+instead. Kiro cannot authenticate without the removed GitHub credentials, so
+`roborev ci review` and generated GitHub workflows reject it. Local, non-CI
+Copilot and Kiro launches retain their legacy GitHub-token exemption; agents
+launched over ACP have no such exemption. roborev logs the variables it removed
+so a resulting authentication failure is diagnosable.
 
 Clearing the environment is not the whole story: a default GitLab Runner clones
 from a credentialed URL and leaves it in the checkout's `.git/config` as

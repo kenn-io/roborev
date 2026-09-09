@@ -214,6 +214,8 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type", false},
 		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning", false},
 		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity", false},
+		{"KiroReviewAgent", []string{"review", "--ref", "HEAD", "--agent", "kiro"}, "kiro cannot run in CI reviews", false},
+		{"KiroSynthesisAgent", []string{"review", "--ref", "HEAD", "--agent", "test", "--synthesis-agent", "kiro"}, "kiro cannot run in CI reviews", false},
 		{"OptionLikeRef", []string{"review", "--ref=--format=%H"}, "--ref must not start with '-'", false},
 		{"RequiresRef", []string{"review"}, "auto-detection", true},
 	}
