@@ -168,7 +168,7 @@ func TestTUIFindingsRequestOption(t *testing.T) {
 			queries[key] = r.URL.Query()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jobs": []any{}, "has_more": false}))
+		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []any{}, "has_more": false})
 	}))
 	defer ts.Close()
 
