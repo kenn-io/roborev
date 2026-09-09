@@ -69,8 +69,8 @@ var gitlabForgeCredentialEnvKeys = []string{
 //
 // These are stripped by default, but two agent CLIs authenticate with a
 // GitHub token and cannot run without it: copilot and kiro-cli (see
-// ghaction.AgentEnvVar, which maps both to GITHUB_TOKEN). Generated CI
-// workflows reject them; elsewhere those two launch sites opt out via
+// ghaction.AgentEnvVar, which maps both to GITHUB_TOKEN, and the generated
+// workflow's hardcoded GH_TOKEN line). Those two launch sites opt out via
 // withGitHubCredentials(); every other agent gets them removed.
 var githubForgeCredentialEnvKeys = []string{
 	"GH_TOKEN",

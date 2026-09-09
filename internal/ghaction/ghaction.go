@@ -19,7 +19,8 @@ import (
 var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",
-		"opencode", "cursor", "kilo", "droid", "grok",
+		"copilot", "opencode", "cursor",
+		"kiro", "kilo", "droid", "grok",
 	}
 	safeVersionRE = regexp.MustCompile(
 		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
@@ -61,9 +62,6 @@ func (c *WorkflowConfig) Validate() error {
 		return fmt.Errorf("at least one agent is required")
 	}
 	for _, ag := range c.Agents {
-		if ag == "copilot" || ag == "kiro" {
-			return fmt.Errorf("agent %q requires GitHub credentials and cannot run in isolated CI reviews", ag)
-		}
 		if !contains(allowedAgents, ag) {
 			return fmt.Errorf(
 				"invalid agent %q (valid: %s)",
@@ -173,8 +171,9 @@ func buildAgentInfos(agents []string) []AgentInfo {
 }
 
 // envEntries deduplicates agent infos by env var so the env
-// block does not repeat the same variable. GitHub-token agents are
-// rejected by Validate; they have no provider secret entry.
+// block doesn't repeat the same variable. GITHUB_TOKEN is
+// skipped because the workflow template already provides it
+// via the hardcoded GH_TOKEN line.
 func envEntries(infos []AgentInfo) []AgentInfo {
 	seen := make(map[string]bool)
 	var entries []AgentInfo
@@ -308,6 +307,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   review:
@@ -317,7 +317,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Install roborev
         run: |
@@ -339,84 +338,27 @@ jobs:
           "$HOME/.local/bin/roborev" version
 
       # TODO: Pin agent CLI versions for supply-chain safety.
+      # Replace @latest with a specific version (e.g., @1.2.3).
       - name: Install agents
         run: |
           set -euo pipefail
-          build_dir=$(mktemp -d)
-          cat > "$build_dir/Dockerfile" <<'DOCKERFILE'
-          FROM node:24-bookworm
-          RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep python3-pip && rm -rf /var/lib/apt/lists/*
-          ENV PIP_BREAK_SYSTEM_PACKAGES=1
           {{- range .Agents }}
-          RUN {{ .InstallCmd }}
-          {{- end }}
-          DOCKERFILE
-          docker build -t roborev-ci-agent "$build_dir"
-          rm -rf "$build_dir"
-          # Discovery stubs fail closed if the container launch is not enabled.
-          # Agent probes and executions are redirected into the image by roborev.
-          {{- range .Agents }}
-          {{- if eq .Name "claude-code" }}
-          agent_cmd=claude
-          {{- else if eq .Name "cursor" }}
-          agent_cmd=agent
-          {{- else }}
-          agent_cmd={{ .Name }}
-          {{- end }}
-          printf '#!/bin/sh\nexit 1\n' > "$HOME/.local/bin/$agent_cmd"
-          chmod +x "$HOME/.local/bin/$agent_cmd"
+          {{ .InstallCmd }}
           {{- end }}
 
       - name: Run review
         env:
-          ROBOREV_CI_AGENT_IMAGE: roborev-ci-agent
-          ROBOREV_CI_REPO: ${{"{{"}} github.workspace {{"}}"}}
+          GH_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
           {{- range .EnvEntries }}
           {{ .EnvVar }}: ${{"{{"}} secrets.{{ .SecretName }} {{"}}"}}
           {{- end }}
         run: |
           set -euo pipefail
-          # Only prepared schemas and snapshots belong in this directory.
-          export ROBOREV_DATA_DIR
-          ROBOREV_DATA_DIR=$(mktemp -d)
-          export TMPDIR
-          TMPDIR=$(mktemp -d)
-          mkdir -p "$RUNNER_TEMP/roborev-result"
           roborev ci review \
             --agent "{{ .AgentCSV }}" \
             --synthesis-agent "{{ .SynthesisAgent }}" \
             --ref "${{"{{"}} github.event.pull_request.base.sha {{"}}"}}..${{"{{"}} github.event.pull_request.head.sha {{"}}"}}" \
-            --output-file "$RUNNER_TEMP/roborev-result/comment.md"
-
-      - name: Upload completed review
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: roborev-result
-          path: ${{"{{"}} runner.temp {{"}}"}}/roborev-result/comment.md
-          if-no-files-found: error
-
-  publish:
-    needs: review
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      # This job never checks out or executes pull request content.
-      - name: Download completed review
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
-        with:
-          name: roborev-result
-          path: result
-
-      - name: Publish review
-        env:
-          GH_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
-          GH_REPO: ${{"{{"}} github.repository {{"}}"}}
-          PR_NUMBER: ${{"{{"}} github.event.pull_request.number {{"}}"}}
-        run: |
-          set -euo pipefail
-          if [ -s result/comment.md ]; then
-            jq -Rs '{body: .}' < result/comment.md > comment.json
-            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input comment.json
-          fi
+            --comment \
+            --gh-repo "${{"{{"}} github.repository {{"}}"}}" \
+            --pr "${{"{{"}} github.event.pull_request.number {{"}}"}}"
 `

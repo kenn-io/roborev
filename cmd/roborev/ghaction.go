@@ -98,8 +98,8 @@ After generating the workflow, add repository secrets ` +
 
 	cmd.Flags().StringVar(&agentFlag, "agent", "",
 		"agents to use, comma-separated "+
-			"(codex, claude-code, gemini, "+
-			"opencode, cursor, kilo, droid, grok)")
+			"(codex, claude-code, gemini, copilot, "+
+			"opencode, cursor, kiro, kilo, droid, pi, grok)")
 	cmd.Flags().StringVar(&outputPath, "output", "",
 		"output path for workflow file "+
 			"(default: .github/workflows/roborev.yml)")

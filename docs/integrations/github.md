@@ -1155,38 +1155,16 @@ Add secrets in your repository's **Settings > Secrets and variables > Actions**.
 
 The generated workflow triggers on `pull_request` events and:
 
-1. Checks out the PR branch with full history and disables persisted Git
-    credentials
-1. Downloads roborev and verifies its SHA256 checksum
-1. Builds an agent image using a temporary build context outside the checkout
-1. Runs reviews, capability probes, and synthesis in disposable Docker
-    containers
-1. Uploads the completed comment as an artifact
-1. Publishes that artifact from a separate job with `pull-requests: write`
+1. Checks out the PR branch with full history
+1. Downloads the pinned roborev binary and verifies its SHA256 checksum
+1. Runs `roborev ci review --comment` with the configured agents
+1. Posts a PR comment only when an agent produced substantive review output
 
-The review job has only `contents: read`. Its agent containers receive read-only
-mounts of the checkout and prepared input files, a fresh writable home, and
-explicitly allowed provider API keys. They do not receive the runner's home, Git
-configuration, SSH sockets, askpass helpers, Docker socket, or publishing token.
-Agents can inspect Git history and diffs but cannot commit changes to the
-mounted repository. ACP agents are rejected because their terminal tools run in
-the parent process.
-
-Copilot and Kiro are rejected by the generator because their current adapters
-require GitHub credentials. Provider API keys remain readable inside the
-containers; hiding those keys from model-controlled tools requires a separate
-provider broker. The containers have network access for provider requests.
-
-The publisher checks out no code and treats the artifact as comment text. It
-always appends a comment; `upsert_comments` does not affect this generated
-workflow. An all-failed or empty-output run creates no comment. Actionable
-failures exit nonzero; an all-quota batch keeps its existing successful exit.
-
-To upgrade an existing workflow, regenerate it with
-`roborev init gh-action --force`. Use a roborev release that includes
-`ci review --output-file` and container isolation. These protections apply to
-the generated workflow, not arbitrary manual invocations of
-`ci review --comment`.
+In GitHub Actions, `ci review` reads `GITHUB_REPOSITORY`, `GITHUB_REF`, and
+`GITHUB_EVENT_PATH` automatically, so no flags are needed beyond `--comment`. An
+all-failed or empty-output run leaves its diagnostics in the Actions log without
+making a GitHub comment request. It exits nonzero for actionable failures; an
+all-quota batch keeps its existing successful exit.
 
 ### Customizing via `.roborev.toml`
 
@@ -1209,16 +1187,41 @@ min_severity = "medium"
 
 ### Manual Workflow Setup
 
-Start with `roborev init gh-action` and edit the generated workflow. Keep
-publishing in a separate job, `persist-credentials: false` on checkout, and the
-container environment settings in the review step. The generator creates agent
-discovery stubs that fail if container isolation is disabled.
+If you prefer full control over the workflow, create
+`.github/workflows/roborev.yml` manually:
 
-For a custom publishing integration, use
-`roborev ci review --output-file comment.md` without `--comment`. The file
-contains the severity-filtered GitHub comment, or is empty when no agent
-produced substantive output. Pass the file as data to the publishing job; never
-execute it or interpolate its contents into shell code.
+```yaml
+name: roborev
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install roborev
+        run: |
+          curl -fsSL https://roborev.io/install.sh | bash
+          echo "$HOME/.roborev/bin" >> "$GITHUB_PATH"
+
+      - name: Run review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: roborev ci review --comment --agent claude-code
+```
+
+Adjust the agent and secrets to match your setup. For multi-agent reviews, pass
+a comma-separated list (`--agent codex,gemini`) or use `--review-types` to run
+different review types.
 
 ## See Also
 
