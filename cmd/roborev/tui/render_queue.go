@@ -1382,7 +1382,7 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colReasoning, colReviewType, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colFindings, colSessionID, colRequestedModel, colRequestedProvider}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colReasoning, colReviewType, colQueued, colElapsed, colStatus, colPF, colFindings, colHandled, colCost, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{

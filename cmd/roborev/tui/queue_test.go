@@ -2717,6 +2717,13 @@ func TestDefaultColumnOrderDetection(t *testing.T) {
 	assert.False(t, slices.Equal(customOrder, toggleableColumns))
 }
 
+func TestDefaultColumnOrderPlacesFindingsBesideVerdict(t *testing.T) {
+	pfIndex := slices.Index(toggleableColumns, colPF)
+	findingsIndex := slices.Index(toggleableColumns, colFindings)
+
+	assert.Equal(t, pfIndex+1, findingsIndex)
+}
+
 func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
 	hidden := parseHiddenColumns(nil)
 	assert.True(t, hidden[colSessionID])

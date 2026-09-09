@@ -142,4 +142,15 @@ func TestListJobsFindingCounts(t *testing.T) {
 	var structuredOutput sql.NullString
 	require.NoError(t, db.QueryRow("SELECT structured_output FROM reviews WHERE job_id = ?", job.ID).Scan(&structuredOutput))
 	assert.True(t, structuredOutput.Valid)
+
+	_, err = db.Exec("UPDATE review_jobs SET job_type = '', commit_id = NULL, git_ref = '', diff_content = ? WHERE id = ?", "diff --git a/file.go b/file.go", job.ID)
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE reviews SET structured_output = NULL, output = ?, verdict_bool = NULL WHERE job_id = ?", "- Medium — legacy diff-only finding", job.ID)
+	require.NoError(t, err)
+	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
+	require.NoError(t, err)
+	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, jobs[0].FindingCounts)
+	review, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, review.Job.FindingCounts)
 }
