@@ -3325,6 +3325,38 @@
         },
         "type": "object"
       },
+      "FindingCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "approximate": {
+            "type": "boolean"
+          },
+          "critical": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "high": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "low": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "medium": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "critical",
+          "high",
+          "medium",
+          "low",
+          "approximate"
+        ],
+        "type": "object"
+      },
       "ReviewJob": {
         "additionalProperties": false,
         "properties": {
@@ -3389,6 +3421,9 @@
             },
             "nullable": true,
             "type": "array"
+          },
+          "finding_counts": {
+            "$ref": "#/components/schemas/FindingCounts"
           },
           "finished_at": {
             "format": "date-time",
@@ -5642,6 +5677,21 @@
             "name": "omit_prompt",
             "schema": {
               "description": "Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)",
+              "enum": [
+                "true",
+                "false",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include nullable finding severity counts for eligible completed reviews",
+            "explode": false,
+            "in": "query",
+            "name": "include_findings",
+            "schema": {
+              "description": "Include nullable finding severity counts for eligible completed reviews",
               "enum": [
                 "true",
                 "false",

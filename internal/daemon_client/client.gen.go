@@ -207,16 +207,16 @@ func (e ListJobsParamsIncludeFindings) Valid() bool {
 
 // Defines values for GetSummaryParamsAll.
 const (
-	False GetSummaryParamsAll = "false"
-	True  GetSummaryParamsAll = "true"
+	GetSummaryParamsAllFalse GetSummaryParamsAll = "false"
+	GetSummaryParamsAllTrue  GetSummaryParamsAll = "true"
 )
 
 // Valid indicates whether the value is a known member of the GetSummaryParamsAll enum.
 func (e GetSummaryParamsAll) Valid() bool {
 	switch e {
-	case False:
+	case GetSummaryParamsAllFalse:
 		return true
-	case True:
+	case GetSummaryParamsAllTrue:
 		return true
 	default:
 		return false
@@ -854,6 +854,15 @@ type FailureStats struct {
 	Total   int64            `json:"total"`
 }
 
+// FindingCounts defines model for FindingCounts.
+type FindingCounts struct {
+	Approximate bool  `json:"approximate"`
+	Critical    int64 `json:"critical"`
+	High        int64 `json:"high"`
+	Low         int64 `json:"low"`
+	Medium      int64 `json:"medium"`
+}
+
 // FixJobRequest defines model for FixJobRequest.
 type FixJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1203,15 +1212,6 @@ type Review struct {
 type ReviewFileCoverage struct {
 	Excluded *int64 `json:"excluded,omitempty"`
 	Reviewed *int64 `json:"reviewed,omitempty"`
-}
-
-// FindingCounts defines model for FindingCounts.
-type FindingCounts struct {
-	Approximate bool  `json:"approximate"`
-	Critical    int64 `json:"critical"`
-	High        int64 `json:"high"`
-	Low         int64 `json:"low"`
-	Medium      int64 `json:"medium"`
 }
 
 // ReviewJob defines model for ReviewJob.
