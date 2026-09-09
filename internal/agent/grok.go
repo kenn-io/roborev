@@ -517,7 +517,7 @@ func (a *GrokAgent) ClassifyWithSchema(
 	args := a.classifyArgs(schema, promptPath)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	if out != nil {
@@ -582,7 +582,7 @@ func (a *GrokAgent) ReviewWithSchema(
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 	var stdoutBuf, stderrBuf bytes.Buffer
 	if out != nil {
 		sw := newSyncWriter(out)

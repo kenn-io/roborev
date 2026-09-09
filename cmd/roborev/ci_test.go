@@ -36,6 +36,8 @@ func TestCIReviewSynthesisOverrides(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clearForgeCIEnv(t)
+			t.Setenv("GH_TOKEN", "publisher-sentinel")
+			t.Setenv("GIT_ASKPASS", "askpass-sentinel")
 			dataDir := testenv.SetDataDir(t)
 			repo := testutil.NewTestRepoWithCommit(t)
 			repo.AddRemote("origin", "https://"+tt.host+"/example/project-a.git")
@@ -46,6 +48,10 @@ func TestCIReviewSynthesisOverrides(t *testing.T) {
 			t.Setenv("TEST_CI_SYNTHESIS_REASONING", reasoningPath)
 			scriptPath := filepath.Join(dataDir, "codex-fixture")
 			require.NoError(t, os.WriteFile(scriptPath, []byte(`#!/bin/sh
+if [ -n "$GH_TOKEN$GITHUB_TOKEN$GIT_ASKPASS" ]; then
+  echo "CI agent inherited publishing credentials or helpers" >&2
+  exit 1
+fi
 reasoning=''
 for arg in "$@"; do
   case "$arg" in
@@ -83,11 +89,27 @@ synthesis_reasoning = %q
 			if tt.host == "gitlab.example.com" {
 				args = append(args, "--gl-repo", "example/project-a")
 			} else {
-				args = append(args, "--gh-repo", "example/project-a")
+				args = append(args, "--gh-repo", "example/project-a", "--pr", "7", "--comment", "--upsert-comments=false")
+			}
+			posted := make(chan string, 1)
+			if tt.host == "github.com" {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "/api/v3/repos/example/project-a/issues/7/comments", r.URL.Path)
+					posted <- r.Header.Get("Authorization")
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"id":1}`))
+				}))
+				t.Cleanup(server.Close)
+				t.Setenv("GITHUB_API_URL", server.URL)
 			}
 			cmd := ciCmd()
 			cmd.SetArgs(args)
 			output := captureOutput(t, cmd.Execute)
+			if tt.host == "github.com" {
+				require.Len(t, posted, 1, "parent publishes after the agent completes")
+				assert.Equal(t, "Bearer publisher-sentinel", <-posted)
+			}
 			assert.Contains(t, output, "Combined test reviews")
 			assert.Contains(t, output, "Minor naming issue.", "stdout keeps below-threshold findings")
 			model, err := os.ReadFile(modelPath)

@@ -247,7 +247,7 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 		return cached.(bool), nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(ctx, cmd)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeDangerousFlag)
 	if err != nil && !supported {
@@ -262,7 +262,7 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 		return cached.(bool)
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(ctx, cmd)
 	output, _ := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeEffortFlag)
 	claudeEffortSupport.Store(command, supported)
@@ -280,7 +280,7 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 		return cached.(bool)
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(ctx, cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Don't cache transient failures.
@@ -710,13 +710,13 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	}
 	args := a.classifyArgs(schema)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
-	configureSubprocess(cmd)
 	cmd.Dir = repoPath
 	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	configureSubprocess(ctx, cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
@@ -773,13 +773,13 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	args = append(args, "--json-schema", string(schema))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
-	configureSubprocess(cmd)
 	cmd.Dir = repoPath
 	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	configureSubprocess(ctx, cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -142,6 +142,11 @@ type ciReviewOpts struct {
 }
 
 func runCIReview(ctx context.Context, opts ciReviewOpts) error {
+	ctx, cleanup, err := agent.WithCIReview(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	// Validate flag-only inputs early (before git/config
 	// checks) so users get clear errors even outside a repo.
 	if opts.reasoning != "" {

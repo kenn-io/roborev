@@ -104,7 +104,7 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath)
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(context.Background(), cmd)
 
 	err := cmd.Run()
 	require.Error(t, err, "expected command cancellation")
@@ -117,7 +117,7 @@ func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sh", "-c", "kill -KILL $$")
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(context.Background(), cmd)
 
 	err := cmd.Run()
 	require.Error(t, err, "expected signal exit")
@@ -134,7 +134,7 @@ func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
 	skipIfWindows(t)
 
 	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $GIT_OPTIONAL_LOCKS")
-	configureSubprocess(cmd)
+	configureSubprocess(context.Background(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {
 	cmd := exec.CommandContext(context.Background(),
 		"sh", "-c", "echo $MY_TEST_VAR:$GIT_OPTIONAL_LOCKS")
 	cmd.Env = append(os.Environ(), "MY_TEST_VAR=hello")
-	configureSubprocess(cmd)
+	configureSubprocess(context.Background(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestConfigureSubprocessPreservesPWD(t *testing.T) {
 	dir := t.TempDir()
 	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $PWD")
 	cmd.Dir = dir
-	configureSubprocess(cmd)
+	configureSubprocess(context.Background(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestConfigureCapabilityProbePreservesRelativeCommandPath(t *testing.T) {
 	t.Chdir(repoDir)
 
 	cmd := exec.CommandContext(context.Background(), "./bin/codex", "--help")
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(context.Background(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testi
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", "exit 0")
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(context.Background(), cmd)
 
 	require.NoError(t, cmd.Run())
 	require.NotNil(t, cmd.Cancel, "expected wrapped cancel")

@@ -244,7 +244,7 @@ func (a *PiAgent) ClassifyWithSchema(
 	args := a.classifyArgs(promptPath, outputPath, schema)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
@@ -302,7 +302,7 @@ func (a *PiAgent) ReviewWithSchema(
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 	var stdoutBuf, stderrBuf bytes.Buffer
 	if out != nil {
 		sw := newSyncWriter(out)
@@ -391,7 +391,7 @@ func (a *PiAgent) Review(
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 
 	// Capture stdout for the result
 	var stdoutBuf bytes.Buffer

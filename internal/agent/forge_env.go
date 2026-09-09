@@ -67,11 +67,9 @@ var gitlabForgeCredentialEnvKeys = []string{
 // githubForgeCredentialEnvKeys lists the GitHub credentials roborev reads to
 // post pull request comments and commit statuses.
 //
-// These are stripped by default, but two agent CLIs authenticate with a
-// GitHub token and cannot run without it: copilot and kiro-cli (see
-// ghaction.AgentEnvVar, which maps both to GITHUB_TOKEN, and the generated
-// workflow's hardcoded GH_TOKEN line). Those two launch sites opt out via
-// withGitHubCredentials(); every other agent gets them removed.
+// These are stripped by default. Local Copilot and Kiro launches may opt out via
+// withGitHubCredentials(); CI always strips them and Copilot uses its separate
+// COPILOT_GITHUB_TOKEN provider credential.
 var githubForgeCredentialEnvKeys = []string{
 	"GH_TOKEN",
 	"GITHUB_TOKEN",

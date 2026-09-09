@@ -96,7 +96,7 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 		cmd.Env = append([]string(nil), spec.Env...)
 	}
 	cmd.Stdin = spec.Stdin
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 	cmd.WaitDelay = streamingCLIWaitDelay
 
 	sw := newSyncWriter(spec.Output)

@@ -197,6 +197,9 @@ func (a *ACPAgent) runPrompt(
 	// credentials here too (see forge_env.go). There is no opt-out, so log
 	// what was removed to keep a resulting auth failure diagnosable.
 	cmd.Env = StripUntrustedEnvLogged(cmd.Environ(), "acp agent "+a.Command)
+	if isCIReview(ctx) {
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx))
+	}
 
 	// Set up stdio pipes for communication with the agent
 	var stdinPipe io.WriteCloser
@@ -253,6 +256,7 @@ func (a *ACPAgent) runPrompt(
 	// Defer cleanup in proper order: terminals -> pipes -> process
 	// Create a client that handles agent responses
 	client := &acpClient{
+		ciReviewDir:    ciReviewDir(ctx),
 		agent:          a,
 		output:         output,
 		result:         &bytes.Buffer{},

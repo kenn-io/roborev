@@ -110,7 +110,7 @@ func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
-	tracker := configureSubprocess(cmd)
+	tracker := configureSubprocess(ctx, cmd)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -14,7 +14,7 @@ import (
 // variable, so a real terminal launch can be inspected end to end.
 const echoTerminalEnvScript = `#!/bin/sh
 echo "gitlab=[$GITLAB_TOKEN] gh=[$GH_TOKEN] github=[$GITHUB_TOKEN] cijob=[$CI_JOB_TOKEN]"
-echo "extra=[$ACP_EXTRA] gac=[$GOOGLE_APPLICATION_CREDENTIALS]"
+echo "extra=[$ACP_EXTRA] gac=[$GOOGLE_APPLICATION_CREDENTIALS] askpass=[$GIT_ASKPASS]"
 `
 
 // newTerminalTestClient builds an acpClient permitted to create terminals.
@@ -45,12 +45,19 @@ func TestACPCreateTerminalStripsForgeCredentials(t *testing.T) {
 
 	tests := []struct {
 		name  string
+		ci    bool
 		env   []acp.EnvVariable
 		wants []string
 	}{
 		{
 			name:  "NoCallerEnv",
 			wants: []string{"extra=[]"},
+		},
+		{
+			name:  "CICallerCannotRestoreCredentials",
+			ci:    true,
+			env:   []acp.EnvVariable{{Name: "GH_TOKEN", Value: "caller-token"}, {Name: "GIT_ASKPASS", Value: "caller-helper"}},
+			wants: []string{"askpass=[]"},
 		},
 		{
 			name:  "WithCallerEnv",
@@ -65,6 +72,12 @@ func TestACPCreateTerminalStripsForgeCredentials(t *testing.T) {
 			forgeCredentialTestEnv(t)
 			cmdPath := writeTempCommand(t, echoTerminalEnvScript)
 			client := newTerminalTestClient(t, t.TempDir())
+			if tt.ci {
+				ctx, cleanup, err := WithCIReview(context.Background())
+				require.NoError(t, err)
+				t.Cleanup(cleanup)
+				client.ciReviewDir = ciReviewDir(ctx)
+			}
 
 			created, err := client.CreateTerminal(context.Background(),
 				acp.CreateTerminalRequest{

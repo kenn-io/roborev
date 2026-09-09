@@ -75,6 +75,7 @@ func (bw *boundedWriter) Write(p []byte) (n int, err error) {
 
 // acpClient implements the acp.Client interface to handle agent responses
 type acpClient struct {
+	ciReviewDir         string
 	agent               *ACPAgent
 	output              io.Writer
 	result              *bytes.Buffer
@@ -354,6 +355,9 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	env := StripUntrustedEnv(cmd.Environ())
 	for _, envVar := range params.Env {
 		env = append(env, fmt.Sprintf("%s=%s", envVar.Name, envVar.Value))
+	}
+	if c.ciReviewDir != "" {
+		env = ciReviewEnv(env, c.ciReviewDir)
 	}
 	cmd.Env = env
 
