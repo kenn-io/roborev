@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +50,8 @@ func TestJobFindingCountsEligibility(t *testing.T) {
 		want bool
 	}{
 		{name: "review done", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone}, want: true},
+		{name: "range done", job: ReviewJob{JobType: JobTypeRange, Status: JobStatusDone}, want: true},
+		{name: "dirty done", job: ReviewJob{JobType: JobTypeDirty, Status: JobStatusDone}, want: true},
 		{name: "compact applied", job: ReviewJob{JobType: JobTypeCompact, Status: JobStatusApplied}, want: true},
 		{name: "synthesis rebased", job: ReviewJob{JobType: JobTypeSynthesis, Status: JobStatusRebased}, want: true},
 		{name: "legacy review", job: ReviewJob{CommitID: &commitID, Status: JobStatusDone}, want: true},
@@ -57,13 +60,41 @@ func TestJobFindingCountsEligibility(t *testing.T) {
 		{name: "fix", job: ReviewJob{JobType: JobTypeFix, Status: JobStatusDone}, want: false},
 		{name: "classify", job: ReviewJob{JobType: JobTypeClassify, Status: JobStatusDone}, want: false},
 		{name: "queued review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusQueued}, want: false},
+		{name: "running review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusRunning}, want: false},
 		{name: "failed review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusFailed}, want: false},
+		{name: "canceled review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusCanceled}, want: false},
+		{name: "applied review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusApplied}, want: true},
+		{name: "rebased review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusRebased}, want: true},
+		{name: "skipped review", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusSkipped}, want: false},
 		{name: "review error", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, Error: "error"}, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.job.HasFindingCountsOutput())
+		})
+	}
+}
+
+func TestJobFindingCountsMetadataVariants(t *testing.T) {
+	sourceMachineID := uuid.UUID{2}
+	resumeSourceJobUUID := uuid.UUID{3}
+	tests := []struct {
+		name string
+		job  ReviewJob
+	}{
+		{name: "user source", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone}},
+		{name: "auto design source", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, Source: JobSourceAutoDesign}},
+		{name: "ci source", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, Source: JobSourceCI, CIBaseBranch: "main"}},
+		{name: "post commit source", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, Source: JobSourcePostCommit}},
+		{name: "synced remote row", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, SourceMachineID: &sourceMachineID}},
+		{name: "rerun unseen", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone}},
+		{name: "rerun seen", job: ReviewJob{JobType: JobTypeReview, Status: JobStatusDone, ResumeSourceJobUUID: &resumeSourceJobUUID}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.True(t, tt.job.HasFindingCountsOutput())
 		})
 	}
 }

@@ -144,9 +144,13 @@ func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) {
 	}
 
 	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TTY_FORCE", "1")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("CLICOLOR_FORCE", "1")
 	output := m.renderQueueView()
 	var buf bytes.Buffer
 	writer := colorprofile.NewWriter(&buf, os.Environ())
+	assert.Equal(t, colorprofile.ASCII, writer.Profile)
 	_, err := writer.Write([]byte(output))
 	require.NoError(t, err)
 	assert.NotContains(t, buf.String(), "\x1b[38;")
