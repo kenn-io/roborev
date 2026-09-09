@@ -1948,8 +1948,10 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	}
 	structuredOutputExpr := "''"
 	proseOutputExpr := "''"
+	diffContentExpr := "NULL"
 	if options.includeFindings {
 		structuredOutputExpr = "rv.structured_output"
+		diffContentExpr = "j.diff_content"
 		proseOutputExpr = `CASE WHEN j.status IN ('done', 'applied', 'rebased')
 			AND COALESCE(j.error, '') = ''
 			AND (COALESCE(j.job_type, '') IN ('review', 'range', 'dirty', 'compact', 'synthesis')
@@ -1967,7 +1969,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	// backfill guarantee a non-NULL verdict implies a non-empty output.
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count, j.diff_content,
+		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count, ` + diffContentExpr + `,
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed,
 		       CASE WHEN rv.verdict_bool IS NULL THEN rv.output ELSE '' END,
 		       rv.verdict_bool,

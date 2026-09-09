@@ -110,16 +110,29 @@ func TestListJobsFindingCounts(t *testing.T) {
 	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","location":null},{"severity":"medium","problem":"p","fix":"f","location":null}]}`
 	_, err := db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
 	require.NoError(t, err)
+	_, err = db.Exec("UPDATE review_jobs SET diff_content = ? WHERE id = ?", "large legacy diff payload", job.ID)
+	require.NoError(t, err)
 
 	defaultJobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, defaultJobs, 1)
 	assert.Nil(t, defaultJobs[0].FindingCounts)
+	assert.Nil(t, defaultJobs[0].DiffContent)
 
 	jobs, err := db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, &FindingCounts{High: 1, Medium: 1}, jobs[0].FindingCounts)
+	require.NotNil(t, jobs[0].DiffContent)
+	assert.Equal(t, "large legacy diff payload", *jobs[0].DiffContent)
+
+	defaultReview, err := db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, defaultReview.Job.DiffContent)
+	countedReview, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, countedReview.Job.DiffContent)
+	assert.Equal(t, "large legacy diff payload", *countedReview.Job.DiffContent)
 
 	_, err = db.Exec("UPDATE reviews SET structured_output = NULL, output = ? WHERE job_id = ?", "- High — old finding", job.ID)
 	require.NoError(t, err)
