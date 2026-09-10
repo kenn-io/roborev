@@ -43,7 +43,7 @@ func ReviewFindingCounts(structuredOutput *string, proseOutput string) *FindingC
 	}
 
 	counts := &FindingCounts{Approximate: true}
-	for _, label := range ProseSeverityLabels(strings.Split(proseOutput, "\n")) {
+	for _, label := range reviewProseSeverityLabels(strings.Split(proseOutput, "\n")) {
 		if label.Legend {
 			continue
 		}
@@ -62,6 +62,68 @@ func ReviewFindingCounts(structuredOutput *string, proseOutput string) *FindingC
 		return nil
 	}
 	return counts
+}
+
+func reviewProseSeverityLabels(lines []string) []ProseLabel {
+	labels := ProseSeverityLabels(lines)
+	headingSeverity := ""
+	headingLevel := 0
+	fieldSeen := false
+
+	for i, line := range lines {
+		level := proseMarkdownHeadingLevel(line)
+		if severity := proseSeverityHeading(line); severity != "" {
+			labels[i] = ProseLabel{Severity: severity}
+			headingSeverity = severity
+			headingLevel = level
+			fieldSeen = false
+			continue
+		}
+		if level > 0 && headingSeverity != "" && level <= headingLevel {
+			headingSeverity = ""
+			headingLevel = 0
+			fieldSeen = false
+		}
+		if headingSeverity == "" || labels[i].Severity != headingSeverity ||
+			!proseSeverityField(line) || fieldSeen {
+			continue
+		}
+		labels[i].Severity = ""
+		fieldSeen = true
+	}
+	return labels
+}
+
+func proseSeverityHeading(line string) string {
+	if proseMarkdownHeadingLevel(line) == 0 {
+		return ""
+	}
+	heading := strings.ToLower(stripMarkdown(strings.TrimSpace(line)))
+	for _, severity := range []string{"critical", "high", "medium", "low"} {
+		if heading == severity+" severity" || strings.HasPrefix(heading, severity+" severity ") {
+			return severity
+		}
+	}
+	return ""
+}
+
+func proseMarkdownHeadingLevel(line string) int {
+	trimmed := strings.TrimSpace(line)
+	level := 0
+	for level < len(trimmed) && trimmed[level] == '#' {
+		level++
+	}
+	if level == 0 || (level < len(trimmed) && trimmed[level] != ' ') {
+		return 0
+	}
+	return level
+}
+
+func proseSeverityField(line string) bool {
+	field := strings.ToLower(stripMarkdown(stripListMarker(strings.TrimSpace(line))))
+	return strings.HasPrefix(field, "severity:") || strings.HasPrefix(field, "severity|") ||
+		strings.HasPrefix(field, "severity -") || strings.HasPrefix(field, "severity —") ||
+		strings.HasPrefix(field, "severity –")
 }
 
 // HasFindingCountsOutput reports whether a job can have review finding data.

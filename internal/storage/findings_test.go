@@ -32,6 +32,11 @@ func TestReviewFindingCounts(t *testing.T) {
 			prose: "Severity rubric:\n- High — rubric\n- Medium — rubric\n## Findings\n- High — bug\n- Medium: issue\nLow — nit\nHigh-level overview",
 			want:  &FindingCounts{High: 1, Medium: 1, Low: 1, Approximate: true},
 		},
+		{
+			name:  "compact severity headings",
+			prose: "## VERIFIED FINDINGS\n\n### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\nSeverity: High\n\n### **Low Severity**\n\n#### 1. Naming\n**Files:** other.go:7\nSeverity: Low",
+			want:  &FindingCounts{High: 1, Low: 1, Approximate: true},
+		},
 		{name: "unlabeled prose", prose: "No issues found."},
 	}
 
