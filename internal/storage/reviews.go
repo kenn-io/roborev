@@ -33,10 +33,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &jobFields.MinSeverity, &jobFields.BackupAgent, &jobFields.BackupModel,
 		&jobFields.PanelRunUUID, &jobFields.PanelRole, &jobFields.PanelName, &jobFields.PanelMemberName, &jobFields.PanelMemberIndex, &jobFields.PanelMemberConfig, &jobFields.ClaimBlocked,
 	}
-	diffContentExpr := "NULL"
-	if includeFindingCounts {
-		diffContentExpr = "j.diff_content"
-	}
+	diffContentExpr := findingCountsDiffContentExpr(includeFindingCounts)
 	err := db.QueryRow(`
 		SELECT `+reviewSelectColumns+`,
 		       j.id, j.uuid, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,

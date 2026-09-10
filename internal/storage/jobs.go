@@ -1836,6 +1836,17 @@ func collectListJobsOptions(opts ...ListJobsOption) listJobsOptions {
 	return o
 }
 
+// Typed rows identify their review kind, so finding counts only need diff_content for legacy rows.
+func findingCountsDiffContentExpr(includeFindings bool) string {
+	if !includeFindings {
+		return "NULL"
+	}
+	return `CASE WHEN COALESCE(j.job_type, '') = ''
+			AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty'
+				OR j.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0)
+			THEN j.diff_content ELSE NULL END`
+}
+
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
 	var args []any
 	var conditions []string
@@ -1948,10 +1959,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	}
 	structuredOutputExpr := "''"
 	proseOutputExpr := "''"
-	diffContentExpr := "NULL"
+	diffContentExpr := findingCountsDiffContentExpr(options.includeFindings)
 	if options.includeFindings {
 		structuredOutputExpr = "rv.structured_output"
-		diffContentExpr = "j.diff_content"
 		proseOutputExpr = `CASE WHEN j.status IN ('done', 'applied', 'rebased')
 			AND COALESCE(j.error, '') = ''
 			AND (COALESCE(j.job_type, '') IN ('review', 'range', 'dirty', 'compact', 'synthesis')

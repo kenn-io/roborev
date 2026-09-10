@@ -67,7 +67,9 @@ func ReviewFindingCounts(structuredOutput *string, proseOutput string) *FindingC
 func reviewProseSeverityLabels(lines []string) []ProseLabel {
 	labels := ProseSeverityLabels(lines)
 	headingSeverity := ""
-	headingLevel := 0
+	sectionLevel := 0
+	currentHeadingIndex := -1
+	nestedFinding := false
 	fieldSeen := false
 
 	for i, line := range lines {
@@ -75,13 +77,27 @@ func reviewProseSeverityLabels(lines []string) []ProseLabel {
 		if severity := proseSeverityHeading(line); severity != "" {
 			labels[i] = ProseLabel{Severity: severity}
 			headingSeverity = severity
-			headingLevel = level
+			sectionLevel = level
+			currentHeadingIndex = i
+			nestedFinding = false
 			fieldSeen = false
 			continue
 		}
-		if level > 0 && headingSeverity != "" && level <= headingLevel {
+		if headingSeverity != "" && proseFindingHeading(line) && level > sectionLevel {
+			if !nestedFinding {
+				labels[currentHeadingIndex].Severity = ""
+				nestedFinding = true
+			}
+			labels[i] = ProseLabel{Severity: headingSeverity}
+			currentHeadingIndex = i
+			fieldSeen = false
+			continue
+		}
+		if level > 0 && headingSeverity != "" && level <= sectionLevel {
 			headingSeverity = ""
-			headingLevel = 0
+			sectionLevel = 0
+			currentHeadingIndex = -1
+			nestedFinding = false
 			fieldSeen = false
 		}
 		if headingSeverity == "" || labels[i].Severity != headingSeverity ||
@@ -92,6 +108,19 @@ func reviewProseSeverityLabels(lines []string) []ProseLabel {
 		fieldSeen = true
 	}
 	return labels
+}
+
+func proseFindingHeading(line string) bool {
+	if proseMarkdownHeadingLevel(line) == 0 {
+		return false
+	}
+	heading := stripMarkdown(strings.TrimSpace(line))
+	position := 0
+	for position < len(heading) && heading[position] >= '0' && heading[position] <= '9' {
+		position++
+	}
+	return position > 0 && position < len(heading) &&
+		(heading[position] == '.' || heading[position] == ')' || heading[position] == ':')
 }
 
 func proseSeverityHeading(line string) string {

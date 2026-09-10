@@ -37,6 +37,11 @@ func TestReviewFindingCounts(t *testing.T) {
 			prose: "## VERIFIED FINDINGS\n\n### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\nSeverity: High\n\n### **Low Severity**\n\n#### 1. Naming\n**Files:** other.go:7\nSeverity: Low",
 			want:  &FindingCounts{High: 1, Low: 1, Approximate: true},
 		},
+		{
+			name:  "compact severity section counts nested findings",
+			prose: "### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\nSeverity: High\n\n#### 2. Missing auth\n**Files:** auth.go:9\nSeverity: High",
+			want:  &FindingCounts{High: 2, Approximate: true},
+		},
 		{name: "unlabeled prose", prose: "No issues found."},
 	}
 
@@ -128,16 +133,14 @@ func TestListJobsFindingCounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, &FindingCounts{High: 1, Medium: 1}, jobs[0].FindingCounts)
-	require.NotNil(t, jobs[0].DiffContent)
-	assert.Equal(t, "large legacy diff payload", *jobs[0].DiffContent)
+	assert.Nil(t, jobs[0].DiffContent)
 
 	defaultReview, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.Nil(t, defaultReview.Job.DiffContent)
 	countedReview, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
 	require.NoError(t, err)
-	require.NotNil(t, countedReview.Job.DiffContent)
-	assert.Equal(t, "large legacy diff payload", *countedReview.Job.DiffContent)
+	assert.Nil(t, countedReview.Job.DiffContent)
 
 	_, err = db.Exec("UPDATE reviews SET structured_output = NULL, output = ? WHERE job_id = ?", "- High — old finding", job.ID)
 	require.NoError(t, err)
@@ -168,7 +171,31 @@ func TestListJobsFindingCounts(t *testing.T) {
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
 	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, jobs[0].FindingCounts)
+	require.NotNil(t, jobs[0].DiffContent)
+	assert.Equal(t, "diff --git a/file.go b/file.go", *jobs[0].DiffContent)
 	review, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, review.Job.FindingCounts)
+	require.NotNil(t, review.Job.DiffContent)
+	assert.Equal(t, "diff --git a/file.go b/file.go", *review.Job.DiffContent)
+}
+
+func TestListJobsFindingCountsOmitsTypedDiffContent(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/finding-counts-typed-diff")
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "dirty",
+		Agent:       "codex",
+		DiffContent: "large typed diff payload",
+		JobType:     JobTypeDirty,
+	})
+	require.NoError(t, err)
+
+	jobs, err := db.ListJobs("", "", 0, 0, WithoutPrompt(), WithFindingCounts())
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, job.ID, jobs[0].ID)
+	assert.Nil(t, jobs[0].DiffContent)
 }
