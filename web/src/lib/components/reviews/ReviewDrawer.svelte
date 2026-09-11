@@ -2,7 +2,6 @@
   import { BottomDock, Button, FitStages, IconButton } from "@kenn-io/kit-ui";
   import BanIcon from "@lucide/svelte/icons/ban";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
-  import CopyIcon from "@lucide/svelte/icons/copy";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import Undo2Icon from "@lucide/svelte/icons/undo-2";
   import { getReviewStores } from "../../stores/context";
@@ -52,10 +51,6 @@
   function shortRef(ref: string): string {
     if (ref.length > 10) return ref.slice(0, 8);
     return ref;
-  }
-
-  function copyOutput(): void {
-    stores.roborevReview?.copyOutput();
   }
 
   function handleCloseReview(): void {
@@ -298,12 +293,6 @@
             label="Cancel"
           />
         {/if}
-        <Button
-          size="sm"
-          onclick={copyOutput}
-          title="Copy review output"
-          label="Copy Output"
-        />
       </div>
     {/snippet}
     {#snippet iconActions()}
@@ -344,14 +333,6 @@
             <BanIcon size={14} aria-hidden="true" />
           </IconButton>
         {/if}
-        <IconButton
-          size="sm"
-          ariaLabel="Copy Output"
-          title="Copy review output"
-          onclick={copyOutput}
-        >
-          <CopyIcon size={14} aria-hidden="true" />
-        </IconButton>
       </div>
     {/snippet}
     <div class="review-dock-footer">

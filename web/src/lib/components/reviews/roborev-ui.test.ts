@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/svelte";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ReviewProjectionView,
@@ -52,6 +52,7 @@ const projection: ReviewProjection = {
 
 describe("@kenn-io/roborev-ui", () => {
   it("renders the complete read-only review projection", async () => {
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
     const view = render(ReviewProjectionView, { projection });
 
     expect(screen.getByText("project-a")).toBeInTheDocument();
@@ -59,6 +60,11 @@ describe("@kenn-io/roborev-ui", () => {
     expect(screen.getByText("correctness")).toBeInTheDocument();
     expect(screen.getByText("Confirmed")).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Result" });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Copy review as Markdown" }),
+    );
+    expect(writeText).toHaveBeenCalledWith(projection.review?.output);
+    writeText.mockRestore();
     expect(view.container.innerHTML).not.toContain("<script");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });

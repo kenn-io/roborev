@@ -8,6 +8,7 @@
     loading?: boolean;
     pending?: boolean;
     emptyMessage?: string;
+    copyLabel?: string;
   }
 
   let {
@@ -15,6 +16,7 @@
     loading = false,
     pending = false,
     emptyMessage = "No review output available.",
+    copyLabel = "Copy review as Markdown",
   }: Props = $props();
 
   const fallbackHTML = $derived(renderMarkdownSync(output));
@@ -55,8 +57,8 @@
     <div class="review-actions">
       <CopyButton
         text={output}
-        ariaLabel="Copy review as Markdown"
-        title="Copy review as Markdown"
+        ariaLabel={copyLabel}
+        title={copyLabel}
         revealOnHover
       />
     </div>

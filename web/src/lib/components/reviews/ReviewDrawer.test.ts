@@ -213,18 +213,13 @@ describe("ReviewDrawer", () => {
 
     const group = screen.getByRole("group", { name: "Review actions" });
     const buttons = [...group.children] as HTMLElement[];
-    expect(buttons.map((el) => el.tagName)).toEqual([
-      "BUTTON",
-      "BUTTON",
-      "BUTTON",
-    ]);
+    expect(buttons.map((el) => el.tagName)).toEqual(["BUTTON", "BUTTON"]);
     expect(buttons.every((el) => el.classList.contains("kit-button"))).toBe(
       true,
     );
     expect(buttons.map((el) => el.textContent?.trim())).toEqual([
       "Close Review",
       "Rerun",
-      "Copy Output",
     ]);
   });
 
@@ -239,9 +234,6 @@ describe("ReviewDrawer", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
     expect(state.closeReview).toHaveBeenCalledWith(42);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Copy Output" }));
-    expect(state.copyOutput).toHaveBeenCalledTimes(1);
   });
 
   it("shows rerun only for rerunnable jobs", () => {

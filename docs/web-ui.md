@@ -73,7 +73,9 @@ provides:
 
 Hover over the review output to reveal the copy icon in its top-right corner. It
 copies the original Markdown, including headings, lists, links, and code blocks.
-The icon also appears on keyboard focus and stays visible on touch devices.
+The icon floats over the content without reserving space. It also appears on
+keyboard focus and stays visible on touch devices. Release notes provide the
+same action labeled "Copy release notes as Markdown".
 
 When a review agent fails before producing output, the **Review** tab shows the
 recorded failure reason so the problem can be diagnosed without leaving the
