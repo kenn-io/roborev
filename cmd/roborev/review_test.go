@@ -15,6 +15,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // tryBranchReview exercises tryBranchReviewForRef against the current
@@ -330,10 +331,11 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 		mux.HandleFunc("/api/jobs", poller.HandleJobs)
 		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, http.StatusOK, storage.Review{
-				ID:     1,
-				JobID:  1,
-				Agent:  "test",
-				Output: "No issues found. LGTM!",
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found. LGTM!"),
+				ID:          1,
+				JobID:       1,
+				Agent:       "test",
+				Output:      "No issues found. LGTM!",
 			})
 		})
 

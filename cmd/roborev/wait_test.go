@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type mockConfig struct {
@@ -200,8 +201,10 @@ func TestWait_Scenarios(t *testing.T) {
 			name: "Passing Review",
 			args: []string{"--sha", "HEAD", "--quiet"},
 			mock: mockConfig{
-				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
-				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+				Jobs: []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+				Review: &storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 1, Agent: "test", Output: "No issues found.",
+				},
 			},
 			expectErr: false,
 		},
@@ -219,8 +222,10 @@ func TestWait_Scenarios(t *testing.T) {
 			name: "Positional Arg As Git Ref",
 			args: []string{"HEAD", "--quiet"},
 			mock: mockConfig{
-				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
-				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+				Jobs: []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+				Review: &storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 1, Agent: "test", Output: "No issues found.",
+				},
 			},
 			expectErr: false,
 		},
@@ -268,7 +273,8 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 	mock := mockConfig{
 		Jobs: []storage.ReviewJob{{ID: 42, GitRef: "abc", Agent: "test", Status: "done"}},
 		Review: &storage.Review{
-			ID: 1, JobID: 42, Agent: "test", Output: "No issues found.",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+			ID:          1, JobID: 42, Agent: "test", Output: "No issues found.",
 		},
 		OnJobsQuery: func(r *http.Request) {
 			lastJobsQuery = r.URL.RawQuery
@@ -293,7 +299,9 @@ func TestWaitMultipleJobIDs(t *testing.T) {
 			{ID: 10, Agent: "test", Status: "done"},
 			{ID: 20, Agent: "test", Status: "done"},
 		},
-		Review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+		Review: &storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+		},
 	}
 	newWaitEnv(t, newWaitMockHandler(mock))
 
@@ -307,8 +315,10 @@ func TestWaitMultipleJobIDsOneFails(t *testing.T) {
 	// One job passes, one fails (has issues)
 	handler := newMultiJobMockHandler(map[int64]mockJobResult{
 		10: {
-			job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-			review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+			job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+			},
 		},
 		20: {
 			job:    storage.ReviewJob{ID: 20, Agent: "test", Status: "done"},
@@ -328,8 +338,10 @@ func TestWaitMultipleJobIDsOneFailsReportsOutput(t *testing.T) {
 	// appear in stdout (not suppressed).
 	handler := newMultiJobMockHandler(map[int64]mockJobResult{
 		10: {
-			job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-			review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+			job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+			},
 		},
 		20: {
 			job:    storage.ReviewJob{ID: 20, Agent: "test", Status: "done"},
@@ -352,8 +364,10 @@ func TestWaitMultipleJobIDsNotFoundReportsOutput(t *testing.T) {
 	// message should appear in stdout.
 	handler := newMultiJobMockHandler(map[int64]mockJobResult{
 		10: {
-			job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-			review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+			job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+			},
 		},
 		// 99 is absent — will produce ErrJobNotFound
 	})
@@ -377,8 +391,10 @@ func TestWaitMultipleGenericErrors(t *testing.T) {
 			name: "failed job reports error message",
 			jobs: map[int64]mockJobResult{
 				10: {
-					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+					job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{
+						VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+					},
 				},
 				20: {
 					job: storage.ReviewJob{ID: 20, Agent: "test", Status: "failed", Error: "agent crashed"},
@@ -391,8 +407,10 @@ func TestWaitMultipleGenericErrors(t *testing.T) {
 			name: "canceled job reports canceled",
 			jobs: map[int64]mockJobResult{
 				10: {
-					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+					job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{
+						VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+					},
 				},
 				30: {
 					job: storage.ReviewJob{ID: 30, Agent: "test", Status: "canceled"},
@@ -405,8 +423,10 @@ func TestWaitMultipleGenericErrors(t *testing.T) {
 			name: "review fetch error reports message",
 			jobs: map[int64]mockJobResult{
 				10: {
-					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
-					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+					job: storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{
+						VerdictBool: testutil.ReviewFixtureVerdict("No issues found."), ID: 1, JobID: 10, Agent: "test", Output: "No issues found.",
+					},
 				},
 				40: {
 					job: storage.ReviewJob{ID: 40, Agent: "test", Status: "done"},
@@ -555,7 +575,8 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	mock := mockConfig{
 		Jobs: []storage.ReviewJob{{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}},
 		Review: &storage.Review{
-			ID: 1, JobID: 1, Agent: "test", Output: "No issues found.",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+			ID:          1, JobID: 1, Agent: "test", Output: "No issues found.",
 		},
 		OnJobsQuery: func(r *http.Request) {
 			// Capture only the lookup query (has git_ref), not the poll query (has id)

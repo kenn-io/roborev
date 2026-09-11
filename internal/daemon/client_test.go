@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
@@ -163,7 +164,9 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			writeTestJSON(t, w, storage.Review{ID: 1, JobID: 1, Output: "Review complete"})
+			writeTestJSON(t, w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Review complete"), ID: 1, JobID: 1, Output: "Review complete",
+			})
 			return
 		default:
 			assert.Empty(t, fmt.Sprintf("%s %s", r.Method, r.URL.Path), "unexpected request")

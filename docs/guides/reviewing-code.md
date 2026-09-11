@@ -453,6 +453,46 @@ Browse open reviews first with `roborev tui`, then fix them. See
 [Responding to Reviews](/docs/guides/responding-to-reviews/) for the full set of
 options.
 
+## Review storage and legacy migration
+
+New reviews, compact reviews, and synthesis reviews store their complete JSON
+review document. Markdown is generated for display and export. Findings below
+the configured severity threshold stay in the document, and synthesis documents
+retain their source references and reviewer labels.
+
+On database upgrade, roborev uses existing valid JSON as the authoritative
+review and archives the previous record. Records without valid JSON move to
+`legacy_reviews` with a `migration_error` explaining why they require
+conversion. They are excluded from normal review reads. Roborev does not guess
+missing severities, fixes, or synthesis sources, and does not launch an agent to
+convert historical records automatically.
+
+When unresolved records remain, roborev asks you to run an AI agent for the
+migration. Stop the daemon before importing results, and use the database path
+for the intended installation:
+
+```bash
+roborev legacy-reviews --db /path/to/reviews.db export > migration-input.json
+```
+
+Give that file to your agent. It contains the original records, the conversion
+errors, and the review and synthesis JSON schemas. Ask the agent to preserve all
+findings and to leave any record it cannot convert faithfully unresolved. Import
+each completed JSON document using the archive ID from the export:
+
+```bash
+roborev legacy-reviews --db /path/to/reviews.db import 1 < converted-review.json
+```
+
+An import validates the document before restoring the active review. The
+original record remains archived with a resolution timestamp. Restart the daemon
+after importing. Migration input contains private review data; keep it with the
+local database rather than adding it to a repository.
+
+The PostgreSQL mirror also archives legacy records and excludes them from active
+reviews. Its archive retains the original row as JSON in
+`legacy_reviews.record`.
+
 ## See Also
 
 - [Responding to Reviews](/docs/guides/responding-to-reviews/): Fix findings and

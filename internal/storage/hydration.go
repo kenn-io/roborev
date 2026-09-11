@@ -3,7 +3,10 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"uuid"
+
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 type sqlScanner interface {
@@ -183,6 +186,9 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 }
 
 type reviewScanFields struct {
+	JobType           string
+	MinSeverity       string
+	OutputPrefix      string
 	CreatedAt         string
 	Closed            int
 	UUID              sql.Null[uuid.UUID]
@@ -195,7 +201,10 @@ type reviewScanFields struct {
 const reviewSelectColumns = `
 	rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at,
 	rv.closed, rv.uuid, rv.verdict_bool, rv.structured_output,
-	rv.reviewed_file_count, rv.excluded_file_count`
+	rv.reviewed_file_count, rv.excluded_file_count,
+ (SELECT job_type FROM review_jobs WHERE id = rv.job_id),
+ (SELECT COALESCE(min_severity, '') FROM review_jobs WHERE id = rv.job_id),
+ (SELECT COALESCE(output_prefix, '') FROM review_jobs WHERE id = rv.job_id)`
 
 func reviewScanDestinations(
 	review *Review,
@@ -214,6 +223,7 @@ func reviewScanDestinations(
 		&fields.StructuredOutput,
 		&fields.ReviewedFileCount,
 		&fields.ExcludedFileCount,
+		&fields.JobType, &fields.MinSeverity, &fields.OutputPrefix,
 	}
 }
 
@@ -225,8 +235,8 @@ func scanReviewFields(
 	if err := scanner.Scan(reviewScanDestinations(&review, &fields)...); err != nil {
 		return Review{}, reviewScanFields{}, err
 	}
-	applyReviewScan(&review, fields)
-	return review, fields, nil
+	err := applyReviewScan(&review, fields)
+	return review, fields, err
 }
 
 func scanReview(scanner sqlScanner) (Review, error) {
@@ -234,7 +244,14 @@ func scanReview(scanner sqlScanner) (Review, error) {
 	return review, err
 }
 
-func applyReviewScan(review *Review, fields reviewScanFields) {
+func applyReviewScan(review *Review, fields reviewScanFields) error {
+	if requiresReviewDocument(fields.JobType) {
+		doc, err := structuredreview.Decode(json.RawMessage(fields.StructuredOutput.String))
+		if err != nil {
+			return fmt.Errorf("review requires JSON migration: %w", err)
+		}
+		review.Output = fields.OutputPrefix + doc.Markdown(fields.MinSeverity)
+	}
 	review.CreatedAt = parseSQLiteTime(fields.CreatedAt)
 	review.Closed = fields.Closed != 0
 	if fields.UUID.Valid {
@@ -257,6 +274,7 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 	}
 	review.FileCoverage = NormalizeReviewFileCoverage(&coverage)
 	applyReviewVerdict(review, fields.VerdictBool)
+	return nil
 }
 
 func scanCommit(scanner sqlScanner) (*Commit, error) {

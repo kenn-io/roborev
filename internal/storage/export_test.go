@@ -25,7 +25,7 @@ func TestExportReviewsContentProfile(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "SYSTEM PROMPT MUST NOT EXPORT", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "SYSTEM PROMPT MUST NOT EXPORT", "No issues found."))
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET branch = 'main',
@@ -58,7 +58,7 @@ func TestExportReviewsContentProfile(t *testing.T) {
 	assert.Equal(int64(123), derefInt64(got.Cost.TokensIn))
 	assert.Equal(int64(45), derefInt64(got.Cost.TokensOut))
 	assert.InDelta(0.67, derefFloat64(got.Cost.USD), 1e-9)
-	assert.Equal("No issues found.", derefString(got.Content))
+	assert.Contains(derefString(got.Content), "No issues found.")
 	assert.Equal(int64(2000), derefInt64(got.DurationMS))
 	assert.Equal("2026-06-29T00:00:03Z", got.CompletedAt)
 	assert.Empty(got.Subagents)
@@ -87,7 +87,7 @@ func TestExportReviewsMetadataProfileOmitsContent(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found. SECRET_OUTPUT"))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found. SECRET_OUTPUT"))
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestExportReviewsFiltersAndOrdering(t *testing.T) {
 	}
 	empty := enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, "5555555555555555555555555555555555555555").ID, "5555555555555555555555555555555555555555")
 	claimJob(t, db, "w-empty")
-	require.NoError(t, db.CompleteJob(empty.ID, "codex", "prompt", ""))
+	require.NoError(t, completeReviewFixture(db, empty.ID, "codex", "prompt", ""))
 	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, empty.ID)
 	require.NoError(t, err)
 
@@ -459,7 +459,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	assert.Equal("security", got.Subagents[0].Name)
 	assert.Equal("fail", got.Subagents[0].Verdict)
 	assert.Equal("security", derefString(got.Subagents[0].ReviewType))
-	assert.Equal("- High — issue", derefString(got.Subagents[0].Content))
+	assert.Contains(derefString(got.Subagents[0].Content), "- High — issue")
 	assert.Equal(int64(7), derefInt64(got.Subagents[0].Cost.TokensIn))
 	assert.Equal(int64(9), derefInt64(got.Subagents[0].Cost.TokensOut))
 	assert.InDelta(0.12, derefFloat64(got.Subagents[0].Cost.USD), 1e-9)
@@ -533,8 +533,9 @@ func TestExportReviewsPreservesLargeContent(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJobResult(
 		job.ID, "codex", "prompt", ReviewCompletion{
-			Output:  strings.Repeat("x", (1<<20)+100),
-			Verdict: VerdictFail,
+			StructuredOutput: reviewFixtureJSON(strings.Repeat("x", (1<<20)+100)),
+			Output:           strings.Repeat("x", (1<<20)+100),
+			Verdict:          VerdictFail,
 		},
 	))
 
@@ -542,7 +543,7 @@ func TestExportReviewsPreservesLargeContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
 	require.NotNil(t, page.Reviews[0].Content)
-	assert.Equal(t, strings.Repeat("x", (1<<20)+100), *page.Reviews[0].Content)
+	assert.Contains(t, *page.Reviews[0].Content, strings.Repeat("x", (1<<20)+100))
 }
 
 func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
@@ -554,7 +555,7 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "dddddddddddddddddddddddddddddddddddddddd")
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	_, err = db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -599,7 +600,7 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 	commit := createCommit(t, db, repoID, sha)
 	job := enqueueJob(t, db, repoID, commit.ID, sha)
 	markExportJobRunning(t, db, job.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	_, err := db.Exec(`UPDATE reviews SET uuid = ?, created_at = ?, closed = ? WHERE job_id = ?`, testUUID("review-"+sha), completedAt, boolInt(closed), job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
@@ -651,7 +652,7 @@ func seedPanelExportJob(
 	_, err = db.Exec(`UPDATE review_jobs SET job_type = ?, started_at = '2026-06-29T00:00:00Z' WHERE id = ?`, panelJobType(role), job.ID)
 	require.NoError(t, err)
 	markExportJobRunning(t, db, job.ID)
-	require.NoError(t, db.CompleteJob(job.ID, agentName, "prompt", output))
+	require.NoError(t, completeReviewFixture(db, job.ID, agentName, "prompt", output))
 	_, err = db.Exec(`UPDATE reviews SET created_at = ? WHERE job_id = ?`, completedAt, job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)

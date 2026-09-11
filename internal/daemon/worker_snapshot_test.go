@@ -65,7 +65,7 @@ func TestSnapshotFlow_SmallDiffInlinesWithoutFile(t *testing.T) {
 	var receivedPrompt string
 	registerFakeAgent(t, "test", func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
 		receivedPrompt = p
-		return "No issues found.", nil
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	})
 
 	job := tc.createAndClaimJob(t, sha, testWorkerID)
@@ -90,7 +90,7 @@ func TestSnapshotFlow_LargeDiffWritesFileAndReferencesInPrompt(t *testing.T) {
 	var receivedPrompt string
 	registerFakeAgent(t, "test", func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
 		receivedPrompt = p
-		return "No issues found.", nil
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	})
 
 	commit, err := tc.DB.GetOrCreateCommit(
@@ -126,7 +126,7 @@ func TestSnapshotFlow_SnapshotFileCleanedUpAfterReview(t *testing.T) {
 	var snapshotPath string
 	registerFakeAgent(t, "test", func(_ context.Context, repoPath, _, p string, _ io.Writer) (string, error) {
 		snapshotPath = promptSnapshotPath(t, repoPath, p)
-		return "No issues found.", nil
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	})
 
 	commit, err := tc.DB.GetOrCreateCommit(
@@ -170,7 +170,7 @@ func TestSnapshotFlow_SnapshotFileReadableDuringReview(t *testing.T) {
 	registerFakeAgent(t, "test", func(_ context.Context, repoPath, _, p string, _ io.Writer) (string, error) {
 		data, err := os.ReadFile(promptSnapshotPath(t, repoPath, p))
 		fileContent, fileReadErr = string(data), err
-		return "No issues found.", nil
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	})
 
 	commit, err := tc.DB.GetOrCreateCommit(
@@ -221,7 +221,7 @@ func TestSnapshotFlow_ExcludePatternsAppliedToSnapshot(t *testing.T) {
 		data, err := os.ReadFile(promptSnapshotPath(t, repoPath, p))
 		require.NoError(t, err)
 		fileContent = string(data)
-		return "No issues found.", nil
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	})
 
 	commit, err := tc.DB.GetOrCreateCommit(
@@ -262,7 +262,7 @@ func TestSnapshotFlow_PriorRangeReviews(t *testing.T) {
 			require.NoError(t, err)
 			_, err = tc.DB.ClaimJob(testWorkerID)
 			require.NoError(t, err)
-			require.NoError(t, tc.DB.CompleteJob(prior.ID, "test", "old prompt", "earlier range finding"))
+			require.NoError(t, testutil.CompleteReviewFixture(tc.DB, prior.ID, "test", "old prompt", "earlier range finding"))
 			ref := base + ".." + second
 			var storedPrompt string
 			if prebuilt {
@@ -283,7 +283,7 @@ func TestSnapshotFlow_PriorRangeReviews(t *testing.T) {
 				require.NoError(t, err)
 				assert.Contains(string(content), "earlier range finding")
 				assert.NotContains(p, "earlier range finding")
-				return "No issues found.", nil
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 			})
 			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: ref, Agent: "test", JobType: storage.JobTypeRange, Prompt: storedPrompt, PromptPrebuilt: prebuilt})
 			require.NoError(t, err)

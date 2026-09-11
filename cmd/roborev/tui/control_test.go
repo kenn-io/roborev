@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // --- Unit tests for control types ---
@@ -878,7 +879,9 @@ func TestNoQuit_CtrlCStillQuits(t *testing.T) {
 func TestNoQuit_QStillClosesModal(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewReview
-	m.currentReview = &storage.Review{Agent: "test", Output: "test"}
+	m.currentReview = &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("test"), Agent: "test", Output: "test",
+	}
 
 	result, _ := m.Update(keyPressMsg('q'))
 	updated := result.(model)

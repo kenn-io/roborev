@@ -46,10 +46,20 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(append(reviewDestinations, jobDestinations...)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		var unresolved int
+		archiveErr := db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE job_id = ? AND resolved_at IS NULL`, jobID).Scan(&unresolved)
+		if archiveErr == nil && unresolved > 0 {
+			return nil, ErrLegacyReviewMigration
+		}
+	}
+
 	if err != nil {
 		return nil, err
 	}
-	applyReviewScan(&r, reviewFields)
+	if err := applyReviewScan(&r, reviewFields); err != nil {
+		return nil, err
+	}
 	applyReviewJobScan(&job, jobFields)
 	if err := db.attachExperimentAssignments(&job); err != nil {
 		return nil, err

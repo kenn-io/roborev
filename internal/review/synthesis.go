@@ -81,7 +81,7 @@ func VerifyDedupePreamble() string {
 		"3. **Output format:**\n" +
 		"   - Use the review output format above, including verdict-compatible finding structure\n" +
 		"   - Every verified finding that still applies must be repeated in the compact output\n" +
-		"   - Separate repeated findings with the same `---` delimiter used by regular reviews\n" +
+		"   - Return the verified findings in the review JSON findings array\n" +
 		"   - Counts, totals, and summaries may accompany repeated findings, but must not replace them\n" +
 		"   - The summary may mention how many prior findings were dropped as fixed, duplicates, or false positives\n\n"
 }

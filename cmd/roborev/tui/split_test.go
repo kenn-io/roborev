@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func splitModel(opts ...testModelOption) model {
@@ -652,7 +653,9 @@ func TestSplitEngageKeepsTasksOriginReviewScroll(t *testing.T) {
 	m := splitModel()
 	m.currentView = viewReview
 	m.reviewFromView = viewTasks
-	m.currentReview = &storage.Review{JobID: 99, Output: "fix job review"}
+	m.currentReview = &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("fix job review"), JobID: 99, Output: "fix job review",
+	}
 	m.selectedJobID = 99 // fix job: absent from m.jobs/panelMembers
 	m.reviewScroll = 7
 
@@ -805,7 +808,8 @@ func splitTestReview() *storage.Review {
 	verdictP := "P"
 	finishedAt := splitTestFinishedAt
 	return &storage.Review{
-		ID: 10, JobID: 2, Agent: "codex",
+		VerdictBool: testutil.ReviewFixtureVerdict("## Findings\n\n1. first finding\n2. second finding\n"),
+		ID:          10, JobID: 2, Agent: "codex",
 		Output: "## Findings\n\n1. first finding\n2. second finding\n",
 		Job: &storage.ReviewJob{
 			ID: 2, GitRef: "bbbb222", RepoName: "repoA",
@@ -4209,7 +4213,8 @@ func TestPromptNavToDifferentJobClearsStaleSiblings(t *testing.T) {
 	m.selectedJobID = 1
 	yFinishedAt := splitTestFinishedAt
 	yReview := &storage.Review{
-		ID: 20, JobID: 1, Agent: "codex", Output: "Y's output",
+		VerdictBool: testutil.ReviewFixtureVerdict("Y's output"),
+		ID:          20, JobID: 1, Agent: "codex", Output: "Y's output",
 		Job: &storage.ReviewJob{ID: 1, FinishedAt: &yFinishedAt},
 	}
 	res, _ := m.handlePromptMsg(promptMsg{review: yReview, jobID: 1})
@@ -4567,7 +4572,9 @@ func TestSplitReconcileDetailStalePendingForOldJobDoesNotBlockDifferentJob(t *te
 	jobA := storage.ReviewJob{ID: 2, Status: storage.JobStatusDone, FinishedAt: &t1, Agent: "codex"}
 	jobB := storage.ReviewJob{ID: 3, Status: storage.JobStatusDone, FinishedAt: &t1, Agent: "codex"}
 	m := splitModel(withTestJobs(jobA, jobB), withSelection(0, 2))
-	reviewA := &storage.Review{ID: 20, JobID: 2, Agent: "codex", Output: "A v1", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	reviewA := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("A v1"), ID: 20, JobID: 2, Agent: "codex", Output: "A v1", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	m.currentReview = reviewA
 
 	// Job A observed running again (a same-second rerun window), then
@@ -4592,7 +4599,9 @@ func TestSplitReconcileDetailStalePendingForOldJobDoesNotBlockDifferentJob(t *te
 	// Re-entering split, maybeBootstrapDetail's JobID-only match skips --
 	// contrived directly here (currentReview already "shows" job B): the
 	// guard only compares JobIDs and doesn't care how that came to be.
-	reviewB := &storage.Review{ID: 21, JobID: 3, Agent: "codex", Output: "B v1", Job: &storage.ReviewJob{ID: 3, FinishedAt: &t1}}
+	reviewB := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("B v1"), ID: 21, JobID: 3, Agent: "codex", Output: "B v1", Job: &storage.ReviewJob{ID: 3, FinishedAt: &t1},
+	}
 	m.currentReview = reviewB
 	m, bootstrapCmd := m.maybeBootstrapDetail()
 	require.Nil(bootstrapCmd, "bootstrap correctly skips -- currentReview already matches the selected job")
@@ -4627,7 +4636,9 @@ func TestUntrackedFollowResponseForDifferentJobDoesNotClearTrackedPending(t *tes
 	jobA := storage.ReviewJob{ID: 2, Status: storage.JobStatusDone, FinishedAt: &t1, Agent: "codex"}
 	jobB := storage.ReviewJob{ID: 3, Status: storage.JobStatusDone, FinishedAt: &t1, Agent: "codex"}
 	m := splitModel(withTestJobs(jobA, jobB), withSelection(0, 2))
-	reviewA := &storage.Review{ID: 20, JobID: 2, Agent: "codex", Output: "A v1", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	reviewA := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("A v1"), ID: 20, JobID: 2, Agent: "codex", Output: "A v1", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	m.currentReview = reviewA
 
 	// Job A observed running, then completes -- a TRACKED fetch is
@@ -4649,7 +4660,9 @@ func TestUntrackedFollowResponseForDifferentJobDoesNotClearTrackedPending(t *tes
 	// rather than a special 0 sentinel -- there is no more such sentinel.
 	m.selectedIdx, m.selectedJobID = 1, 3
 	m.reviewFetchSeq++
-	untrackedReviewB := &storage.Review{ID: 99, JobID: 3, Agent: "codex", Output: "B content", Job: &storage.ReviewJob{ID: 3, FinishedAt: &t1}}
+	untrackedReviewB := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("B content"), ID: 99, JobID: 3, Agent: "codex", Output: "B content", Job: &storage.ReviewJob{ID: 3, FinishedAt: &t1},
+	}
 	res, _ := m.handleReviewMsg(reviewMsg{review: untrackedReviewB, jobID: 3, follow: true, fetchSeq: m.reviewFetchSeq})
 	m = res.(model)
 	require.NotNil(m.currentReview)
@@ -4923,7 +4936,9 @@ func TestOlderTrackedResponseDoesNotOverwriteNewerUntrackedCommentRefresh(t *tes
 	require.NotNil(commentCmd, "the comment refresh must dispatch")
 
 	// That untracked refresh lands FIRST, with the new comment.
-	freshWithComment := &storage.Review{ID: 20, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	freshWithComment := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict(review.Output), ID: 20, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res2, _ := m.handleReviewMsg(reviewMsg{
 		review: freshWithComment, jobID: 2, follow: true, gen: m.detailFollowGen,
 		responses: []storage.Response{{ID: 1, Response: "old comment"}, {ID: 2, Response: "the user's new comment"}},
@@ -4934,7 +4949,9 @@ func TestOlderTrackedResponseDoesNotOverwriteNewerUntrackedCommentRefresh(t *tes
 
 	// The OLDER tracked response (dispatched before the comment) now
 	// finally lands, carrying pre-comment data.
-	staleReview := &storage.Review{ID: 19, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	staleReview := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict(review.Output), ID: 19, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res3, _ := m.handleReviewMsg(reviewMsg{
 		review: staleReview, jobID: 2, follow: true, gen: m.detailFollowGen,
 		responses: []storage.Response{{ID: 1, Response: "old comment"}},
@@ -4979,14 +4996,18 @@ func TestUntrackedAcceptanceBlocksLaterStaleTrackedResponse(t *testing.T) {
 	require.NotNil(tickCmd, "the pane-log completion handoff must still dispatch its own follow fetch")
 
 	// That untracked fetch resolves first.
-	newerReview := &storage.Review{ID: 30, JobID: 2, Agent: "codex", Output: "NEWER content", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	newerReview := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("NEWER content"), ID: 30, JobID: 2, Agent: "codex", Output: "NEWER content", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res2, _ := m.handleReviewMsg(reviewMsg{review: newerReview, jobID: 2, follow: true, gen: m.detailFollowGen, fetchSeq: m.reviewFetchSeq})
 	m = res2.(model)
 	require.Equal("NEWER content", m.currentReview.Output)
 
 	// The OLDER tracked response (dispatched before the handoff) now
 	// lands.
-	staleReview := &storage.Review{ID: 29, JobID: 2, Agent: "codex", Output: "STALE content", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	staleReview := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("STALE content"), ID: 29, JobID: 2, Agent: "codex", Output: "STALE content", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res3, _ := m.handleReviewMsg(reviewMsg{review: staleReview, jobID: 2, follow: true, gen: m.detailFollowGen, fetchSeq: trackedFollowSeq})
 	got := res3.(model)
 	assert.Equal("NEWER content", got.currentReview.Output, "a stale tracked response arriving after a newer untracked one must not overwrite it")
@@ -5117,7 +5138,9 @@ func TestCommentResultSkipsDispatchForJobNoLongerSelected(t *testing.T) {
 	// Y's own (legitimate, already-dispatched) response must still be
 	// accepted normally afterward -- confirming the X dispatch never
 	// bumped reviewFetchSeq out from under it.
-	reviewY := &storage.Review{ID: 40, JobID: 3, Agent: "codex", Output: "Y content", Job: &storage.ReviewJob{ID: 3}}
+	reviewY := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("Y content"), ID: 40, JobID: 3, Agent: "codex", Output: "Y content", Job: &storage.ReviewJob{ID: 3},
+	}
 	res2, _ := got.handleReviewMsg(reviewMsg{review: reviewY, jobID: 3, follow: true, gen: got.detailFollowGen, fetchSeq: outstandingSeqForY})
 	got2 := res2.(model)
 	require.NotNil(got2.currentReview)
@@ -5172,7 +5195,9 @@ func TestCommentResultFromSplitDetailFocusUsesSequencedPath(t *testing.T) {
 
 	// The OLDER tracked response (dispatched before the comment) now
 	// finally lands.
-	staleReview := &storage.Review{ID: 19, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	staleReview := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict(review.Output), ID: 19, JobID: 2, Agent: "codex", Output: review.Output, Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res3, _ := m.handleReviewMsg(reviewMsg{
 		review: staleReview, jobID: 2, follow: true, gen: m.detailFollowGen,
 		responses: []storage.Response{{ID: 1, Response: "old comment"}},
@@ -5219,7 +5244,9 @@ func TestCommentResultStackedSkipsRefreshOnceTheSelectionMovedOn(t *testing.T) {
 		withSelection(0, 2),
 	)
 	m.layout = layoutStacked
-	m.currentReview = &storage.Review{ID: 20, JobID: 2, Agent: "codex", Output: "job 2 review"}
+	m.currentReview = &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("job 2 review"), ID: 20, JobID: 2, Agent: "codex", Output: "job 2 review",
+	}
 
 	// A control-socket select-job to a DIFFERENT job (3) arrives before
 	// the comment POST resolves. In stacked mode, handleCtrlSelectJob
@@ -6746,7 +6773,9 @@ func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
 	m3.currentView = viewReview
 	m3.reviewFromView = viewTasks
 	m3.focus = focusDetail
-	m3.currentReview = &storage.Review{JobID: 99, Output: "fix review"}
+	m3.currentReview = &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("fix review"), JobID: 99, Output: "fix review",
+	}
 	m3.selectedJobID = 99
 	m3.applyLayout(layoutStacked)
 	assert.Equal(viewReview, m3.currentView)

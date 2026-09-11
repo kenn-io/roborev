@@ -144,7 +144,7 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 	require.NoError(t, err, "Expected no error, got: %v")
 
 	// We don't check output for diff content because agent output is mocked.
-	h.assertOutputContains("Commit: dirty")
+	h.assertOutputContains("No issues found.")
 }
 
 func TestLocalReviewAgentResolution(t *testing.T) {

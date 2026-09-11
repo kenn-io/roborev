@@ -235,7 +235,7 @@ func enqueueCompletedInsightsReviewJob(
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
 
-	err = db.CompleteJob(job.ID, "test", "prompt", output)
+	err = testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", output)
 	require.NoError(t, err)
 
 	return job

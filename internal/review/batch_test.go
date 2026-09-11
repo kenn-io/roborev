@@ -37,7 +37,10 @@ func (m *mockAgent) Review(
 	if m.model != "" {
 		out += " model=" + m.model
 	}
-	return out, m.err
+	if m.err != nil || json.Valid([]byte(out)) {
+		return out, m.err
+	}
+	return string(testutil.ReviewFixtureJSON(out)), nil
 }
 
 func (m *mockAgent) WithReasoning(
@@ -649,7 +652,7 @@ func (p *promptCapture) Review(
 	_ context.Context, _, _, prompt string, _ io.Writer,
 ) (string, error) {
 	p.lastPrompt = prompt
-	return "No issues found.", nil
+	return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 }
 
 func (p *promptCapture) WithReasoning(

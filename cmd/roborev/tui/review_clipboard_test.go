@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type mockClipboard struct {
@@ -149,7 +150,9 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	mock := &mockClipboard{}
 
 	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Review content for clipboard"},
+		storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("Review content for clipboard"), ID: 1, JobID: 123, Agent: "test", Output: "Review content for clipboard",
+		},
 		nil,
 	))
 	m.clipboard = mock
@@ -178,7 +181,9 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 		},
 	}
 	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Found an issue"},
+		storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("Found an issue"), ID: 1, JobID: 123, Agent: "test", Output: "Found an issue",
+		},
 		responses,
 	))
 	m.clipboard = mock
@@ -214,7 +219,9 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: ""},
+		storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict(""), ID: 1, JobID: 123, Agent: "test", Output: "",
+		},
 		nil,
 	))
 
@@ -254,7 +261,9 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: pbcopy not found")}
 
 	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Review content"},
+		storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("Review content"), ID: 1, JobID: 123, Agent: "test", Output: "Review content",
+		},
 		nil,
 	))
 	m.clipboard = mock
@@ -274,7 +283,9 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	mock := &mockClipboard{}
 
 	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 42, JobID: 123, Agent: "test", Output: "Review content"},
+		storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("Review content"), ID: 42, JobID: 123, Agent: "test", Output: "Review content",
+		},
 		nil,
 	))
 	m.clipboard = mock
@@ -307,43 +318,48 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "empty output",
 			review: &storage.Review{
-				ID:     1,
-				Output: "",
+				VerdictBool: testutil.ReviewFixtureVerdict(""),
+				ID:          1,
+				Output:      "",
 			},
 			expected: "",
 		},
 		{
 			name: "review with JobID only (no job struct)",
 			review: &storage.Review{
-				ID:     99,
-				JobID:  42,
-				Output: "Content here",
+				VerdictBool: testutil.ReviewFixtureVerdict("Content here"),
+				ID:          99,
+				JobID:       42,
+				Output:      "Content here",
 			},
 			expected: "Review #42\n\nContent here",
 		},
 		{
 			name: "review with JobID 0 but review ID set (legacy fallback)",
 			review: &storage.Review{
-				ID:     77,
-				JobID:  0,
-				Output: "Content here",
+				VerdictBool: testutil.ReviewFixtureVerdict("Content here"),
+				ID:          77,
+				JobID:       0,
+				Output:      "Content here",
 			},
 			expected: "Review #77\n\nContent here",
 		},
 		{
 			name: "review with all IDs 0 and no job struct (no header)",
 			review: &storage.Review{
-				ID:     0,
-				JobID:  0,
-				Output: "Content here",
+				VerdictBool: testutil.ReviewFixtureVerdict("Content here"),
+				ID:          0,
+				JobID:       0,
+				Output:      "Content here",
 			},
 			expected: "Content here",
 		},
 		{
 			name: "review with job - full SHA truncated",
 			review: &storage.Review{
-				ID:     99,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          99,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       99,
 					RepoPath: "/Users/test/myrepo",
@@ -355,8 +371,9 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "long branch name not truncated",
 			review: &storage.Review{
-				ID:     101,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          101,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       101,
 					RepoPath: "/repo",
@@ -368,8 +385,9 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "review with job - range not truncated",
 			review: &storage.Review{
-				ID:     100,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          100,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       100,
 					RepoPath: "/path/to/repo",
@@ -381,8 +399,9 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "always uses job ID from Job struct",
 			review: &storage.Review{
-				ID:     999,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          999,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       555,
 					RepoPath: "/repo/path",
@@ -394,9 +413,10 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "Job present but Job.ID is 0 falls back to JobID with context",
 			review: &storage.Review{
-				ID:     999,
-				JobID:  123,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          999,
+				JobID:       123,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       0,
 					RepoPath: "/repo/path",
@@ -408,9 +428,10 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "Job present but Job.ID is 0 falls back to review.ID with context",
 			review: &storage.Review{
-				ID:     999,
-				JobID:  0,
-				Output: "Review content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+				ID:          999,
+				JobID:       0,
+				Output:      "Review content",
 				Job: &storage.ReviewJob{
 					ID:       0,
 					RepoPath: "/repo/path",
@@ -422,8 +443,9 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "short git ref not truncated",
 			review: &storage.Review{
-				ID:     10,
-				Output: "Content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Content"),
+				ID:          10,
+				Output:      "Content",
 				Job: &storage.ReviewJob{
 					ID:       10,
 					RepoPath: "/repo",
@@ -435,8 +457,9 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "uppercase SHA truncated",
 			review: &storage.Review{
-				ID:     102,
-				Output: "Content",
+				VerdictBool: testutil.ReviewFixtureVerdict("Content"),
+				ID:          102,
+				Output:      "Content",
 				Job: &storage.ReviewJob{
 					ID:       102,
 					RepoPath: "/repo",
@@ -457,9 +480,10 @@ func TestFormatClipboardContent(t *testing.T) {
 
 func TestFormatClipboardContentWithResponses(t *testing.T) {
 	review := &storage.Review{
-		ID:     1,
-		JobID:  42,
-		Output: "Some findings here",
+		VerdictBool: testutil.ReviewFixtureVerdict("Some findings here"),
+		ID:          1,
+		JobID:       42,
+		Output:      "Some findings here",
 	}
 	responses := []storage.Response{
 		{
@@ -490,9 +514,10 @@ func TestFormatClipboardContentWithResponses(t *testing.T) {
 
 func TestFormatClipboardContentNoResponses(t *testing.T) {
 	review := &storage.Review{
-		ID:     1,
-		JobID:  42,
-		Output: "Review content",
+		VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
+		ID:          1,
+		JobID:       42,
+		Output:      "Review content",
 	}
 
 	withNil := formatClipboardContent(review, nil)

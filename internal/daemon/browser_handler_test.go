@@ -565,7 +565,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 			"UPDATE review_jobs SET status = 'running' WHERE id = ?", job.ID,
 		)
 		require.NoError(t, err)
-		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "PASS"))
 		_, eventCh := server.broadcaster.Subscribe("")
 		handler, sessions := newBrowserHandlerFixtureWithCore(
 			t, testBrowserAuthToken, server.httpServer.Handler,

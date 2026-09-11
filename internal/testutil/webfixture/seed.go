@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 const (
@@ -218,10 +219,10 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 	created := jobTime(job.id).Add(10 * time.Minute).Format(sqliteTime)
 	_, err := tx.Exec(`
 		INSERT INTO reviews
-			(job_id, agent, prompt, output, created_at, closed,
+			(job_id, agent, prompt, structured_output, output, created_at, closed,
 			 verdict_bool, uuid, updated_at)
-		VALUES (?, ?, 'Review the fixture change', ?, ?, ?, ?, ?, ?)`,
-		job.id, job.agent, output, created, closed, verdict,
+		VALUES (?, ?, 'Review the fixture change', ?, '', ?, ?, ?, ?, ?)`,
+		job.id, job.agent, string(testutil.ReviewFixtureJSON(output)), created, closed, verdict,
 		fmt.Sprintf("10000000-0000-4000-8000-%012d", job.id), created,
 	)
 	if err != nil {

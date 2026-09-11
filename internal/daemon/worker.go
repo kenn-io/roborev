@@ -598,11 +598,10 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 	return builder
 }
 
-// reviewJobUsesStructuredOutput reports whether a review job's agent returns
-// schema-constrained findings. Fix, task, and compact jobs always run as prose
-// because their stored prompts define their own output contract.
+// reviewJobUsesStructuredOutput selects the JSON contract for reviews and
+// compact jobs. Tasks and fixes retain their own output contracts.
 func reviewJobUsesStructuredOutput(job *storage.ReviewJob) bool {
-	return job.IsReviewJob() && agent.SupportsStructuredReview(job.Agent)
+	return job.IsReviewJob() || job.JobType == storage.JobTypeCompact
 }
 
 // markAgentInvoked records that an agent is being invoked for this attempt. Call
@@ -1049,9 +1048,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Reconcile the actual agent's output contract before shared preparation.
-	if job.PromptPrebuilt && job.IsReviewJob() {
-		_, structured := a.(agent.StructuredReviewAgent)
-		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, structured)
+	if job.IsReviewJob() || job.JobType == storage.JobTypeCompact {
+		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, true)
 	}
 
 	eventWorktreePath := checkout.eventWorktreePath
@@ -1154,23 +1152,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// (prompt preparation, worktree creation) have passed.
 	wp.markAgentInvoked(workerID, job, a)
 
-	// Run the agent. Tasks, insights, fixes, and compact jobs use their stored
-	// prompts directly. Compact derives its verdict from the compact response
-	// contract instead of the ordinary review-text parser.
+	// Tasks and fixes use free-form output. Reviews and compact jobs validate
+	// the same JSON document before completing.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
-	if job.IsTaskJob() || job.IsFixJob() || job.JobType == storage.JobTypeCompact {
+	if job.IsTaskJob() || job.IsFixJob() {
 		agentReview.Output, err = a.Review(
 			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
 		)
-		if job.JobType == storage.JobTypeCompact && err == nil {
-			if noVerdict := review.NoVerdict(agentReview.Output); noVerdict != nil {
-				err = noVerdict
-			} else {
-				agentReview.Verdict = compactVerdict(agentReview.Output)
-			}
-		}
 	} else {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,

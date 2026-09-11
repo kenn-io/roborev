@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"uuid"
+
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 type ExportProfile string
@@ -195,7 +197,7 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCursor) (*sql.Rows, error) {
 	outputExpr := "NULL"
 	if opts.Profile == ExportProfileContent {
-		outputExpr = "rv.output"
+		outputExpr = "rv.structured_output"
 	}
 	completedExpr := sqliteNormalizedTimestampExpr("rv.created_at")
 	var conditions []string
@@ -282,6 +284,14 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 		&row.ciHeadSHA,
 		&row.resumeSourceJobUUID,
 	)
+	if err == nil && row.output.Valid {
+		doc, decodeErr := structuredreview.Decode(json.RawMessage(row.output.String))
+		if decodeErr != nil {
+			return row, decodeErr
+		}
+		row.output.String = doc.Markdown("")
+	}
+
 	return row, err
 }
 
@@ -344,7 +354,7 @@ func (row exportReviewRow) exportCommitSHA() string {
 func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]ExportSubagent, error) {
 	outputExpr := "NULL"
 	if profile == ExportProfileContent {
-		outputExpr = "rv.output"
+		outputExpr = "rv.structured_output"
 	}
 	rows, err := db.Query(`
 		SELECT rv.uuid, rv.verdict_bool, rv.created_at, `+outputExpr+`,
@@ -401,7 +411,11 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 			sub.ResumeSourceJobUUID = &resumeSource.V
 		}
 		if profile == ExportProfileContent && output.Valid {
-			sub.Content = new(output.String)
+			doc, err := structuredreview.Decode(json.RawMessage(output.String))
+			if err != nil {
+				return nil, err
+			}
+			sub.Content = new(doc.Markdown(""))
 		}
 		out = append(out, sub)
 	}

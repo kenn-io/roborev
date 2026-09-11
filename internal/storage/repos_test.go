@@ -24,7 +24,7 @@ func setupDBAndRepo(t *testing.T, name string) (*DB, *Repo) {
 func completeTestJob(t *testing.T, db *DB, jobID int64, output string) {
 	t.Helper()
 	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(jobID, "codex", "prompt", output); err != nil {
+	if err := completeReviewFixture(db, jobID, "codex", "prompt", output); err != nil {
 		require.NoError(t, err, "CompleteJob failed: %v")
 	}
 }
@@ -662,7 +662,7 @@ func TestGetRepoStats(t *testing.T) {
 		assert.Equal(t, 1, stats.FailedReviews)
 	})
 
-	t.Run("legacy null verdict_bool still falls back to parsed output", func(t *testing.T) {
+	t.Run("missing verdict does not parse Markdown", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-legacy-verdict-test")
 
 		commit := createCommit(t, db, repo.ID, "stats-legacy-verdict-sha")
@@ -675,7 +675,7 @@ func TestGetRepoStats(t *testing.T) {
 		stats, err := db.GetRepoStats(repo.ID)
 		require.NoError(t, err, "GetRepoStats failed: %v")
 
-		assert.Equal(t, 1, stats.PassedReviews)
+		assert.Equal(t, 0, stats.PassedReviews)
 		assert.Equal(t, 0, stats.FailedReviews)
 	})
 }
@@ -966,7 +966,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		job := enqueueJob(t, db, repo.ID, commit.ID, "verdict-sha")
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as PASS
-		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found in this commit.")
 
 		// Fetch via ListJobs and check verdict is set
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
@@ -997,7 +997,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as FAIL
-		db.CompleteJob(jobID, "codex", "prompt", "**Verdict**: FAIL\n\n1. Bug found")
+		completeReviewFixture(db, jobID, "codex", "prompt", "**Verdict**: FAIL\n\n1. Bug found")
 
 		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)

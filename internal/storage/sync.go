@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 // Sync state keys
@@ -881,14 +882,36 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// First, find the job_id by uuid
 	var jobID int64
-	var jobType string
-	err := db.QueryRow(`SELECT id, job_type FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType)
+	var jobType, threshold string
+	err := db.QueryRow(`SELECT id, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType, &threshold)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("find job for review: %w", err)
+	}
+
+	if requiresReviewDocument(jobType) {
+		doc, err := structuredreview.Decode(r.StructuredOutput)
+		if err == nil && jobType == JobTypeSynthesis {
+			err = doc.RequireSources(len(doc.SourceLabels))
+		}
+		if err != nil {
+			_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed,
+  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
+  uuid, updated_by_machine_id, updated_at, synced_at, migration_error)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(uuid) DO NOTHING`, jobID, r.Agent, r.Prompt, r.Output, r.CreatedAt.Format(time.RFC3339), r.Closed,
+				r.ReviewedFileCount, r.ExcludedFileCount, r.VerdictBool, string(r.StructuredOutput), r.UUID,
+				r.UpdatedByMachineID, r.UpdatedAt.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
+				"No valid review JSON document; AI conversion required: "+err.Error())
+			return archiveErr
+		}
+		r.Output = ""
+		if r.VerdictBool == nil && !doc.UnableToReview() {
+			r.VerdictBool = new(doc.Passed(threshold))
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -901,7 +924,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	// verdict was stored before: output that is not a review, and free-form
 	// task or insights output, which never carries a verdict locally either.
 	var verdictBool any
-	noVerdict := ClassifyOutput(r.Output) != OutputReviewed || isFreeFormJobType(jobType)
+	noVerdict := isFreeFormJobType(jobType) || (!requiresReviewDocument(jobType) && ClassifyOutput(r.Output) != OutputReviewed)
 	if r.VerdictBool != nil && !noVerdict {
 		verdictBool = 0
 		if *r.VerdictBool {
@@ -914,7 +937,12 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	if noVerdict {
 		verdictOnConflict = "NULL"
 	}
-	_, err = db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
@@ -922,6 +950,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
+ output = excluded.output,
 			verdict_bool = `+verdictOnConflict+`,
 			structured_output = COALESCE(excluded.structured_output, reviews.structured_output),
 			reviewed_file_count = COALESCE(excluded.reviewed_file_count, reviews.reviewed_file_count),
@@ -933,7 +962,15 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool, nullStr(string(r.StructuredOutput)), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
-	return err
+	if err != nil {
+		return err
+	}
+	if requiresReviewDocument(jobType) {
+		if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpsertPulledResponse inserts a response from PostgreSQL into SQLite.

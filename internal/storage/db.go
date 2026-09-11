@@ -273,9 +273,14 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
 	}
+	if err := wrapped.migrateLegacyReviews(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate legacy reviews: %w", err)
+	}
+
 	if _, err := wrapped.BackfillVerdictBool(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("backfill verdicts: %w", err)
+		return nil, fmt.Errorf("backfill JSON verdicts: %w", err)
 	}
 
 	return wrapped, nil

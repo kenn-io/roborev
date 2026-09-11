@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -904,8 +905,9 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m.versionMismatch = true
 		m.daemonVersion = "old-version"
 		m.currentReview = &storage.Review{
-			ID:     1,
-			Output: "Test review",
+			VerdictBool: testutil.ReviewFixtureVerdict("Test review"),
+			ID:          1,
+			Output:      "Test review",
 			Job: &storage.ReviewJob{
 				ID:       1,
 				GitRef:   "abc123",
@@ -936,8 +938,9 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m.versionMismatch = true
 		m.daemonVersion = "old-version"
 		m.currentReview = &storage.Review{
-			ID:     1,
-			Output: "Test review",
+			VerdictBool: testutil.ReviewFixtureVerdict("Test review"),
+			ID:          1,
+			Output:      "Test review",
 			Job: &storage.ReviewJob{
 				ID:       1,
 				GitRef:   "abc123",

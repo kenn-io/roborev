@@ -31,7 +31,7 @@ func TestJobCounts(t *testing.T) {
 	claimed, _ := db.ClaimJob("w1")
 	if claimed != nil {
 		assert.Equal(t, claimed.ID, job.ID)
-		db.CompleteJob(claimed.ID, "codex", "p", "o")
+		completeReviewFixture(db, claimed.ID, "codex", "p", "o")
 	}
 
 	commit2 := createCommit(t, db, repo.ID, "fail1")
@@ -137,7 +137,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	t.Run("counts include all job statuses", func(t *testing.T) {
 		claimed, _ := db.ClaimJob("worker-1")
 		if claimed != nil {
-			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+			completeReviewFixture(db, claimed.ID, "codex", "prompt", "output")
 		}
 
 		claimed2, _ := db.ClaimJob("worker-1")
@@ -236,7 +236,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 				s := seedTwoRepos(t)
 				// Complete one job in repo1 so we can filter by status=done.
 				claimed := claimJob(t, s.db, "worker-1")
-				err := s.db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+				err := completeReviewFixture(s.db, claimed.ID, "codex", "prompt", "output")
 				require.NoError(t, err, "CompleteJob failed")
 				return s.db, "done", s.repo1.RootPath, 50, 0
 			},
@@ -362,7 +362,7 @@ func TestListJobsWithRepoPaths(t *testing.T) {
 	// oldest job (claimed first) so exactly one done job exists.
 	claimed := claimJob(t, db, "worker-1")
 	require.Equal(t, "repo1", claimed.RepoName)
-	require.NoError(t, db.CompleteJob(claimed.ID, "codex", "prompt", "output"))
+	require.NoError(t, completeReviewFixture(db, claimed.ID, "codex", "prompt", "output"))
 
 	inScope, err := db.CountJobStats("", "",
 		WithRepoPaths([]string{repo1.RootPath, repo2.RootPath}))
@@ -441,7 +441,7 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
 		db.ClaimJob("w")
-		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+		completeReviewFixture(db, job.ID, "codex", "", fmt.Sprintf("output %d", i))
 
 		if i == 0 {
 			db.MarkReviewClosedByJobID(job.ID, true)
@@ -493,7 +493,7 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
 		db.ClaimJob("w")
-		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+		completeReviewFixture(db, job.ID, "codex", "", fmt.Sprintf("output %d", i))
 	}
 
 	t.Run("WithBranch strict excludes branchless", func(t *testing.T) {
@@ -723,7 +723,7 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 	_, err = db.ClaimJob("worker-0")
 	require.NoError(t, err, "ClaimJob failed: %v")
 
-	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
+	err = completeReviewFixture(db, job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
 	require.NoError(t, err, "CompleteJob failed: %v")
 
 	jobs, err := db.ListJobs("", "", 50, 0)
@@ -753,7 +753,7 @@ func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
 	_, err = db.ClaimJob("worker-0")
 	require.NoError(t, err, "ClaimJob failed: %v")
 
-	err = db.CompleteJob(job.ID, "codex", "review prompt", "No issues found.\n## Verdict: PASS")
+	err = completeReviewFixture(db, job.ID, "codex", "review prompt", "No issues found.\n## Verdict: PASS")
 	require.NoError(t, err, "CompleteJob failed: %v")
 
 	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
@@ -986,7 +986,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 
 	for range 3 {
 		claimed := claimJob(t, db, "w1")
-		if err := db.CompleteJob(claimed.ID, "codex", "p", "o"); err != nil {
+		if err := completeReviewFixture(db, claimed.ID, "codex", "p", "o"); err != nil {
 			require.NoError(t, err, "CompleteJob failed: %v")
 		}
 	}
@@ -1021,7 +1021,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		cA := createCommit(t, db, rA.ID, "win-a")
 		enqueueJob(t, db, rA.ID, cA.ID, "win-a")
 		claimed := claimJob(t, db, "w2")
-		require.NoError(t, db.CompleteJob(claimed.ID, "codex", "p", "o"))
+		require.NoError(t, completeReviewFixture(db, claimed.ID, "codex", "p", "o"))
 
 		jobs, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(`C:\Users\dev\workspace`),
@@ -1315,7 +1315,7 @@ func TestListJobsWithoutPrompt(t *testing.T) {
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "worker-1")
-	require.NoError(t, db.CompleteJob(doneJob.ID, "test", "done prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, doneJob.ID, "test", "done prompt", "No issues found."))
 
 	// Second job: claimed → running, prompt must survive the metadata listing
 	// (the TUI prompt view reads it straight from the queue rows).
@@ -1357,7 +1357,7 @@ func TestListJobsWithoutPrompt(t *testing.T) {
 	assert.Equal("done-ref", byID[doneJob.ID].GitRef, "other fields still hydrated")
 }
 
-func TestListJobsParsesVerdictWhenVerdictBoolNull(t *testing.T) {
+func TestListJobsDoesNotParseMarkdownWhenVerdictBoolNull(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1369,7 +1369,7 @@ func TestListJobsParsesVerdictWhenVerdictBoolNull(t *testing.T) {
 	_, err = db.ClaimJob("worker-0")
 	require.NoError(t, err, "ClaimJob failed: %v")
 
-	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
+	err = completeReviewFixture(db, job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
 	require.NoError(t, err, "CompleteJob failed: %v")
 
 	// Legacy rows (e.g. synced from an older machine) can lack verdict_bool;
@@ -1381,6 +1381,5 @@ func TestListJobsParsesVerdictWhenVerdictBoolNull(t *testing.T) {
 	require.NoError(t, err, "ListJobs failed: %v")
 
 	require.Len(t, jobs, 1)
-	require.NotNil(t, jobs[0].Verdict)
-	assert.Equal(t, "F", *jobs[0].Verdict)
+	assert.Nil(t, jobs[0].Verdict)
 }

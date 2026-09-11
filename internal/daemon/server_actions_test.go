@@ -517,9 +517,9 @@ func TestHandleRerunJob(t *testing.T) {
 			if claimed.ID == job.ID {
 				break
 			}
-			db.CompleteJob(claimed.ID, "test", "prompt", "output")
+			testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "output")
 		}
-		db.CompleteJob(job.ID, "test", "prompt", "output")
+		testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output")
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -571,7 +571,7 @@ func TestHandleRerunJob(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
 		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(job.ID, agentName, "prompt", "output"))
+		require.NoError(t, testutil.CompleteReviewFixture(isolatedDB, job.ID, agentName, "prompt", "output"))
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -744,9 +744,9 @@ func TestHandleRerunJob(t *testing.T) {
 			if claimed.ID == job.ID {
 				break
 			}
-			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "output"))
+			require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "output"))
 		}
-		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -1288,7 +1288,7 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
 
 	// Subscribe to broadcaster before the close call
 	_, eventCh := server.broadcaster.Subscribe("")
@@ -1324,7 +1324,7 @@ func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
 
 	// Close first, then reopen
 	require.NoError(t, db.MarkReviewClosedByJobID(job.ID, true))
@@ -1361,7 +1361,7 @@ func TestHandleCloseReview_RepoFilteredSubscriber(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
 
 	// Look up the normalized repo path used in the DB
 	loaded, err := db.GetJobByID(job.ID)

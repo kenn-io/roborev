@@ -175,7 +175,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 			WithContext(ctx).
 			ForRepo(repoPath, repoID).
 			WithRepoConfig(repoCfg, repoCfgRef).
-			WithStructuredOutput(agent.SupportsStructuredReview(agentName))
+			WithStructuredOutput(true)
 		return builder.BuildWithAdditionalContext(
 			gitRef,
 			contextCount,
@@ -3202,7 +3202,7 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 		WithContext(ctx).
 		ForRepo(repoPath, repoID).
 		WithRepoConfig(repoCfg, repoCfgRef).
-		WithStructuredOutput(agent.SupportsStructuredReview(agentName))
+		WithStructuredOutput(true)
 	return builder.BuildWithAdditionalContext(
 		gitRef,
 		contextCount,

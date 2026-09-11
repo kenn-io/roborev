@@ -161,7 +161,7 @@ func TestHandleJobOutput(t *testing.T) {
 	t.Run("polling completed job normalizes persisted output with review agent", func(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-agent-alias"), "agent123", "claude")
 		setJobStatus(t, db, job.ID, storage.JobStatusRunning)
-		require.NoError(t, db.CompleteJob(job.ID, "claude-code", "prompt", "No issues found."))
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "claude-code", "prompt", "No issues found."))
 		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 		require.NoError(t, os.WriteFile(
 			JobLogPath(job.ID),

@@ -194,7 +194,7 @@ func runSingle(
 		WithContext(ctx).
 		ForRepo(cfg.RepoPath, 0).
 		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef).
-		WithStructuredOutput(agent.IsStructuredReviewAgent(resolvedAgent))
+		WithStructuredOutput(true)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType

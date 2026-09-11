@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestTUIFetchReviewNotFound(t *testing.T) {
@@ -58,10 +59,11 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		if r.URL.Path == "/api/review" {
 			// Return a review for a single commit (not a range or dirty)
 			review := storage.Review{
-				ID:     1,
-				JobID:  42,
-				Agent:  "test",
-				Output: "No issues found.",
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+				ID:          1,
+				JobID:       42,
+				Agent:       "test",
+				Output:      "No issues found.",
 				Job: &storage.ReviewJob{
 					ID:       42,
 					GitRef:   "abc123def456", // Single commit SHA (not a range)
@@ -131,10 +133,11 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 		if r.URL.Path == "/api/review" {
 			// Return a review for a commit range (not a single commit)
 			review := storage.Review{
-				ID:     1,
-				JobID:  42,
-				Agent:  "test",
-				Output: "No issues found.",
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+				ID:          1,
+				JobID:       42,
+				Agent:       "test",
+				Output:      "No issues found.",
 				Job: &storage.ReviewJob{
 					ID:       42,
 					GitRef:   "abc123..def456", // Range review
@@ -175,10 +178,11 @@ func TestTUIFetchReviewNoFallbackForDirtyReviewWithCommitID(t *testing.T) {
 
 		if r.URL.Path == "/api/review" {
 			review := storage.Review{
-				ID:     1,
-				JobID:  42,
-				Agent:  "test",
-				Output: "Dirty review output",
+				VerdictBool: testutil.ReviewFixtureVerdict("Dirty review output"),
+				ID:          1,
+				JobID:       42,
+				Agent:       "test",
+				Output:      "Dirty review output",
 				Job: &storage.ReviewJob{
 					ID:       42,
 					CommitID: &commitID,

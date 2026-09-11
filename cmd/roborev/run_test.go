@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -291,10 +292,11 @@ var nextStubReviewID atomic.Int64
 
 func stubReview(jobID int64, agent, output string) storage.Review {
 	return storage.Review{
-		ID:     nextStubReviewID.Add(1),
-		JobID:  jobID,
-		Agent:  agent,
-		Output: output,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		ID:          nextStubReviewID.Add(1),
+		JobID:       jobID,
+		Agent:       agent,
+		Output:      output,
 	}
 }
 

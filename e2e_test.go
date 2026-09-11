@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // TestE2EEnqueueAndReview tests the full flow of enqueueing and reviewing a commit
@@ -114,7 +115,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		require.Equal(t, 1, running, "Expected 1 running job, got %d", running)
 
 		// Complete the job
-		err = d.CompleteJob(job.ID, "codex", "test prompt", "This commit looks good!")
+		err = testutil.CompleteReviewFixture(d, job.ID, "codex", "test prompt", "This commit looks good!")
 		require.NoError(t, err, "CompleteJob failed")
 
 		// Verify completed state

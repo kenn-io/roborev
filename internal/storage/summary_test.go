@@ -36,10 +36,10 @@ func TestGetSummary_Overview(t *testing.T) {
 	_ = enqueueJob(t, db, repo.ID, commit.ID, "abc123") // stays queued
 
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j1.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, j1.ID, "codex", "prompt", "No issues found."))
 
 	claimJob(t, db, "w2")
-	require.NoError(t, db.CompleteJob(j2.ID, "codex", "prompt", "- Medium — Bug found"))
+	require.NoError(t, completeReviewFixture(db, j2.ID, "codex", "prompt", "- Medium — Bug found"))
 
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-1 * time.Hour),
@@ -62,11 +62,11 @@ func TestGetSummary_Verdicts(t *testing.T) {
 	for range 2 {
 		j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 		claimJob(t, db, "w1")
-		require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "No issues found."))
+		require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "No issues found."))
 	}
 	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Security issue"))
+	require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "- High — Security issue"))
 
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-1 * time.Hour),
@@ -91,7 +91,7 @@ func TestGetSummary_ResolutionRate(t *testing.T) {
 	for i := range 3 {
 		j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 		claimJob(t, db, "w1")
-		require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Bug"))
+		require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "- High — Bug"))
 		if i < 2 {
 			require.NoError(t, db.MarkReviewClosedByJobID(j.ID, true))
 		}
@@ -120,7 +120,7 @@ func TestGetSummary_AgentBreakdown(t *testing.T) {
 		})
 		require.NoError(t, err)
 		claimJob(t, db, "w1")
-		require.NoError(t, db.CompleteJob(j.ID, agent, "p", "No issues found."))
+		require.NoError(t, completeReviewFixture(db, j.ID, agent, "p", "No issues found."))
 	}
 
 	s, err := db.GetSummary(SummaryOptions{
@@ -322,12 +322,12 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	// Normal review (pass)
 	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, j1.ID, "codex", "p", "No issues found."))
 
 	// Normal review (fail)
 	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug found"))
+	require.NoError(t, completeReviewFixture(db, j2.ID, "codex", "p", "- High — Bug found"))
 
 	// Task job (no meaningful verdict)
 	j3, err := db.EnqueueJob(EnqueueOpts{
@@ -336,7 +336,7 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j3.ID, "codex", "", "some analysis output"))
+	require.NoError(t, completeReviewFixture(db, j3.ID, "codex", "", "some analysis output"))
 
 	// Fix job (no meaningful verdict)
 	j4, err := db.EnqueueJob(EnqueueOpts{
@@ -345,7 +345,7 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j4.ID, "codex", "", "applied fix"))
+	require.NoError(t, completeReviewFixture(db, j4.ID, "codex", "", "applied fix"))
 
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-1 * time.Hour),
@@ -377,16 +377,16 @@ func TestGetSummary_RepoBreakdown(t *testing.T) {
 	// repo1: 2 jobs (1 pass, 1 fail)
 	j := enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "No issues found."))
 
 	j = enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Bug"))
+	require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "- High — Bug"))
 
 	// repo2: 1 job (pass)
 	j = enqueueJob(t, db, repo2.ID, c2.ID, "bbb222")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, j.ID, "codex", "p", "No issues found."))
 
 	// All repos query includes repo breakdown
 	s, err := db.GetSummary(SummaryOptions{
@@ -434,15 +434,15 @@ func TestBackfillVerdictBool(t *testing.T) {
 	// Create reviews with verdict_bool set (normal path)
 	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, j1.ID, "codex", "p", "No issues found."))
 
 	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug"))
+	require.NoError(t, completeReviewFixture(db, j2.ID, "codex", "p", "- High — Bug"))
 
 	j3 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j3.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns."))
+	require.NoError(t, completeReviewFixture(db, j3.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns."))
 
 	// Simulate legacy rows by nullifying verdict_bool
 	_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL`)
@@ -495,7 +495,7 @@ func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "The code has issues."))
 	// An older release parsed a verdict out of this prose.
 	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
@@ -521,10 +521,10 @@ func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "clear123")
 	job := enqueueJob(t, db, repo.ID, commit.ID, "clear123")
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "p", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "p", "No issues found."))
 
 	// Simulate a legacy empty-output row that still carries a verdict.
-	_, err := db.Exec(`UPDATE reviews SET output = '', verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	_, err := db.Exec(`UPDATE reviews SET output = '', structured_output = NULL, verdict_bool = 0 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 
 	count, err := db.BackfillVerdictBool()

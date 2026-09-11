@@ -343,7 +343,7 @@ func TestHumaExportReviews(t *testing.T) {
 	assert.NotNil(t, page2.NextCursor)
 	require.Len(t, page2.Reviews, 1)
 	assert.Equal(t, "fail", page2.Reviews[0].Verdict)
-	assert.Equal(t, "- Medium — issue", *page2.Reviews[0].Content)
+	assert.Contains(t, *page2.Reviews[0].Content, "- Medium — issue")
 }
 
 func TestHumaExportReviewsRejectsDifferentDatabaseCursorWithConflict(t *testing.T) {

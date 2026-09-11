@@ -88,7 +88,7 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB,
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 
@@ -136,7 +136,7 @@ func TestTokenCostReconcilerRejectsJobLogFromPriorAttempt(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB,
 		job.ID, "codex", "prompt", "Setup failed before agent invocation.",
 	))
 
@@ -301,7 +301,7 @@ func seedTokenCostCandidate(
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	require.NoError(t, tc.DB.MarkJobAgentInvoked(job.ID, testWorkerID, "codex review"))
 	require.NoError(t, tc.DB.SaveJobSessionID(job.ID, testWorkerID, sessionID))
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 	if tokenUsage != "" {
 		updated, err := tc.DB.BackfillJobTokenUsageIfCurrent(storage.TokenUsageWrite{
 			JobID:                job.ID,

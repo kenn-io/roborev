@@ -52,9 +52,9 @@ func TestBuildRangePrompt_PriorReviewsDocument(t *testing.T) {
 	path, reviews := readPriorRangeReviewsDocument(t, string(fullPrompt))
 	require.Len(t, reviews, 2)
 	assert.Equal(base[:7]+".."+first[:7], reviews[0].Range)
-	assert.Equal("prior synthesis review", reviews[0].Output)
+	assert.Contains(reviews[0].Output, "prior synthesis review")
 	assert.Equal(base[:7]+".."+second[:7], reviews[1].Range)
-	assert.Equal(priorOutput, reviews[1].Output)
+	assert.Contains(reviews[1].Output, strings.TrimSpace(priorOutput))
 	require.Len(t, reviews[1].Comments, 1)
 	assert.Equal(comment, reviews[1].Comments[0].Response)
 	assert.Equal("developer", reviews[1].Comments[0].Responder)
@@ -112,7 +112,7 @@ func createCompletedRangeReview(t *testing.T, db *storage.DB, repoID int64, ref,
 	claimed, err := db.ClaimJob("range-context-worker")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", output))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", output))
 	return job.ID
 }
 
@@ -161,7 +161,7 @@ func TestPrebuiltPriorRangeReviewsDocument_TargetAndRetry(t *testing.T) {
 		t.Cleanup(result.Cleanup)
 		path, reviews := readPriorRangeReviewsDocument(t, result.Prompt)
 		require.Len(t, reviews, 1)
-		assert.Equal("earlier finding", reviews[0].Output)
+		assert.Contains(reviews[0].Output, "earlier finding")
 		assert.Equal(filepath.Join(agentPath, "review-context"), filepath.Dir(filepath.Dir(path)))
 		assert.NotEqual(previousPath, path)
 		assert.NotContains(result.Prompt, PriorRangeReviewsFilePathPlaceholder)

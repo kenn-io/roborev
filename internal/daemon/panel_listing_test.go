@@ -153,7 +153,7 @@ func TestListJobsByIDAttachesPresentationMetadata(t *testing.T) {
 	_, synthID, _ := enqueueTrioPanel(t, server)
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, synthID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(synthID, "test", "prompt", "PASS\n\nPanel review"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, synthID, "test", "prompt", "PASS\n\nPanel review"))
 
 	jobs := listJobsViaHTTP(t, server, "?id="+stringID(synthID))
 

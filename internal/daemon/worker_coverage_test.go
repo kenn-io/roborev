@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestReviewFileCoverageForCommittedInputs(t *testing.T) {
@@ -56,7 +57,7 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 	baseline := &agent.FakeAgent{
 		NameStr: "clean-review",
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	}
 	agent.Register(baseline)
@@ -72,7 +73,7 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 	builder := prompt.NewBuilderWithConfig(tc.DB, cfg).
 		WithContext(context.Background()).
 		ForRepo(tc.TmpDir, tc.Repo.ID).
-		WithKataClient(kata.NewCLIClient(tc.TmpDir))
+		WithKataClient(kata.NewCLIClient(tc.TmpDir)).WithStructuredOutput(true)
 	independent, err := builder.BuildWithSnapshotTarget(
 		sha, cfg.ReviewContextCount, "test", job.ReviewType, minSeverity, excludes, prompt.SnapshotTarget{},
 	)
@@ -114,7 +115,8 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, task.ID)
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.CompleteJobResult(task.ID, "test", "task prompt", storage.ReviewCompletion{
-		Output: "task output",
+		StructuredOutput: testutil.ReviewFixtureJSON("task output"),
+		Output:           "task output",
 	}))
 	taskReview, err := tc.DB.GetReviewByJobID(task.ID)
 	require.NoError(t, err)
@@ -127,7 +129,8 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, compact.ID)
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.CompleteJobResult(compact.ID, "test", "compact prompt", storage.ReviewCompletion{
-		Output: "compact output",
+		StructuredOutput: testutil.ReviewFixtureJSON("compact output"),
+		Output:           "compact output",
 	}))
 	compactReview, err := tc.DB.GetReviewByJobID(compact.ID)
 	require.NoError(t, err)

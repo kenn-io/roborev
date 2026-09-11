@@ -285,7 +285,7 @@ func TestApplyJobVerdictForSynthesis(t *testing.T) {
 	// Move to running so CompleteJob persists the review + verdict.
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(synth.ID, "test", "prompt", "Critical — boom"))
+	require.NoError(t, completeReviewFixture(db, synth.ID, "test", "prompt", "Critical — boom"))
 
 	got, err := db.GetJobByID(synth.ID)
 	require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, member.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(member.ID, "test", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, member.ID, "test", "prompt", "No issues found."))
 
 	// The by-id hydration paths reach a member directly and must round-trip its
 	// panel fields.
@@ -427,7 +427,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(synth.ID, "test", "prompt", "Synthesized."))
+	require.NoError(t, completeReviewFixture(db, synth.ID, "test", "prompt", "Synthesized."))
 
 	bySHA, err := db.GetReviewByCommitSHA("abc123")
 	require.NoError(t, err)
@@ -682,8 +682,9 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.CompleteJobResult(
 		m0.ID, "test", "prompt", ReviewCompletion{
-			Output:  "High: no actionable findings.",
-			Verdict: VerdictPass,
+			StructuredOutput: reviewFixtureJSON("High: no actionable findings."),
+			Output:           "High: no actionable findings.",
+			Verdict:          VerdictPass,
 		},
 	))
 
@@ -701,7 +702,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 
 	// The completed member surfaces its review output and done status.
 	assert.Equal("done", got[0].Status)
-	assert.Equal("High: no actionable findings.", got[0].Output)
+	assert.Contains(got[0].Output, "High: no actionable findings.")
 	require.NotNil(t, got[0].VerdictBool)
 	assert.Equal(1, *got[0].VerdictBool)
 	// A member without a review has an empty output but its own status.
@@ -937,7 +938,7 @@ func TestGetReviewByCommitSHAExcludesPanelMembers(t *testing.T) {
 
 	complete := func(jobID int64, output string) {
 		setStatus(t, db, jobID, JobStatusRunning)
-		require.NoError(t, db.CompleteJob(jobID, "test", "p", output))
+		require.NoError(t, completeReviewFixture(db, jobID, "test", "p", output))
 	}
 
 	// Only members have reviews yet (synthesis still pending or failed). The
@@ -954,7 +955,7 @@ func TestGetReviewByCommitSHAExcludesPanelMembers(t *testing.T) {
 	rev, err := db.GetReviewByCommitSHA("base..head")
 	require.NoError(t, err)
 	assert.Equal(t, synth.ID, rev.JobID, "SHA resolves to the synthesis job")
-	assert.Equal(t, "synthesis output", rev.Output)
+	assert.Contains(t, rev.Output, "synthesis output")
 }
 
 // TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview verifies that when a
@@ -988,7 +989,7 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 	require.NoError(t, err)
 	complete := func(jobID int64, output string) {
 		setStatus(t, db, jobID, JobStatusRunning)
-		require.NoError(t, db.CompleteJob(jobID, "test", "p", output))
+		require.NoError(t, completeReviewFixture(db, jobID, "test", "p", output))
 	}
 	complete(members[0].ID, "member 0 output")
 	complete(members[1].ID, "member 1 output")

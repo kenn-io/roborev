@@ -144,10 +144,11 @@ func TestGoldenPrompt_AddressWithSplitResponses(t *testing.T) {
 
 	b := NewBuilder(nil)
 	review := &storage.Review{
-		JobID:  42,
-		Agent:  "test",
-		Output: "- Medium: foo.go:1 missing doc comment",
-		Job:    &storage.ReviewJob{GitRef: sha},
+		VerdictBool: testutil.ReviewFixtureVerdict("- Medium: foo.go:1 missing doc comment"),
+		JobID:       42,
+		Agent:       "test",
+		Output:      "- Medium: foo.go:1 missing doc comment",
+		Job:         &storage.ReviewJob{GitRef: sha},
 	}
 	responses := []storage.Response{
 		{Responder: "roborev-fix", Response: "Added doc comment", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
@@ -322,10 +323,11 @@ func TestGoldenPrompt_AddressWithoutSeverity(t *testing.T) {
 
 	b := NewBuilder(nil)
 	review := &storage.Review{
-		JobID:  99,
-		Agent:  "test",
-		Output: "- Medium: foo.go:1 missing doc comment",
-		Job:    &storage.ReviewJob{GitRef: sha},
+		VerdictBool: testutil.ReviewFixtureVerdict("- Medium: foo.go:1 missing doc comment"),
+		JobID:       99,
+		Agent:       "test",
+		Output:      "- Medium: foo.go:1 missing doc comment",
+		Job:         &storage.ReviewJob{GitRef: sha},
 	}
 	responses := []storage.Response{
 		{Responder: "roborev-fix", Response: "Added doc comment", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},

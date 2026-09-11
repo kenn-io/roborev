@@ -483,9 +483,10 @@ func (h *mockServerHandler) handleReview(w http.ResponseWriter, r *http.Request)
 		output = "review output"
 	}
 	json.NewEncoder(w).Encode(storage.Review{
-		JobID:  atomic.LoadInt64(&h.jobID),
-		Agent:  h.opts.Agent,
-		Output: output,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		JobID:       atomic.LoadInt64(&h.jobID),
+		Agent:       h.opts.Agent,
+		Output:      output,
 	})
 }
 

@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/skills"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -361,7 +362,8 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		client := newMockDaemonClient()
 		// Commit1 passes, commit2 fails
 		client.reviews["commit1sha"] = &storage.Review{
-			ID: 1, JobID: 1, Output: "No issues found. LGTM!",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found. LGTM!"),
+			ID:          1, JobID: 1, Output: "No issues found. LGTM!",
 		}
 		client.reviews["commit2sha"] = &storage.Review{
 			ID: 2, JobID: 2, Output: "**Bug**: Missing error handling in foo.go:42", VerdictBool: new(0),
@@ -430,10 +432,12 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 		client := newMockDaemonClient()
 		// All individual commits pass (outputs must start with pass patterns)
 		client.reviews["commit1"] = &storage.Review{
-			ID: 1, JobID: 1, Output: "No issues found.",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+			ID:          1, JobID: 1, Output: "No issues found.",
 		}
 		client.reviews["commit2"] = &storage.Review{
-			ID: 2, JobID: 2, Output: "No issues found. LGTM!",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found. LGTM!"),
+			ID:          2, JobID: 2, Output: "No issues found. LGTM!",
 		}
 
 		commits := []string{"commit1", "commit2"}
@@ -476,7 +480,8 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 
 		md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc123", Status: storage.JobStatusDone}
 		md.State.reviews["abc123"] = &storage.Review{
-			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
+			VerdictBool: testutil.ReviewFixtureVerdict("All tests pass. No issues found."),
+			ID:          1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
 		}
 
 		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
@@ -572,7 +577,8 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			RepoPath: repoDir,
 		}
 		s.reviews[req.GitRef] = &storage.Review{
-			ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
+			VerdictBool: testutil.ReviewFixtureVerdict("No issues found. Branch looks good!"),
+			ID:          branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
 		}
 		jobCopy := *s.jobs[branchJobID]
 		s.mu.Unlock()
@@ -597,7 +603,8 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 	// Passing review (will be returned once job is Done)
 	md.State.reviews[commitSHA] = &storage.Review{
-		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Closed: false,
+		VerdictBool: testutil.ReviewFixtureVerdict("No issues found. LGTM!"),
+		ID:          1, JobID: 1, Output: "No issues found. LGTM!", Closed: false,
 	}
 	md.State.nextJobID = 2
 

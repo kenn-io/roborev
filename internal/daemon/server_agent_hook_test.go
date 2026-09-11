@@ -109,7 +109,7 @@ func TestAgentHookEventUsesDatabaseReviewState(t *testing.T) {
 	})
 	require.NoError(t, err)
 	setJobStatus(t, db, job.ID, storage.JobStatusRunning)
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(db,
 		job.ID, "test", "review", "- High — unsafe query construction",
 	))
 

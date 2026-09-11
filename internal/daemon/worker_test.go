@@ -554,7 +554,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "finish-window", testWorkerID)
 
-	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+	if err := testutil.CompleteReviewFixture(tc.DB, job.ID, "test", "prompt", "output"); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "CompleteJob failed: %v", err)
@@ -659,7 +659,7 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 				return "", err
 			}
 			moduleLine = strings.TrimSpace(string(data))
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -755,7 +755,7 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 				return "", err
 			}
 			snapshotContent = string(data)
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -894,7 +894,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 				return "", ctx.Err()
 			case <-release:
 			}
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -997,7 +997,7 @@ func (a *sessionStreamingTestAgent) Review(ctx context.Context, repoPath, commit
 			return "", err
 		}
 	}
-	return "No issues found.", nil
+	return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 }
 
 func (a *sessionStreamingTestAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
@@ -1149,7 +1149,7 @@ func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
 	logPath := JobLogPath(job.ID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
@@ -1185,7 +1185,7 @@ func TestCaptureTokenUsageForSessionRejectsReenqueuedJob(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB,
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 
@@ -1217,7 +1217,7 @@ func TestCaptureTokenUsageForSessionKeepsJobLogWhenSessionIsReused(t *testing.T)
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
 	logPath := JobLogPath(job.ID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
@@ -1254,7 +1254,7 @@ func TestCaptureTokenUsageForSessionRetriesUntilFreshSessionIsIndexed(t *testing
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
 	var attempts atomic.Int32
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
@@ -1291,7 +1291,7 @@ func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
 	tc.Pool.tokenUsageIndexRetryWindow = 400 * time.Millisecond
 	tc.Pool.tokenUsageIndexRetryInterval = 200 * time.Millisecond
@@ -1330,7 +1330,7 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
 	logPath := JobLogPath(job.ID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
@@ -1377,7 +1377,7 @@ func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1401,7 +1401,7 @@ func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 	tc.Pool.processJob(testWorkerID, claimed)
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Equal(t, job.Prompt, capturedPrompt)
+	assert.Contains(t, capturedPrompt, job.Prompt)
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
@@ -1440,7 +1440,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 			NameStr: agentName,
 			ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
 				capturedPrompt = reviewPrompt
-				return "No issues found.", nil
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 			},
 		})
 		t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1450,7 +1450,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 
 		updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 		assert.Contains(t, capturedPrompt, "review body")
-		assert.NotContains(t, capturedPrompt, instruction)
+		assert.Contains(t, capturedPrompt, `"schema_version":2`)
 		assert.Equal(t, body, updated.Prompt, "the stored prompt is left as enqueued")
 	})
 
@@ -1627,7 +1627,7 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1659,7 +1659,7 @@ func TestProcessJob_BroadcastsBranchOnLifecycleEvents(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1703,7 +1703,7 @@ func TestProcessJob_BroadcastsCIBaseBranchOnLifecycleEvents(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1997,7 +1997,7 @@ func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -2160,7 +2160,7 @@ func TestProcessJob_SmallDiffSucceedsWhenGitDirReadOnly(t *testing.T) {
 		NameStr: "codex",
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
 			agentCalled = true
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Register(originalCodex) })
@@ -2210,7 +2210,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWhenGitDirReadOnly(t *testing.T
 		NameStr: "codex",
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
 			agentCalled = true
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Register(originalCodex) })
@@ -2275,7 +2275,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 			data, readErr := os.ReadFile(snapshotPath)
 			require.NoError(t, readErr)
 			assert.Contains(t, string(data), "large-agent.txt")
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Register(originalTest) })
@@ -2333,7 +2333,7 @@ func TestProcessJob_OversizedTaskUsesSharedPromptFile(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, string(saved), strings.Repeat("x", 2048))
 			agentCalled = true
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Register(originalTest) })
@@ -3877,7 +3877,7 @@ func TestAutoClosePassingReviews(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: passAgentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, w io.Writer) (string, error) {
-			out := "No issues found."
+			out := string(testutil.ReviewFixtureJSON("No issues found."))
 			_, _ = w.Write([]byte(out))
 			return out, nil
 		},
@@ -3955,7 +3955,7 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return output, nil
+			return string(testutil.ReviewFixtureJSON(output)), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -3996,7 +3996,7 @@ func TestProcessJob_MinSeverityCascade(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 			capturedPrompt = prompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -4033,7 +4033,7 @@ func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 			capturedPrompt = prompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
@@ -4077,7 +4077,7 @@ func TestProcessJobExperimentPlanKeepsClearedExecutionSettings(t *testing.T) {
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })

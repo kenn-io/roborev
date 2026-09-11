@@ -389,7 +389,7 @@ func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent
 	t.Helper()
 	_, err := h.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark done")
-	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, ?, 'p', ?)`, jobID, agent, output)
+	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, verdict_bool) VALUES (?, ?, 'p', '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
 	require.NoError(t, err, "insert review")
 }
 
@@ -720,7 +720,8 @@ func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
 	output := strings.Repeat("x", review.MaxCommentLen-2) +
 		"😀" + strings.Repeat("y", 100)
 	storedReview := &storage.Review{
-		Output: output,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		Output:      output,
 		Job: &storage.ReviewJob{
 			PanelName: "ci",
 			Agent:     "codex",
@@ -736,7 +737,8 @@ func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
 func TestFormatPanelPRComment_DoesNotTruncateWhenCommentFits(t *testing.T) {
 	output := strings.Repeat("x", review.MaxCommentLen-1000)
 	storedReview := &storage.Review{
-		Output: output,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		Output:      output,
 		Job: &storage.ReviewJob{
 			PanelName: "ci",
 			Agent:     "codex",

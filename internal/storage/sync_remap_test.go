@@ -37,7 +37,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 	_, err = db.ClaimJob("worker-sync")
 	require.NoError(t, err, "ClaimJob: %v")
 
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = completeReviewFixture(db, job.ID, "test", "prompt", "output")
 	require.NoError(t, err, "CompleteJob: %v")
 
 	// Verify patch_id appears in GetJobsToSync
@@ -214,7 +214,7 @@ func TestRemapTriggersResync(t *testing.T) {
 	_, err = db.ClaimJob("worker-resync")
 	require.NoError(t, err, "ClaimJob: %v")
 
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = completeReviewFixture(db, job.ID, "test", "prompt", "output")
 	require.NoError(t, err, "CompleteJob: %v")
 
 	// Set synced_at to a past time so remap's updated_at is guaranteed later
