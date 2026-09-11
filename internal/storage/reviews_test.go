@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -678,7 +679,7 @@ func TestGetRecentRangeReviewCandidates(t *testing.T) {
 		RepoID: otherRepo.ID, GitRef: "base..other", Agent: "test", JobType: JobTypeRange,
 	}, "other")
 
-	candidates, err := db.GetRecentRangeReviewCandidates(repo.ID, 10, 0)
+	candidates, err := db.GetRecentRangeReviewCandidates(t.Context(), repo.ID)
 	require.NoError(t, err)
 	require.Len(t, candidates, 2)
 	assert.Equal(t, "base..newer", candidates[0].GitRef)
@@ -688,10 +689,10 @@ func TestGetRecentRangeReviewCandidates(t *testing.T) {
 		{JobID: candidates[1].JobID, GitRef: "base..older"},
 	}, candidates)
 
-	page, err := db.GetRecentRangeReviewCandidates(repo.ID, 1, 1)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, "base..older", page[0].GitRef)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = db.GetRecentRangeReviewCandidates(ctx, repo.ID)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestGetReviewByJobIDIncludesBranch(t *testing.T) {

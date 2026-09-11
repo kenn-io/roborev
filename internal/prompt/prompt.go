@@ -946,7 +946,9 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	}
 	if opts.priorRangeReviewsFile != nil {
 		ctx.optional.PriorRangeReviewsFile = *opts.priorRangeReviewsFile
-	} else if rangeStart != "" && len(b.priorRangeReviewViews(rangeStart, rangeRef, commits, contextCount)) > 0 {
+	} else if rangeStart != "" && b.repoID > 0 && len(commits) > 0 {
+		// Stored prompts defer historical lookup to the worker. Searching here
+		// blocks CI scheduling and repeats the same lookup at execution time.
 		ctx.optional.PriorRangeReviewsFile = PriorRangeReviewsFilePathPlaceholder
 	}
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -127,14 +128,14 @@ type RangeReviewCandidate struct {
 	GitRef string
 }
 
-// GetRecentRangeReviewCandidates returns a page of recent canonical range
-// reviews for a repository. Git topology decides whether a candidate is
-// contained.
-func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit, offset int) ([]RangeReviewCandidate, error) {
-	if repoID <= 0 || limit <= 0 || offset < 0 {
+// GetRecentRangeReviewCandidates returns canonical range review metadata,
+// newest first. Read it once: OFFSET pages repeatedly join and sort the same
+// history before Git topology can decide which candidates are contained.
+func (db *DB) GetRecentRangeReviewCandidates(ctx context.Context, repoID int64) ([]RangeReviewCandidate, error) {
+	if repoID <= 0 {
 		return nil, nil
 	}
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT j.id, j.git_ref
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
@@ -143,8 +144,7 @@ func (db *DB) GetRecentRangeReviewCandidates(repoID int64, limit, offset int) ([
 		  AND j.git_ref LIKE '%..%'
 		  AND COALESCE(j.panel_role, '') != 'member'
 		ORDER BY `+sqliteNormalizedTimestampExpr("rv.created_at")+` DESC, rv.id DESC
-		LIMIT ? OFFSET ?
-	`, repoID, limit, offset)
+	`, repoID)
 	if err != nil {
 		return nil, err
 	}
