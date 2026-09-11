@@ -3,7 +3,6 @@
  */
 
 export interface FindingCounts {
-  approximate: boolean;
   critical: number;
   high: number;
   low: number;

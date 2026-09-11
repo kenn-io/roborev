@@ -56,7 +56,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 	}
 	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output, r.Output != "")
 	if includeFindingCounts {
-		applyJobFindingCounts(&job, reviewFields.StructuredOutput, sql.NullString{Valid: true, String: r.Output})
+		applyJobFindingCounts(&job, reviewFields.StructuredOutput)
 	}
 
 	r.Job = &job

@@ -46,7 +46,6 @@
             "items": {
               "$ref": "#/components/schemas/ActivityEntry"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -301,28 +300,24 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "models": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "projects": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "sources": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -341,7 +336,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "bucket": {
@@ -351,14 +345,12 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "projects": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "since": {
@@ -369,7 +361,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "until": {
@@ -504,7 +495,6 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsDimensionRow"
             },
-            "nullable": true,
             "type": "array"
           },
           "filters": {
@@ -514,7 +504,6 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsDimensionRow"
             },
-            "nullable": true,
             "type": "array"
           },
           "options": {
@@ -524,7 +513,6 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsProjectRow"
             },
-            "nullable": true,
             "type": "array"
           },
           "schema_version": {
@@ -535,7 +523,6 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsDimensionRow"
             },
-            "nullable": true,
             "type": "array"
           },
           "summary": {
@@ -545,7 +532,6 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsTimeBucket"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -715,7 +701,6 @@
             "items": {
               "$ref": "#/components/schemas/SessionUsagePayload"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -761,7 +746,6 @@
               "format": "int64",
               "type": "integer"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -946,7 +930,6 @@
             "items": {
               "$ref": "#/components/schemas/AgentHookSnooze"
             },
-            "nullable": true,
             "type": "array"
           },
           "active_workers": {
@@ -1033,7 +1016,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -1135,7 +1117,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "enqueued_at": {
@@ -1149,8 +1130,10 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
+          },
+          "finding_counts": {
+            "$ref": "#/components/schemas/FindingCounts"
           },
           "finished_at": {
             "format": "date-time",
@@ -1339,7 +1322,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "git_ref": {
@@ -1466,7 +1448,6 @@
             "items": {
               "$ref": "#/components/schemas/ErrorDetail"
             },
-            "nullable": true,
             "type": "array"
           },
           "instance": {
@@ -1565,7 +1546,6 @@
             "items": {
               "$ref": "#/components/schemas/ExportCICostJob"
             },
-            "nullable": true,
             "type": "array"
           },
           "legacy": {
@@ -1623,7 +1603,6 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "finished_at": {
@@ -1694,7 +1673,6 @@
             "items": {
               "$ref": "#/components/schemas/ExportCIPanel"
             },
-            "nullable": true,
             "type": "array"
           },
           "schema_version": {
@@ -1740,7 +1718,6 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "first_attempt_at": {
@@ -1757,7 +1734,6 @@
             "items": {
               "$ref": "#/components/schemas/ExportCIPanelJob"
             },
-            "nullable": true,
             "type": "array"
           },
           "outcome": {
@@ -1885,7 +1861,6 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "model": {
@@ -1923,7 +1898,6 @@
             "items": {
               "$ref": "#/components/schemas/ExportSubagent"
             },
-            "nullable": true,
             "type": "array"
           },
           "verdict": {
@@ -2009,7 +1983,6 @@
             "items": {
               "$ref": "#/components/schemas/ExportReview"
             },
-            "nullable": true,
             "type": "array"
           },
           "schema_version": {
@@ -2152,6 +2125,34 @@
         ],
         "type": "object"
       },
+      "FindingCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "critical": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "high": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "low": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "medium": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ],
+        "type": "object"
+      },
       "FixJobRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2196,7 +2197,6 @@
             "items": {
               "$ref": "#/components/schemas/ComponentHealth"
             },
-            "nullable": true,
             "type": "array"
           },
           "error_count_24h": {
@@ -2210,7 +2210,6 @@
             "items": {
               "$ref": "#/components/schemas/ErrorEntry"
             },
-            "nullable": true,
             "type": "array"
           },
           "uptime": {
@@ -2371,7 +2370,6 @@
             "items": {
               "$ref": "#/components/schemas/BranchWithCount"
             },
-            "nullable": true,
             "type": "array"
           },
           "nulls_remaining": {
@@ -2404,7 +2402,6 @@
             "items": {
               "$ref": "#/components/schemas/Response"
             },
-            "nullable": true,
             "type": "array"
           }
         },
@@ -2433,7 +2430,6 @@
             "items": {
               "$ref": "#/components/schemas/ReviewJob"
             },
-            "nullable": true,
             "type": "array"
           },
           "next_cursor": {
@@ -2466,7 +2462,6 @@
             "items": {
               "$ref": "#/components/schemas/RepoWithCount"
             },
-            "nullable": true,
             "type": "array"
           },
           "total_count": {
@@ -2569,7 +2564,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "enqueued_at": {
@@ -2583,8 +2577,10 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
+          },
+          "finding_counts": {
+            "$ref": "#/components/schemas/FindingCounts"
           },
           "finished_at": {
             "format": "date-time",
@@ -2605,7 +2601,6 @@
               "format": "int64",
               "type": "integer"
             },
-            "nullable": true,
             "type": "array"
           },
           "min_severity": {
@@ -2877,6 +2872,75 @@
         ],
         "type": "object"
       },
+      "ReleaseNote": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "html_url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prerelease": {
+            "type": "boolean"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "tag_name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag_name",
+          "name",
+          "body",
+          "html_url",
+          "published_at",
+          "updated_at",
+          "prerelease"
+        ],
+        "type": "object"
+      },
+      "ReleaseNotesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/ReleaseNotesResponse.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "fetched_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNote"
+            },
+            "type": "array"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "releases",
+          "fetched_at",
+          "stale"
+        ],
+        "type": "object"
+      },
       "ReleaseUpdateOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2942,7 +3006,6 @@
             "items": {
               "$ref": "#/components/schemas/RemapMapping"
             },
-            "nullable": true,
             "type": "array"
           },
           "repo_path": {
@@ -3117,6 +3180,9 @@
             "example": "https://example.com/RerunJobRequest.json",
             "format": "uri",
             "readOnly": true,
+            "type": "string"
+          },
+          "agent": {
             "type": "string"
           },
           "job_id": {
@@ -3325,38 +3391,6 @@
         },
         "type": "object"
       },
-      "FindingCounts": {
-        "additionalProperties": false,
-        "properties": {
-          "approximate": {
-            "type": "boolean"
-          },
-          "critical": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "high": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "low": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "medium": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "critical",
-          "high",
-          "medium",
-          "low",
-          "approximate"
-        ],
-        "type": "object"
-      },
       "ReviewJob": {
         "additionalProperties": false,
         "properties": {
@@ -3405,7 +3439,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "enqueued_at": {
@@ -3419,7 +3452,6 @@
             "items": {
               "$ref": "#/components/schemas/ExperimentAssignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "finding_counts": {
@@ -3596,14 +3628,12 @@
             "items": {
               "$ref": "#/components/schemas/ReviewProjectionJob"
             },
-            "nullable": true,
             "type": "array"
           },
           "responses": {
             "items": {
               "$ref": "#/components/schemas/ReviewProjectionResponse"
             },
-            "nullable": true,
             "type": "array"
           },
           "review": {
@@ -3834,7 +3864,6 @@
             "items": {
               "$ref": "#/components/schemas/AgentStats"
             },
-            "nullable": true,
             "type": "array"
           },
           "branch": {
@@ -3853,7 +3882,6 @@
             "items": {
               "$ref": "#/components/schemas/JobTypeStats"
             },
-            "nullable": true,
             "type": "array"
           },
           "overview": {
@@ -3866,7 +3894,6 @@
             "items": {
               "$ref": "#/components/schemas/RepoSummary"
             },
-            "nullable": true,
             "type": "array"
           },
           "since": {
@@ -3963,7 +3990,6 @@
             "items": {
               "$ref": "#/components/schemas/TokenResult"
             },
-            "nullable": true,
             "type": "array"
           },
           "skipped": {
@@ -4413,7 +4439,6 @@
               "items": {
                 "type": "string"
               },
-              "nullable": true,
               "type": "array"
             }
           }
@@ -4568,7 +4593,6 @@
               "items": {
                 "type": "string"
               },
-              "nullable": true,
               "type": "array"
             }
           },
@@ -4666,7 +4690,8 @@
                   ]
                 }
               }
-            }
+            },
+            "description": "HTTP 200 response"
           },
           "201": {
             "content": {
@@ -4686,7 +4711,7 @@
                 }
               }
             },
-            "description": "Created"
+            "description": "HTTP 201 response"
           },
           "400": {
             "content": {
@@ -4695,7 +4720,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 400 response"
           },
           "413": {
             "content": {
@@ -4704,7 +4730,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 413 response"
           },
           "500": {
             "content": {
@@ -4713,7 +4740,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 500 response"
           },
           "503": {
             "content": {
@@ -4722,7 +4750,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 503 response"
           }
         },
         "summary": "Enqueue a daemon job",
@@ -5215,7 +5244,7 @@
                 }
               }
             },
-            "description": "Created"
+            "description": "HTTP 201 response"
           },
           "400": {
             "content": {
@@ -5224,7 +5253,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 400 response"
           },
           "404": {
             "content": {
@@ -5233,7 +5263,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 404 response"
           },
           "500": {
             "content": {
@@ -5242,7 +5273,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 500 response"
           },
           "503": {
             "content": {
@@ -5251,7 +5283,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 503 response"
           }
         },
         "summary": "Create a background fix job",
@@ -5556,7 +5589,6 @@
               "items": {
                 "type": "string"
               },
-              "nullable": true,
               "type": "array"
             }
           },
@@ -5914,6 +5946,37 @@
           }
         },
         "summary": "Resume queue processing",
+        "tags": [
+          "daemon"
+        ]
+      }
+    },
+    "/api/releases": {
+      "get": {
+        "operationId": "list-releases",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseNotesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List recent Roborev release notes",
         "tags": [
           "daemon"
         ]
@@ -6467,7 +6530,7 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "HTTP 200 response"
           },
           "400": {
             "content": {
@@ -6476,7 +6539,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 400 response"
           },
           "500": {
             "content": {
@@ -6485,7 +6549,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
-            }
+            },
+            "description": "HTTP 500 response"
           }
         },
         "summary": "Backfill token usage from AgentsView payloads",
@@ -6528,7 +6593,6 @@
               "items": {
                 "type": "string"
               },
-              "nullable": true,
               "type": "array"
             }
           },
@@ -6542,7 +6606,6 @@
               "items": {
                 "type": "string"
               },
-              "nullable": true,
               "type": "array"
             }
           },

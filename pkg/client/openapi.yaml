@@ -1631,8 +1631,6 @@ components:
     FindingCounts:
       additionalProperties: false
       properties:
-        approximate:
-          type: boolean
         critical:
           format: int64
           type: integer
@@ -1650,7 +1648,6 @@ components:
         - high
         - medium
         - low
-        - approximate
       type: object
     FixJobRequest:
       additionalProperties: false

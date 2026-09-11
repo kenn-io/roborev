@@ -50,7 +50,7 @@ func TestTUIFindingsQueue(t *testing.T) {
 func TestTUIFindingsUnavailable(t *testing.T) {
 	assert.Equal(t, "-", findingCountsCell(nil))
 	assert.Equal(t, "0/0/0", findingCountsCell(&storage.FindingCounts{}))
-	assert.Equal(t, "~1/0/2", findingCountsCell(&storage.FindingCounts{High: 1, Low: 2, Approximate: true}))
+	assert.Equal(t, "1/0/2", findingCountsCell(&storage.FindingCounts{High: 1, Low: 2}))
 }
 
 func TestTUIFindingsColor(t *testing.T) {

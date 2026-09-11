@@ -16,38 +16,22 @@ func TestReviewFindingCounts(t *testing.T) {
 	tests := []struct {
 		name       string
 		structured *string
-		prose      string
 		want       *FindingCounts
 	}{
 		{name: "structured v2", structured: &structured, want: &FindingCounts{Critical: 1, High: 1, Medium: 1, Low: 1}},
 		{name: "structured v1", structured: &structuredV1, want: &FindingCounts{Low: 1}},
 		{name: "valid empty structured output", structured: new(`{"schema_version":2,"summary":"clean","verdict":"pass","findings":[]}`), want: &FindingCounts{}},
-		{name: "empty structured output falls back to prose", structured: new(""), prose: "- High — old finding", want: &FindingCounts{High: 1, Approximate: true}},
+		{name: "missing structured output"},
+		{name: "empty structured output", structured: new("")},
 		{name: "unable to review", structured: new(`{"schema_version":2,"summary":"unavailable","verdict":"unable_to_review","findings":[]}`)},
 		{name: "malformed structured output", structured: new(`{"schema_version":2`)},
 		{name: "non-object structured output", structured: new(`[]`)},
 		{name: "trailing structured output", structured: new(structured + ` {}`)},
-		{
-			name:  "prose labels exclude rubric and high-level",
-			prose: "Severity rubric:\n- High — rubric\n- Medium — rubric\n## Findings\n- High — bug\n- Medium: issue\nLow — nit\nHigh-level overview",
-			want:  &FindingCounts{High: 1, Medium: 1, Low: 1, Approximate: true},
-		},
-		{
-			name:  "compact severity headings",
-			prose: "## VERIFIED FINDINGS\n\n### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\nSeverity: High\n\n### **Low Severity**\n\n#### 1. Naming\n**Files:** other.go:7\nSeverity: Low",
-			want:  &FindingCounts{High: 1, Low: 1, Approximate: true},
-		},
-		{
-			name:  "compact severity section counts nested findings",
-			prose: "### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\nSeverity: High\n\n#### 2. Missing auth\n**Files:** auth.go:9\nSeverity: High",
-			want:  &FindingCounts{High: 2, Approximate: true},
-		},
-		{name: "unlabeled prose", prose: "No issues found."},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, ReviewFindingCounts(tt.structured, tt.prose))
+			assert.Equal(t, tt.want, ReviewFindingCounts(tt.structured))
 		})
 	}
 }
@@ -146,13 +130,13 @@ func TestListJobsFindingCounts(t *testing.T) {
 	require.NoError(t, err)
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
-	assert.Equal(t, &FindingCounts{High: 1, Approximate: true}, jobs[0].FindingCounts)
+	assert.Nil(t, jobs[0].FindingCounts)
 
 	_, err = db.Exec("UPDATE reviews SET structured_output = ?, output = ? WHERE job_id = ?", "", "- High — empty structured output", job.ID)
 	require.NoError(t, err)
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
-	assert.Equal(t, &FindingCounts{High: 1, Approximate: true}, jobs[0].FindingCounts)
+	assert.Nil(t, jobs[0].FindingCounts)
 
 	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", "{", job.ID)
 	require.NoError(t, err)
@@ -170,12 +154,12 @@ func TestListJobsFindingCounts(t *testing.T) {
 	require.NoError(t, err)
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())
 	require.NoError(t, err)
-	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, jobs[0].FindingCounts)
+	assert.Nil(t, jobs[0].FindingCounts)
 	require.NotNil(t, jobs[0].DiffContent)
 	assert.Equal(t, "diff --git a/file.go b/file.go", *jobs[0].DiffContent)
 	review, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, &FindingCounts{Medium: 1, Approximate: true}, review.Job.FindingCounts)
+	assert.Nil(t, review.Job.FindingCounts)
 	require.NotNil(t, review.Job.DiffContent)
 	assert.Equal(t, "diff --git a/file.go b/file.go", *review.Job.DiffContent)
 }

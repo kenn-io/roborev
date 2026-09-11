@@ -1456,11 +1456,10 @@ type FailureStats struct {
 }
 
 type FindingCounts struct {
-	Approximate bool  `json:"approximate"`
-	Critical    int64 `json:"critical"`
-	High        int64 `json:"high"`
-	Low         int64 `json:"low"`
-	Medium      int64 `json:"medium"`
+	Critical int64 `json:"critical"`
+	High     int64 `json:"high"`
+	Low      int64 `json:"low"`
+	Medium   int64 `json:"medium"`
 }
 
 type FixJobRequest struct {

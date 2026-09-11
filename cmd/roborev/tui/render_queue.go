@@ -1086,11 +1086,7 @@ func findingCountsCell(counts *storage.FindingCounts) string {
 	if counts == nil {
 		return "-"
 	}
-	prefix := ""
-	if counts.Approximate {
-		prefix = "~"
-	}
-	return fmt.Sprintf("%s%d/%d/%d", prefix, counts.Critical+counts.High, counts.Medium, counts.Low)
+	return fmt.Sprintf("%d/%d/%d", counts.Critical+counts.High, counts.Medium, counts.Low)
 }
 
 func findingCountsColor(counts *storage.FindingCounts) color.Color {

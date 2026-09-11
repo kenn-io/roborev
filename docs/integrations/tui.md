@@ -235,12 +235,12 @@ are hidden by default. To show separator lines between columns, set
 
 The Findings column is visible by default. It shows Critical and High findings
 together, followed by Medium and Low, for example `1/2/0`. Structured review
-data gives exact counts, including findings below the configured minimum
-severity. Older prose reviews show `~` before the counts. Unavailable data shows
-`-`, and a valid structured review with no findings shows `0/0/0`. Panel parents
-and members show counts from their own reviews. On narrow terminals, the
-existing column drop rules may hide Findings to keep the remaining cells
-readable.
+JSON gives exact counts, including findings below the configured minimum
+severity. Reviews without usable structured JSON show `-`; Markdown output is
+not parsed for counts. A valid structured review with no findings shows `0/0/0`.
+Panel parents and members show counts from their own reviews. On narrow
+terminals, the existing column drop rules may hide Findings to keep the
+remaining cells readable.
 
 The Reasoning column shows the recorded reasoning effort, such as `xhigh`,
 separately from the model. It is visible by default. Jobs with no recorded

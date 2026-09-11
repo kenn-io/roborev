@@ -3115,7 +3115,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode(), "body: %s", resp.Body)
 		require.NotNil(t, resp.JSON200)
 		require.NotNil(t, resp.JSON200.Jobs)
-		return *resp.JSON200.Jobs
+		return resp.JSON200.Jobs
 	}
 
 	jobByID := func(t *testing.T, jobs []daemonclient.ReviewJob, id int64) daemonclient.ReviewJob {
