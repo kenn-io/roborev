@@ -93,7 +93,7 @@
 
   .review-content {
     position: relative;
-    padding: 16px 46px 16px 20px;
+    padding: 16px 20px;
   }
 
   /* Markdown prose styling */
