@@ -71,6 +71,9 @@ provides:
 - close or reopen, rerun, and eligible cancellation actions; and
 - review-output copying and a comment form.
 
+Use the copy icon above the review output to copy its original Markdown,
+including headings, lists, links, and code blocks.
+
 When a review agent fails before producing output, the **Review** tab shows the
 recorded failure reason so the problem can be diagnosed without leaving the
 browser application.

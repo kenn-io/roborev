@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CopyButton } from "@kenn-io/kit-ui";
   import { initMarkdownMermaidRendering } from "@kenn-io/kit-ui/utils/markdown-mermaid";
   import { renderMarkdown, renderMarkdownSync } from "../markdown/render";
 
@@ -50,6 +51,13 @@
 {:else if pending}
   <div class="review-pending">Review in progress...</div>
 {:else if output}
+  <div class="review-actions">
+    <CopyButton
+      text={output}
+      ariaLabel="Copy review as Markdown"
+      title="Copy review as Markdown"
+    />
+  </div>
   <div class="review-content markdown-body" bind:this={markdownContainer}>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by the Markdown renderer -->
     {@html renderedHTML}
@@ -59,6 +67,12 @@
 {/if}
 
 <style>
+  .review-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 20px 0;
+  }
+
   .review-loading,
   .review-pending,
   .review-empty {
