@@ -51,14 +51,15 @@
 {:else if pending}
   <div class="review-pending">Review in progress...</div>
 {:else if output}
-  <div class="review-actions">
-    <CopyButton
-      text={output}
-      ariaLabel="Copy review as Markdown"
-      title="Copy review as Markdown"
-    />
-  </div>
   <div class="review-content markdown-body" bind:this={markdownContainer}>
+    <div class="review-actions">
+      <CopyButton
+        text={output}
+        ariaLabel="Copy review as Markdown"
+        title="Copy review as Markdown"
+        revealOnHover
+      />
+    </div>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by the Markdown renderer -->
     {@html renderedHTML}
   </div>
@@ -68,9 +69,17 @@
 
 <style>
   .review-actions {
-    display: flex;
-    justify-content: flex-end;
-    padding: 8px 20px 0;
+    position: absolute;
+    top: 16px;
+    right: 10px;
+  }
+
+  .review-content:hover .review-actions :global(.kit-copy-btn) {
+    opacity: 1;
+  }
+
+  .review-content > .review-actions + :global(*) {
+    margin-top: 0;
   }
 
   .review-loading,
@@ -83,7 +92,8 @@
   }
 
   .review-content {
-    padding: 16px 20px;
+    position: relative;
+    padding: 16px 46px 16px 20px;
   }
 
   /* Markdown prose styling */

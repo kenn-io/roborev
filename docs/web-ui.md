@@ -71,8 +71,9 @@ provides:
 - close or reopen, rerun, and eligible cancellation actions; and
 - review-output copying and a comment form.
 
-Use the copy icon above the review output to copy its original Markdown,
-including headings, lists, links, and code blocks.
+Hover over the review output to reveal the copy icon in its top-right corner. It
+copies the original Markdown, including headings, lists, links, and code blocks.
+The icon also appears on keyboard focus and stays visible on touch devices.
 
 When a review agent fails before producing output, the **Review** tab shows the
 recorded failure reason so the problem can be diagnosed without leaving the
