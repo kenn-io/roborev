@@ -35,6 +35,9 @@ describe("ReleaseNotesModal", () => {
     });
 
     expect(await screen.findByText("Latest notes")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy release notes as Markdown" }),
+    ).toHaveAttribute("title", "Copy release notes as Markdown");
     await fireEvent.click(screen.getByRole("button", { name: /Roborev 1.9/ }));
     expect(await screen.findByText("Earlier notes")).toBeInTheDocument();
   });

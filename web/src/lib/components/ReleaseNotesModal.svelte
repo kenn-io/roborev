@@ -9,6 +9,7 @@
   type ReleaseContentComponent = Component<{
     output: string;
     emptyMessage?: string;
+    copyLabel?: string;
   }>;
 
   interface Props {
@@ -137,6 +138,7 @@
               {#if ReleaseContent}
                 <ReleaseContent
                   output={selectedRelease.body}
+                  copyLabel="Copy release notes as Markdown"
                   emptyMessage="No release notes were provided."
                 />
               {:else if rendererError}

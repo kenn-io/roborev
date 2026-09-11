@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CopyButton } from "@kenn-io/kit-ui";
   import { initMarkdownMermaidRendering } from "@kenn-io/kit-ui/utils/markdown-mermaid";
   import { renderMarkdown, renderMarkdownSync } from "../markdown/render";
 
@@ -7,6 +8,7 @@
     loading?: boolean;
     pending?: boolean;
     emptyMessage?: string;
+    copyLabel?: string;
   }
 
   let {
@@ -14,6 +16,7 @@
     loading = false,
     pending = false,
     emptyMessage = "No review output available.",
+    copyLabel = "Copy review as Markdown",
   }: Props = $props();
 
   const fallbackHTML = $derived(renderMarkdownSync(output));
@@ -51,6 +54,14 @@
   <div class="review-pending">Review in progress...</div>
 {:else if output}
   <div class="review-content markdown-body" bind:this={markdownContainer}>
+    <div class="review-actions">
+      <CopyButton
+        text={output}
+        ariaLabel={copyLabel}
+        title={copyLabel}
+        revealOnHover
+      />
+    </div>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by the Markdown renderer -->
     {@html renderedHTML}
   </div>
@@ -59,6 +70,20 @@
 {/if}
 
 <style>
+  .review-actions {
+    position: absolute;
+    top: 16px;
+    right: 10px;
+  }
+
+  .review-content:hover .review-actions :global(.kit-copy-btn) {
+    opacity: 1;
+  }
+
+  .review-content > .review-actions + :global(*) {
+    margin-top: 0;
+  }
+
   .review-loading,
   .review-pending,
   .review-empty {
@@ -69,6 +94,7 @@
   }
 
   .review-content {
+    position: relative;
     padding: 16px 20px;
   }
 
