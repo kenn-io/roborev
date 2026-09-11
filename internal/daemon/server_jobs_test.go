@@ -82,6 +82,75 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	}
 }
 
+func TestListJobsFindingCountsHTTP(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo, err := db.GetOrCreateRepo("/tmp/daemon-finding-counts")
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "daemon-finding-sha", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "test",
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("daemon-finding-worker")
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "No issues found."))
+	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"critical","problem":"p","fix":"f","location":null},{"severity":"low","problem":"p","fix":"f","location":null}]}`
+	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
+	require.NoError(t, err)
+
+	without := fetchJobs(t, server, "limit=0")
+	require.Len(t, without.Jobs, 1)
+	assert.Nil(t, without.Jobs[0].FindingCounts)
+
+	withCounts := fetchJobs(t, server, "limit=0&include_findings=true")
+	require.Len(t, withCounts.Jobs, 1)
+	assert.Equal(t, &storage.FindingCounts{Critical: 1, Low: 1}, withCounts.Jobs[0].FindingCounts)
+
+	idResponse := fetchJobs(t, server, fmt.Sprintf("id=%d&include_findings=true", job.ID))
+	require.Len(t, idResponse.Jobs, 1)
+	assert.Equal(t, withCounts.Jobs[0].FindingCounts, idResponse.Jobs[0].FindingCounts)
+
+	idWithoutCounts := fetchJobs(t, server, fmt.Sprintf("id=%d", job.ID))
+	require.Len(t, idWithoutCounts.Jobs, 1)
+	assert.Nil(t, idWithoutCounts.Jobs[0].FindingCounts)
+
+	runUUID := testUUID("daemon-finding-panel")
+	members, _, err := db.EnqueuePanelRun(
+		[]storage.EnqueueOpts{{
+			RepoID: repo.ID, GitRef: "panel-head", Agent: "test",
+			JobType: storage.JobTypeReview, PanelRunUUID: &runUUID,
+			PanelRole: storage.PanelRoleMember, PanelName: "review",
+			PanelMemberName: "member", PanelMemberIndex: 0,
+		}},
+		storage.EnqueueOpts{
+			RepoID: repo.ID, GitRef: "panel-head", Agent: "test",
+			JobType: storage.JobTypeSynthesis, PanelRunUUID: &runUUID,
+			PanelRole: storage.PanelRoleSynthesis, PanelName: "review",
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	_, err = db.ClaimJob("daemon-panel-worker")
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(members[0].ID, "test", "prompt", "No issues found."))
+	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, members[0].ID)
+	require.NoError(t, err)
+
+	panelWithoutCounts := fetchJobs(t, server, "panel_run="+url.QueryEscape(runUUID.String()))
+	require.Len(t, panelWithoutCounts.Jobs, 2)
+	for _, panelJob := range panelWithoutCounts.Jobs {
+		assert.Nil(t, panelJob.FindingCounts)
+	}
+	panelWithCounts := fetchJobs(t, server, "panel_run="+url.QueryEscape(runUUID.String())+"&include_findings=true")
+	require.Len(t, panelWithCounts.Jobs, 2)
+	for _, panelJob := range panelWithCounts.Jobs {
+		if panelJob.ID == members[0].ID {
+			assert.Equal(t, &storage.FindingCounts{Critical: 1, Low: 1}, panelJob.FindingCounts)
+		}
+	}
+}
+
 func TestHandleListJobsMultiRepoFilter(t *testing.T) {
 	assert := assert.New(t)
 	server, db, tmpDir := newTestServer(t)
@@ -3046,7 +3115,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode(), "body: %s", resp.Body)
 		require.NotNil(t, resp.JSON200)
 		require.NotNil(t, resp.JSON200.Jobs)
-		return *resp.JSON200.Jobs
+		return resp.JSON200.Jobs
 	}
 
 	jobByID := func(t *testing.T, jobs []daemonclient.ReviewJob, id int64) daemonclient.ReviewJob {

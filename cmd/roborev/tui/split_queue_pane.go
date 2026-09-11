@@ -4,10 +4,9 @@ package tui
 // dropping from the end of the user's configured column order (rightmost-
 // configured drops first). colSel, colJobID, and colRef always survive.
 // Expanded panel members also retain colReviewType to identify each reviewer.
-// Estimation: fixed columns use their minimum fixed widths; flex columns
-// (ref/branch/repo) count a floor of min(content, 12); +1 spacing per
-// non-first column. This mirrors renderQueueTable's sizing closely enough
-// to decide fit; renderQueueTable does the exact layout afterward.
+// Estimation: fixed columns use their minimum widths; Ref, Branch, and Repo
+// use caps of 22, 20, and 15 characters; +1 spacing applies per non-first
+// column. renderQueueTable performs the exact layout after this fit check.
 func (m model) queuePaneColumns(paneW int, contentWidth map[int]int) []int {
 	core := map[int]bool{colSel: true, colJobID: true, colRef: true}
 	for _, row := range m.visibleQueueRows() {
@@ -21,8 +20,12 @@ func (m model) queuePaneColumns(paneW int, contentWidth map[int]int) []int {
 		switch c {
 		case colSel:
 			return 2
-		case colRef, colBranch, colRepo:
-			return min(max(w, 4), 12)
+		case colRef:
+			return min(max(w, 4), 22)
+		case colBranch:
+			return min(max(w, 4), 20)
+		case colRepo:
+			return min(max(w, 4), 15)
 		case colReasoning:
 			return min(max(w, 9), 16)
 		case colReviewType:

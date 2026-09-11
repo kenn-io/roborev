@@ -137,8 +137,9 @@ type ReviewJob struct {
 	// PanelSummary is the member breakdown for a synthesis (parent) row,
 	// attached by the listing handler for collapsed panel display. Nil for
 	// non-panel jobs and member rows.
-	PanelSummary *PanelSummary          `json:"panel_summary,omitempty"`
-	Experiments  []ExperimentAssignment `json:"experiments,omitempty"`
+	PanelSummary  *PanelSummary          `json:"panel_summary,omitempty"`
+	FindingCounts *FindingCounts         `json:"finding_counts,omitempty"`
+	Experiments   []ExperimentAssignment `json:"experiments,omitempty"`
 	// FrozenExperimentPlan is loaded only while a worker executes this job.
 	// The assignment JSON remains the persisted source of truth.
 	FrozenExperimentPlan *ExperimentAssignmentInput `json:"-"`

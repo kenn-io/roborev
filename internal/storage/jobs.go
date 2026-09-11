@@ -1703,6 +1703,7 @@ type listJobsOptions struct {
 	panelRun           uuid.UUID
 	excludePanelRole   string
 	omitPrompt         bool
+	includeFindings    bool
 }
 
 type jobListPosition struct {
@@ -1747,6 +1748,11 @@ func WithClosed(closed bool) ListJobsOption {
 // the TUI prompt view renders it straight from list rows.
 func WithoutPrompt() ListJobsOption {
 	return func(o *listJobsOptions) { o.omitPrompt = true }
+}
+
+// WithFindingCounts requests the nullable finding-count projection for listed jobs.
+func WithFindingCounts() ListJobsOption {
+	return func(o *listJobsOptions) { o.includeFindings = true }
 }
 
 // WithJobType filters jobs by job_type (e.g. "fix", "review").
@@ -1828,6 +1834,17 @@ func collectListJobsOptions(opts ...ListJobsOption) listJobsOptions {
 		opt(&o)
 	}
 	return o
+}
+
+// Typed rows identify their review kind, so finding counts only need diff_content for legacy rows.
+func findingCountsDiffContentExpr(includeFindings bool) string {
+	if !includeFindings {
+		return "NULL"
+	}
+	return `CASE WHEN COALESCE(j.job_type, '') = ''
+			AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty'
+				OR j.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0)
+			THEN j.diff_content ELSE NULL END`
 }
 
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
@@ -1940,6 +1957,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if options.omitPrompt {
 		promptExpr = "CASE WHEN j.status IN ('queued', 'running') THEN j.prompt ELSE '' END"
 	}
+	structuredOutputExpr := "''"
+	diffContentExpr := findingCountsDiffContentExpr(options.includeFindings)
+	if options.includeFindings {
+		structuredOutputExpr = "rv.structured_output"
+	}
 	// The review output is only needed to parse a verdict for legacy rows
 	// where verdict_bool is NULL (e.g. synced from older machines); rows with
 	// a stored verdict skip the large TEXT payload and pass the existence
@@ -1949,11 +1971,12 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	// backfill guarantee a non-NULL verdict implies a non-empty output.
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count,
+		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count, ` + diffContentExpr + `,
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed,
 		       CASE WHEN rv.verdict_bool IS NULL THEN rv.output ELSE '' END,
 		       rv.verdict_bool,
 		       CASE WHEN rv.verdict_bool IS NOT NULL THEN 1 ELSE COALESCE(rv.output != '', 0) END,
+		       ` + structuredOutputExpr + `,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
 		       j.command_line, j.dirty_files, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -1991,12 +2014,13 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var output sql.NullString
 		var verdictBool sql.NullInt64
 		var hasOutput bool
+		var structuredOutput sql.NullString
 		var fields reviewJobScanFields
 
 		err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &fields.ResumeSourceUUID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
-			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
+			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount, &fields.DiffContent,
 			&fields.Agentic, &fields.PromptPrebuilt, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
-			&verdictBool, &hasOutput, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
+			&verdictBool, &hasOutput, &structuredOutput, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
 			&fields.CommandLine, &fields.DirtyFiles, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 			&fields.SkipReason, &fields.Source,
@@ -2006,6 +2030,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		applyReviewJobScan(&j, fields)
 		applyJobVerdict(&j, verdictBool, output.String, hasOutput)
+		if options.includeFindings {
+			applyJobFindingCounts(&j, structuredOutput)
+		}
 
 		jobs = append(jobs, j)
 	}

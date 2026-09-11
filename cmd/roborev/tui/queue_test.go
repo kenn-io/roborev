@@ -2717,6 +2717,13 @@ func TestDefaultColumnOrderDetection(t *testing.T) {
 	assert.False(t, slices.Equal(customOrder, toggleableColumns))
 }
 
+func TestDefaultColumnOrderPlacesFindingsBesideVerdict(t *testing.T) {
+	pfIndex := slices.Index(toggleableColumns, colPF)
+	findingsIndex := slices.Index(toggleableColumns, colFindings)
+
+	assert.Equal(t, pfIndex+1, findingsIndex)
+}
+
 func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
 	hidden := parseHiddenColumns(nil)
 	assert.True(t, hidden[colSessionID])
@@ -2783,6 +2790,9 @@ func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
 
 	for _, col := range toggleableColumns {
 		name := columnNames[col]
+		if col == colFindings {
+			name = "H/M/L"
+		}
 		assert.Contains(t, headerLine, name,
 			"header missing column %q (col=%d)", name, col)
 	}

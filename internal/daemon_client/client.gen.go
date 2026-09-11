@@ -184,18 +184,39 @@ func (e ListJobsParamsOmitPrompt) Valid() bool {
 	}
 }
 
+// Defines values for ListJobsParamsIncludeFindings.
+const (
+	ListJobsParamsIncludeFindingsEmpty ListJobsParamsIncludeFindings = ""
+	ListJobsParamsIncludeFindingsFalse ListJobsParamsIncludeFindings = "false"
+	ListJobsParamsIncludeFindingsTrue  ListJobsParamsIncludeFindings = "true"
+)
+
+// Valid indicates whether the value is a known member of the ListJobsParamsIncludeFindings enum.
+func (e ListJobsParamsIncludeFindings) Valid() bool {
+	switch e {
+	case ListJobsParamsIncludeFindingsEmpty:
+		return true
+	case ListJobsParamsIncludeFindingsFalse:
+		return true
+	case ListJobsParamsIncludeFindingsTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetSummaryParamsAll.
 const (
-	False GetSummaryParamsAll = "false"
-	True  GetSummaryParamsAll = "true"
+	GetSummaryParamsAllFalse GetSummaryParamsAll = "false"
+	GetSummaryParamsAllTrue  GetSummaryParamsAll = "true"
 )
 
 // Valid indicates whether the value is a known member of the GetSummaryParamsAll enum.
 func (e GetSummaryParamsAll) Valid() bool {
 	switch e {
-	case False:
+	case GetSummaryParamsAllFalse:
 		return true
-	case True:
+	case GetSummaryParamsAllTrue:
 		return true
 	default:
 		return false
@@ -214,8 +235,8 @@ type ActivityEntry struct {
 // ActivityOutputBody defines model for ActivityOutputBody.
 type ActivityOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string          `json:"$schema,omitempty"`
-	Entries *[]ActivityEntry `json:"entries"`
+	Schema  *string         `json:"$schema,omitempty"`
+	Entries []ActivityEntry `json:"entries"`
 }
 
 // AddCommentRequest defines model for AddCommentRequest.
@@ -294,20 +315,20 @@ type AnalyticsDimensionRow struct {
 
 // AnalyticsFilterOptions defines model for AnalyticsFilterOptions.
 type AnalyticsFilterOptions struct {
-	Agents   *[]string `json:"agents"`
-	Models   *[]string `json:"models"`
-	Projects *[]string `json:"projects"`
-	Sources  *[]string `json:"sources"`
+	Agents   []string `json:"agents"`
+	Models   []string `json:"models"`
+	Projects []string `json:"projects"`
+	Sources  []string `json:"sources"`
 }
 
 // AnalyticsFilters defines model for AnalyticsFilters.
 type AnalyticsFilters struct {
-	Agents   *[]string  `json:"agents"`
+	Agents   []string   `json:"agents"`
 	Bucket   string     `json:"bucket"`
-	Models   *[]string  `json:"models"`
-	Projects *[]string  `json:"projects"`
+	Models   []string   `json:"models"`
+	Projects []string   `json:"projects"`
 	Since    *time.Time `json:"since,omitempty"`
-	Sources  *[]string  `json:"sources"`
+	Sources  []string   `json:"sources"`
 	Until    time.Time  `json:"until"`
 }
 
@@ -343,16 +364,16 @@ type AnalyticsReviewStats struct {
 // AnalyticsSnapshot defines model for AnalyticsSnapshot.
 type AnalyticsSnapshot struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string                  `json:"$schema,omitempty"`
-	Agents        *[]AnalyticsDimensionRow `json:"agents"`
-	Filters       AnalyticsFilters         `json:"filters"`
-	Models        *[]AnalyticsDimensionRow `json:"models"`
-	Options       AnalyticsFilterOptions   `json:"options"`
-	Projects      *[]AnalyticsProjectRow   `json:"projects"`
-	SchemaVersion int64                    `json:"schema_version"`
-	Sources       *[]AnalyticsDimensionRow `json:"sources"`
-	Summary       AnalyticsSummary         `json:"summary"`
-	TimeSeries    *[]AnalyticsTimeBucket   `json:"time_series"`
+	Schema        *string                 `json:"$schema,omitempty"`
+	Agents        []AnalyticsDimensionRow `json:"agents"`
+	Filters       AnalyticsFilters        `json:"filters"`
+	Models        []AnalyticsDimensionRow `json:"models"`
+	Options       AnalyticsFilterOptions  `json:"options"`
+	Projects      []AnalyticsProjectRow   `json:"projects"`
+	SchemaVersion int64                   `json:"schema_version"`
+	Sources       []AnalyticsDimensionRow `json:"sources"`
+	Summary       AnalyticsSummary        `json:"summary"`
+	TimeSeries    []AnalyticsTimeBucket   `json:"time_series"`
 }
 
 // AnalyticsSummary defines model for AnalyticsSummary.
@@ -397,9 +418,9 @@ type AutoDesignStatus struct {
 // BackfillTokensRequest defines model for BackfillTokensRequest.
 type BackfillTokensRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema   *string                `json:"$schema,omitempty"`
-	DryRun   *bool                  `json:"dry_run,omitempty"`
-	Sessions *[]SessionUsagePayload `json:"sessions"`
+	Schema   *string               `json:"$schema,omitempty"`
+	DryRun   *bool                 `json:"dry_run,omitempty"`
+	Sessions []SessionUsagePayload `json:"sessions"`
 }
 
 // BatchJobsOutputBody defines model for BatchJobsOutputBody.
@@ -412,8 +433,8 @@ type BatchJobsOutputBody struct {
 // BatchJobsRequest defines model for BatchJobsRequest.
 type BatchJobsRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string  `json:"$schema,omitempty"`
-	JobIds *[]int64 `json:"job_ids"`
+	Schema *string `json:"$schema,omitempty"`
+	JobIds []int64 `json:"job_ids"`
 }
 
 // BranchWithCount defines model for BranchWithCount.
@@ -476,31 +497,31 @@ type CostEnvelope struct {
 // DaemonStatus defines model for DaemonStatus.
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema               *string            `json:"$schema,omitempty"`
-	ActiveSnoozes        *[]AgentHookSnooze `json:"active_snoozes"`
-	ActiveWorkers        int64              `json:"active_workers"`
-	Address              *string            `json:"address,omitempty"`
-	AppliedJobs          int64              `json:"applied_jobs"`
-	AutoDesign           *AutoDesignStatus  `json:"auto_design,omitempty"`
-	CanceledJobs         int64              `json:"canceled_jobs"`
-	CompletedJobs        int64              `json:"completed_jobs"`
-	ConfigReloadCounter  *int64             `json:"config_reload_counter,omitempty"`
-	ConfigReloadedAt     *string            `json:"config_reloaded_at,omitempty"`
-	FailedJobs           int64              `json:"failed_jobs"`
-	MachineId            *uuid.UUID         `json:"machine_id,omitempty"`
-	MaxWorkers           int64              `json:"max_workers"`
-	Network              *string            `json:"network,omitempty"`
-	Port                 *int64             `json:"port,omitempty"`
-	QueuePaused          bool               `json:"queue_paused"`
-	QueuedJobs           int64              `json:"queued_jobs"`
-	RebasedJobs          int64              `json:"rebased_jobs"`
-	RunningJobs          int64              `json:"running_jobs"`
-	SkippedJobs          int64              `json:"skipped_jobs"`
-	UpdateDrainExpiresAt *string            `json:"update_drain_expires_at,omitempty"`
-	UpdateDrainPolicy    *string            `json:"update_drain_policy,omitempty"`
-	UpdateDraining       bool               `json:"update_draining"`
-	Version              string             `json:"version"`
-	WebCapabilities      *[]string          `json:"web_capabilities"`
+	Schema               *string           `json:"$schema,omitempty"`
+	ActiveSnoozes        []AgentHookSnooze `json:"active_snoozes"`
+	ActiveWorkers        int64             `json:"active_workers"`
+	Address              *string           `json:"address,omitempty"`
+	AppliedJobs          int64             `json:"applied_jobs"`
+	AutoDesign           *AutoDesignStatus `json:"auto_design,omitempty"`
+	CanceledJobs         int64             `json:"canceled_jobs"`
+	CompletedJobs        int64             `json:"completed_jobs"`
+	ConfigReloadCounter  *int64            `json:"config_reload_counter,omitempty"`
+	ConfigReloadedAt     *string           `json:"config_reloaded_at,omitempty"`
+	FailedJobs           int64             `json:"failed_jobs"`
+	MachineId            *uuid.UUID        `json:"machine_id,omitempty"`
+	MaxWorkers           int64             `json:"max_workers"`
+	Network              *string           `json:"network,omitempty"`
+	Port                 *int64            `json:"port,omitempty"`
+	QueuePaused          bool              `json:"queue_paused"`
+	QueuedJobs           int64             `json:"queued_jobs"`
+	RebasedJobs          int64             `json:"rebased_jobs"`
+	RunningJobs          int64             `json:"running_jobs"`
+	SkippedJobs          int64             `json:"skipped_jobs"`
+	UpdateDrainExpiresAt *string           `json:"update_drain_expires_at,omitempty"`
+	UpdateDrainPolicy    *string           `json:"update_drain_policy,omitempty"`
+	UpdateDraining       bool              `json:"update_draining"`
+	Version              string            `json:"version"`
+	WebCapabilities      []string          `json:"web_capabilities"`
 }
 
 // DurationStats defines model for DurationStats.
@@ -530,6 +551,7 @@ type EnqueueCreatedResponse struct {
 	EnqueuedAt            time.Time               `json:"enqueued_at"`
 	Error                 *string                 `json:"error,omitempty"`
 	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts          `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
 	GitRef                string                  `json:"git_ref"`
 	Id                    int64                   `json:"id"`
@@ -672,10 +694,10 @@ type ExportCICostDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
-	DatabaseId  uuid.UUID          `json:"database_id"`
-	GeneratedAt string             `json:"generated_at"`
-	Jobs        *[]ExportCICostJob `json:"jobs"`
-	Legacy      bool               `json:"legacy"`
+	DatabaseId  uuid.UUID         `json:"database_id"`
+	GeneratedAt string            `json:"generated_at"`
+	Jobs        []ExportCICostJob `json:"jobs"`
+	Legacy      bool              `json:"legacy"`
 
 	// NextCursor Opaque resume cursor emitted when jobs is non-empty.
 	NextCursor    *string `json:"next_cursor"`
@@ -690,16 +712,16 @@ type ExportCICostDocument struct {
 
 // ExportCICostJob defines model for ExportCICostJob.
 type ExportCICostJob struct {
-	Agent               string                  `json:"agent"`
-	CostUsd             *float64                `json:"cost_usd"`
-	Experiments         *[]ExperimentAssignment `json:"experiments"`
-	FinishedAt          string                  `json:"finished_at"`
-	JobUuid             uuid.UUID               `json:"job_uuid"`
-	Model               *string                 `json:"model"`
-	Provider            *string                 `json:"provider"`
-	ResumeSourceJobUuid *uuid.UUID              `json:"resume_source_job_uuid"`
-	Role                string                  `json:"role"`
-	Status              string                  `json:"status"`
+	Agent               string                 `json:"agent"`
+	CostUsd             *float64               `json:"cost_usd"`
+	Experiments         []ExperimentAssignment `json:"experiments"`
+	FinishedAt          string                 `json:"finished_at"`
+	JobUuid             uuid.UUID              `json:"job_uuid"`
+	Model               *string                `json:"model"`
+	Provider            *string                `json:"provider"`
+	ResumeSourceJobUuid *uuid.UUID             `json:"resume_source_job_uuid"`
+	Role                string                 `json:"role"`
+	Status              string                 `json:"status"`
 }
 
 // ExportCIMetricsDocument defines model for ExportCIMetricsDocument.
@@ -712,11 +734,11 @@ type ExportCIMetricsDocument struct {
 	GeneratedAt string    `json:"generated_at"`
 
 	// NextCursor Opaque resume cursor emitted when panels is non-empty.
-	NextCursor    *string          `json:"next_cursor"`
-	Panels        *[]ExportCIPanel `json:"panels"`
-	SchemaVersion int64            `json:"schema_version"`
-	Tool          string           `json:"tool"`
-	ToolVersion   string           `json:"tool_version"`
+	NextCursor    *string         `json:"next_cursor"`
+	Panels        []ExportCIPanel `json:"panels"`
+	SchemaVersion int64           `json:"schema_version"`
+	Tool          string          `json:"tool"`
+	ToolVersion   string          `json:"tool_version"`
 
 	// Truncated True when more matching rows are available immediately.
 	Truncated bool                `json:"truncated"`
@@ -725,18 +747,18 @@ type ExportCIMetricsDocument struct {
 
 // ExportCIPanel defines model for ExportCIPanel.
 type ExportCIPanel struct {
-	AttemptCount   *int64                  `json:"attempt_count"`
-	Experiments    *[]ExperimentAssignment `json:"experiments"`
-	FirstAttemptAt *string                 `json:"first_attempt_at"`
-	GithubRepo     string                  `json:"github_repo"`
-	HeadSha        string                  `json:"head_sha"`
-	Jobs           *[]ExportCIPanelJob     `json:"jobs"`
-	Outcome        string                  `json:"outcome"`
-	PanelCreatedAt string                  `json:"panel_created_at"`
-	PostedAt       string                  `json:"posted_at"`
-	PrNumber       int64                   `json:"pr_number"`
-	SynthesisAgent *string                 `json:"synthesis_agent"`
-	SynthesisModel *string                 `json:"synthesis_model"`
+	AttemptCount   *int64                 `json:"attempt_count"`
+	Experiments    []ExperimentAssignment `json:"experiments"`
+	FirstAttemptAt *string                `json:"first_attempt_at"`
+	GithubRepo     string                 `json:"github_repo"`
+	HeadSha        string                 `json:"head_sha"`
+	Jobs           []ExportCIPanelJob     `json:"jobs"`
+	Outcome        string                 `json:"outcome"`
+	PanelCreatedAt string                 `json:"panel_created_at"`
+	PostedAt       string                 `json:"posted_at"`
+	PrNumber       int64                  `json:"pr_number"`
+	SynthesisAgent *string                `json:"synthesis_agent"`
+	SynthesisModel *string                `json:"synthesis_model"`
 }
 
 // ExportCIPanelJob defines model for ExportCIPanelJob.
@@ -754,25 +776,25 @@ type ExportCIPanelJob struct {
 
 // ExportReview defines model for ExportReview.
 type ExportReview struct {
-	Agent               string                  `json:"agent"`
-	Branch              *string                 `json:"branch"`
-	CommitSha           *string                 `json:"commit_sha"`
-	CompletedAt         string                  `json:"completed_at"`
-	Content             *string                 `json:"content"`
-	Cost                ExportReviewCost        `json:"cost"`
-	CreatedAt           string                  `json:"created_at"`
-	DurationMs          *int64                  `json:"duration_ms"`
-	Experiments         *[]ExperimentAssignment `json:"experiments"`
-	Model               *string                 `json:"model"`
-	PrNumber            *int64                  `json:"pr_number"`
-	PrUrl               *string                 `json:"pr_url"`
-	Project             string                  `json:"project"`
-	Repo                string                  `json:"repo"`
-	ResumeSourceJobUuid *uuid.UUID              `json:"resume_source_job_uuid"`
-	ReviewId            uuid.UUID               `json:"review_id"`
-	Status              string                  `json:"status"`
-	Subagents           *[]ExportSubagent       `json:"subagents"`
-	Verdict             string                  `json:"verdict"`
+	Agent               string                 `json:"agent"`
+	Branch              *string                `json:"branch"`
+	CommitSha           *string                `json:"commit_sha"`
+	CompletedAt         string                 `json:"completed_at"`
+	Content             *string                `json:"content"`
+	Cost                ExportReviewCost       `json:"cost"`
+	CreatedAt           string                 `json:"created_at"`
+	DurationMs          *int64                 `json:"duration_ms"`
+	Experiments         []ExperimentAssignment `json:"experiments"`
+	Model               *string                `json:"model"`
+	PrNumber            *int64                 `json:"pr_number"`
+	PrUrl               *string                `json:"pr_url"`
+	Project             string                 `json:"project"`
+	Repo                string                 `json:"repo"`
+	ResumeSourceJobUuid *uuid.UUID             `json:"resume_source_job_uuid"`
+	ReviewId            uuid.UUID              `json:"review_id"`
+	Status              string                 `json:"status"`
+	Subagents           []ExportSubagent       `json:"subagents"`
+	Verdict             string                 `json:"verdict"`
 }
 
 // ExportReviewCost defines model for ExportReviewCost.
@@ -792,12 +814,12 @@ type ExportReviewsDocument struct {
 	GeneratedAt string    `json:"generated_at"`
 
 	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
-	NextCursor    *string         `json:"next_cursor"`
-	Profile       string          `json:"profile"`
-	Reviews       *[]ExportReview `json:"reviews"`
-	SchemaVersion int64           `json:"schema_version"`
-	Tool          string          `json:"tool"`
-	ToolVersion   string          `json:"tool_version"`
+	NextCursor    *string        `json:"next_cursor"`
+	Profile       string         `json:"profile"`
+	Reviews       []ExportReview `json:"reviews"`
+	SchemaVersion int64          `json:"schema_version"`
+	Tool          string         `json:"tool"`
+	ToolVersion   string         `json:"tool_version"`
 
 	// Truncated True when more matching rows are available immediately.
 	Truncated bool                `json:"truncated"`
@@ -833,6 +855,14 @@ type FailureStats struct {
 	Total   int64            `json:"total"`
 }
 
+// FindingCounts defines model for FindingCounts.
+type FindingCounts struct {
+	Critical int64 `json:"critical"`
+	High     int64 `json:"high"`
+	Low      int64 `json:"low"`
+	Medium   int64 `json:"medium"`
+}
+
 // FixJobRequest defines model for FixJobRequest.
 type FixJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -846,13 +876,13 @@ type FixJobRequest struct {
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string            `json:"$schema,omitempty"`
-	Components    *[]ComponentHealth `json:"components"`
-	ErrorCount24h int64              `json:"error_count_24h"`
-	Healthy       bool               `json:"healthy"`
-	RecentErrors  *[]ErrorEntry      `json:"recent_errors"`
-	Uptime        string             `json:"uptime"`
-	Version       string             `json:"version"`
+	Schema        *string           `json:"$schema,omitempty"`
+	Components    []ComponentHealth `json:"components"`
+	ErrorCount24h int64             `json:"error_count_24h"`
+	Healthy       bool              `json:"healthy"`
+	RecentErrors  []ErrorEntry      `json:"recent_errors"`
+	Uptime        string            `json:"uptime"`
+	Version       string            `json:"version"`
 }
 
 // JobIDRequest defines model for JobIDRequest.
@@ -898,26 +928,26 @@ type JobWithReview struct {
 // ListBranchesOutputBody defines model for ListBranchesOutputBody.
 type ListBranchesOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema         *string            `json:"$schema,omitempty"`
-	Branches       *[]BranchWithCount `json:"branches"`
-	NullsRemaining int64              `json:"nulls_remaining"`
-	TotalCount     int64              `json:"total_count"`
+	Schema         *string           `json:"$schema,omitempty"`
+	Branches       []BranchWithCount `json:"branches"`
+	NullsRemaining int64             `json:"nulls_remaining"`
+	TotalCount     int64             `json:"total_count"`
 }
 
 // ListCommentsOutputBody defines model for ListCommentsOutputBody.
 type ListCommentsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string     `json:"$schema,omitempty"`
-	Responses *[]Response `json:"responses"`
+	Schema    *string    `json:"$schema,omitempty"`
+	Responses []Response `json:"responses"`
 }
 
 // ListJobsOutputBody defines model for ListJobsOutputBody.
 type ListJobsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string      `json:"$schema,omitempty"`
-	FilteredStats *JobStats    `json:"filtered_stats,omitempty"`
-	HasMore       bool         `json:"has_more"`
-	Jobs          *[]ReviewJob `json:"jobs"`
+	Schema        *string     `json:"$schema,omitempty"`
+	FilteredStats *JobStats   `json:"filtered_stats,omitempty"`
+	HasMore       bool        `json:"has_more"`
+	Jobs          []ReviewJob `json:"jobs"`
 
 	// NextCursor Opaque resume cursor when more jobs are available
 	NextCursor *string   `json:"next_cursor"`
@@ -927,9 +957,9 @@ type ListJobsOutputBody struct {
 // ListReposOutputBody defines model for ListReposOutputBody.
 type ListReposOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema     *string          `json:"$schema,omitempty"`
-	Repos      *[]RepoWithCount `json:"repos"`
-	TotalCount int64            `json:"total_count"`
+	Schema     *string         `json:"$schema,omitempty"`
+	Repos      []RepoWithCount `json:"repos"`
+	TotalCount int64           `json:"total_count"`
 }
 
 // OverviewStats defines model for OverviewStats.
@@ -961,11 +991,12 @@ type PanelEnqueueResponse struct {
 	EnqueuedAt            time.Time               `json:"enqueued_at"`
 	Error                 *string                 `json:"error,omitempty"`
 	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts          `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
 	GitRef                string                  `json:"git_ref"`
 	Id                    int64                   `json:"id"`
 	JobType               string                  `json:"job_type"`
-	MemberJobIds          *[]int64                `json:"member_job_ids"`
+	MemberJobIds          []int64                 `json:"member_job_ids"`
 	MinSeverity           *string                 `json:"min_severity,omitempty"`
 	Model                 *string                 `json:"model,omitempty"`
 	OutputPrefix          *string                 `json:"output_prefix,omitempty"`
@@ -1045,6 +1076,26 @@ type RegisterRepoRequest struct {
 	RepoPath string  `json:"repo_path"`
 }
 
+// ReleaseNote defines model for ReleaseNote.
+type ReleaseNote struct {
+	Body        string    `json:"body"`
+	HtmlUrl     string    `json:"html_url"`
+	Name        string    `json:"name"`
+	Prerelease  bool      `json:"prerelease"`
+	PublishedAt time.Time `json:"published_at"`
+	TagName     string    `json:"tag_name"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ReleaseNotesResponse defines model for ReleaseNotesResponse.
+type ReleaseNotesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string       `json:"$schema,omitempty"`
+	FetchedAt time.Time     `json:"fetched_at"`
+	Releases  []ReleaseNote `json:"releases"`
+	Stale     bool          `json:"stale"`
+}
+
 // ReleaseUpdateOutputBody defines model for ReleaseUpdateOutputBody.
 type ReleaseUpdateOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1065,9 +1116,9 @@ type RemapMapping struct {
 // RemapRequest defines model for RemapRequest.
 type RemapRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema   *string         `json:"$schema,omitempty"`
-	Mappings *[]RemapMapping `json:"mappings"`
-	RepoPath string          `json:"repo_path"`
+	Schema   *string        `json:"$schema,omitempty"`
+	Mappings []RemapMapping `json:"mappings"`
+	RepoPath string         `json:"repo_path"`
 }
 
 // RemapResult defines model for RemapResult.
@@ -1121,6 +1172,7 @@ type RerunJobOutputBody struct {
 type RerunJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string    `json:"$schema,omitempty"`
+	Agent     *string    `json:"agent,omitempty"`
 	JobId     int64      `json:"job_id"`
 	RequestId *uuid.UUID `json:"request_id,omitempty"`
 }
@@ -1203,6 +1255,7 @@ type ReviewJob struct {
 	EnqueuedAt            time.Time               `json:"enqueued_at"`
 	Error                 *string                 `json:"error,omitempty"`
 	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts          `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
 	GitRef                string                  `json:"git_ref"`
 	Id                    int64                   `json:"id"`
@@ -1250,12 +1303,12 @@ type ReviewJob struct {
 // ReviewProjection defines model for ReviewProjection.
 type ReviewProjection struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string                     `json:"$schema,omitempty"`
-	Job           ReviewProjectionJob         `json:"job"`
-	PanelMembers  *[]ReviewProjectionJob      `json:"panel_members"`
-	Responses     *[]ReviewProjectionResponse `json:"responses"`
-	Review        *ReviewProjectionReview     `json:"review,omitempty"`
-	SchemaVersion int64                       `json:"schema_version"`
+	Schema        *string                    `json:"$schema,omitempty"`
+	Job           ReviewProjectionJob        `json:"job"`
+	PanelMembers  []ReviewProjectionJob      `json:"panel_members"`
+	Responses     []ReviewProjectionResponse `json:"responses"`
+	Review        *ReviewProjectionReview    `json:"review,omitempty"`
+	SchemaVersion int64                      `json:"schema_version"`
 }
 
 // ReviewProjectionJob defines model for ReviewProjectionJob.
@@ -1322,18 +1375,18 @@ type ShutdownOutputBody struct {
 // Summary defines model for Summary.
 type Summary struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema   *string         `json:"$schema,omitempty"`
-	Agents   *[]AgentStats   `json:"agents"`
-	Branch   *string         `json:"branch,omitempty"`
-	Cost     CostAggregate   `json:"cost"`
-	Duration DurationStats   `json:"duration"`
-	Failures FailureStats    `json:"failures"`
-	JobTypes *[]JobTypeStats `json:"job_types"`
-	Overview OverviewStats   `json:"overview"`
-	RepoPath *string         `json:"repo_path,omitempty"`
-	Repos    *[]RepoSummary  `json:"repos,omitempty"`
-	Since    time.Time       `json:"since"`
-	Verdicts VerdictStats    `json:"verdicts"`
+	Schema   *string        `json:"$schema,omitempty"`
+	Agents   []AgentStats   `json:"agents"`
+	Branch   *string        `json:"branch,omitempty"`
+	Cost     CostAggregate  `json:"cost"`
+	Duration DurationStats  `json:"duration"`
+	Failures FailureStats   `json:"failures"`
+	JobTypes []JobTypeStats `json:"job_types"`
+	Overview OverviewStats  `json:"overview"`
+	RepoPath *string        `json:"repo_path,omitempty"`
+	Repos    *[]RepoSummary `json:"repos,omitempty"`
+	Since    time.Time      `json:"since"`
+	Verdicts VerdictStats   `json:"verdicts"`
 }
 
 // SyncStatusOutputBody defines model for SyncStatusOutputBody.
@@ -1358,12 +1411,12 @@ type TokenResult struct {
 // TokenSummary defines model for TokenSummary.
 type TokenSummary struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string        `json:"$schema,omitempty"`
-	Failed  int64          `json:"failed"`
-	Results *[]TokenResult `json:"results"`
-	Skipped int64          `json:"skipped"`
-	Total   int64          `json:"total"`
-	Updated int64          `json:"updated"`
+	Schema  *string       `json:"$schema,omitempty"`
+	Failed  int64         `json:"failed"`
+	Results []TokenResult `json:"results"`
+	Skipped int64         `json:"skipped"`
+	Total   int64         `json:"total"`
+	Updated int64         `json:"updated"`
 }
 
 // UpdateDrainRequestBody defines model for UpdateDrainRequestBody.
@@ -1655,6 +1708,9 @@ type ListJobsParams struct {
 	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsParamsOmitPrompt `form:"omit_prompt,omitempty" json:"omit_prompt,omitempty"`
 
+	// IncludeFindings Include nullable finding severity counts for eligible completed reviews
+	IncludeFindings *ListJobsParamsIncludeFindings `form:"include_findings,omitempty" json:"include_findings,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `form:"repo_prefix,omitempty" json:"repo_prefix,omitempty"`
 
@@ -1685,6 +1741,9 @@ type ListJobsParamsHideClassifyJobs string
 
 // ListJobsParamsOmitPrompt defines parameters for ListJobs.
 type ListJobsParamsOmitPrompt string
+
+// ListJobsParamsIncludeFindings defines parameters for ListJobs.
+type ListJobsParamsIncludeFindings string
 
 // ListReposParams defines parameters for ListRepos.
 type ListReposParams struct {
@@ -2003,6 +2062,9 @@ type ClientInterface interface {
 
 	// UnpauseQueue request
 	UnpauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListReleases request
+	ListReleases(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemapJobsWithBody request with any body
 	RemapJobsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2499,6 +2561,18 @@ func (c *Client) PauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) UnpauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnpauseQueueRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListReleases(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListReleasesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4403,6 +4477,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		}
 
+		if params.IncludeFindings != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "include_findings", *params.IncludeFindings, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		if params.RepoPrefix != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo_prefix", *params.RepoPrefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
@@ -4608,6 +4698,33 @@ func NewUnpauseQueueRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListReleasesRequest generates requests for ListReleases
+func NewListReleasesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/releases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -5864,6 +5981,9 @@ type ClientWithResponsesInterface interface {
 	// UnpauseQueueWithResponse request
 	UnpauseQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*UnpauseQueueResponse, error)
 
+	// ListReleasesWithResponse request
+	ListReleasesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListReleasesResponse, error)
+
 	// RemapJobsWithBodyWithResponse request with any body
 	RemapJobsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemapJobsResponse, error)
 
@@ -6529,6 +6649,29 @@ func (r UnpauseQueueResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UnpauseQueueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListReleasesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReleaseNotesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ListReleasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListReleasesResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7351,6 +7494,15 @@ func (c *ClientWithResponses) UnpauseQueueWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseUnpauseQueueResponse(rsp)
+}
+
+// ListReleasesWithResponse request returning *ListReleasesResponse
+func (c *ClientWithResponses) ListReleasesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListReleasesResponse, error) {
+	rsp, err := c.ListReleases(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListReleasesResponse(rsp)
 }
 
 // RemapJobsWithBodyWithResponse request with arbitrary body returning *RemapJobsResponse
@@ -8484,6 +8636,39 @@ func ParseUnpauseQueueResponse(rsp *http.Response) (*UnpauseQueueResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest QueuePauseOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListReleasesResponse parses an HTTP response from a ListReleasesWithResponse call
+func ParseListReleasesResponse(rsp *http.Response) (*ListReleasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListReleasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReleaseNotesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

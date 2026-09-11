@@ -1313,11 +1313,18 @@ func (s *Server) humaListJobs(
 			)
 		}
 		job.Patch = nil
-		review, reviewErr := s.db.GetReviewByJobID(job.ID)
+		var review *storage.Review
+		var reviewErr error
+		if input.IncludeFindings == "true" {
+			review, reviewErr = s.db.GetReviewByJobIDWithFindingCounts(job.ID)
+		} else {
+			review, reviewErr = s.db.GetReviewByJobID(job.ID)
+		}
 		if reviewErr == nil {
 			job.Closed = &review.Closed
 			if review.Job != nil {
 				job.Verdict = review.Job.Verdict
+				job.FindingCounts = review.Job.FindingCounts
 			}
 		} else if !errors.Is(reviewErr, sql.ErrNoRows) {
 			return nil, huma.Error500InternalServerError(
@@ -1392,6 +1399,9 @@ func (s *Server) humaListJobs(
 	var listOpts []storage.ListJobsOption
 	if input.OmitPrompt == "true" {
 		listOpts = append(listOpts, storage.WithoutPrompt())
+	}
+	if input.IncludeFindings == "true" {
+		listOpts = append(listOpts, storage.WithFindingCounts())
 	}
 	if input.GitRef != "" {
 		listOpts = append(

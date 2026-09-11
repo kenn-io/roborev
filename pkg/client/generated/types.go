@@ -645,6 +645,7 @@ type EnqueueCreatedResponse struct {
 	EnqueuedAt            time.Time              `json:"enqueued_at" validate:"required"`
 	ErrorData             *string                `json:"error,omitempty"`
 	Experiments           []ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts         `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time             `json:"finished_at,omitempty"`
 	GitRef                string                 `json:"git_ref" validate:"required"`
 	ID                    int64                  `json:"id"`
@@ -701,6 +702,13 @@ func (e EnqueueCreatedResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Experiments[%d]", i), err)
+			}
+		}
+	}
+	if e.FindingCounts != nil {
+		if v, ok := any(e.FindingCounts).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FindingCounts", err)
 			}
 		}
 	}
@@ -1447,6 +1455,13 @@ type FailureStats struct {
 	Total   int64            `json:"total"`
 }
 
+type FindingCounts struct {
+	Critical int64 `json:"critical"`
+	High     int64 `json:"high"`
+	Low      int64 `json:"low"`
+	Medium   int64 `json:"medium"`
+}
+
 type FixJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string `json:"$schema,omitempty"`
@@ -1697,6 +1712,7 @@ type PanelEnqueueResponse struct {
 	EnqueuedAt            time.Time              `json:"enqueued_at" validate:"required"`
 	ErrorData             *string                `json:"error,omitempty"`
 	Experiments           []ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts         `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time             `json:"finished_at,omitempty"`
 	GitRef                string                 `json:"git_ref" validate:"required"`
 	ID                    int64                  `json:"id"`
@@ -1754,6 +1770,13 @@ func (p PanelEnqueueResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Experiments[%d]", i), err)
+			}
+		}
+	}
+	if p.FindingCounts != nil {
+		if v, ok := any(p.FindingCounts).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FindingCounts", err)
 			}
 		}
 	}
@@ -2215,6 +2238,7 @@ type ReviewJob struct {
 	EnqueuedAt            time.Time              `json:"enqueued_at" validate:"required"`
 	ErrorData             *string                `json:"error,omitempty"`
 	Experiments           []ExperimentAssignment `json:"experiments,omitempty"`
+	FindingCounts         *FindingCounts         `json:"finding_counts,omitempty"`
 	FinishedAt            *time.Time             `json:"finished_at,omitempty"`
 	GitRef                string                 `json:"git_ref" validate:"required"`
 	ID                    int64                  `json:"id"`
@@ -2271,6 +2295,13 @@ func (r ReviewJob) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Experiments[%d]", i), err)
+			}
+		}
+	}
+	if r.FindingCounts != nil {
+		if v, ok := any(r.FindingCounts).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FindingCounts", err)
 			}
 		}
 	}
