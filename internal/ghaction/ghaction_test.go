@@ -34,8 +34,9 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "valid kiro agent",
-			cfg:  WorkflowConfig{Agents: []string{"kiro"}},
+			name:    "kiro is not allowed in CI",
+			cfg:     WorkflowConfig{Agents: []string{"kiro"}},
+			wantErr: "requires GitHub credentials",
 		},
 		{
 			name: "valid kilo agent",
@@ -79,8 +80,8 @@ func TestValidate(t *testing.T) {
 				require.Error(t, err, "expected error")
 				require.ErrorContains(t, err, tt.wantErr, "unexpected error")
 
-			} else if err != nil {
-				require.Failf(t, "unexpected error", "%v", err)
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -194,7 +195,7 @@ func TestGenerate(t *testing.T) {
 				"GH_TOKEN:",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				assert.NotContains(t, env, "GITHUB_TOKEN", "env block should not contain bare GITHUB_TOKEN: entry for copilot")
+				assert.Equal(t, "${{ secrets.COPILOT_GITHUB_TOKEN }}", env["COPILOT_GITHUB_TOKEN"])
 			},
 		},
 		{
@@ -245,20 +246,6 @@ func TestGenerate(t *testing.T) {
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
 				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")
-			},
-		},
-		{
-			name: "kiro skipped from env entries",
-			cfg: WorkflowConfig{
-				Agents: []string{"kiro"},
-			},
-			wantStrs: []string{
-				"kiro.dev",
-			},
-			notWantStrs: []string{
-				"OPENAI_API_KEY",
-				"ANTHROPIC_API_KEY",
-				"AWS_ACCESS_KEY_ID",
 			},
 		},
 		{
@@ -478,7 +465,7 @@ func TestAgentEnvVar(t *testing.T) {
 		{"codex", "OPENAI_API_KEY"},
 		{"claude-code", "ANTHROPIC_API_KEY"},
 		{"gemini", "GOOGLE_API_KEY"},
-		{"copilot", "GITHUB_TOKEN"},
+		{"copilot", "COPILOT_GITHUB_TOKEN"},
 		{"opencode", "ANTHROPIC_API_KEY"},
 		{"kiro", "GITHUB_TOKEN"},
 		{"kilo", "ANTHROPIC_API_KEY"},
@@ -526,16 +513,16 @@ func TestAgentSecrets(t *testing.T) {
 			wantVars: []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
 		},
 		{
-			name:     "copilot alone produces empty list",
+			name:     "copilot has separate provider token",
 			agents:   []string{"copilot"},
-			wantLen:  0,
-			wantVars: nil,
+			wantLen:  1,
+			wantVars: []string{"COPILOT_GITHUB_TOKEN"},
 		},
 		{
-			name:     "copilot plus codex only codex secret",
+			name:     "copilot plus codex provider secrets",
 			agents:   []string{"copilot", "codex"},
-			wantLen:  1,
-			wantVars: []string{"OPENAI_API_KEY"},
+			wantLen:  2,
+			wantVars: []string{"COPILOT_GITHUB_TOKEN", "OPENAI_API_KEY"},
 		},
 	}
 

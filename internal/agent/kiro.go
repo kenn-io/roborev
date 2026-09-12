@@ -165,9 +165,9 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	// kiro-cli authenticates with a GitHub token, so it is exempt from
-	// the GitHub half of the forge credential strip (see forge_env.go).
-	tracker := configureSubprocess(cmd, withGitHubCredentials())
+	// Local Kiro launches retain legacy GitHub-token authentication. CI reviews
+	// reject Kiro because they strip those publishing tokens.
+	tracker := configureSubprocess(ctx, cmd, withGitHubCredentials())
 
 	// kiro-cli emits ANSI terminal escape codes that are not
 	// suitable for streaming. Capture and return stripped text.

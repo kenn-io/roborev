@@ -186,6 +186,13 @@ func versionOutputLooksLikeGrok(command string) bool {
 func probeVersionIdentity(command string) commandIdentity {
 	ctx, cancel := context.WithTimeout(context.Background(), identityProbeTimeout)
 	defer cancel()
+	// Availability checks run before an agent is selected and have no review
+	// context. Version identification never needs Git credentials or helpers.
+	ctx, cleanup, err := WithCIReview(ctx)
+	if err != nil {
+		return identityUnknown
+	}
+	defer cleanup()
 
 	for _, arg := range identityProbeArgs {
 		if ctx.Err() != nil {
@@ -250,10 +257,8 @@ func (w *limitedProbeWriter) Bytes() []byte {
 
 func runIdentityProbe(ctx context.Context, command string, arg string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, command, arg)
-	configureCapabilityProbe(cmd)
-	// No stdin. Environment is inherited (probes are not env-sanitized);
-	// configureCapabilityProbe only hides the console on Windows and moves
-	// the working directory to os.TempDir().
+	configureCapabilityProbe(ctx, cmd)
+	// No stdin. The probe uses the same credential filtering as agent runs.
 	cmd.Stdin = nil
 	// Non-zero WaitDelay so Wait returns after context kill even when an
 	// orphan descendant keeps stdout/stderr pipes open.

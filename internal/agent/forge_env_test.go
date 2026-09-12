@@ -229,7 +229,7 @@ func TestConfigureSubprocessStripsForgeCredentials(t *testing.T) {
 			if tt.keepGitHub {
 				opts = append(opts, withGitHubCredentials())
 			}
-			configureSubprocess(cmd, opts...)
+			configureSubprocess(context.Background(), cmd, opts...)
 
 			require.NotEmpty(t, cmd.Env, "configureSubprocess must populate cmd.Env")
 			require.NotEmpty(t, tt.absent)
@@ -414,7 +414,7 @@ func TestConfigureCapabilityProbeStripsForgeCredentials(t *testing.T) {
 	assert := assert.New(t)
 
 	cmd := exec.CommandContext(context.Background(), "does-not-run")
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(context.Background(), cmd)
 
 	require.NotEmpty(t, cmd.Env, "configureCapabilityProbe must populate cmd.Env")
 	for _, key := range ForgeCredentialEnvKeys() {
@@ -457,8 +457,8 @@ func TestSpawnPathsStripPreloadEnv(t *testing.T) {
 		name      string
 		configure func(*exec.Cmd)
 	}{
-		{"Subprocess", func(cmd *exec.Cmd) { configureSubprocess(cmd) }},
-		{"CapabilityProbe", configureCapabilityProbe},
+		{"Subprocess", func(cmd *exec.Cmd) { configureSubprocess(context.Background(), cmd) }},
+		{"CapabilityProbe", func(cmd *exec.Cmd) { configureCapabilityProbe(context.Background(), cmd) }},
 	}
 
 	for _, tt := range tests {

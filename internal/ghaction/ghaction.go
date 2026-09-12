@@ -20,7 +20,7 @@ var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",
 		"copilot", "opencode", "cursor",
-		"kiro", "kilo", "droid", "grok",
+		"kilo", "droid", "grok",
 	}
 	safeVersionRE = regexp.MustCompile(
 		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
@@ -62,6 +62,10 @@ func (c *WorkflowConfig) Validate() error {
 		return fmt.Errorf("at least one agent is required")
 	}
 	for _, ag := range c.Agents {
+		if ag == "kiro" {
+			return fmt.Errorf(
+				"agent %q requires GitHub credentials and cannot run in generated CI reviews", ag)
+		}
 		if !contains(allowedAgents, ag) {
 			return fmt.Errorf(
 				"invalid agent %q (valid: %s)",
@@ -93,10 +97,10 @@ func AgentEnvVar(agentName string) string {
 	case "gemini":
 		return "GOOGLE_API_KEY"
 	case "copilot":
-		return "GITHUB_TOKEN"
+		return "COPILOT_GITHUB_TOKEN"
 	case "kiro":
-		// kiro-cli is not CI-compatible yet; use GITHUB_TOKEN
-		// so envEntries skips it (same as copilot).
+		// kiro-cli requires separate login setup; it has no API-key
+		// secret to include in the generated workflow.
 		return "GITHUB_TOKEN"
 	case "kilo":
 		return "ANTHROPIC_API_KEY"
@@ -172,8 +176,7 @@ func buildAgentInfos(agents []string) []AgentInfo {
 
 // envEntries deduplicates agent infos by env var so the env
 // block doesn't repeat the same variable. GITHUB_TOKEN is
-// skipped because the workflow template already provides it
-// via the hardcoded GH_TOKEN line.
+// skipped for Kiro, which requires separate login setup.
 func envEntries(infos []AgentInfo) []AgentInfo {
 	seen := make(map[string]bool)
 	var entries []AgentInfo
@@ -287,7 +290,10 @@ var workflowTemplate = `# roborev CI Review
 #
 # Required setup:
 {{- range .EnvEntries }}
-{{- if or (eq .Name "opencode") (eq .Name "kilo") }}
+{{- if eq .Name "copilot" }}
+#   - Add "COPILOT_GITHUB_TOKEN" with only the Copilot Requests permission.
+#     Do not grant it repository write permissions or reuse the publishing token.
+{{- else if or (eq .Name "opencode") (eq .Name "kilo") }}
 #   - Add a repository secret named "{{ .SecretName }}" (default for {{ .Name }}).
 #     If you use a different model provider, replace with the appropriate key
 #     (e.g., OPENAI_API_KEY, GOOGLE_API_KEY) and update the env block below.
@@ -317,6 +323,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install roborev
         run: |

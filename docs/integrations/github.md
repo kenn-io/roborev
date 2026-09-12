@@ -1153,6 +1153,7 @@ Each agent needs its API key as a repository secret:
 | Claude Code | `ANTHROPIC_API_KEY` |
 | Codex | `OPENAI_API_KEY` |
 | Gemini | `GOOGLE_API_KEY` |
+| Copilot | `COPILOT_GITHUB_TOKEN` |
 
 Add secrets in your repository's **Settings > Secrets and variables > Actions**.
 
@@ -1160,7 +1161,8 @@ Add secrets in your repository's **Settings > Secrets and variables > Actions**.
 
 The generated workflow triggers on `pull_request` events and:
 
-1. Checks out the PR branch with full history
+1. Checks out the PR branch with full history, without persisting Git
+    credentials
 1. Downloads the pinned roborev binary and verifies its SHA256 checksum
 1. Runs `roborev ci review --comment` with the configured agents
 1. Posts a PR comment only when an agent produced substantive review output
@@ -1170,6 +1172,25 @@ In GitHub Actions, `ci review` reads `GITHUB_REPOSITORY`, `GITHUB_REF`, and
 all-failed or empty-output run leaves its diagnostics in the Actions log without
 making a GitHub comment request. It exits nonzero for actionable failures; an
 all-quota batch keeps its existing successful exit.
+
+CI agent subprocesses, capability probes, and ACP terminals do not inherit
+publishing tokens, Git author or committer variables, Git configuration
+injections, SSH agent sockets, or askpass helpers. Their Git environment
+disables credential helpers, hooks, default commit identity, and network
+transports. Local history, status, and diff commands continue to work. The
+parent roborev process retains its credentials and existing comment/upsert
+behavior.
+
+Copilot uses a separate `COPILOT_GITHUB_TOKEN` secret. Create a fine-grained
+token with only the **Copilot Requests** permission, as described in
+[GitHub's CLI setup documentation](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli).
+Do not give that token repository write permissions or reuse the publishing
+token. Other model-provider credentials and agent installation remain unchanged.
+
+These controls remove inherited Git capabilities; they are not filesystem
+isolation. The existing agent read-only tool permissions still apply. Regenerate
+existing workflows with `roborev init gh-action --force` to disable persisted
+checkout credentials and include Copilot's separate secret when selected.
 
 ### Customizing via `.roborev.toml`
 
@@ -1212,6 +1233,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install roborev
         run: |
@@ -1220,6 +1242,7 @@ jobs:
 
       - name: Run review
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: roborev ci review --comment --agent claude-code
 ```

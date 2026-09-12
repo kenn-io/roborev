@@ -339,7 +339,7 @@ func antigravityPromptViaFlag(ctx context.Context, command string) bool {
 	// Run the probe from a stable cwd and without a console window, and avoid
 	// inheriting a deleted daemon working directory (a bad cwd otherwise makes
 	// the probe fail and mis-default a legacy agy to the --prompt contract).
-	configureCapabilityProbe(cmd)
+	configureCapabilityProbe(ctx, cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", err)

@@ -39,16 +39,15 @@ type subprocessConfig struct {
 
 type subprocessOption func(*subprocessConfig)
 
-// withGitHubCredentials keeps GH_TOKEN/GITHUB_TOKEN in the child
-// environment. Only for agent CLIs that authenticate with a GitHub token
-// and cannot start without it (copilot, kiro-cli); see forge_env.go.
+// withGitHubCredentials retains legacy GitHub authentication for local
+// Copilot and Kiro launches. CI reviews always strip publishing tokens.
 func withGitHubCredentials() subprocessOption {
 	return func(cfg *subprocessConfig) {
 		cfg.keepGitHubCredentials = true
 	}
 }
 
-func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTracker {
+func configureSubprocess(ctx context.Context, cmd *exec.Cmd, opts ...subprocessOption) *subprocessTracker {
 	var cfg subprocessConfig
 	for _, opt := range opts {
 		opt(&cfg)
@@ -75,9 +74,12 @@ func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTra
 	// that error points at roborev having removed the token.
 	cmd.Env = logRemovedUntrustedEnv(
 		cmd.Env,
-		stripUntrustedEnv(cmd.Env, cfg.keepGitHubCredentials),
+		stripUntrustedEnv(cmd.Env, cfg.keepGitHubCredentials && !isCIReview(ctx)),
 		"agent "+filepath.Base(cmd.Path))
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
+	if isCIReview(ctx) {
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), cmd.Dir)
+	}
 
 	tracker := &subprocessTracker{}
 	// Ensure Cancel is always set. Go's exec.CommandContext only provides a
@@ -100,7 +102,7 @@ func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTra
 	return tracker
 }
 
-func configureCapabilityProbe(cmd *exec.Cmd) {
+func configureCapabilityProbe(ctx context.Context, cmd *exec.Cmd) {
 	procutil.HideConsole(cmd)
 	// A probe runs the agent binary (`claude --help` and friends) before any
 	// review starts, so it needs the same environment scrub as the review
@@ -119,6 +121,9 @@ func configureCapabilityProbe(cmd *exec.Cmd) {
 		if absPath, err := filepath.Abs(cmd.Path); err == nil {
 			cmd.Path = absPath
 		}
+	}
+	if isCIReview(ctx) {
+		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), "")
 	}
 	cmd.Dir = os.TempDir()
 }

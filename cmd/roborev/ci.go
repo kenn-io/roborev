@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -142,6 +143,11 @@ type ciReviewOpts struct {
 }
 
 func runCIReview(ctx context.Context, opts ciReviewOpts) error {
+	ctx, cleanup, err := agent.WithCIReview(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	// Validate flag-only inputs early (before git/config
 	// checks) so users get clear errors even outside a repo.
 	if opts.reasoning != "" {
@@ -276,6 +282,10 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		return fmt.Errorf("no agents configured " +
 			"(check --agent flag or config)")
 	}
+	if slices.Contains(agents, "kiro") {
+		return fmt.Errorf(
+			"kiro cannot run in CI reviews because CI agents do not receive GitHub publishing credentials")
+	}
 
 	// Resolve review types
 	reviewTypes := config.ResolveCIReviewTypes(
@@ -314,6 +324,10 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Resolve synthesis agent
 	synthAgent := config.ResolveCISynthesisAgent(
 		opts.synthesisAgent, repoCfg, globalCfg)
+	if synthAgent == "kiro" {
+		return fmt.Errorf(
+			"kiro cannot run in CI reviews because CI agents do not receive GitHub publishing credentials")
+	}
 
 	log.Printf(
 		"ci review: ref=%s agents=%v types=%v "+
