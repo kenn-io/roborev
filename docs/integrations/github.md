@@ -30,6 +30,11 @@ For multi-agent or multi-type configurations, member results are synthesized
 into a single combined PR comment. When only one member produces output, roborev
 can pass that output through without an extra synthesis agent call.
 
+Workers load optional prior range review context when they execute a job. The
+poller does not search that history before enqueueing jobs, so the lookup does
+not delay other PRs or deferred retries. This context can include reviews that
+completed while the job was queued.
+
 ## What to Expect
 
 Before enabling the CI poller, understand the following:

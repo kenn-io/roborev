@@ -84,6 +84,10 @@ func (b *Builder) priorRangeReviewViews(
 	if b.db == nil || b.repoID <= 0 || rangeStart == "" || limit <= 0 || len(commits) == 0 {
 		return nil
 	}
+	candidates, err := b.db.GetRecentRangeReviewCandidates(b.context(), b.repoID)
+	if err != nil {
+		return nil
+	}
 	commitIndex := make(map[string]int, len(commits))
 	for i, commit := range commits {
 		commitIndex[commit] = i
@@ -107,12 +111,14 @@ func (b *Builder) priorRangeReviewViews(
 		resolveCache[ref] = resolved
 		return resolved, true
 	}
-	for offset := 0; len(selectedByEnd) < limit; offset += priorRangeReviewPageSize {
-		candidates, err := b.db.GetRecentRangeReviewCandidates(b.repoID, priorRangeReviewPageSize, offset)
-		if err != nil {
-			return nil
+	for page := range slices.Chunk(candidates, priorRangeReviewPageSize) {
+		if len(selectedByEnd) >= limit {
+			break
 		}
-		for _, candidate := range candidates {
+		for _, candidate := range page {
+			if b.context().Err() != nil {
+				return nil
+			}
 			if candidate.GitRef == rangeRef {
 				continue
 			}
@@ -148,9 +154,6 @@ func (b *Builder) priorRangeReviewViews(
 				}
 			}
 			selectedByEnd[resolvedEnd] = selected{view: view, index: index}
-		}
-		if len(candidates) < priorRangeReviewPageSize {
-			break
 		}
 	}
 	selectedViews := make([]selected, 0, len(selectedByEnd))

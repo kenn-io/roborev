@@ -143,10 +143,12 @@ func TestPrebuiltPriorRangeReviewsDocument_TargetAndRetry(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	dbRepo, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
-	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+first, storage.JobTypeRange, "earlier finding")
 	builder := NewBuilder(db).ForRepo(repo.Path(), dbRepo.ID)
 	prebuilt, err := builder.Build(base+".."+second, 2, "test", "", "")
 	require.NoError(t, err)
+	// Historical context is resolved when the worker executes, including
+	// reviews that complete after the prompt was queued.
+	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+first, storage.JobTypeRange, "earlier finding")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("snapshot_dir = 'review-context'\n"), 0o600))
 	agentRepo := testutil.NewTestRepoWithCommit(t)
 	// Exercise XML path escaping while using the trusted source's snapshot root.
