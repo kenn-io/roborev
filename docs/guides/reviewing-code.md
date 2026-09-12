@@ -3,6 +3,19 @@ title: Reviewing Code
 description: Review branches, uncommitted changes, and commit ranges
 ---
 
+## Evidence for Build and Test Findings
+
+The built-in review prompts ask reviewers to run a focused check before claiming
+that code does not compile or a test fails. Reviewers should use the
+repository's pinned toolchain at the reviewed revision and include the command,
+version, and failure output. If execution is unavailable, they should label the
+claim unverified and explain the limitation.
+
+For missing setup findings, reviewers should trace the complete initialization
+path. A helper, export, constructor, or transaction callback may provide state
+that is not visible beside the failing operation. These instructions guide the
+reviewer; they are not a guarantee that every finding has been reproduced.
+
 ## Feature Branches
 
 Use `--branch` to review all commits since your branch diverged from main:
