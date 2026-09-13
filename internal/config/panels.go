@@ -22,7 +22,11 @@ type SubagentSpec struct {
 	ReviewType   string `toml:"review_type"`
 	Instructions string `toml:"instructions"`
 	AllowFailure bool   `toml:"allow_failure"`
-	Timeout      string `toml:"timeout"`
+	// NonVoting runs the member and stores its review for inspection but
+	// keeps it out of synthesis and the panel verdict. Use it to trial a new
+	// agent or model without letting it influence the authoritative result.
+	NonVoting bool   `toml:"non_voting"`
+	Timeout   string `toml:"timeout"`
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
@@ -141,10 +145,25 @@ func (rc ReviewConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("panel %q references undefined subagent %q", name, member))
 			}
 		}
+		if err := rc.checkVotingMember(name, panel); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	errs = append(errs, rc.checkPanelRef("default_panel", rc.DefaultPanel))
 	errs = append(errs, rc.checkPanelRef("hook_review_panel", rc.HookPanel))
 	return errors.Join(errs...)
+}
+
+// checkVotingMember returns an error when every defined member of panel is
+// non_voting: such a panel could never produce a synthesized verdict. Undefined
+// members are reported separately and do not count either way.
+func (rc ReviewConfig) checkVotingMember(name string, panel PanelSpec) error {
+	for _, member := range panel.Members {
+		if spec, ok := rc.Subagents[member]; ok && !spec.NonVoting {
+			return nil
+		}
+	}
+	return fmt.Errorf("panel %q has no voting members", name)
 }
 
 // checkPanelRef returns an error if name is non-empty but is not a defined
@@ -205,6 +224,7 @@ type ResolvedMember struct {
 	ReviewType    string `json:"review_type"`
 	Instructions  string `json:"instructions"`
 	AllowFailure  bool   `json:"allow_failure,omitempty"`
+	NonVoting     bool   `json:"non_voting,omitempty"`
 	Timeout       string `json:"timeout,omitempty"`
 	BackupAgent   string `json:"backup_agent,omitempty"`
 	BackupModel   string `json:"backup_model,omitempty"`
@@ -247,6 +267,9 @@ func ResolvePanel(panelName, repoPath string, globalCfg *Config) ([]ResolvedMemb
 		}
 		members = append(members, member)
 	}
+	if !hasVotingMember(members) {
+		return nil, SynthesisSpec{}, fmt.Errorf("panel %q has no voting members", panelName)
+	}
 	synth, err := resolveSynthesis(panel, repoPath, globalCfg)
 	if err != nil {
 		return nil, SynthesisSpec{}, err
@@ -288,11 +311,20 @@ func ResolveCIPanel(
 		}
 		members = append(members, member)
 	}
+	if !hasVotingMember(members) {
+		return nil, SynthesisSpec{}, fmt.Errorf("panel %q has no voting members", panelName)
+	}
 	synth, err := resolveSynthesisFromConfig(panel, repoCfg, globalCfg)
 	if err != nil {
 		return nil, SynthesisSpec{}, err
 	}
 	return members, synth, nil
+}
+
+// hasVotingMember reports whether at least one resolved member takes part in
+// synthesis and the panel verdict.
+func hasVotingMember(members []ResolvedMember) bool {
+	return slices.ContainsFunc(members, func(m ResolvedMember) bool { return !m.NonVoting })
 }
 
 // ResolveCISynthesis resolves the synthesis spec for the implicit-panel
@@ -396,6 +428,7 @@ func resolveMemberFromConfig(
 		ReviewType:    reviewType,
 		Instructions:  spec.Instructions,
 		AllowFailure:  spec.AllowFailure,
+		NonVoting:     spec.NonVoting,
 		Timeout:       spec.Timeout,
 	}, nil
 }

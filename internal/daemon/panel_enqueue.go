@@ -669,9 +669,24 @@ func panelMemberOpts(
 		o.PanelRunUUID, o.PanelRole = &runUUID, storage.PanelRoleMember
 		o.PanelName, o.PanelMemberName, o.PanelMemberIndex = panelName, m.Name, m.Index
 		o.PanelMemberConfigJSON = string(cfgJSON)
+		o.OutputPrefix = nonVotingOutputPrefix(m)
 		out[i] = o
 	}
 	return out, nil
+}
+
+// nonVotingBanner is prepended to every non-voting member review so a reader
+// sees at once that the result is advisory and did not shape the panel verdict.
+const nonVotingBanner = "> **Non-voting reviewer.** This review is advisory only: " +
+	"it was excluded from panel synthesis and did not affect the verdict.\n\n"
+
+// nonVotingOutputPrefix returns the advisory banner for non-voting members and
+// "" for voting members.
+func nonVotingOutputPrefix(m config.ResolvedMember) string {
+	if m.NonVoting {
+		return nonVotingBanner
+	}
+	return ""
 }
 
 func resolvePanelMemberExecution(

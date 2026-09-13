@@ -236,6 +236,35 @@ func TestPanelCommitStatus(t *testing.T) {
 			wantDesc:  "Review complete",
 		},
 		{
+			name: "non-voting failure never fails the panel",
+			members: []storage.BatchReviewResult{
+				member("codex", "review", "done", ""),
+				{
+					Agent:                 "trial",
+					ReviewType:            "review",
+					Status:                "failed",
+					Error:                 "boom",
+					PanelMemberConfigJSON: `{"non_voting":true}`,
+				},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete",
+		},
+		{
+			name: "only a non-voting member completing is still all failed",
+			members: []storage.BatchReviewResult{
+				member("codex", "review", "failed", "boom"),
+				{
+					Agent:                 "trial",
+					ReviewType:            "review",
+					Status:                "done",
+					PanelMemberConfigJSON: `{"non_voting":true}`,
+				},
+			},
+			wantState: "error",
+			wantDesc:  "All reviews failed",
+		},
+		{
 			name: "done plus skip is success with note",
 			members: []storage.BatchReviewResult{
 				member("codex", "review", "done", ""),
@@ -916,6 +945,75 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "1 canceled")
 		assert.NotContains(t, body, "gemini/security")
 	})
+}
+
+// TestPanelNonVotingMemberExcludedFromComment verifies a non_voting member is
+// kept out of the posted review body (raw fallback and synthesis source labels)
+// while the footer still reports it as a separate non-voting count.
+func TestPanelNonVotingMemberExcludedFromComment(t *testing.T) {
+	t.Run("raw fallback omits the non-voting review", func(t *testing.T) {
+		assert := assert.New(t)
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		statuses := h.CaptureCommitStatuses()
+
+		const headSHA = "3333333ccccccc"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 12, headSHA, "1111111aaaaaa.."+headSHA,
+			[]jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Voting finding"},
+				{Agent: "trial", ReviewType: "review", Status: "done", Output: "Observer finding", PanelMemberConfigJSON: `{"non_voting":true}`},
+			})
+		h.markJobFailed(t, synth.ID, "synthesis crashed")
+
+		h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(body, "Voting finding")
+		assert.NotContains(body, "Observer finding")
+		require.Len(t, *statuses, 1)
+		assert.Equal("success", (*statuses)[0].State)
+	})
+
+	t.Run("synthesized comment footer counts the non-voting member", func(t *testing.T) {
+		assert := assert.New(t)
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
+		comments := h.CaptureComments()
+
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 13, "headsha1313", "base..headsha1313",
+			[]jobSpec{
+				{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"},
+				{Agent: "gemini", ReviewType: "security", Status: "done", Output: "y"},
+				{Agent: "trial", ReviewType: "default", Status: "failed", Error: "boom", PanelMemberConfigJSON: `{"non_voting":true}`},
+			})
+		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(body, "Reviewers: 2 done + 1 non-voting")
+		assert.NotContains(body, "1 failed")
+	})
+}
+
+func TestPanelMemberTimeoutStateIgnoresNonVoting(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Now()
+	started := now.Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	members := []storage.BatchReviewResult{
+		{Agent: "trial", Status: "done", PanelMemberConfigJSON: `{"non_voting":true}`},
+		{Agent: "codex", Status: "running", StartedAt: started},
+	}
+
+	hasMeaningful, hasExpiredRunning := panelMemberTimeoutState(members, time.Hour, now)
+	assert.False(hasMeaningful, "a finished non-voting member is not a postable result")
+	assert.True(hasExpiredRunning)
+
+	members[0] = storage.BatchReviewResult{Agent: "gemini", Status: "done"}
+	hasMeaningful, _ = panelMemberTimeoutState(members, time.Hour, now)
+	assert.True(hasMeaningful)
 }
 
 func TestPanelRawFallbackRendersHeadSHA(t *testing.T) {

@@ -122,6 +122,54 @@ func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
 	assert.True(t, allMembersPassed(results, succeeded))
 }
 
+// TestSynthesisExcludesNonVotingMember verifies a non_voting member's findings
+// never reach synthesis or the verdict: with one voting member that passed and
+// one non-voting member that failed the review, the panel passes without ever
+// invoking the synthesis agent, while the non-voting review stays stored.
+func TestSynthesisExcludesNonVotingMember(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-non-voting-member"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-non-voting"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "trial-panel", []memberSpec{
+		{name: "voter", agent: memberAgent},
+		{name: "observer", agent: memberAgent, nonVoting: true},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
+	completeMember(t, tc, members[1].ID, memberAgent, "- High: nil deref in a.go:1")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output))
+	assert.NotContains(review.Output, "nil deref")
+	assert.False(synthCalled, "a lone voting member passes through; the observer must not trigger synthesis")
+
+	observer, err := tc.DB.GetReviewByJobID(members[1].ID)
+	require.NoError(t, err)
+	assert.Contains(observer.Output, "nil deref", "the non-voting review itself is still stored")
+}
+
+func TestAllMembersPassedIgnoresNonVotingFailure(t *testing.T) {
+	results := reviewpkg.VotingResults([]reviewpkg.ReviewResult{
+		{Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
+		{Status: reviewpkg.ResultDone, Output: "- High: bug", Verdict: storage.VerdictFail, NonVoting: true},
+	})
+	succeeded := filterSucceeded(results)
+
+	assert.True(t, allMembersPassed(results, succeeded))
+}
+
 func TestFilterSucceededRejectsEmptyOutputPlaceholder(t *testing.T) {
 	results := []reviewpkg.ReviewResult{
 		{Status: reviewpkg.ResultDone, Output: "No review output generated"},

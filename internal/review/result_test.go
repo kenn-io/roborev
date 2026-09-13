@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -203,4 +204,19 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.Equal(storage.VerdictFail, combined.Verdict)
 	assert.Equal("medium", combined.MinSeverity)
 	assert.NotContains(combined.Output, "No findings at or above")
+}
+
+func TestVotingResults(t *testing.T) {
+	assert := assert.New(t)
+	results := []ReviewResult{
+		{Agent: "codex", Status: ResultDone, Output: "A"},
+		{Agent: "trial", Status: ResultDone, Output: "B", NonVoting: true},
+		{Agent: "gemini", Status: ResultFailed, Error: "boom"},
+	}
+
+	voting := VotingResults(results)
+	require.Len(t, voting, 2)
+	assert.Equal("codex", voting[0].Agent)
+	assert.Equal("gemini", voting[1].Agent)
+	assert.Empty(VotingResults(nil))
 }

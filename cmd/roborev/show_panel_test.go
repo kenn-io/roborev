@@ -91,3 +91,19 @@ func TestFormatReviewersSummaryFallsBackToAgent(t *testing.T) {
 	}
 	assert.Equal("1 reviewers: codex P", formatReviewersSummary(members))
 }
+
+func TestFormatReviewersSummaryMarksNonVoting(t *testing.T) {
+	members := []storage.ReviewJob{
+		{ID: 1, PanelMemberName: "bug", Agent: "codex", Status: storage.JobStatusDone, Verdict: new("P")},
+		{
+			ID: 2, PanelMemberName: "observer", Agent: "gemini", Status: storage.JobStatusDone, Verdict: new("F"),
+			PanelRole: storage.PanelRoleMember, PanelMemberConfigJSON: `{"non_voting":true}`,
+		},
+	}
+	assert.Equal(t, "2 reviewers: bug P, observer (non-voting) F", formatReviewersSummary(members))
+
+	block := buildShowPanelBlock(9, testUUID("run-uuid-2"), "trial", members)
+	require.Len(t, block.Members, 2)
+	assert.False(t, block.Members[0].NonVoting)
+	assert.True(t, block.Members[1].NonVoting)
+}

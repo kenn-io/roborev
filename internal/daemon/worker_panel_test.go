@@ -24,6 +24,7 @@ type memberSpec struct {
 	agent        string
 	instructions string
 	timeout      string
+	nonVoting    bool
 }
 
 // enqueuePanelRun builds and enqueues a panel run (members + gated synthesis)
@@ -46,6 +47,7 @@ func enqueuePanelRun(
 			Agent:        m.agent,
 			Instructions: m.instructions,
 			Timeout:      m.timeout,
+			NonVoting:    m.nonVoting,
 		})
 		require.NoError(t, err)
 		opts = append(opts, storage.EnqueueOpts{

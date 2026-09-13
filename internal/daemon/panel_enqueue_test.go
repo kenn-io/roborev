@@ -1159,3 +1159,50 @@ func TestEnqueuePostCommitPanelDuplicateSkips(t *testing.T) {
 	}
 	assert.Equal(t, beforeActivity, afterActivity)
 }
+
+// TestEnqueuePanelNonVotingMemberGetsBanner verifies a non_voting subagent is
+// enqueued like any other member but carries the advisory banner as its output
+// prefix and reports itself as non-voting from the stored member snapshot.
+func TestEnqueuePanelNonVotingMemberGetsBanner(t *testing.T) {
+	assert := assert.New(t)
+	server, db, _ := newTestServer(t)
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+[review]
+default_panel = "trial"
+
+[review.subagents.bug]
+agent = "test"
+review_type = "default"
+
+[review.subagents.observer]
+agent = "test"
+review_type = "security"
+non_voting = true
+
+[review.panels.trial]
+members = ["bug", "observer"]
+synthesis_agent = "test"
+`)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	assert.Equal("bug", members[0].PanelMemberName)
+	assert.False(members[0].IsNonVotingMember())
+	assert.Empty(members[0].OutputPrefix)
+
+	assert.Equal("observer", members[1].PanelMemberName)
+	assert.True(members[1].IsNonVotingMember())
+	assert.Equal(nonVotingBanner, members[1].OutputPrefix)
+	assert.Contains(members[1].PanelMemberConfigJSON, `"non_voting":true`)
+}

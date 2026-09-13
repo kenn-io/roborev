@@ -415,6 +415,22 @@ func TestPanelReviewHeaderSummarizesMembers(t *testing.T) {
 	assert.Contains(t, header, "security F")
 }
 
+func TestPanelReviewHeaderMarksNonVotingMembers(t *testing.T) {
+	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2}))
+	observer := makeJob(12, withPanelMember("R", "observer", 1), withVerdict("F"))
+	observer.PanelMemberConfigJSON = `{"non_voting":true}`
+	members := []storage.ReviewJob{
+		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
+		observer,
+	}
+	header := panelReviewHeader(job, members)
+	assert.Contains(t, header, "default P")
+	assert.Contains(t, header, "observer (non-voting) F")
+
+	assert.Equal(t, "observer (non-voting)", panelMemberLabel(observer))
+	assert.Equal(t, "Reviewer: observer (non-voting) | Review type: default", reviewTypeMetadata(observer))
+}
+
 func TestPanelReviewHeaderFallsBackToSummary(t *testing.T) {
 	// Opening a parent that was never expanded (members not cached) must still
 	// render a header — from PanelSummary — never dropped.

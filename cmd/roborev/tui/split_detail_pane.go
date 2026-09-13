@@ -319,7 +319,7 @@ func (m model) renderJobStatusCard(job storage.ReviewJob, innerW int) []string {
 	add("Branch", m.getBranchForJob(job))
 	add("Agent", formatAgentLabel(job.Agent, job.Model))
 	if job.PanelRole == storage.PanelRoleMember {
-		add("Reviewer", stripControlChars(job.PanelMemberName))
+		add("Reviewer", panelMemberLabel(job))
 	}
 	add("Review type", displayReviewType(job.ReviewType, job.PanelRole))
 	if job.StartedAt != nil {

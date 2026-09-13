@@ -42,7 +42,9 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("load panel members: %v", err))
 		return
 	}
-	results := toReviewResults(rows)
+	// Non-voting members are advisory: their reviews stay stored on the member
+	// jobs but never reach synthesis or the verdict.
+	results := reviewpkg.VotingResults(toReviewResults(rows))
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(job.MinSeverity)
 	}

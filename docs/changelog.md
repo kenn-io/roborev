@@ -9,6 +9,14 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Panel subagents can be marked `non_voting = true` to trial a new agent or
+    model risk free. A non-voting member reviews every target like any other
+    member and its review is stored and viewable, but it is excluded from
+    synthesis, the panel verdict, the CI commit status, and the PR comment body.
+    Its review carries an advisory banner, member listings label it
+    `(non-voting)`, and the PR comment footer counts it separately. A panel must
+    keep at least one voting member. See
+    [Subagent Review Panels](/advanced/subagent-review-panels/#subagents).
 - Reviews with a minimum severity now keep every finding instead of dropping the
     ones below the threshold. The threshold only decides the verdict: a review
     fails when any finding is at or above it and passes otherwise, so

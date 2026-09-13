@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 	"uuid"
@@ -256,6 +257,23 @@ func (j ReviewJob) IsFixJob() bool {
 // stored-prompt job (task/compact/fix) — it has its own worker path.
 func (j ReviewJob) IsSynthesisJob() bool {
 	return j.JobType == JobTypeSynthesis
+}
+
+// IsNonVotingMember reports whether this panel member was configured as
+// non_voting: it ran and stored a review, but was excluded from synthesis and
+// the panel verdict. The flag is read from the resolved member config snapshot
+// stored with the job, so it reflects the config at enqueue time.
+func (j ReviewJob) IsNonVotingMember() bool {
+	if j.PanelRole != PanelRoleMember || j.PanelMemberConfigJSON == "" {
+		return false
+	}
+	var member struct {
+		NonVoting bool `json:"non_voting"`
+	}
+	if err := json.Unmarshal([]byte(j.PanelMemberConfigJSON), &member); err != nil {
+		return false
+	}
+	return member.NonVoting
 }
 
 // LegacyCommentLookupTarget returns the legacy commit-comment lookup key for

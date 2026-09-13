@@ -1043,7 +1043,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	}
 	reviewType := displayReviewType(job.ReviewType, job.PanelRole)
 	if job.PanelRole == storage.PanelRoleMember {
-		if name := stripControlChars(job.PanelMemberName); name != "" {
+		if name := panelMemberLabel(job); name != "" {
 			reviewType = name
 		}
 	}
@@ -1101,6 +1101,20 @@ func findingCountsColor(counts *storage.FindingCounts) color.Color {
 	default:
 		return queuedStyle.GetForeground()
 	}
+}
+
+// panelMemberLabel is the sanitized reviewer name for a panel member row, with
+// a "(non-voting)" tag when the member was excluded from synthesis. It returns
+// "" when the job has no member name.
+func panelMemberLabel(job storage.ReviewJob) string {
+	name := stripControlChars(job.PanelMemberName)
+	if name == "" {
+		return ""
+	}
+	if job.IsNonVotingMember() {
+		name += " (non-voting)"
+	}
+	return name
 }
 
 // displayReviewType returns the canonical label shown in the TUI. Synthesis

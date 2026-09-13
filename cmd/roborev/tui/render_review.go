@@ -25,7 +25,11 @@ func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) strin
 			if mem.Verdict != nil && *mem.Verdict != "" {
 				v = *mem.Verdict
 			}
-			parts = append(parts, fmt.Sprintf("%s %s", mem.PanelMemberName, v))
+			name := mem.PanelMemberName
+			if mem.IsNonVotingMember() {
+				name += " (non-voting)"
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", name, v))
 		}
 		return fmt.Sprintf("%d reviewers: %s", len(members), strings.Join(parts, ", "))
 	}
@@ -69,7 +73,7 @@ func (m model) reviewContentString(review *storage.Review) string {
 func reviewTypeMetadata(job storage.ReviewJob) string {
 	label := "Review type: " + displayReviewType(job.ReviewType, job.PanelRole)
 	if job.PanelRole == storage.PanelRoleMember {
-		if name := stripControlChars(job.PanelMemberName); name != "" {
+		if name := panelMemberLabel(job); name != "" {
 			label = "Reviewer: " + name + " | " + label
 		}
 	}

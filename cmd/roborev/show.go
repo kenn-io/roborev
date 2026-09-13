@@ -27,6 +27,7 @@ type showPanelMember struct {
 	ReviewType string `json:"review_type"`
 	Status     string `json:"status"`
 	Verdict    string `json:"verdict,omitempty"`
+	NonVoting  bool   `json:"non_voting,omitempty"`
 }
 
 // showPanelBlock is the additive "panel" object on show --json for a synthesis
@@ -49,6 +50,7 @@ func buildShowPanelBlock(synthesisJobID int64, runUUID uuid.UUID, name string, m
 			Agent:      m.Agent,
 			ReviewType: m.ReviewType,
 			Status:     string(m.Status),
+			NonVoting:  m.IsNonVotingMember(),
 		}
 		if m.Verdict != nil {
 			member.Verdict = *m.Verdict
@@ -70,6 +72,9 @@ func formatReviewersSummary(members []storage.ReviewJob) string {
 		name := m.PanelMemberName
 		if name == "" {
 			name = m.Agent
+		}
+		if m.IsNonVotingMember() {
+			name += " (non-voting)"
 		}
 		parts[i] = fmt.Sprintf("%s %s", name, verdict)
 	}

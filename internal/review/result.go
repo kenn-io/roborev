@@ -46,6 +46,23 @@ type ReviewResult struct {
 	// otherwise successful panel fail. It is set from the resolved member config
 	// stored with the job, not from live config.
 	AllowFailure bool
+
+	// NonVoting means this panel member is advisory only: its review is stored
+	// for inspection but it never feeds synthesis or the panel verdict. Like
+	// AllowFailure it comes from the resolved member config stored with the job.
+	NonVoting bool
+}
+
+// VotingResults returns the results that take part in synthesis and the panel
+// verdict, preserving order. Non-voting members are dropped.
+func VotingResults(results []ReviewResult) []ReviewResult {
+	out := make([]ReviewResult, 0, len(results))
+	for _, r := range results {
+		if !r.NonVoting {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Passed returns the canonical review verdict when one is available, falling

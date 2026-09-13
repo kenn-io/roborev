@@ -83,7 +83,9 @@ configuration.
 Panel subagents can be marked `allow_failure = true` when a reviewer is useful
 but flaky. Those members still contribute findings when they succeed, but a
 transient failure or cancellation does not fail the synthesized parent if
-required reviewers produced usable output.
+required reviewers produced usable output. Mark a subagent `non_voting = true`
+to trial it: it runs and stores a review labeled non-voting, but never
+influences synthesis or the verdict.
 
 ### CI Integration
 

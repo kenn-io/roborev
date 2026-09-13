@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,6 +38,7 @@ review_type = "security"
 reasoning = "thorough"
 instructions = "Focus on authz."
 allow_failure = true
+non_voting = true
 timeout = "3m"
 
 [review.panels.quick]
@@ -60,6 +62,7 @@ synthesis_model = "gpt-5.5"
 	assert.Equal("thorough", cfg.Review.Subagents["security"].Reasoning)
 	assert.Equal("Focus on authz.", cfg.Review.Subagents["security"].Instructions)
 	assert.True(cfg.Review.Subagents["security"].AllowFailure)
+	assert.True(cfg.Review.Subagents["security"].NonVoting)
 	assert.Equal("3m", cfg.Review.Subagents["security"].Timeout)
 	assert.Equal([]string{"default", "security"}, cfg.Review.Panels["branch_final"].Members)
 	assert.Equal("codex", cfg.Review.Panels["branch_final"].SynthesisAgent)
@@ -647,4 +650,61 @@ func TestResolvePanelRejectsInvalidReviewType(t *testing.T) {
 	}}
 	_, _, err := ResolvePanel("p", "", global)
 	assert.ErrorContains(t, err, "invalid review_type")
+}
+
+func TestReviewConfigValidateRequiresVotingMember(t *testing.T) {
+	assert := assert.New(t)
+	rc := ReviewConfig{
+		Subagents: map[string]SubagentSpec{
+			"voter":    {Agent: "codex"},
+			"observer": {Agent: "gemini", NonVoting: true},
+		},
+		Panels: map[string]PanelSpec{
+			"mixed":     {Members: []string{"voter", "observer"}},
+			"observers": {Members: []string{"observer"}},
+			"typo":      {Members: []string{"observer", "missing"}},
+		},
+	}
+	err := rc.Validate()
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(msg, `panel "observers" has no voting members`)
+	assert.Contains(msg, `panel "typo" has no voting members`)
+	assert.NotContains(msg, `panel "mixed"`)
+}
+
+func TestResolvePanelNonVotingMember(t *testing.T) {
+	assert := assert.New(t)
+	global := &Config{
+		ReviewAgent: "codex",
+		Review: ReviewConfig{
+			Subagents: map[string]SubagentSpec{
+				"voter":    {Agent: "codex"},
+				"observer": {Agent: "gemini", NonVoting: true},
+			},
+			Panels: map[string]PanelSpec{
+				"trial":     {Members: []string{"voter", "observer"}},
+				"observers": {Members: []string{"observer"}},
+			},
+		},
+	}
+
+	members, _, err := ResolvePanel("trial", "", global)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.False(members[0].NonVoting)
+	assert.True(members[1].NonVoting)
+
+	// The flag must survive the stored member snapshot.
+	raw, err := json.Marshal(members[1])
+	require.NoError(t, err)
+	assert.Contains(string(raw), `"non_voting":true`)
+	raw, err = json.Marshal(members[0])
+	require.NoError(t, err)
+	assert.NotContains(string(raw), "non_voting")
+
+	_, _, err = ResolvePanel("observers", "", global)
+	require.ErrorContains(t, err, `panel "observers" has no voting members`)
+	_, _, err = ResolveCIPanel("observers", nil, global)
+	require.ErrorContains(t, err, `panel "observers" has no voting members`)
 }
