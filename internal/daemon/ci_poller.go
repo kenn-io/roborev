@@ -1193,8 +1193,11 @@ func (p *CIPoller) maybeAppendDesignMember(
 	repo *storage.Repo, repoCfg *config.RepoConfig, cfg *config.Config,
 	mergeBase, headSHA string,
 ) []config.ResolvedMember {
+	// Only a voting design member provides design coverage; a non-voting
+	// design trial is dropped before synthesis and must not suppress the
+	// automatic design review.
 	for _, m := range members {
-		if m.ReviewType == config.ReviewTypeDesign {
+		if m.ReviewType == config.ReviewTypeDesign && !m.NonVoting {
 			return members
 		}
 	}
@@ -1381,7 +1384,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			PanelMemberName:       m.Name,
 			PanelMemberIndex:      i,
 			PanelMemberConfigJSON: string(cfgJSON),
-			OutputPrefix:          nonVotingOutputPrefix(m),
+			NonVoting:             m.NonVoting,
 		})
 	}
 
@@ -3520,7 +3523,6 @@ func toReviewResult(
 ) reviewpkg.ReviewResult {
 	var member struct {
 		AllowFailure bool `json:"allow_failure"`
-		NonVoting    bool `json:"non_voting"`
 	}
 	if br.PanelMemberConfigJSON != "" {
 		_ = json.Unmarshal([]byte(br.PanelMemberConfigJSON), &member)
@@ -3540,7 +3542,7 @@ func toReviewResult(
 		Skipped:          br.Status == string(storage.JobStatusSkipped),
 		SkipReason:       br.SkipReason,
 		AllowFailure:     member.AllowFailure,
-		NonVoting:        member.NonVoting,
+		NonVoting:        br.NonVoting,
 	}
 	result.MinSeverity = br.MinSeverity
 	if len(br.StructuredOutput) != 0 {

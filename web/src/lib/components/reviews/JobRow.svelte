@@ -117,7 +117,11 @@
           </span>
         {/if}
         {#if member && job.panel_member_name}
-          <span class="member-name">{job.panel_member_name}</span>
+          <span class="member-name"
+            >{job.panel_member_name}{job.non_voting
+              ? " (non-voting)"
+              : ""}</span
+          >
         {/if}
         {#if panelStatus}
           <span class="panel-status">{panelStatus}</span>

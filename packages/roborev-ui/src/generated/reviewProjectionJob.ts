@@ -12,6 +12,7 @@ export interface ReviewProjectionJob {
   git_ref: string;
   id: number;
   model?: string;
+  non_voting?: boolean;
   panel_member_name?: string;
   panel_name?: string;
   panel_role?: string;

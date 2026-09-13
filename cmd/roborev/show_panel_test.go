@@ -97,7 +97,7 @@ func TestFormatReviewersSummaryMarksNonVoting(t *testing.T) {
 		{ID: 1, PanelMemberName: "bug", Agent: "codex", Status: storage.JobStatusDone, Verdict: new("P")},
 		{
 			ID: 2, PanelMemberName: "observer", Agent: "gemini", Status: storage.JobStatusDone, Verdict: new("F"),
-			PanelRole: storage.PanelRoleMember, PanelMemberConfigJSON: `{"non_voting":true}`,
+			PanelRole: storage.PanelRoleMember, NonVoting: true,
 		},
 	}
 	assert.Equal(t, "2 reviewers: bug P, observer (non-voting) F", formatReviewersSummary(members))

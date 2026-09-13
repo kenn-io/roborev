@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 	"uuid"
@@ -121,6 +120,7 @@ type ReviewJob struct {
 	PanelMemberName       string     `json:"panel_member_name,omitempty"`
 	PanelMemberIndex      int        `json:"panel_member_index,omitempty"`
 	PanelMemberConfigJSON string     `json:"panel_member_config_json,omitempty"`
+	NonVoting             bool       `json:"non_voting,omitempty"`    // Advisory panel member: excluded from synthesis and verdict
 	ClaimBlocked          bool       `json:"claim_blocked,omitempty"` // local-only scheduling gate
 	TokenUsage            string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
@@ -259,21 +259,18 @@ func (j ReviewJob) IsSynthesisJob() bool {
 	return j.JobType == JobTypeSynthesis
 }
 
+// NonVotingBanner opens every non-voting member review so a reader sees at
+// once that the result is advisory and did not shape the panel verdict. It is
+// composed when the review is loaded, from the job's synced non_voting column,
+// so it renders the same on every machine.
+const NonVotingBanner = "> **Non-voting reviewer.** This review is advisory only: " +
+	"it was excluded from panel synthesis and did not affect the verdict.\n\n"
+
 // IsNonVotingMember reports whether this panel member was configured as
 // non_voting: it ran and stored a review, but was excluded from synthesis and
-// the panel verdict. The flag is read from the resolved member config snapshot
-// stored with the job, so it reflects the config at enqueue time.
+// the panel verdict.
 func (j ReviewJob) IsNonVotingMember() bool {
-	if j.PanelRole != PanelRoleMember || j.PanelMemberConfigJSON == "" {
-		return false
-	}
-	var member struct {
-		NonVoting bool `json:"non_voting"`
-	}
-	if err := json.Unmarshal([]byte(j.PanelMemberConfigJSON), &member); err != nil {
-		return false
-	}
-	return member.NonVoting
+	return j.PanelRole == PanelRoleMember && j.NonVoting
 }
 
 // LegacyCommentLookupTarget returns the legacy commit-comment lookup key for

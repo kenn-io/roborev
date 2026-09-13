@@ -232,6 +232,16 @@ describe("panelReviewHeader", () => {
     );
   });
 
+  it("labels non-voting members", () => {
+    const members = [
+      makeMember(0, { verdict: "P" }),
+      makeMember(1, { verdict: "F", non_voting: true }),
+    ];
+    expect(panelReviewHeader(makeParent(), members)).toBe(
+      "2 reviewers: default P, security (non-voting) F",
+    );
+  });
+
   it("falls back to the summary split without members", () => {
     const parent = makeParent({ members_succeeded: 2, members_failed: 1 });
     expect(panelReviewHeader(parent, undefined)).toBe(

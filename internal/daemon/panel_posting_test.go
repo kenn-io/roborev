@@ -102,6 +102,7 @@ func (h *ciPollerHarness) seedCIPanelRun(
 			RepoID: h.Repo.ID, GitRef: gitRef, Agent: s.Agent, ReviewType: s.ReviewType,
 			JobType: storage.JobTypeReview, PanelName: "ci", PanelMemberName: s.Agent,
 			PanelMemberIndex: i, PanelMemberConfigJSON: s.PanelMemberConfigJSON,
+			NonVoting: s.NonVoting,
 		})
 	}
 	synthesis := storage.EnqueueOpts{
@@ -240,11 +241,11 @@ func TestPanelCommitStatus(t *testing.T) {
 			members: []storage.BatchReviewResult{
 				member("codex", "review", "done", ""),
 				{
-					Agent:                 "trial",
-					ReviewType:            "review",
-					Status:                "failed",
-					Error:                 "boom",
-					PanelMemberConfigJSON: `{"non_voting":true}`,
+					Agent:      "trial",
+					ReviewType: "review",
+					Status:     "failed",
+					Error:      "boom",
+					NonVoting:  true,
 				},
 			},
 			wantState: "success",
@@ -255,10 +256,10 @@ func TestPanelCommitStatus(t *testing.T) {
 			members: []storage.BatchReviewResult{
 				member("codex", "review", "failed", "boom"),
 				{
-					Agent:                 "trial",
-					ReviewType:            "review",
-					Status:                "done",
-					PanelMemberConfigJSON: `{"non_voting":true}`,
+					Agent:      "trial",
+					ReviewType: "review",
+					Status:     "done",
+					NonVoting:  true,
 				},
 			},
 			wantState: "error",
@@ -961,7 +962,7 @@ func TestPanelNonVotingMemberExcludedFromComment(t *testing.T) {
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 12, headSHA, "1111111aaaaaa.."+headSHA,
 			[]jobSpec{
 				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Voting finding"},
-				{Agent: "trial", ReviewType: "review", Status: "done", Output: "Observer finding", PanelMemberConfigJSON: `{"non_voting":true}`},
+				{Agent: "trial", ReviewType: "review", Status: "done", Output: "Observer finding", NonVoting: true},
 			})
 		h.markJobFailed(t, synth.ID, "synthesis crashed")
 
@@ -985,7 +986,7 @@ func TestPanelNonVotingMemberExcludedFromComment(t *testing.T) {
 			[]jobSpec{
 				{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"},
 				{Agent: "gemini", ReviewType: "security", Status: "done", Output: "y"},
-				{Agent: "trial", ReviewType: "default", Status: "failed", Error: "boom", PanelMemberConfigJSON: `{"non_voting":true}`},
+				{Agent: "trial", ReviewType: "default", Status: "failed", Error: "boom", NonVoting: true},
 			})
 		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
 
@@ -1003,7 +1004,7 @@ func TestPanelMemberTimeoutStateIgnoresNonVoting(t *testing.T) {
 	now := time.Now()
 	started := now.Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	members := []storage.BatchReviewResult{
-		{Agent: "trial", Status: "done", PanelMemberConfigJSON: `{"non_voting":true}`},
+		{Agent: "trial", Status: "done", NonVoting: true},
 		{Agent: "codex", Status: "running", StartedAt: started},
 	}
 

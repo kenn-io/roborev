@@ -62,6 +62,7 @@ func enqueuePanelRun(
 			PanelMemberName:       m.name,
 			PanelMemberIndex:      i,
 			PanelMemberConfigJSON: string(cfgJSON),
+			NonVoting:             m.nonVoting,
 		})
 	}
 	synthesis := storage.EnqueueOpts{

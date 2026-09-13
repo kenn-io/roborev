@@ -652,6 +652,7 @@ type EnqueueCreatedResponse struct {
 	JobType               string                 `json:"job_type" validate:"required"`
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
+	NonVoting             *bool                  `json:"non_voting,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -1720,6 +1721,7 @@ type PanelEnqueueResponse struct {
 	MemberJobIds          []int64                `json:"member_job_ids" validate:"required"`
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
+	NonVoting             *bool                  `json:"non_voting,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -2245,6 +2247,7 @@ type ReviewJob struct {
 	JobType               string                 `json:"job_type" validate:"required"`
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
+	NonVoting             *bool                  `json:"non_voting,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -2408,6 +2411,7 @@ type ReviewProjectionJob struct {
 	GitRef          string        `json:"git_ref" validate:"required"`
 	ID              int64         `json:"id"`
 	Model           *string       `json:"model,omitempty"`
+	NonVoting       *bool         `json:"non_voting,omitempty"`
 	PanelMemberName *string       `json:"panel_member_name,omitempty"`
 	PanelName       *string       `json:"panel_name,omitempty"`
 	PanelRole       *string       `json:"panel_role,omitempty"`

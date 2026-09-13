@@ -210,6 +210,7 @@ type browserReviewJob struct {
 	PanelName        string                `json:"panel_name,omitempty"`
 	PanelMemberName  string                `json:"panel_member_name,omitempty"`
 	PanelMemberIndex int                   `json:"panel_member_index,omitempty"`
+	NonVoting        bool                  `json:"non_voting,omitempty"`
 	TokenUsage       string                `json:"token_usage,omitempty"`
 	UUID             *uuid.UUID            `json:"uuid,omitempty" format:"uuid"`
 	RepoPath         string                `json:"repo_path,omitempty"`
@@ -272,6 +273,7 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 		MinSeverity: job.MinSeverity, PanelRunUUID: job.PanelRunUUID,
 		PanelRole: job.PanelRole, PanelName: job.PanelName,
 		PanelMemberName: job.PanelMemberName, PanelMemberIndex: job.PanelMemberIndex,
+		NonVoting:  job.IsNonVotingMember(),
 		TokenUsage: projectBrowserTokenUsage(job.TokenUsage), UUID: job.UUID,
 		RepoPath: job.RepoPath,
 		RepoName: job.RepoName, CommitSubject: job.CommitSubject, Closed: job.Closed,

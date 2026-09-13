@@ -197,8 +197,17 @@ TUI, `roborev show`, and the daemon API. It is never fed to the synthesis agent,
 never counted toward the panel verdict or CI commit status, and never rendered
 in the PR comment body; the comment footer only counts it separately. Its stored
 review starts with a banner noting that it was advisory, and member listings
-label it `(non-voting)`. A panel must keep at least one voting member; a panel
-whose members are all non-voting is rejected at config validation.
+label it `(non-voting)` in the TUI, the web UI, and `roborev show`. The flag is
+stored on the job and syncs between machines, so the banner and labels render
+everywhere.
+
+Synthesis does not wait for non-voting members. Once every voting member has
+finished, the synthesized review, the PR comment, and the CI commit status
+proceed while a slow trial agent is still running; its review appears on its own
+job when it completes. A non-voting design member does not count as design
+coverage, so the automatic design review still runs when the change warrants
+one. A panel must keep at least one voting member; a panel whose members are all
+non-voting is rejected at config validation.
 
 ```toml
 [review.subagents.trial]

@@ -28,6 +28,7 @@ export interface EnqueueCreatedResponse {
   job_type: string;
   min_severity?: string;
   model?: string;
+  non_voting?: boolean;
   output_prefix?: string;
   panel_member_config_json?: string;
   panel_member_index?: number;

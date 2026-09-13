@@ -418,7 +418,7 @@ func TestPanelReviewHeaderSummarizesMembers(t *testing.T) {
 func TestPanelReviewHeaderMarksNonVotingMembers(t *testing.T) {
 	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2}))
 	observer := makeJob(12, withPanelMember("R", "observer", 1), withVerdict("F"))
-	observer.PanelMemberConfigJSON = `{"non_voting":true}`
+	observer.NonVoting = true
 	members := []storage.ReviewJob{
 		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
 		observer,

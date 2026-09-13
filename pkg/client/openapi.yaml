@@ -861,6 +861,8 @@ components:
           type: string
         model:
           type: string
+        non_voting:
+          type: boolean
         output_prefix:
           type: string
         panel_member_config_json:
@@ -1993,6 +1995,8 @@ components:
           type: string
         model:
           type: string
+        non_voting:
+          type: boolean
         output_prefix:
           type: string
         panel_member_config_json:
@@ -2644,6 +2648,8 @@ components:
           type: string
         model:
           type: string
+        non_voting:
+          type: boolean
         output_prefix:
           type: string
         panel_member_config_json:
@@ -2792,6 +2798,8 @@ components:
           type: integer
         model:
           type: string
+        non_voting:
+          type: boolean
         panel_member_name:
           type: string
         panel_name:

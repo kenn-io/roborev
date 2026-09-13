@@ -382,6 +382,7 @@ type jobSpec struct {
 	Output                string
 	Error                 string
 	PanelMemberConfigJSON string
+	NonVoting             bool
 }
 
 // markJobDoneWithReview sets a job to "done" and inserts a review row.
@@ -4395,6 +4396,54 @@ func TestProcessPRAutoDesignAppendsNoneWhenNotWarranted(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, members, 1, "only the matrix member, no design member")
 	assert.Equal(t, 0, designMemberCount(members), "no design member appended")
+}
+
+// TestProcessPRAutoDesignIgnoresNonVotingDesignMember verifies a non-voting
+// design member in the CI panel does not count as design coverage: the poller
+// still appends the voting automatic design member when the change warrants
+// one, so a design trial never removes design findings from the verdict.
+func TestProcessPRAutoDesignIgnoresNonVotingDesignMember(t *testing.T) {
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
+		enabled := true
+		rc := &config.RepoConfig{}
+		rc.AutoDesignReview.Enabled = &enabled
+		rc.AutoDesignReview.TriggerPaths = []string{"migrations/**"}
+		rc.CI.Panel = "trial"
+		rc.Review = config.ReviewConfig{
+			Subagents: map[string]config.SubagentSpec{
+				"bug":          {Agent: "test", ReviewType: "default"},
+				"design_trial": {Agent: "test", ReviewType: "design", NonVoting: true},
+			},
+			Panels: map[string]config.PanelSpec{
+				"trial": {Members: []string{"bug", "design_trial"}, SynthesisAgent: "test"},
+			},
+		}
+		return ciRepoConfigSource{Config: rc}, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("migrations/001.sql", "create table t(id integer);\n", "feat: add migration")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 9, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 9, head)
+	require.NoError(t, err)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 3, "bug, non-voting design trial, and the appended voting design member")
+	assert.Equal(t, 2, designMemberCount(members))
+	voting := 0
+	for _, m := range members {
+		if m.ReviewType == "design" && !m.IsNonVotingMember() {
+			voting++
+		}
+	}
+	assert.Equal(t, 1, voting, "exactly one voting design member")
 }
 
 // TestProcessPRAutoDesignFailsOpenOnAmbiguous verifies the fail-open path: when

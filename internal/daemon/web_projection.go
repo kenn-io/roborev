@@ -40,6 +40,7 @@ type ReviewProjectionJob struct {
 	PanelRole       string                `json:"panel_role,omitempty"`
 	PanelName       string                `json:"panel_name,omitempty"`
 	PanelMemberName string                `json:"panel_member_name,omitempty"`
+	NonVoting       bool                  `json:"non_voting,omitempty"`
 	PanelSummary    *storage.PanelSummary `json:"panel_summary,omitempty"`
 }
 
@@ -145,6 +146,6 @@ func projectReviewJob(job storage.ReviewJob) ReviewProjectionJob {
 		ReviewType: job.ReviewType, Source: job.Source, EnqueuedAt: job.EnqueuedAt,
 		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt,
 		PanelRole: job.PanelRole, PanelName: job.PanelName,
-		PanelMemberName: job.PanelMemberName, PanelSummary: job.PanelSummary,
+		PanelMemberName: job.PanelMemberName, NonVoting: job.IsNonVotingMember(), PanelSummary: job.PanelSummary,
 	}
 }

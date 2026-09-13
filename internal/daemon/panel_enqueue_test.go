@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -244,6 +245,56 @@ func TestEnqueuePanelDoesNotDuplicateAutoDesignWhenPanelHasDesignMember(t *testi
 	assert.Equal(0, autoDesignRowsForSHA(t, db, storedRepo.ID, sha),
 		"explicit design panel member should satisfy design coverage without an auto_design duplicate")
 	assert.EqualValues(0, AutoDesignMetricsSnapshot().TriggeredHeuristic)
+}
+
+// TestEnqueuePanelNonVotingDesignMemberKeepsAutoDesign verifies a non-voting
+// design member does not count as design coverage: the automatic design review
+// is still dispatched, so trialing a design reviewer never removes the
+// authoritative design findings from the panel.
+func TestEnqueuePanelNonVotingDesignMemberKeepsAutoDesign(t *testing.T) {
+	assert := assert.New(t)
+	ResetAutoDesignMetricsForTest()
+	t.Cleanup(ResetAutoDesignMetricsForTest)
+	server, db, _ := newTestServer(t)
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+[review]
+default_panel = "trial"
+
+[review.subagents.bug]
+agent = "test"
+review_type = "default"
+
+[review.subagents.design_trial]
+agent = "test"
+review_type = "design"
+non_voting = true
+
+[review.panels.trial]
+members = ["bug", "design_trial"]
+synthesis_agent = "test"
+
+[auto_design_review]
+enabled = true
+trigger_paths = ["migrations/**"]
+`)
+	repo.CommitFile("base.txt", "base", "base")
+	sha := repo.CommitFile("migrations/001.sql", "create table t(id integer);\n", "feat: add migration")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   sha,
+		Agent:    "test",
+	})
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(1, autoDesignRowsForSHA(t, db, storedRepo.ID, sha),
+		"a non-voting design member must not satisfy design coverage")
 }
 
 // TestEnqueuePanelFreezesSHA verifies a symbolic git_ref is frozen to one
@@ -1161,8 +1212,9 @@ func TestEnqueuePostCommitPanelDuplicateSkips(t *testing.T) {
 }
 
 // TestEnqueuePanelNonVotingMemberGetsBanner verifies a non_voting subagent is
-// enqueued like any other member but carries the advisory banner as its output
-// prefix and reports itself as non-voting from the stored member snapshot.
+// enqueued like any other member, is flagged non-voting on its job row, stores
+// no banner in output_prefix, and has its stored review opened by the advisory
+// banner when read back.
 func TestEnqueuePanelNonVotingMemberGetsBanner(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
@@ -1203,6 +1255,14 @@ synthesis_agent = "test"
 
 	assert.Equal("observer", members[1].PanelMemberName)
 	assert.True(members[1].IsNonVotingMember())
-	assert.Equal(nonVotingBanner, members[1].OutputPrefix)
-	assert.Contains(members[1].PanelMemberConfigJSON, `"non_voting":true`)
+	assert.Empty(members[1].OutputPrefix, "the banner is composed at read time, never stored in the prefix")
+
+	// The banner is composed when the review is read, so it is never lost.
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, members[1].ID)
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, members[1].ID, "test", "", "- High: bug in a.go:1"))
+	review, err := db.GetReviewByJobID(members[1].ID)
+	require.NoError(t, err)
+	assert.True(strings.HasPrefix(review.Output, storage.NonVotingBanner), review.Output)
+	assert.Contains(review.Output, "bug in a.go:1")
 }

@@ -120,6 +120,31 @@ describe("JobRow", () => {
       ).toBeTruthy();
     });
 
+    it("labels a non-voting member row", () => {
+      const member: ReviewJob = {
+        ...makeJob(),
+        id: 12,
+        panel_role: "member",
+        panel_run_uuid: "run-10",
+        panel_member_index: 1,
+        panel_member_name: "trial",
+        non_voting: true,
+        verdict: "F",
+      };
+
+      render(JobRow, {
+        props: {
+          job: member,
+          selected: false,
+          highlighted: false,
+          onclick: () => {},
+          member: true,
+        },
+      });
+
+      expect(screen.getByText("trial (non-voting)")).toBeTruthy();
+    });
+
     it("renders a member row with indented ref content and member name", () => {
       const member: ReviewJob = {
         ...makeJob(),

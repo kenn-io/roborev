@@ -142,10 +142,11 @@ export function panelReviewHeader(
   if (!isPanelParent(job) || !summary) return null;
 
   if (members !== undefined && members.length > 0) {
-    const parts = members.map(
-      (member) =>
-        `${member.panel_member_name || member.agent} ${member.verdict ?? "·"}`,
-    );
+    const parts = members.map((member) => {
+      const name = member.panel_member_name || member.agent;
+      const label = member.non_voting ? `${name} (non-voting)` : name;
+      return `${label} ${member.verdict ?? "·"}`;
+    });
     return `${members.length} reviewers: ${parts.join(", ")}`;
   }
 

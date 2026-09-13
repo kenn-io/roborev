@@ -562,7 +562,7 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
 		JobType: JobTypeReview, PanelRunUUID: &runUUID, PanelRole: "member",
 		PanelName: "branch_final", PanelMemberName: "security", PanelMemberIndex: 2,
-		PanelMemberConfigJSON: `{"agent":"test"}`,
+		PanelMemberConfigJSON: `{"agent":"test"}`, NonVoting: true,
 	})
 	require.NoError(t, err)
 	// Only terminal jobs sync.
@@ -578,6 +578,7 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	assert.Equal("security", s.PanelMemberName)
 	assert.Equal(2, s.PanelMemberIndex)
 	assert.JSONEq(`{"agent":"test"}`, s.PanelMemberConfigJSON)
+	assert.True(s.NonVoting)
 }
 
 func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
@@ -602,6 +603,7 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 		PanelMemberName:       "design",
 		PanelMemberIndex:      4,
 		PanelMemberConfigJSON: `{"agent":"test","review_type":"design"}`,
+		NonVoting:             true,
 	}
 	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
 
@@ -610,11 +612,12 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 	row := db.QueryRow(`
 		SELECT COALESCE(panel_run_uuid,''), COALESCE(panel_role,''), COALESCE(panel_name,''),
 		       COALESCE(panel_member_name,''), panel_member_index, COALESCE(panel_member_config_json,''),
-		       COALESCE(claim_blocked,0)
+		       COALESCE(claim_blocked,0), COALESCE(non_voting,0)
 		FROM review_jobs WHERE uuid = ?
 	`, pulled.UUID)
 	require.NoError(t, row.Scan(&got.PanelRunUUID, &got.PanelRole, &got.PanelName,
-		&got.PanelMemberName, &got.PanelMemberIndex, &got.PanelMemberConfigJSON, &cb))
+		&got.PanelMemberName, &got.PanelMemberIndex, &got.PanelMemberConfigJSON, &cb, &got.NonVoting))
+	assert.True(got.NonVoting, "non_voting must round-trip through pull")
 	assert.Equal(testUUIDPtr("run-9"), got.PanelRunUUID)
 	assert.Equal("member", got.PanelRole)
 	assert.Equal("design", got.PanelMemberName)
@@ -1049,4 +1052,49 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&count))
 	assert.Equal(t, 3, count)
+}
+
+// TestMaybeReleasePanelSynthesisIgnoresNonVotingMembers verifies synthesis is
+// released once every voting member is terminal, even while a non-voting member
+// is still running: an advisory trial must never delay the authoritative result.
+func TestMaybeReleasePanelSynthesisIgnoresNonVotingMembers(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/release-non-voting")
+	runID := testUUID("run-non-voting")
+	synth, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+		JobType: JobTypeSynthesis, PanelRunUUID: &runID, PanelRole: "synthesis",
+		PanelName: "trial", ClaimBlocked: true,
+	})
+	require.NoError(t, err)
+	voter, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+		JobType: JobTypeRange, PanelRunUUID: &runID, PanelRole: "member",
+		PanelMemberName: "voter", PanelMemberIndex: 0,
+	})
+	require.NoError(t, err)
+	observer, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+		JobType: JobTypeRange, PanelRunUUID: &runID, PanelRole: "member",
+		PanelMemberName: "observer", PanelMemberIndex: 1, NonVoting: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, observer.NonVoting)
+
+	// Voting member still running: blocked, whatever the observer is doing.
+	setStatus(t, db, voter.ID, JobStatusRunning)
+	setStatus(t, db, observer.ID, JobStatusDone)
+	require.NoError(t, db.MaybeReleasePanelSynthesis(runID))
+	assert.True(t, claimBlockedOf(t, db, synth.ID), "a running voting member keeps synthesis blocked")
+
+	// Voting member done, observer still running: released.
+	setStatus(t, db, voter.ID, JobStatusDone)
+	setStatus(t, db, observer.ID, JobStatusRunning)
+	require.NoError(t, db.MaybeReleasePanelSynthesis(runID))
+	assert.False(t, claimBlockedOf(t, db, synth.ID), "a running non-voting member must not block synthesis")
+
+	stuck, err := db.ListStuckPanelRuns()
+	require.NoError(t, err)
+	assert.NotContains(t, stuck, runID)
 }

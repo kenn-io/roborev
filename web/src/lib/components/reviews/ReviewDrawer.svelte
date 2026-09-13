@@ -192,7 +192,9 @@
           {/if}
           {#if selectedJob.panel_member_name}
             <span class="review-type">
-              {selectedJob.panel_member_name}
+              {selectedJob.panel_member_name}{selectedJob.non_voting
+                ? " (non-voting)"
+                : ""}
             </span>
           {/if}
           <StatusBadge status={selectedJob.status} />

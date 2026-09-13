@@ -56,6 +56,7 @@ type reviewJobScanFields struct {
 	PanelMemberIndex  sql.NullInt64
 	PanelMemberConfig sql.NullString
 	ClaimBlocked      int
+	NonVoting         int
 	SkipReason        sql.NullString
 	Source            sql.NullString
 }
@@ -177,6 +178,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.PanelMemberConfigJSON = fields.PanelMemberConfig.String
 	}
 	job.ClaimBlocked = fields.ClaimBlocked != 0
+	job.NonVoting = fields.NonVoting != 0
 	if fields.SkipReason.Valid {
 		job.SkipReason = fields.SkipReason.String
 	}
@@ -189,6 +191,7 @@ type reviewScanFields struct {
 	JobType           string
 	MinSeverity       string
 	OutputPrefix      string
+	NonVoting         int
 	CreatedAt         string
 	Closed            int
 	UUID              sql.Null[uuid.UUID]
@@ -204,7 +207,8 @@ const reviewSelectColumns = `
 	rv.reviewed_file_count, rv.excluded_file_count,
  (SELECT job_type FROM review_jobs WHERE id = rv.job_id),
  (SELECT COALESCE(min_severity, '') FROM review_jobs WHERE id = rv.job_id),
- (SELECT COALESCE(output_prefix, '') FROM review_jobs WHERE id = rv.job_id)`
+ (SELECT COALESCE(output_prefix, '') FROM review_jobs WHERE id = rv.job_id),
+ (SELECT COALESCE(non_voting, 0) FROM review_jobs WHERE id = rv.job_id)`
 
 func reviewScanDestinations(
 	review *Review,
@@ -223,7 +227,7 @@ func reviewScanDestinations(
 		&fields.StructuredOutput,
 		&fields.ReviewedFileCount,
 		&fields.ExcludedFileCount,
-		&fields.JobType, &fields.MinSeverity, &fields.OutputPrefix,
+		&fields.JobType, &fields.MinSeverity, &fields.OutputPrefix, &fields.NonVoting,
 	}
 }
 
@@ -251,6 +255,9 @@ func applyReviewScan(review *Review, fields reviewScanFields) error {
 			return fmt.Errorf("review requires JSON migration: %w", err)
 		}
 		review.Output = fields.OutputPrefix + doc.Markdown(fields.MinSeverity)
+	}
+	if fields.NonVoting != 0 {
+		review.Output = NonVotingBanner + review.Output
 	}
 	review.CreatedAt = parseSQLiteTime(fields.CreatedAt)
 	review.Closed = fields.Closed != 0

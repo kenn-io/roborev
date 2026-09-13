@@ -1103,6 +1103,21 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add non_voting to review_jobs if missing. A non-voting panel
+	// member runs and stores its review but is excluded from synthesis and the
+	// verdict; the flag syncs as an ordinary job column so every machine can
+	// label the review and compose its advisory banner.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'non_voting'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check non_voting column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN non_voting INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("add non_voting column: %w", err)
+		}
+	}
+
 	// Migration: add ci_base_branch column to review_jobs if missing.
 	// CI reviews record the PR base (target) branch here for event/hook
 	// branch matching. The ordinary branch column records the PR head branch.
