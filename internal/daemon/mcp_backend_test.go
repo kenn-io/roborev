@@ -213,7 +213,7 @@ func TestMCPBackendCommentsByCommitID(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(full.CommitID)
 
-	comments, err := server.mcpBackend().ListComments(t.Context(), mcpserver.ReviewRef{CommitID: *full.CommitID})
+	comments, err := server.mcpBackend().ListComments(t.Context(), mcpserver.CommentRef{CommitID: *full.CommitID})
 	require.NoError(err)
 	require.Len(comments, 1, "only the legacy commit-linked comment from the seed")
 	assert.Equal("legacy thanks", comments[0].Response)

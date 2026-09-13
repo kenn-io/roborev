@@ -6,11 +6,31 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/version"
 )
 
 const mcpRequestTimeout = 60 * time.Second
+
+var mcpProbeDaemon = daemon.ProbeDaemonPing
+
+// ensureMCPDaemon starts the discovered daemon when needed. An explicit
+// --server address is only probed: auto-start would launch a daemon at the
+// configured address rather than the selected one and then fail to connect.
+func ensureMCPDaemon() error {
+	if serverAddr == "" {
+		if err := ensureDaemon(); err != nil {
+			return fmt.Errorf("daemon not running: %w", err)
+		}
+		return nil
+	}
+	ep := getDaemonEndpoint()
+	if _, err := mcpProbeDaemon(ep, 2*time.Second); err != nil {
+		return fmt.Errorf("daemon at %s is not running (explicit --server endpoints are not started automatically): %w", ep, err)
+	}
+	return nil
+}
 
 func mcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -41,8 +61,9 @@ func mcpServeCmd() *cobra.Command {
 		Short: "Serve read-only roborev tools over stdio",
 		Long: `Serve the roborev MCP tools over stdin/stdout.
 
-The daemon is started when needed. All diagnostics go to stderr so stdout
-carries only protocol messages.
+The daemon is started when needed. With an explicit --server address the
+daemon must already be running there; nothing is started. All diagnostics go
+to stderr so stdout carries only protocol messages.
 
 Example client configuration:
 
@@ -56,8 +77,8 @@ Example client configuration:
 			// The stdio transport owns stdout; keep daemon lifecycle
 			// messages on stderr so they never corrupt the protocol stream.
 			lifecycleOut = cmd.ErrOrStderr()
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+			if err := ensureMCPDaemon(); err != nil {
+				return err
 			}
 			ep := getDaemonEndpoint()
 			backend := mcpserver.NewHTTPBackend(ep.BaseURL(), ep.HTTPClient(mcpRequestTimeout))

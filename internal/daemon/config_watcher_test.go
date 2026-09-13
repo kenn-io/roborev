@@ -339,6 +339,18 @@ auth_token = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU"
 	assert.Equal(t, testBrowserAuthToken, h.Watcher.Config().Web.AuthToken)
 }
 
+func TestConfigWatcherPreservesRestartRequiredMCPConfig(t *testing.T) {
+	h := newConfigWatcherHarness(t, `[mcp]
+enabled = true
+`)
+
+	h.updateConfigAndWait(t, `[mcp]
+enabled = false
+`)
+
+	assert.True(t, h.Watcher.Config().MCP.Enabled, "the mounted MCP endpoint cannot change until restart")
+}
+
 func TestConfigGetter_Interface(t *testing.T) {
 	// Verify both StaticConfig and ConfigWatcher implement ConfigGetter
 	var _ ConfigGetter = (*StaticConfig)(nil)

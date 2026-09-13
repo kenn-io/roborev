@@ -20,7 +20,7 @@ type fakeBackend struct {
 	listBranchesFn func(context.Context, string) ([]storage.BranchWithCount, error)
 	listJobsFn     func(context.Context, JobsQuery) (JobsPage, error)
 	getReviewFn    func(context.Context, ReviewRef) (*storage.Review, error)
-	listCommentsFn func(context.Context, ReviewRef) ([]storage.Response, error)
+	listCommentsFn func(context.Context, CommentRef) ([]storage.Response, error)
 	getJobOutputFn func(context.Context, int64) (JobOutput, error)
 }
 
@@ -59,7 +59,7 @@ func (f *fakeBackend) GetReview(ctx context.Context, ref ReviewRef) (*storage.Re
 	return f.getReviewFn(ctx, ref)
 }
 
-func (f *fakeBackend) ListComments(ctx context.Context, ref ReviewRef) ([]storage.Response, error) {
+func (f *fakeBackend) ListComments(ctx context.Context, ref CommentRef) ([]storage.Response, error) {
 	if f.listCommentsFn == nil {
 		return nil, nil
 	}
@@ -323,17 +323,20 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	commitID := int64(77)
-	var refs []ReviewRef
+	var refs []CommentRef
 	backend := &fakeBackend{
 		getReviewFn: func(_ context.Context, ref ReviewRef) (*storage.Review, error) {
 			if ref.SHA == "missing" {
 				return nil, NewError(ErrorCodeNotFound, "review not found")
 			}
+			if ref.SHA == "archived" {
+				return nil, NewError(ErrorCodeUnavailable, "review awaiting conversion")
+			}
 			return &storage.Review{JobID: 9, Job: &storage.ReviewJob{
 				ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
 			}}, nil
 		},
-		listCommentsFn: func(_ context.Context, ref ReviewRef) ([]storage.Response, error) {
+		listCommentsFn: func(_ context.Context, ref CommentRef) ([]storage.Response, error) {
 			refs = append(refs, ref)
 			switch {
 			case ref.JobID == 9:
@@ -345,7 +348,7 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 					{ID: 1, Responder: "dev", Response: "legacy", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 					{ID: 2, Responder: "dev", Response: "job-linked", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
 				}, nil
-			case ref.SHA == "missing":
+			case ref.SHA == "missing", ref.SHA == "archived":
 				return []storage.Response{{ID: 5, Responder: "dev", Response: "direct"}}, nil
 			}
 			return nil, nil
@@ -360,17 +363,20 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 	require.Len(out.Comments, 2, "job-linked and legacy comments merged and deduplicated")
 	assert.Equal("legacy", out.Comments[0].Response)
 	assert.Equal("job-linked", out.Comments[1].Response)
-	assert.Equal([]ReviewRef{{JobID: 9}, {CommitID: 77}}, refs)
+	assert.Equal([]CommentRef{{JobID: 9}, {CommitID: 77}}, refs)
 
-	// Without a review, the reference is looked up directly.
-	result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": "missing"})
-	require.False(result.IsError)
-	decodeText(t, result, &out)
-	require.Len(out.Comments, 1)
-	assert.Equal("direct", out.Comments[0].Response)
+	// Without a resolvable review (missing, or archived and awaiting
+	// conversion), the reference is looked up directly.
+	for _, sha := range []string{"missing", "archived"} {
+		result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": sha})
+		require.False(result.IsError, sha)
+		decodeText(t, result, &out)
+		require.Len(out.Comments, 1, sha)
+		assert.Equal("direct", out.Comments[0].Response, sha)
+	}
 }
 
-func TestGetJobOutputReportsTotalLines(t *testing.T) {
+func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	backend := &fakeBackend{getJobOutputFn: func(_ context.Context, jobID int64) (JobOutput, error) {
 		lines := make([]OutputLine, maxOutputLines+5)
 		return JobOutput{JobID: jobID, Status: "done", Lines: lines}, nil
@@ -380,7 +386,7 @@ func TestGetJobOutputReportsTotalLines(t *testing.T) {
 	require.False(t, result.IsError)
 	var out jobOutputResult
 	decodeText(t, result, &out)
-	assert.Equal(t, maxOutputLines+5, out.TotalLines)
+	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
 }

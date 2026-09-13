@@ -20,7 +20,7 @@ type Backend interface {
 	ListBranches(ctx context.Context, repoPath string) ([]storage.BranchWithCount, error)
 	ListJobs(context.Context, JobsQuery) (JobsPage, error)
 	GetReview(context.Context, ReviewRef) (*storage.Review, error)
-	ListComments(context.Context, ReviewRef) ([]storage.Response, error)
+	ListComments(context.Context, CommentRef) ([]storage.Response, error)
 	GetJobOutput(ctx context.Context, jobID int64) (JobOutput, error)
 }
 
@@ -48,9 +48,16 @@ type JobsPage struct {
 	NextCursor string
 }
 
-// ReviewRef identifies a review by job ID, by commit ID, or by commit SHA.
-// A positive JobID takes precedence, then CommitID, then SHA.
+// ReviewRef identifies a review by job ID or by commit SHA. A positive JobID
+// takes precedence.
 type ReviewRef struct {
+	JobID int64
+	SHA   string
+}
+
+// CommentRef identifies a comment thread by job ID, legacy commit ID, or
+// commit SHA. A positive JobID takes precedence, then CommitID, then SHA.
+type CommentRef struct {
 	JobID    int64
 	CommitID int64
 	SHA      string

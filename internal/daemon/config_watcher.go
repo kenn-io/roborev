@@ -208,6 +208,8 @@ func (cw *ConfigWatcher) reloadConfig() {
 	oldCfg := cw.cfg
 	requestedWeb := newCfg.Web
 	newCfg.Web = oldCfg.Web
+	requestedMCP := newCfg.MCP
+	newCfg.MCP = oldCfg.MCP
 	cw.cfg = newCfg
 	cw.lastReloadedAt = time.Now()
 	cw.reloadCounter++
@@ -222,6 +224,9 @@ func (cw *ConfigWatcher) reloadConfig() {
 	logConfigChanges(oldCfg, newCfg)
 	if requestedWeb != oldCfg.Web {
 		log.Printf("Config change: [web] settings changed (requires daemon restart to take effect)")
+	}
+	if requestedMCP != oldCfg.MCP {
+		log.Printf("Config change: [mcp] settings changed (requires daemon restart to take effect)")
 	}
 
 	// Broadcast config reloaded event to notify connected clients

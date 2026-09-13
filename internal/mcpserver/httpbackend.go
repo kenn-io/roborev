@@ -108,18 +108,24 @@ func (b *HTTPBackend) ListJobs(ctx context.Context, q JobsQuery) (JobsPage, erro
 }
 
 func (b *HTTPBackend) GetReview(ctx context.Context, ref ReviewRef) (*storage.Review, error) {
+	params := url.Values{}
+	if ref.JobID > 0 {
+		params.Set("job_id", strconv.FormatInt(ref.JobID, 10))
+	} else if ref.SHA != "" {
+		params.Set("sha", ref.SHA)
+	}
 	var review storage.Review
-	if err := b.getJSON(ctx, "/api/review", reviewRefParams(ref), &review); err != nil {
+	if err := b.getJSON(ctx, "/api/review", params, &review); err != nil {
 		return nil, err
 	}
 	return &review, nil
 }
 
-func (b *HTTPBackend) ListComments(ctx context.Context, ref ReviewRef) ([]storage.Response, error) {
+func (b *HTTPBackend) ListComments(ctx context.Context, ref CommentRef) ([]storage.Response, error) {
 	var body struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := b.getJSON(ctx, "/api/comments", reviewRefParams(ref), &body); err != nil {
+	if err := b.getJSON(ctx, "/api/comments", commentRefParams(ref), &body); err != nil {
 		return nil, err
 	}
 	return body.Responses, nil
@@ -134,7 +140,7 @@ func (b *HTTPBackend) GetJobOutput(ctx context.Context, jobID int64) (JobOutput,
 	return output, nil
 }
 
-func reviewRefParams(ref ReviewRef) url.Values {
+func commentRefParams(ref CommentRef) url.Values {
 	params := url.Values{}
 	switch {
 	case ref.JobID > 0:

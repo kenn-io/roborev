@@ -131,12 +131,15 @@ type jobOutputInput struct {
 }
 
 type jobOutputResult struct {
-	JobID      int64        `json:"job_id"`
-	Status     string       `json:"status"`
-	Lines      []OutputLine `json:"lines"`
-	TotalLines int          `json:"total_lines"`
-	Truncated  bool         `json:"truncated"`
-	HasMore    bool         `json:"has_more"`
+	JobID  int64        `json:"job_id"`
+	Status string       `json:"status"`
+	Lines  []OutputLine `json:"lines"`
+	// AvailableLines is the size of the daemon's retained snapshot, not the
+	// number of lines the agent produced: running output is bounded by the
+	// daemon buffer and persisted logs keep only their tail.
+	AvailableLines int  `json:"available_lines"`
+	Truncated      bool `json:"truncated" jsonschema:"true when this response omits lines from the daemon snapshot"`
+	HasMore        bool `json:"has_more"`
 }
 
 func (s *Server) registerTools() {
@@ -170,8 +173,9 @@ func (s *Server) registerTools() {
 	}, wrapTool(s.listComments))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_get_job_output",
-		Description: "Return the last lines of the agent's streamed output for a job (at most 2000; " +
-			"total_lines reports how many exist). Useful for running or failed jobs; " +
+		Description: "Return the last lines of the agent's streamed output for a job, at most 2000. " +
+			"available_lines is the size of the daemon's retained snapshot, which is itself bounded, " +
+			"so earlier output of very long jobs may be gone. Useful for running or failed jobs; " +
 			"completed reviews are better read with roborev_get_review.",
 	}, wrapTool(s.getJobOutput))
 }
@@ -375,28 +379,26 @@ func (s *Server) getJobOutput(ctx context.Context, in jobOutputInput) (jobOutput
 		lines = []OutputLine{}
 	}
 	return jobOutputResult{
-		JobID:      output.JobID,
-		Status:     output.Status,
-		Lines:      lines,
-		TotalLines: total,
-		Truncated:  truncated,
-		HasMore:    output.HasMore,
+		JobID:          output.JobID,
+		Status:         output.Status,
+		Lines:          lines,
+		AvailableLines: total,
+		Truncated:      truncated,
+		HasMore:        output.HasMore,
 	}, nil
 }
 
 // allComments merges job-linked comments with legacy commit-linked comments
 // for the same review, so callers see the full conversation regardless of
-// which linkage each comment used. When no review resolves, the reference is
-// looked up directly.
+// which linkage each comment used. When the review cannot be resolved (not
+// found, or archived and awaiting conversion), the reference is looked up
+// directly so readable comments are still returned.
 func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Response, error) {
 	review, err := s.backend.GetReview(ctx, ref)
 	if err != nil {
-		if errorCode(err) == ErrorCodeNotFound {
-			return s.backend.ListComments(ctx, ref)
-		}
-		return nil, err
+		return s.backend.ListComments(ctx, CommentRef{JobID: ref.JobID, SHA: ref.SHA})
 	}
-	responses, err := s.backend.ListComments(ctx, ReviewRef{JobID: review.JobID})
+	responses, err := s.backend.ListComments(ctx, CommentRef{JobID: review.JobID})
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +409,7 @@ func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Resp
 	if commitID == 0 && sha == "" {
 		return responses, nil
 	}
-	legacy, err := s.backend.ListComments(ctx, ReviewRef{CommitID: commitID, SHA: sha})
+	legacy, err := s.backend.ListComments(ctx, CommentRef{CommitID: commitID, SHA: sha})
 	if err != nil {
 		if errorCode(err) == ErrorCodeNotFound {
 			return responses, nil

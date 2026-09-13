@@ -89,7 +89,7 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	case err := <-done:
 		require.NoError(err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("mcp serve did not exit after stdin closed")
+		require.Fail("mcp serve did not exit after stdin closed")
 	}
 	assert.NotContains(stderr.String(), "Error")
 }
@@ -189,4 +189,20 @@ func TestMCPStatusHonorsServerFlag(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, []string{"127.0.0.1:9999"}, probed)
 	assert.Contains(t, out.String(), `"backend_url":"http://127.0.0.1:9999"`)
+}
+
+func TestMCPServeDoesNotStartDaemonForExplicitServer(t *testing.T) {
+	origProbe := mcpProbeDaemon
+	var probed []string
+	mcpProbeDaemon = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+		probed = append(probed, ep.Address)
+		return nil, errors.New("connection refused")
+	}
+	t.Cleanup(func() { mcpProbeDaemon = origProbe })
+	patchServerAddr(t, "127.0.0.1:9999")
+
+	err := ensureMCPDaemon()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not started automatically")
+	assert.Equal(t, []string{"127.0.0.1:9999"}, probed)
 }

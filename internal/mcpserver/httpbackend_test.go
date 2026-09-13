@@ -85,7 +85,7 @@ func TestHTTPBackendReviewRefPrefersJobID(t *testing.T) {
 	assert.Equal("5", d.requests[0].Query().Get("job_id"))
 	assert.Empty(d.requests[0].Query().Get("sha"))
 
-	comments, err := backend.ListComments(t.Context(), ReviewRef{SHA: "abc"})
+	comments, err := backend.ListComments(t.Context(), CommentRef{SHA: "abc"})
 	require.NoError(err)
 	require.Len(comments, 1)
 	assert.Equal("fixed", comments[0].Response)
@@ -106,7 +106,7 @@ func TestHTTPBackendMapsStatusCodesToErrorCodes(t *testing.T) {
 	assert.Equal(ErrorCodeNotFound, backendErr.Code)
 	assert.Equal("review not found", backendErr.Message)
 
-	_, err = backend.ListComments(t.Context(), ReviewRef{})
+	_, err = backend.ListComments(t.Context(), CommentRef{})
 	backendErr, ok = errors.AsType[*Error](err)
 	require.True(ok)
 	assert.Equal(ErrorCodeInvalidArgument, backendErr.Code)
@@ -156,7 +156,7 @@ func TestHTTPBackendJobOutputAndBranches(t *testing.T) {
 func TestHTTPBackendListCommentsByCommitID(t *testing.T) {
 	d, backend := newFakeDaemon(t)
 	d.routes["/api/comments"] = jsonResponse(http.StatusOK, `{"responses":[]}`)
-	_, err := backend.ListComments(t.Context(), ReviewRef{CommitID: 77, SHA: "ignored"})
+	_, err := backend.ListComments(t.Context(), CommentRef{CommitID: 77, SHA: "ignored"})
 	require.NoError(t, err)
 	q := d.requests[0].Query()
 	assert.Equal(t, "77", q.Get("commit_id"))

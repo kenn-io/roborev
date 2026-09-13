@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -482,7 +481,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
 	}
 	var info PingInfo
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return nil, fmt.Errorf("decode daemon ping: %w", err)
 	}
 	if !info.OK {
