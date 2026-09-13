@@ -421,23 +421,47 @@ func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Resp
 }
 
 // resolveJob finds the job a review reference points at: the job itself by
-// ID, or the newest job for a commit SHA. It returns nil without error when
-// no job matches.
+// ID, or the newest canonical review job for a commit SHA. Fix, task, and
+// panel member jobs can share a reviewed SHA and are skipped, matching the
+// storage layer's SHA review lookup. It returns nil without error when no
+// job matches.
 func (s *Server) resolveJob(ctx context.Context, ref ReviewRef) (*storage.ReviewJob, error) {
-	query := JobsQuery{Limit: 1}
 	if ref.JobID > 0 {
-		query.ID = ref.JobID
-	} else {
-		query.GitRef = ref.SHA
+		page, err := s.backend.ListJobs(ctx, JobsQuery{ID: ref.JobID, Limit: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(page.Jobs) == 0 {
+			return nil, nil
+		}
+		return &page.Jobs[0], nil
 	}
-	page, err := s.backend.ListJobs(ctx, query)
+	page, err := s.backend.ListJobs(ctx, JobsQuery{GitRef: ref.SHA, Limit: defaultJobLimit})
 	if err != nil {
 		return nil, err
 	}
-	if len(page.Jobs) == 0 {
-		return nil, nil
+	for i := range page.Jobs {
+		if isCanonicalReviewJob(&page.Jobs[i]) {
+			return &page.Jobs[i], nil
+		}
 	}
-	return &page.Jobs[0], nil
+	return nil, nil
+}
+
+// isCanonicalReviewJob mirrors the job-type filter of the storage layer's
+// SHA review lookup: review-producing types (including legacy rows with an
+// empty type) that are not panel members.
+func isCanonicalReviewJob(job *storage.ReviewJob) bool {
+	if job.PanelRole == "member" {
+		return false
+	}
+	switch job.JobType {
+	case "", storage.JobTypeReview, storage.JobTypeRange, storage.JobTypeDirty,
+		storage.JobTypeSynthesis, storage.JobTypeCompact:
+		return true
+	default:
+		return false
+	}
 }
 
 // findingCountsFromStructured derives severity counts from the stored

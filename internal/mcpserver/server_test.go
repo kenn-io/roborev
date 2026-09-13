@@ -329,10 +329,18 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 			switch {
 			case q.GitRef == "boom":
 				return JobsPage{}, NewError(ErrorCodeInternal, "database unavailable")
-			case q.ID == 9, q.GitRef == "abc123":
+			case q.ID == 9:
 				return JobsPage{Jobs: []storage.ReviewJob{{
 					ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
 				}}}, nil
+			case q.GitRef == "abc123":
+				// Newer fix and panel-member jobs share the SHA and must not
+				// shadow the canonical review job.
+				return JobsPage{Jobs: []storage.ReviewJob{
+					{ID: 11, JobType: storage.JobTypeFix, GitRef: "abc123", CommitID: &commitID},
+					{ID: 10, JobType: storage.JobTypeReview, PanelRole: "member", GitRef: "abc123", CommitID: &commitID},
+					{ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID},
+				}}, nil
 			}
 			return JobsPage{}, nil
 		},
