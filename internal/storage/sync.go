@@ -663,6 +663,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		AND r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
+		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact'))
 		AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`)
 		ORDER BY r.id
 		LIMIT ?
@@ -898,24 +899,11 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			err = doc.RequireSources(len(doc.SourceLabels))
 		}
 		if err != nil {
-			var existing sql.NullString
-			lookupErr := db.QueryRow(`SELECT structured_output FROM reviews WHERE uuid = ?`, r.UUID).Scan(&existing)
-			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
-				return lookupErr
-			}
-			if current, decodeErr := structuredreview.Decode(json.RawMessage(existing.String)); decodeErr == nil &&
-				(jobType != JobTypeSynthesis || current.RequireSources(len(current.SourceLabels)) == nil) {
+			// Older clients cannot write Markdown review records.
+			if len(r.StructuredOutput) == 0 {
 				return nil
 			}
-			_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed,
-  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
-  uuid, updated_by_machine_id, updated_at, synced_at, migration_error)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(uuid) DO NOTHING`, jobID, r.Agent, r.Prompt, r.Output, r.CreatedAt.Format(time.RFC3339), r.Closed,
-				r.ReviewedFileCount, r.ExcludedFileCount, r.VerdictBool, string(r.StructuredOutput), r.UUID,
-				r.UpdatedByMachineID, r.UpdatedAt.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
-				"No valid review JSON document; AI conversion required: "+err.Error())
-			return archiveErr
+			return fmt.Errorf("review JSON: %w", err)
 		}
 		r.Output = ""
 		if r.VerdictBool == nil && !doc.UnableToReview() {

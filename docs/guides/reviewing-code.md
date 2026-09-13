@@ -220,10 +220,10 @@ nothing to fix. `fix_min_severity` applies only to the findings of failing
 reviews.
 
 Every review agent must return the review JSON model. Agents with native JSON
-support use it; other agents receive the model in their prompt. This also
-applies to custom review types and backup agents. Roborev validates the returned
-JSON and derives the result from finding severities. An agent that cannot review
-the change reports `unable_to_review` or an error.
+support use it; other agents receive the model in their prompt. Custom review
+types keep their existing native-schema agent requirement. Roborev validates the
+returned JSON and derives the result from finding severities. An agent that
+cannot review the change reports `unable_to_review` or an error.
 
 Set a default per repo in `.roborev.toml` or globally in
 `~/.roborev/config.toml`:
@@ -460,9 +460,11 @@ retain their source references and reviewer labels.
 On database upgrade, roborev uses existing valid JSON as the authoritative
 review and archives the previous record. Records without valid JSON move to
 `legacy_reviews` with a `migration_error` explaining why they require
-conversion. They are excluded from normal review reads. Roborev does not guess
-missing severities, fixes, or synthesis sources, and does not launch an agent to
-convert historical records automatically.
+conversion. They are excluded from normal review reads. Sync ignores
+Markdown-only review updates from older clients; it does not create new legacy
+records from them. Roborev does not guess missing severities, fixes, or
+synthesis sources, and does not launch an agent to convert historical records
+automatically.
 
 When unresolved records remain, roborev asks you to run an AI agent for the
 migration. Stop the daemon before importing results, and use the database path

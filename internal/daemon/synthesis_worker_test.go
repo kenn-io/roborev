@@ -1318,7 +1318,8 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	member := members[0]
 	_, err := tc.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
 	require.NoError(t, err)
-	require.NoError(t, tc.DB.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: *member.UUID, Agent: "test", Output: "Legacy failed attempt"}))
+	_, archiveErr := tc.DB.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', 'prompt', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
+	require.NoError(t, archiveErr)
 	records, err := tc.DB.UnresolvedLegacyReviews()
 	require.NoError(t, err)
 	require.Len(t, records, 1)

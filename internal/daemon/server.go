@@ -936,6 +936,9 @@ func resolveRerunOpts(
 				"classifier reruns require a SchemaAgent, got %q", selectedAgent,
 			)
 		}
+		if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
 		)
@@ -2901,8 +2904,17 @@ func (s *Server) resolveSingleAgent(
 		)
 		return resolvedSingleAgent{}, out
 	}
+	if err := agent.ValidateStructuredReviewSelection(
+		in.req.ReviewType, resolved,
+	); err != nil {
+		out, _ := rawJSONOutput(
+			http.StatusBadRequest,
+			ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
+		)
+		return resolvedSingleAgent{}, out
+	}
 	agentName = resolved.Name()
-	if err := agent.ValidateReviewBackup(
+	if err := agent.ValidateStructuredReviewBackup(
 		in.req.ReviewType, resolution, agentName,
 	); err != nil {
 		out, _ := rawJSONOutput(

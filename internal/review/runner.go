@@ -28,6 +28,9 @@ func RunAgentReview(
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
 	out io.Writer,
 ) (ReviewResult, error) {
+	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {
+		return ReviewResult{}, err
+	}
 	raw, err := invokeReview(
 		ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
 	)

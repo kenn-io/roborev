@@ -2803,7 +2803,7 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	}
 }
 
-func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONAgent(t *testing.T) {
+func TestHandleEnqueueRejectsCustomReviewWithUnsupportedAgent(t *testing.T) {
 	repoDir := t.TempDir()
 	testutil.InitTestGitRepo(t, repoDir)
 	require.NoError(t, os.WriteFile(
@@ -2823,12 +2823,13 @@ func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONAgent(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "does not support schema-constrained reviews")
 	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-	assert.Equal(t, 1, queued)
+	assert.Zero(t, queued)
 }
 
-func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONBackupAgent(t *testing.T) {
+func TestHandleEnqueueRejectsCustomReviewWithUnsupportedBackupAgent(t *testing.T) {
 	const primaryName = "structured-enqueue-primary"
 	agent.Register(&structuredWorkerTestAgent{name: primaryName})
 	t.Cleanup(func() { agent.Unregister(primaryName) })
@@ -2855,9 +2856,10 @@ func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONBackupAgent(t *testing.T)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid backup agent")
 	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-	assert.Equal(t, 1, queued)
+	assert.Zero(t, queued)
 }
 
 func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
@@ -3324,7 +3326,8 @@ func TestHandleListJobsByIDWithArchivedReview(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	_, jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "archived"), 1, "archive")
 	job := jobs[0]
-	require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test", Output: "Legacy review", CreatedAt: time.Now(), UpdatedAt: time.Now()}))
+	_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', 'prompt', ?, datetime('now'), 0, ?, 'AI conversion required')`, job.ID, "Legacy review", uuid.New())
+	require.NoError(t, archiveErr)
 	_, err := db.GetReviewByJobID(job.ID)
 	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job.ID), nil)

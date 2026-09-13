@@ -97,8 +97,8 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 	_, err = tx.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
  structured_output, reviewed_file_count, excluded_file_count, updated_by_machine_id, created_at, updated_at)
  SELECT r.uuid, r.job_uuid, r.agent, r.prompt, '', r.closed, $3, $2,
- r.reviewed_file_count, r.excluded_file_count, r.updated_by_machine_id, r.created_at, clock_timestamp()
- FROM jsonb_populate_record(NULL::reviews, $1::jsonb) r`, record, raw, verdict)
+ r.reviewed_file_count, r.excluded_file_count, $4, r.created_at, clock_timestamp()
+ FROM jsonb_populate_record(NULL::reviews, $1::jsonb) r`, record, raw, verdict, uuid.New())
 	if err != nil {
 		return fmt.Errorf("restore converted review: %w", err)
 	}

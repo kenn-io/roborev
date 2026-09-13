@@ -955,10 +955,15 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
+		if err := agent.ValidateStructuredReviewSelection(
+			member.ReviewType, selected,
+		); err != nil {
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+		}
 		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
-	if err := agent.ValidateReviewBackup(
+	if err := agent.ValidateStructuredReviewBackup(
 		member.ReviewType, resolution, resolvedAgent,
 	); err != nil {
 		return "", "", "", "", fmt.Errorf(
@@ -1031,10 +1036,15 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
+		if err := agent.ValidateStructuredReviewSelection(
+			entry.ReviewType, selected,
+		); err != nil {
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+		}
 		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
-	if err := agent.ValidateReviewBackup(
+	if err := agent.ValidateStructuredReviewBackup(
 		entry.ReviewType, resolution, resolvedAgent,
 	); err != nil {
 		return "", "", "", "", fmt.Errorf(

@@ -235,7 +235,9 @@ func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
 		if err != nil || (job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected)) {
 			continue
 		}
-		available = append(available, name)
+		if agent.ValidateStructuredReviewSelection(job.ReviewType, selected) == nil {
+			available = append(available, name)
+		}
 	}
 	return available, nil
 }

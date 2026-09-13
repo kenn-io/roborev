@@ -596,7 +596,7 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	assert.Equal(t, VerdictFail, review.Verdict())
 }
 
-func TestUpsertPulledReviewArchivesMarkdown(t *testing.T) {
+func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	h := newSyncTestHelper(t)
 	job := h.createPendingJob("legacy-pulled-review")
 	const prose = "I am unable to read the diff."
@@ -608,16 +608,14 @@ func TestUpsertPulledReviewArchivesMarkdown(t *testing.T) {
 	}
 	require.NoError(t, h.db.UpsertPulledReview(incoming))
 	_, err := h.db.GetReviewByJobID(job.ID)
-	require.ErrorIs(t, err, ErrLegacyReviewMigration)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 	records, err := h.db.UnresolvedLegacyReviews()
 	require.NoError(t, err)
-	require.Len(t, records, 1)
-	assert.Equal(t, prose, records[0].Output)
-	assert.Contains(t, records[0].Reason, "AI conversion required")
+	assert.Empty(t, records)
 	require.NoError(t, h.db.UpsertPulledReview(incoming))
 	records, err = h.db.UnresolvedLegacyReviews()
 	require.NoError(t, err)
-	assert.Len(t, records, 1)
+	assert.Empty(t, records)
 }
 
 func TestUpsertPulledReviewDoesNotReplaceJSONWithMarkdown(t *testing.T) {
@@ -823,4 +821,15 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 	var verdict sql.NullInt64
 	require.NoError(t, h.db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
 	assert.False(t, verdict.Valid, "task output must stay unrated on pull, as it does locally")
+}
+
+func TestGetReviewsToSyncSkipsMarkdown(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("markdown-sync")
+	require.NoError(t, h.db.MarkJobSynced(job.ID))
+	_, err := h.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Legacy Markdown' WHERE job_id = ?`, job.ID)
+	require.NoError(t, err)
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, reviews)
 }

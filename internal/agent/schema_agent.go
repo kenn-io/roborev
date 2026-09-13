@@ -49,19 +49,30 @@ func IsStructuredReviewAgent(a Agent) bool {
 
 // SupportsStructuredReview reports whether the registered agent with this
 // name (or alias) returns schema-constrained review output. Unknown names
-// report false so prompts built before an agent is resolved fall back to the
-// prose output format.
+// report false. Review output still must satisfy the JSON document model.
 func SupportsStructuredReview(name string) bool {
 	a, err := Get(name)
 	return err == nil && IsStructuredReviewAgent(a)
 }
 
-// ValidateReviewBackup checks that a distinct configured backup can be resolved.
-// Availability is deliberately
+// ValidateStructuredReviewSelection rejects a resolved agent that cannot run
+// a schema-constrained custom review. Built-in review types use prose output
+// and accept every Agent implementation.
+func ValidateStructuredReviewSelection(reviewType string, a Agent) error {
+	if config.IsBuiltInReviewType(reviewType) || IsStructuredReviewAgent(a) {
+		return nil
+	}
+	return fmt.Errorf(
+		"agent %q does not support schema-constrained reviews", a.Name(),
+	)
+}
+
+// ValidateStructuredReviewBackup rejects a distinct configured backup that
+// cannot run a schema-constrained custom review. Availability is deliberately
 // not checked: workers resolve workflow backups again at failover time, so a
 // configured backup that is unavailable during enqueue may still be selected
 // later.
-func ValidateReviewBackup(
+func ValidateStructuredReviewBackup(
 	reviewType string,
 	resolution WorkflowConfig,
 	selectedAgent string,
@@ -72,20 +83,23 @@ func ValidateReviewBackup(
 		return nil
 	}
 
+	var backup Agent
 	var err error
 	if isConfiguredACPAgentNameFromConfig(
 		backupName, resolution.GlobalConfig, resolution.RepoConfig,
 	) {
-		_, err = configuredACPAgentFromConfig(
+		backup, err = configuredACPAgentFromConfig(
 			backupName, resolution.RepoConfig, resolution.GlobalConfig,
 		)
 	} else {
-		_, err = Get(backupName)
+		backup, err = Get(backupName)
 	}
 	if err != nil {
 		return fmt.Errorf("resolve backup agent %q: %w", backupName, err)
 	}
-
+	if err := ValidateStructuredReviewSelection(reviewType, backup); err != nil {
+		return fmt.Errorf("invalid backup agent: %w", err)
+	}
 	return nil
 }
 

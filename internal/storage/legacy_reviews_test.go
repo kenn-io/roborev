@@ -132,7 +132,9 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 		Agent: "test", Prompt: "prompt", Output: "Unstructured review.",
 		UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	require.NoError(t, env.db.UpsertPulledReview(incoming))
+	_, seedErr := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid) VALUES (?, 'test', 'prompt', ?, ?)`, env.job.ID, incoming.Output, incoming.UUID)
+	require.NoError(t, seedErr)
+	require.NoError(t, env.db.migrateLegacyReviews())
 	_, err := env.db.GetReviewByJobID(env.job.ID)
 	require.ErrorIs(t, err, ErrLegacyReviewMigration)
 	incoming.StructuredOutput = json.RawMessage(`{"schema_version":2,"summary":"Converted elsewhere.","verdict":"pass","findings":[]}`)

@@ -1169,10 +1169,9 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	require.NotNil(t, excludedFileCount)
 	assert.Equal(t, 0, *reviewedFileCount)
 	assert.Equal(t, 4, *excludedFileCount)
-	var archivedOutput, reason string
-	require.NoError(t, pool.pool.QueryRow(ctx, `SELECT record->>'output', migration_error FROM legacy_reviews WHERE uuid = $1`, reviews[1].UUID).Scan(&archivedOutput, &reason))
-	assert.Equal(t, "test output 2", archivedOutput)
-	assert.Contains(t, reason, "AI conversion required")
+	var markdownRows int
+	require.NoError(t, pool.pool.QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, reviews[1].UUID).Scan(&markdownRows))
+	assert.Zero(t, markdownRows)
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})

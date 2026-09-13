@@ -23,6 +23,9 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) {
 	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id)
  VALUES ($1, $2, 'test', 'prompt', 'Legacy finding with missing details', $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
+	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobID}, "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, pulled)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	var original, reason string
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', migration_error FROM legacy_reviews WHERE uuid = $1`, reviewID).Scan(&original, &reason))
@@ -62,15 +65,19 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 		require.NoError(t, err)
 		if status == "done" {
 			memberReviewID := uuid.New()
-			require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: memberReviewID, JobUUID: memberID, Agent: "test", Output: "No issues found.", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}))
+			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'prompt', 'No issues found.', $3)`, memberReviewID, memberID, defaultTestMachineID)
+			require.NoError(t, err)
+			require.NoError(t, pool.migrateLegacyReviews(ctx))
 			clean := json.RawMessage(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
 			require.NoError(t, pool.ResolveLegacyReview(ctx, memberReviewID, clean))
-			_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at) SELECT $1, record, migration_error, resolved_at FROM legacy_reviews WHERE uuid = $2`, uuid.New(), memberReviewID)
+			_, err = pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at) SELECT $1, record, migration_error, resolved_at FROM legacy_reviews WHERE uuid = $2`, uuid.New(), memberReviewID)
 			require.NoError(t, err)
 		}
 	}
 	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", Prompt: "original prompt", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}
-	require.NoError(t, pool.UpsertReview(ctx, incoming))
+	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'original prompt', 'Legacy finding', $3)`, reviewID, jobID, defaultTestMachineID)
+	require.NoError(t, err)
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	records, err := pool.UnresolvedLegacyReviews(ctx)
 	require.NoError(t, err)
 	var record PostgresLegacyReview
@@ -87,6 +94,10 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 	raw := json.RawMessage(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
 	require.Error(t, pool.ResolveLegacyReview(ctx, reviewID, json.RawMessage(`invalid`)))
 	require.NoError(t, pool.ResolveLegacyReview(ctx, reviewID, raw))
+	pulled, _, err := pool.PullReviews(ctx, defaultTestMachineID, []uuid.UUID{jobID}, "", 10)
+	require.NoError(t, err)
+	require.Len(t, pulled, 1)
+	assert.Equal(t, reviewID, pulled[0].UUID)
 	var output, prompt, stored, original string
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT output, prompt, structured_output::text FROM reviews WHERE uuid = $1`, reviewID).Scan(&output, &prompt, &stored))
 	assert.Empty(t, output)

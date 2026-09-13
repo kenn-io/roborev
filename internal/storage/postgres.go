@@ -831,19 +831,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 // unrated even if a legacy verdict was stored before: output that is not a
 // review ($13), and free-form task or insights jobs, looked up by job type.
 const pgUpsertReviewSQL = `
- WITH archived AS (
- INSERT INTO legacy_reviews (uuid, record, migration_error)
- SELECT $1::uuid, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
- 'prompt', $4::text, 'output', $5::text, 'closed', $6::boolean, 'verdict_bool', $7::boolean,
- 'reviewed_file_count', $9::integer, 'excluded_file_count', $10::integer,
- 'updated_by_machine_id', $11::uuid, 'created_at', $12::timestamptz),
- 'No valid review JSON document; AI conversion required'
- WHERE $8::jsonb IS NULL
- AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.uuid = $1 AND r.structured_output IS NOT NULL)
- AND EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
- AND j.job_type IN ('review','range','dirty','synthesis','compact'))
- ON CONFLICT(uuid) DO NOTHING
- ), resolved AS (
+ WITH resolved AS (
  UPDATE legacy_reviews SET resolved_at = clock_timestamp()
  WHERE uuid = $1 AND $8::jsonb IS NOT NULL AND resolved_at IS NULL
  )
@@ -1214,8 +1202,10 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
 		FROM reviews r
+		JOIN review_jobs j ON j.uuid = r.job_uuid
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
+		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact'))
 		AND (r.updated_at > $3 OR (r.updated_at = $3 AND r.id > $4))
 		ORDER BY r.updated_at, r.id
 		LIMIT $5

@@ -254,9 +254,9 @@ func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
 	opts.applyDefaults()
 
 	_, err := pool.Exec(t.Context(), `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
+		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id, structured_output)
+		VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8, $9)
+	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID, reviewFixtureJSON("No issues found."))
 	require.NoError(t, err, "Failed to create review %s", opts.UUID)
 }
 
