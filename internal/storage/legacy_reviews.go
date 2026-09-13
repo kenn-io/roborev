@@ -254,7 +254,7 @@ func legacySynthesisSources(q querier, jobID int64) ([]LegacyReviewSource, error
 	rows, err := q.Query(`SELECT j.agent, j.review_type,
  COALESCE(r.structured_output, l.structured_output, ''), COALESCE(NULLIF(r.output, ''), l.output, '')
  FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
- LEFT JOIN legacy_reviews l ON l.job_id = j.id
+ LEFT JOIN legacy_reviews l ON l.job_id = j.id AND l.resolved_at IS NULL AND r.job_id IS NULL
  WHERE j.panel_run_uuid = (SELECT panel_run_uuid FROM review_jobs WHERE id = ?)
  AND j.panel_role = 'member' AND j.status = 'done' ORDER BY j.panel_member_index, j.id`, jobID)
 	if err != nil {

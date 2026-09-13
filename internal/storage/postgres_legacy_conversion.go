@@ -117,7 +117,7 @@ func postgresLegacySources(ctx context.Context, q pgLegacyQuerier, jobUUID uuid.
  COALESCE(r.structured_output::text, l.record->>'structured_output', ''),
  COALESCE(NULLIF(r.output, ''), l.record->>'output', '')
  FROM review_jobs j LEFT JOIN reviews r ON r.job_uuid = j.uuid
- LEFT JOIN legacy_reviews l ON (l.record->>'job_uuid')::uuid = j.uuid
+ LEFT JOIN legacy_reviews l ON (l.record->>'job_uuid')::uuid = j.uuid AND l.resolved_at IS NULL AND r.job_uuid IS NULL
  WHERE j.panel_run_uuid = (SELECT panel_run_uuid FROM review_jobs WHERE uuid = $1)
  AND j.panel_role = 'member' AND j.status = 'done' ORDER BY j.panel_member_index, j.uuid`, jobUUID)
 	if err != nil {

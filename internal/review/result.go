@@ -72,7 +72,10 @@ func (r ReviewResult) ApplyMinSeverity(minSeverity string) ReviewResult {
 	}
 	if r.Structured != nil {
 		r.MinSeverity = effective
-		r.Verdict = storage.VerdictFromPassed(r.Structured.Passed(effective))
+		r.Verdict = storage.VerdictUnknown
+		if !r.Structured.UnableToReview() {
+			r.Verdict = storage.VerdictFromPassed(r.Structured.Passed(effective))
+		}
 		r.Output = r.Structured.Markdown(effective)
 		return r
 	}
@@ -125,8 +128,13 @@ func HasSubstantiveOutput(results []ReviewResult) bool {
 // IsSubstantiveOutput reports whether one completed review produced
 // agent-authored output.
 func IsSubstantiveOutput(result ReviewResult) bool {
-	return result.Status == ResultDone &&
-		storage.ClassifyOutput(result.Output) == storage.OutputReviewed
+	if result.Status != ResultDone {
+		return false
+	}
+	if result.Structured != nil {
+		return !result.Structured.UnableToReview()
+	}
+	return storage.ClassifyOutput(result.Output) == storage.OutputReviewed
 }
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.

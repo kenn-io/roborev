@@ -578,10 +578,6 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 	return &job, nil
 }
 
-// isValidConsolidatedReview delegates to the shared daemon package
-// so CLI --wait and daemon background mode use the same validation.
-var isValidConsolidatedReview = daemon.IsValidCompactOutput
-
 // filterReviewJobs excludes non-review job types (compact, task) from
 // the source list to prevent recursive self-compaction loops.
 func filterReviewJobs(jobs []storage.ReviewJob) []storage.ReviewJob {

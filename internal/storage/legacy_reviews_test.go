@@ -94,6 +94,10 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 		if status == "done" {
 			_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
 			require.NoError(t, err)
+			for _, suffix := range []string{"old-a", "old-b"} {
+				_, err = env.db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error, resolved_at) VALUES (?, 'test', 'prompt', 'No issues found.', datetime('now'), 0, ?, '', datetime('now'))`, member.ID, testUUID(member.ReviewType+suffix))
+				require.NoError(t, err)
+			}
 		}
 	}
 	raw := `{"schema_version":2,"summary":"Synthesis finding.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null,"sources":[1]}]}`

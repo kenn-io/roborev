@@ -1236,15 +1236,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Fix job %d: captured patch (%d bytes)", workerID, job.ID, len(fixPatch))
 	}
 
-	// For compact jobs, validate raw agent output before storing.
-	// Invalid output (empty, error patterns) should fail the job,
-	// not produce a "done" review that misleads --wait callers.
-	if job.JobType == "compact" && !IsValidCompactOutput(output) {
-		log.Printf("[%s] Compact job %d produced invalid output, failing", workerID, job.ID)
-		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, "compact output invalid (empty or error)")
-		return
-	}
-
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was

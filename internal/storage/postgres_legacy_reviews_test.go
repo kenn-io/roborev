@@ -61,7 +61,12 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 		_, err := pool.Pool().Exec(ctx, `UPDATE review_jobs SET panel_run_uuid = $1, panel_role = 'member', panel_member_index = $2, review_type = 'security' WHERE uuid = $3`, runID, i, memberID)
 		require.NoError(t, err)
 		if status == "done" {
-			require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: uuid.New(), JobUUID: memberID, Agent: "test", Output: "No issues found.", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}))
+			memberReviewID := uuid.New()
+			require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: memberReviewID, JobUUID: memberID, Agent: "test", Output: "No issues found.", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}))
+			clean := json.RawMessage(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
+			require.NoError(t, pool.ResolveLegacyReview(ctx, memberReviewID, clean))
+			_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at) SELECT $1, record, migration_error, resolved_at FROM legacy_reviews WHERE uuid = $2`, uuid.New(), memberReviewID)
+			require.NoError(t, err)
 		}
 	}
 	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", Prompt: "original prompt", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}

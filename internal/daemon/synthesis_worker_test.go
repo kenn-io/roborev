@@ -1311,3 +1311,29 @@ func TestSynthesisNoVerdictOutputFailsWithoutRetry(t *testing.T) {
 	assert.Contains(updated.Error, "unable to read the diff file")
 	assert.Equal(0, updated.RetryCount, "no-verdict synthesis output must not burn same-agent retries")
 }
+
+func TestSynthesisImportedUnableReview(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	runID, members, _ := enqueuePanelRun(t, tc, "imported-unable", []memberSpec{{name: "member", agent: "test"}})
+	member := members[0]
+	_, err := tc.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: *member.UUID, Agent: "test", Output: "Legacy failed attempt"}))
+	records, err := tc.DB.UnresolvedLegacyReviews()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.NoError(t, tc.DB.ResolveLegacyReview(records[0].ID, json.RawMessage(`{"schema_version":2,"summary":"The provider was unavailable.","verdict":"unable_to_review","findings":[]}`)))
+	rows, err := tc.DB.GetPanelMemberReviews(runID)
+	require.NoError(t, err)
+	results := toReviewResults(rows)
+	require.Len(t, results, 1)
+	results[0] = results[0].ApplyMinSeverity("medium")
+	assert.Equal(t, storage.VerdictUnknown, results[0].Verdict)
+	assert.Empty(t, filterSucceeded(results))
+	synth := releaseAndClaimSynthesis(t, tc, runID)
+	tc.Pool.processJob(testWorkerID, synth)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "unable_to_review", review.StructuredOutput["verdict"])
+	assert.Equal(t, storage.VerdictUnknown, review.Verdict())
+}

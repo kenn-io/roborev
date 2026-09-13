@@ -3950,12 +3950,12 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	setupTestEnv(t)
 	tc := newWorkerTestContext(t, 1)
 	const agentName = "compact-verdict-agent"
-	const output = "## Critical Issues\n\n1. SQL injection in main.go:42"
+	const output = `{"schema_version":2,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","problem":"A record is lost.","fix":"Retain the record.","location":"file.go:12"}]}`
 
 	agent.Register(&agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return string(testutil.ReviewFixtureJSON(output)), nil
+			return output, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
