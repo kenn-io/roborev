@@ -48,11 +48,12 @@ type JobsPage struct {
 	NextCursor string
 }
 
-// ReviewRef identifies a review by job ID or by commit SHA. A positive JobID
-// takes precedence.
+// ReviewRef identifies a review by job ID, by commit ID, or by commit SHA.
+// A positive JobID takes precedence, then CommitID, then SHA.
 type ReviewRef struct {
-	JobID int64
-	SHA   string
+	JobID    int64
+	CommitID int64
+	SHA      string
 }
 
 // OutputLine mirrors the daemon's streamed output line format.

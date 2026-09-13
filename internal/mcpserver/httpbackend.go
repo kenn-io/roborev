@@ -136,9 +136,12 @@ func (b *HTTPBackend) GetJobOutput(ctx context.Context, jobID int64) (JobOutput,
 
 func reviewRefParams(ref ReviewRef) url.Values {
 	params := url.Values{}
-	if ref.JobID > 0 {
+	switch {
+	case ref.JobID > 0:
 		params.Set("job_id", strconv.FormatInt(ref.JobID, 10))
-	} else if ref.SHA != "" {
+	case ref.CommitID > 0:
+		params.Set("commit_id", strconv.FormatInt(ref.CommitID, 10))
+	case ref.SHA != "":
 		params.Set("sha", ref.SHA)
 	}
 	return params

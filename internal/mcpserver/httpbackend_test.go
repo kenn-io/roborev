@@ -152,3 +152,13 @@ func TestHTTPBackendJobOutputAndBranches(t *testing.T) {
 	assert.Equal("main", branches[0].Name)
 	assert.Equal("/repo", d.requests[1].Query().Get("repo"))
 }
+
+func TestHTTPBackendListCommentsByCommitID(t *testing.T) {
+	d, backend := newFakeDaemon(t)
+	d.routes["/api/comments"] = jsonResponse(http.StatusOK, `{"responses":[]}`)
+	_, err := backend.ListComments(t.Context(), ReviewRef{CommitID: 77, SHA: "ignored"})
+	require.NoError(t, err)
+	q := d.requests[0].Query()
+	assert.Equal(t, "77", q.Get("commit_id"))
+	assert.Empty(t, q.Get("sha"))
+}

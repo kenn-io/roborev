@@ -289,3 +289,98 @@ func TestGetJobOutputTailsLines(t *testing.T) {
 	result = callTool(t, session, "roborev_get_job_output", map[string]any{"job_id": 0})
 	assert.True(result.IsError)
 }
+
+func TestGetReviewDerivesFindingCountsFromStructuredOutput(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	failed := 0
+	backend := &fakeBackend{getReviewFn: func(context.Context, ReviewRef) (*storage.Review, error) {
+		return &storage.Review{
+			ID: 1, JobID: 2, Agent: "codex", Output: "findings", VerdictBool: &failed,
+			StructuredOutput: storage.StructuredOutput{
+				"schema_version": 2, "summary": "review", "verdict": "fail",
+				"findings": []any{
+					map[string]any{"severity": "high", "problem": "p", "fix": "f", "location": nil},
+					map[string]any{"severity": "low", "problem": "p", "fix": "f", "location": nil},
+					map[string]any{"severity": "low", "problem": "p", "fix": "f", "location": nil},
+				},
+			},
+		}, nil
+	}}
+	session := connectSession(t, backend)
+
+	result := callTool(t, session, "roborev_get_review", map[string]any{"job_id": 2})
+	require.False(result.IsError)
+	var out reviewOutput
+	decodeText(t, result, &out)
+	assert.Equal("fail", out.Verdict)
+	require.NotNil(out.FindingCounts)
+	assert.Equal(1, out.FindingCounts.High)
+	assert.Equal(2, out.FindingCounts.Low)
+}
+
+func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	commitID := int64(77)
+	var refs []ReviewRef
+	backend := &fakeBackend{
+		getReviewFn: func(_ context.Context, ref ReviewRef) (*storage.Review, error) {
+			if ref.SHA == "missing" {
+				return nil, NewError(ErrorCodeNotFound, "review not found")
+			}
+			return &storage.Review{JobID: 9, Job: &storage.ReviewJob{
+				ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
+			}}, nil
+		},
+		listCommentsFn: func(_ context.Context, ref ReviewRef) ([]storage.Response, error) {
+			refs = append(refs, ref)
+			switch {
+			case ref.JobID == 9:
+				return []storage.Response{
+					{ID: 2, Responder: "dev", Response: "job-linked", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
+				}, nil
+			case ref.CommitID == 77:
+				return []storage.Response{
+					{ID: 1, Responder: "dev", Response: "legacy", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+					{ID: 2, Responder: "dev", Response: "job-linked", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
+				}, nil
+			case ref.SHA == "missing":
+				return []storage.Response{{ID: 5, Responder: "dev", Response: "direct"}}, nil
+			}
+			return nil, nil
+		},
+	}
+	session := connectSession(t, backend)
+
+	result := callTool(t, session, "roborev_list_comments", map[string]any{"sha": "abc123"})
+	require.False(result.IsError)
+	var out listCommentsOutput
+	decodeText(t, result, &out)
+	require.Len(out.Comments, 2, "job-linked and legacy comments merged and deduplicated")
+	assert.Equal("legacy", out.Comments[0].Response)
+	assert.Equal("job-linked", out.Comments[1].Response)
+	assert.Equal([]ReviewRef{{JobID: 9}, {CommitID: 77}}, refs)
+
+	// Without a review, the reference is looked up directly.
+	result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": "missing"})
+	require.False(result.IsError)
+	decodeText(t, result, &out)
+	require.Len(out.Comments, 1)
+	assert.Equal("direct", out.Comments[0].Response)
+}
+
+func TestGetJobOutputReportsTotalLines(t *testing.T) {
+	backend := &fakeBackend{getJobOutputFn: func(_ context.Context, jobID int64) (JobOutput, error) {
+		lines := make([]OutputLine, maxOutputLines+5)
+		return JobOutput{JobID: jobID, Status: "done", Lines: lines}, nil
+	}}
+	session := connectSession(t, backend)
+	result := callTool(t, session, "roborev_get_job_output", map[string]any{"job_id": 1})
+	require.False(t, result.IsError)
+	var out jobOutputResult
+	decodeText(t, result, &out)
+	assert.Equal(t, maxOutputLines+5, out.TotalLines)
+	assert.Len(t, out.Lines, maxOutputLines)
+	assert.True(t, out.Truncated)
+}

@@ -97,8 +97,12 @@ func (b mcpBackend) GetReview(ctx context.Context, ref mcpserver.ReviewRef) (*st
 
 func (b mcpBackend) ListComments(ctx context.Context, ref mcpserver.ReviewRef) ([]storage.Response, error) {
 	input := &ListCommentsInput{JobID: -1, CommitID: -1, SHA: ref.SHA}
-	if ref.JobID > 0 {
+	switch {
+	case ref.JobID > 0:
 		input.JobID = ref.JobID
+		input.SHA = ""
+	case ref.CommitID > 0:
+		input.CommitID = ref.CommitID
 		input.SHA = ""
 	}
 	out, err := b.server.humaListComments(ctx, input)

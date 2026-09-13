@@ -95,7 +95,7 @@ The JSON form is an array, empty when no daemon has `[mcp]` enabled.
 | `roborev_list_jobs` | Review jobs (metadata only) filtered by repository, branch, status, job type, or closed state, with cursor paging |
 | `roborev_get_review` | Full review output, verdict, and finding counts for a job id or commit SHA |
 | `roborev_list_comments` | Developer responses attached to a review |
-| `roborev_get_job_output` | The agent's streamed output lines for a job, optionally tailed |
+| `roborev_get_job_output` | The last lines of the agent's streamed output for a job, at most 2,000, with the total line count |
 
 Job listings omit prompts and diffs. Review results omit the prompt and return
 `verdict` as `pass`, `fail`, or empty when no verdict exists yet.

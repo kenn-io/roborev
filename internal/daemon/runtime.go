@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -454,6 +455,43 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 		return nil, err
 	}
 	return pingInfoFromKit(info), nil
+}
+
+// ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
+// the full roborev ping payload, including fields the shared kit probe does
+// not model such as mcp_url.
+func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	if ep.Address == "" {
+		return nil, fmt.Errorf("empty daemon address")
+	}
+	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/ping", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ep.HTTPClient(timeout).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
+	}
+	var info PingInfo
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode daemon ping: %w", err)
+	}
+	if !info.OK {
+		return nil, errors.New("daemon ping returned ok=false")
+	}
+	if info.Service != daemonServiceName {
+		return nil, fmt.Errorf("unexpected daemon service %q", info.Service)
+	}
+	return &info, nil
 }
 
 // ProbeDaemonAlive checks if a daemon at the given endpoint is actually responding.

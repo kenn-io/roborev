@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +43,8 @@ func seedCompletedReview(t *testing.T, db *storage.DB, repoPath string) *storage
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt text", "No issues found."))
 	_, err = db.AddCommentToJob(job.ID, "dev", "thanks")
+	require.NoError(t, err)
+	_, err = db.AddComment(commit.ID, "dev", "legacy thanks")
 	require.NoError(t, err)
 	return job
 }
@@ -107,8 +111,9 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert.NotContains(review, "prompt")
 
 	comments := call("roborev_list_comments", map[string]any{"job_id": job.ID})["comments"].([]any)
-	require.Len(comments, 1)
+	require.Len(comments, 2, "job-linked and legacy commit-linked comments are merged")
 	assert.Equal("thanks", comments[0].(map[string]any)["response"])
+	assert.Equal("legacy thanks", comments[1].(map[string]any)["response"])
 
 	output := call("roborev_get_job_output", map[string]any{"job_id": job.ID})
 	assert.Equal("done", output["status"])
@@ -175,4 +180,41 @@ func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
 	disabled.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code)
 	assert.NotContains(w.Body.String(), "mcp_url")
+}
+
+func TestProbeDaemonPingKeepsMCPURL(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server, _ := newMCPTestServer(t, true)
+	httpSrv := httptest.NewServer(server.httpServer.Handler)
+	t.Cleanup(httpSrv.Close)
+	ep, err := ParseEndpoint(strings.TrimPrefix(httpSrv.URL, "http://"))
+	require.NoError(err)
+	server.endpointMu.Lock()
+	server.endpoint = ep
+	server.endpointMu.Unlock()
+
+	ping, err := ProbeDaemonPing(ep, 2*time.Second)
+	require.NoError(err)
+	assert.Equal(daemonServiceName, ping.Service)
+	assert.Equal(os.Getpid(), ping.PID)
+	assert.Equal(httpSrv.URL+mcpserver.HTTPPath, ping.MCPURL)
+
+	_, err = ProbeDaemonPing(DaemonEndpoint{Network: "tcp", Address: "10.0.0.1:7373"}, time.Second)
+	assert.Error(err, "non-loopback addresses are refused")
+}
+
+func TestMCPBackendCommentsByCommitID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server, db := newMCPTestServer(t, true)
+	job := seedCompletedReview(t, db, "/tmp/mcp-legacy-comments")
+	full, err := db.GetJobByID(job.ID)
+	require.NoError(err)
+	require.NotNil(full.CommitID)
+
+	comments, err := server.mcpBackend().ListComments(t.Context(), mcpserver.ReviewRef{CommitID: *full.CommitID})
+	require.NoError(err)
+	require.Len(comments, 1, "only the legacy commit-linked comment from the seed")
+	assert.Equal("legacy thanks", comments[0].Response)
 }

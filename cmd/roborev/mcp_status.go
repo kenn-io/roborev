@@ -23,7 +23,7 @@ type mcpListenerStatus struct {
 
 var (
 	mcpStatusListRuntimes = daemon.ListAllRuntimes
-	mcpStatusProbe        = daemon.ProbeDaemon
+	mcpStatusProbe        = daemon.ProbeDaemonPing
 )
 
 func mcpStatusCmd() *cobra.Command {

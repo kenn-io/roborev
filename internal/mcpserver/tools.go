@@ -127,15 +127,16 @@ type listCommentsOutput struct {
 
 type jobOutputInput struct {
 	JobID int64 `json:"job_id" jsonschema:"job id"`
-	Tail  int   `json:"tail,omitempty" jsonschema:"return only the last N lines; default all, max 2000"`
+	Tail  int   `json:"tail,omitempty" jsonschema:"return only the last N lines; default and maximum 2000"`
 }
 
 type jobOutputResult struct {
-	JobID     int64        `json:"job_id"`
-	Status    string       `json:"status"`
-	Lines     []OutputLine `json:"lines"`
-	Truncated bool         `json:"truncated"`
-	HasMore   bool         `json:"has_more"`
+	JobID      int64        `json:"job_id"`
+	Status     string       `json:"status"`
+	Lines      []OutputLine `json:"lines"`
+	TotalLines int          `json:"total_lines"`
+	Truncated  bool         `json:"truncated"`
+	HasMore    bool         `json:"has_more"`
 }
 
 func (s *Server) registerTools() {
@@ -169,8 +170,9 @@ func (s *Server) registerTools() {
 	}, wrapTool(s.listComments))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_get_job_output",
-		Description: "Return the agent's streamed output lines for a job. " +
-			"Useful for running or failed jobs; completed reviews are better read with roborev_get_review.",
+		Description: "Return the last lines of the agent's streamed output for a job (at most 2000; " +
+			"total_lines reports how many exist). Useful for running or failed jobs; " +
+			"completed reviews are better read with roborev_get_review.",
 	}, wrapTool(s.getJobOutput))
 }
 
@@ -315,6 +317,9 @@ func (s *Server) getReview(ctx context.Context, in reviewRefInput) (reviewOutput
 		out.Verdict = row.Verdict
 		out.FindingCounts = row.FindingCounts
 	}
+	if out.FindingCounts == nil {
+		out.FindingCounts = findingCountsFromStructured(review.StructuredOutput)
+	}
 	if out.Verdict == "" && review.VerdictBool != nil {
 		if *review.VerdictBool == 1 {
 			out.Verdict = "pass"
@@ -330,7 +335,7 @@ func (s *Server) listComments(ctx context.Context, in reviewRefInput) (listComme
 	if err != nil {
 		return listCommentsOutput{}, err
 	}
-	responses, err := s.backend.ListComments(ctx, ref)
+	responses, err := s.allComments(ctx, ref)
 	if err != nil {
 		return listCommentsOutput{}, err
 	}
@@ -356,6 +361,7 @@ func (s *Server) getJobOutput(ctx context.Context, in jobOutputInput) (jobOutput
 		return jobOutputResult{}, err
 	}
 	lines := output.Lines
+	total := len(lines)
 	keep := maxOutputLines
 	if in.Tail > 0 && in.Tail < keep {
 		keep = in.Tail
@@ -369,12 +375,60 @@ func (s *Server) getJobOutput(ctx context.Context, in jobOutputInput) (jobOutput
 		lines = []OutputLine{}
 	}
 	return jobOutputResult{
-		JobID:     output.JobID,
-		Status:    output.Status,
-		Lines:     lines,
-		Truncated: truncated,
-		HasMore:   output.HasMore,
+		JobID:      output.JobID,
+		Status:     output.Status,
+		Lines:      lines,
+		TotalLines: total,
+		Truncated:  truncated,
+		HasMore:    output.HasMore,
 	}, nil
+}
+
+// allComments merges job-linked comments with legacy commit-linked comments
+// for the same review, so callers see the full conversation regardless of
+// which linkage each comment used. When no review resolves, the reference is
+// looked up directly.
+func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Response, error) {
+	review, err := s.backend.GetReview(ctx, ref)
+	if err != nil {
+		if errorCode(err) == ErrorCodeNotFound {
+			return s.backend.ListComments(ctx, ref)
+		}
+		return nil, err
+	}
+	responses, err := s.backend.ListComments(ctx, ReviewRef{JobID: review.JobID})
+	if err != nil {
+		return nil, err
+	}
+	if review.Job == nil {
+		return responses, nil
+	}
+	commitID, sha := review.Job.LegacyCommentLookupTarget()
+	if commitID == 0 && sha == "" {
+		return responses, nil
+	}
+	legacy, err := s.backend.ListComments(ctx, ReviewRef{CommitID: commitID, SHA: sha})
+	if err != nil {
+		if errorCode(err) == ErrorCodeNotFound {
+			return responses, nil
+		}
+		return nil, err
+	}
+	return storage.MergeResponses(responses, legacy), nil
+}
+
+// findingCountsFromStructured derives severity counts from the stored
+// structured review document when the job projection did not carry them.
+func findingCountsFromStructured(structured storage.StructuredOutput) *storage.FindingCounts {
+	if len(structured) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(structured)
+	if err != nil {
+		return nil
+	}
+	text := string(raw)
+	return storage.ReviewFindingCounts(&text)
 }
 
 func (in reviewRefInput) ref() (ReviewRef, error) {
