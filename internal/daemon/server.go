@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -187,6 +188,10 @@ func newServerWithLogs(
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
 	s.registerAgentHookRoutes(mux)
+	if cfg.MCP.Enabled {
+		mcpServer := mcpserver.New(s.mcpBackend(), version.Version)
+		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
+	}
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -3704,6 +3709,41 @@ func (s *Server) humaActivity(
 	return resp, nil
 }
 
+// jobOutputSnapshot returns the accumulated output for a job, falling back
+// to the persisted log once the job has finished.
+func (s *Server) jobOutputSnapshot(jobID int64) (JobOutputResponse, error) {
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		return JobOutputResponse{}, huma.Error404NotFound("job not found")
+	}
+	return s.jobOutputResponse(job), nil
+}
+
+func (s *Server) jobOutputResponse(job *storage.ReviewJob) JobOutputResponse {
+	lines := s.workerPool.GetJobOutput(job.ID)
+	if len(lines) == 0 && jobStatusHasPersistedOutput(job.Status) {
+		normalizerAgent := agent.CanonicalName(job.Agent)
+		if review, reviewErr := s.db.GetReviewByJobID(job.ID); reviewErr == nil && review.Agent != "" {
+			normalizerAgent = agent.CanonicalName(review.Agent)
+		}
+		persisted, err := readNormalizedJobOutputForAttempt(
+			job.ID, normalizerAgent, job.StartedAt,
+		)
+		if err == nil {
+			lines = persisted
+		}
+	}
+	if lines == nil {
+		lines = []OutputLine{}
+	}
+	return JobOutputResponse{
+		JobID:   job.ID,
+		Status:  string(job.Status),
+		Lines:   lines,
+		HasMore: job.Status == storage.JobStatusRunning,
+	}
+}
+
 func (s *Server) humaJobOutput(
 	ctx context.Context, input *JobOutputInput,
 ) (*huma.StreamResponse, error) {
@@ -3723,28 +3763,7 @@ func (s *Server) humaJobOutput(
 		}
 
 		if input.Stream != "1" {
-			lines := s.workerPool.GetJobOutput(jobID)
-			if len(lines) == 0 && jobStatusHasPersistedOutput(job.Status) {
-				normalizerAgent := agent.CanonicalName(job.Agent)
-				if review, reviewErr := s.db.GetReviewByJobID(jobID); reviewErr == nil && review.Agent != "" {
-					normalizerAgent = agent.CanonicalName(review.Agent)
-				}
-				persisted, err := readNormalizedJobOutputForAttempt(
-					jobID, normalizerAgent, job.StartedAt,
-				)
-				if err == nil {
-					lines = persisted
-				}
-			}
-			if lines == nil {
-				lines = []OutputLine{}
-			}
-			writeHumaJSON(hctx, http.StatusOK, JobOutputResponse{
-				JobID:   jobID,
-				Status:  string(job.Status),
-				Lines:   lines,
-				HasMore: job.Status == storage.JobStatusRunning,
-			})
+			writeHumaJSON(hctx, http.StatusOK, s.jobOutputResponse(job))
 			return
 		}
 

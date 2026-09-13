@@ -1,0 +1,152 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/storage"
+)
+
+// mcpBackend serves MCP tools from the daemon's own handlers so the HTTP
+// transport mounted on the API listener shares one database connection and
+// one set of read semantics with the CLI-facing API.
+type mcpBackend struct {
+	server *Server
+}
+
+func (s *Server) mcpBackend() mcpserver.Backend {
+	return mcpBackend{server: s}
+}
+
+func (b mcpBackend) Status(ctx context.Context) (*storage.DaemonStatus, error) {
+	out, err := b.server.humaGetStatus(ctx, &GetStatusInput{})
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return &out.Body, nil
+}
+
+func (b mcpBackend) ListRepos(ctx context.Context, q mcpserver.ReposQuery) ([]storage.RepoWithCount, error) {
+	out, err := b.server.humaListRepos(ctx, &ListReposInput{Prefix: q.Prefix, Branch: q.Branch})
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return out.Body.Repos, nil
+}
+
+func (b mcpBackend) ListBranches(ctx context.Context, repoPath string) ([]storage.BranchWithCount, error) {
+	out, err := b.server.humaListBranches(ctx, &ListBranchesInput{Repo: []string{repoPath}})
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return out.Body.Branches, nil
+}
+
+func (b mcpBackend) ListJobs(ctx context.Context, q mcpserver.JobsQuery) (mcpserver.JobsPage, error) {
+	// Mirror the query defaults Huma applies when a parameter is absent so the
+	// in-process path lists exactly like GET /api/jobs.
+	input := &ListJobsInput{
+		ID:              -1,
+		Status:          q.Status,
+		Branch:          q.Branch,
+		JobType:         q.JobType,
+		OmitPrompt:      "true",
+		IncludeFindings: "true",
+		Limit:           limitNotProvided,
+		Offset:          -1,
+		Before:          -1,
+		Cursor:          q.Cursor,
+	}
+	if q.RepoPath != "" {
+		input.Repo = []string{q.RepoPath}
+	}
+	if q.Closed != nil {
+		input.Closed = strconv.FormatBool(*q.Closed)
+	}
+	if q.Limit > 0 {
+		input.Limit = q.Limit
+	}
+	out, err := b.server.humaListJobs(ctx, input)
+	if err != nil {
+		return mcpserver.JobsPage{}, mcpError(err)
+	}
+	page := mcpserver.JobsPage{Jobs: out.Body.Jobs, HasMore: out.Body.HasMore}
+	if out.Body.NextCursor != nil {
+		page.NextCursor = *out.Body.NextCursor
+	}
+	return page, nil
+}
+
+func (b mcpBackend) GetReview(ctx context.Context, ref mcpserver.ReviewRef) (*storage.Review, error) {
+	input := &GetReviewInput{JobID: -1, SHA: ref.SHA}
+	if ref.JobID > 0 {
+		input.JobID = ref.JobID
+		input.SHA = ""
+	}
+	out, err := b.server.humaGetReview(ctx, input)
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return out.Body, nil
+}
+
+func (b mcpBackend) ListComments(ctx context.Context, ref mcpserver.ReviewRef) ([]storage.Response, error) {
+	input := &ListCommentsInput{JobID: -1, CommitID: -1, SHA: ref.SHA}
+	if ref.JobID > 0 {
+		input.JobID = ref.JobID
+		input.SHA = ""
+	}
+	out, err := b.server.humaListComments(ctx, input)
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return out.Body.Responses, nil
+}
+
+func (b mcpBackend) GetJobOutput(_ context.Context, jobID int64) (mcpserver.JobOutput, error) {
+	snapshot, err := b.server.jobOutputSnapshot(jobID)
+	if err != nil {
+		return mcpserver.JobOutput{}, mcpError(err)
+	}
+	lines := make([]mcpserver.OutputLine, 0, len(snapshot.Lines))
+	for _, line := range snapshot.Lines {
+		lines = append(lines, mcpserver.OutputLine{
+			Timestamp: line.Timestamp,
+			Text:      line.Text,
+			Type:      line.Type,
+		})
+	}
+	return mcpserver.JobOutput{
+		JobID:   snapshot.JobID,
+		Status:  snapshot.Status,
+		Lines:   lines,
+		HasMore: snapshot.HasMore,
+	}, nil
+}
+
+// mcpError maps Huma status errors onto the stable MCP error codes.
+func mcpError(err error) error {
+	statusErr, ok := errors.AsType[huma.StatusError](err)
+	if !ok {
+		return mcpserver.NewError(mcpserver.ErrorCodeInternal, err.Error())
+	}
+	message := statusErr.Error()
+	if model, ok := errors.AsType[*huma.ErrorModel](err); ok && model.Detail != "" {
+		message = model.Detail
+	}
+	switch statusErr.GetStatus() {
+	case http.StatusNotFound:
+		return mcpserver.NewError(mcpserver.ErrorCodeNotFound, message)
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return mcpserver.NewError(mcpserver.ErrorCodeInvalidArgument, message)
+	case http.StatusServiceUnavailable, http.StatusConflict:
+		return mcpserver.NewError(mcpserver.ErrorCodeUnavailable, message)
+	default:
+		return mcpserver.NewError(mcpserver.ErrorCodeInternal, message)
+	}
+}

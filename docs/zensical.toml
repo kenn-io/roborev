@@ -47,6 +47,7 @@ nav = [
   {"Integrations" = [
     {"Kata" = "integrations/kata.md"},
     {"Claude Chic" = "integrations/claudechic.md"},
+    {"MCP Server" = "integrations/mcp.md"},
   ]},
   {"Troubleshooting" = "guides/troubleshooting.md"},
   {"Development" = "development.md"},

@@ -48,6 +48,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 | `internal/git/` | Shared git helpers for refs, diffs, branch logic, repo discovery | `git.go` |
 | `internal/worktree/` | Temporary worktree creation, patch capture/apply/check | `worktree.go` |
 | `internal/skills/` | Embedded Codex/Claude skill files and installer logic | `skills.go`, `internal/skills/claude/`, `internal/skills/codex/` |
+| `internal/mcpserver/` | Read-only MCP server: tools, guidance resource, HTTP-API backend for stdio | `server.go`, `tools.go`, `backend.go`, `httpbackend.go` |
 | `internal/streamfmt/` | Formatting streamed agent output for CLI and TUI | `streamfmt.go`, `render.go` |
 | `internal/githook/` | Hook install/upgrade logic | `githook.go` |
 | `internal/github/` | GitHub REST helpers used by CI/comment flows | `comment.go` |

@@ -1049,7 +1049,7 @@ The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
 **Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, and the `[sync]` section.
+`[web]` section, the `[mcp]` section, and the `[sync]` section.
 
 ### Browser Application
 
@@ -1142,6 +1142,20 @@ browser access needs to be configured instead of opening a dead URL.
 See [Browser UI](/docs/web-ui/) for the exact installed-user workflow, a
 Tailscale Serve recipe, browser-session behavior, and the analytics metric
 definitions.
+
+### MCP Server
+
+The daemon can serve a read-only
+[Model Context Protocol](/docs/integrations/mcp/) endpoint at `/mcp` on its API
+listener. It is off by default:
+
+```toml
+[mcp]
+enabled = true
+```
+
+Enabling it requires a daemon restart. The stdio transport, `roborev mcp serve`,
+needs no configuration.
 
 ### Data Directory
 

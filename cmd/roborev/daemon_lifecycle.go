@@ -25,6 +25,10 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+// lifecycleOut receives daemon start/restart notices. Commands whose stdout is
+// a protocol stream (roborev mcp serve) point it at stderr.
+var lifecycleOut io.Writer = os.Stdout
+
 var (
 	// Polling intervals for waitForJob - exposed for testing
 	pollStartInterval = 1 * time.Second
@@ -243,20 +247,20 @@ func ensureDaemon() error {
 					return fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, err)
 				}
 				if verbose {
-					fmt.Printf("Daemon probe failed, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
 				}
 				return restartDaemonForEnsure()
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
-					fmt.Printf("Daemon version unknown, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
 				}
 				return restartDaemonForEnsure()
 			}
 			if daemonVersion != version.Version {
 				if verbose {
-					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
+					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
 				}
 				return restartDaemonForEnsure()
 			}
@@ -273,13 +277,13 @@ func ensureDaemon() error {
 		if !skipVersionCheck {
 			if probe.Version == "" {
 				if verbose {
-					fmt.Printf("Daemon version unknown, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
 				}
 				return restartDaemonForEnsure()
 			}
 			if probe.Version != version.Version {
 				if verbose {
-					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
+					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
 				}
 				return restartDaemonForEnsure()
 			}
@@ -300,7 +304,7 @@ func ensureDaemon() error {
 
 func startDaemon() error {
 	if verbose {
-		fmt.Println("Starting daemon...")
+		fmt.Fprintln(lifecycleOut, "Starting daemon...")
 	}
 
 	// Persist any pending queue-pause state before the daemon's workers start.
@@ -461,7 +465,7 @@ func restartDaemon() error {
 			break
 		}
 		if lastErr != nil && verbose {
-			fmt.Printf("Warning: WAL checkpoint failed: %v\n", lastErr)
+			fmt.Fprintf(lifecycleOut, "Warning: WAL checkpoint failed: %v\n", lastErr)
 		}
 	}
 

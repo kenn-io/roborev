@@ -62,6 +62,7 @@ func main() {
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(uiCmd())
+	rootCmd.AddCommand(mcpCmd())
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
 	rootCmd.AddCommand(analyzeCmd())

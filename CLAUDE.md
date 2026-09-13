@@ -57,6 +57,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/githook/` | Git hook installation/management |
 | `internal/ghaction/` | GitHub Actions integration |
 | `internal/kata/` | Kata task-ledger client (CLI shell-out), ref parsing, context resolution |
+| `internal/mcpserver/` | Read-only MCP server (stdio via CLI, streamable HTTP mounted on the daemon at `/mcp`) |
 | `internal/skills/` | Agent skill discovery and management |
 | `internal/streamfmt/` | Streaming output formatting |
 | `internal/testutil/` | Test helpers (TestRepo, HTTP fixtures) |
@@ -81,6 +82,9 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/config/config.go` | Config/RepoConfig structs, Resolve* functions |
 | `internal/prompt/prompt.go` | Prompt builder (single, range, dirty) |
 | `internal/worktree/worktree.go` | Worktree create/patch-capture/apply |
+| `internal/mcpserver/server.go` | MCP server construction, HTTP handler, stdio runner |
+| `internal/daemon/mcp_backend.go` | In-process MCP backend calling daemon handlers; `/mcp` mount |
+| `cmd/roborev/mcp_cmd.go` | `roborev mcp serve` stdio command |
 | `internal/review/synthesis.go` | Multi-agent review synthesis for CI |
 | `internal/gitlab/client.go` | GitLab client, token and API base-URL resolution |
 | `internal/gitlab/comment.go` | MR note upsert, quick-action escaping, create recovery |

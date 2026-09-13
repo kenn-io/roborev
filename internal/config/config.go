@@ -156,6 +156,12 @@ type WebConfig struct {
 	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }
 
+// MCPConfig controls the read-only Model Context Protocol endpoint served by
+// the daemon.
+type MCPConfig struct {
+	Enabled bool `toml:"enabled" comment:"Serve the read-only MCP endpoint at /mcp on the daemon API listener. Requires a daemon restart."`
+}
+
 // ResolvedTimeout returns the HTTP usage lookup timeout.
 func (c CostConfig) ResolvedTimeout() time.Duration {
 	const defaultTimeout = 10 * time.Second
@@ -358,6 +364,9 @@ type Config struct {
 
 	// Browser application configuration
 	Web WebConfig `toml:"web"`
+
+	// Read-only MCP endpoint served on the daemon API listener
+	MCP MCPConfig `toml:"mcp"`
 
 	// Agent-specific behavior
 	Agent AgentConfig `toml:"agent"`
