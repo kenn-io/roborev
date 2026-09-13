@@ -39,7 +39,7 @@ func seedCompletedReview(t *testing.T, db *storage.DB, repoPath string) *storage
 	require.NoError(t, err)
 	_, err = db.ClaimJob("mcp-worker")
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt text", "No issues found.\n\nVerdict: PASS"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt text", "No issues found."))
 	_, err = db.AddCommentToJob(job.ID, "dev", "thanks")
 	require.NoError(t, err)
 	return job
