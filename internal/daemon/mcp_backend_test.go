@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,8 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
-	job := seedCompletedReview(t, db, "/tmp/mcp-repo")
+	repoPath := filepath.ToSlash(t.TempDir())
+	job := seedCompletedReview(t, db, repoPath)
 
 	httpSrv := httptest.NewServer(server.httpServer.Handler)
 	t.Cleanup(httpSrv.Close)
@@ -91,13 +93,13 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 
 	repos := call("roborev_list_repos", nil)["repos"].([]any)
 	require.Len(repos, 1)
-	assert.Equal("/tmp/mcp-repo", repos[0].(map[string]any)["root_path"])
+	assert.Equal(repoPath, repos[0].(map[string]any)["root_path"])
 
-	branches := call("roborev_list_branches", map[string]any{"repo_path": "/tmp/mcp-repo"})["branches"].([]any)
+	branches := call("roborev_list_branches", map[string]any{"repo_path": repoPath})["branches"].([]any)
 	require.Len(branches, 1)
 	assert.Equal("main", branches[0].(map[string]any)["name"])
 
-	jobsOut := call("roborev_list_jobs", map[string]any{"repo_path": "/tmp/mcp-repo", "status": "done"})
+	jobsOut := call("roborev_list_jobs", map[string]any{"repo_path": repoPath, "status": "done"})
 	jobs := jobsOut["jobs"].([]any)
 	require.Len(jobs, 1)
 	row := jobs[0].(map[string]any)
@@ -137,7 +139,7 @@ func TestMCPBackendListJobsMatchesHTTPDefaults(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
-	seedCompletedReview(t, db, "/tmp/mcp-defaults")
+	seedCompletedReview(t, db, t.TempDir())
 
 	page, err := server.mcpBackend().ListJobs(t.Context(), mcpserver.JobsQuery{})
 	require.NoError(err)
@@ -208,7 +210,7 @@ func TestMCPBackendCommentsByCommitID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
-	job := seedCompletedReview(t, db, "/tmp/mcp-legacy-comments")
+	job := seedCompletedReview(t, db, t.TempDir())
 	full, err := db.GetJobByID(job.ID)
 	require.NoError(err)
 	require.NotNil(full.CommitID)
