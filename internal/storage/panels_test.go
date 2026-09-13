@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -1097,4 +1098,53 @@ func TestMaybeReleasePanelSynthesisIgnoresNonVotingMembers(t *testing.T) {
 	stuck, err := db.ListStuckPanelRuns()
 	require.NoError(t, err)
 	assert.NotContains(t, stuck, runID)
+}
+
+// TestJobReadPathsReturnNonVoting verifies every job read path hydrates the
+// synced non_voting column: the shared column lists guarantee a new job column
+// cannot be missed by one query and silently read as false.
+func TestJobReadPathsReturnNonVoting(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/read-paths")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	runID := testUUID("run-read-paths")
+	observer, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+		JobType: JobTypeReview, PanelRunUUID: &runID, PanelRole: "member",
+		PanelName: "trial", PanelMemberName: "observer", PanelMemberIndex: 0, NonVoting: true,
+	})
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.True(claimed.NonVoting, "ClaimJob")
+	require.NoError(t, db.CompleteJob(claimed.ID, "test", "p",
+		`{"schema_version":2,"summary":"ok","verdict":"pass","findings":[]}`))
+
+	byID, err := db.GetJobByID(observer.ID)
+	require.NoError(t, err)
+	assert.True(byID.NonVoting, "GetJobByID")
+
+	listed, err := db.ListJobs("", "", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.True(listed[0].NonVoting, "ListJobs")
+
+	members, err := db.GetPanelMembers(runID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.True(members[0].NonVoting, "GetPanelMembers")
+
+	review, err := db.GetReviewByJobID(observer.ID)
+	require.NoError(t, err)
+	require.NotNil(t, review.Job)
+	assert.True(review.Job.NonVoting, "GetReviewByJobID")
+	assert.True(strings.HasPrefix(review.Output, NonVotingBanner), "banner composed at read time")
+
+	batch, err := db.GetJobsWithReviewsByIDs([]int64{observer.ID})
+	require.NoError(t, err)
+	assert.True(batch[observer.ID].Job.NonVoting, "GetJobsWithReviewsByIDs")
 }

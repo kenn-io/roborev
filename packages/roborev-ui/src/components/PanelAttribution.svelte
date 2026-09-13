@@ -16,7 +16,11 @@
     <ul>
       {#each members as member (member.id)}
         <li>
-          <span>{member.panel_member_name || member.agent}</span>
+          <span
+            >{member.panel_member_name || member.agent}{member.non_voting
+              ? " (non-voting)"
+              : ""}</span
+          >
           <VerdictBadge verdict={member.verdict} />
         </li>
       {/each}

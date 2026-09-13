@@ -561,9 +561,9 @@ func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'),
-		    finished_at = datetime('now'), source_machine_id = 'remote-machine',
+		    finished_at = datetime('now'), source_machine_id = ?,
 		    synced_at = datetime('now')
-		WHERE id = ?`, job.ID)
+		WHERE id = ?`, testUUID("remote-machine"), job.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, db.ReenqueueJob(job.ID, ReenqueueOpts{}))

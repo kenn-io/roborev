@@ -836,3 +836,18 @@ func TestRerunPanelPreservesTarget(t *testing.T) {
 		}
 	})
 }
+
+// TestRerunPanelPreservesNonVotingMember verifies a rerun clones a non-voting
+// member as non-voting: an advisory trial must never become a voter because the
+// panel was run again.
+func TestRerunPanelPreservesNonVotingMember(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	oldRunUUID, members, synth := enqueueServerPanelRun(t, db, 2)
+	_, err := db.Exec("UPDATE review_jobs SET non_voting = 1 WHERE id = ?", members[1].ID)
+	require.NoError(t, err)
+
+	_, newMembers := rerunAndLoadNewRun(t, server, db, oldRunUUID, synth.ID)
+	require.Len(t, newMembers, 2)
+	assert.False(t, newMembers[0].NonVoting)
+	assert.True(t, newMembers[1].NonVoting, "rerun must keep the member non-voting")
+}

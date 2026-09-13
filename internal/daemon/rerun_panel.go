@@ -279,6 +279,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID uuid.UUID, diff string, d
 		PanelMemberName:       m.PanelMemberName,
 		PanelMemberIndex:      m.PanelMemberIndex,
 		PanelMemberConfigJSON: m.PanelMemberConfigJSON,
+		NonVoting:             m.NonVoting,
 	}
 }
 
