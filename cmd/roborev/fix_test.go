@@ -148,7 +148,8 @@ func TestBuildBatchFixPromptSplitsMixedResponses(t *testing.T) {
 			jobID: 1,
 			job:   &storage.ReviewJob{GitRef: "abc123"},
 			review: &storage.Review{
-				Output: "Found HIGH bug in foo.go",
+				VerdictBool: testutil.ReviewFixtureVerdict("Found HIGH bug in foo.go"),
+				Output:      "Found HIGH bug in foo.go",
 			},
 			comments: []storage.Response{
 				{Responder: "roborev-refine", Response: "Created commit def456", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
@@ -199,7 +200,8 @@ func TestBuildBatchFixPromptWithCommitMetadata(t *testing.T) {
 		jobID: 1,
 		job:   &storage.ReviewJob{GitRef: "abc123"},
 		review: &storage.Review{
-			Output: "Found bug in foo.go",
+			VerdictBool: testutil.ReviewFixtureVerdict("Found bug in foo.go"),
+			Output:      "Found bug in foo.go",
 		},
 	}}
 	metadata := config.FixCommitMetadata{
@@ -290,7 +292,8 @@ func TestBuildBatchFixPromptWithFixGuidelines(t *testing.T) {
 		jobID: 1,
 		job:   &storage.ReviewJob{GitRef: "abc123"},
 		review: &storage.Review{
-			Output: "Finding text",
+			VerdictBool: testutil.ReviewFixtureVerdict("Finding text"),
+			Output:      "Finding text",
 		},
 	}}
 	got := buildBatchFixPromptWithMetadata(entries, "", config.FixCommitMetadata{}, policy)
@@ -309,14 +312,16 @@ func TestBuildBatchFixPromptRequestsPerJobDispositionWithGuidelines(t *testing.T
 			jobID: 41,
 			job:   &storage.ReviewJob{GitRef: "abc123"},
 			review: &storage.Review{
-				Output: "First finding",
+				VerdictBool: testutil.ReviewFixtureVerdict("First finding"),
+				Output:      "First finding",
 			},
 		},
 		{
 			jobID: 42,
 			job:   &storage.ReviewJob{GitRef: "def456"},
 			review: &storage.Review{
-				Output: "Second finding",
+				VerdictBool: testutil.ReviewFixtureVerdict("Second finding"),
+				Output:      "Second finding",
 			},
 		},
 	}
@@ -413,8 +418,9 @@ func TestFetchReview(t *testing.T) {
 			name:       "success",
 			statusCode: http.StatusOK,
 			review: &storage.Review{
-				JobID:  42,
-				Output: "Analysis output here",
+				VerdictBool: testutil.ReviewFixtureVerdict("Analysis output here"),
+				JobID:       42,
+				Output:      "Analysis output here",
 			},
 		},
 		{
@@ -822,7 +828,9 @@ func TestFixSingleJobRecordsSkippedOutcomeBeforeClosing(t *testing.T) {
 			}}})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Finding"), JobID: 99, Output: "Finding",
+			})
 		}).
 		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, map[string]any{"responses": []storage.Response{}})
@@ -879,7 +887,9 @@ func TestProcessFixBatchKeepsJobOpenWhenOutcomeCommentFails(t *testing.T) {
 			}}})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Finding"), JobID: 99, Output: "Finding",
+			})
 		}).
 		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, map[string]any{"responses": []storage.Response{}})
@@ -929,7 +939,9 @@ func TestProcessFixBatchPreservesLegacyCloseWhenCommentFailsWithoutGuidelines(t 
 			}}})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Finding"), JobID: 99, Output: "Finding",
+			})
 		}).
 		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, map[string]any{"responses": []storage.Response{}})
@@ -981,7 +993,9 @@ func TestProcessFixBatchUsesNeutralStatusForMixedPolicyOutcome(t *testing.T) {
 			if r.URL.Query().Get("job_id") == "100" {
 				jobID = 100
 			}
-			writeJSON(w, storage.Review{JobID: jobID, Output: "Finding"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Finding"), JobID: jobID, Output: "Finding",
+			})
 		}).
 		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, map[string]any{"responses": []storage.Response{}})
@@ -1163,7 +1177,9 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 			})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("## Issues\n- Found minor issue"), Output: "## Issues\n- Found minor issue",
+			})
 			// Simulate daemon death after responding
 			daemonDead.Store(true)
 			removeAllDaemonFiles(t)
@@ -1398,7 +1414,9 @@ func TestRunFixOpen(t *testing.T) {
 			}).
 			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 				reviewCalls.Add(1)
-				writeJSON(w, storage.Review{Output: "findings"})
+				writeJSON(w, storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+				})
 			}).
 			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 				closeCalls.Add(1)
@@ -1512,7 +1530,9 @@ func TestRunFixOpen(t *testing.T) {
 			}).
 			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 				reviewCalls.Add(1)
-				writeJSON(w, storage.Review{Output: "findings"})
+				writeJSON(w, storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+				})
 			}).
 			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -1587,7 +1607,9 @@ func TestRunFixOpen(t *testing.T) {
 			}).
 			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 				reviewCalls.Add(1)
-				writeJSON(w, storage.Review{Output: "findings"})
+				writeJSON(w, storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+				})
 			}).
 			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -1683,7 +1705,9 @@ func TestRunFixOpenOrdering(t *testing.T) {
 				}
 			}).
 			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-				writeJSON(w, storage.Review{Output: "findings"})
+				writeJSON(w, storage.Review{
+					VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+				})
 			}).
 			WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusCreated)
@@ -1771,7 +1795,9 @@ func TestRunFixOpenRequery(t *testing.T) {
 			}
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
@@ -1830,7 +1856,9 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 				"has_more": false,
 			})
 		case "/api/review":
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		case "/api/comment":
 			w.WriteHeader(http.StatusCreated)
 		case "/api/review/close":
@@ -1872,7 +1900,9 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 			})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
@@ -2066,14 +2096,18 @@ func TestFixJobDirect_RetryPreservesInitialAndFinalAgentOutput(t *testing.T) {
 func TestBuildBatchFixPrompt(t *testing.T) {
 	entries := []batchEntry{
 		{
-			jobID:  123,
-			job:    &storage.ReviewJob{GitRef: "abc123def456", JobType: storage.JobTypeReview},
-			review: &storage.Review{Output: "Found bug in foo.go"},
+			jobID: 123,
+			job:   &storage.ReviewJob{GitRef: "abc123def456", JobType: storage.JobTypeReview},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Found bug in foo.go"), Output: "Found bug in foo.go",
+			},
 		},
 		{
-			jobID:  456,
-			job:    &storage.ReviewJob{GitRef: "deadbeef1234", JobType: storage.JobTypeReview},
-			review: &storage.Review{Output: "Missing error check in bar.go"},
+			jobID: 456,
+			job:   &storage.ReviewJob{GitRef: "deadbeef1234", JobType: storage.JobTypeReview},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Missing error check in bar.go"), Output: "Missing error check in bar.go",
+			},
 		},
 	}
 
@@ -2100,9 +2134,11 @@ func TestBuildBatchFixPrompt(t *testing.T) {
 func TestBuildBatchFixPromptSingleEntry(t *testing.T) {
 	entries := []batchEntry{
 		{
-			jobID:  7,
-			job:    &storage.ReviewJob{GitRef: "aaa"},
-			review: &storage.Review{Output: "one issue"},
+			jobID: 7,
+			job:   &storage.ReviewJob{GitRef: "aaa"},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("one issue"), Output: "one issue",
+			},
 		},
 	}
 
@@ -2113,9 +2149,11 @@ func TestBuildBatchFixPromptSingleEntry(t *testing.T) {
 func TestSplitIntoBatches(t *testing.T) {
 	makeEntry := func(id int64, outputSize int) batchEntry {
 		return batchEntry{
-			jobID:  id,
-			job:    &storage.ReviewJob{GitRef: fmt.Sprintf("sha%d", id)},
-			review: &storage.Review{Output: strings.Repeat("x", outputSize)},
+			jobID: id,
+			job:   &storage.ReviewJob{GitRef: fmt.Sprintf("sha%d", id)},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict(strings.Repeat("x", outputSize)), Output: strings.Repeat("x", outputSize),
+			},
 		}
 	}
 
@@ -2986,13 +3024,15 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			jobID := r.URL.Query().Get("job_id")
 			if jobID == "10" {
 				writeJSON(w, storage.Review{
-					JobID:  10,
-					Output: "No issues found.",
+					VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+					JobID:       10,
+					Output:      "No issues found.",
 				})
 			} else {
 				writeJSON(w, storage.Review{
-					JobID:  20,
-					Output: "## Issues\n- Bug in foo.go",
+					VerdictBool: testutil.ReviewFixtureVerdict("## Issues\n- Bug in foo.go"),
+					JobID:       20,
+					Output:      "## Issues\n- Bug in foo.go",
 				})
 			}
 		}).
@@ -3085,7 +3125,9 @@ func TestRunFixBatchRequery(t *testing.T) {
 			})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
@@ -3144,7 +3186,9 @@ func setupFixErrorMockDaemon(t *testing.T, processedJobs *[]int64, mu *sync.Mute
 			})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -3590,9 +3634,11 @@ func TestBuildGenericFixPromptMinSeverity(t *testing.T) {
 func TestBuildBatchFixPromptMinSeverity(t *testing.T) {
 	entries := []batchEntry{
 		{
-			jobID:  1,
-			job:    &storage.ReviewJob{GitRef: "abc123"},
-			review: &storage.Review{Output: "issue found"},
+			jobID: 1,
+			job:   &storage.ReviewJob{GitRef: "abc123"},
+			review: &storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("issue found"), Output: "issue found",
+			},
 		},
 	}
 
@@ -4042,7 +4088,9 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			reviewCalls.Add(1)
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
@@ -4141,7 +4189,9 @@ func TestRunFixOpenExcludesMergedBranchJobs(t *testing.T) {
 			}
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "findings"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("findings"), Output: "findings",
+			})
 		}).
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
@@ -4437,8 +4487,9 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 			}
 			mu.Unlock()
 			writeJSON(w, storage.Review{
-				JobID:  10,
-				Output: "## Issues\n- Bug",
+				VerdictBool: testutil.ReviewFixtureVerdict("## Issues\n- Bug"),
+				JobID:       10,
+				Output:      "## Issues\n- Bug",
 			})
 		}).
 		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
@@ -4544,7 +4595,9 @@ func TestRunFixWithSeenDiscoveryAbortsOnAgentLimit(t *testing.T) {
 			})
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{Output: "## Issues\n- Bug"})
+			writeJSON(w, storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("## Issues\n- Bug"), Output: "## Issues\n- Bug",
+			})
 		}).
 		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)

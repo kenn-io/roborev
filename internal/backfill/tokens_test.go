@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -63,7 +64,7 @@ func TestStoreCapturedTokenUsageRejectsReenqueuedJob(t *testing.T) {
 	claimed, err := db.ClaimJob("capture-worker")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(db,
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 	selected, err := db.GetJobByID(job.ID)
@@ -118,7 +119,7 @@ func TestStoreMergedTokenUsagePreservesNewerUsageAfterConflict(t *testing.T) {
 	require.NoError(t, db.SaveJobSessionID(
 		job.ID, "usage-worker", "usage-session",
 	))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(db,
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 

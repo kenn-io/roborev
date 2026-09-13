@@ -100,7 +100,7 @@ func TestListJobsFindingCounts(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "finding-counts-sha")
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	require.NotNil(t, claimJob(t, db, "finding-counts-worker"))
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","location":null},{"severity":"medium","problem":"p","fix":"f","location":null}]}`
 	_, err := db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
 	require.NoError(t, err)
@@ -157,11 +157,8 @@ func TestListJobsFindingCounts(t *testing.T) {
 	assert.Nil(t, jobs[0].FindingCounts)
 	require.NotNil(t, jobs[0].DiffContent)
 	assert.Equal(t, "diff --git a/file.go b/file.go", *jobs[0].DiffContent)
-	review, err := db.GetReviewByJobIDWithFindingCounts(job.ID)
-	require.NoError(t, err)
-	assert.Nil(t, review.Job.FindingCounts)
-	require.NotNil(t, review.Job.DiffContent)
-	assert.Equal(t, "diff --git a/file.go b/file.go", *review.Job.DiffContent)
+	_, err = db.GetReviewByJobIDWithFindingCounts(job.ID)
+	require.ErrorContains(t, err, "requires JSON migration")
 }
 
 func TestListJobsFindingCountsOmitsTypedDiffContent(t *testing.T) {

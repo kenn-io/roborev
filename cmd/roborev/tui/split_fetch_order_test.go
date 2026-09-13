@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // orderingServerModel builds a split-layout model wired to a mock daemon
@@ -30,7 +31,8 @@ func orderingServerModel(t *testing.T, responses *[]storage.Response) model {
 			// no legacy SHA/commit lookup and the comment list below is the
 			// whole answer.
 			_ = json.NewEncoder(w).Encode(storage.Review{
-				ID: 10, JobID: 2, Agent: "codex", Output: "## Findings\n\n1. first finding\n",
+				VerdictBool: testutil.ReviewFixtureVerdict("## Findings\n\n1. first finding\n"),
+				ID:          10, JobID: 2, Agent: "codex", Output: "## Findings\n\n1. first finding\n",
 				Job: &storage.ReviewJob{ID: 2, Status: storage.JobStatusDone},
 			})
 		case "/api/comments":
@@ -46,7 +48,8 @@ func orderingServerModel(t *testing.T, responses *[]storage.Response) model {
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2 // job 2: done
 	m.currentReview = &storage.Review{
-		ID: 10, JobID: 2, Agent: "codex", Output: "## Findings\n\n1. first finding\n",
+		VerdictBool: testutil.ReviewFixtureVerdict("## Findings\n\n1. first finding\n"),
+		ID:          10, JobID: 2, Agent: "codex", Output: "## Findings\n\n1. first finding\n",
 		Job: &storage.ReviewJob{ID: 2, Status: storage.JobStatusDone},
 	}
 	m.currentResponses = *responses
@@ -167,7 +170,8 @@ func TestQueueFixKeyFlowOpensPanelWhenReviewLands(t *testing.T) {
 // user is no longer looking at.
 func TestAcceptedReviewForDifferentJobClosesFixPanel(t *testing.T) {
 	arriving := &storage.Review{
-		ID: 40, JobID: 3, Agent: "codex", Output: "job 3 review",
+		VerdictBool: testutil.ReviewFixtureVerdict("job 3 review"),
+		ID:          40, JobID: 3, Agent: "codex", Output: "job 3 review",
 		Job: &storage.ReviewJob{ID: 3},
 	}
 	cases := []struct {
@@ -251,7 +255,8 @@ func TestSplitDetailReviewActionsBlockedWhileReviewStale(t *testing.T) {
 	}
 	closed := false
 	loaded := &storage.Review{
-		ID: 10, JobID: 2, Agent: "codex", Output: "job 2 review",
+		VerdictBool: testutil.ReviewFixtureVerdict("job 2 review"),
+		ID:          10, JobID: 2, Agent: "codex", Output: "job 2 review",
 		Prompt: "job 2 prompt", Closed: closed,
 		Job: &storage.ReviewJob{ID: 2, GitRef: "bbbb222", Status: storage.JobStatusDone},
 	}
@@ -551,7 +556,9 @@ func TestReconcileSuppressionReleasedByItsOwnResponse(t *testing.T) {
 	// supersede it.
 	dispatchSeq := m.reviewFetchSeq
 	m.reviewFetchSeq++ // something newer went out in the meantime
-	foreign := &storage.Review{ID: 12, JobID: 2, Agent: "codex", Output: "foreign", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	foreign := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("foreign"), ID: 12, JobID: 2, Agent: "codex", Output: "foreign", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	resForeign, _ := m.handleReviewMsg(reviewMsg{
 		review: foreign, jobID: 2, follow: true, gen: m.detailFollowGen,
 		fetchSeq: m.reviewFetchSeq,
@@ -561,7 +568,9 @@ func TestReconcileSuppressionReleasedByItsOwnResponse(t *testing.T) {
 
 	// Its OWN response releases the slot even when REJECTED for display
 	// (here: superseded by the newer dispatch above).
-	stale := &storage.Review{ID: 11, JobID: 2, Agent: "codex", Output: "stale", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1}}
+	stale := &storage.Review{
+		VerdictBool: testutil.ReviewFixtureVerdict("stale"), ID: 11, JobID: 2, Agent: "codex", Output: "stale", Job: &storage.ReviewJob{ID: 2, FinishedAt: &t1},
+	}
 	res, _ := m.handleReviewMsg(reviewMsg{
 		review: stale, jobID: 2, follow: true, gen: m.detailFollowGen,
 		fetchSeq: dispatchSeq,
@@ -625,7 +634,8 @@ func TestStackedCommentRefreshForUnselectedJobDoesNotDestroyConcurrentFetch(t *t
 		case "/api/review":
 			id, _ := strconv.ParseInt(r.URL.Query().Get("job_id"), 10, 64)
 			_ = json.NewEncoder(w).Encode(storage.Review{
-				ID: id * 10, JobID: id, Agent: "codex",
+				VerdictBool: testutil.ReviewFixtureVerdict(fmt.Sprintf("job %d review", id)),
+				ID:          id * 10, JobID: id, Agent: "codex",
 				Output: fmt.Sprintf("job %d review", id),
 				Job:    &storage.ReviewJob{ID: id, Status: storage.JobStatusDone},
 			})
@@ -645,7 +655,8 @@ func TestStackedCommentRefreshForUnselectedJobDoesNotDestroyConcurrentFetch(t *t
 	}
 	m.selectedIdx, m.selectedJobID = 0, 2
 	m.currentReview = &storage.Review{
-		ID: 20, JobID: 2, Agent: "codex", Output: "job 2 review",
+		VerdictBool: testutil.ReviewFixtureVerdict("job 2 review"),
+		ID:          20, JobID: 2, Agent: "codex", Output: "job 2 review",
 		Job: &storage.ReviewJob{ID: 2, Status: storage.JobStatusDone},
 	}
 

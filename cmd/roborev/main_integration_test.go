@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
@@ -103,9 +104,10 @@ func handleMockRefineGetJobs(t *testing.T) func(w http.ResponseWriter, r *http.R
 			}
 			if _, ok := s.reviews[gitRef]; !ok {
 				s.reviews[gitRef] = &storage.Review{
-					ID:     job.ID + 1000,
-					JobID:  job.ID,
-					Output: "**Bug**: fix failed",
+					VerdictBool: testutil.ReviewFixtureVerdict("**Bug**: fix failed"),
+					ID:          job.ID + 1000,
+					JobID:       job.ID,
+					Output:      "**Bug**: fix failed",
 				}
 			}
 			jobCopy := *job
@@ -152,9 +154,10 @@ func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
 
 			// Create a passing review for the branch review
 			state.reviews[req.GitRef] = &storage.Review{
-				ID:     jobID + 1000,
-				JobID:  jobID,
-				Output: "No issues found.",
+				VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+				ID:          jobID + 1000,
+				JobID:       jobID,
+				Output:      "No issues found.",
 			}
 			state.mu.Unlock()
 
@@ -206,7 +209,8 @@ func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
 
 	// Per-commit review passes — so refine reaches the branch review
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 7, Output: "No issues found.",
+		VerdictBool: testutil.ReviewFixtureVerdict("No issues found."),
+		ID:          1, JobID: 7, Output: "No issues found.",
 	}
 
 	ctx := defaultTestRunContext(t, repoDir)
@@ -246,10 +250,12 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 
 	md.State.nextJobID = 100
 	md.State.reviews[oldestCommit] = &storage.Review{
-		ID: 1, JobID: 1, Output: "**Bug**: old failure", Closed: false,
+		VerdictBool: testutil.ReviewFixtureVerdict("**Bug**: old failure"),
+		ID:          1, JobID: 1, Output: "**Bug**: old failure", Closed: false,
 	}
 	md.State.reviews[newestCommit] = &storage.Review{
-		ID: 2, JobID: 2, Output: "**Bug**: new failure", Closed: false,
+		VerdictBool: testutil.ReviewFixtureVerdict("**Bug**: new failure"),
+		ID:          2, JobID: 2, Output: "**Bug**: new failure", Closed: false,
 	}
 
 	var changeCount int

@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func collectMsgs(cmd tea.Cmd) []tea.Msg {
@@ -534,10 +535,11 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				m.selectedIdx, m.selectedJobID = 0, 1
 
 				m.currentReview = &storage.Review{
-					ID:     1,
-					JobID:  1,
-					Output: "test review",
-					Job:    &m.jobs[0],
+					VerdictBool: testutil.ReviewFixtureVerdict("test review"),
+					ID:          1,
+					JobID:       1,
+					Output:      "test review",
+					Job:         &m.jobs[0],
 				}
 			},
 		},
@@ -637,11 +639,12 @@ func TestMouseNotToggledWithinContentViews(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.currentReview = &storage.Review{
-		ID:     1,
-		JobID:  1,
-		Output: "test",
-		Prompt: "test prompt",
-		Job:    &m.jobs[0],
+		VerdictBool: testutil.ReviewFixtureVerdict("test"),
+		ID:          1,
+		JobID:       1,
+		Output:      "test",
+		Prompt:      "test prompt",
+		Job:         &m.jobs[0],
 	}
 	m.reviewFromView = viewQueue
 

@@ -62,18 +62,40 @@ they may indicate known issues that should be ignored, explain why certain patte
 or provide context that affects how you should evaluate similar code in the current commit.
 
 --- Review for commit 52f2722 ---
+## Summary
+
 Found unused variable in a.txt
 
 Verdict: FAIL
+
+**Agent assessment:** Fail
+
+## Findings
+
+### 1. Medium
+
+**Problem:** Found unused variable in a.txt
+
+Verdict: FAIL
+
+**Fix:** Apply the correction described in the test finding.
+
 
 Comments on this review:
 - alice: "False positive; we use this field via reflection."
 - bob: "Agree with alice."
 
 --- Review for commit 496ac4b ---
+## Summary
+
 No issues found.
 
 Verdict: PASS
+
+**Agent assessment:** Pass
+
+No issues found.
+
 
 ## Current Commit
 

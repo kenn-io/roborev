@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	googlegithub "github.com/google/go-github/v90/github"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing.T) {
@@ -25,6 +25,7 @@ func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
 	rev := &storage.Review{
+		VerdictBool:      testutil.ReviewFixtureVerdict("Original complete review."),
 		Output:           "Original complete review.",
 		StructuredOutput: structured,
 		Job:              &storage.ReviewJob{MinSeverity: "low"},
@@ -47,8 +48,9 @@ func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing
 func TestPanelPRCommentFiltersProseWithoutChangingReview(t *testing.T) {
 	prose := "### Low\nMinor naming issue.\n\n---\n\n### High\nState is lost. Persist it."
 	rev := &storage.Review{
-		Output: prose,
-		Job:    &storage.ReviewJob{MinSeverity: "low"},
+		VerdictBool: testutil.ReviewFixtureVerdict(prose),
+		Output:      prose,
+		Job:         &storage.ReviewJob{MinSeverity: "low"},
 	}
 	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "high"}, rev, "F", nil, false, "abc1234")
 	assert.NotContains(t, comment, "Minor naming issue.")
@@ -643,9 +645,8 @@ func TestPanelPermanentPreflightErrorAbandons(t *testing.T) {
 	assert.False(won, "abandoned panel cannot be reclaimed for posting")
 }
 
-// TestPanelWrapperNoDoubleHeader covers F11: a synthesis output lacking the
-// `## roborev:` header is wrapped exactly once; a raw/all-failed body that
-// already starts with the header is not double-wrapped.
+// TestPanelWrapperNoDoubleHeader checks that JSON-backed synthesis output
+// gets one comment header and retains findings and reviewer metadata.
 func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 
@@ -685,7 +686,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		comments := h.CaptureComments()
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 24, "headsha999", "base..headsha999",
 			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
-		h.completeSynthesisWithReview(t, synth.ID, "No issues found in the summary.\n\n- High finding")
+		h.completeSynthesisWithReview(t, synth.ID, `{"schema_version":2,"summary":"No issues found in the summary.","verdict":"fail","findings":[{"severity":"high","problem":"- High finding","fix":"Correct the issue.","location":null,"sources":[1]}],"source_labels":["test"]}`)
 		_, err := h.DB.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, synth.ID)
 		require.NoError(t, err)
 
@@ -792,23 +793,6 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		body := (*comments)[0].Body
 		assert.Contains(t, body, "Synthesis: claude-code")
 		assert.NotContains(t, body, "Synthesis: codex")
-	})
-
-	t.Run("headed pass output keeps result text", func(t *testing.T) {
-		h.Cfg.CI.IncludeCosts = false
-		comments := h.CaptureComments()
-		const headSHA = "1234567feedface"
-		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 19, headSHA, "base.."+headSHA,
-			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "No issues found."}})
-		h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
-
-		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-
-		require.Len(t, *comments, 1)
-		body := (*comments)[0].Body
-		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
-		assert.Contains(t, body, "No issues found.")
-		assert.Contains(t, body, "Reviewers: 1 done")
 	})
 
 	t.Run("plain output footer hides cost by default", func(t *testing.T) {
@@ -932,54 +916,8 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "1 canceled")
 		assert.NotContains(t, body, "gemini/security")
 	})
-
-	t.Run("prefixed output is not re-wrapped", func(t *testing.T) {
-		h.Cfg.CI.IncludeCosts = false
-		comments := h.CaptureComments()
-		const headSHA = "abc1234feedface"
-		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 10, headSHA, "base.."+headSHA,
-			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
-		h.completeSynthesisWithReview(t, synth.ID, "## roborev: Combined Review (`abc1234`)\n\nAlready headed.")
-
-		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-
-		require.Len(t, *comments, 1)
-		body := (*comments)[0].Body
-		assert.Equal(t, 1, strings.Count(body, "## roborev:"), "no double header")
-		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
-		assert.Contains(t, body, "Already headed.")
-		assert.Contains(t, body, "Reviewers: 1 done")
-		assert.NotContains(t, body, "Panel:")
-		assert.NotContains(t, body, "Members:")
-		assert.NotContains(t, body, "Head:", "reviewed head belongs in the title, not the footer")
-	})
-
-	t.Run("prefixed output is bounded with footer", func(t *testing.T) {
-		h.Cfg.CI.IncludeCosts = false
-		comments := h.CaptureComments()
-		const headSHA = "7654321feedface"
-		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 21, headSHA, "base.."+headSHA,
-			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
-		output := "## roborev: Combined Review (`7654321`)\n\n" +
-			strings.Repeat("ü", reviewpkg.MaxCommentLen)
-		h.completeSynthesisWithReview(t, synth.ID, output)
-
-		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-
-		require.Len(t, *comments, 1)
-		body := (*comments)[0].Body
-		assert.LessOrEqual(t, len(body), reviewpkg.MaxCommentLen)
-		assert.True(t, utf8.ValidString(body), "truncated comment must be valid UTF-8")
-		assert.Equal(t, 1, strings.Count(body, "## roborev:"), "no double header")
-		assert.Contains(t, body, "...(truncated)")
-		assert.Contains(t, body, "Reviewers: 1 done")
-		assert.NotContains(t, body, "Panel:")
-		assert.NotContains(t, body, "Members:")
-	})
 }
 
-// TestPanelRawFallbackRendersHeadSHA covers F11's SHA rule: the comment renders
-// row.HeadSHA (short), never the synthesis job's merge-base range.
 func TestPanelRawFallbackRendersHeadSHA(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -1246,30 +1184,6 @@ func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Outcome)
 	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome, "all-skip persists the no-review outcome")
-}
-
-func TestPostPanelRunPlaceholderOnlyUsesSkippedSummary(t *testing.T) {
-	assert := assert.New(t)
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	comments := h.CaptureComments()
-
-	const placeholder = "No review output generated"
-	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 88, "placeholder1234", "base..placeholder1234",
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: placeholder}})
-	h.completeSynthesisWithReview(t, synth.ID, placeholder)
-
-	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-
-	require.Len(t, *comments, 1, "placeholder-only panel posts one operational summary")
-	assert.Contains((*comments)[0].Body, "## roborev: Review Skipped")
-	assert.NotContains((*comments)[0].Body, "## roborev: Combined Review")
-	assert.NotContains((*comments)[0].Body, placeholder)
-	assert.True(h.panelPostedAt(t, panel.ID), "placeholder-only panel is finalized")
-
-	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 88, "placeholder1234")
-	require.NoError(t, err)
-	require.NotNil(t, got.Outcome)
-	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome)
 }
 
 // TestFinalizePanelRunBackfillsMissingAttemptRow covers upgrade-boundary panel

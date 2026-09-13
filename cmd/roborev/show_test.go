@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestShowCommandArgParsing(t *testing.T) {
@@ -69,7 +70,8 @@ func TestShowCommandArgParsing(t *testing.T) {
 			}
 
 			getQuery := mockReviewDaemon(t, storage.Review{
-				ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+				VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
+				ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
 			})
 
 			chdir(t, repo.Dir)
@@ -117,7 +119,8 @@ func TestShowOutputFormat(t *testing.T) {
 			shortSHA := commitSHA[:7]
 
 			mockReviewDaemon(t, storage.Review{
-				ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
+				VerdictBool: testutil.ReviewFixtureVerdict("Test review output"),
+				ID:          1, JobID: 42, Output: "Test review output", Agent: "codex",
 			})
 
 			chdir(t, repo.Dir)
@@ -154,7 +157,8 @@ func TestShowOutsideGitRepo(t *testing.T) {
 		chdir(t, nonGitDir)
 
 		getQuery := mockReviewDaemon(t, storage.Review{
-			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+			VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
+			ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
 		})
 
 		output := runShowCmd(t, "--job", "42")
@@ -169,7 +173,8 @@ func TestShowJSONOutput(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	mockReviewDaemon(t, storage.Review{
-		ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+		VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
+		ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
 	})
 
 	chdir(t, repo.Dir)
@@ -196,7 +201,8 @@ func TestShowIncludesComments(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	review := storage.Review{
-		ID: 1, JobID: 42, Output: "Found issues", Agent: "test",
+		VerdictBool: testutil.ReviewFixtureVerdict("Found issues"),
+		ID:          1, JobID: 42, Output: "Found issues", Agent: "test",
 	}
 	responses := []storage.Response{
 		{
@@ -242,7 +248,8 @@ func TestShowDirtyReviewSkipsBaseCommitLegacyComments(t *testing.T) {
 			repo.CommitFile("file.txt", "content", "initial commit")
 			commitID := int64(42)
 			review := storage.Review{
-				ID: 1, JobID: 42, Output: "Dirty review output", Agent: "test",
+				VerdictBool: testutil.ReviewFixtureVerdict("Dirty review output"),
+				ID:          1, JobID: 42, Output: "Dirty review output", Agent: "test",
 				Job: &storage.ReviewJob{
 					ID:       42,
 					CommitID: &commitID,
@@ -401,7 +408,8 @@ func TestShowNoComments(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	mockReviewDaemon(t, storage.Review{
-		ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+		VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
+		ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
 	})
 
 	chdir(t, repo.Dir)

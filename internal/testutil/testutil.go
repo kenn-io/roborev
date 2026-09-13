@@ -338,7 +338,7 @@ func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agen
 	if _, err := db.ClaimJob("test-worker"); err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	if err := db.CompleteJob(job.ID, "test-worker", "prompt", reviewText); err != nil {
+	if err := CompleteReviewFixture(db, job.ID, "test-worker", "prompt", reviewText); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 

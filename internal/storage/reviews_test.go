@@ -315,7 +315,7 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 		assert.Equal(t, job1.ID, res1.Job.ID)
 		assert.NotNil(t, res1.Review, "Expected review for job 1, but got nil")
 		if res1.Review != nil {
-			assert.Equal(t, "output1", res1.Review.Output)
+			assert.Contains(t, res1.Review.Output, "output1")
 		}
 
 		// Check job 2 (no review)
@@ -329,7 +329,7 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 		assert.True(t, ok)
 		assert.NotNil(t, res3.Review, "Expected review for job 3, but got nil")
 		if res3.Review != nil {
-			assert.Equal(t, "output3", res3.Review.Output)
+			assert.Contains(t, res3.Review.Output, "output3")
 		}
 
 		// Check non-existent job
@@ -503,7 +503,7 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 		assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P")
 	})
 
-	t.Run("legacy review with NULL verdict_bool falls back to ParseVerdict", func(t *testing.T) {
+	t.Run("missing verdict does not parse Markdown", func(t *testing.T) {
 		commit2 := createCommit(t, db, repo.ID, "vread456")
 		job := createCompletedJobWithOptions(t, db, EnqueueOpts{
 			RepoID:   repo.ID,
@@ -522,7 +522,8 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 
 		assert.Nil(t, review.VerdictBool)
 		// Should still get correct verdict via ParseVerdict fallback
-		assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P")
+		require.NotNil(t, review.Job)
+		assert.Nil(t, review.Job.Verdict)
 	})
 }
 
@@ -642,7 +643,7 @@ func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, outpu
 		agent = "test-agent"
 	}
 
-	if err := db.CompleteJob(job.ID, agent, "prompt", output); err != nil {
+	if err := completeReviewFixture(db, job.ID, agent, "prompt", output); err != nil {
 		require.NoError(t, err, "CompleteJob failed: %v")
 	}
 
@@ -779,7 +780,7 @@ func TestGetReviewByCommitSHAIgnoresNonReviewJobs(t *testing.T) {
 	require.NoError(t, err, "fix job must not shadow the review")
 	require.NotNil(t, review.Job)
 	assert.Equal(reviewJob.ID, review.JobID, "resolves the canonical review job")
-	assert.Equal("No issues found.", review.Output)
+	assert.Contains(review.Output, "No issues found.")
 }
 
 // TestGetReviewByCommitSHAResolvesSynthesisOverMember verifies that for a panel
@@ -815,7 +816,7 @@ func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
 	review, err := db.GetReviewByCommitSHA("synth123")
 	require.NoError(t, err)
 	assert.Equal(synth.ID, review.JobID, "synthesis is the canonical review")
-	assert.Equal("synthesis output", review.Output)
+	assert.Contains(review.Output, "synthesis output")
 }
 
 func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
@@ -993,7 +994,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 		claimed, claimErr := db.ClaimJob("session-worker")
 		require.NoError(t, claimErr)
 		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "No issues found."))
+		require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "No issues found."))
 		_, updateErr := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
 		require.NoError(t, updateErr)
 		return *job
@@ -1038,7 +1039,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) 
 	claimed, err := db.ClaimJob("session-worker")
 	require.NoError(t, err)
 	require.Equal(t, members[0].ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, claimed.ID, "test", "prompt", "No issues found."))
 	setJobSession(t, db, claimed.ID, "ci-session")
 
 	query := ReusableSessionQuery{

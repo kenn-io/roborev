@@ -132,10 +132,11 @@ func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, 
 func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, closed bool) *mockDaemonClient {
 	m.nextReviewID++
 	m.reviews[sha] = &storage.Review{
-		ID:     m.nextReviewID,
-		JobID:  jobID,
-		Output: output,
-		Closed: closed,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		ID:          m.nextReviewID,
+		JobID:       jobID,
+		Output:      output,
+		Closed:      closed,
 	}
 	return m
 }

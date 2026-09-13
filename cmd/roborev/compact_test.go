@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestIsValidConsolidatedReview(t *testing.T) {
@@ -242,9 +243,11 @@ func TestExtractJobIDs(t *testing.T) {
 
 func mockJobReview(id int64, ref, output string) jobReview {
 	return jobReview{
-		jobID:  id,
-		job:    &storage.ReviewJob{ID: id, GitRef: ref},
-		review: &storage.Review{Output: output},
+		jobID: id,
+		job:   &storage.ReviewJob{ID: id, GitRef: ref},
+		review: &storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict(output), Output: output,
+		},
 	}
 }
 
@@ -271,7 +274,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 				"Do not include any front matter",
 				"Use the review output format above",
 				"Every verified finding that still applies must be repeated",
-				"Separate repeated findings with the same `---` delimiter",
+				"Return the verified findings in the review JSON findings array",
 				"may mention how many prior findings were dropped",
 			},
 			wantNotContain: []string{

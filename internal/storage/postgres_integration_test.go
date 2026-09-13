@@ -183,7 +183,7 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 		return nil, nil, fmt.Errorf("failed to set job running: %w", err)
 	}
-	if err := db.CompleteJob(job.ID, "test", prompt, output); err != nil {
+	if err := completeReviewFixture(db, job.ID, "test", prompt, output); err != nil {
 		return nil, nil, fmt.Errorf("CompleteJob failed: %w", err)
 	}
 	review, err := db.GetReviewByJobID(job.ID)
@@ -213,7 +213,7 @@ func tryCreateCompletedReviewWithoutCommit(db *DB, repoID int64) (*ReviewJob, er
 	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 		return nil, fmt.Errorf("failed to set job running: %w", err)
 	}
-	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+	if err := completeReviewFixture(db, job.ID, "test", "prompt", "output"); err != nil {
 		return nil, fmt.Errorf("CompleteJob failed: %w", err)
 	}
 	return job, nil
@@ -633,7 +633,7 @@ func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
 	require.NoError(t, err)
 	_, err = nodeB.DB.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, fixJob.ID)
 	require.NoError(t, err)
-	require.NoError(t, nodeB.DB.CompleteJob(fixJob.ID, "test", "prompt", "patch output"))
+	require.NoError(t, completeReviewFixture(nodeB.DB, fixJob.ID, "test", "prompt", "patch output"))
 
 	_, err = nodeB.Worker.SyncNow()
 	require.NoError(t, err)

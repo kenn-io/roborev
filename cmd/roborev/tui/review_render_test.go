@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // setupRenderModel creates a standardized model for rendering tests
@@ -55,9 +56,10 @@ func TestTUIRenderViews(t *testing.T) {
 			view:   viewReview,
 			branch: "feature/test",
 			review: &storage.Review{
-				ID:     10,
-				Output: "Some review output",
-				Closed: true,
+				VerdictBool: testutil.ReviewFixtureVerdict("Some review output"),
+				ID:          10,
+				Output:      "Some review output",
+				Closed:      true,
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -72,9 +74,10 @@ func TestTUIRenderViews(t *testing.T) {
 			name: "review view with model",
 			view: viewReview,
 			review: &storage.Review{
-				ID:     10,
-				Agent:  "codex",
-				Output: "Some review output",
+				VerdictBool: testutil.ReviewFixtureVerdict("Some review output"),
+				ID:          10,
+				Agent:       "codex",
+				Output:      "Some review output",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -90,9 +93,10 @@ func TestTUIRenderViews(t *testing.T) {
 			name: "review view without model",
 			view: viewReview,
 			review: &storage.Review{
-				ID:     10,
-				Agent:  "codex",
-				Output: "Some review output",
+				VerdictBool: testutil.ReviewFixtureVerdict("Some review output"),
+				ID:          10,
+				Agent:       "codex",
+				Output:      "Some review output",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -142,8 +146,9 @@ func TestTUIRenderViews(t *testing.T) {
 			view:   viewReview,
 			branch: "",
 			review: &storage.Review{
-				ID:     10,
-				Output: "Some review output",
+				VerdictBool: testutil.ReviewFixtureVerdict("Some review output"),
+				ID:          10,
+				Output:      "Some review output",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc123..def456",
@@ -158,8 +163,9 @@ func TestTUIRenderViews(t *testing.T) {
 			name: "review view no blank line without verdict",
 			view: viewReview,
 			review: &storage.Review{
-				ID:     10,
-				Output: "Line 1\nLine 2\nLine 3",
+				VerdictBool: testutil.ReviewFixtureVerdict("Line 1\nLine 2\nLine 3"),
+				ID:          10,
+				Output:      "Line 1\nLine 2\nLine 3",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -176,8 +182,9 @@ func TestTUIRenderViews(t *testing.T) {
 			name: "review view verdict on line 2",
 			view: viewReview,
 			review: &storage.Review{
-				ID:     10,
-				Output: "Line 1\nLine 2\nLine 3",
+				VerdictBool: testutil.ReviewFixtureVerdict("Line 1\nLine 2\nLine 3"),
+				ID:          10,
+				Output:      "Line 1\nLine 2\nLine 3",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -194,9 +201,10 @@ func TestTUIRenderViews(t *testing.T) {
 			name: "review view closed without verdict",
 			view: viewReview,
 			review: &storage.Review{
-				ID:     10,
-				Output: "Line 1\n\nLine 2\n\nLine 3",
-				Closed: true,
+				VerdictBool: testutil.ReviewFixtureVerdict("Line 1\n\nLine 2\n\nLine 3"),
+				ID:          10,
+				Output:      "Line 1\n\nLine 2\n\nLine 3",
+				Closed:      true,
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -215,8 +223,9 @@ func TestTUIRenderViews(t *testing.T) {
 			view:   viewReview,
 			branch: "",
 			review: &storage.Review{
-				Agent:  "codex",
-				Output: "Job failed:\n\nsome error",
+				VerdictBool: testutil.ReviewFixtureVerdict("Job failed:\n\nsome error"),
+				Agent:       "codex",
+				Output:      "Job failed:\n\nsome error",
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   "abc1234",
@@ -353,10 +362,11 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			review := &storage.Review{
-				ID:     10,
-				Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
-				Closed: tt.closed,
-				Agent:  tt.reviewAgent,
+				VerdictBool: testutil.ReviewFixtureVerdict("L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20"),
+				ID:          10,
+				Output:      "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
+				Closed:      tt.closed,
+				Agent:       tt.reviewAgent,
 				Job: &storage.ReviewJob{
 					ID:       1,
 					GitRef:   tt.jobRef,

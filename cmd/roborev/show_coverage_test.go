@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestShowReportsStoredFileCoverage(t *testing.T) {
@@ -17,7 +18,8 @@ func TestShowReportsStoredFileCoverage(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 		chdir(t, repo.Dir)
 		review := storage.Review{
-			ID: 1, JobID: 42, Output: "PASS", Agent: "test",
+			VerdictBool: testutil.ReviewFixtureVerdict("PASS"),
+			ID:          1, JobID: 42, Output: "PASS", Agent: "test",
 			FileCoverage: &storage.ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
 		}
 		mockReviewDaemon(t, review)
@@ -28,7 +30,9 @@ func TestShowReportsStoredFileCoverage(t *testing.T) {
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
 		chdir(t, repo.Dir)
-		mockReviewDaemon(t, storage.Review{ID: 1, JobID: 42, Output: "PASS", Agent: "test"})
+		mockReviewDaemon(t, storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("PASS"), ID: 1, JobID: 42, Output: "PASS", Agent: "test",
+		})
 		output := runShowCmd(t, "--job", "42")
 		assert.NotContains(t, output, "Files:")
 	})
@@ -37,7 +41,8 @@ func TestShowReportsStoredFileCoverage(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 		chdir(t, repo.Dir)
 		review := storage.Review{
-			ID: 1, JobID: 42, Output: "PASS", Agent: "test",
+			VerdictBool: testutil.ReviewFixtureVerdict("PASS"),
+			ID:          1, JobID: 42, Output: "PASS", Agent: "test",
 			FileCoverage: &storage.ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
 		}
 		mockReviewDaemon(t, review)

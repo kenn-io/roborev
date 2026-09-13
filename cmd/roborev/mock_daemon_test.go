@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -415,8 +416,9 @@ func (b *MockDaemonBuilder) WithHandler(path string, handler http.HandlerFunc) *
 
 func (b *MockDaemonBuilder) WithReview(jobID int64, output string) *MockDaemonBuilder {
 	b.reviews[jobID] = storage.Review{
-		JobID:  jobID,
-		Output: output,
+		VerdictBool: testutil.ReviewFixtureVerdict(output),
+		JobID:       jobID,
+		Output:      output,
 	}
 	return b
 }

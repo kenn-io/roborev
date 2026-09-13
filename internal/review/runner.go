@@ -7,7 +7,6 @@ import (
 	"io"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -21,43 +20,24 @@ func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt s
 	return a.Review(ctx, repoPath, gitRef, prompt, out)
 }
 
-// RunAgentReview owns the structured versus prose review execution contract.
-// Agents that support schema-constrained output return structured findings
-// for every review type, so the verdict comes from the reported severities
-// rather than from parsing Markdown. Other agents run built-in review types
-// as prose and derive the verdict from the rendered output; custom review
-// types require schema support. minSeverity never removes findings: it only
-// decides which severities count against the verdict.
+// RunAgentReview validates JSON for every review, including agents without a
+// native schema mode. Markdown is a presentation of the validated document.
 func RunAgentReview(
 	ctx context.Context,
 	a agent.Agent,
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
 	out io.Writer,
 ) (ReviewResult, error) {
-	_, ok := a.(agent.StructuredReviewAgent)
-	if !ok {
-		if !config.IsBuiltInReviewType(reviewType) {
-			return ReviewResult{}, fmt.Errorf(
-				"agent %q does not support schema-constrained reviews", a.Name(),
-			)
-		}
-		output, err := invokeReview(ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out)
-		if err != nil {
-			return ReviewResult{}, err
-		}
-		result := ReviewResult{Output: output, MinSeverity: minSeverity}
-		if noVerdict := NoVerdict(output); noVerdict != nil {
-			return result, noVerdict
-		}
-		result.Verdict = storage.ParseVerdictAtSeverity(output, minSeverity)
-		return result, nil
-	}
-
 	raw, err := invokeReview(
 		ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
 	)
 	if err != nil {
 		return ReviewResult{}, err
+	}
+	if !json.Valid([]byte(raw)) {
+		if noVerdict := NoVerdict(raw); noVerdict != nil {
+			return ReviewResult{}, noVerdict
+		}
 	}
 	structured, err := DecodeStructuredReview(json.RawMessage(raw))
 	if err != nil {

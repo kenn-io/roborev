@@ -179,7 +179,7 @@ func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, members[0].ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "P"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "P"))
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
 	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{

@@ -356,7 +356,7 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 	require.Equal(t, jobs[0].ID, second.ID)
 	require.NoError(t, db.MarkJobAgentInvoked(second.ID, "second-worker", "codex review"))
 	require.NoError(t, db.SaveJobSessionID(second.ID, "second-worker", "reused-session"))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, completeReviewFixture(db,
 		second.ID, "codex", "prompt", "No issues found.",
 	))
 
@@ -402,7 +402,7 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 	require.Equal(t, job.ID, second.ID)
 	require.NoError(t, db.MarkJobAgentInvoked(second.ID, "second-worker", "codex review"))
 	require.NoError(t, db.SaveJobSessionID(second.ID, "second-worker", "reused-session"))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, completeReviewFixture(db,
 		second.ID, "codex", "prompt", "No issues found.",
 	))
 
@@ -448,7 +448,7 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 	require.NoError(t, db.MarkJobAgentInvoked(
 		resumed.ID, "resumed-worker", "codex review",
 	))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, completeReviewFixture(db,
 		resumed.ID, "codex", "prompt", "No issues found.",
 	))
 
@@ -536,7 +536,7 @@ func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 	require.NoError(t, db.SaveJobSessionID(
 		jobID, "auto-design-worker", "auto-design-session",
 	))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, completeReviewFixture(db,
 		jobID, "codex", "prompt", "No issues found.",
 	))
 
@@ -577,7 +577,7 @@ func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
 	require.NoError(t, db.SaveJobSessionID(
 		job.ID, "local-worker", "local-rerun-session",
 	))
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, completeReviewFixture(db,
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 

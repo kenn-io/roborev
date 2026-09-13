@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -84,7 +85,7 @@ func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 
 	logPath := daemon.JobLogPath(job.ID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
@@ -217,7 +218,7 @@ func enqueueCompleteJob(
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	return job
 }
 

@@ -36,7 +36,8 @@ func TestBrowserReviewProjectionOmitsFileCoverage(t *testing.T) {
 
 	zero, excluded := 0, 3
 	review := storage.Review{
-		ID: 1, JobID: 2, Agent: "test", Prompt: "prompt", Output: "output",
+		VerdictBool: testutil.ReviewFixtureVerdict("output"),
+		ID:          1, JobID: 2, Agent: "test", Prompt: "prompt", Output: "output",
 		FileCoverage: &storage.ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
 	}
 	loopback, err := json.Marshal(review)

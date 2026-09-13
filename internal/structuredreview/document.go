@@ -79,9 +79,9 @@ type Document struct {
 	Verdict  string    `json:"verdict,omitempty"`
 	Findings []Finding `json:"findings"`
 	// SourceLabels names the input reviews a sourced document cites, indexed
-	// by review number minus one. It is caller-provided, never decoded, and
-	// only used when rendering Markdown.
-	SourceLabels []string `json:"-"`
+	// by review number minus one. Persist these labels with synthesized
+	// documents so source attribution survives storage and sync.
+	SourceLabels []string `json:"source_labels,omitempty"`
 }
 
 type Finding struct {
@@ -115,6 +115,7 @@ type documentWire struct {
 	Summary       string        `json:"summary"`
 	Verdict       string        `json:"verdict"`
 	Findings      []findingWire `json:"findings"`
+	SourceLabels  []string      `json:"source_labels,omitempty"`
 }
 
 type findingWire struct {
@@ -140,6 +141,7 @@ func Decode(raw json.RawMessage) (Document, error) {
 	}
 	result := Document{
 		SchemaVersion: wire.SchemaVersion,
+		SourceLabels:  wire.SourceLabels,
 		Summary:       wire.Summary,
 		Verdict:       strings.ToLower(strings.TrimSpace(wire.Verdict)),
 		Findings:      make([]Finding, len(wire.Findings)),
@@ -289,6 +291,9 @@ func (r Document) Markdown(minSeverity string) string {
 	out.WriteString(strings.TrimSpace(r.Summary))
 	if r.Verdict != "" {
 		fmt.Fprintf(&out, "\n\n**Agent assessment:** %s", verdictLabel(r.Verdict))
+	}
+	if r.UnableToReview() {
+		return out.String() + "\n"
 	}
 	if len(r.Findings) == 0 {
 		out.WriteString("\n\nNo issues found.\n")

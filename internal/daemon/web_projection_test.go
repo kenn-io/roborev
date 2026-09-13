@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestReviewProjectionByJobID(t *testing.T) {
@@ -18,7 +20,7 @@ func TestReviewProjectionByJobID(t *testing.T) {
 	job := jobs[0]
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', branch = 'main', model = 'model-a' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "PASS\n\nReview output"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "PASS\n\nReview output"))
 	_, err = db.AddCommentToJob(job.ID, "reviewer-a", "Existing response")
 	require.NoError(t, err)
 
@@ -35,7 +37,7 @@ func TestReviewProjectionByJobID(t *testing.T) {
 	assert.Equal(t, "model-a", projection.Job.Model)
 	assert.Equal(t, "P", projection.Job.Verdict)
 	require.NotNil(t, projection.Review)
-	assert.Equal(t, "PASS\n\nReview output", projection.Review.Output)
+	assert.Contains(t, projection.Review.Output, "PASS\n\nReview output")
 	require.Len(t, projection.Responses, 1)
 	assert.Equal(t, "Existing response", projection.Responses[0].Response)
 	assert.NotContains(t, response.Body.String(), repo.RootPath)
@@ -47,7 +49,7 @@ func TestReviewProjectionSelectsNewestContextualReview(t *testing.T) {
 	for _, job := range jobs {
 		_, err := db.Exec(`UPDATE review_jobs SET status = 'running', branch = 'feature' WHERE id = ?`, job.ID)
 		require.NoError(t, err)
-		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "PASS"))
 	}
 
 	response := serveHuma(t, server, http.MethodGet,

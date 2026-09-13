@@ -243,7 +243,7 @@ func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
 	claimed, err := h.db.ClaimJob("w-sync-wt")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+	require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "PASS"))
 
 	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestGetJobsToSync_IncludesSource(t *testing.T) {
 	claimed, err := h.db.ClaimJob("w-sync-source")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+	require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "PASS"))
 
 	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 	require.NoError(t, err)

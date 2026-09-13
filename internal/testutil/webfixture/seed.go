@@ -3,6 +3,7 @@ package webfixture
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 const (
@@ -207,21 +209,41 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 	if *job.verdict {
 		verdict = 1
 	}
-	output := job.output
-	if output == "" {
-		if verdict == 1 {
-			output = "No issues found. The change follows project conventions."
-		} else {
-			output = findingOutput(job.id)
+	doc := structuredreview.Document{
+		SchemaVersion: structuredreview.SchemaVersion,
+		Summary:       "No issues found. The change follows project conventions.",
+		Verdict:       structuredreview.VerdictPass,
+		Findings:      []structuredreview.Finding{},
+	}
+	if verdict == 0 {
+		problem := job.output
+		if problem == "" {
+			problem = findingOutput(job.id)
 		}
+		doc.Summary = "The change needs an error-handling correction."
+		doc.Verdict = structuredreview.VerdictFail
+		doc.Findings = []structuredreview.Finding{{
+			Severity: "medium", Problem: problem,
+			Fix: "Return the error to the caller.",
+		}}
+		if job.jobType == storage.JobTypeSynthesis {
+			doc.SourceLabels = []string{"codex"}
+			doc.Findings[0].Sources = []int{1}
+		}
+	} else if job.output != "" {
+		doc.Summary = job.output
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("encode review for job %d: %w", job.id, err)
 	}
 	created := jobTime(job.id).Add(10 * time.Minute).Format(sqliteTime)
-	_, err := tx.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO reviews
-			(job_id, agent, prompt, output, created_at, closed,
+			(job_id, agent, prompt, structured_output, output, created_at, closed,
 			 verdict_bool, uuid, updated_at)
-		VALUES (?, ?, 'Review the fixture change', ?, ?, ?, ?, ?, ?)`,
-		job.id, job.agent, output, created, closed, verdict,
+		VALUES (?, ?, 'Review the fixture change', ?, '', ?, ?, ?, ?, ?)`,
+		job.id, job.agent, string(raw), created, closed, verdict,
 		fmt.Sprintf("10000000-0000-4000-8000-%012d", job.id), created,
 	)
 	if err != nil {

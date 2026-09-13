@@ -598,7 +598,7 @@ func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
 	claimed, err := h.db.ClaimJob("worker")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "output"))
+	require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "output"))
 	_, err = h.db.Exec(`UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
 	require.NoError(t, err)
 

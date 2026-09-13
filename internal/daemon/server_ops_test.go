@@ -40,7 +40,7 @@ func TestHandleBatchJobs(t *testing.T) {
 		}, err)
 	}
 	setJobStatus(t, db, job1.ID, storage.JobStatusRunning)
-	if err := db.CompleteJob(job1.ID, "test", "p1", "o1"); err != nil {
+	if err := testutil.CompleteReviewFixture(db, job1.ID, "test", "p1", "o1"); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "CompleteJob failed for job1: %v", err)
@@ -83,15 +83,8 @@ func TestHandleBatchJobs(t *testing.T) {
 				return false
 			}, "Result for job %d not found", job1.ID)
 		}
-		if res1.Review == nil {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected review for job 1")
-		} else if res1.Review.Output != "o1" {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected output 'o1', got %q", res1.Review.Output)
-		}
+		require.NotNil(t, res1.Review)
+		assert.Equal(t, "o1", res1.Review.StructuredOutput["summary"])
 
 		// Check job 2 (no review)
 		res2, ok := resp.Results[job2.ID]
@@ -436,7 +429,7 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 			return false
 		}, "ClaimJob: expected job %d", job.ID)
 	}
-	if err := db.CompleteJob(
+	if err := testutil.CompleteReviewFixture(db,
 		job.ID, "test", "prompt", "review output",
 	); err != nil {
 		require.Condition(t, func() bool {
@@ -552,7 +545,7 @@ func setupFixJobFixture(
 
 	_, err = db.ClaimJob("w1")
 	require.NoError(t, err, "ClaimJob failed")
-	require.NoError(t, db.CompleteJob(
+	require.NoError(t, testutil.CompleteReviewFixture(db,
 		reviewJob.ID, "test", "prompt", "FAIL: issues found",
 	), "CompleteJob failed")
 
@@ -649,9 +642,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			if claimed.ID == wtJob.ID {
 				break
 			}
-			db.CompleteJob(claimed.ID, "test", "prompt", "PASS")
+			testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "PASS")
 		}
-		require.NoError(t, db.CompleteJob(
+		require.NoError(t, testutil.CompleteReviewFixture(db,
 			wtJob.ID, "test", "prompt", "FAIL: issues found",
 		))
 
@@ -701,9 +694,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			if claimed.ID == wtJob.ID {
 				break
 			}
-			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "PASS"))
+			require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "PASS"))
 		}
-		require.NoError(t, db.CompleteJob(
+		require.NoError(t, testutil.CompleteReviewFixture(db,
 			wtJob.ID, "test", "prompt", "FAIL: issues found",
 		))
 
@@ -752,9 +745,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			if claimed.ID == wtJob.ID {
 				break
 			}
-			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "PASS"))
+			require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "PASS"))
 		}
-		require.NoError(t, db.CompleteJob(
+		require.NoError(t, testutil.CompleteReviewFixture(db,
 			wtJob.ID, "test", "prompt", "FAIL: issues found",
 		))
 
@@ -805,7 +798,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			ParentJobID: reviewJob.ID,
 		})
 		db.ClaimJob("w-fix-parent")
-		db.CompleteJob(fixJob.ID, "test", "prompt", "done")
+		testutil.CompleteReviewFixture(db, fixJob.ID, "test", "prompt", "done")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
@@ -836,7 +829,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			Agent:    "test",
 		})
 		db.ClaimJob("w3")
-		db.CompleteJob(review2.ID, "test", "prompt", "FAIL: other issues")
+		testutil.CompleteReviewFixture(db, review2.ID, "test", "prompt", "FAIL: other issues")
 
 		wrongParentFix, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:      repo.ID,
@@ -848,7 +841,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		})
 		// Complete it so it has terminal status + patch
 		db.ClaimJob("w4")
-		db.CompleteJob(wrongParentFix.ID, "test", "prompt", "done")
+		testutil.CompleteReviewFixture(db, wrongParentFix.ID, "test", "prompt", "done")
 		db.SaveJobPatch(wrongParentFix.ID, "--- a/f\n+++ b/f\n")
 
 		req := testutil.MakeJSONRequest(
@@ -872,7 +865,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		})
 		// Complete it (terminal status) but don't set a patch
 		db.ClaimJob("w5")
-		db.CompleteJob(noPatchFix.ID, "test", "prompt", "done but no diff")
+		testutil.CompleteReviewFixture(db, noPatchFix.ID, "test", "prompt", "done but no diff")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
@@ -959,7 +952,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		})
 		// Force to running so CompleteJob can transition it to done.
 		setJobStatus(t, db, compactJob.ID, storage.JobStatusRunning)
-		db.CompleteJob(compactJob.ID, "test", "consolidated findings", "FAIL: issues found")
+		testutil.CompleteReviewFixture(db, compactJob.ID, "test", "consolidated findings", "FAIL: issues found")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
@@ -994,7 +987,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			Agent:  "test",
 		})
 		setJobStatus(t, db, rangeJob.ID, storage.JobStatusRunning)
-		db.CompleteJob(rangeJob.ID, "test", "prompt", "FAIL: issues found")
+		testutil.CompleteReviewFixture(db, rangeJob.ID, "test", "prompt", "FAIL: issues found")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
@@ -1096,7 +1089,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			Agent:    "test",
 		})
 		db.ClaimJob("w2")
-		db.CompleteJob(otherReview.ID, "test", "prompt", "FAIL")
+		testutil.CompleteReviewFixture(db, otherReview.ID, "test", "prompt", "FAIL")
 
 		otherFix, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:      repo2.ID,
@@ -1260,7 +1253,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 
 		_, claimErr := db.ClaimJob("w-task")
 		require.NoError(t, claimErr)
-		require.NoError(t, db.CompleteJob(
+		require.NoError(t, testutil.CompleteReviewFixture(db,
 			taskJob.ID, "test", "analyze this", "FAIL: issues found",
 		))
 
@@ -1311,7 +1304,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 			if claimed.ID == staleFix.ID {
 				break
 			}
-			db.CompleteJob(claimed.ID, "test", "prompt", "PASS")
+			testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "PASS")
 		}
 
 		patch := "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new\n"

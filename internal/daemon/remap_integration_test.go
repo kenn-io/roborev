@@ -87,7 +87,7 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 			return false
 		}, "ClaimJob: %v", err)
 	}
-	err = ctx.db.CompleteJob(job.ID, "test", "prompt", "LGTM - no issues found")
+	err = testutil.CompleteReviewFixture(ctx.db, job.ID, "test", "prompt", "LGTM - no issues found")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false

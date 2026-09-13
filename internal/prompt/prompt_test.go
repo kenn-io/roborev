@@ -130,9 +130,15 @@ func TestBuildRangePromptSummarizesExcludedDependencyMetadata(t *testing.T) {
 
 func TestOrderedPreviousReviewViewsRendersOldestFirst(t *testing.T) {
 	views := orderedPreviousReviewViews([]HistoricalReviewContext{
-		{SHA: "ccccccc", Review: &storage.Review{Output: "newest"}},
-		{SHA: "bbbbbbb", Review: &storage.Review{Output: "middle"}},
-		{SHA: "aaaaaaa", Review: &storage.Review{Output: "oldest"}},
+		{SHA: "ccccccc", Review: &storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("newest"), Output: "newest",
+		}},
+		{SHA: "bbbbbbb", Review: &storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("middle"), Output: "middle",
+		}},
+		{SHA: "aaaaaaa", Review: &storage.Review{
+			VerdictBool: testutil.ReviewFixtureVerdict("oldest"), Output: "oldest",
+		}},
 	})
 	require.Len(t, views, 3)
 	assert.Equal(t, "aaaaaaa", views[0].Commit)
@@ -1313,8 +1319,9 @@ func TestBuildAddressPromptShowsFullDiff(t *testing.T) {
 	b := NewBuilderWithConfig(nil, cfg)
 
 	review := &storage.Review{
-		Agent:  "test",
-		Output: "Found issue: check custom.dat",
+		VerdictBool: testutil.ReviewFixtureVerdict("Found issue: check custom.dat"),
+		Agent:       "test",
+		Output:      "Found issue: check custom.dat",
 		Job: &storage.ReviewJob{
 			GitRef: sha,
 		},
@@ -1336,9 +1343,10 @@ func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) 
 	b := NewBuilder(nil)
 
 	review := &storage.Review{
-		Agent:  "test",
-		Output: "Found issue: check custom.dat",
-		Job:    &storage.ReviewJob{GitRef: sha},
+		VerdictBool: testutil.ReviewFixtureVerdict("Found issue: check custom.dat"),
+		Agent:       "test",
+		Output:      "Found issue: check custom.dat",
+		Job:         &storage.ReviewJob{GitRef: sha},
 	}
 	attempts := []storage.Response{{Responder: "roborev-fix", Response: "Tried a narrow fix"}}
 
@@ -1365,9 +1373,10 @@ func TestBuildAddressPromptSplitsResponses(t *testing.T) {
 	}
 
 	review := &storage.Review{
-		JobID:  1,
-		Agent:  "test",
-		Output: "Found bug in foo.go",
+		VerdictBool: testutil.ReviewFixtureVerdict("Found bug in foo.go"),
+		JobID:       1,
+		Agent:       "test",
+		Output:      "Found bug in foo.go",
 	}
 
 	p, err := b.ForRepo(r.dir, 0).BuildAddressPrompt(review, responses, "")

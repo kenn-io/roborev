@@ -295,10 +295,10 @@ func TestMigrationFromOldSchema(t *testing.T) {
 		t, "old.db", legacyReviewJobSchema, legacyReviewJobSeed,
 	)
 
-	// Verify the old data is preserved
-	review, err := db.GetReviewByJobID(1)
-	require.NoError(t, err, "GetReviewByJobID failed")
-	assert.Equal(t, "test output", review.Output)
+	records, err := db.UnresolvedLegacyReviews()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "test output", records[0].Output)
 
 	// Verify the new constraint allows 'canceled' status
 	// Use raw SQL to insert a job, since the migration test's schema may not
@@ -577,7 +577,7 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 			}, "no job to claim")
 		}
 
-		err = db.CompleteJob(job.ID, "codex", "prompt", "No issues found.")
+		err = completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found.")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -613,7 +613,7 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 			}, "no job to claim")
 		}
 
-		err = db.CompleteJob(job.ID, "codex", "prompt", "- High — SQL injection in login handler")
+		err = completeReviewFixture(db, job.ID, "codex", "prompt", "- High — SQL injection in login handler")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -797,18 +797,10 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Verify data preserved
-	review, err := db.GetReviewByJobID(1)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetReviewByJobID failed: %v", err)
-	}
-	if review.Output != "looks good" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Review output not preserved: got %q", review.Output)
-	}
+	records, err := db.UnresolvedLegacyReviews()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "looks good", records[0].Output)
 
 	job, err := db.GetJobByID(1)
 	require.NoError(t, err)
@@ -1115,18 +1107,10 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 		}, "Expected prompt 'my prompt', got '%s'", prompt)
 	}
 
-	// Verify review data is preserved
-	review, err := db.GetReviewByJobID(1)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetReviewByJobID failed: %v", err)
-	}
-	if review.Output != "test output" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected output 'test output', got '%s'", review.Output)
-	}
+	records, err := db.UnresolvedLegacyReviews()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "test output", records[0].Output)
 
 	// Verify new constraint works by creating and canceling a job.
 	// Use raw SQL to insert/update the job, since the migration test's schema may

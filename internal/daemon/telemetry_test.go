@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type fakeTelemetryClient struct {
@@ -46,7 +47,7 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	require.NoError(err)
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
 	require.NoError(err)
-	require.NoError(db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 
 	cfg := config.DefaultConfig()
 	cfg.MaxWorkers = 4

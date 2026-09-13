@@ -86,7 +86,7 @@ func registerCapturingAgent(t *testing.T, name string, captured *string) {
 		NameStr: name,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			*captured = reviewPrompt
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(name) })
@@ -98,7 +98,7 @@ func registerPassingAgent(t *testing.T, name string) {
 	agent.Register(&agent.FakeAgent{
 		NameStr: name,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
-			return "No issues found.", nil
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(name) })

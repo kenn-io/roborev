@@ -15,7 +15,11 @@ import (
 
 const structuredReviewOutputInstruction = `
 
-Roborev will constrain the final response with a JSON Schema. Return a concise
+Return exactly one JSON object, without a code fence or other text, with this shape:
+{"schema_version":2,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":null}]}
+Use an empty findings array when there are no findings. Set location to a file:line
+string when known, otherwise null. This JSON format replaces any Markdown output
+format specified earlier in the prompt. Return a concise
 summary, your overall verdict, and every actionable finding. Each finding must
 include its severity, problem, and recommended fix; include a location when one
 is known. Use only these severity values: critical, high, medium, or low. The
@@ -23,13 +27,8 @@ verdict is "pass" when the change is acceptable, "fail" when it is not, and
 "unable_to_review" only when you could not assess the change at all, for
 example because the diff is missing or unreadable; explain why in the summary.`
 
-// ReconcileStructuredOutputInstruction makes a prebuilt review prompt match
-// the agent that will actually run it. Prompts are built before failover,
-// so a prompt written for a structured agent may reach a prose agent and
-// vice versa. A prose agent must not be told its answer will be
-// schema-constrained, and a structured agent should be told what the schema
-// expects. The instruction is appended only when absent, so custom prompts
-// that already embed it are unchanged.
+// ReconcileStructuredOutputInstruction adds or removes the explicit JSON output
+// contract. Native schema support is optional; every review must return JSON.
 func ReconcileStructuredOutputInstruction(prompt string, structured bool) string {
 	present := strings.Contains(prompt, structuredReviewOutputInstruction)
 	switch {

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // stuckPanelMember builds an EnqueueOpts for a panel member targeting the
@@ -64,7 +65,7 @@ func TestPanelSweepReleasesStuck(t *testing.T) {
 		claimed, err := db.ClaimJob("w")
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
-		require.NoError(t, db.CompleteJob(claimed.ID, "test", "", "No issues found."))
+		require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "", "No issues found."))
 	}
 
 	// Sanity: synthesis is still blocked because nothing released it.

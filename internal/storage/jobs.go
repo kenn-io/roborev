@@ -1125,7 +1125,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
-// If the job has an output_prefix, it will be prepended to the output.
+// Review jobs require a JSON document. Prefixes are applied only when rendering.
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	return db.completeJob(jobID, agent, prompt, ReviewCompletion{Output: output})
 }
@@ -1186,16 +1186,37 @@ func (db *DB) completeJob(
 
 	// Fetch output_prefix and job_type from job (if any)
 	var outputPrefix sql.NullString
-	var jobType string
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType)
+	var jobType, storedThreshold string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
+	if completion.MinSeverity == "" {
+		completion.MinSeverity = storedThreshold
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 
-	// Prepend output_prefix if present
+	// Review documents are the only persisted review body. Free-form task
+	// and fix results retain their separate output contract.
 	finalOutput := completion.Output
-	if outputPrefix.Valid && outputPrefix.String != "" {
-		finalOutput = outputPrefix.String + completion.Output
+	if requiresReviewDocument(jobType) {
+		if len(completion.StructuredOutput) == 0 {
+			completion.StructuredOutput = json.RawMessage(completion.Output)
+		}
+		doc, err := structuredreview.Decode(completion.StructuredOutput)
+		if err != nil {
+			return fmt.Errorf("review JSON document is required; Markdown records are no longer accepted: %w", err)
+		}
+		if jobType == JobTypeSynthesis {
+			if err := doc.RequireSources(len(doc.SourceLabels)); err != nil {
+				return fmt.Errorf("synthesis JSON sources are required: %w", err)
+			}
+		}
+		if completion.Verdict == VerdictUnknown && !doc.UnableToReview() {
+			completion.Verdict = VerdictFromPassed(doc.Passed(completion.MinSeverity))
+		}
+		finalOutput = ""
+	} else if outputPrefix.Valid {
+		finalOutput = outputPrefix.String + finalOutput
 	}
 
 	// Update job status only if still running (not canceled)
@@ -1962,13 +1983,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if options.includeFindings {
 		structuredOutputExpr = "rv.structured_output"
 	}
-	// The review output is only needed to parse a verdict for legacy rows
-	// where verdict_bool is NULL (e.g. synced from older machines); rows with
-	// a stored verdict skip the large TEXT payload and pass the existence
-	// flag instead. Both expressions must stay lazy CASEs: evaluating
-	// rv.output at all (even just != '') materializes the full text, so the
-	// flag returns 1 straight from verdict_bool — writers and the startup
-	// backfill guarantee a non-NULL verdict implies a non-empty output.
+	// Stored verdicts avoid loading a result body in queue listings. Review
+	// verdicts come from JSON at write time; only free-form job types may
+	// still need their output here. Keep the large text expressions lazy.
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count, ` + diffContentExpr + `,
@@ -2680,7 +2697,7 @@ func (db *DB) GetPanelMembers(panelRunUUID uuid.UUID) ([]ReviewJob, error) {
 		}
 		applyReviewJobScan(&j, fields)
 		if output.Valid {
-			applyJobVerdict(&j, verdictBool, output.String, output.String != "")
+			applyJobVerdict(&j, verdictBool, output.String, output.String != "" || verdictBool.Valid)
 		}
 		jobs = append(jobs, j)
 	}
@@ -2736,7 +2753,7 @@ func (db *DB) GetSynthesisJob(panelRunUUID uuid.UUID) (*ReviewJob, error) {
 	}
 	applyReviewJobScan(&j, fields)
 	if output.Valid {
-		applyJobVerdict(&j, verdictBool, output.String, output.String != "")
+		applyJobVerdict(&j, verdictBool, output.String, output.String != "" || verdictBool.Valid)
 	}
 	if err := db.attachExperimentAssignments(&j); err != nil {
 		return nil, err
@@ -2752,7 +2769,7 @@ func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT j.id, j.agent, j.review_type, COALESCE(j.panel_member_name, ''), COALESCE(rv.output, ''), rv.verdict_bool, rv.structured_output, COALESCE(j.min_severity, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, ''),
+		SELECT j.id, j.agent, j.review_type, COALESCE(j.panel_member_name, ''), '', rv.verdict_bool, rv.structured_output, COALESCE(j.min_severity, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, ''),
 		       COALESCE(j.panel_member_config_json, ''),
 		       COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''), COALESCE(j.token_usage, '')
 		FROM review_jobs j
@@ -2773,6 +2790,11 @@ func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult
 		}
 		if structuredOutput.Valid {
 			r.StructuredOutput = json.RawMessage(structuredOutput.String)
+			doc, err := structuredreview.Decode(r.StructuredOutput)
+			if err != nil {
+				return nil, err
+			}
+			r.Output = doc.Markdown(r.MinSeverity)
 		}
 		results = append(results, r)
 	}

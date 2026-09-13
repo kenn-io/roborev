@@ -50,7 +50,7 @@ func markMemberRunning(t *testing.T, tc *workerTestContext, jobID int64) {
 func completeMember(t *testing.T, tc *workerTestContext, jobID int64, ag, output string) {
 	t.Helper()
 	markMemberRunning(t, tc, jobID)
-	require.NoError(t, tc.DB.CompleteJob(jobID, ag, "", output))
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, jobID, ag, "", output))
 }
 
 // failMember drives a specific member to terminal failure.
@@ -551,8 +551,8 @@ func TestSynthesisAllFailed(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Contains(review.Output, "Review Failed")
-	assert.Contains(review.Output, "All review jobs in this batch failed")
+	assert.Contains(review.Output, "Unable to review")
+	assert.Contains(review.Output, "All review agents failed")
 	assert.False(synthCalled, "no agent should run when every member failed")
 }
 
@@ -612,7 +612,7 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Equal(memberAOutput, review.Output, "passthrough must emit member output verbatim")
+	assert.Equal(memberAOutput, review.StructuredOutput["summary"], "passthrough retains the member document")
 	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output), "verdict carried from member output")
 	assert.Equal(memberAgent, review.Agent, "review labeled with the surviving member's agent")
 	assert.False(synthCalled, "passthrough must not invoke an agent")
@@ -649,7 +649,7 @@ func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *tes
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Equal(memberOutput, review.Output, "low findings stay in the output")
+	assert.Contains(review.Output, memberOutput, "low findings stay in the output")
 	require.NotNil(t, review.VerdictBool)
 	assert.Equal(1, *review.VerdictBool, "a low-only review passes a medium threshold")
 	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
@@ -796,7 +796,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Equal("No issues found.", review.Output, "stored synthesis output is body content; renderers add headers and footers")
+	assert.Equal("No issues found.", review.StructuredOutput["summary"])
 	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output))
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
 }
@@ -1212,7 +1212,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 			for _, file := range files {
 				content, err := os.ReadFile(file)
 				require.NoError(t, err)
-				assert.Contains(string(content), strings.Repeat("finding ", 1000))
+				assert.Contains(string(content), strings.TrimSpace(strings.Repeat("finding ", 1000)))
 			}
 			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
@@ -1230,8 +1230,8 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.Repeat("finding ", 1000))
-	completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.Repeat("finding ", 1000))
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")

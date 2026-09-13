@@ -61,14 +61,36 @@ Do not re-raise issues identified below unless they persist in the final code.
 Focus on cross-commit interactions and problems not caught by per-commit reviews.
 
 --- Commit d4c9b80 (test-worker, failed) ---
+## Summary
+
 Found bug: missing null check in handler
 
 Verdict: FAIL
 
+**Agent assessment:** Fail
+
+## Findings
+
+### 1. Medium
+
+**Problem:** Found bug: missing null check in handler
+
+Verdict: FAIL
+
+**Fix:** Apply the correction described in the test finding.
+
+
 --- Commit a5e670f (test-worker, passed) ---
+## Summary
+
 No issues found.
 
 Verdict: PASS
+
+**Agent assessment:** Pass
+
+No issues found.
+
 
 ## Commit Range
 

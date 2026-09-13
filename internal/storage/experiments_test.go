@@ -36,7 +36,7 @@ func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
 	claimed, err := db.ClaimJob("experiment-worker")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, job.Experiments, review.Job.Experiments)
@@ -127,7 +127,7 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 	claimed, err := db.ClaimJob("export-worker")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 
 	page, err := db.ExportReviews(ExportReviewsOptions{
 		Profile: ExportProfileMetadata, Limit: 10,

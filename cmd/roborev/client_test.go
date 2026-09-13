@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // writeJSON encodes data as JSON to the response writer.
@@ -123,7 +124,9 @@ func TestWaitForReview(t *testing.T) {
 		mux.Handle("/api/jobs", newMockHandler(t, "GET", "/api/jobs",
 			map[string]any{"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}}, 0))
 		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
-			storage.Review{ID: 1, JobID: 1, Output: "Review complete"}, 0))
+			storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Review complete"), ID: 1, JobID: 1, Output: "Review complete",
+			}, 0))
 
 		daemonFromHandler(t, mux)
 
@@ -147,7 +150,9 @@ func TestWaitForReview(t *testing.T) {
 			})
 		})
 		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
-			storage.Review{ID: 1, JobID: 1, Output: "Review after polling"}, 0))
+			storage.Review{
+				VerdictBool: testutil.ReviewFixtureVerdict("Review after polling"), ID: 1, JobID: 1, Output: "Review after polling",
+			}, 0))
 
 		daemonFromHandler(t, mux)
 

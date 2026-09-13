@@ -39,8 +39,9 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 	zero, excluded := 0, 27
 	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", ReviewCompletion{
-		Output:       "PASS",
-		FileCoverage: &ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
+		StructuredOutput: reviewFixtureJSON("PASS"),
+		Output:           "PASS",
+		FileCoverage:     &ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
 	}))
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -58,7 +59,9 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 
 	unknown := enqueueJob(t, db, repo.ID, commit.ID, "unknown-sha")
 	setJobStatus(t, db, unknown.ID, JobStatusRunning)
-	require.NoError(t, db.CompleteJobResult(unknown.ID, "test", "prompt", ReviewCompletion{Output: "PASS"}))
+	require.NoError(t, db.CompleteJobResult(unknown.ID, "test", "prompt", ReviewCompletion{
+		StructuredOutput: reviewFixtureJSON("PASS"), Output: "PASS",
+	}))
 	unknownReview, err := db.GetReviewByJobID(unknown.ID)
 	require.NoError(t, err)
 	assert.Nil(t, unknownReview.FileCoverage)
@@ -69,8 +72,9 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 	canceled := enqueueJob(t, db, repo.ID, commit.ID, "canceled-sha")
 	setJobStatus(t, db, canceled.ID, JobStatusCanceled)
 	require.NoError(t, db.CompleteJobResult(canceled.ID, "test", "prompt", ReviewCompletion{
-		Output:       "PASS",
-		FileCoverage: &ReviewFileCoverage{Reviewed: &zero},
+		StructuredOutput: reviewFixtureJSON("PASS"),
+		Output:           "PASS",
+		FileCoverage:     &ReviewFileCoverage{Reviewed: &zero},
 	}))
 	_, err = db.GetReviewByJobID(canceled.ID)
 	require.Error(t, err)
@@ -82,9 +86,9 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 		WHERE name IN ('reviewed_file_count', 'excluded_file_count')
 	`).Scan(&columns))
 	assert.Equal(t, 2, columns)
-	legacyReview, err := legacy.GetReviewByJobID(1)
+	records, err := legacy.UnresolvedLegacyReviews()
 	require.NoError(t, err)
-	assert.Nil(t, legacyReview.FileCoverage)
+	require.Len(t, records, 1)
 }
 
 func TestReviewFileCoveragePartialAndSync(t *testing.T) {
@@ -95,8 +99,9 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 	reviewed := 4
 	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", ReviewCompletion{
-		Output:       "PASS",
-		FileCoverage: &ReviewFileCoverage{Reviewed: &reviewed},
+		StructuredOutput: reviewFixtureJSON("PASS"),
+		Output:           "PASS",
+		FileCoverage:     &ReviewFileCoverage{Reviewed: &reviewed},
 	}))
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -122,6 +127,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	require.NotNil(t, job.UUID)
 	require.NotNil(t, review.UUID)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
+		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              "remote",
@@ -140,6 +146,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	newExcluded := 9
 	future = future.Add(time.Hour)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
+		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              "remote",
@@ -177,6 +184,7 @@ func TestIntegrationCoveragePostgres(t *testing.T) {
 	excluded := 3
 	updatedBy := uuid.New()
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
+		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               reviewUUID,
 		JobUUID:            jobUUID,
 		Agent:              "test",
@@ -195,6 +203,7 @@ func TestIntegrationCoveragePostgres(t *testing.T) {
 	assert.Equal(t, 3, *reviews[0].ExcludedFileCount)
 
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
+		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               reviewUUID,
 		JobUUID:            jobUUID,
 		Agent:              "test",

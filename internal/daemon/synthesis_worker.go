@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 // errSynthesisCanceled signals that the synthesis agent run was canceled, so the
@@ -61,30 +62,36 @@ func (wp *WorkerPool) processSynthesisJob(
 		// Every member failed — emit a durable fail review with no agent call.
 		// The comment renders the head SHA (FormatAllFailedComment short-SHAs its
 		// arg), so pass the head side of the frozen mergeBase..headSHA range.
-		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			review: reviewpkg.ReviewResult{
-				Agent:       job.Agent,
-				Output:      reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)),
-				Verdict:     storage.VerdictFail,
-				MinSeverity: job.MinSeverity,
-			},
+		wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
+			SchemaVersion: structuredreview.SchemaVersion, Summary: fmt.Sprintf("All review agents failed for %s; no review could be produced.", headOf(job.GitRef)),
+			Verdict: structuredreview.VerdictUnableToReview, Findings: []structuredreview.Finding{},
 		})
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
 		// label the review with that member's agent. Its verdict already
 		// honors the panel threshold, so no synthesis agent is needed.
-		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			review: succeeded[0],
-		})
+		single := succeeded[0]
+		doc, err := reviewpkg.DecodeStructuredReview(single.StructuredOutput)
+		if err != nil {
+			wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+			return
+		}
+		doc.SourceLabels = reviewpkg.SynthesisSourceLabels(succeeded)
+		for i := range doc.Findings {
+			doc.Findings[i].Sources = []int{1}
+		}
+		single.StructuredOutput, err = json.Marshal(doc)
+		if err != nil {
+			wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+			return
+		}
+		single.Output = doc.Markdown(job.MinSeverity)
+		wp.completeSynthesisContext(workerID, job, synthesisResult{review: single})
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
-			wp.completeSynthesisContext(workerID, job, synthesisResult{
-				review: reviewpkg.ReviewResult{
-					Agent:       job.Agent,
-					Output:      "No issues found.",
-					Verdict:     storage.VerdictPass,
-					MinSeverity: job.MinSeverity,
-				},
+			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
+				SchemaVersion: structuredreview.SchemaVersion, Summary: "No issues found.",
+				Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{},
 			})
 			return
 		}
@@ -271,19 +278,9 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	agentName, prompt, output := res.review.Agent, res.prompt, res.review.Output
-	var completeErr error
-	if res.review.Verdict != storage.VerdictUnknown {
-		completeErr = wp.db.CompleteJobResult(
-			job.ID, agentName, prompt, storage.ReviewCompletion{
-				Output:           output,
-				Verdict:          res.review.Verdict,
-				StructuredOutput: res.review.StructuredOutput,
-				MinSeverity:      res.review.MinSeverity,
-			},
-		)
-	} else {
-		completeErr = wp.db.CompleteJob(job.ID, agentName, prompt, output)
-	}
+	completeErr := wp.db.CompleteJobResult(job.ID, agentName, prompt, storage.ReviewCompletion{
+		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
+	})
 	if completeErr != nil {
 		// Leaving the job running would strand the panel with no comment.
 		// Route the storage failure through the ordinary retry/fail path.
@@ -508,4 +505,16 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 		return false
 	}
 	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedConfigured.Name())
+}
+
+func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
+		return
+	}
+	wp.completeSynthesisContext(workerID, job, synthesisResult{review: reviewpkg.ReviewResult{
+		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: storage.VerdictFromPassed(doc.Passed(job.MinSeverity)),
+		StructuredOutput: raw, MinSeverity: job.MinSeverity,
+	}})
 }

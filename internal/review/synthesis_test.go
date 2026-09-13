@@ -218,7 +218,7 @@ func TestSynthesisDocumentRoundTripsNullLocation(t *testing.T) {
 	encoded, err := json.Marshal(doc)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"location":null`)
-	assert.NotContains(t, string(encoded), "source_labels")
+	assert.Contains(t, string(encoded), "source_labels")
 
 	again, err := DecodeStructuredReview(encoded)
 	require.NoError(t, err, "the stored document must satisfy the storage validator")

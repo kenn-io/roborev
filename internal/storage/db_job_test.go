@@ -51,7 +51,7 @@ func TestJobLifecycle(t *testing.T) {
 	assert.Nil(t, claimed2)
 
 	// Complete job
-	require.NoError(t, env.db.CompleteJob(
+	require.NoError(t, completeReviewFixture(env.db,
 		env.job.ID, "codex", "test prompt", "test output",
 	), "CompleteJob failed")
 
@@ -104,7 +104,7 @@ func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "worker-1")
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "The code has issues."))
+	require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "The code has issues."))
 
 	var verdict sql.NullInt64
 	require.NoError(t, db.QueryRow(
@@ -117,7 +117,7 @@ func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/unknown-verdict", "unknown123")
 	claimJob(t, env.db, "worker-1")
 
-	require.NoError(t, env.db.CompleteJob(
+	require.NoError(t, completeReviewFixture(env.db,
 		env.job.ID, "codex", "prompt", "I am unable to read the diff file because it is ignored by configured ignore patterns.",
 	))
 
@@ -461,7 +461,7 @@ func TestRunningJobIDsAndTargetedCount(t *testing.T) {
 func TestReviewOperations(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "rev123")
 	claimJob(t, env.db, "worker-1")
-	require.NoError(t, env.db.CompleteJob(
+	require.NoError(t, completeReviewFixture(env.db,
 		env.job.ID, "codex", "the prompt", "the review output",
 	), "CompleteJob failed")
 
@@ -469,7 +469,7 @@ func TestReviewOperations(t *testing.T) {
 	review, err := env.db.GetReviewByCommitSHA("rev123")
 	require.NoError(t, err, "GetReviewByCommitSHA failed")
 
-	assert.Equal(t, "the review output", review.Output)
+	assert.Contains(t, review.Output, "the review output")
 	assert.Equal(t, "codex", review.Agent)
 }
 
@@ -478,7 +478,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-pass")
 		_, err := env.db.ClaimJob("worker-1")
 		require.NoError(t, err)
-		require.NoError(t, env.db.CompleteJob(
+		require.NoError(t, completeReviewFixture(env.db,
 			env.job.ID, "codex", "the prompt",
 			"No issues found. The code looks good.",
 		))
@@ -494,7 +494,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-compact-clean")
 		_, err := env.db.ClaimJob("worker-1")
 		require.NoError(t, err)
-		require.NoError(t, env.db.CompleteJob(
+		require.NoError(t, completeReviewFixture(env.db,
 			env.job.ID, "codex", "the prompt",
 			"## Compact Analysis\n\n---\n\nNo remaining findings.",
 		))
@@ -519,7 +519,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-empty")
 		_, err := env.db.ClaimJob("worker-1")
 		require.NoError(t, err)
-		require.NoError(t, env.db.CompleteJob(
+		require.NoError(t, completeReviewFixture(env.db,
 			env.job.ID, "codex", "the prompt", "",
 		)) // empty output
 
@@ -550,8 +550,8 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 		// Manually insert a review to simulate edge case
 		_, err = env.db.Exec(
-			`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, 'codex', 'prompt', 'No issues found.')`,
-			env.job.ID,
+			`INSERT INTO reviews (job_id, agent, prompt, output, structured_output) VALUES (?, 'codex', 'prompt', '', ?)`,
+			env.job.ID, string(reviewFixtureJSON("No issues found.")),
 		)
 		require.NoError(t, err, "Failed to insert review")
 
@@ -565,7 +565,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-sha")
 		_, err := env.db.ClaimJob("worker-1")
 		require.NoError(t, err)
-		require.NoError(t, env.db.CompleteJob(
+		require.NoError(t, completeReviewFixture(env.db,
 			env.job.ID, "codex", "the prompt", "No issues found.",
 		))
 
@@ -601,7 +601,7 @@ func TestMarkReviewClosed(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "addr123")
 	_, err := env.db.ClaimJob("worker-1")
 	require.NoError(t, err)
-	require.NoError(t, env.db.CompleteJob(
+	require.NoError(t, completeReviewFixture(env.db,
 		env.job.ID, "codex", "prompt", "output",
 	))
 
@@ -646,7 +646,7 @@ func TestMarkReviewClosedByJobID(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "jobaddr123")
 	_, err := env.db.ClaimJob("worker-1")
 	require.NoError(t, err)
-	require.NoError(t, env.db.CompleteJob(
+	require.NoError(t, completeReviewFixture(env.db,
 		env.job.ID, "codex", "prompt", "output",
 	))
 
@@ -756,7 +756,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 
 	// Claim, complete, then try retry (should fail - job is done)
 	_, _ = db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "p", "o")
+	completeReviewFixture(db, job.ID, "codex", "p", "o")
 
 	retried, err = db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob on done job failed: %v")
@@ -1115,7 +1115,7 @@ func TestCancelJob(t *testing.T) {
 	t.Run("cancel done job fails", func(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-done")
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.CancelJob(job.ID)
 		require.Error(t, err)
@@ -1136,7 +1136,7 @@ func TestCancelJob(t *testing.T) {
 		db.CancelJob(job.ID)
 
 		// CompleteJob should not overwrite canceled status
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		updated, _ := db.GetJobByID(job.ID)
 		assert.Equal(t, JobStatusCanceled, updated.Status)
@@ -1181,7 +1181,7 @@ func TestMarkJobApplied(t *testing.T) {
 	t.Run("mark done fix job as applied", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobApplied(job.ID)
 		require.NoError(t, err, "MarkJobApplied failed: %v")
@@ -1200,7 +1200,7 @@ func TestMarkJobApplied(t *testing.T) {
 	t.Run("mark applied job again fails", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-2", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 		db.MarkJobApplied(job.ID)
 
 		err := db.MarkJobApplied(job.ID)
@@ -1210,7 +1210,7 @@ func TestMarkJobApplied(t *testing.T) {
 	t.Run("mark non-fix job fails", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-review", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobApplied(job.ID)
 		require.Error(t, err)
@@ -1227,7 +1227,7 @@ func TestMarkJobRebased(t *testing.T) {
 	t.Run("mark done fix job as rebased", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobRebased(job.ID)
 		require.NoError(t, err, "MarkJobRebased failed: %v")
@@ -1246,7 +1246,7 @@ func TestMarkJobRebased(t *testing.T) {
 	t.Run("mark non-fix job fails", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-review", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobRebased(job.ID)
 		require.Error(t, err)
@@ -1314,9 +1314,9 @@ func TestReenqueueJob(t *testing.T) {
 				break
 			}
 			// Complete other jobs to clear them
-			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+			completeReviewFixture(db, claimed.ID, "codex", "prompt", "output")
 		}
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		completeReviewFixture(db, job.ID, "codex", "prompt", "output")
 
 		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
@@ -1393,7 +1393,7 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
 		assert.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(job.ID, "opencode", "prompt", "output"))
+		require.NoError(t, completeReviewFixture(isolatedDB, job.ID, "opencode", "prompt", "output"))
 
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{Model: "openai/gpt-5", Provider: "openai"})
 		require.NoError(t, err)
@@ -1418,7 +1418,7 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
 		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(job.ID, "codex", "prompt", "output"))
+		require.NoError(t, completeReviewFixture(isolatedDB, job.ID, "codex", "prompt", "output"))
 
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{
 			Agent: "codex", Reasoning: "high", RestorePlan: true,
@@ -1456,7 +1456,7 @@ func TestReenqueueJob(t *testing.T) {
 		require.NotNil(t, claimed)
 		assert.Equal(t, job.ID, claimed.ID)
 
-		err = isolatedDB.CompleteJob(job.ID, "test", "prompt", "output")
+		err = completeReviewFixture(isolatedDB, job.ID, "test", "prompt", "output")
 		require.NoError(t, err)
 
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
@@ -1478,14 +1478,14 @@ func TestReenqueueJob(t *testing.T) {
 		// First completion cycle
 		claimed, _ := isolatedDB.ClaimJob("worker-1")
 		assert.False(t, claimed == nil || claimed.ID != job.ID)
-		err := isolatedDB.CompleteJob(job.ID, "codex", "first prompt", "first output")
+		err := completeReviewFixture(isolatedDB, job.ID, "codex", "first prompt", "first output")
 		require.NoError(t, err, "First CompleteJob failed: %v")
 
 		// Verify first review exists
 		review1, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after first complete: %v")
 
-		assert.Equal(t, "first output", review1.Output)
+		assert.Contains(t, review1.Output, "first output")
 
 		// Re-enqueue the done job
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
@@ -1498,14 +1498,14 @@ func TestReenqueueJob(t *testing.T) {
 		// Second completion cycle
 		claimed, _ = isolatedDB.ClaimJob("worker-1")
 		assert.False(t, claimed == nil || claimed.ID != job.ID)
-		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
+		err = completeReviewFixture(isolatedDB, job.ID, "codex", "second prompt", "second output")
 		require.NoError(t, err, "Second CompleteJob failed: %v")
 
 		// Verify second review exists with new content
 		review2, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after second complete: %v")
 
-		assert.Equal(t, "second output", review2.Output)
+		assert.Contains(t, review2.Output, "second output")
 	})
 }
 
@@ -1532,7 +1532,7 @@ func TestReenqueueJob_ClearsPrebuiltPrompt(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", job.Prompt, "review output"))
+	require.NoError(t, completeReviewFixture(db, job.ID, "test", job.Prompt, "review output"))
 
 	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
 	require.NoError(t, err)
@@ -1561,7 +1561,7 @@ func TestReenqueueJob_PreservesDirtyFiles(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "review output"))
+	require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "review output"))
 
 	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
 	require.NoError(t, err)
@@ -1594,7 +1594,7 @@ func TestReenqueueJob_PreservesTaskPrompt(t *testing.T) {
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", taskPrompt, "task output"))
+	require.NoError(t, completeReviewFixture(db, job.ID, "test", taskPrompt, "task output"))
 
 	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
 	require.NoError(t, err)
