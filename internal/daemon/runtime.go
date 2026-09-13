@@ -117,6 +117,7 @@ type PingInfo struct {
 	Service string `json:"service"`
 	Version string `json:"version"`
 	PID     int    `json:"pid,omitempty"`
+	MCPURL  string `json:"mcp_url,omitempty" doc:"Streamable HTTP MCP endpoint when [mcp] is enabled and the daemon listens on TCP"`
 }
 
 func runtimeStore() kitdaemon.RuntimeStore {

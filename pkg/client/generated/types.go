@@ -1860,7 +1860,10 @@ func (p PanelSummary) Validate() error {
 
 type PingInfo struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
+	Schema *string `json:"$schema,omitempty"`
+
+	// McpURL Streamable HTTP MCP endpoint when [mcp] is enabled and the daemon listens on TCP
+	McpURL  *string `json:"mcp_url,omitempty"`
 	Ok      bool    `json:"ok"`
 	Pid     *int64  `json:"pid,omitempty"`
 	Service string  `json:"service" validate:"required"`

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -89,4 +92,101 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 		t.Fatal("mcp serve did not exit after stdin closed")
 	}
 	assert.NotContains(stderr.String(), "Error")
+}
+
+func stubMCPStatusDiscovery(
+	t *testing.T,
+	runtimes []*daemon.RuntimeInfo,
+	probe func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error),
+) {
+	t.Helper()
+	origList, origProbe := mcpStatusListRuntimes, mcpStatusProbe
+	mcpStatusListRuntimes = func() ([]*daemon.RuntimeInfo, error) { return runtimes, nil }
+	mcpStatusProbe = probe
+	t.Cleanup(func() {
+		mcpStatusListRuntimes, mcpStatusProbe = origList, origProbe
+	})
+	patchServerAddr(t, "")
+}
+
+func TestMCPStatusListsAdvertisedListeners(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	stubMCPStatusDiscovery(t,
+		[]*daemon.RuntimeInfo{
+			{PID: 11, Network: "tcp", Address: "127.0.0.1:7373"},
+			{PID: 12, Network: "tcp", Address: "127.0.0.1:7374"},
+			{PID: 13, Network: "tcp", Address: "127.0.0.1:7375"},
+		},
+		func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			switch ep.Address {
+			case "127.0.0.1:7373":
+				return &daemon.PingInfo{OK: true, PID: 11, MCPURL: "http://127.0.0.1:7373/mcp"}, nil
+			case "127.0.0.1:7374":
+				// MCP disabled on this daemon.
+				return &daemon.PingInfo{OK: true, PID: 12}, nil
+			default:
+				// Stale record: a different process answers on the port.
+				return &daemon.PingInfo{OK: true, PID: 99, MCPURL: "http://127.0.0.1:7375/mcp"}, nil
+			}
+		})
+
+	var out bytes.Buffer
+	cmd := mcpCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status", "--json"})
+	require.NoError(cmd.Execute())
+
+	var listeners []mcpListenerStatus
+	require.NoError(json.Unmarshal(out.Bytes(), &listeners))
+	assert.Equal([]mcpListenerStatus{{
+		PID: 11, Transport: "http",
+		URL: "http://127.0.0.1:7373/mcp", BackendURL: "http://127.0.0.1:7373",
+	}}, listeners)
+
+	out.Reset()
+	cmd = mcpCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	require.NoError(cmd.Execute())
+	assert.Equal("MCP http://127.0.0.1:7373/mcp (pid 11, daemon http://127.0.0.1:7373)\n", out.String())
+}
+
+func TestMCPStatusReportsEmptyListWithoutListeners(t *testing.T) {
+	stubMCPStatusDiscovery(t, nil, func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return nil, errors.New("unreachable")
+	})
+
+	var out bytes.Buffer
+	cmd := mcpCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status", "--json"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "[]\n", out.String())
+
+	out.Reset()
+	cmd = mcpCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "No HTTP MCP listeners are running.\n", out.String())
+}
+
+func TestMCPStatusHonorsServerFlag(t *testing.T) {
+	var probed []string
+	stubMCPStatusDiscovery(t,
+		[]*daemon.RuntimeInfo{{PID: 11, Network: "tcp", Address: "127.0.0.1:7373"}},
+		func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			probed = append(probed, ep.Address)
+			return &daemon.PingInfo{OK: true, PID: 5, MCPURL: "http://" + ep.Address + "/mcp"}, nil
+		})
+	patchServerAddr(t, "127.0.0.1:9999")
+
+	var out bytes.Buffer
+	cmd := mcpCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"status", "--json"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, []string{"127.0.0.1:9999"}, probed)
+	assert.Contains(t, out.String(), `"backend_url":"http://127.0.0.1:9999"`)
 }

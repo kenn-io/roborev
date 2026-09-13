@@ -144,3 +144,35 @@ func TestMCPBackendListJobsMatchesHTTPDefaults(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(page.Jobs)
 }
+
+func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/roborev.sock"}
+	assert.Equal("http://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcp))
+	assert.Empty(mcpURLForEndpoint(false, tcp))
+	assert.Empty(mcpURLForEndpoint(true, unix))
+	assert.Empty(mcpURLForEndpoint(true, DaemonEndpoint{}))
+
+	server, _ := newMCPTestServer(t, true)
+	server.endpointMu.Lock()
+	server.endpoint = tcp
+	server.endpointMu.Unlock()
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code)
+	var ping PingInfo
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &ping))
+	assert.Equal("http://127.0.0.1:7373/mcp", ping.MCPURL)
+
+	disabled, _ := newMCPTestServer(t, false)
+	disabled.endpointMu.Lock()
+	disabled.endpoint = tcp
+	disabled.endpointMu.Unlock()
+	w = httptest.NewRecorder()
+	disabled.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code)
+	assert.NotContains(w.Body.String(), "mcp_url")
+}

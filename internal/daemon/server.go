@@ -65,6 +65,7 @@ type Server struct {
 	telemetryStop           chan struct{}
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
+	mcpEnabled              bool       // [mcp] enabled at construction; /mcp is mounted on the API listener
 	endpoint                DaemonEndpoint
 	alternateEndpoint       *DaemonEndpoint
 	socketActivated         bool // true if started via systemd socket activation
@@ -189,6 +190,7 @@ func newServerWithLogs(
 	s.registerHumaAPI(mux)
 	s.registerAgentHookRoutes(mux)
 	if cfg.MCP.Enabled {
+		s.mcpEnabled = true
 		mcpServer := mcpserver.New(s.mcpBackend(), version.Version)
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
@@ -3606,12 +3608,26 @@ func (s *Server) humaGetHealth(
 func (s *Server) humaPing(
 	ctx context.Context, input *struct{},
 ) (*PingOutput, error) {
+	s.endpointMu.Lock()
+	ep := s.endpoint
+	s.endpointMu.Unlock()
 	return &PingOutput{Body: PingInfo{
 		OK:      true,
 		Service: daemonServiceName,
 		Version: version.Version,
 		PID:     os.Getpid(),
+		MCPURL:  mcpURLForEndpoint(s.mcpEnabled, ep),
 	}}, nil
+}
+
+// mcpURLForEndpoint returns the advertised streamable HTTP MCP endpoint.
+// It is empty when MCP is disabled or the API listener is not TCP, since
+// MCP clients cannot dial a Unix socket URL.
+func mcpURLForEndpoint(enabled bool, ep DaemonEndpoint) string {
+	if !enabled || ep.Network != "tcp" || ep.Address == "" {
+		return ""
+	}
+	return ep.BaseURL() + mcpserver.HTTPPath
 }
 
 // humaShutdown requests a graceful daemon shutdown. This is the only

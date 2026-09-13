@@ -5,6 +5,8 @@
 export interface PingInfo {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Streamable HTTP MCP endpoint when [mcp] is enabled and the daemon listens on TCP */
+  mcp_url?: string;
   ok: boolean;
   pid?: number;
   service: string;

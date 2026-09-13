@@ -2813,6 +2813,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "mcp_url": {
+            "description": "Streamable HTTP MCP endpoint when [mcp] is enabled and the daemon listens on TCP",
+            "type": "string"
+          },
           "ok": {
             "type": "boolean"
           },

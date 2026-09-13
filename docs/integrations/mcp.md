@@ -70,6 +70,21 @@ The HTTP transport runs in the daemon process and reads the database directly.
 The stdio transport is a separate process that talks to the daemon over HTTP, so
 it never opens the database itself.
 
+## Discovering the HTTP listener
+
+`roborev mcp status` lists daemons that currently serve the HTTP endpoint
+without starting anything. Each entry reports the MCP URL and the daemon API
+base URL it reads from, so a host that already selected a daemon can match the
+listener to it. The daemon also advertises the same URL as `mcp_url` in its
+`/api/ping` response.
+
+```bash
+roborev mcp status          # MCP http://127.0.0.1:7373/mcp (pid 4242, daemon http://127.0.0.1:7373)
+roborev mcp status --json   # [{"pid":4242,"transport":"http","url":"http://127.0.0.1:7373/mcp","backend_url":"http://127.0.0.1:7373"}]
+```
+
+The JSON form is an array, empty when no daemon has `[mcp]` enabled.
+
 ## Tools
 
 | Tool | Purpose |

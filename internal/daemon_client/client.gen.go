@@ -1055,7 +1055,10 @@ type PanelSummary struct {
 // PingInfo defines model for PingInfo.
 type PingInfo struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
+	Schema *string `json:"$schema,omitempty"`
+
+	// McpUrl Streamable HTTP MCP endpoint when [mcp] is enabled and the daemon listens on TCP
+	McpUrl  *string `json:"mcp_url,omitempty"`
 	Ok      bool    `json:"ok"`
 	Pid     *int64  `json:"pid,omitempty"`
 	Service string  `json:"service"`

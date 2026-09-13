@@ -26,9 +26,12 @@ Two transports are available:
          daemon to serve streamable HTTP at <daemon address>/mcp.
 
 Both transports expose the same tools: status, repositories, branches, jobs,
-reviews, comments, and job output. Nothing is written.`,
+reviews, comments, and job output. Nothing is written.
+
+'roborev mcp status' lists daemons currently serving the HTTP endpoint.`,
 	}
 	cmd.AddCommand(mcpServeCmd())
+	cmd.AddCommand(mcpStatusCmd())
 	return cmd
 }
 
