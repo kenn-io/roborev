@@ -1138,6 +1138,10 @@ func TestJobReadPathsReturnNonVoting(t *testing.T) {
 	require.Len(t, members, 1)
 	assert.True(members[0].NonVoting, "GetPanelMembers")
 
+	voting, err := db.GetPanelMemberReviews(runID)
+	require.NoError(t, err)
+	assert.Empty(voting, "GetPanelMemberReviews returns voting members only")
+
 	review, err := db.GetReviewByJobID(observer.ID)
 	require.NoError(t, err)
 	require.NotNil(t, review.Job)

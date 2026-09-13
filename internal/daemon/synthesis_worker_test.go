@@ -160,16 +160,6 @@ func TestSynthesisExcludesNonVotingMember(t *testing.T) {
 	assert.Contains(observer.Output, "nil deref", "the non-voting review itself is still stored")
 }
 
-func TestAllMembersPassedIgnoresNonVotingFailure(t *testing.T) {
-	results := reviewpkg.VotingResults([]reviewpkg.ReviewResult{
-		{Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
-		{Status: reviewpkg.ResultDone, Output: "- High: bug", Verdict: storage.VerdictFail, NonVoting: true},
-	})
-	succeeded := filterSucceeded(results)
-
-	assert.True(t, allMembersPassed(results, succeeded))
-}
-
 func TestFilterSucceededRejectsEmptyOutputPlaceholder(t *testing.T) {
 	results := []reviewpkg.ReviewResult{
 		{Status: reviewpkg.ResultDone, Output: "No review output generated"},

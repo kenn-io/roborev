@@ -50,7 +50,7 @@ func buildShowPanelBlock(synthesisJobID int64, runUUID uuid.UUID, name string, m
 			Agent:      m.Agent,
 			ReviewType: m.ReviewType,
 			Status:     string(m.Status),
-			NonVoting:  m.IsNonVotingMember(),
+			NonVoting:  m.NonVoting,
 		}
 		if m.Verdict != nil {
 			member.Verdict = *m.Verdict
@@ -73,7 +73,7 @@ func formatReviewersSummary(members []storage.ReviewJob) string {
 		if name == "" {
 			name = m.Agent
 		}
-		if m.IsNonVotingMember() {
+		if m.NonVoting {
 			name += " (non-voting)"
 		}
 		parts[i] = fmt.Sprintf("%s %s", name, verdict)

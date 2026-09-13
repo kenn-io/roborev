@@ -266,13 +266,6 @@ func (j ReviewJob) IsSynthesisJob() bool {
 const NonVotingBanner = "> **Non-voting reviewer.** This review is advisory only: " +
 	"it was excluded from panel synthesis and did not affect the verdict.\n\n"
 
-// IsNonVotingMember reports whether this panel member was configured as
-// non_voting: it ran and stored a review, but was excluded from synthesis and
-// the panel verdict.
-func (j ReviewJob) IsNonVotingMember() bool {
-	return j.PanelRole == PanelRoleMember && j.NonVoting
-}
-
 // LegacyCommentLookupTarget returns the legacy commit-comment lookup key for
 // this job. Only single-commit review rows are eligible: dirty jobs may carry a
 // base HEAD commit_id for session reuse, but that base is not the reviewed

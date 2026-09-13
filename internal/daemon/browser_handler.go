@@ -273,7 +273,7 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 		MinSeverity: job.MinSeverity, PanelRunUUID: job.PanelRunUUID,
 		PanelRole: job.PanelRole, PanelName: job.PanelName,
 		PanelMemberName: job.PanelMemberName, PanelMemberIndex: job.PanelMemberIndex,
-		NonVoting:  job.IsNonVotingMember(),
+		NonVoting:  job.NonVoting,
 		TokenUsage: projectBrowserTokenUsage(job.TokenUsage), UUID: job.UUID,
 		RepoPath: job.RepoPath,
 		RepoName: job.RepoName, CommitSubject: job.CommitSubject, Closed: job.Closed,

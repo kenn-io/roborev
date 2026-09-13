@@ -4439,7 +4439,7 @@ func TestProcessPRAutoDesignIgnoresNonVotingDesignMember(t *testing.T) {
 	assert.Equal(t, 2, designMemberCount(members))
 	voting := 0
 	for _, m := range members {
-		if m.ReviewType == "design" && !m.IsNonVotingMember() {
+		if m.ReviewType == "design" && !m.NonVoting {
 			voting++
 		}
 	}

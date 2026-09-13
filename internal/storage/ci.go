@@ -38,7 +38,6 @@ type BatchReviewResult struct {
 	Error                 string          `json:"error"`
 	SkipReason            string          `json:"skip_reason,omitempty"`
 	PanelMemberConfigJSON string          `json:"panel_member_config_json,omitempty"`
-	NonVoting             bool            `json:"non_voting,omitempty"`
 	StartedAt             string          `json:"started_at,omitempty"`
 	FinishedAt            string          `json:"finished_at,omitempty"`
 	TokenUsage            string          `json:"token_usage,omitempty"`

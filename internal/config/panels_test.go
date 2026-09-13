@@ -695,11 +695,8 @@ func TestResolvePanelNonVotingMember(t *testing.T) {
 	assert.False(members[0].NonVoting)
 	assert.True(members[1].NonVoting)
 
-	// The flag must survive the stored member snapshot.
+	// The flag lives in the review_jobs.non_voting column, not the snapshot.
 	raw, err := json.Marshal(members[1])
-	require.NoError(t, err)
-	assert.Contains(string(raw), `"non_voting":true`)
-	raw, err = json.Marshal(members[0])
 	require.NoError(t, err)
 	assert.NotContains(string(raw), "non_voting")
 

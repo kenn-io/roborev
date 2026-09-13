@@ -13,12 +13,11 @@ All notable changes to roborev, grouped by minor release.
     model risk free. A non-voting member reviews every target like any other
     member and its review is stored and viewable, but it is excluded from
     synthesis, the panel verdict, the CI commit status, and the PR comment body.
-    Its review carries an advisory banner, member listings label it
-    `(non-voting)`, and the PR comment footer counts it separately. Synthesis no
-    longer waits for a non-voting member to finish, and a non-voting design
-    member does not replace the automatic design review. The flag is a synced
-    job column, so the SQLite and PostgreSQL schemas gain `non_voting`. A panel
-    must keep at least one voting member. See
+    Its review carries an advisory banner and member listings label it
+    `(non-voting)`. Synthesis no longer waits for a non-voting member to finish,
+    and a non-voting design member does not replace the automatic design review.
+    The flag is a synced job column, so the SQLite and PostgreSQL schemas gain
+    `non_voting`. A panel must keep at least one voting member. See
     [Subagent Review Panels](/advanced/subagent-review-panels/#subagents).
 - Reviews with a minimum severity now keep every finding instead of dropping the
     ones below the threshold. The threshold only decides the verdict: a review

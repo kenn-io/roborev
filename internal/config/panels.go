@@ -224,7 +224,7 @@ type ResolvedMember struct {
 	ReviewType    string `json:"review_type"`
 	Instructions  string `json:"instructions"`
 	AllowFailure  bool   `json:"allow_failure,omitempty"`
-	NonVoting     bool   `json:"non_voting,omitempty"`
+	NonVoting     bool   `json:"-"` // stored in the review_jobs.non_voting column, not the snapshot
 	Timeout       string `json:"timeout,omitempty"`
 	BackupAgent   string `json:"backup_agent,omitempty"`
 	BackupModel   string `json:"backup_model,omitempty"`

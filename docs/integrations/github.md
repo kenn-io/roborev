@@ -518,8 +518,7 @@ failure or cancellation will not block an otherwise usable CI panel comment.
 
 Use `non_voting = true` to trial a new agent or model on real PRs without risk.
 The member reviews every PR and its output is stored locally, but it never feeds
-the synthesized comment, the verdict, or the commit status. The comment footer
-reports it as a separate non-voting count.
+the synthesized comment, the verdict, or the commit status.
 
 See [Subagent Review Panels](/docs/advanced/subagent-review-panels/) for the
 full panel configuration reference.

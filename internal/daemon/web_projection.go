@@ -146,6 +146,6 @@ func projectReviewJob(job storage.ReviewJob) ReviewProjectionJob {
 		ReviewType: job.ReviewType, Source: job.Source, EnqueuedAt: job.EnqueuedAt,
 		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt,
 		PanelRole: job.PanelRole, PanelName: job.PanelName,
-		PanelMemberName: job.PanelMemberName, NonVoting: job.IsNonVotingMember(), PanelSummary: job.PanelSummary,
+		PanelMemberName: job.PanelMemberName, NonVoting: job.NonVoting, PanelSummary: job.PanelSummary,
 	}
 }

@@ -26,7 +26,7 @@ func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) strin
 				v = *mem.Verdict
 			}
 			name := mem.PanelMemberName
-			if mem.IsNonVotingMember() {
+			if mem.NonVoting {
 				name += " (non-voting)"
 			}
 			parts = append(parts, fmt.Sprintf("%s %s", name, v))

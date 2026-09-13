@@ -2690,20 +2690,21 @@ func (db *DB) GetSynthesisJob(panelRunUUID uuid.UUID) (*ReviewJob, error) {
 	return &j, nil
 }
 
-// GetPanelMemberReviews returns one BatchReviewResult per member of a panel
-// run, joined to its review output, ordered by panel_member_index. The
-// synthesis row is excluded.
+// GetPanelMemberReviews returns one BatchReviewResult per voting member of a
+// panel run, joined to its review output, ordered by panel_member_index. The
+// synthesis row and non-voting members are excluded, so synthesis, the PR
+// comment, and the commit status never see a non-voting review.
 func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult, error) {
 	if panelRunUUID == uuid.Nil() {
 		return nil, nil
 	}
 	rows, err := db.Query(`
 		SELECT j.id, j.agent, j.review_type, COALESCE(j.panel_member_name, ''), '', rv.verdict_bool, rv.structured_output, COALESCE(j.min_severity, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, ''),
-		       COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
+		       COALESCE(j.panel_member_config_json, ''),
 		       COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''), COALESCE(j.token_usage, '')
 		FROM review_jobs j
 		LEFT JOIN reviews rv ON rv.job_id = j.id
-		WHERE j.panel_run_uuid = ? AND j.panel_role = 'member'
+		WHERE j.panel_run_uuid = ? AND j.panel_role = 'member' AND COALESCE(j.non_voting, 0) = 0
 		ORDER BY j.panel_member_index, j.id`, panelRunUUID)
 	if err != nil {
 		return nil, fmt.Errorf("query panel member reviews: %w", err)
@@ -2714,7 +2715,7 @@ func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult
 	for rows.Next() {
 		var r BatchReviewResult
 		var structuredOutput sql.NullString
-		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.PanelMemberName, &r.Output, &r.VerdictBool, &structuredOutput, &r.MinSeverity, &r.Status, &r.Error, &r.SkipReason, &r.PanelMemberConfigJSON, &r.NonVoting, &r.StartedAt, &r.FinishedAt, &r.TokenUsage); err != nil {
+		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.PanelMemberName, &r.Output, &r.VerdictBool, &structuredOutput, &r.MinSeverity, &r.Status, &r.Error, &r.SkipReason, &r.PanelMemberConfigJSON, &r.StartedAt, &r.FinishedAt, &r.TokenUsage); err != nil {
 			return nil, fmt.Errorf("scan panel member review: %w", err)
 		}
 		if structuredOutput.Valid {

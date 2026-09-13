@@ -1250,11 +1250,11 @@ synthesis_agent = "test"
 	require.Len(t, members, 2)
 
 	assert.Equal("bug", members[0].PanelMemberName)
-	assert.False(members[0].IsNonVotingMember())
+	assert.False(members[0].NonVoting)
 	assert.Empty(members[0].OutputPrefix)
 
 	assert.Equal("observer", members[1].PanelMemberName)
-	assert.True(members[1].IsNonVotingMember())
+	assert.True(members[1].NonVoting)
 	assert.Empty(members[1].OutputPrefix, "the banner is composed at read time, never stored in the prefix")
 
 	// The banner is composed when the review is read, so it is never lost.

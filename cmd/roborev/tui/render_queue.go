@@ -1111,7 +1111,7 @@ func panelMemberLabel(job storage.ReviewJob) string {
 	if name == "" {
 		return ""
 	}
-	if job.IsNonVotingMember() {
+	if job.NonVoting {
 		name += " (non-voting)"
 	}
 	return name

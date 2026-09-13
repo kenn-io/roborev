@@ -2247,8 +2247,7 @@ func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason stri
 // any status is set — the all-failed "failure" status path is therefore
 // unreachable for an all-transient panel.
 func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.BatchReviewResult) {
-	// Non-voting members never decide whether or what to post.
-	results := reviewpkg.VotingResults(toReviewResults(members))
+	results := toReviewResults(members)
 	attempt, err := p.ensureReviewAttempt(row)
 	if err != nil {
 		log.Printf("CI poller: error loading review attempt for %s#%d@%s: %v",
@@ -2435,9 +2434,7 @@ func (p *CIPoller) recordDeferral(
 // fallback, which already carries the header and renders row.HeadSHA. SHAs
 // always come from row.HeadSHA.
 func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) (string, error) {
-	// Only voting members are rendered as review input; non-voting members are
-	// advisory and appear in the footer count alone.
-	results := reviewpkg.VotingResults(toReviewResults(members))
+	results := toReviewResults(members)
 	if !reviewpkg.HasSubstantiveOutput(results) {
 		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA), nil
 	}
@@ -2514,7 +2511,6 @@ func (p *CIPoller) releasePanelClaim(id int64) {
 // function for its status — finalizePanelRun defers and sets a pending status
 // before posting — so the all-failed "error" arm is unreachable for one.
 func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string) {
-	members = votingMembers(members)
 	results := toReviewResults(members)
 	completed := 0
 	failedMembers := 0
@@ -2675,12 +2671,10 @@ func panelMemberTimeoutState(members []storage.BatchReviewResult, timeout time.D
 	for i := range members {
 		switch storage.JobStatus(members[i].Status) {
 		case storage.JobStatusDone:
-			if !toReviewResult(members[i]).NonVoting {
-				hasMeaningful = true
-			}
+			hasMeaningful = true
 		case storage.JobStatusFailed, storage.JobStatusCanceled:
 			r := toReviewResult(members[i])
-			if !r.NonVoting && !r.AllowFailure && !reviewpkg.IsQuotaFailure(r) && !reviewpkg.IsTimeoutCancellation(r) {
+			if !r.AllowFailure && !reviewpkg.IsQuotaFailure(r) && !reviewpkg.IsTimeoutCancellation(r) {
 				hasMeaningful = true
 			}
 		case storage.JobStatusRunning:
@@ -3542,7 +3536,6 @@ func toReviewResult(
 		Skipped:          br.Status == string(storage.JobStatusSkipped),
 		SkipReason:       br.SkipReason,
 		AllowFailure:     member.AllowFailure,
-		NonVoting:        br.NonVoting,
 	}
 	result.MinSeverity = br.MinSeverity
 	if len(br.StructuredOutput) != 0 {
@@ -3579,7 +3572,7 @@ func formatPanelPRCommentWithHead(cfg reviewpkg.CommentConfig, review *storage.R
 		result.StructuredOutput, _ = json.Marshal(review.StructuredOutput)
 	}
 	// Synthesis cites only successful members, in their original order.
-	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(reviewpkg.VotingResults(toReviewResults(members))))
+	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
 	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(cfg, result, labels))
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
@@ -3674,15 +3667,6 @@ func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 	if len(members) == 0 {
 		return "none"
 	}
-	nonVoting := len(members) - len(votingMembers(members))
-	members = votingMembers(members)
-	suffix := ""
-	if nonVoting > 0 {
-		suffix = fmt.Sprintf(" + %d non-voting", nonVoting)
-	}
-	if len(members) == 0 {
-		return "none" + suffix
-	}
 	counts := make(map[string]int)
 	for _, m := range members {
 		counts[formatPanelReviewerStatus(m)]++
@@ -3707,20 +3691,9 @@ func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 		parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
 	}
 	if len(parts) == 1 {
-		return parts[0] + suffix
+		return parts[0]
 	}
-	return fmt.Sprintf("%d total (%s)%s", len(members), strings.Join(parts, ", "), suffix)
-}
-
-// votingMembers drops non-voting panel members, preserving order.
-func votingMembers(members []storage.BatchReviewResult) []storage.BatchReviewResult {
-	out := make([]storage.BatchReviewResult, 0, len(members))
-	for _, m := range members {
-		if !toReviewResult(m).NonVoting {
-			out = append(out, m)
-		}
-	}
-	return out
+	return fmt.Sprintf("%d total (%s)", len(members), strings.Join(parts, ", "))
 }
 
 func formatPanelReviewerStatus(member storage.BatchReviewResult) string {
