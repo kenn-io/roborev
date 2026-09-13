@@ -86,8 +86,16 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	runID := testUUID("legacy-synthesis")
 	_, err := env.db.Exec(`UPDATE review_jobs SET job_type = 'synthesis', panel_run_uuid = ?, panel_role = 'synthesis' WHERE id = ?`, runID, env.job.ID)
 	require.NoError(t, err)
-	_, err = env.db.EnqueueJob(EnqueueOpts{RepoID: env.repo.ID, GitRef: "synthesis-head", Agent: "test", PanelRunUUID: &runID, PanelRole: PanelRoleMember})
-	require.NoError(t, err)
+	for i, status := range []string{"failed", "done", "done"} {
+		member, err := env.db.EnqueueJob(EnqueueOpts{RepoID: env.repo.ID, GitRef: "synthesis-head", Agent: "test", ReviewType: []string{"", "security", "design"}[i], PanelRunUUID: &runID, PanelRole: PanelRoleMember, PanelMemberIndex: i})
+		require.NoError(t, err)
+		_, err = env.db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, status, member.ID)
+		require.NoError(t, err)
+		if status == "done" {
+			_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
+			require.NoError(t, err)
+		}
+	}
 	raw := `{"schema_version":2,"summary":"Synthesis finding.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null,"sources":[1]}]}`
 	_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', 'Original synthesis', ?, ?)`, env.job.ID, raw, testUUID("synthesis-review"))
 	require.NoError(t, err)
@@ -96,10 +104,13 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Contains(t, records[0].Reason, "only 0 reviews")
-	require.Len(t, records[0].Sources, 1)
-	assert.Equal(t, "test", records[0].Sources[0].Agent)
-	invalid := strings.Replace(raw, `"sources":[1]`, `"sources":[2]`, 1)
-	require.ErrorContains(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(invalid)), "only 1 reviews")
+	require.Len(t, records[0].Sources, 2)
+	assert.Equal(t, "test (security)", records[0].Sources[0].Agent)
+	assert.Equal(t, "test (design)", records[0].Sources[1].Agent)
+	assert.Equal(t, 1, records[0].Sources[0].Number)
+	assert.Equal(t, 2, records[0].Sources[1].Number)
+	invalid := strings.Replace(raw, `"sources":[1]`, `"sources":[3]`, 1)
+	require.ErrorContains(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(invalid)), "only 2 reviews")
 	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(raw)))
 	require.NoError(t, env.db.migrateLegacyReviews())
 	got, err := env.db.GetReviewByJobID(env.job.ID)
@@ -107,7 +118,7 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	assert.Contains(t, got.Output, "test")
 	var stored string
 	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&stored))
-	assert.Contains(t, stored, `"source_labels":["test"]`)
+	assert.Contains(t, stored, `"source_labels":["test (security)","test (design)"]`)
 }
 
 func TestLegacyReviewResolvedBySync(t *testing.T) {
@@ -131,4 +142,21 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 	var original string
 	require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE uuid = ?`, incoming.UUID).Scan(&original))
 	assert.Equal(t, "Unstructured review.", original)
+}
+
+func TestStaleMarkdownSyncKeepsCanonicalReview(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/canonical-sync", "canonical-head")
+	raw := json.RawMessage(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
+	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	require.NoError(t, env.db.UpsertPulledReview(incoming))
+	incoming.StructuredOutput = nil
+	incoming.Output = "Stale Markdown"
+	incoming.UpdatedAt = incoming.UpdatedAt.Add(time.Second)
+	require.NoError(t, env.db.UpsertPulledReview(incoming))
+	got, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Canonical review.", got.StructuredOutput["summary"])
+	remaining, err := env.db.UnresolvedLegacyReviews()
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
 }

@@ -898,6 +898,15 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			err = doc.RequireSources(len(doc.SourceLabels))
 		}
 		if err != nil {
+			var existing sql.NullString
+			lookupErr := db.QueryRow(`SELECT structured_output FROM reviews WHERE uuid = ?`, r.UUID).Scan(&existing)
+			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+				return lookupErr
+			}
+			if current, decodeErr := structuredreview.Decode(json.RawMessage(existing.String)); decodeErr == nil &&
+				(jobType != JobTypeSynthesis || current.RequireSources(len(current.SourceLabels)) == nil) {
+				return nil
+			}
 			_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed,
   reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
   uuid, updated_by_machine_id, updated_at, synced_at, migration_error)

@@ -553,6 +553,8 @@ func TestSynthesisAllFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(review.Output, "Unable to review")
 	assert.Contains(review.Output, "All review agents failed")
+	assert.Equal(storage.VerdictUnknown, review.Verdict())
+	assert.Equal("unable_to_review", review.StructuredOutput["verdict"])
 	assert.False(synthCalled, "no agent should run when every member failed")
 }
 

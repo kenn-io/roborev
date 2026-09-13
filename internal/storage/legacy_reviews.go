@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"uuid"
+	"strings"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/structuredreview"
 )
 
@@ -150,30 +151,20 @@ func (db *DB) ResolveLegacyReview(id int64, raw json.RawMessage) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	var threshold, jobType string
-	var panelRun sql.Null[uuid.UUID]
 	var jobID int64
-	if err := tx.QueryRow(`SELECT l.job_id, COALESCE(j.min_severity, ''), j.job_type, j.panel_run_uuid
+	if err := tx.QueryRow(`SELECT l.job_id, COALESCE(j.min_severity, ''), j.job_type
  FROM legacy_reviews l JOIN review_jobs j ON j.id = l.job_id
- WHERE l.archive_id = ? AND l.resolved_at IS NULL`, id).Scan(&jobID, &threshold, &jobType, &panelRun); err != nil {
+ WHERE l.archive_id = ? AND l.resolved_at IS NULL`, id).Scan(&jobID, &threshold, &jobType); err != nil {
 		return err
 	}
 	if jobType == JobTypeSynthesis {
-		rows, err := tx.Query(`SELECT agent FROM review_jobs WHERE panel_run_uuid = ? AND panel_role = 'member' ORDER BY panel_member_index, id`, panelRun.V)
+		sources, err := legacySynthesisSources(tx, jobID)
 		if err != nil {
 			return err
 		}
 		doc.SourceLabels = nil
-		for rows.Next() {
-			var label string
-			if err := rows.Scan(&label); err != nil {
-				rows.Close()
-				return err
-			}
-			doc.SourceLabels = append(doc.SourceLabels, label)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
+		for _, source := range sources {
+			doc.SourceLabels = append(doc.SourceLabels, source.Agent)
 		}
 		if err := doc.RequireSources(len(doc.SourceLabels)); err != nil {
 			return fmt.Errorf("synthesis conversion: %w", err)
@@ -240,28 +231,8 @@ func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 		if result[i].JobType != JobTypeSynthesis {
 			continue
 		}
-		sources, err := db.Query(`SELECT j.agent, r.structured_output, COALESCE(l.output, '') FROM review_jobs j
- LEFT JOIN reviews r ON r.job_id = j.id LEFT JOIN legacy_reviews l ON l.job_id = j.id
- WHERE j.panel_run_uuid = (SELECT panel_run_uuid FROM review_jobs WHERE id = ?) AND j.panel_role = 'member'
- ORDER BY j.panel_member_index, j.id`, result[i].JobID)
+		result[i].Sources, err = legacySynthesisSources(db, result[i].JobID)
 		if err != nil {
-			return nil, err
-		}
-		for sources.Next() {
-			var source LegacyReviewSource
-			var raw sql.NullString
-			if err := sources.Scan(&source.Agent, &raw, &source.Markdown); err != nil {
-				sources.Close()
-				return nil, err
-			}
-			source.Number = len(result[i].Sources) + 1
-			if raw.Valid {
-				source.Document = json.RawMessage(raw.String)
-			}
-			result[i].Sources = append(result[i].Sources, source)
-		}
-		sources.Close()
-		if err := sources.Err(); err != nil {
 			return nil, err
 		}
 	}
@@ -275,4 +246,50 @@ type LegacyReviewSource struct {
 	Agent    string          `json:"agent"`
 	Document json.RawMessage `json:"document,omitempty"`
 	Markdown string          `json:"markdown,omitempty"`
+}
+
+// legacySynthesisSources retains the successful, substantive input order used
+// by synthesis. Archived prose is read only as explicit conversion input.
+func legacySynthesisSources(q querier, jobID int64) ([]LegacyReviewSource, error) {
+	rows, err := q.Query(`SELECT j.agent, j.review_type,
+ COALESCE(r.structured_output, l.structured_output, ''), COALESCE(NULLIF(r.output, ''), l.output, '')
+ FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
+ LEFT JOIN legacy_reviews l ON l.job_id = j.id
+ WHERE j.panel_run_uuid = (SELECT panel_run_uuid FROM review_jobs WHERE id = ?)
+ AND j.panel_role = 'member' AND j.status = 'done' ORDER BY j.panel_member_index, j.id`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sources := []LegacyReviewSource{}
+	for rows.Next() {
+		var agent, reviewType, raw, markdown string
+		if err := rows.Scan(&agent, &reviewType, &raw, &markdown); err != nil {
+			return nil, err
+		}
+		if source, ok := legacySource(agent, reviewType, json.RawMessage(raw), markdown); ok {
+			source.Number = len(sources) + 1
+			sources = append(sources, source)
+		}
+	}
+	return sources, rows.Err()
+}
+
+func legacySource(agent, reviewType string, raw json.RawMessage, markdown string) (LegacyReviewSource, bool) {
+	doc, err := structuredreview.Decode(raw)
+	if err == nil {
+		if doc.UnableToReview() {
+			return LegacyReviewSource{}, false
+		}
+	} else {
+		if ClassifyOutput(markdown) != OutputReviewed {
+			return LegacyReviewSource{}, false
+		}
+		raw = nil
+	}
+	label := strings.TrimSpace(agent)
+	if rt := strings.TrimSpace(reviewType); rt != "" && !config.IsDefaultReviewType(rt) {
+		label += " (" + rt + ")"
+	}
+	return LegacyReviewSource{Agent: label, Document: raw, Markdown: markdown}, true
 }

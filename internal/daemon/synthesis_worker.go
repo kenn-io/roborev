@@ -310,7 +310,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		)
 	}
 	verdict := res.review.Verdict
-	if verdict == storage.VerdictUnknown {
+	if verdict == storage.VerdictUnknown && len(res.review.StructuredOutput) == 0 {
 		verdict = storage.ParseVerdict(output)
 	}
 	wp.autoClosePassingReview(workerID, job, verdict)
@@ -513,8 +513,12 @@ func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.Re
 		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
 		return
 	}
+	verdict := storage.VerdictUnknown
+	if !doc.UnableToReview() {
+		verdict = storage.VerdictFromPassed(doc.Passed(job.MinSeverity))
+	}
 	wp.completeSynthesisContext(workerID, job, synthesisResult{review: reviewpkg.ReviewResult{
-		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: storage.VerdictFromPassed(doc.Passed(job.MinSeverity)),
+		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
 		StructuredOutput: raw, MinSeverity: job.MinSeverity,
 	}})
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2802,7 +2803,7 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	}
 }
 
-func TestHandleEnqueueRejectsCustomReviewWithUnsupportedAgent(t *testing.T) {
+func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONAgent(t *testing.T) {
 	repoDir := t.TempDir()
 	testutil.InitTestGitRepo(t, repoDir)
 	require.NoError(t, os.WriteFile(
@@ -2822,13 +2823,12 @@ func TestHandleEnqueueRejectsCustomReviewWithUnsupportedAgent(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "does not support schema-constrained reviews")
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-	assert.Zero(t, queued)
+	assert.Equal(t, 1, queued)
 }
 
-func TestHandleEnqueueRejectsCustomReviewWithUnsupportedBackupAgent(t *testing.T) {
+func TestHandleEnqueueAcceptsCustomReviewWithPromptJSONBackupAgent(t *testing.T) {
 	const primaryName = "structured-enqueue-primary"
 	agent.Register(&structuredWorkerTestAgent{name: primaryName})
 	t.Cleanup(func() { agent.Unregister(primaryName) })
@@ -2855,10 +2855,9 @@ func TestHandleEnqueueRejectsCustomReviewWithUnsupportedBackupAgent(t *testing.T
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "invalid backup agent")
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-	assert.Zero(t, queued)
+	assert.Equal(t, 1, queued)
 }
 
 func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
@@ -3319,4 +3318,24 @@ func TestHandleEnqueueDetachedHeadInfersBranch(t *testing.T) {
 		testutil.DecodeJSON(t, w, &job)
 		assert.Equal(t, "explicit-branch", job.Branch)
 	})
+}
+
+func TestHandleListJobsByIDWithArchivedReview(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	_, jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "archived"), 1, "archive")
+	job := jobs[0]
+	require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test", Output: "Legacy review", CreatedAt: time.Now(), UpdatedAt: time.Now()}))
+	_, err := db.GetReviewByJobID(job.ID)
+	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job.ID), nil)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	testutil.DecodeJSON(t, w, &response)
+	require.Len(t, response.Jobs, 1)
+	assert.Equal(t, job.ID, response.Jobs[0].ID)
+	assert.NotContains(t, w.Body.String(), "Legacy review")
 }

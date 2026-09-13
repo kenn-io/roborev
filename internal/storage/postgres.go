@@ -838,7 +838,9 @@ const pgUpsertReviewSQL = `
  'reviewed_file_count', $9::integer, 'excluded_file_count', $10::integer,
  'updated_by_machine_id', $11::uuid, 'created_at', $12::timestamptz),
  'No valid review JSON document; AI conversion required'
- WHERE $8::jsonb IS NULL AND EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
+ WHERE $8::jsonb IS NULL
+ AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.uuid = $1 AND r.structured_output IS NOT NULL)
+ AND EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
  AND j.job_type IN ('review','range','dirty','synthesis','compact'))
  ON CONFLICT(uuid) DO NOTHING
  ), resolved AS (

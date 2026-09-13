@@ -80,23 +80,6 @@ func IsValidCompactOutput(output string) bool {
 	return !reportsRemainingFindingsWithoutDetails(output)
 }
 
-func compactVerdict(output string) storage.Verdict {
-	if !IsValidCompactOutput(output) {
-		return storage.VerdictUnknown
-	}
-	lower := strings.ToLower(output)
-	if hasActionableCompactFinding(output, lower) {
-		return storage.VerdictFail
-	}
-	if reportsNoRemainingFindings(lower) {
-		return storage.VerdictPass
-	}
-	if verdict := storage.ParseVerdict(output); verdict != storage.VerdictUnknown {
-		return verdict
-	}
-	return storage.VerdictFail
-}
-
 var (
 	compactFileLinePattern        = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|py|js|ts|tsx|jsx|java|rb|rs|c|cc|cpp|h|hpp|cs|php|swift|kt|m|mm|sql|yaml|yml|json|toml|md):\d+\b`)
 	compactPositiveRemainingCount = regexp.MustCompile(`\b[1-9]\d* (?:verified )?findings? remains?\b`)

@@ -640,7 +640,6 @@ func TestHandleRerunJob(t *testing.T) {
 		}{
 			{name: "unknown", selected: "missing-rerun-agent", wantError: "unknown agent"},
 			{name: "unavailable", selected: "rerun-unavailable", wantError: "unavailable"},
-			{name: "structured", selected: "rerun-unstructured", reviewType: "custom", wantError: "schema-constrained reviews"},
 			{name: "classifier", selected: "rerun-unstructured", reviewType: "design", jobType: storage.JobTypeClassify, wantError: "SchemaAgent"},
 			{name: "experiment", selected: "test", wantError: "frozen experiment", experiment: &storage.ExperimentAssignmentInput{
 				ExperimentID: "rerun-agent", DefinitionHash: "definition", DefinitionJSON: `{}`,

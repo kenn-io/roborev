@@ -219,14 +219,11 @@ for auto-close, and `roborev fix` and the fix skills skip it because there is
 nothing to fix. `fix_min_severity` applies only to the findings of failing
 reviews.
 
-Agents that support schema-constrained output (Codex, Claude Code, Pi, and Grok)
-return their findings as structured data for every review type, so the verdict
-comes from the reported severities rather than from parsing prose. Other agents
-keep prose output, and roborev reads the severity labels in that prose the same
-way. A prose review without severity labels falls back to the agent's own pass
-or fail statement. Structured reviews also carry the agent's own verdict, shown
-in the output for context; an agent that reports it was unable to review the
-change fails the job instead of passing it.
+Every review agent must return the review JSON model. Agents with native JSON
+support use it; other agents receive the model in their prompt. This also
+applies to custom review types and backup agents. Roborev validates the returned
+JSON and derives the result from finding severities. An agent that cannot review
+the change reports `unable_to_review` or an error.
 
 Set a default per repo in `.roborev.toml` or globally in
 `~/.roborev/config.toml`:
@@ -491,7 +488,13 @@ local database rather than adding it to a repository.
 
 The PostgreSQL mirror also archives legacy records and excludes them from active
 reviews. Its archive retains the original row as JSON in
-`legacy_reviews.record`.
+`legacy_reviews.record`. Use `--postgres-url` instead of `--db` to export and
+import these records. PostgreSQL archive IDs are UUIDs:
+
+```bash
+roborev legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
+roborev legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
+```
 
 ## See Also
 

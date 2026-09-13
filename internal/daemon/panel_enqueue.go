@@ -702,11 +702,8 @@ func resolvePanelMemberExecution(
 	if err != nil {
 		return "", "", "", "", err
 	}
-	if err := agent.ValidateStructuredReviewSelection(m.ReviewType, selected); err != nil {
-		return "", "", "", "", err
-	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
-	if err := agent.ValidateStructuredReviewBackup(
+	if err := agent.ValidateReviewBackup(
 		m.ReviewType, resolution, selectedName,
 	); err != nil {
 		return "", "", "", "", err
