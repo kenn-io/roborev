@@ -325,16 +325,16 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 	commitID := int64(77)
 	var refs []CommentRef
 	backend := &fakeBackend{
-		getReviewFn: func(_ context.Context, ref ReviewRef) (*storage.Review, error) {
-			if ref.SHA == "missing" {
-				return nil, NewError(ErrorCodeNotFound, "review not found")
+		listJobsFn: func(_ context.Context, q JobsQuery) (JobsPage, error) {
+			switch {
+			case q.GitRef == "boom":
+				return JobsPage{}, NewError(ErrorCodeInternal, "database unavailable")
+			case q.ID == 9, q.GitRef == "abc123":
+				return JobsPage{Jobs: []storage.ReviewJob{{
+					ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
+				}}}, nil
 			}
-			if ref.SHA == "archived" {
-				return nil, NewError(ErrorCodeUnavailable, "review awaiting conversion")
-			}
-			return &storage.Review{JobID: 9, Job: &storage.ReviewJob{
-				ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
-			}}, nil
+			return JobsPage{}, nil
 		},
 		listCommentsFn: func(_ context.Context, ref CommentRef) ([]storage.Response, error) {
 			refs = append(refs, ref)
@@ -348,7 +348,7 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 					{ID: 1, Responder: "dev", Response: "legacy", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 					{ID: 2, Responder: "dev", Response: "job-linked", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)},
 				}, nil
-			case ref.SHA == "missing", ref.SHA == "archived":
+			case ref.SHA == "missing":
 				return []storage.Response{{ID: 5, Responder: "dev", Response: "direct"}}, nil
 			}
 			return nil, nil
@@ -365,15 +365,27 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 	assert.Equal("job-linked", out.Comments[1].Response)
 	assert.Equal([]CommentRef{{JobID: 9}, {CommitID: 77}}, refs)
 
-	// Without a resolvable review (missing, or archived and awaiting
-	// conversion), the reference is looked up directly.
-	for _, sha := range []string{"missing", "archived"} {
-		result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": sha})
-		require.False(result.IsError, sha)
-		decodeText(t, result, &out)
-		require.Len(out.Comments, 1, sha)
-		assert.Equal("direct", out.Comments[0].Response, sha)
-	}
+	// Job-ID lookups resolve the same linkage without needing the review row.
+	refs = nil
+	result = callTool(t, session, "roborev_list_comments", map[string]any{"job_id": 9})
+	require.False(result.IsError)
+	decodeText(t, result, &out)
+	require.Len(out.Comments, 2)
+	assert.Equal([]CommentRef{{JobID: 9}, {CommitID: 77}}, refs)
+
+	// Without a matching job, the reference is looked up directly.
+	result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": "missing"})
+	require.False(result.IsError)
+	decodeText(t, result, &out)
+	require.Len(out.Comments, 1)
+	assert.Equal("direct", out.Comments[0].Response)
+
+	// An unrelated backend failure is reported, not masked as a partial thread.
+	result = callTool(t, session, "roborev_list_comments", map[string]any{"sha": "boom"})
+	require.True(result.IsError)
+	var failure toolErrorOutput
+	decodeText(t, result, &failure)
+	assert.Equal(ErrorCodeInternal, failure.Error.Code)
 }
 
 func TestGetJobOutputReportsAvailableLines(t *testing.T) {

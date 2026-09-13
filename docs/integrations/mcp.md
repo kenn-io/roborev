@@ -15,8 +15,8 @@ Two transports are available and both expose the same tools.
 ## Stdio
 
 `roborev mcp serve` speaks MCP over stdin and stdout and reads from the daemon
-through its HTTP API. The daemon is started when needed. Diagnostics go to
-stderr so stdout carries only protocol messages.
+through its HTTP API. Without `--server`, the discovered daemon is started when
+needed. Diagnostics go to stderr so stdout carries only protocol messages.
 
 Configure it as a command-based server in your MCP client:
 
@@ -38,7 +38,9 @@ claude mcp add roborev -- roborev mcp serve
 ```
 
 The `--server` global flag is honored, so a client can target a specific daemon
-address with `roborev --server 127.0.0.1:7373 mcp serve`.
+address with `roborev --server 127.0.0.1:7373 mcp serve`. An explicitly selected
+daemon is only probed: it must already be running and match the CLI version, and
+nothing is started for it.
 
 ## Streamable HTTP
 

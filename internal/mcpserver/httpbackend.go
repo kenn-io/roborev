@@ -71,6 +71,12 @@ func (b *HTTPBackend) ListJobs(ctx context.Context, q JobsQuery) (JobsPage, erro
 	params := url.Values{}
 	params.Set("omit_prompt", "true")
 	params.Set("include_findings", "true")
+	if q.ID > 0 {
+		params.Set("id", strconv.FormatInt(q.ID, 10))
+	}
+	if q.GitRef != "" {
+		params.Set("git_ref", q.GitRef)
+	}
 	if q.RepoPath != "" {
 		params.Set("repo", q.RepoPath)
 	}

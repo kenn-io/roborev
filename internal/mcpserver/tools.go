@@ -389,23 +389,24 @@ func (s *Server) getJobOutput(ctx context.Context, in jobOutputInput) (jobOutput
 }
 
 // allComments merges job-linked comments with legacy commit-linked comments
-// for the same review, so callers see the full conversation regardless of
-// which linkage each comment used. When the review cannot be resolved (not
-// found, or archived and awaiting conversion), the reference is looked up
-// directly so readable comments are still returned.
+// for the same review job, so callers see the full conversation regardless
+// of which linkage each comment used. Linkage comes from the job row rather
+// than the review, so an archived review awaiting conversion still yields
+// its comments. Backend failures propagate; only a missing job falls back to
+// the direct lookup, where legacy commit comments may still exist.
 func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Response, error) {
-	review, err := s.backend.GetReview(ctx, ref)
-	if err != nil {
-		return s.backend.ListComments(ctx, CommentRef{JobID: ref.JobID, SHA: ref.SHA})
-	}
-	responses, err := s.backend.ListComments(ctx, CommentRef{JobID: review.JobID})
+	job, err := s.resolveJob(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	if review.Job == nil {
-		return responses, nil
+	if job == nil {
+		return s.backend.ListComments(ctx, CommentRef{JobID: ref.JobID, SHA: ref.SHA})
 	}
-	commitID, sha := review.Job.LegacyCommentLookupTarget()
+	responses, err := s.backend.ListComments(ctx, CommentRef{JobID: job.ID})
+	if err != nil {
+		return nil, err
+	}
+	commitID, sha := job.LegacyCommentLookupTarget()
 	if commitID == 0 && sha == "" {
 		return responses, nil
 	}
@@ -417,6 +418,26 @@ func (s *Server) allComments(ctx context.Context, ref ReviewRef) ([]storage.Resp
 		return nil, err
 	}
 	return storage.MergeResponses(responses, legacy), nil
+}
+
+// resolveJob finds the job a review reference points at: the job itself by
+// ID, or the newest job for a commit SHA. It returns nil without error when
+// no job matches.
+func (s *Server) resolveJob(ctx context.Context, ref ReviewRef) (*storage.ReviewJob, error) {
+	query := JobsQuery{Limit: 1}
+	if ref.JobID > 0 {
+		query.ID = ref.JobID
+	} else {
+		query.GitRef = ref.SHA
+	}
+	page, err := s.backend.ListJobs(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(page.Jobs) == 0 {
+		return nil, nil
+	}
+	return &page.Jobs[0], nil
 }
 
 // findingCountsFromStructured derives severity counts from the stored

@@ -52,6 +52,7 @@ func (b mcpBackend) ListJobs(ctx context.Context, q mcpserver.JobsQuery) (mcpser
 	// in-process path lists exactly like GET /api/jobs.
 	input := &ListJobsInput{
 		ID:              -1,
+		GitRef:          q.GitRef,
 		Status:          q.Status,
 		Branch:          q.Branch,
 		JobType:         q.JobType,
@@ -61,6 +62,9 @@ func (b mcpBackend) ListJobs(ctx context.Context, q mcpserver.JobsQuery) (mcpser
 		Offset:          -1,
 		Before:          -1,
 		Cursor:          q.Cursor,
+	}
+	if q.ID > 0 {
+		input.ID = q.ID
 	}
 	if q.RepoPath != "" {
 		input.Repo = []string{q.RepoPath}

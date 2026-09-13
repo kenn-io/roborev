@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,8 +27,13 @@ func ensureMCPDaemon() error {
 		return nil
 	}
 	ep := getDaemonEndpoint()
-	if _, err := mcpProbeDaemon(ep, 2*time.Second); err != nil {
+	probe, err := mcpProbeDaemon(ep, 2*time.Second)
+	if err != nil {
 		return fmt.Errorf("daemon at %s is not running (explicit --server endpoints are not started automatically): %w", ep, err)
+	}
+	if os.Getenv("ROBOREV_SKIP_VERSION_CHECK") != "1" && probe.Version != version.Version {
+		return fmt.Errorf("daemon at %s runs version %s but this CLI is %s; restart that daemon before serving MCP from it",
+			ep, probe.Version, version.Version)
 	}
 	return nil
 }

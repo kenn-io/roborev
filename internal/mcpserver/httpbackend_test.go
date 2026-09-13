@@ -162,3 +162,15 @@ func TestHTTPBackendListCommentsByCommitID(t *testing.T) {
 	assert.Equal(t, "77", q.Get("commit_id"))
 	assert.Empty(t, q.Get("sha"))
 }
+
+func TestHTTPBackendListJobsByIDAndGitRef(t *testing.T) {
+	d, backend := newFakeDaemon(t)
+	d.routes["/api/jobs"] = jsonResponse(http.StatusOK, `{"jobs":[],"has_more":false,"next_cursor":null}`)
+	_, err := backend.ListJobs(t.Context(), JobsQuery{ID: 12})
+	require.NoError(t, err)
+	assert.Equal(t, "12", d.requests[0].Query().Get("id"))
+	_, err = backend.ListJobs(t.Context(), JobsQuery{GitRef: "abc123", Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "abc123", d.requests[1].Query().Get("git_ref"))
+	assert.Equal(t, "1", d.requests[1].Query().Get("limit"))
+}

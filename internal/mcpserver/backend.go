@@ -31,7 +31,10 @@ type ReposQuery struct {
 }
 
 // JobsQuery filters the review job listing. Zero values mean "no filter".
+// A positive ID returns that single job and ignores the other filters.
 type JobsQuery struct {
+	ID       int64
+	GitRef   string
 	RepoPath string
 	Branch   string
 	Status   string

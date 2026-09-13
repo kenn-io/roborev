@@ -85,12 +85,16 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 
 	require.NoError(session.Close())
 	_ = stdinW.Close()
-	select {
-	case err := <-done:
-		require.NoError(err)
-	case <-time.After(10 * time.Second):
-		require.Fail("mcp serve did not exit after stdin closed")
-	}
+	var serveErr error
+	require.Eventually(func() bool {
+		select {
+		case serveErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 50*time.Millisecond, "mcp serve did not exit after stdin closed")
+	require.NoError(serveErr)
 	assert.NotContains(stderr.String(), "Error")
 }
 
@@ -205,4 +209,21 @@ func TestMCPServeDoesNotStartDaemonForExplicitServer(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not started automatically")
 	assert.Equal(t, []string{"127.0.0.1:9999"}, probed)
+}
+
+func TestMCPServeRejectsStaleExplicitServer(t *testing.T) {
+	origProbe := mcpProbeDaemon
+	mcpProbeDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v0.0.1-stale", PID: 7}, nil
+	}
+	t.Cleanup(func() { mcpProbeDaemon = origProbe })
+	patchServerAddr(t, "127.0.0.1:9999")
+
+	err := ensureMCPDaemon()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "v0.0.1-stale")
+	assert.Contains(t, err.Error(), "restart")
+
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
+	require.NoError(t, ensureMCPDaemon())
 }
