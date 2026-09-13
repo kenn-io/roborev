@@ -436,32 +436,33 @@ func (s *Server) resolveJob(ctx context.Context, ref ReviewRef) (*storage.Review
 		}
 		return &page.Jobs[0], nil
 	}
-	page, err := s.backend.ListJobs(ctx, JobsQuery{GitRef: ref.SHA, Limit: defaultJobLimit})
-	if err != nil {
-		return nil, err
-	}
-	for i := range page.Jobs {
-		if isCanonicalReviewJob(&page.Jobs[i]) {
-			return &page.Jobs[i], nil
+	query := JobsQuery{GitRef: ref.SHA, Limit: defaultJobLimit}
+	for {
+		page, err := s.backend.ListJobs(ctx, query)
+		if err != nil {
+			return nil, err
 		}
+		for i := range page.Jobs {
+			if isCanonicalReviewJob(&page.Jobs[i]) {
+				return &page.Jobs[i], nil
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			return nil, nil
+		}
+		query.Cursor = page.NextCursor
 	}
-	return nil, nil
 }
 
-// isCanonicalReviewJob mirrors the job-type filter of the storage layer's
-// SHA review lookup: review-producing types (including legacy rows with an
-// empty type) that are not panel members.
+// isCanonicalReviewJob follows ReviewJob's review classification, including
+// its legacy empty-type fallback, while also accepting compact and synthesis
+// jobs that produce canonical review documents.
 func isCanonicalReviewJob(job *storage.ReviewJob) bool {
-	if job.PanelRole == "member" {
+	if job.PanelRole == storage.PanelRoleMember {
 		return false
 	}
-	switch job.JobType {
-	case "", storage.JobTypeReview, storage.JobTypeRange, storage.JobTypeDirty,
-		storage.JobTypeSynthesis, storage.JobTypeCompact:
-		return true
-	default:
-		return false
-	}
+	return job.IsReviewJob() || job.JobType == storage.JobTypeCompact ||
+		job.IsSynthesisJob()
 }
 
 // findingCountsFromStructured derives severity counts from the stored

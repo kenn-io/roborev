@@ -333,12 +333,20 @@ func TestListCommentsMergesJobAndLegacyCommitComments(t *testing.T) {
 				return JobsPage{Jobs: []storage.ReviewJob{{
 					ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID,
 				}}}, nil
-			case q.GitRef == "abc123":
-				// Newer fix and panel-member jobs share the SHA and must not
-				// shadow the canonical review job.
+			case q.GitRef == "abc123" && q.Cursor == "":
+				// Fill the first page with newer fix jobs; resolution must
+				// follow the cursor to find the canonical review.
+				jobs := make([]storage.ReviewJob, defaultJobLimit)
+				for i := range jobs {
+					jobs[i] = storage.ReviewJob{ID: int64(100 - i), JobType: storage.JobTypeFix, GitRef: "abc123"}
+				}
+				return JobsPage{Jobs: jobs, HasMore: true, NextCursor: "next"}, nil
+			case q.GitRef == "abc123" && q.Cursor == "next":
+				// An empty-type legacy task and panel member must not shadow
+				// the canonical review job.
 				return JobsPage{Jobs: []storage.ReviewJob{
-					{ID: 11, JobType: storage.JobTypeFix, GitRef: "abc123", CommitID: &commitID},
-					{ID: 10, JobType: storage.JobTypeReview, PanelRole: "member", GitRef: "abc123", CommitID: &commitID},
+					{ID: 12, GitRef: "abc123"},
+					{ID: 10, JobType: storage.JobTypeReview, PanelRole: storage.PanelRoleMember, GitRef: "abc123", CommitID: &commitID},
 					{ID: 9, JobType: storage.JobTypeReview, GitRef: "abc123", CommitID: &commitID},
 				}}, nil
 			}
