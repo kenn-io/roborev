@@ -170,6 +170,17 @@ If your repository uses `core.hooksPath` (common with Husky and other hook
 managers), roborev resolves relative paths against the main repository root so
 the post-commit hook fires correctly from linked worktrees.
 
+Automatic hook maintenance during reviews, daemon startup, and updates only
+modifies hooks inside the repository's Git metadata directory (including the
+shared Git directory for linked worktrees). If `core.hooksPath` points into a
+working tree, such as a tracked `.githooks` directory, or an external shared
+directory, automatic maintenance leaves those files unchanged.
+
+To install or upgrade hooks in those locations, explicitly run `roborev init` or
+`roborev install-hook`. To refresh only existing roborev-managed hooks, run
+`roborev install-hook repair`. These commands may edit tracked hook files;
+inspect the resulting diff before committing.
+
 ## See Also
 
 - [Configuration](/docs/configuration/) - Per-repo and global settings

@@ -80,7 +80,8 @@ func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string)
 // layout roborev's own hook installs use, including linked worktrees. Any
 // other location (core.hooksPath into a working tree, an external shared
 // hooks directory) may hold tracked or user-managed files, so background
-// processes must only write hooks when this reports true.
+// processes and automatic CLI maintenance must only write hooks when this
+// reports true. Explicit installation and repair may opt into other locations.
 func HooksDirInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
 	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
