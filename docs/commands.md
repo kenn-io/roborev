@@ -314,10 +314,12 @@ jobs with their timing and model metadata. The panel's `experiments` field is an
 array of assignments when an experiment applies and `null` otherwise.
 
 Terminal outcomes distinguish `review_posted`, `no_review_posted`,
-`giveup_posted`, and `abandoned`. roborev backfills metrics for older finalized
-panels from retained jobs and attempts when the daemon starts. If the source
-rows have already been deleted, the panel remains exportable with outcome
-`unknown` and unavailable fields set to `null`.
+`giveup_posted`, and `abandoned`. `giveup_posted` is historical; exhausted
+retries now finish with `no_review_posted` and an error status without a PR
+comment. roborev backfills metrics for older finalized panels from retained jobs
+and attempts when the daemon starts. If the source rows have already been
+deleted, the panel remains exportable with outcome `unknown` and unavailable
+fields set to `null`.
 
 Export documents use `schema_version: 1` and the same stable `database_id`
 contract as review exports. Rows are ordered by `(posted_at, panel_id)`

@@ -2251,7 +2251,7 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 	out := classifyPanelOutcome(results, p.synthesisFailureResult(row), consecutiveGenuine)
 	switch out.Kind {
 	case OutcomePost:
-		p.postPanelComment(row, members, storage.PanelOutcomeReviewPosted)
+		p.postPanelComment(row, members)
 	case OutcomeAllSkip:
 		p.finalizePanelWithoutReview(row, "No review output")
 	case OutcomeGenuineGiveUp:
@@ -2315,7 +2315,7 @@ func (p *CIPoller) ensureReviewAttempt(row *storage.CIPanel) (*storage.ReviewAtt
 
 // postPanelComment posts usable review output, sets the commit status, and
 // finalizes the panel and its attempt in the same transaction.
-func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.BatchReviewResult, outcome string) {
+func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.BatchReviewResult) {
 	body, err := p.panelCommentBody(row, members)
 	if err != nil {
 		p.handlePanelPostError(row, err)
@@ -2332,7 +2332,7 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 		log.Printf("CI poller: failed to set %s status for %s@%s: %v",
 			state, row.GithubRepo, row.HeadSHA, err)
 	}
-	if err := p.db.MarkPanelPosted(row.ID, outcome); err != nil {
+	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeReviewPosted); err != nil {
 		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
 	}
 	log.Printf("CI poller: posted panel comment on %s#%d (panel %d, %d members)",
@@ -2340,17 +2340,11 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 }
 
 // finalizePanelWithoutReview records a failed status without creating a PR
-// comment. Keep the panel eligible for reconciliation if the status write fails.
+// comment. Status write errors are log-only, as they are after posting a review.
 func (p *CIPoller) finalizePanelWithoutReview(row *storage.CIPanel, statusDesc string) {
 	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); err != nil {
 		log.Printf("CI poller: failed to set error status for %s@%s: %v",
 			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-		if isPermanentGitHubAccessError(err) {
-			p.abandonPanelPost(row, statusDesc, "inaccessible GitHub repo/PR")
-		} else {
-			p.releasePanelClaim(row.ID)
-		}
-		return
 	}
 	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeNoReviewPosted); err != nil {
 		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
@@ -2415,9 +2409,6 @@ func (p *CIPoller) recordDeferral(
 // always come from row.HeadSHA.
 func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) (string, error) {
 	results := toReviewResults(members)
-	if !reviewpkg.HasSubstantiveOutput(results) {
-		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA), nil
-	}
 	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
 	if err != nil {
 		return "", fmt.Errorf("load synthesis for PR comment: %w", err)
@@ -2481,18 +2472,12 @@ func (p *CIPoller) releasePanelClaim(id int64) {
 	}
 }
 
-// panelCommitStatus computes the GitHub commit status from a panel run's member
-// outcomes, mirroring postBatchResults' §9 switch. Status reflects whether the
-// review process ran, never the synthesis verdict: a Fail verdict still posts
-// success, and quota/timeout/transient-outage skips are success-with-note rather
-// than failures (so quota exhaustion or a provider outage never counts as a
-// genuine failure here). The "jobs" are the member rows; the synthesis is
-// consolidation, not a reviewer. Note: an all-transient panel never reaches this
-// function for its status — finalizePanelRun defers and sets a pending status
-// before posting — so the all-failed "error" arm is unreachable for one.
+// panelCommitStatus computes the status for a panel with usable review output.
+// It counts genuine member failures, not findings or synthesis failures.
+// Availability skips add a note without failing the status. Panels without
+// usable output are deferred or finalized by finalizePanelRun before posting.
 func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string) {
 	results := toReviewResults(members)
-	completed := 0
 	failedMembers := 0
 	quotaSkips := 0
 	timeoutSkips := 0
@@ -2500,8 +2485,6 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 	for i, m := range members {
 		r := results[i]
 		switch storage.JobStatus(m.Status) {
-		case storage.JobStatusDone:
-			completed++
 		case storage.JobStatusFailed, storage.JobStatusCanceled:
 			if r.AllowFailure {
 				continue
@@ -2522,11 +2505,6 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 	state = "success"
 	desc = "Review complete"
 	switch {
-	case completed == 0 && realFailures == 0 && skippedTotal > 0:
-		desc = fmt.Sprintf("Review complete (%d agent(s) skipped)", skippedTotal)
-	case completed == 0:
-		state = "error"
-		desc = "All reviews failed"
 	case realFailures > 0:
 		state = "failure"
 		desc = fmt.Sprintf("Review complete (%d/%d jobs failed)", realFailures, len(members))

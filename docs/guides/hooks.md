@@ -120,6 +120,10 @@ errored out). For terminal notifications only, configure separate
 canceled, closed, reopened, and commented events, which is useful for webhooks
 and built-ins that ignore irrelevant event types internally.
 
+When panel members produce no usable output, the synthesis parent fails without
+running an agent. Its terminal event still updates CI and stream subscribers,
+but does not repeat member failure hooks or Discord alerts.
+
 ## Branch Filtering
 
 Add `branches` to any hook to run it only for selected branches:

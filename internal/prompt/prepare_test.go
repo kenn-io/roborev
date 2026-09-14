@@ -26,19 +26,21 @@ func TestPrepareSanitizesUTF8BeforeSizing(t *testing.T) {
 		{name: "file after sanitization expands the prompt", limit: len(text) + 1, file: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			builder := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: tc.limit}).ForRepo(repo.Path(), 0)
+			assert := assert.New(t)
+			cfg := &config.Config{DefaultMaxPromptSize: tc.limit}
+			builder := NewBuilderWithConfig(nil, cfg).ForRepo(repo.Path(), 0)
 			prepared, err := builder.Prepare(text, SnapshotTarget{})
 			require.NoError(t, err)
-			assert.True(t, utf8.ValidString(prepared.Prompt))
+			assert.True(utf8.ValidString(prepared.Prompt))
 			if tc.file {
 				require.NotNil(t, prepared.Cleanup)
 				t.Cleanup(prepared.Cleanup)
 				saved, err := os.ReadFile(prepared.FilePath)
 				require.NoError(t, err)
-				assert.Equal(t, want, string(saved))
+				assert.Equal(want, string(saved))
 			} else {
-				assert.Empty(t, prepared.FilePath)
-				assert.Equal(t, want, prepared.Prompt)
+				assert.Empty(prepared.FilePath)
+				assert.Equal(want, prepared.Prompt)
 			}
 		})
 	}

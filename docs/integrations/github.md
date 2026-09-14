@@ -427,8 +427,9 @@ both permissions. If your app predates either permission, add them:
     **Read and write**
 1. Save and accept the updated permissions on each installation
 
-If no GitHub App is configured, or the app lacks the commit statuses permission,
-status checks are silently skipped. PR comments are still posted regardless.
+Without GitHub credentials, status checks are skipped. Status write failures,
+including missing permissions, are logged and do not reopen finalized panels. PR
+comments are still posted when a reviewer produces usable output.
 
 !!! note
 

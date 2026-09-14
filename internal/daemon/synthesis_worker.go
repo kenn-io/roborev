@@ -55,12 +55,11 @@ func (wp *WorkerPool) processSynthesisJob(
 
 	switch len(succeeded) {
 	case 0:
-		if errMsg, ok := allAvailabilitySkippedFailure(results); ok {
-			wp.failSynthesisWithoutReviewContext(ctx, workerID, job, errMsg)
-			return
+		errMsg, ok := allAvailabilitySkippedFailure(results)
+		if !ok {
+			errMsg = "all review agents failed or produced no usable output"
 		}
-		wp.failSynthesisWithoutReviewContext(ctx, workerID, job,
-			"all review agents failed or produced no usable output")
+		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, errMsg)
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
 		// label the review with that member's agent. Its verdict already
@@ -236,7 +235,13 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 	} else if updated {
 		log.Printf("[%s] Synthesis job %d failed: %s",
 			workerID, job.ID, errorMsg)
-		wp.broadcastFailed(job, job.Agent, errorMsg)
+		// No synthesis agent ran. Keep CI and streaming subscribers informed
+		// without attributing another agent failure or repeating member alerts.
+		event := eventForJob("review.failed", job, job.ID)
+		event.Agent = ""
+		event.Error = errorMsg
+		event.SuppressHooks = true
+		wp.broadcaster.Broadcast(event)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",
 				fmt.Sprintf("synthesis job %d failed: %s", job.ID, errorMsg),
