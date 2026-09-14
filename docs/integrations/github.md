@@ -412,7 +412,7 @@ The status context is `roborev` and progresses through these states:
 | `pending` | A panel is queued, running, throttled, or deferred for retry |
 | `success` | The review process completed and a comment was posted, including comments that contain findings |
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
-| `error` | No reviewer produced usable output because of no available agent, repeated genuine failures, or all member jobs failing |
+| `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
 Label-based bypasses use a GitHub check run instead of a commit status because
 commit statuses do not have a skipped state. The roborev check run completes
@@ -706,13 +706,12 @@ outcome:
 
 | Outcome | Behavior |
 |---------|----------|
-| Transient provider outage or synthesis quota failure | Defers without a PR comment, keeps the status `pending`, and retries with exponential backoff. The first delay is 2 minutes, it doubles up to a 1 hour cap, and transient retries give up after 72 hours. |
-| Genuine member failure | Retries up to 3 consecutive genuine attempts. After that, roborev posts a fixed `Review Unavailable` note and sets an `error` status. |
-| Quota or timeout skips only | Posts an all skipped summary and uses a nonblocking status. |
+| Provider outage or quota failure | Defers without a PR comment, keeps the status `pending`, and retries with exponential backoff. The first delay is 2 minutes and doubles up to a 1 hour cap. After 72 hours, retries stop with an `error` status and no PR comment. |
+| Genuine member failure | Retries up to 3 consecutive genuine attempts, then sets an `error` status without a PR comment. |
+| Timeout skips or empty results only | Sets an `error` status without a PR comment. |
 
-The fixed genuine and transient give-up notices describe only the failure
-category. Agent errors and command output remain in local logs and state; they
-are not copied into pull request comments.
+PR comments require usable review output. Failed attempts keep their agent
+errors and command output in local logs and state for diagnosis.
 
 If panel members produced review output but the synthesis agent hits quota or a
 transient provider failure, roborev now retries the panel instead of posting the
@@ -1111,8 +1110,9 @@ During cooldown:
 - If a backup agent is configured (see
     [Backup Agents](/docs/configuration/#backup-agents)) and is not also in
     cooldown, the job is retried with the backup agent automatically.
-- Commit status is set to `success` when all panel members were skipped due to
-    quota. This prevents quota exhaustion from blocking PRs.
+- When all panel members hit quota limits, the commit status stays `pending`
+    during retries. If the retry window expires, it becomes `error` with no PR
+    comment.
 - The cooldown timer resets each time the agent hits a quota error, but it is
     capped by `agent_quota_cooldown`. Provider reset hints can shorten the
     cooldown, not lengthen it beyond your configured cap.

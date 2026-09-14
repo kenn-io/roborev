@@ -519,47 +519,6 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
-// TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header
-// must render the head SHA, never the merge base. processSynthesisJob frames the
-// synthesis on the frozen mergeBase..headSHA range, and FormatAllFailedComment
-// short-SHAs its argument, so passing the raw range would render the base.
-func TestSynthesisAllFailedRendersHeadSHA(t *testing.T) {
-	assert := assert.New(t)
-	tc := newWorkerTestContext(t, 1)
-
-	const memberAgent = "panel-headsha-member"
-	registerPassingAgent(t, memberAgent)
-	var synthCalled bool
-	const synthAgent = "synth-headsha"
-	registerNeverCalledAgent(t, synthAgent, &synthCalled)
-
-	runUUID, members, synth := enqueuePanelRun(t, tc, "headsha-panel", []memberSpec{
-		{name: "m0", agent: memberAgent},
-	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent)
-
-	// Frame the synthesis on a base..head range with distinguishable short SHAs.
-	const baseSHA = "1111111aaaaaa"
-	const headSHA = "2222222bbbbbb"
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET git_ref = ? WHERE id = ?",
-		baseSHA+".."+headSHA, synth.ID,
-	)
-	require.NoError(t, err)
-	for _, m := range members {
-		failMember(t, tc, m.ID)
-	}
-
-	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
-
-	review, err := tc.DB.GetReviewByJobID(synth.ID)
-	require.NoError(t, err)
-	assert.Contains(review.Output, "2222222", "all-failed header renders the head short SHA")
-	assert.NotContains(review.Output, "1111111", "all-failed header must not render the base SHA")
-	assert.False(synthCalled)
-}
-
 func TestSynthesisAllFailed(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
@@ -586,13 +545,9 @@ func TestSynthesisAllFailed(t *testing.T) {
 	tc.Pool.processJob(testWorkerID, synth)
 
 	requireOutputChannelClosed(t, output)
-	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
-	review, err := tc.DB.GetReviewByJobID(synth.ID)
-	require.NoError(t, err)
-	assert.Contains(review.Output, "Unable to review")
-	assert.Contains(review.Output, "All review agents failed")
-	assert.Equal(storage.VerdictUnknown, review.Verdict())
-	assert.Equal("unable_to_review", review.StructuredOutput["verdict"])
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+	_, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.Error(t, err, "a failed panel must not store a completed review")
 	assert.False(synthCalled, "no agent should run when every member failed")
 }
 
@@ -1371,8 +1326,7 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	assert.Empty(t, filterSucceeded(results))
 	synth := releaseAndClaimSynthesis(t, tc, runID)
 	tc.Pool.processJob(testWorkerID, synth)
-	review, err := tc.DB.GetReviewByJobID(synth.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "unable_to_review", review.StructuredOutput["verdict"])
-	assert.Equal(t, storage.VerdictUnknown, review.Verdict())
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+	_, err = tc.DB.GetReviewByJobID(synth.ID)
+	require.Error(t, err, "an imported unavailable result must not become a completed review")
 }

@@ -45,6 +45,10 @@ previous prompts. `review_context_count` limits the number of earlier endpoints
 included, with one review per endpoint. Repeated reviews of the current endpoint
 are excluded from this document. The file is removed when the review finishes.
 
+Before measuring or sending a prompt, roborev replaces invalid UTF-8 byte
+sequences with `�`. This lets reviews run when a diff includes legacy-encoded
+files. Valid Unicode and repository files remain unchanged.
+
 ### Pre-Merge Review
 
 Before creating a pull request, review your entire branch:

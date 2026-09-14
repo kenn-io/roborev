@@ -4,8 +4,8 @@ import reviewpkg "go.kenn.io/roborev/internal/review"
 
 // OutcomeKind enumerates how a finalized CI panel run should be resolved against
 // its member results and the HEAD's retry state. It is the decision the
-// finalize path branches on: post results, defer for a retry, give up with a
-// non-blocking note, or post the all-skipped summary.
+// finalize path branches on: post results, defer for a retry, or record a
+// terminal error without posting a comment.
 type OutcomeKind int
 
 const (
@@ -14,18 +14,18 @@ const (
 	OutcomePost OutcomeKind = iota
 	// OutcomeDeferTransient defers the run for a later retry: no member
 	// succeeded and at least one failed on a provider outage or agent
-	// availability limit. The finalize path posts nothing unless the transient
+	// availability limit. The finalize path posts nothing, including when the
 	// retry wall is exhausted.
 	OutcomeDeferTransient
 	// OutcomeDeferGenuine defers the run for a later retry: no member succeeded,
 	// none failed transiently, and at least one failed genuinely, but the
 	// consecutive-genuine streak has not yet hit the give-up cap.
 	OutcomeDeferGenuine
-	// OutcomeGenuineGiveUp posts a genuine-failure soft note with a blocking
-	// commit status: a genuine failure recurred up to the give-up cap.
+	// OutcomeGenuineGiveUp records an error status without a comment after
+	// a genuine failure recurs up to the give-up cap.
 	OutcomeGenuineGiveUp
-	// OutcomeAllSkip posts the all-skipped summary: every member was a timeout
-	// skip (or the member set was empty), with no real result.
+	// OutcomeAllSkip records an error status without a comment: every member
+	// was a timeout skip (or the member set was empty), with no real result.
 	OutcomeAllSkip
 )
 

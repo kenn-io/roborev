@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,37 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestPrepareSanitizesUTF8BeforeSizing(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	text := strings.Repeat("field: \xfe\n", 64) + "valid: café 世界 �\n"
+	want := strings.Repeat("field: �\n", 64) + "valid: café 世界 �\n"
+	for _, tc := range []struct {
+		name  string
+		limit int
+		file  bool
+	}{
+		{name: "inline", limit: len(want)},
+		{name: "file after sanitization expands the prompt", limit: len(text) + 1, file: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: tc.limit}).ForRepo(repo.Path(), 0)
+			prepared, err := builder.Prepare(text, SnapshotTarget{})
+			require.NoError(t, err)
+			assert.True(t, utf8.ValidString(prepared.Prompt))
+			if tc.file {
+				require.NotNil(t, prepared.Cleanup)
+				t.Cleanup(prepared.Cleanup)
+				saved, err := os.ReadFile(prepared.FilePath)
+				require.NoError(t, err)
+				assert.Equal(t, want, string(saved))
+			} else {
+				assert.Empty(t, prepared.FilePath)
+				assert.Equal(t, want, prepared.Prompt)
+			}
+		})
+	}
+}
 
 func TestPreparePreservesCompletePrompt(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)

@@ -100,8 +100,8 @@ Synthesis avoids extra agent work when it can:
 - If multiple members produced findings, a read only synthesis agent verifies,
     deduplicates, preserves file and line references, groups by severity, and
     writes one combined result.
-- If no member succeeds, roborev records a durable all failed review instead of
-    pretending the code passed.
+- If no member produces usable output, the parent job fails without storing a
+    review. The member jobs retain their errors for diagnosis.
 
 When a panel uses `min_severity`, member findings below the threshold stay in
 the combined output. The threshold only decides whether the panel passes or

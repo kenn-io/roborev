@@ -7,7 +7,7 @@ type RetrySchedule struct {
 	Base          time.Duration // first delay
 	Cap           time.Duration // max single delay
 	TransientWall time.Duration // give up transient retries after this since first attempt
-	GenuineMax    int           // max consecutive genuine attempts before soft note
+	GenuineMax    int           // max consecutive genuine attempts before giving up
 }
 
 // DefaultRetrySchedule: 2m, 4m, 8m ... capped at 1h then hourly; transient

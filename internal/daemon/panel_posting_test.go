@@ -1081,9 +1081,7 @@ func TestPostPanelRunDefersGenuine(t *testing.T) {
 	assert.Equal(1, attempt.ConsecutiveGenuineAttempts, "genuine defer bumps the streak")
 }
 
-// TestPostPanelRunGenuineGiveUp covers the genuine give-up: once the
-// consecutive-genuine streak reaches the cap, the run posts a soft note, sets a
-// blocking status, and finalizes the attempt as done.
+// Once genuine retries are exhausted, finalize with an error and no comment.
 func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -1106,10 +1104,7 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
-	require.Len(t, *comments, 1, "give-up posts a soft note")
-	assert.Contains((*comments)[0].Body, "## roborev: Review Unavailable", "give-up note header")
-	assert.NotContains((*comments)[0].Body, "private launcher detail")
-	assert.NotContains((*comments)[0].Body, "second diagnostic line")
+	assert.Empty(*comments, "failed reviews do not post PR comments")
 	require.Len(t, *statuses, 1)
 	assert.Equal("error", (*statuses)[0].State, "genuine give-up status blocks required checks")
 	assert.Equal("All reviews failed", (*statuses)[0].Desc)
@@ -1123,13 +1118,10 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 82, headSHA)
 	require.NoError(t, err)
 	require.NotNil(t, got.Outcome)
-	assert.Equal(storage.PanelOutcomeGiveupPosted, *got.Outcome)
+	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome)
 }
 
-// TestPostPanelRunTransientGiveUp covers the transient give-up: an all-transient
-// panel whose first attempt is older than the 3-day retry wall stops deferring
-// and posts a non-blocking transient note instead, sets a success (non-failing)
-// status, finalizes the attempt as done, and marks the panel posted (not retired).
+// Exhausted provider retries also finish with an error and no comment.
 func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -1155,24 +1147,14 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
-	require.Len(t, *comments, 1, "transient give-up posts one note after the wall")
-	body := (*comments)[0].Body
-	assert.Contains(body, "## roborev: Review Unavailable", "transient give-up note header")
-	assert.Contains(body, "3 days", "transient note explains the 3-day wall")
-	assert.Contains(body, "provider", "transient note blames the AI provider")
-	assert.NotContains(body, "next commit", "must be the transient note, not the genuine soft note")
-	assert.NotContains(body, "Review Failed", "give-up note is not a terminal Review Failed comment")
-	assert.NotContains(body, "Check CI logs", "give-up note is not a terminal failure comment")
-	assert.NotContains(body, "private provider detail")
-	assert.NotContains(body, "second diagnostic line")
+	assert.Empty(*comments, "exhausted provider retries do not post PR comments")
 
 	require.Len(t, *statuses, 1, "transient give-up sets exactly one status")
-	assert.Equal("success", (*statuses)[0].State, "give-up status is non-failing")
-	assert.NotEqual("failure", (*statuses)[0].State, "give-up status is never failure")
-	assert.NotEqual("error", (*statuses)[0].State, "give-up status is never error")
+	assert.Equal("error", (*statuses)[0].State)
+	assert.Equal("Review unavailable", (*statuses)[0].Desc)
 
 	assert.True(h.panelPostedAt(t, panel.ID), "give-up finalizes the panel (posted_at set)")
-	assert.False(h.panelRetiredAt(t, panel.ID), "give-up posts the panel, it is not retired")
+	assert.False(h.panelRetiredAt(t, panel.ID), "give-up finalizes the panel without scheduling another review")
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 85, headSHA)
 	require.NoError(t, err)
@@ -1182,16 +1164,10 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 85, headSHA)
 	require.NoError(t, err)
 	require.NotNil(t, got.Outcome)
-	assert.Equal(storage.PanelOutcomeGiveupPosted, *got.Outcome)
+	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome)
 }
 
-// TestPostPanelRunAllSkipPersistsNoReviewOutcome covers the all-skip finalize
-// arm: every member is a timeout skip (classifyPanelOutcome falls through to
-// OutcomeAllSkip), so finalizePanelRun still posts the all-skipped summary but
-// must persist storage.PanelOutcomeNoReviewPosted, not the OutcomePost arm's
-// PanelOutcomeReviewPosted — the two arms only differ in which outcome they
-// pass to postPanelComment, so a regression re-merging them would pass every
-// other test in this file.
+// A panel of timeout skips has no review to post or count in review metrics.
 func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -1205,15 +1181,35 @@ func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
-	require.Len(t, *comments, 1, "all-skip still posts the all-skipped summary")
-	assert.Contains((*comments)[0].Body, "## roborev: Review Skipped", "all-skipped summary header")
-	assert.NotEmpty(*statuses, "commit status set on all-skip")
+	assert.Empty(*comments, "a panel without review output does not post PR comments")
+	require.Len(t, *statuses, 1)
+	assert.Equal("error", (*statuses)[0].State)
 	assert.True(h.panelPostedAt(t, panel.ID), "all-skip finalizes the panel (posted_at set)")
 
 	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 87, "allskip1234567")
 	require.NoError(t, err)
 	require.NotNil(t, got.Outcome)
 	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome, "all-skip persists the no-review outcome")
+}
+
+func TestPanelWithoutReviewRetriesFailedStatusWrite(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 1, "status-retry", "base..status-retry",
+		[]jobSpec{{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "expired"}})
+	h.markJobFailed(t, synth.ID, "no usable output")
+	h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+		return fmt.Errorf("temporary API failure")
+	}
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+	assert.False(t, h.panelPostedAt(t, panel.ID), "failed status write leaves the panel unfinished")
+
+	statuses := h.CaptureCommitStatuses()
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+	require.Len(t, *statuses, 1, "the posting claim was released for retry")
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.True(t, h.panelPostedAt(t, panel.ID))
+	assert.Empty(t, *comments)
 }
 
 // TestFinalizePanelRunBackfillsMissingAttemptRow covers upgrade-boundary panel

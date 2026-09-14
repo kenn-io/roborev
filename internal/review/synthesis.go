@@ -328,28 +328,6 @@ func FormatAllFailedComment(
 	return b.String()
 }
 
-// FormatTransientGiveUpComment is posted after the 3-day transient retry cap.
-// It explains that the AI provider was repeatedly unavailable without exposing
-// the underlying agent error.
-func FormatTransientGiveUpComment(headSHA string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
-	b.WriteString("roborev tried to review this PR for 3 days but the AI provider " +
-		"was repeatedly unavailable, so no review was produced.\n\n")
-	return b.String()
-}
-
-// FormatGenuineSoftNoteComment is posted after bounded genuine failures. It
-// notes the agent repeatedly failed to run and that roborev will retry on the
-// next commit without exposing the underlying agent error.
-func FormatGenuineSoftNoteComment(headSHA string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
-	b.WriteString("The review agent repeatedly failed to run (likely an agent or " +
-		"configuration error). roborev will try again on the next commit.\n\n")
-	return b.String()
-}
-
 // IsQuotaFailure returns true if a review's error indicates a
 // quota skip rather than a real failure.
 func IsQuotaFailure(r ReviewResult) bool {
