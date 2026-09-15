@@ -173,15 +173,25 @@ make api-check
 make web-release-check
 ```
 
-`make api-check` verifies that browser types match the canonical OpenAPI
-document. `make web-release-check` builds the SPA, validates its Vite manifest,
+`pkg/client/openapi.yaml` is the canonical OpenAPI document. Run
+`make api-generate` after changing daemon routes to regenerate the document, the
+DoorDash oapi-codegen Go client, and the Orval TypeScript clients.
+`make api-check` verifies that these generated files match the daemon routes. Go
+callers use `pkg/client` to configure the HTTP transport. Its generated raw
+methods return response bodies without buffering; callers must close them.
+
+`make web-release-check` builds the SPA, validates its Vite manifest,
 temporarily stages it for Go embedding, tests the embedded release, and always
 restores the tracked compilation stub.
 
-The daemon's typed HTTP API uses Go's JSON v2 encoder while retaining its
-existing JSON behavior for other values. Ordinary slice fields are non-nullable
-collections in OpenAPI and serialize as `[]` when empty. Use an explicit
-nullable representation only when `null` is part of the API contract.
+The daemon's typed HTTP API and production JSON handling use Go's JSON v2
+encoder. The Huma configuration registers this encoder in its JSON format map.
+Ordinary slice fields are non-nullable collections in OpenAPI and serialize as
+`[]` when empty. Use an explicit nullable representation only when `null` is
+part of the API contract. Use explicit JSON field tags for case-sensitive
+decoding and `omitzero` when zero-valued numbers must be omitted. JSON used for
+experiment fingerprints uses deterministic encoding so map key order does not
+change stored hashes.
 
 To exercise a checkout exactly like an installed release, including the embedded
 application and the normal Roborev SQLite database and configuration, build the
