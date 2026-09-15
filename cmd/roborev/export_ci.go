@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 type exportCIMetricsOpts struct {
@@ -167,7 +169,7 @@ func fetchExportCIMetricsPage(ep daemon.DaemonEndpoint, opts exportCIMetricsOpts
 		params.Set("legacy", "true")
 	}
 
-	resp, err := ep.HTTPClient(30 * time.Second).Get(ep.BaseURL() + "/api/export/ci-metrics?" + params.Encode())
+	resp, err := ep.APIClient(30*time.Second).ExportCiMetricsRaw(context.Background(), nil, roborevclient.WithQuery(params))
 	if err != nil {
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}

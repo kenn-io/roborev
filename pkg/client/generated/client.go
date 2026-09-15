@@ -35,6 +35,22 @@ type ClientInterface interface {
 	ListActivity(ctx context.Context, options *ListActivityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListActivityResponse, error)
 	ListActivityWithResponse(ctx context.Context, options *ListActivityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListActivityResp, error)
 
+	// RecordAgentHookEvent Post API agent hook event
+	RecordAgentHookEvent(ctx context.Context, options *RecordAgentHookEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RecordAgentHookEventResponse, error)
+	RecordAgentHookEventWithResponse(ctx context.Context, options *RecordAgentHookEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RecordAgentHookEventResp, error)
+
+	// CompleteAgentHookFix Post API agent hook fix done
+	CompleteAgentHookFix(ctx context.Context, options *CompleteAgentHookFixRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteAgentHookFixResponse, error)
+	CompleteAgentHookFixWithResponse(ctx context.Context, options *CompleteAgentHookFixRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteAgentHookFixResp, error)
+
+	// ResetAgentHookSessions Post API agent hook reset
+	ResetAgentHookSessions(ctx context.Context, options *ResetAgentHookSessionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResetAgentHookSessionsResponse, error)
+	ResetAgentHookSessionsWithResponse(ctx context.Context, options *ResetAgentHookSessionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResetAgentHookSessionsResp, error)
+
+	// ListAgentHookSessions Get API agent hook sessions
+	ListAgentHookSessions(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentHookSessionsResponse, error)
+	ListAgentHookSessionsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentHookSessionsResp, error)
+
 	// SetAgentHookSnooze Set or clear an agent-hook workspace snooze
 	SetAgentHookSnooze(ctx context.Context, options *SetAgentHookSnoozeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetAgentHookSnoozeResponse, error)
 	SetAgentHookSnoozeWithResponse(ctx context.Context, options *SetAgentHookSnoozeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetAgentHookSnoozeResp, error)
@@ -286,6 +302,260 @@ func (c *Client) ListActivity(ctx context.Context, options *ListActivityRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/activity")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RecordAgentHookEvent Post API agent hook event
+func (c *Client) RecordAgentHookEvent(ctx context.Context, options *RecordAgentHookEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RecordAgentHookEventResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/agent-hook/event",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RecordAgentHookEventResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RecordAgentHookEventErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RecordAgentHookEventErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RecordAgentHookEventResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RecordAgentHookEventResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/agent-hook/event")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CompleteAgentHookFix Post API agent hook fix done
+func (c *Client) CompleteAgentHookFix(ctx context.Context, options *CompleteAgentHookFixRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteAgentHookFixResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/agent-hook/fix-done",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CompleteAgentHookFixResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(CompleteAgentHookFixErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CompleteAgentHookFixErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CompleteAgentHookFixResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CompleteAgentHookFixResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/agent-hook/fix-done")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResetAgentHookSessions Post API agent hook reset
+func (c *Client) ResetAgentHookSessions(ctx context.Context, options *ResetAgentHookSessionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResetAgentHookSessionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/agent-hook/reset",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ResetAgentHookSessionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ResetAgentHookSessionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ResetAgentHookSessionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ResetAgentHookSessionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ResetAgentHookSessionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/agent-hook/reset")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListAgentHookSessions Get API agent hook sessions
+func (c *Client) ListAgentHookSessions(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentHookSessionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/agent-hook/sessions",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListAgentHookSessionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListAgentHookSessionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListAgentHookSessionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListAgentHookSessionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListAgentHookSessionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/agent-hook/sessions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,6 +16,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func listCmd() *cobra.Command {
@@ -59,7 +58,6 @@ Examples:
 			}
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
 
 			// Auto-resolve repo from cwd when not specified.
 			// Use worktree root for branch detection, main repo root for API queries
@@ -95,28 +93,28 @@ Examples:
 			}
 
 			// Build query URL
-			params := url.Values{}
+			params := generated.ListJobsQuery{}
 			if repoPrefix != "" {
-				params.Set("repo_prefix", repoPrefix)
+				params.RepoPrefix = new(repoPrefix)
 			} else if repoPath != "" {
-				params.Set("repo", repoPath)
+				params.Repo = []string{repoPath}
 			}
 			if branch != "" && (repoPrefix == "" || cmd.Flags().Changed("branch")) {
-				params.Set("branch", branch)
-				params.Set("branch_include_empty", "true")
+				params.Branch = new(branch)
+				params.BranchIncludeEmpty = new(generated.ListJobsQueryBranchIncludeEmpty("true"))
 			}
 			if status != "" {
-				params.Set("status", status)
+				params.Status = new(status)
 			}
 			if closed {
-				params.Set("closed", "true")
+				params.Closed = new(generated.ListJobsQueryClosed("true"))
 			} else if open {
-				params.Set("closed", "false")
+				params.Closed = new(generated.ListJobsQueryClosed("false"))
 			}
-			params.Set("limit", strconv.Itoa(limit))
+			params.Limit = new(int64(limit))
 
-			client := ep.HTTPClient(5 * time.Second)
-			resp, err := client.Get(addr + "/api/jobs?" + params.Encode())
+			client := ep.APIClient(5 * time.Second)
+			resp, err := client.ListJobsRaw(cmd.Context(), &generated.ListJobsRequestOptions{Query: &params})
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}

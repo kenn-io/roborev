@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +16,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func summaryCmd() *cobra.Command {
@@ -50,7 +50,6 @@ Examples:
 			}
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
 
 			// Auto-resolve repo from cwd when not specified (unless --all)
 			if !allRepos && repoPath == "" {
@@ -65,22 +64,22 @@ Examples:
 				}
 			}
 
-			params := url.Values{}
+			params := generated.GetSummaryQuery{}
 			if repoPath != "" {
-				params.Set("repo", repoPath)
+				params.Repo = new(repoPath)
 			}
 			if branch != "" {
-				params.Set("branch", branch)
+				params.Branch = new(branch)
 			}
 			if since != "" {
-				params.Set("since", since)
+				params.Since = new(since)
 			}
 			if allRepos {
-				params.Set("all", "true")
+				params.All = new(generated.GetSummaryQueryAll("true"))
 			}
 
-			client := ep.HTTPClient(10 * time.Second)
-			resp, err := client.Get(addr + "/api/summary?" + params.Encode())
+			client := ep.APIClient(10 * time.Second)
+			resp, err := client.GetSummaryRaw(cmd.Context(), &generated.GetSummaryRequestOptions{Query: &params})
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}

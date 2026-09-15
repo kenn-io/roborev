@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	webassets "go.kenn.io/roborev/internal/web"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 var browserCapabilities = []string{"web-ui-v1", "web-session-v1", "analytics-v1"}
@@ -118,7 +119,10 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 }
 
 func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <-chan error) error {
-	client := &http.Client{Timeout: 200 * time.Millisecond}
+	client, err := roborevclient.NewWithHTTPClient("http://"+endpoint.DialAddress+basePath, &http.Client{Timeout: 200 * time.Millisecond})
+	if err != nil {
+		return err
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
@@ -129,16 +133,10 @@ func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <
 			return err
 		default:
 		}
-		request, err := http.NewRequest(
-			http.MethodGet,
-			"http://"+endpoint.DialAddress+joinBrowserPath(basePath, "/api/ping"),
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-		request.Host = endpoint.Address
-		response, err := client.Do(request)
+		response, err := client.PingRaw(context.Background(), func(_ context.Context, req *http.Request) error {
+			req.Host = endpoint.Address
+			return nil
+		})
 		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {

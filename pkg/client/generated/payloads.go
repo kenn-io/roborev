@@ -2,6 +2,12 @@
 
 package generated
 
+type RecordAgentHookEventBody = Request
+
+type CompleteAgentHookFixBody = AgentHookFixDoneRequest
+
+type ResetAgentHookSessionsBody = AgentHookResetRequest
+
 type SetAgentHookSnoozeBody = AgentHookSnoozeRequest
 
 type AddCommentBody = AddCommentRequest

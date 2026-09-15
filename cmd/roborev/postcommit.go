@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // hookHTTPClient returns an HTTP client for hook requests with the given
@@ -194,11 +194,7 @@ func postCommitCmd() *cobra.Command {
 			timeout := config.ResolveHookTimeout(root, globalCfg)
 
 			ep := getDaemonEndpoint()
-			resp, err := hookHTTPClient(timeout).Post(
-				ep.BaseURL()+"/api/enqueue",
-				"application/json",
-				bytes.NewReader(reqBody),
-			)
+			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
 					"enqueue request failed: %v", err,

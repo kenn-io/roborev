@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 type exportCICostOpts struct {
@@ -163,7 +165,7 @@ func fetchExportCICostPage(
 		params.Set("legacy", "true")
 	}
 
-	resp, err := ep.HTTPClient(30 * time.Second).Get(ep.BaseURL() + "/api/export/ci-costs?" + params.Encode())
+	resp, err := ep.APIClient(30*time.Second).ExportCiCostsRaw(context.Background(), nil, roborevclient.WithQuery(params))
 	if err != nil {
 		return daemon.ExportCICostDocument{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -18,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func insightsCmd() *cobra.Command {
@@ -147,7 +147,7 @@ func runInsights(ctx context.Context, cmd *cobra.Command, opts insightsOptions) 
 	})
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(30*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(30*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}

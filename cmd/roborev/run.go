@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -21,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func runCmd() *cobra.Command {
@@ -254,8 +254,7 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 	})
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(10*time.Second).
-		Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}

@@ -62,6 +62,132 @@ components:
         - commenter
         - comment
       type: object
+    AgentHookFixDoneOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookFixDoneOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        ok:
+          type: boolean
+      required:
+        - ok
+      type: object
+    AgentHookFixDoneRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookFixDoneRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        fix_session_id:
+          type: string
+      required:
+        - fix_session_id
+      type: object
+    AgentHookResetOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookResetOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        ok:
+          type: boolean
+      required:
+        - ok
+      type: object
+    AgentHookResetRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookResetRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        all:
+          type: boolean
+        session_id:
+          type: string
+      type: object
+    AgentHookResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        commit_count:
+          format: int64
+          type: integer
+        commit_threshold:
+          format: int64
+          type: integer
+        count:
+          format: int64
+          type: integer
+        failed_review_count:
+          format: int64
+          type: integer
+        failed_review_threshold:
+          format: int64
+          type: integer
+        fix_session_id:
+          type: string
+        reason:
+          type: string
+        remind_count:
+          format: int64
+          type: integer
+        session_id:
+          type: string
+        skipped:
+          type: boolean
+        threshold:
+          format: int64
+          type: integer
+        triggered:
+          type: boolean
+        triggered_by:
+          type: string
+      required:
+        - session_id
+        - count
+        - threshold
+        - triggered
+      type: object
+    AgentHookSessionsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AgentHookSessionsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        sessions:
+          additionalProperties:
+            $ref: "#/components/schemas/SessionState"
+          type: object
+      required:
+        - sessions
+      type: object
     AgentHookSnooze:
       additionalProperties: false
       properties:
@@ -1711,6 +1837,34 @@ components:
         - recent_errors
         - error_count_24h
       type: object
+    Input:
+      additionalProperties: false
+      properties:
+        cwd:
+          type: string
+        hook_event_name:
+          type: string
+        last_assistant_message:
+          type: string
+        session_id:
+          type: string
+        stop_hook_active:
+          type: boolean
+        tool_input:
+          additionalProperties: {}
+          type: object
+        tool_name:
+          type: string
+        tool_response: {}
+        tool_use_id:
+          type: string
+        transcript_path:
+          type: string
+        turn_id:
+          type: string
+      required:
+        - session_id
+      type: object
     JobIDRequest:
       additionalProperties: false
       properties:
@@ -2142,6 +2296,44 @@ components:
         - members_canceled
         - members_skipped
       type: object
+    PendingReminder:
+      additionalProperties: false
+      properties:
+        branch:
+          type: string
+        commit_count:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        failed_review_count:
+          format: int64
+          type: integer
+        head:
+          type: string
+        instruction:
+          type: string
+        lineage_key:
+          type: string
+        reason:
+          type: string
+        tracked_repo_identity:
+          type: string
+        tracked_repo_root:
+          type: string
+        triggered_by:
+          type: string
+        worktree_root:
+          type: string
+      required:
+        - triggered_by
+        - reason
+        - tracked_repo_root
+        - worktree_root
+        - lineage_key
+        - created_at
+      type: object
     PingInfo:
       additionalProperties: false
       properties:
@@ -2401,6 +2593,41 @@ components:
         - root_path
         - count
       type: object
+    Request:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/Request.json
+          format: uri
+          readOnly: true
+          type: string
+        agent:
+          type: string
+        commit_threshold:
+          format: int64
+          type: integer
+        defer_post_tool_reminder:
+          type: boolean
+        event:
+          $ref: "#/components/schemas/Input"
+        failed_review_threshold:
+          format: int64
+          type: integer
+        instruction:
+          type: string
+        threshold:
+          format: int64
+          type: integer
+      required:
+        - agent
+        - event
+        - threshold
+        - commit_threshold
+        - failed_review_threshold
+        - instruction
+      type: object
     RerunJobOutputBody:
       additionalProperties: false
       properties:
@@ -2594,6 +2821,9 @@ components:
         reviewed:
           format: int64
           type: integer
+      type: object
+    ReviewIDSetValue:
+      additionalProperties: false
       type: object
     ReviewJob:
       additionalProperties: false
@@ -2880,6 +3110,87 @@ components:
         - output
         - created_at
         - closed
+      type: object
+    SessionState:
+      additionalProperties: false
+      properties:
+        acknowledged_review_ids:
+          additionalProperties:
+            additionalProperties:
+              $ref: "#/components/schemas/ReviewIDSetValue"
+            type: object
+          type: object
+        commit_count:
+          format: int64
+          type: integer
+        commit_counts_since_prompt:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        commit_shas_since_prompt:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        commit_triggered_at:
+          format: date-time
+          type: string
+        count:
+          format: int64
+          type: integer
+        failed_review_count:
+          format: int64
+          type: integer
+        failed_review_triggered_at:
+          format: date-time
+          type: string
+        failed_review_triggered_counts:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        last_commit_head:
+          type: string
+        last_commit_repo:
+          type: string
+        last_cwd:
+          type: string
+        last_failed_review_branch:
+          type: string
+        last_failed_review_repo:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        last_turn_id:
+          type: string
+        pending_reminders:
+          additionalProperties:
+            $ref: "#/components/schemas/PendingReminder"
+          type: object
+        remind_count:
+          format: int64
+          type: integer
+        repo_heads:
+          additionalProperties:
+            type: string
+          type: object
+        stop_counts_since_prompt:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        triggered_at:
+          format: date-time
+          type: string
+        worktree_lineage_keys:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - count
       type: object
     SessionUsagePayload:
       additionalProperties: false
@@ -3339,6 +3650,92 @@ paths:
       summary: List recent daemon activity
       tags:
         - daemon
+  /api/agent-hook/event:
+    post:
+      operationId: record-agent-hook-event
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Request"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHookResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API agent hook event
+  /api/agent-hook/fix-done:
+    post:
+      operationId: complete-agent-hook-fix
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentHookFixDoneRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHookFixDoneOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API agent hook fix done
+  /api/agent-hook/reset:
+    post:
+      operationId: reset-agent-hook-sessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentHookResetRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHookResetOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API agent hook reset
+  /api/agent-hook/sessions:
+    get:
+      operationId: list-agent-hook-sessions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHookSessionsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API agent hook sessions
   /api/agent-hook/snooze:
     post:
       operationId: set-agent-hook-snooze

@@ -71,15 +71,7 @@ func sseReadLoop(
 		}
 	}()
 
-	client := endpoint.HTTPClient(0)
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet,
-		endpoint.BaseURL()+"/api/stream/events", nil,
-	)
-	if err != nil {
-		return false, err
-	}
-	resp, err := client.Do(req)
+	resp, err := endpoint.APIClient(0).StreamEventsRaw(ctx, nil)
 	if err != nil {
 		return false, err
 	}

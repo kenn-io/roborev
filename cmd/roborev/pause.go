@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -51,13 +52,12 @@ func setQueuePaused(paused bool) error {
 	}
 
 	ep := getDaemonEndpoint()
-	addr := ep.BaseURL()
-	path := "/api/queue/unpause"
+	api := ep.APIClient(2 * time.Second)
+	update := api.UnpauseQueueRaw
 	if paused {
-		path = "/api/queue/pause"
+		update = api.PauseQueueRaw
 	}
-
-	resp, err := ep.HTTPClient(2*time.Second).Post(addr+path, "application/json", nil)
+	resp, err := update(context.Background())
 	if err != nil {
 		return fmt.Errorf("update queue pause state: %w", err)
 	}
