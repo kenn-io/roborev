@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -3102,7 +3103,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 
 	ts := httptest.NewServer(server.httpServer.Handler)
 	t.Cleanup(ts.Close)
-	client, err := daemonclient.NewDefaultClient(ts.URL)
+	client, err := roborevclient.NewWithHTTPClient(ts.URL, ts.Client())
 	require.NoError(t, err)
 
 	ctx := context.Background()
