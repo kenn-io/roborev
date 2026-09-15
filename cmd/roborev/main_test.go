@@ -826,9 +826,11 @@ func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		wantBinary += ".exe"
 	}
-	assert.False(t, gotOpts.current)
-	assert.True(t, gotOpts.registered)
-	assert.Equal(t, wantBinary, gotOpts.binary)
+	assert := assert.New(t)
+	assert.False(gotOpts.current)
+	assert.True(gotOpts.registered)
+	assert.True(gotOpts.gitDirOnly)
+	assert.Equal(wantBinary, gotOpts.binary)
 }
 
 func TestRepairHooksAfterUpdateSkipsWhenNoRestart(t *testing.T) {
@@ -887,6 +889,7 @@ func main() {
 		"install-hook",
 		"repair",
 		"--registered",
+		"--git-dir-only",
 	}, "\n"), string(gotBytes))
 }
 

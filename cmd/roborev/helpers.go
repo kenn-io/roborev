@@ -118,8 +118,13 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 // autoInstallHooks upgrades outdated hooks and installs
 // companion hooks (e.g. post-rewrite and pre-push when post-commit
 // exists). It does NOT install hooks from scratch so that
-// explicit uninstall-hook is respected.
+// explicit uninstall-hook is respected. Like daemon startup repair, automatic
+// maintenance must leave working-tree and external shared hooks alone.
 func autoInstallHooks(ctx context.Context, repoPath string) {
+	insideGitDir, err := githook.HooksDirInsideGitDir(ctx, repoPath)
+	if err != nil || !insideGitDir {
+		return
+	}
 	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return

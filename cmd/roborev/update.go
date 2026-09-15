@@ -362,6 +362,7 @@ func repairHooksAfterUpdateResult(binDir string, run repairHookRunner) error {
 				"install-hook",
 				"repair",
 				"--registered",
+				"--git-dir-only",
 			)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
@@ -374,7 +375,7 @@ func repairHooksAfterUpdateResult(binDir string, run repairHookRunner) error {
 		}
 	}
 
-	if err := run(repairHookOptions{registered: true, binary: newBinary}); err != nil {
+	if err := run(repairHookOptions{registered: true, gitDirOnly: true, binary: newBinary}); err != nil {
 		return err
 	}
 	return nil
