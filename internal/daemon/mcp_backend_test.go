@@ -62,6 +62,7 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
+	server.browserRuntime = &BrowserRuntimeInfo{Origin: "https://reviews.example", WebBasePath: "/team"}
 	repoPath := filepath.ToSlash(t.TempDir())
 	job := seedCompletedReview(t, db, repoPath)
 
@@ -103,11 +104,13 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	jobs := jobsOut["jobs"].([]any)
 	require.Len(jobs, 1)
 	row := jobs[0].(map[string]any)
+	assert.Equal("https://reviews.example/team/reviews/1", row["web_url"])
 	assert.EqualValues(job.ID, row["id"])
 	assert.Equal("pass", row["verdict"])
 	assert.Equal(false, row["closed"])
 
 	review := call("roborev_get_review", map[string]any{"job_id": job.ID})
+	assert.Equal("https://reviews.example/team/reviews/1", review["web_url"])
 	assert.Contains(review["output"], "No issues found")
 	assert.Equal("pass", review["verdict"])
 	assert.NotContains(review, "prompt")
@@ -219,4 +222,40 @@ func TestMCPBackendCommentsByCommitID(t *testing.T) {
 	require.NoError(err)
 	require.Len(comments, 1, "only the legacy commit-linked comment from the seed")
 	assert.Equal("legacy thanks", comments[0].Response)
+}
+
+func TestReviewBrowserURLsInAPIResponses(t *testing.T) {
+	server, db := newMCPTestServer(t, false)
+	job := seedCompletedReview(t, db, filepath.ToSlash(t.TempDir()))
+	require.EqualValues(t, 1, job.ID)
+	for _, tc := range []struct {
+		name    string
+		runtime *BrowserRuntimeInfo
+		want    string
+	}{
+		{name: "disabled"},
+		{name: "local", runtime: &BrowserRuntimeInfo{Origin: "http://127.0.0.1:7400"}, want: "http://127.0.0.1:7400/reviews/1"},
+		{name: "mounted", runtime: &BrowserRuntimeInfo{Origin: "https://reviews.example", WebBasePath: "/team"}, want: "https://reviews.example/team/reviews/1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server.browserRuntime = tc.runtime
+			for _, path := range []string{"/api/jobs", "/api/jobs?id=1", "/api/review?job_id=1"} {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				w := httptest.NewRecorder()
+				server.httpServer.Handler.ServeHTTP(w, req)
+				require.Equal(t, http.StatusOK, w.Code)
+				var out map[string]any
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+				if jobs, ok := out["jobs"].([]any); ok {
+					require.Len(t, jobs, 1)
+					out = jobs[0].(map[string]any)
+				}
+				if tc.want == "" {
+					assert.NotContains(t, out, "web_url")
+				} else {
+					assert.Equal(t, tc.want, out["web_url"])
+				}
+			}
+		})
+	}
 }

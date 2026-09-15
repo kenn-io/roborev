@@ -1339,6 +1339,7 @@ func (s *Server) humaListJobs(
 			)
 		}
 		resp := &ListJobsOutput{}
+		job.WebURL = s.reviewBrowserURL(job.ID)
 		resp.Body.Jobs = []storage.ReviewJob{*job}
 		attachPanelSummaries(s.db, resp.Body.Jobs)
 		if input.OmitPrompt == "true" {
@@ -1598,6 +1599,9 @@ func (s *Server) humaListJobs(
 	}
 
 	resp := &ListJobsOutput{}
+	for i := range jobs {
+		jobs[i].WebURL = s.reviewBrowserURL(jobs[i].ID)
+	}
 	resp.Body.Jobs = jobs
 	resp.Body.HasMore = hasMore
 	resp.Body.NextCursor = nextCursor
@@ -1630,6 +1634,10 @@ func (s *Server) humaGetReview(
 		return nil, huma.Error404NotFound("review not found")
 	}
 
+	review.WebURL = s.reviewBrowserURL(review.JobID)
+	if review.Job != nil {
+		review.Job.WebURL = review.WebURL
+	}
 	return &GetReviewOutput{Body: review}, nil
 }
 

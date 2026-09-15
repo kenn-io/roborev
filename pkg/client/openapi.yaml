@@ -942,6 +942,8 @@ components:
           type: string
         verdict:
           type: string
+        web_url:
+          type: string
         worker_id:
           type: string
         worktree_path:
@@ -2076,6 +2078,8 @@ components:
           type: string
         verdict:
           type: string
+        web_url:
+          type: string
         worker_id:
           type: string
         worktree_path:
@@ -2570,6 +2574,8 @@ components:
         verdict_bool:
           format: int64
           type: integer
+        web_url:
+          type: string
       required:
         - id
         - job_id
@@ -2731,6 +2737,8 @@ components:
           format: uuid
           type: string
         verdict:
+          type: string
+        web_url:
           type: string
         worker_id:
           type: string

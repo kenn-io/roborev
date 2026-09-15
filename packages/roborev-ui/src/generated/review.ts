@@ -23,4 +23,5 @@ export interface Review {
   updated_by_machine_id?: string;
   uuid?: string;
   verdict_bool?: number;
+  web_url?: string;
 }

@@ -35,3 +35,14 @@ func joinBrowserPath(basePath, internalPath string) string {
 	}
 	return basePath + "/" + internalPath
 }
+
+// reviewBrowserURL uses this daemon's published browser listener, never the
+// incoming API Host. Numeric review IDs are local to this daemon.
+func (s *Server) reviewBrowserURL(jobID int64) string {
+	s.browserMu.Lock()
+	defer s.browserMu.Unlock()
+	if s.browserRuntime == nil || s.browserRuntime.Origin == "" {
+		return ""
+	}
+	return s.browserRuntime.Origin + joinBrowserPath(s.browserRuntime.WebBasePath, fmt.Sprintf("/reviews/%d", jobID))
+}

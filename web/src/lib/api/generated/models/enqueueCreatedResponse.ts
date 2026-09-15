@@ -63,6 +63,7 @@ export interface EnqueueCreatedResponse {
   updated_at?: string;
   uuid: string;
   verdict?: string;
+  web_url?: string;
   worker_id?: string;
   worktree_path?: string;
 }

@@ -687,6 +687,7 @@ type EnqueueCreatedResponse struct {
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
 	UUID                  uuid.UUID              `json:"uuid" validate:"required"`
 	Verdict               *string                `json:"verdict,omitempty"`
+	WebURL                *string                `json:"web_url,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
 }
@@ -1756,6 +1757,7 @@ type PanelEnqueueResponse struct {
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
 	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
 	Verdict               *string                `json:"verdict,omitempty"`
+	WebURL                *string                `json:"web_url,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
 }
@@ -2170,6 +2172,7 @@ type Review struct {
 	UpdatedByMachineID *uuid.UUID          `json:"updated_by_machine_id,omitempty"`
 	UUID               *uuid.UUID          `json:"uuid,omitempty"`
 	VerdictBool        *int64              `json:"verdict_bool,omitempty"`
+	WebURL             *string             `json:"web_url,omitempty"`
 }
 
 func (r Review) Validate() error {
@@ -2285,6 +2288,7 @@ type ReviewJob struct {
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
 	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
 	Verdict               *string                `json:"verdict,omitempty"`
+	WebURL                *string                `json:"web_url,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
 }

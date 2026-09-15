@@ -68,6 +68,7 @@ type listJobsInput struct {
 }
 
 type jobRow struct {
+	WebURL        string                 `json:"web_url,omitempty" jsonschema:"browser URL for this review on its owning daemon; use this URL when linking to the review"`
 	ID            int64                  `json:"id"`
 	UUID          string                 `json:"uuid,omitempty"`
 	RepoPath      string                 `json:"repo_path,omitempty"`
@@ -102,6 +103,7 @@ type reviewRefInput struct {
 }
 
 type reviewOutput struct {
+	WebURL        string                 `json:"web_url,omitempty" jsonschema:"browser URL for this review on its owning daemon; use this URL when linking to the review"`
 	ID            int64                  `json:"id"`
 	JobID         int64                  `json:"job_id"`
 	Agent         string                 `json:"agent"`
@@ -308,6 +310,7 @@ func (s *Server) getReview(ctx context.Context, in reviewRefInput) (reviewOutput
 		return reviewOutput{}, err
 	}
 	out := reviewOutput{
+		WebURL:    review.WebURL,
 		ID:        review.ID,
 		JobID:     review.JobID,
 		Agent:     review.Agent,
@@ -489,6 +492,7 @@ func (in reviewRefInput) ref() (ReviewRef, error) {
 
 func newJobRow(job *storage.ReviewJob) jobRow {
 	row := jobRow{
+		WebURL:        job.WebURL,
 		ID:            job.ID,
 		RepoPath:      job.RepoPath,
 		RepoName:      job.RepoName,

@@ -56,6 +56,7 @@ func TestListCommand(t *testing.T) {
 	testJobs := []storage.ReviewJob{
 		{
 			ID:         1,
+			WebURL:     "https://reviews.example/team/reviews/1",
 			GitRef:     "abc1234567890",
 			RepoName:   "myrepo",
 			Agent:      "test",
@@ -108,7 +109,8 @@ func TestListCommand(t *testing.T) {
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				var parsed []storage.ReviewJob
 				require.NoError(t, json.Unmarshal([]byte(output), &parsed), "json output not valid JSON\noutput: %s", output)
-				assert.Len(t, parsed, 2)
+				require.Len(t, parsed, 2)
+				assert.Equal(t, "https://reviews.example/team/reviews/1", parsed[0].WebURL)
 			},
 		},
 		{

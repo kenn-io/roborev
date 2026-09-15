@@ -70,6 +70,7 @@ const (
 )
 
 type ReviewJob struct {
+	WebURL              string     `json:"web_url,omitempty"` // Response-only browser link; not persisted.
 	ID                  int64      `json:"id"`
 	RepoID              int64      `json:"repo_id"`
 	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges
@@ -313,6 +314,7 @@ func (StructuredOutput) Schema(huma.Registry) *huma.Schema {
 }
 
 type Review struct {
+	WebURL    string    `json:"web_url,omitempty"` // Response-only browser link; not persisted.
 	ID        int64     `json:"id"`
 	JobID     int64     `json:"job_id"`
 	Agent     string    `json:"agent"`

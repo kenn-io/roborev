@@ -20,6 +20,10 @@ cancel, close, or comment on reviews; use the `roborev` CLI for those actions.
 
 ## Interpreting results
 
+- Use `web_url` when linking to a review. It identifies the owning daemon and
+  includes its configured browser base path. It is omitted when the browser
+  listener is unavailable; do not invent a URL from a job ID.
+
 - `verdict` is `pass`, `fail`, or empty when the review has no verdict yet.
 - `closed` is true when a developer has marked the review as addressed.
 - Job `status` is one of `queued`, `running`, `done`, `failed`, `canceled`,

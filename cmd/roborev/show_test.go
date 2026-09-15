@@ -173,6 +173,7 @@ func TestShowJSONOutput(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	mockReviewDaemon(t, storage.Review{
+		WebURL:      "https://reviews.example/team/reviews/42",
 		VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
 		ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
 	})
@@ -188,6 +189,7 @@ func TestShowJSONOutput(t *testing.T) {
 		assert.EqualValues(t, 42, parsed.JobID)
 		assert.Equal(t, "LGTM", parsed.Output)
 		assert.Equal(t, "test", parsed.Agent)
+		assert.Equal(t, "https://reviews.example/team/reviews/42", parsed.WebURL)
 	})
 
 	t.Run("skips formatted header", func(t *testing.T) {

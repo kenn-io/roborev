@@ -109,3 +109,13 @@ Errors are returned as tool errors with a stable `code` of `not_found`,
 
 The server publishes a `roborev://mcp/guidance` Markdown resource describing the
 recommended call order: status, repositories, jobs, then review detail.
+
+## Review links
+
+Job listings and review results include `web_url` when the daemon has a browser
+listener. Use that URL when linking to a review. It includes the daemon's public
+browser origin and configured base path. The same field appears in
+`roborev list --json` and `roborev show --json`.
+
+Review IDs are local to a daemon. Do not construct a link using another daemon's
+origin. When the browser listener is disabled, `web_url` is omitted.
