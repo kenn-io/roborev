@@ -2,7 +2,8 @@ package main
 
 import (
 	_ "embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 
@@ -32,9 +33,8 @@ so it can help you finish setup. Detection is read-only.`,
 			state := detectState(cmd.Context(), repoRoot, inGitRepo)
 
 			if asJSON {
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(state)
+				enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, state)
 			}
 
 			if !inGitRepo {

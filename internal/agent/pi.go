@@ -3,7 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -135,7 +136,7 @@ func (a *PiAgent) buildArgs(sessionPath string, agenticMode bool) []string {
 
 func (a *PiAgent) structuredReviewArgs(
 	promptPath, outputPath string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	agenticMode bool,
 ) []string {
 	args := slices.Clone(a.LaunchArgs)
@@ -180,7 +181,7 @@ func (a *PiAgent) thinkingLevel() string {
 	}
 }
 
-func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMessage) []string {
+func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema jsontext.Value) []string {
 	args := slices.Clone(a.LaunchArgs)
 	args = append(args,
 		"--no-session",
@@ -226,9 +227,9 @@ func (a *PiAgent) jsonSchemaExtension() string {
 func (a *PiAgent) ClassifyWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	tmpDir, err := os.MkdirTemp("", "roborev-pi-classify-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp classify dir: %w", err)
@@ -275,18 +276,18 @@ func (a *PiAgent) ClassifyWithSchema(
 		return nil, fmt.Errorf("read pi classifier output: %w", err)
 	}
 	result = bytes.TrimSpace(result)
-	if !json.Valid(result) {
+	if !jsontext.Value(result).IsValid() {
 		return nil, fmt.Errorf("pi classifier output is not valid JSON: %q", string(result))
 	}
-	return json.RawMessage(result), nil
+	return jsontext.Value(result), nil
 }
 
 func (a *PiAgent) ReviewWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	tmpDir, err := os.MkdirTemp("", "roborev-pi-review-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp structured review dir: %w", err)
@@ -332,10 +333,10 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("read pi structured review output: %w", err)
 	}
 	result = bytes.TrimSpace(result)
-	if !json.Valid(result) || len(result) == 0 || result[0] != '{' {
+	if !jsontext.Value(result).IsValid() || len(result) == 0 || result[0] != '{' {
 		return nil, fmt.Errorf("pi structured review output is not a JSON object")
 	}
-	return json.RawMessage(result), nil
+	return jsontext.Value(result), nil
 }
 
 func piMissingJSONSchemaExtension(stderr string) bool {

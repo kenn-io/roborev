@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -71,9 +72,8 @@ export, or vice versa.`),
 				}
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(doc)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, doc)
 		},
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
@@ -181,7 +181,7 @@ func fetchExportCIMetricsPage(ep daemon.DaemonEndpoint, opts exportCIMetricsOpts
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var doc daemon.ExportCIMetricsDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("failed to parse export response: %w", err)
 	}
 	return doc, nil

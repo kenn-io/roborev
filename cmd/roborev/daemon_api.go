@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +42,7 @@ func (a daemonReviewAPI) getJob(ctx context.Context, jobID int64) (*storage.Revi
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("parse job: %w", err)
 	}
 	if len(result.Jobs) == 0 {
@@ -72,7 +72,7 @@ func (a daemonReviewAPI) getReview(ctx context.Context, jobID int64, label strin
 	}
 
 	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", label, err)
 	}
 	return &review, nil

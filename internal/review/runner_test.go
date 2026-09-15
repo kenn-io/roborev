@@ -2,7 +2,7 @@ package review
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 	"strings"
 	"testing"
@@ -17,7 +17,7 @@ import (
 func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
 	  "schema_version": 2,
 	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
@@ -49,7 +49,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured", output: "PROSE FALLBACK",
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version": 2,
   "verdict": "pass",
   "summary": "One real bug.",
@@ -121,7 +121,7 @@ func TestNoVerdictMessage(t *testing.T) {
 func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version": 2,
   "summary": "The diff was truncated before any code appeared.",
   "verdict": "unable_to_review",
@@ -140,7 +140,7 @@ func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
 func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version": 2,
   "summary": "Clean change.",
   "verdict": "pass",
@@ -161,7 +161,7 @@ func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
 func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
 	a := &structuredBatchAgent{
 		name:   "structured",
-		result: json.RawMessage(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
+		result: jsontext.Value(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 	}
 	_, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
@@ -172,7 +172,7 @@ func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
 func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
 	a := &structuredBatchAgent{
 		name:   "structured",
-		result: json.RawMessage(`{"schema_version":2,"summary":"Bad.","verdict":"fail","findings":[]}`),
+		result: jsontext.Value(`{"schema_version":2,"summary":"Bad.","verdict":"fail","findings":[]}`),
 	}
 	_, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,

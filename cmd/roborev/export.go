@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -86,9 +87,8 @@ overlapping window separately.`),
 				}
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(doc)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, doc)
 		},
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
@@ -209,7 +209,7 @@ func fetchExportReviewsPage(ep daemon.DaemonEndpoint, opts exportReviewsOpts, cu
 		return daemon.ExportReviewsDocument{}, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var doc daemon.ExportReviewsDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
 		return daemon.ExportReviewsDocument{}, fmt.Errorf("failed to parse export response: %w", err)
 	}
 	return doc, nil

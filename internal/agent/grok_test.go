@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -440,7 +441,7 @@ printf '%s\n' '{"type":"end","stopReason":"end_turn"}'
 
 func TestGrokClassifyArgs(t *testing.T) {
 	a := NewGrokAgent("grok").WithModel("grok-4.5").WithReasoning(ReasoningFast).(*GrokAgent)
-	schema := json.RawMessage(`{"type":"object"}`)
+	schema := jsontext.Value(`{"type":"object"}`)
 	args := a.classifyArgs(schema, "/tmp/p.md")
 
 	assertArgsContainContiguous(t, args, []string{"--output-format", "json"})
@@ -593,7 +594,7 @@ exit 0
 `
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath)
-	schema := json.RawMessage(`{"type":"object","properties":{"design_review":{"type":"boolean"},"reason":{"type":"string"}}}`)
+	schema := jsontext.Value(`{"type":"object","properties":{"design_review":{"type":"boolean"},"reason":{"type":"string"}}}`)
 	got, err := a.ClassifyWithSchema(context.Background(), t.TempDir(), "HEAD", "classify me", schema, nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"design_review":true,"reason":"needs design"}`, string(got))
@@ -634,7 +635,7 @@ func TestGrokClassifyCLISmoke_SchemaAndSideEffect(t *testing.T) {
 		"This is a large architectural change.",
 	}, "\n")
 
-	schema := json.RawMessage(`{
+	schema := jsontext.Value(`{
 	  "type": "object",
 	  "additionalProperties": false,
 	  "required": ["design_review", "reason"],

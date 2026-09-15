@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strconv"
@@ -125,19 +125,19 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
-		return json.NewEncoder(stdout).Encode(map[string]any{})
+		return json.MarshalWrite(stdout, map[string]any{})
 	}
 	if resp.Triggered {
 		if resp.TriggeredBy == "fix_session" {
-			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
 		}
 		resp.Reason = prependAgentHookFixSkillWarning(
 			agenthook.AgentGrok,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
 		)
-		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+		return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
 	}
-	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
+	return json.MarshalWrite(stdout, agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
 }
 
 func agentHookInstallCmd() *cobra.Command {

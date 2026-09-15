@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,7 +24,7 @@ func versionCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			embedded := webAssetsEmbedded()
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+				return json.MarshalWrite(cmd.OutOrStdout(), struct {
 					Name      string `json:"name"`
 					Version   string `json:"version"`
 					WebAssets bool   `json:"web_assets"`

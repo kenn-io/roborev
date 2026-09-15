@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"strings"
@@ -169,7 +170,7 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security"},
 	}
 
-	doc, err := DecodeSynthesisDocument(json.RawMessage(
+	doc, err := DecodeSynthesisDocument(jsontext.Value(
 		`{"schema_version":1,"summary":"One shared finding.","findings":[
 		  {"severity":"high","problem":"Leak","fix":"Close it","location":"a.go:1","sources":[2,1,2]}
 		]}`,
@@ -181,7 +182,7 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 	assert.Contains(md, "One shared finding.")
 	assert.Contains(md, "**Reported by:** gemini (security), codex")
 
-	clean, err := DecodeSynthesisDocument(json.RawMessage(
+	clean, err := DecodeSynthesisDocument(jsontext.Value(
 		`{"schema_version":1,"summary":"Clean.","findings":[]}`,
 	), reviews)
 	require.NoError(t, err)
@@ -203,14 +204,14 @@ func TestDecodeSynthesisDocument(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := DecodeSynthesisDocument(json.RawMessage(tt.raw), reviews)
+			_, err := DecodeSynthesisDocument(jsontext.Value(tt.raw), reviews)
 			require.Error(t, err)
 		})
 	}
 }
 
 func TestSynthesisDocumentRoundTripsNullLocation(t *testing.T) {
-	doc, err := DecodeSynthesisDocument(json.RawMessage(
+	doc, err := DecodeSynthesisDocument(jsontext.Value(
 		`{"schema_version":1,"summary":"S","findings":[{"severity":"low","problem":"P","fix":"F","location":null,"sources":[1]}]}`,
 	), []ReviewResult{{Agent: "codex"}})
 	require.NoError(t, err)

@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"strings"
@@ -18,10 +18,10 @@ import (
 type fakeSchemaAgent struct {
 	name        string
 	commandLine string
-	result      json.RawMessage
+	result      jsontext.Value
 	err         error
 	logOutput   string
-	classifyFn  func(context.Context) (json.RawMessage, error)
+	classifyFn  func(context.Context) (jsontext.Value, error)
 }
 
 func (f *fakeSchemaAgent) Name() string {
@@ -47,9 +47,9 @@ func (f *fakeSchemaAgent) CommandLine() string {
 func (f *fakeSchemaAgent) ClassifyWithSchema(
 	ctx context.Context,
 	_, _, _ string,
-	_ json.RawMessage,
+	_ jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	if f.classifyFn != nil {
 		return f.classifyFn(ctx)
 	}

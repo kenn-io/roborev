@@ -1,7 +1,8 @@
 package streamfmt
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 	"unicode"
 )
@@ -34,7 +35,7 @@ var toolAliases = map[string]string{
 	"task":               "Task",
 }
 
-func toolEvent(name string, input json.RawMessage) Event {
+func toolEvent(name string, input jsontext.Value) Event {
 	name = sanitizeControl(name)
 	display := canonicalToolName(name)
 	if display == "" {
@@ -42,7 +43,7 @@ func toolEvent(name string, input json.RawMessage) Event {
 	}
 	event := Event{Kind: EventTool, Name: display}
 
-	var raw map[string]json.RawMessage
+	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(input, &raw); err != nil || len(raw) == 0 {
 		return event
 	}
@@ -77,7 +78,7 @@ func toolEvent(name string, input json.RawMessage) Event {
 }
 
 func firstJSONField(
-	fields map[string]json.RawMessage, keys ...string,
+	fields map[string]jsontext.Value, keys ...string,
 ) string {
 	for _, key := range keys {
 		if value := jsonString(fields[key]); value != "" {
@@ -104,16 +105,16 @@ func canonicalToolName(name string) string {
 }
 
 func normalizeFields(
-	fields map[string]json.RawMessage,
-) map[string]json.RawMessage {
-	out := make(map[string]json.RawMessage, len(fields))
+	fields map[string]jsontext.Value,
+) map[string]jsontext.Value {
+	out := make(map[string]jsontext.Value, len(fields))
 	for key, value := range fields {
 		out[normalizeToolKey(key)] = value
 	}
 	return out
 }
 
-func jsonString(raw json.RawMessage) string {
+func jsonString(raw jsontext.Value) string {
 	if raw == nil {
 		return ""
 	}
@@ -124,7 +125,7 @@ func jsonString(raw json.RawMessage) string {
 	return value
 }
 
-func jsonStringField(raw json.RawMessage) string {
+func jsonStringField(raw jsontext.Value) string {
 	if len(raw) == 0 {
 		return ""
 	}

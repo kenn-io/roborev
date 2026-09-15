@@ -2,7 +2,7 @@ package tui
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -410,7 +410,7 @@ func (m model) fetchReleaseNotes() tea.Cmd {
 			)}
 		}
 		var result daemon.ReleaseNotesResponse
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 2<<20), &result); err != nil {
 			return releaseNotesErrMsg{err: fmt.Errorf("decode release notes: %w", err)}
 		}
 		return releaseNotesMsg{releases: result.Releases, stale: result.Stale}
@@ -1016,7 +1016,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			return panelMembersMsg{runUUID: runUUID, err: err}
 		}
 		members := make([]storage.ReviewJob, 0, len(result.Jobs))

@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strconv"
@@ -46,11 +47,11 @@ func legacyReviewsCmd() *cobra.Command {
 					return err
 				}
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-				Instructions    string          `json:"instructions"`
-				Schema          json.RawMessage `json:"schema"`
-				SynthesisSchema json.RawMessage `json:"synthesis_schema"`
-				Records         any             `json:"records"`
+			return json.MarshalWrite(cmd.OutOrStdout(), struct {
+				Instructions    string         `json:"instructions"`
+				Schema          jsontext.Value `json:"schema"`
+				SynthesisSchema jsontext.Value `json:"synthesis_schema"`
+				Records         any            `json:"records"`
 			}{
 				"Convert each archived review into the supplied JSON model. Preserve every finding and its severity, problem, fix, location, and synthesis source numbers when present. Do not invent missing information or re-review the code. Leave ambiguous records unresolved and report why. Return one JSON file per resolved record for import with roborev legacy-reviews and the same --db or --postgres-url option, followed by import <id> < converted.json.",
 				structuredreview.Schema, structuredreview.SourcedSchema, records,

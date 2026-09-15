@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -426,7 +427,7 @@ func TestTasksExitRestoresQueueSelection(t *testing.T) {
 	assert.NotNil(cmd, "the shared follow transition must re-point the split pane")
 
 	// Control-socket set-view queue.
-	got, _, _ = taskSelected().handleCtrlSetView(json.RawMessage(`{"view":"queue"}`))
+	got, _, _ = taskSelected().handleCtrlSetView(jsontext.Value(`{"view":"queue"}`))
 	assert.Equal(viewQueue, got.currentView)
 	assert.Equal(int64(2), got.selectedJobID)
 
@@ -7235,7 +7236,7 @@ func TestCtrlRerunLeavesSynthesisParentRowIntact(t *testing.T) {
 	m.jobs = synthesisParentJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 
-	got, resp, cmd := m.handleCtrlRerunJob(json.RawMessage(`{"job_id":2}`))
+	got, resp, cmd := m.handleCtrlRerunJob(jsontext.Value(`{"job_id":2}`))
 	require.Empty(resp.Error, "the control socket still accepts the rerun")
 	require.NotNil(cmd)
 
@@ -7285,8 +7286,8 @@ type rerunPickerSchemaAgent struct {
 }
 
 func (a *rerunPickerSchemaAgent) ClassifyWithSchema(
-	context.Context, string, string, string, json.RawMessage, io.Writer,
-) (json.RawMessage, error) {
+	context.Context, string, string, string, jsontext.Value, io.Writer,
+) (jsontext.Value, error) {
 	return nil, nil
 }
 
@@ -7462,7 +7463,7 @@ func TestDefaultAndControlRerunsOmitAgent(t *testing.T) {
 	require.IsType(t, rerunResultMsg{}, cmd())
 
 	m = rerunPickerModel(t, handler)
-	_, response, cmd := m.handleCtrlRerunJob(json.RawMessage(`{"job_id":42}`))
+	_, response, cmd := m.handleCtrlRerunJob(jsontext.Value(`{"job_id":42}`))
 	require.True(t, response.OK)
 	require.NotNil(t, cmd)
 	require.IsType(t, rerunResultMsg{}, cmd())
@@ -7551,12 +7552,12 @@ func TestCtrlPanelRerunSuppressesDuplicateDispatch(t *testing.T) {
 	m.jobs = synthesisParentJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 
-	got, resp, cmd := m.handleCtrlRerunJob(json.RawMessage(`{"job_id":2}`))
+	got, resp, cmd := m.handleCtrlRerunJob(jsontext.Value(`{"job_id":2}`))
 	require.Empty(resp.Error)
 	require.NotNil(cmd)
 	require.True(got.panelRerunInFlight[2])
 
-	_, resp2, cmd2 := got.handleCtrlRerunJob(json.RawMessage(`{"job_id":2}`))
+	_, resp2, cmd2 := got.handleCtrlRerunJob(jsontext.Value(`{"job_id":2}`))
 	assert.Nil(cmd2, "a second control-socket rerun must not spawn a second panel run")
 	assert.Contains(resp2.Error, "already in flight",
 		"and must report an explicit error so a scripted caller can tell")

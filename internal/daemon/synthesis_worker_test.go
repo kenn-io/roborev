@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"os"
@@ -673,7 +674,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	)
 	require.NoError(t, err)
 	const memberOutput = "## Review Findings\n\nThe summary claims a high issue.\n\n### 1. Low\n\n**Problem:** low-only\n\n**Fix:** low fix"
-	structured := json.RawMessage(`{
+	structured := jsontext.Value(`{
   "schema_version": 2,
   "summary": "The summary claims a high issue.",
   "verdict": "pass",
@@ -733,7 +734,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?", "medium", synthJob.ID,
 	)
 	require.NoError(t, err)
-	structured := json.RawMessage(`{
+	structured := jsontext.Value(`{
   "schema_version": 2,
   "summary": "One nit.",
   "verdict": "pass",
@@ -1316,7 +1317,7 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	records, err := tc.DB.UnresolvedLegacyReviews()
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	require.NoError(t, tc.DB.ResolveLegacyReview(records[0].ID, json.RawMessage(`{"schema_version":2,"summary":"The provider was unavailable.","verdict":"unable_to_review","findings":[]}`)))
+	require.NoError(t, tc.DB.ResolveLegacyReview(records[0].ID, jsontext.Value(`{"schema_version":2,"summary":"The provider was unavailable.","verdict":"unable_to_review","findings":[]}`)))
 	rows, err := tc.DB.GetPanelMemberReviews(runID)
 	require.NoError(t, err)
 	results := toReviewResults(rows)

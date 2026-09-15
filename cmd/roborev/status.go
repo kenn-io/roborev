@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -42,9 +43,8 @@ func statusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			webStatus := webUIStatus{}
 			writeJSONResult := func(result statusJSONResult) error {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(result)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, result)
 			}
 			writeStatusUnavailable := func(err error) error {
 				if jsonOutput {
@@ -106,7 +106,7 @@ func statusCmd() *cobra.Command {
 			}
 
 			var status storage.DaemonStatus
-			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &status); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
@@ -116,7 +116,7 @@ func statusCmd() *cobra.Command {
 			if err == nil {
 				defer healthResp.Body.Close()
 				var decoded storage.HealthStatus
-				if err := json.NewDecoder(healthResp.Body).Decode(&decoded); err != nil {
+				if err := json.UnmarshalRead(healthResp.Body, &decoded); err != nil {
 					log.Printf("failed to parse health response: %v", err)
 				} else {
 					health = &decoded
@@ -132,7 +132,7 @@ func statusCmd() *cobra.Command {
 				var jobsResp struct {
 					Jobs []storage.ReviewJob `json:"jobs"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err == nil {
+				if err := json.UnmarshalRead(resp.Body, &jobsResp); err == nil {
 					jobs = jobsResp.Jobs
 				}
 			}

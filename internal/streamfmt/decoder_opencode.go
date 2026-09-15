@@ -1,7 +1,8 @@
 package streamfmt
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -10,8 +11,8 @@ type openCodeDecoder struct {
 }
 
 type openCodeStreamEvent struct {
-	Type string          `json:"type"`
-	Part json.RawMessage `json:"part,omitempty"`
+	Type string         `json:"type"`
+	Part jsontext.Value `json:"part,omitempty"`
 }
 
 type openCodeTextPart struct {
@@ -22,8 +23,8 @@ type openCodeToolPart struct {
 	Tool  string `json:"tool"`
 	ID    string `json:"id,omitempty"`
 	State struct {
-		Status string                     `json:"status,omitempty"`
-		Input  map[string]json.RawMessage `json:"input,omitempty"`
+		Status string                    `json:"status,omitempty"`
+		Input  map[string]jsontext.Value `json:"input,omitempty"`
 	} `json:"state"`
 }
 
@@ -62,7 +63,7 @@ func (d *openCodeDecoder) Decode(line string) []Event {
 
 func (*openCodeDecoder) Flush() []Event { return nil }
 
-func (d *openCodeDecoder) decodeTool(raw json.RawMessage) []Event {
+func (d *openCodeDecoder) decodeTool(raw jsontext.Value) []Event {
 	var part openCodeToolPart
 	if err := json.Unmarshal(raw, &part); err != nil || part.Tool == "" {
 		return nil

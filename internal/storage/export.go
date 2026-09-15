@@ -3,7 +3,8 @@ package storage
 import (
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -285,7 +286,7 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 		&row.resumeSourceJobUUID,
 	)
 	if err == nil && row.output.Valid {
-		doc, decodeErr := structuredreview.Decode(json.RawMessage(row.output.String))
+		doc, decodeErr := structuredreview.Decode(jsontext.Value(row.output.String))
 		if decodeErr != nil {
 			return row, decodeErr
 		}
@@ -411,7 +412,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 			sub.ResumeSourceJobUUID = &resumeSource.V
 		}
 		if profile == ExportProfileContent && output.Valid {
-			doc, err := structuredreview.Decode(json.RawMessage(output.String))
+			doc, err := structuredreview.Decode(jsontext.Value(output.String))
 			if err != nil {
 				return nil, err
 			}
@@ -443,9 +444,6 @@ func jsonInt64(raw map[string]any, key string) int64 {
 		return int64(v)
 	case int64:
 		return v
-	case json.Number:
-		n, _ := v.Int64()
-		return n
 	default:
 		return 0
 	}

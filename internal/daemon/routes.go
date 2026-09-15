@@ -1,9 +1,8 @@
 package daemon
 
 import (
-	"encoding/json"
 	"encoding/json/jsontext"
-	jsonv2 "encoding/json/v2"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/pprof"
@@ -30,16 +29,15 @@ func humaConfig(title string) huma.Config {
 	cfg := huma.DefaultConfig(title, version.Version)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
-			return jsonv2.MarshalWrite(
+			return json.MarshalWrite(
 				w,
 				value,
-				json.DefaultOptionsV1(),
-				jsonv2.FormatNilSliceAsNull(false),
+				json.FormatNilSliceAsNull(false),
 				jsontext.EscapeForHTML(false),
 			)
 		},
 		Unmarshal: func(data []byte, value any) error {
-			return jsonv2.Unmarshal(data, value, json.DefaultOptionsV1())
+			return json.Unmarshal(data, value)
 		},
 	}
 	cfg.Formats = map[string]huma.Format{
@@ -508,7 +506,7 @@ func OpenAPISpec() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
 	(&Server{}).registerBrowserRoutes(api)
-	return json.MarshalIndent(api.OpenAPI(), "", "  ")
+	return json.Marshal(api.OpenAPI(), jsontext.WithIndent("  "))
 }
 
 // OpenAPISpecYAML returns the daemon OpenAPI document as YAML generated from
@@ -534,7 +532,7 @@ func OpenAPISpec30() ([]byte, error) {
 	if err := json.Unmarshal(spec, &formatted); err != nil {
 		return nil, err
 	}
-	return json.MarshalIndent(formatted, "", "  ")
+	return json.Marshal(formatted, jsontext.WithIndent("  "))
 }
 
 // OpenAPISpec30YAML returns a downgraded OpenAPI 3.0 document as YAML.

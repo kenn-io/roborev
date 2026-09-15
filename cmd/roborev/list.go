@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,14 +131,13 @@ Examples:
 				Jobs    []storage.ReviewJob `json:"jobs"`
 				HasMore bool                `json:"has_more"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &jobsResp); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(jobsResp.Jobs)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, jobsResp.Jobs)
 			}
 
 			if len(jobsResp.Jobs) == 0 {

@@ -2,7 +2,7 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"sort"
 	"strings"
 	"time"
@@ -551,7 +551,7 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		if err := rows.Scan(&id, &output, &threshold); err != nil {
 			return 0, err
 		}
-		doc, err := structuredreview.Decode(json.RawMessage(output))
+		doc, err := structuredreview.Decode(jsontext.Value(output))
 		if err != nil {
 			return 0, err
 		}

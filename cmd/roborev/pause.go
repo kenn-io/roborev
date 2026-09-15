@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"time"
@@ -68,7 +68,7 @@ func setQueuePaused(paused bool) error {
 	}
 
 	var result queuePauseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return fmt.Errorf("parse queue pause response: %w", err)
 	}
 

@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -481,7 +481,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
 	}
 	var info PingInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &info); err != nil {
 		return nil, fmt.Errorf("decode daemon ping: %w", err)
 	}
 	if !info.OK {

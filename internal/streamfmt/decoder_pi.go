@@ -1,7 +1,8 @@
 package streamfmt
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -13,10 +14,10 @@ type piDecoder struct {
 type piStreamEvent struct {
 	Type                  string                   `json:"type"`
 	AssistantMessageEvent *piAssistantMessageEvent `json:"assistantMessageEvent,omitempty"`
-	Message               json.RawMessage          `json:"message,omitempty"`
+	Message               jsontext.Value           `json:"message,omitempty"`
 	ToolCallID            string                   `json:"toolCallId,omitempty"`
 	ToolName              string                   `json:"toolName,omitempty"`
-	Args                  json.RawMessage          `json:"args,omitempty"`
+	Args                  jsontext.Value           `json:"args,omitempty"`
 }
 
 type piAssistantMessageEvent struct {
@@ -66,7 +67,7 @@ func (d *piDecoder) Decode(line string) []Event {
 
 func (*piDecoder) Flush() []Event { return nil }
 
-func (d *piDecoder) decodeMessageEnd(raw json.RawMessage) []Event {
+func (d *piDecoder) decodeMessageEnd(raw jsontext.Value) []Event {
 	var blocks []piContentBlock
 	if err := json.Unmarshal(raw, &blocks); err == nil {
 		parts := make([]string, 0, len(blocks))

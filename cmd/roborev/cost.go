@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -83,14 +84,13 @@ Examples:
 			}
 
 			var cost storage.CostAggregate
-			if err := json.NewDecoder(resp.Body).Decode(&cost); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &cost); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(cost)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, cost)
 			}
 
 			cmd.Println(formatCostLine(cost))

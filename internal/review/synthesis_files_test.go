@@ -2,7 +2,7 @@ package review
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"os"
@@ -32,13 +32,13 @@ func (a *fileSynthesisAgent) Review(_ context.Context, repo, _, prompt string, _
 
 type fileSchemaSynthesisAgent struct{ *fileSynthesisAgent }
 
-func (a *fileSchemaSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, json.RawMessage, io.Writer) (json.RawMessage, error) {
+func (a *fileSchemaSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, jsontext.Value, io.Writer) (jsontext.Value, error) {
 	return nil, errors.New("file inputs cannot use classifier tools")
 }
 
-func (a *fileSchemaSynthesisAgent) ReviewWithSchema(_ context.Context, repo, _, prompt string, schema json.RawMessage, _ io.Writer) (json.RawMessage, error) {
+func (a *fileSchemaSynthesisAgent) ReviewWithSchema(_ context.Context, repo, _, prompt string, schema jsontext.Value, _ io.Writer) (jsontext.Value, error) {
 	result, err := a.read(repo, prompt)
-	return json.RawMessage(result), err
+	return jsontext.Value(result), err
 }
 
 func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {

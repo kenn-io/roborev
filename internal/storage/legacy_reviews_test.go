@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +28,8 @@ func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
 	records, err = env.db.UnresolvedLegacyReviews()
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	require.Error(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(`not JSON`)))
-	raw := json.RawMessage(`{"schema_version":2,"summary":"Converted review.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null}]}`)
+	require.Error(t, env.db.ResolveLegacyReview(records[0].ID, jsontext.Value(`not JSON`)))
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null}]}`)
 	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, raw))
 	got, err := env.db.GetReviewByJobID(env.job.ID)
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestReviewWritesRequireJSON(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/json-review", "json-head")
 	claimJob(t, env.db, "worker")
 	require.ErrorContains(t, env.db.CompleteJob(env.job.ID, "test", "prompt", "No issues found."), "JSON document is required")
-	raw := json.RawMessage(`{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`)
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`)
 	require.NoError(t, env.db.CompleteJobResult(env.job.ID, "test", "prompt", ReviewCompletion{Output: "rendered Markdown must not be stored", StructuredOutput: raw}))
 	var output string
 	var document []byte
@@ -114,8 +114,8 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	assert.Equal(t, 1, records[0].Sources[0].Number)
 	assert.Equal(t, 2, records[0].Sources[1].Number)
 	invalid := strings.Replace(raw, `"sources":[1]`, `"sources":[3]`, 1)
-	require.ErrorContains(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(invalid)), "only 2 reviews")
-	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, json.RawMessage(raw)))
+	require.ErrorContains(t, env.db.ResolveLegacyReview(records[0].ID, jsontext.Value(invalid)), "only 2 reviews")
+	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, jsontext.Value(raw)))
 	require.NoError(t, env.db.migrateLegacyReviews())
 	got, err := env.db.GetReviewByJobID(env.job.ID)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 	require.NoError(t, env.db.migrateLegacyReviews())
 	_, err := env.db.GetReviewByJobID(env.job.ID)
 	require.ErrorIs(t, err, ErrLegacyReviewMigration)
-	incoming.StructuredOutput = json.RawMessage(`{"schema_version":2,"summary":"Converted elsewhere.","verdict":"pass","findings":[]}`)
+	incoming.StructuredOutput = jsontext.Value(`{"schema_version":2,"summary":"Converted elsewhere.","verdict":"pass","findings":[]}`)
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	got, err := env.db.GetReviewByJobID(env.job.ID)
 	require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 
 func TestStaleMarkdownSyncKeepsCanonicalReview(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/canonical-sync", "canonical-head")
-	raw := json.RawMessage(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
 	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	incoming.StructuredOutput = nil

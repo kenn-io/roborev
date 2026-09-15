@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"strings"
@@ -183,7 +183,7 @@ func hasNonJSONLine(s string) bool {
 		if line == "" {
 			continue
 		}
-		if !json.Valid([]byte(line)) {
+		if !jsontext.Value([]byte(line)).IsValid() {
 			return true
 		}
 	}

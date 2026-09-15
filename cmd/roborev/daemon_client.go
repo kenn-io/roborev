@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -157,7 +157,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
 	}
 
@@ -184,7 +184,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	var fallbackResult struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(fallbackResp.Body).Decode(&fallbackResult); err != nil {
+	if err := json.UnmarshalRead(fallbackResp.Body, &fallbackResult); err != nil {
 		return nil, fmt.Errorf("fallback query for %s: decode error: %w", sha, err)
 	}
 
@@ -244,7 +244,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	}
 
 	var job storage.ReviewJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &job); err != nil {
 		return 0, err
 	}
 
@@ -270,7 +270,7 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 

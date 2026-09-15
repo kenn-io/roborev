@@ -2,7 +2,7 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -177,7 +177,7 @@ func (b *HTTPBackend) getJSON(ctx context.Context, path string, params url.Value
 	if resp.StatusCode != http.StatusOK {
 		return httpStatusError(resp)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return NewError(ErrorCodeInternal, fmt.Sprintf("decode %s response: %v", path, err))
 	}
 	return nil

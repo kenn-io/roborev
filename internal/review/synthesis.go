@@ -1,7 +1,7 @@
 package review
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 
@@ -25,7 +25,7 @@ type SynthesisDocument = structuredreview.Document
 // DecodeSynthesisDocument validates one complete synthesis JSON document
 // against the input reviews it combined and attaches reviewer labels so the
 // rendered Markdown can say where each finding came from.
-func DecodeSynthesisDocument(raw json.RawMessage, reviews []ReviewResult) (SynthesisDocument, error) {
+func DecodeSynthesisDocument(raw jsontext.Value, reviews []ReviewResult) (SynthesisDocument, error) {
 	doc, err := structuredreview.Decode(raw)
 	if err != nil {
 		return SynthesisDocument{}, fmt.Errorf("decode synthesis output: %w", err)

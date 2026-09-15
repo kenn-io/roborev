@@ -4,7 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -365,7 +366,7 @@ func fetchForSessionHTTP(
 	}
 
 	var respBody SessionUsagePayload
-	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &respBody); err != nil {
 		return nil, fmt.Errorf("parse usage endpoint output: %w", err)
 	}
 	return UsageFromSessionPayload(respBody)
@@ -447,7 +448,7 @@ func ParseJSON(data string) *Usage {
 	// treating both an absent key and JSON null as unpriced.
 	if u.HasCost {
 		var raw struct {
-			CostUSD *json.RawMessage `json:"cost_usd"`
+			CostUSD *jsontext.Value `json:"cost_usd"`
 		}
 		if err := json.Unmarshal([]byte(data), &raw); err != nil ||
 			raw.CostUSD == nil {

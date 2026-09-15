@@ -2,7 +2,7 @@ package streamfmt
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -184,7 +184,9 @@ func LooksLikeJSON(line string) bool {
 		case ' ', '\t':
 			continue
 		case '{':
-			var probe struct{ Type string }
+			var probe struct {
+				Type string `json:"type"`
+			}
 			if json.Unmarshal([]byte(line), &probe) != nil {
 				return false
 			}

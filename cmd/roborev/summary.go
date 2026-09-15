@@ -2,7 +2,8 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -90,14 +91,13 @@ Examples:
 			}
 
 			var summary storage.Summary
-			if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &summary); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(summary)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, summary)
 			}
 
 			printSummary(cmd, summary)

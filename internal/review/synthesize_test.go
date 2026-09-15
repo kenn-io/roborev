@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"slices"
@@ -96,7 +97,7 @@ func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entr
 
 type structuredSynthesisAgent struct {
 	commonMockAgent
-	schema       json.RawMessage
+	schema       jsontext.Value
 	repoPath     string
 	reviewCalled bool
 }
@@ -115,16 +116,16 @@ func (a *structuredSynthesisAgent) Review(
 	return "", errors.New("plain review must not be used when ReviewWithSchema exists")
 }
 
-func (a *structuredSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, json.RawMessage, io.Writer) (json.RawMessage, error) {
+func (a *structuredSynthesisAgent) ClassifyWithSchema(context.Context, string, string, string, jsontext.Value, io.Writer) (jsontext.Value, error) {
 	return nil, errors.New("synthesis uses the ordinary review entrypoint")
 }
 
 func (a *structuredSynthesisAgent) ReviewWithSchema(
-	_ context.Context, repoPath, _, _ string, schema json.RawMessage, _ io.Writer,
-) (json.RawMessage, error) {
+	_ context.Context, repoPath, _, _ string, schema jsontext.Value, _ io.Writer,
+) (jsontext.Value, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return json.RawMessage(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return jsontext.Value(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 

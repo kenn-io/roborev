@@ -3,7 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -104,7 +104,7 @@ func (c *HTTPClient) getReview(url string) (*storage.Review, error) {
 	}
 
 	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 		return nil, err
 	}
 	return &review, nil
@@ -178,7 +178,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 	}
 
 	var job storage.ReviewJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &job); err != nil {
 		return 0, err
 	}
 
@@ -199,7 +199,7 @@ func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
 	}
 	if len(result.Jobs) == 0 {
@@ -270,7 +270,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
 	}
 
@@ -295,7 +295,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	var fallbackResult struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(fallbackResp.Body).Decode(&fallbackResult); err != nil {
+	if err := json.UnmarshalRead(fallbackResp.Body, &fallbackResult); err != nil {
 		return nil, fmt.Errorf("fallback query for %s: decode error: %w", sha, err)
 	}
 
@@ -350,7 +350,7 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
 		}
@@ -378,7 +378,7 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -413,7 +413,7 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				if json.NewDecoder(legacyResp.Body).Decode(&result) == nil {
+				if json.UnmarshalRead(legacyResp.Body, &result) == nil {
 					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}
@@ -463,7 +463,7 @@ func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
 	}
 
 	var result RemapResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

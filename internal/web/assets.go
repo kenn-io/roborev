@@ -1,7 +1,7 @@
 package web
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io/fs"
 	"path"

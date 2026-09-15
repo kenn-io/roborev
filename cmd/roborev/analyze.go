@@ -3,7 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -362,8 +363,8 @@ func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemon
 			AnalysisType: analysisType.Name,
 			Files:        relPaths,
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		return enc.Encode(result)
+		enc := jsontext.NewEncoder(cmd.OutOrStdout())
+		return json.MarshalEncode(enc, result)
 	}
 
 	if !opts.quiet {
@@ -439,8 +440,8 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 			AnalysisType: analysisType.Name,
 			Files:        fileNames,
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		return enc.Encode(result)
+		enc := jsontext.NewEncoder(cmd.OutOrStdout())
+		return json.MarshalEncode(enc, result)
 	}
 
 	if !opts.quiet {

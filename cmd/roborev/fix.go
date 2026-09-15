@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -814,7 +814,7 @@ func queryOpenJobs(
 		var jobsResp struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &jobsResp); err != nil {
 			return nil, fmt.Errorf("decode response: %w", err)
 		}
 
@@ -1679,7 +1679,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 		var jobsResp struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &jobsResp); err != nil {
 			return nil, err
 		}
 
@@ -1713,7 +1713,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 		}
 
 		var review storage.Review
-		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 			return nil, err
 		}
 
@@ -1748,7 +1748,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		var result struct {
 			Responses []storage.Response `json:"responses"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			return nil, err
 		}
 		responses := result.Responses
@@ -1773,7 +1773,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 						var legacyResult struct {
 							Responses []storage.Response `json:"responses"`
 						}
-						if json.NewDecoder(legacyResp.Body).Decode(&legacyResult) == nil {
+						if json.UnmarshalRead(legacyResp.Body, &legacyResult) == nil {
 							responses = storage.MergeResponses(responses, legacyResult.Responses)
 						}
 					}
@@ -2111,9 +2111,11 @@ func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, err
 		return false, nil
 	}
 	var result struct {
-		Jobs []struct{ ID int64 } `json:"jobs"`
+		Jobs []struct {
+			ID int64 `json:"id"`
+		} `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, nil
 	}
 	return len(result.Jobs) > 0, nil
@@ -2131,9 +2133,11 @@ func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, 
 		return false, fmt.Errorf("fetch jobs failed (%d): %s", resp.StatusCode, body)
 	}
 	var result struct {
-		Jobs []struct{ ID int64 } `json:"jobs"`
+		Jobs []struct {
+			ID int64 `json:"id"`
+		} `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, err
 	}
 	return len(result.Jobs) > 0, nil
@@ -2153,7 +2157,7 @@ func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, 
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, err
 	}
 	for _, existing := range result.Responses {

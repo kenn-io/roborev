@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"

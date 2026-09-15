@@ -2,7 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -560,9 +561,9 @@ func codexNoJSONDiagnostics(runResult streamingCLIResult) string {
 func (a *CodexAgent) ReviewWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	schemaFile, err := os.CreateTemp("", "roborev-codex-review-schema-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create codex review schema: %w", err)
@@ -583,10 +584,10 @@ func (a *CodexAgent) ReviewWithSchema(
 		return nil, err
 	}
 	trimmed := strings.TrimSpace(result)
-	if !json.Valid([]byte(trimmed)) || !strings.HasPrefix(trimmed, "{") {
+	if !jsontext.Value(trimmed).IsValid() || !strings.HasPrefix(trimmed, "{") {
 		return nil, fmt.Errorf("codex structured review output is not a JSON object")
 	}
-	return json.RawMessage(trimmed), nil
+	return jsontext.Value(trimmed), nil
 }
 
 var _ StructuredReviewAgent = (*CodexAgent)(nil)

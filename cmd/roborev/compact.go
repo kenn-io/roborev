@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log"
@@ -208,7 +208,7 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 	var batchResp struct {
 		Results map[int64]storage.JobWithReview `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&batchResp); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &batchResp); err != nil {
 		return nil, fmt.Errorf("decode batch response: %w", err)
 	}
 	return batchResp.Results, nil

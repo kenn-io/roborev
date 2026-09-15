@@ -1,7 +1,7 @@
 package review
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestStructuredReviewKeepsFindingsBelowThreshold(t *testing.T) {
-	raw := json.RawMessage(`{
+	raw := jsontext.Value(`{
   "schema_version": 1,
   "summary": "Two maintainability risks found.",
   "findings": [
@@ -32,7 +32,7 @@ func TestStructuredReviewKeepsFindingsBelowThreshold(t *testing.T) {
 }
 
 func TestStructuredReviewPassesWhenAllFindingsBelowThreshold(t *testing.T) {
-	decoded, err := DecodeStructuredReview(json.RawMessage(
+	decoded, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":1,"summary":"Minor issue.","findings":[{"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}]}`,
 	))
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestStructuredReviewPassesWhenAllFindingsBelowThreshold(t *testing.T) {
 }
 
 func TestStructuredReviewNoFindingsRendersNoIssues(t *testing.T) {
-	decoded, err := DecodeStructuredReview(json.RawMessage(
+	decoded, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":1,"summary":"Clean change.","findings":[]}`,
 	))
 	require.NoError(t, err)
@@ -55,21 +55,21 @@ func TestStructuredReviewNoFindingsRendersNoIssues(t *testing.T) {
 }
 
 func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
-	_, err := DecodeStructuredReview(json.RawMessage(
+	_, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[],"confidence":1}`,
 	))
-	require.ErrorContains(t, err, "unknown field")
+	require.ErrorContains(t, err, "unknown object member")
 }
 
 func TestStructuredReviewRequiresKnownSchemaVersion(t *testing.T) {
-	_, err := DecodeStructuredReview(json.RawMessage(
+	_, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`,
 	))
 	require.ErrorContains(t, err, "unsupported structured review schema_version 3")
 }
 
 func TestStructuredReviewVersionTwoCarriesVerdict(t *testing.T) {
-	decoded, err := DecodeStructuredReview(json.RawMessage(
+	decoded, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"Looks wrong overall.","verdict":"FAIL","findings":[{"severity":"low","problem":"Nit.","fix":"Tidy.","location":null}]}`,
 	))
 	require.NoError(t, err)
@@ -81,33 +81,33 @@ func TestStructuredReviewVersionTwoCarriesVerdict(t *testing.T) {
 }
 
 func TestStructuredReviewVersionOneStillDecodes(t *testing.T) {
-	decoded, err := DecodeStructuredReview(json.RawMessage(
+	decoded, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":1,"summary":"Legacy.","findings":[]}`,
 	))
 	require.NoError(t, err)
 	assert.Empty(t, decoded.Verdict)
 	assert.NotContains(t, decoded.Markdown(""), "Agent assessment")
 
-	_, err = DecodeStructuredReview(json.RawMessage(
+	_, err = DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":1,"summary":"Legacy.","verdict":"pass","findings":[]}`,
 	))
 	require.ErrorContains(t, err, "schema_version 1 does not carry a verdict")
 }
 
 func TestStructuredReviewRejectsInvalidVerdict(t *testing.T) {
-	_, err := DecodeStructuredReview(json.RawMessage(
+	_, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"Done.","verdict":"maybe","findings":[]}`,
 	))
 	require.ErrorContains(t, err, `invalid verdict "maybe"`)
 
-	_, err = DecodeStructuredReview(json.RawMessage(
+	_, err = DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"Done.","findings":[]}`,
 	))
 	require.ErrorContains(t, err, "invalid verdict")
 }
 
 func TestStructuredReviewUnableToReview(t *testing.T) {
-	decoded, err := DecodeStructuredReview(json.RawMessage(
+	decoded, err := DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"The diff was empty.","verdict":"unable_to_review","findings":[]}`,
 	))
 	require.NoError(t, err)

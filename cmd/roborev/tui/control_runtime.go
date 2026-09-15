@@ -1,7 +1,8 @@
 package tui
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +36,7 @@ func WriteTUIRuntime(info TUIRuntimeInfo) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(info, "", "  ")
+	data, err := json.Marshal(info, jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

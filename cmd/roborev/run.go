@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -197,7 +197,7 @@ func reportRunSkipped(
 	cmd *cobra.Command, opts runOptions, skipped daemon.EnqueueSkippedResponse,
 ) error {
 	if opts.jsonOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(skipped)
+		return json.MarshalWrite(cmd.OutOrStdout(), skipped)
 	}
 	if !opts.quiet {
 		cmd.Println(skipped.Reason)
@@ -286,7 +286,7 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(receipt)
+		return json.MarshalWrite(cmd.OutOrStdout(), receipt)
 	}
 
 	if !opts.quiet {

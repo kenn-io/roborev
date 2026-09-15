@@ -1,7 +1,8 @@
 package agent
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -29,7 +30,7 @@ func extractSessionIDFromLine(line string) string {
 		return ""
 	}
 
-	var fields map[string]json.RawMessage
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(line), &fields); err != nil {
 		return ""
 	}
@@ -62,7 +63,7 @@ func extractSessionIDFromLine(line string) string {
 	return ""
 }
 
-func jsonFieldString(fields map[string]json.RawMessage, key string) string {
+func jsonFieldString(fields map[string]jsontext.Value, key string) string {
 	raw, ok := fields[key]
 	if !ok {
 		return ""

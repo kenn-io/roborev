@@ -3,7 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -367,7 +368,7 @@ type claudeStreamMessage struct {
 	Subtype string `json:"subtype,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
 	Message struct {
-		Content json.RawMessage `json:"content,omitempty"`
+		Content jsontext.Value `json:"content,omitempty"`
 	} `json:"message,omitempty"`
 	Result string `json:"result,omitempty"`
 	Error  struct {
@@ -378,7 +379,7 @@ type claudeStreamMessage struct {
 // extractContentText extracts only the text that appears after the last tool-use
 // block in a Claude message content field. Content can be a plain string or an
 // array of content blocks (e.g. [{"type":"text","text":"..."}]).
-func extractContentText(raw json.RawMessage) string {
+func extractContentText(raw jsontext.Value) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -570,7 +571,7 @@ func init() {
 }
 
 // classifyArgs builds the argv for a schema-constrained one-shot classify call.
-func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
+func (a *ClaudeAgent) classifyArgs(schema jsontext.Value) []string {
 	// Classify is a routing decision over commit messages and diffs from
 	// shared repos — never trust that input. Disable ALL tools (including
 	// Read/Glob/Grep) so a prompt-injected commit cannot exfiltrate
@@ -599,15 +600,15 @@ func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
 }
 
 type claudeStructuredOutputBlock struct {
-	Type   string          `json:"type"`
-	Name   string          `json:"name,omitempty"`
-	Input  json.RawMessage `json:"input,omitempty"`
+	Type   string         `json:"type"`
+	Name   string         `json:"name,omitempty"`
+	Input  jsontext.Value `json:"input,omitempty"`
 	Caller struct {
 		Type string `json:"type,omitempty"`
 	} `json:"caller,omitempty"`
 }
 
-func extractClaudeStructuredOutput(raw json.RawMessage) (json.RawMessage, bool, error) {
+func extractClaudeStructuredOutput(raw jsontext.Value) (jsontext.Value, bool, error) {
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
@@ -630,18 +631,18 @@ func extractClaudeStructuredOutput(raw json.RawMessage) (json.RawMessage, bool, 
 	return nil, false, nil
 }
 
-func validateClaudeClassifyJSON(label string, raw json.RawMessage) (json.RawMessage, error) {
+func validateClaudeClassifyJSON(label string, raw jsontext.Value) (jsontext.Value, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("claude %s is empty", label)
 	}
-	if !json.Valid(trimmed) {
+	if !jsontext.Value(trimmed).IsValid() {
 		return nil, fmt.Errorf("claude %s is not valid JSON: %q", label, string(raw))
 	}
 	if trimmed[0] != '{' {
 		return nil, fmt.Errorf("claude %s is not a JSON object: %q", label, string(trimmed))
 	}
-	return json.RawMessage(append([]byte(nil), trimmed...)), nil
+	return jsontext.Value(append([]byte(nil), trimmed...)), nil
 }
 
 // parseClaudeClassifyStream reads Claude's stream-json output and returns the
@@ -649,8 +650,8 @@ func validateClaudeClassifyJSON(label string, raw json.RawMessage) (json.RawMess
 // can emit JSON Schema output as a direct StructuredOutput tool-use block
 // instead of the older final result field, so accept both shapes and ignore
 // assistant prose.
-func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
-	var final json.RawMessage
+func parseClaudeClassifyStream(r io.Reader) (jsontext.Value, error) {
+	var final jsontext.Value
 	var finalLabel string
 	var found bool
 	err := scanStreamJSONLines(r, nil, func(text string) error {
@@ -674,7 +675,7 @@ func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 			}
 		}
 		if msg.Type == "result" && msg.Result != "" {
-			final = json.RawMessage(msg.Result)
+			final = jsontext.Value(msg.Result)
 			finalLabel = "result"
 			found = true
 		}
@@ -694,9 +695,9 @@ func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 func (a *ClaudeAgent) ClassifyWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	// Refuse to run if the installed claude binary doesn't recognize
 	// `--tools` — without that flag, classifyArgs's deny-all is silently
 	// dropped and the model would have file/shell access against
@@ -747,9 +748,9 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 func (a *ClaudeAgent) ReviewWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return nil, err

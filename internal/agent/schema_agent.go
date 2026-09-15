@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"strings"
@@ -22,9 +22,9 @@ type SchemaAgent interface {
 	ClassifyWithSchema(
 		ctx context.Context,
 		repoPath, gitRef, prompt string,
-		schema json.RawMessage,
+		schema jsontext.Value,
 		out io.Writer,
-	) (json.RawMessage, error)
+	) (jsontext.Value, error)
 }
 
 // StructuredReviewAgent is an optional Agent capability for reviews whose
@@ -37,9 +37,9 @@ type StructuredReviewAgent interface {
 	ReviewWithSchema(
 		ctx context.Context,
 		repoPath, gitRef, prompt string,
-		schema json.RawMessage,
+		schema jsontext.Value,
 		out io.Writer,
-	) (json.RawMessage, error)
+	) (jsontext.Value, error)
 }
 
 func IsStructuredReviewAgent(a Agent) bool {

@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -193,7 +194,7 @@ Examples:
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
-			} else if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
@@ -212,9 +213,8 @@ Examples:
 						out.Panel = &block
 					}
 				}
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(&out)
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, &out)
 			}
 
 			// Avoid redundant "job X (job X, ...)" output
@@ -286,7 +286,7 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || len(result.Jobs) == 0 {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil || len(result.Jobs) == 0 {
 		return false
 	}
 
@@ -328,7 +328,7 @@ func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]s
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -359,7 +359,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 			var result struct {
 				Responses []storage.Response `json:"responses"`
 			}
-			if json.NewDecoder(resp.Body).Decode(&result) == nil {
+			if json.UnmarshalRead(resp.Body, &result) == nil {
 				responses = result.Responses
 			}
 		}
@@ -385,7 +385,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				if json.NewDecoder(resp.Body).Decode(&result) == nil {
+				if json.UnmarshalRead(resp.Body, &result) == nil {
 					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}

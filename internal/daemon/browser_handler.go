@@ -3,7 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"strconv"
@@ -550,9 +551,8 @@ func readBrowserJSON(w http.ResponseWriter, request *http.Request, destination a
 		writeBrowserError(w, http.StatusUnsupportedMediaType, "invalid_request")
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, request.Body, 64<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
+	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, request.Body, 64<<10))
+	if err := json.UnmarshalDecode(decoder, destination, json.RejectUnknownMembers(true)); err != nil {
 		writeBrowserError(w, http.StatusBadRequest, "invalid_request")
 		return false
 	}
@@ -563,7 +563,7 @@ func writeBrowserJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	_ = json.MarshalWrite(w, value)
 }
 
 func writeBrowserError(w http.ResponseWriter, status int, code string) {

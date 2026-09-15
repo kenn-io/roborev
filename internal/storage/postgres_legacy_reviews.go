@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"uuid"
 
 	"go.kenn.io/roborev/internal/structuredreview"
@@ -26,7 +26,7 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	}
 	type update struct {
 		id     uuid.UUID
-		raw    json.RawMessage
+		raw    jsontext.Value
 		reason string
 	}
 	var updates []update
@@ -38,7 +38,7 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 			return err
 		}
 		if len(u.raw) == 0 {
-			u.raw = json.RawMessage(output)
+			u.raw = jsontext.Value(output)
 		}
 		doc, decodeErr := structuredreview.Decode(u.raw)
 		if decodeErr == nil && jobType == JobTypeSynthesis {

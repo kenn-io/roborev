@@ -1,7 +1,8 @@
 package daemon
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"regexp"
 	"strings"
 	"unicode"
@@ -127,8 +128,8 @@ func NormalizeClaudeOutput(line string) *OutputLine {
 		SessionID string `json:"session_id,omitempty"`
 
 		// Tool-related fields
-		Name  string          `json:"name,omitempty"`
-		Input json.RawMessage `json:"input,omitempty"`
+		Name  string         `json:"name,omitempty"`
+		Input jsontext.Value `json:"input,omitempty"`
 
 		// Content delta for streaming
 		ContentBlockDelta struct {
@@ -357,7 +358,7 @@ func isToolCallJSON(line string) bool {
 	if !strings.HasPrefix(trimmed, "{") {
 		return false
 	}
-	var m map[string]json.RawMessage
+	var m map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
 		return false
 	}

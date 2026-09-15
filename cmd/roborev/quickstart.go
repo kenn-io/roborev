@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strings"
@@ -158,7 +158,7 @@ func repoTracked(repoRoot string) (bool, error) {
 	var body struct {
 		Tracked bool `json:"tracked"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &body); err != nil {
 		return false, err
 	}
 	return body.Tracked, nil

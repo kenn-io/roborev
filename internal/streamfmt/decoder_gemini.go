@@ -1,15 +1,18 @@
 package streamfmt
 
-import "encoding/json"
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+)
 
 type geminiDecoder struct{}
 
 type geminiStreamEvent struct {
-	Type       string          `json:"type"`
-	Role       string          `json:"role,omitempty"`
-	Content    json.RawMessage `json:"content,omitempty"`
-	ToolName   string          `json:"tool_name,omitempty"`
-	Parameters json.RawMessage `json:"parameters,omitempty"`
+	Type       string         `json:"type"`
+	Role       string         `json:"role,omitempty"`
+	Content    jsontext.Value `json:"content,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	Parameters jsontext.Value `json:"parameters,omitempty"`
 }
 
 func (*geminiDecoder) Decode(line string) []Event {

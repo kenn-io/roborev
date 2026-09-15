@@ -2,7 +2,8 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"uuid"
 
@@ -250,7 +251,7 @@ func scanReview(scanner sqlScanner) (Review, error) {
 
 func applyReviewScan(review *Review, fields reviewScanFields) error {
 	if requiresReviewDocument(fields.JobType) {
-		doc, err := structuredreview.Decode(json.RawMessage(fields.StructuredOutput.String))
+		doc, err := structuredreview.Decode(jsontext.Value(fields.StructuredOutput.String))
 		if err != nil {
 			return fmt.Errorf("review requires JSON migration: %w", err)
 		}

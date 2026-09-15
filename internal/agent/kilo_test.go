@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"strings"
@@ -229,8 +230,8 @@ func kiloTextEvent(text string) string {
 	if err != nil {
 		panic(fmt.Sprintf("kiloTextEvent: %v", err))
 	}
-	ev := map[string]json.RawMessage{
-		"type": json.RawMessage(`"text"`),
+	ev := map[string]jsontext.Value{
+		"type": jsontext.Value(`"text"`),
 		"part": partJSON,
 	}
 	b, err := json.Marshal(ev)

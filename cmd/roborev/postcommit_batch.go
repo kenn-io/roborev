@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -135,13 +136,12 @@ func loadPostCommitBatchState(
 	defer f.Close()
 
 	var state postCommitBatchState
-	decoder := json.NewDecoder(f)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&state); err != nil {
+	decoder := jsontext.NewDecoder(f)
+	if err := json.UnmarshalDecode(decoder, &state, json.RejectUnknownMembers(true)); err != nil {
 		return postCommitBatchState{}, true, fmt.Errorf("decode state: %w", err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &extra, json.RejectUnknownMembers(true)); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = fmt.Errorf("multiple JSON values")
 		}
@@ -174,9 +174,8 @@ func savePostCommitBatchState(path string, state postCommitBatchState) error {
 	tmpPath := f.Name()
 	defer os.Remove(tmpPath)
 
-	encoder := json.NewEncoder(f)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(state); err != nil {
+	encoder := jsontext.NewEncoder(f, jsontext.WithIndent("  "))
+	if err := json.MarshalEncode(encoder, state); err != nil {
 		f.Close()
 		return fmt.Errorf("encode state: %w", err)
 	}
