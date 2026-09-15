@@ -256,28 +256,11 @@ func installFakeAgentsview(t *testing.T, script string) {
 	require.NoError(t, err)
 }
 
-func TestFetchForSessionSurfacesTokenUseFailureAfterSessionUsageFallback(t *testing.T) {
-	installFakeAgentsview(t, `#!/bin/sh
-if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
-  echo "unknown command: session usage" >&2
-  exit 1
-fi
-echo "unexpected args: $@" >&2
-exit 99
-`)
-
-	usage, err := FetchForSession(context.Background(), "test-session-id")
-	require.Error(t, err)
-	assert.Nil(t, usage)
-	assert.Contains(t, err.Error(), "agentsview token-use: exit 99")
-	assert.Contains(t, err.Error(), "unexpected args: token-use test-session-id")
-}
-
 func TestFetchForSessionUsesSessionUsage(t *testing.T) {
 	// The script errors on any other subcommand, so reaching the JSON
 	// proves command selection.
 	installFakeAgentsview(t, `#!/bin/sh
-if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+if [ "$*" = "session usage s --format json --no-sync" ]; then
   echo '{"session_id":"s","agent":"codex","total_output_tokens":28800,"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}'
   exit 0
 fi
@@ -510,26 +493,30 @@ exit 99
 	assert.Contains(t, err.Error(), "usage exploded")
 }
 
-func TestFetchForSessionFallsBackToTokenUseWhenSessionUsageIsMissing(t *testing.T) {
-	installFakeAgentsview(t, `#!/bin/sh
-if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
-  echo "unknown command: session usage" >&2
-  exit 1
-fi
-if [ "$1" = "token-use" ]; then
-  echo '{"session_id":"s","agent":"codex","total_output_tokens":1000,"peak_context_tokens":2000}'
-  exit 0
-fi
-echo "unexpected args: $@" >&2
-exit 99
-`)
+func TestFetchForSessionRejectsUnsupportedCLIWithoutFallback(t *testing.T) {
+	for _, message := range []string{
+		"unknown command: session usage",
+		"unknown subcommand: usage",
+		"unknown flag: --no-sync",
+	} {
+		t.Run(message, func(t *testing.T) {
+			calls := filepath.Join(t.TempDir(), "calls")
+			t.Setenv("AGENTSVIEW_TEST_CALLS", calls)
+			installFakeAgentsview(t, fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$AGENTSVIEW_TEST_CALLS"
+echo %q >&2
+exit 1
+`, message))
 
-	usage, err := FetchForSession(context.Background(), "s")
-	require.NoError(t, err)
-	require.NotNil(t, usage)
-	assert.Equal(t, int64(1000), usage.OutputTokens)
-	assert.Equal(t, int64(2000), usage.PeakContextTokens)
-	assert.False(t, usage.HasCost)
+			usage, err := FetchForSession(context.Background(), "s")
+			require.Error(t, err)
+			assert.Nil(t, usage)
+			assert.Contains(t, err.Error(), message)
+			got, err := os.ReadFile(calls)
+			require.NoError(t, err)
+			assert.Equal(t, "session usage s --format json --no-sync\n", string(got))
+		})
+	}
 }
 
 func TestFetchForSessionExitCodesMeanNoUsage(t *testing.T) {
