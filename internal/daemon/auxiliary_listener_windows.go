@@ -3,12 +3,14 @@
 package daemon
 
 import (
-	"fmt"
+	"errors"
 	"net"
 )
 
+var errUnixSocketsUnsupported = errors.New("unix sockets are not supported on Windows")
+
 func listenUnixEndpoint(DaemonEndpoint) (net.Listener, error) {
-	return nil, fmt.Errorf("Unix sockets are not supported on Windows")
+	return nil, errUnixSocketsUnsupported
 }
 
 func listenAuxiliaryEndpoint(DaemonEndpoint) (net.Listener, *DaemonEndpoint, error) {
