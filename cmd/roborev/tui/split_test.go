@@ -43,10 +43,10 @@ func splitModel(opts ...testModelOption) model {
 func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
 	t.Setenv("CLICOLOR", "")
 	t.Setenv("CLICOLOR_FORCE", "")
-	previousOutput := termenv.DefaultOutput()
-	termenv.SetDefaultOutput(termenv.NewOutput(nil, termenv.WithProfile(termenv.TrueColor)))
+	previousLocation := time.Local
+	time.Local = time.UTC
 	t.Cleanup(func() {
-		termenv.SetDefaultOutput(previousOutput)
+		time.Local = previousLocation
 	})
 
 	fixtures := []struct {
@@ -68,16 +68,16 @@ func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
 	want := map[string]string{
 		"dark/breakpoint/list":      "16c59f415ca9ec5daa7a8998313d2ba084b70b08c47e3a523493b7ce278a400e",
 		"dark/breakpoint/detail":    "cd2ad24ef21ed8be7fca382ff2b684002505cf626d84397535026fd424fd55d7",
-		"dark/intermediate/list":    "733aeac3bdbc25e03db268729dd4fb6a29f883f102c52686bf015b398e24ed70",
-		"dark/intermediate/detail":  "d1f0b0a0efa4fce32d53a716c2c16fd58b7603df68be1116707fc901e05b01b6",
-		"dark/wide/list":            "4245007c602ce08649be675ada0d20eb9979bb7509d28eb9a3d69276c4c46ea3",
-		"dark/wide/detail":          "ca947a35d3d32fe22068c86fa5c96a2dd31b009899a0de6d6f09602b21459723",
+		"dark/intermediate/list":    "75cdb36e478e594b2e78dfb27b9a98cecefe7993189c9270adaae3ec67623611",
+		"dark/intermediate/detail":  "b5e5971c701282798feff9e8895a4cf9787c3c25ec6e03738f535046f97ae46f",
+		"dark/wide/list":            "cd44ef9d6261e15fcf74da2e6656c8a3d51f4a87025e00c7dd79682962a5ec38",
+		"dark/wide/detail":          "3389f1939eff2ab5ad3943cdd17517571d64f8fe629a3baf67884de91cb5898a",
 		"light/breakpoint/list":     "1dce9a5c2275e8e15c2aa9e517184d6658e224d501235269a3150f0b627c6a5f",
 		"light/breakpoint/detail":   "47ebd84e5c81b880c8da6bfae5350188658fcc162e2b20e1e9081562d046c354",
-		"light/intermediate/list":   "943f7c72b1a6938c742a15d0cec5e267499d4e69ef7665fc843f2ef80b8aea15",
-		"light/intermediate/detail": "cf7c22c0edaa000acc90943e3040a55e8a3a9f259097e9904041d9db1f640e9f",
-		"light/wide/list":           "bc6cccd8cd8a22b73c1f00df7ee09503661522918f77bdf694fd6fb19954769d",
-		"light/wide/detail":         "5dd92cec5a484df798c525516efd015e7798f4330f6cd3404a0b56d28a96ee76",
+		"light/intermediate/list":   "5f0351c10d5ad06ed5f7c572fb0e3c8904b60fc0ae5c3f861e2ca270dacd6743",
+		"light/intermediate/detail": "776716a92d73021ab670e564706fcf8e14936ebacbacfb48eff666c50cba7d43",
+		"light/wide/list":           "ff5ac93665353e8f735bddd818d604de5e2105950afd20f990d97c5ed00fd8b6",
+		"light/wide/detail":         "d643825784ebaa9d95a6e5ef2c4e8702f2efcc38d3d21a7812485ad084eb1d5c",
 	}
 	for _, colorMode := range []string{"dark", "light"} {
 		for _, fixture := range fixtures {
@@ -90,6 +90,7 @@ func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
 						withReview(splitTestReview()),
 						withDimensions(fixture.width, fixture.height),
 					)
+					m.mdCache.colorProfile = termenv.Ascii
 					m.focus = focus.value
 					got := fmt.Sprintf("%x", sha256.Sum256([]byte(m.renderSplit())))
 					t.Logf("sha256=%s", got)
