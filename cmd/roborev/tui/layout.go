@@ -5,24 +5,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 )
-
-type layoutMode int
-
-const (
-	layoutStacked layoutMode = iota
-	layoutSplit
-)
-
-func (l layoutMode) String() string {
-	if l == layoutSplit {
-		return "split"
-	}
-	return "stacked"
-}
 
 type focusPane int
 
@@ -38,52 +25,23 @@ func (f focusPane) String() string {
 	return "list"
 }
 
-// Split layout breakpoints and pane sizing. Detail-first allocation: the
-// review pane reserves splitDetailReservedWidth cells; the list takes the
-// remainder clamped to [splitListMinWidth, splitListMaxWidth].
-const (
-	splitMinWidth            = 140
-	splitMinHeight           = 36
-	splitDetailReservedWidth = 100
-	splitListMinWidth        = 50
-	splitListMaxWidth        = 90
-)
+var splitLayoutConfig = splitlayout.Config{
+	ListMinWidth:        50,
+	ListMaxWidth:        90,
+	DetailReservedWidth: 100,
+	MinBodyHeight:       5,
+}
+
+func layoutString(layout splitlayout.Mode) string {
+	if layout == splitlayout.Split {
+		return "split"
+	}
+	return "stacked"
+}
 
 // detailFollowDebounce coalesces held-down queue navigation into a single
 // detail fetch (kata uses the same value).
 const detailFollowDebounce = 75 * time.Millisecond
-
-// splitGeom is the single source of truth for split-layout pane math.
-// Outer sizes include the 1-cell border on each side; inner sizes are the
-// content area inside the border.
-type splitGeom struct {
-	listOuterW, detailOuterW, bodyH                    int
-	listInnerW, listInnerH, detailInnerW, detailInnerH int
-}
-
-// splitGeometry computes pane rectangles for the given terminal size.
-// Bands: title(1) + body(bodyH) + info(1) + footer(footerLines).
-func splitGeometry(width, height, footerLines int) splitGeom {
-	listW := min(max(width-splitDetailReservedWidth, splitListMinWidth), splitListMaxWidth)
-	detailW := width - listW
-	bodyH := max(height-2-footerLines, 5)
-	return splitGeom{
-		listOuterW:   listW,
-		detailOuterW: detailW,
-		bodyH:        bodyH,
-		listInnerW:   listW - 2,
-		listInnerH:   bodyH - 2,
-		detailInnerW: detailW - 2,
-		detailInnerH: bodyH - 2,
-	}
-}
-
-func pickLayout(width, height int) layoutMode {
-	if width >= splitMinWidth && height >= splitMinHeight {
-		return layoutSplit
-	}
-	return layoutStacked
-}
 
 // resolveLayout picks the layout for the current terminal size, honoring a
 // manual L-toggle lock: a locked stacked preference always wins; a locked
@@ -94,13 +52,13 @@ func pickLayout(width, height int) layoutMode {
 // violate it -- so while it is active the layout is stacked regardless of
 // terminal size or lock, and every consumer keyed on m.layout (rendering,
 // mouse routing, tab, reconcile) follows automatically.
-func (m model) resolveLayout() layoutMode {
+func (m model) resolveLayout() splitlayout.Mode {
 	if m.distractionFree {
-		return layoutStacked
+		return splitlayout.Stacked
 	}
-	fits := pickLayout(m.width, m.height)
-	if m.layoutLocked && m.preferredLayout == layoutStacked {
-		return layoutStacked
+	fits := splitlayout.PickLayout(m.width, m.height)
+	if m.layoutLocked && m.preferredLayout == splitlayout.Stacked {
+		return splitlayout.Stacked
 	}
 	return fits
 }
@@ -120,7 +78,7 @@ func (m model) splitActive() bool {
 	if m.currentView == viewReview && m.reviewFromView == viewTasks {
 		return false
 	}
-	return m.layout == layoutSplit &&
+	return m.layout == splitlayout.Split &&
 		(m.currentView == viewQueue || m.currentView == viewReview)
 }
 
@@ -130,12 +88,12 @@ func (m model) splitActive() bool {
 // updated -- focus/currentView/currentReview are left untouched so the
 // transient view's in-progress state (e.g. a comment being typed) survives
 // a resize. normalizeSplitState reconciles focus once such a view exits.
-func (m *model) applyLayout(target layoutMode) {
+func (m *model) applyLayout(target splitlayout.Mode) {
 	if m.layout == target {
 		return
 	}
 	m.layout = target
-	if target != layoutSplit && m.paneLogStreaming {
+	if target != splitlayout.Split && m.paneLogStreaming {
 		// Leaving split kills the pane log's poll chain: the pending
 		// paneLogTickMsg is dropped by handlePaneLogTickMsg's layout gate
 		// and nothing re-arms it. Invalidate the tail explicitly (the same
@@ -155,7 +113,7 @@ func (m *model) applyLayout(target layoutMode) {
 	if m.currentView != viewQueue && m.currentView != viewReview {
 		return
 	}
-	if target == layoutSplit {
+	if target == splitlayout.Split {
 		if m.currentView == viewReview && m.currentReview != nil {
 			m.focus = focusDetail
 		} else {
@@ -246,7 +204,7 @@ func (m model) followSelectionChange(prevSelected int64) (model, tea.Cmd) {
 	// NOT reach these). See disarmPendingReviewOpen's doc.
 	m.disarmPendingReviewOpen()
 	m.abandonInFlightSelectionRequests()
-	if m.layout != layoutSplit {
+	if m.layout != splitlayout.Split {
 		// Outside split only the PENDING half of the fix intent is
 		// selection-bound (the same asymmetry as handleJobsMsg's
 		// normalization epilogue): F was pressed with the selection on the
@@ -395,7 +353,7 @@ func (m model) scheduleDetailFollow() (model, tea.Cmd) {
 // splitReconcileDetail's twin: this only runs on a fresh selection change,
 // and reconcile self-heals that narrower imprecision within one refresh.
 func (m model) handleDetailFollowTick(msg detailFollowTickMsg) (tea.Model, tea.Cmd) {
-	if msg.gen != m.detailFollowGen || m.layout != layoutSplit {
+	if msg.gen != m.detailFollowGen || m.layout != splitlayout.Split {
 		return m, nil
 	}
 	job, ok := m.selectedJob()
@@ -551,7 +509,7 @@ func reviewJobCompletionChanged(review *storage.Review, job *storage.ReviewJob) 
 // own "open the review" intent is still exactly what the user wants
 // served once a response lands, and must survive this call.
 func (m model) maybeBootstrapDetail() (model, tea.Cmd) {
-	if m.layout != layoutSplit {
+	if m.layout != splitlayout.Split {
 		return m, nil
 	}
 	// A tasks-origin review renders full-screen even while split is engaged
@@ -611,7 +569,7 @@ func (m model) maybeBootstrapDetail() (model, tea.Cmd) {
 // Stacked layout (no persistent pane to retain it for) and split with no
 // matching review both keep the prior nil-and-reload behavior.
 func (m model) preserveOrClearReviewOnQueueReturn() model {
-	if m.layout == layoutSplit && m.currentReview != nil && m.currentReview.JobID == m.selectedJobID {
+	if m.layout == splitlayout.Split && m.currentReview != nil && m.currentReview.JobID == m.selectedJobID {
 		return m
 	}
 	m.currentReview = nil
@@ -626,8 +584,8 @@ func (m model) preserveOrClearReviewOnQueueReturn() model {
 // drift apart.
 func (m model) paneLogWidth() int {
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
-	return g.detailInnerW
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	return g.DetailInnerW
 }
 
 // startPaneLog begins tailing a running job's log in the detail pane
@@ -718,7 +676,7 @@ func (m model) startPaneLog(job storage.ReviewJob) (tea.Model, tea.Cmd) {
 // exactly outside the run window -- narrow enough not to warrant more
 // persisted state for it.
 func (m model) splitReconcileDetail() (model, tea.Cmd) {
-	if m.layout != layoutSplit {
+	if m.layout != splitlayout.Split {
 		return m, nil
 	}
 	job, ok := m.selectedJob()
@@ -939,7 +897,7 @@ func (m model) normalizeSplitState() model {
 		m.reviewFixPanelFocused = false
 	}
 
-	if m.layout != layoutSplit {
+	if m.layout != splitlayout.Split {
 		return m
 	}
 	switch m.currentView {

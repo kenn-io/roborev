@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -54,8 +55,8 @@ func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 				_, _ = fmt.Fprint(w, tt.body)
 			})
 			m.currentView = viewQueue
-			m.layout = layoutSplit
-			m.preferredLayout = layoutSplit
+			m.layout = splitlayout.Split
+			m.preferredLayout = splitlayout.Split
 			m.width, m.height = 150, 40
 			job := storage.ReviewJob{
 				ID: 42, Status: storage.JobStatusRunning,
@@ -94,7 +95,7 @@ func TestPaneLogFetchRefreshesIdentityAfterFailover(t *testing.T) {
 		_, _ = fmt.Fprintln(w, `{"type":"end"}`)
 	})
 	m.currentView = viewQueue
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.width, m.height = 150, 40
 	job := storage.ReviewJob{
 		ID: 42, Status: storage.JobStatusRunning, Agent: "codex",
@@ -129,7 +130,7 @@ func TestPaneLogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
 		_, _ = fmt.Fprintln(w, `{"type":"end"}`)
 	})
 	m.currentView = viewQueue
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.width, m.height = 150, 40
 	job := storage.ReviewJob{
 		ID: 42, Status: storage.JobStatusRunning,
@@ -180,8 +181,8 @@ func TestPaneLogFetchKeepsGrokTextTogetherAcrossPolls(t *testing.T) {
 		}
 	})
 	m.currentView = viewQueue
-	m.layout = layoutSplit
-	m.preferredLayout = layoutSplit
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
 	m.width, m.height = 150, 40
 	job := storage.ReviewJob{
 		ID: 42, Status: storage.JobStatusRunning, Agent: "grok",
@@ -224,8 +225,8 @@ func TestPaneLogEmptyTerminalPollFlushesBufferedGrokText(t *testing.T) {
 		}
 	})
 	m.currentView = viewQueue
-	m.layout = layoutSplit
-	m.preferredLayout = layoutSplit
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
 	m.width, m.height = 150, 40
 	job := storage.ReviewJob{
 		ID: 42, Status: storage.JobStatusRunning, Agent: "grok",
@@ -303,8 +304,8 @@ func TestPaneLogResizeKeepsJobIdentity(t *testing.T) {
 		_, _ = fmt.Fprint(w, input)
 	})
 	m.currentView = viewQueue
-	m.layout = layoutSplit
-	m.preferredLayout = layoutSplit
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
 	m.width, m.height = 150, 40
 	job := storage.ReviewJob{
 		ID: 42, Status: storage.JobStatusRunning,

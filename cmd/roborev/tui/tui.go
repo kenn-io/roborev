@@ -21,6 +21,7 @@ import (
 	"charm.land/lipgloss/v2/table"
 	"github.com/mattn/go-runewidth"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -507,11 +508,11 @@ type model struct {
 	taskColGen    int            // bumped when fixJobs/columns change
 
 	// Split layout state (see layout.go). layout/focus are only consulted
-	// when layout == layoutSplit; stacked mode behaves exactly as before.
-	layout          layoutMode
+	// when layout == splitlayout.Split; stacked mode behaves exactly as before.
+	layout          splitlayout.Mode
 	focus           focusPane
-	layoutLocked    bool       // true after a manual L toggle
-	preferredLayout layoutMode // the layout the user chose with L
+	layoutLocked    bool             // true after a manual L toggle
+	preferredLayout splitlayout.Mode // the layout the user chose with L
 
 	// detailFollowGen is a generation guard for in-flight review fetches:
 	// responses are stamped at dispatch, and the response handlers

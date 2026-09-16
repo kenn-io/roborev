@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -78,7 +79,7 @@ func (m model) handleControlMutation(
 
 func (m model) buildStateResponse() controlResponse {
 	focus := ""
-	if m.layout == layoutSplit {
+	if m.layout == splitlayout.Split {
 		focus = m.focus.String()
 	}
 	return controlResponse{
@@ -94,7 +95,7 @@ func (m model) buildStateResponse() controlResponse {
 			JobCount:        len(m.jobs),
 			VisibleJobCount: len(m.getVisibleJobs()),
 			Stats:           m.jobStats,
-			Layout:          m.layout.String(),
+			Layout:          layoutString(m.layout),
 			Focus:           focus,
 		},
 	}

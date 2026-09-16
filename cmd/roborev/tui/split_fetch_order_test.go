@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -42,7 +43,7 @@ func orderingServerModel(t *testing.T, responses *[]storage.Response) model {
 		}
 	})
 	m.width, m.height = 150, 40
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.tasksEnabled = true // 'F' is one of the ordinary (non-follow) dispatchers
 	m.currentView = viewQueue
 	m.jobs = testQueueJobs()
@@ -327,7 +328,7 @@ func TestCtrlCloseReviewHideClosedFollowsSelection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	newModelForClose := func(layout layoutMode) model {
+	newModelForClose := func(layout splitlayout.Mode) model {
 		jobs := testQueueJobs()
 		closed := false
 		jobs[1].Closed = &closed // job 2: done, selected
@@ -342,7 +343,7 @@ func TestCtrlCloseReviewHideClosedFollowsSelection(t *testing.T) {
 	params, err := json.Marshal(map[string]any{"job_id": 2, "closed": true})
 	require.NoError(err)
 
-	m := newModelForClose(layoutSplit)
+	m := newModelForClose(splitlayout.Split)
 	beforeGen := m.detailFollowGen
 	got, resp, cmd := m.handleCtrlCloseReview(params)
 	require.True(resp.OK, "expected OK, got %s", resp.Error)
@@ -351,7 +352,7 @@ func TestCtrlCloseReviewHideClosedFollowsSelection(t *testing.T) {
 	assert.NotNil(cmd, "the follow cmd must be batched with the close cmd, not dropped")
 	assert.False(got.reviewFixPanelOpen, "the fix panel bound to the closed job must not survive the selection change")
 
-	stacked := newModelForClose(layoutStacked)
+	stacked := newModelForClose(splitlayout.Stacked)
 	gotStacked, respStacked, _ := stacked.handleCtrlCloseReview(params)
 	require.True(respStacked.OK)
 	// Abandonment is layout-independent: the selection leaving job 2
@@ -375,7 +376,7 @@ func TestClosedResultRollbackFollowsSelection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	newModelForRollback := func(layout layoutMode) model {
+	newModelForRollback := func(layout splitlayout.Mode) model {
 		m := splitModel(withSelection(0, 3)) // the optimistic close moved the selection to job 3
 		m.layout = layout
 		m.pendingClosed = map[int64]pendingState{2: {newState: true, seq: 7}}
@@ -386,7 +387,7 @@ func TestClosedResultRollbackFollowsSelection(t *testing.T) {
 		err: errors.New("daemon rejected the close"),
 	}
 
-	m := newModelForRollback(layoutSplit)
+	m := newModelForRollback(splitlayout.Split)
 	beforeGen := m.detailFollowGen
 	res, cmd := m.handleClosedResultMsg(msg)
 	got := res.(model)
@@ -394,7 +395,7 @@ func TestClosedResultRollbackFollowsSelection(t *testing.T) {
 	assert.Greater(got.detailFollowGen, beforeGen, "the restored selection must schedule a detail follow")
 	assert.NotNil(cmd, "the follow cmd must be returned, not dropped")
 
-	stacked := newModelForRollback(layoutStacked)
+	stacked := newModelForRollback(splitlayout.Stacked)
 	resStacked, cmdStacked := stacked.handleClosedResultMsg(msg)
 	gotStacked := resStacked.(model)
 	require.Equal(int64(2), gotStacked.selectedJobID)
@@ -448,7 +449,7 @@ func TestEveryReviewFetchDispatcherStampsTheSharedEpoch(t *testing.T) {
 		{"queue Enter (stacked)", func() (model, tea.Model, tea.Cmd) {
 			m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 				withTestJobs(doneJob(2), doneJob(1)), withSelection(0, 2))
-			m.layout = layoutStacked
+			m.layout = splitlayout.Stacked
 			res, cmd := m.handleEnterKey()
 			return m, res, cmd
 		}},
@@ -490,7 +491,7 @@ func TestEveryReviewFetchDispatcherStampsTheSharedEpoch(t *testing.T) {
 		{"comment refresh (stacked)", func() (model, tea.Model, tea.Cmd) {
 			m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40),
 				withTestJobs(doneJob(2)), withSelection(0, 2))
-			m.layout = layoutStacked
+			m.layout = splitlayout.Stacked
 			m.currentReview = &storage.Review{ID: 10, JobID: 2, Job: &storage.ReviewJob{ID: 2}}
 			res, cmd := m.handleCommentResultMsg(commentResultMsg{jobID: 2})
 			return m, res, cmd
@@ -646,7 +647,7 @@ func TestStackedCommentRefreshForUnselectedJobDoesNotDestroyConcurrentFetch(t *t
 		}
 	})
 	m.width, m.height = 150, 40
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.currentView = viewReview
 	m.reviewFromView = viewQueue
 	m.jobs = []storage.ReviewJob{
@@ -875,7 +876,7 @@ func TestPendingFixPanelUsesArmedOriginNotTheAcceptingResponsesOrigin(t *testing
 // parent review, with layout split, dispatches an ORDINARY fetch
 // (dispatchReviewFetch) whose eventual response is what's supposed to switch
 // into the review view. splitReconcileDetail gates only on
-// m.layout == layoutSplit -- not on whether the split pane is actually the
+// m.layout == splitlayout.Split -- not on whether the split pane is actually the
 // thing being rendered -- so it keeps running while the user sits on
 // viewTasks. On the very next jobs refresh it observes the SAME job
 // (selectedJobID already points at the parent, set by 'P' itself) with no
@@ -893,7 +894,7 @@ func TestTasksParentReviewOpensDespiteReconcileFollowRace(t *testing.T) {
 	parentID := int64(2) // Done job in testQueueJobs()
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID},
 	}
@@ -951,7 +952,7 @@ func TestTasksParentReviewOpensDespiteReconcileFollowRace(t *testing.T) {
 
 // TestTasksParentReviewOpensInStackedDespiteJobsRefresh confirms the race
 // TestTasksParentReviewOpensDespiteReconcileFollowRace exercises cannot arise
-// in stacked layout: splitReconcileDetail's own gate (m.layout != layoutSplit)
+// in stacked layout: splitReconcileDetail's own gate (m.layout != splitlayout.Split)
 // makes it a no-op there, so a jobs refresh landing between 'P' and its
 // response never dispatches a competing follow, and the ordinary response
 // opens the review exactly as before.
@@ -962,7 +963,7 @@ func TestTasksParentReviewOpensInStackedDespiteJobsRefresh(t *testing.T) {
 	parentID := int64(2)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID},
 	}
@@ -1008,7 +1009,7 @@ func TestFollowFailureResolvesSupersededPendingReviewOpen(t *testing.T) {
 	parentID := int64(2)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID},
 	}
@@ -1061,7 +1062,7 @@ func TestOrdinaryFetchStillOpensReviewAfterLayoutToggleBeforeResponseLands(t *te
 
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	// Enter on job 2 (done): dispatches the ordinary fetch (A), arms the
 	// pending-open intent.
@@ -1078,7 +1079,7 @@ func TestOrdinaryFetchStillOpensReviewAfterLayoutToggleBeforeResponseLands(t *te
 	// review fetch yet, so A's fetchSeq is still current.
 	res2, _ := got.handleToggleLayoutKey()
 	toggled := res2.(model)
-	require.Equal(layoutSplit, toggled.layout)
+	require.Equal(splitlayout.Split, toggled.layout)
 	require.Greater(toggled.detailFollowGen, genA, "sanity: the bootstrap must have bumped gen")
 	require.Equal(int64(2), toggled.pendingReviewOpenJobID,
 		"the layout toggle alone must not clear a still-valid intent for the unchanged selection")
@@ -1147,7 +1148,7 @@ func TestStaleOrdinaryResponseDoesNotClobberFreshlyArmedPendingOpen(t *testing.T
 
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.selectedJobID = 2 // job 2: done
 
 	// Dispatch A: arms the pending-open intent for job 2.
@@ -1271,7 +1272,7 @@ func TestOriginalDispatchGenStaleResponseDoesNotCancelInFlightFixPanelRetry(t *t
 
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2)) // job 2: done
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.tasksEnabled = true
 
 	// 'F': dispatch A, arms the pending fix-panel request.
@@ -1288,7 +1289,7 @@ func TestOriginalDispatchGenStaleResponseDoesNotCancelInFlightFixPanelRetry(t *t
 	// closeFixPanelIfJobChanged no-ops and the panel stays pending.
 	res2, _ := m.handleToggleLayoutKey()
 	m = res2.(model)
-	require.Equal(layoutSplit, m.layout)
+	require.Equal(splitlayout.Split, m.layout)
 	require.Greater(m.detailFollowGen, genA)
 	require.True(m.reviewFixPanelPending, "sanity: L must not itself close the pending panel")
 
@@ -1343,7 +1344,7 @@ func TestFollowFailureAfterTasksParentReviewShowsVisibleFlashNotSilence(t *testi
 	parentID := int64(2)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID},
 	}
@@ -1393,7 +1394,7 @@ func TestReviewErrMsgResolvesPendingOpenWithVisibleFlashNotSilence(t *testing.T)
 
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	// Queue Enter on job 2 (done): dispatches the ordinary fetch, arms the
 	// pending-open intent.
@@ -1419,7 +1420,7 @@ func TestReviewErrMsgResolvesPendingOpenWithVisibleFlashNotSilence(t *testing.T)
 	// Much later, unrelated to job 2, the user toggles into split layout.
 	res3, _ := failed.handleToggleLayoutKey()
 	toggled := res3.(model)
-	require.Equal(layoutSplit, toggled.layout)
+	require.Equal(splitlayout.Split, toggled.layout)
 
 	// The bootstrap follow this triggers lands, carrying job 2's content.
 	res4, _ := toggled.handleReviewMsg(reviewMsg{
@@ -1499,7 +1500,7 @@ func TestTasksNotYankedOutAfterRerunConfirmsParentWhilePending(t *testing.T) {
 	parentID := int64(2)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID},
 	}
@@ -1550,7 +1551,7 @@ func TestThreeKeystrokeRescueRepro(t *testing.T) {
 
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	// Enter on job 2 (done): dispatches the ordinary fetch (A), arms the
 	// pending-open intent.
@@ -1565,15 +1566,15 @@ func TestThreeKeystrokeRescueRepro(t *testing.T) {
 	// tick.
 	res2, _ := got.handleToggleLayoutKey()
 	toggled1 := res2.(model)
-	require.Equal(layoutSplit, toggled1.layout)
+	require.Equal(splitlayout.Split, toggled1.layout)
 	require.Greater(toggled1.detailFollowGen, genA)
 
 	// L again, before the tick fires: toggles back to stacked.
-	// maybeBootstrapDetail early-returns (layout != layoutSplit), so no
+	// maybeBootstrapDetail early-returns (layout != splitlayout.Split), so no
 	// NEW tick is scheduled -- but the FIRST tick is still outstanding.
 	res3, _ := toggled1.handleToggleLayoutKey()
 	toggled2 := res3.(model)
-	require.Equal(layoutStacked, toggled2.layout)
+	require.Equal(splitlayout.Stacked, toggled2.layout)
 	require.Equal(toggled1.detailFollowGen, toggled2.detailFollowGen,
 		"sanity: the second L must not schedule another bump")
 
@@ -1652,7 +1653,7 @@ func TestRerunConfirmedWhileNotSelectedDoesNotWronglyServePendingOpen(t *testing
 	// for any future path that slips past the chokepoint.
 	direct := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(0, 3))
-	direct.layout = layoutStacked
+	direct.layout = splitlayout.Stacked
 	direct.pendingReviewOpenJobID = 2
 	direct.pendingReviewOpenOrigin = viewQueue
 	direct.pendingReviewOpenSeq = 1
@@ -1668,7 +1669,7 @@ func TestRerunConfirmedWhileNotSelectedDoesNotWronglyServePendingOpen(t *testing
 	// from the rerun) with no intent to rescue, and is dropped.
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	res2, cmd := m.handleEnterKey()
 	got := res2.(model)

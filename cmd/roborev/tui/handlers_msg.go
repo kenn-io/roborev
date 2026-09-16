@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -276,7 +277,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				m.reviewScroll = 0
 				job := m.jobs[nextIdx]
 				m, navFollowCmd = m.followSelectionChange(prevSelected)
-				if m.layout != layoutSplit {
+				if m.layout != splitlayout.Split {
 					m.closeFixPanelIfJobChanged()
 				}
 				switch job.Status {
@@ -312,7 +313,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				// split a panel bound to the previous job -- open or
 				// pending -- must close; followSelectionChange only
 				// closes the pending half there.
-				if m.layout != layoutSplit {
+				if m.layout != splitlayout.Split {
 					m.closeFixPanelIfJobChanged()
 				}
 				if job.Status == storage.JobStatusDone {
@@ -841,7 +842,7 @@ func (m *model) acceptReview(msg reviewMsg) {
 func (m *model) openReviewViewFrom(origin viewKind) {
 	if m.currentView == origin || m.currentView == viewReview {
 		m.currentView = viewReview
-		if m.layout == layoutSplit {
+		if m.layout == splitlayout.Split {
 			m.focus = focusDetail
 		}
 	}
@@ -1644,7 +1645,7 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 // tailed job and the current selection disagree" -- it can't go stale the
 // way msg.jobID == m.paneLogJobID alone could.
 func (m model) handlePaneLogTickMsg(msg paneLogTickMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.paneLogSeq || m.layout != layoutSplit || !m.paneLogStreaming {
+	if msg.seq != m.paneLogSeq || m.layout != splitlayout.Split || !m.paneLogStreaming {
 		return m, nil
 	}
 	job, ok := m.selectedJob()
@@ -2039,7 +2040,7 @@ func (m model) handleCommentResultMsg(
 			cmd := m.dispatchFailedCommentsFetch(msg.jobID)
 			return m, cmd
 		}
-		// splitActive() -- not the coarser m.layout == layoutSplit -- is
+		// splitActive() -- not the coarser m.layout == splitlayout.Split -- is
 		// the knob: it encodes "the split pane is actually rendering",
 		// including the tasks-origin exclusion. A tasks-origin review is
 		// rendered full-screen even on a split-capable terminal, and the
@@ -2049,7 +2050,7 @@ func (m model) handleCommentResultMsg(
 		// completely silent. splitActive() routes it to the else branch,
 		// whose plain fetchReview failures surface through the ordinary
 		// full-screen error mechanism. For every non-tasks-origin case
-		// splitActive() reduces to m.layout == layoutSplit here, so only
+		// splitActive() reduces to m.layout == splitlayout.Split here, so only
 		// the tasks-origin review behaves differently.
 		if m.splitActive() {
 			// A one-shot dispatch triggered by this single
@@ -2077,7 +2078,7 @@ func (m model) handleCommentResultMsg(
 			m.currentReview != nil &&
 			m.currentReview.JobID == msg.jobID {
 			// Stacked mode, OR a tasks-origin review rendered full-screen
-			// even while layout == layoutSplit (see above):
+			// even while layout == splitlayout.Split (see above):
 			// a plain non-follow fetch (ordered by the same epoch as
 			// every other review fetch, but not follow-TAGGED), whose
 			// failures surface through the ordinary full-screen error
@@ -2261,7 +2262,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 // handleWindowSizeMsg processes terminal resize events.
 // maybeResizeRefill dispatches a jobs refetch when the (resized) terminal
 // can show more rows than are loaded and more data is available. In split
-// layout the list pane's row budget (splitGeometry) differs from
+// layout the list pane's row budget (splitLayoutConfig.Geometry) differs from
 // queueVisibleRows' full-screen chrome reservation, so use the pane's own
 // capacity there or a resize into a tall split pane can leave rows unfilled
 // even though more data is available (hasMore). Shared by
@@ -2275,7 +2276,7 @@ func (m *model) maybeResizeRefill() tea.Cmd {
 		return nil
 	}
 	visibleRows := m.queueVisibleRows()
-	if m.layout == layoutSplit {
+	if m.layout == splitlayout.Split {
 		visibleRows = m.queuePaneRowCapacity()
 	}
 	if visibleRows+queuePrefetchBuffer > len(m.jobs) {
@@ -2303,7 +2304,7 @@ func (m model) handleWindowSizeMsg(
 	// otherwise the persistent paneLogFmtr keeps wrapping at the stale
 	// width for the rest of the session. Gated on splitActive() (layout
 	// split AND currentView queue/review) rather than bare
-	// layout==layoutSplit: a transient view (e.g. viewLog) can be open on
+	// layout==splitlayout.Split: a transient view (e.g. viewLog) can be open on
 	// top of split, and stealing the early return here would skip that
 	// view's own resize re-render below, leaving IT at the stale width
 	// instead. When the pane isn't the visible thing (transient view
@@ -2330,7 +2331,7 @@ func (m model) handleWindowSizeMsg(
 				refillCmd := m.maybeResizeRefill()
 				return m, tea.Batch(followCmd, m.fetchPaneLog(job.ID), refillCmd)
 			}
-		} else if m.layout == layoutSplit {
+		} else if m.layout == splitlayout.Split {
 			// A transient view is covering the pane, so restarting the
 			// tail now would poll invisibly at the wrong width. Invalidate
 			// it and mark it paused; the Update tail resumes (via

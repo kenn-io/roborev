@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -98,7 +99,7 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 			// pendingClosed-style map for the review side) so
 			// handleClosedResultMsg's single rollback-on-failure path, gated
 			// on that one seq, can't roll back one half without the other.
-			if m.layout == layoutSplit && m.currentReview != nil && m.currentReview.JobID == job.ID {
+			if m.layout == splitlayout.Split && m.currentReview != nil && m.currentReview.JobID == job.ID {
 				m.currentReview.Closed = newState
 			}
 			if m.hideClosed && newState {
@@ -546,7 +547,7 @@ func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // In split layout, tab from the list pane (with a review loaded) moves
 // focus to the detail pane instead.
 func (m model) handleTabKey() (tea.Model, tea.Cmd) {
-	if m.layout == layoutSplit && m.currentView == viewQueue {
+	if m.layout == splitlayout.Split && m.currentView == viewQueue {
 		if !m.selectedReviewLoaded() {
 			// Either nothing is loaded, or the loaded review belongs to a
 			// job other than the one currently highlighted (e.g. the

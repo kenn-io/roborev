@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -277,22 +278,22 @@ func (m model) handleToggleLayoutKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue && m.currentView != viewReview {
 		return m, nil
 	}
-	target := layoutSplit
-	if m.layout == layoutSplit {
-		target = layoutStacked
+	target := splitlayout.Split
+	if m.layout == splitlayout.Split {
+		target = splitlayout.Stacked
 	}
 	// applyLayout below is a direct transition that bypasses resolveLayout,
 	// so distraction-free's stacked override (see resolveLayout) must be
 	// enforced here too or L would re-engage the split composition while
 	// the title-plus-list-only contract is active.
-	if target == layoutSplit && m.distractionFree {
+	if target == splitlayout.Split && m.distractionFree {
 		m.setFlash("Split layout is unavailable in distraction-free mode (press D to exit)",
 			3*time.Second, m.currentView)
 		return m, nil
 	}
-	if target == layoutSplit && pickLayout(m.width, m.height) != layoutSplit {
+	if target == splitlayout.Split && splitlayout.PickLayout(m.width, m.height) != splitlayout.Split {
 		m.setFlash(fmt.Sprintf("Terminal too small for split view (needs %dx%d)",
-			splitMinWidth, splitMinHeight), 3*time.Second, m.currentView)
+			splitlayout.MinWidth, splitlayout.MinHeight), 3*time.Second, m.currentView)
 		return m, nil
 	}
 	m.layoutLocked = true
@@ -326,7 +327,7 @@ func (m model) handleQuitKey() (tea.Model, tea.Cmd) {
 	// through to the general viewReview branch below returns to
 	// reviewFromView (viewTasks) instead, via the same logic that handles
 	// every other full-screen review return.
-	if m.layout == layoutSplit && m.currentView == viewReview && m.reviewFromView != viewTasks {
+	if m.layout == splitlayout.Split && m.currentView == viewReview && m.reviewFromView != viewTasks {
 		if m.reviewFixPanelOpen {
 			m.closeFixPanel()
 			return m, nil
@@ -916,7 +917,7 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 	// fall through to the general viewReview branch below (which returns
 	// to reviewFromView == viewTasks) instead of this split-pane-specific
 	// "back to the queue list" shortcut.
-	if m.layout == layoutSplit && m.currentView == viewReview && m.reviewFromView != viewTasks {
+	if m.layout == splitlayout.Split && m.currentView == viewReview && m.reviewFromView != viewTasks {
 		if m.reviewFixPanelOpen {
 			m.closeFixPanel()
 			return m, nil

@@ -6,21 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 )
-
-// splitPaneStyle wraps pane content in a border: accent when focused,
-// gray otherwise. lipgloss v2 sizes Width/Height border-box.
-func splitPaneStyle(focused bool, outerW, outerH int) lipgloss.Style {
-	border := adaptiveColor("242", "246")
-	if focused {
-		border = adaptiveColor("125", "205")
-	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(border).
-		Width(outerW).
-		Height(outerH)
-}
 
 // splitFooterRows returns the help table for the focused pane.
 func (m model) splitFooterRows() [][]helpItem {
@@ -64,14 +51,23 @@ func filterHelpItem(rows [][]helpItem, key string) [][]helpItem {
 func (m model) renderSplit() string {
 	footerRows := m.splitFooterRows()
 	footerLines := len(reflowHelpRows(footerRows, m.width))
-	g := splitGeometry(m.width, m.height, footerLines)
+	g := splitLayoutConfig.Geometry(m.width, m.height, footerLines)
 
 	title := m.renderQueueTitle()
 
-	listPane := splitPaneStyle(m.focus == focusList, g.listOuterW, g.bodyH).
-		Render(strings.Join(m.renderQueuePaneBody(g.listInnerW, g.listInnerH), "\n"))
-	detailPane := splitPaneStyle(m.focus == focusDetail, g.detailOuterW, g.bodyH).
-		Render(strings.Join(m.renderDetailPane(g.detailInnerW, g.detailInnerH), "\n"))
+	listBorder := adaptiveColor("242", "246")
+	if m.focus == focusList {
+		listBorder = adaptiveColor("125", "205")
+	}
+	detailBorder := adaptiveColor("242", "246")
+	if m.focus == focusDetail {
+		detailBorder = adaptiveColor("125", "205")
+	}
+
+	listPane := splitlayout.PaneStyle(listBorder, g.ListOuterW, g.BodyH).
+		Render(strings.Join(m.renderQueuePaneBody(g.ListInnerW, g.ListInnerH), "\n"))
+	detailPane := splitlayout.PaneStyle(detailBorder, g.DetailOuterW, g.BodyH).
+		Render(strings.Join(m.renderDetailPane(g.DetailInnerW, g.DetailInnerH), "\n"))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailPane)
 
 	info := m.splitInfoLine(g)
@@ -81,7 +77,7 @@ func (m model) renderSplit() string {
 }
 
 // splitInfoLine shows the flash (if any) or the focused pane's position.
-func (m model) splitInfoLine(g splitGeom) string {
+func (m model) splitInfoLine(g splitlayout.Geom) string {
 	if flash := m.renderFlash(m.currentView); flash != "" {
 		return flash
 	}
@@ -91,7 +87,7 @@ func (m model) splitInfoLine(g splitGeom) string {
 		// (a status card for a queued/running job, or the loading/error
 		// card while a stale attempt's review is being refetched).
 		if m.selectedReviewLoaded() {
-			start, end, total := m.reviewPaneScrollInfo(g.detailInnerW, g.detailInnerH)
+			start, end, total := m.reviewPaneScrollInfo(g.DetailInnerW, g.DetailInnerH)
 			if total > end-start {
 				return statusStyle.Render(fmt.Sprintf("[%d-%d of %d lines]", start+1, end, total))
 			}
@@ -122,11 +118,11 @@ func (m model) splitInfoLine(g splitGeom) string {
 func (m model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mouse := msg.Mouse()
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
 
 	switch msg.(type) {
 	case tea.MouseWheelMsg:
-		if mouse.X < g.listOuterW {
+		if mouse.X < g.ListOuterW {
 			prevSelected := m.selectedJobID
 			var navCmd tea.Cmd
 			switch mouse.Button {
@@ -161,7 +157,7 @@ func (m model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if mouse.Button != tea.MouseLeft {
 			return m, nil
 		}
-		if mouse.X < g.listOuterW {
+		if mouse.X < g.ListOuterW {
 			rows := m.visibleQueueRows()
 			idx := m.splitListRowAt(rows, mouse.Y, g)
 			if idx < 0 || idx >= len(rows) {
@@ -206,8 +202,8 @@ func (m model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // about the row budget.
 func (m model) queuePaneRowCapacity() int {
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
-	return max(g.listInnerH-2, 1)
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	return max(g.ListInnerH-2, 1)
 }
 
 // splitListRowAt maps a screen row y to the index of the visible queue row
@@ -221,7 +217,7 @@ func (m model) queuePaneRowCapacity() int {
 // regardless of compact mode, matching what renderQueuePaneBody actually
 // passes to renderQueueTable) -- it's purely about where the data rows
 // start on screen.
-func (m model) splitListRowAt(rows []queueRow, y int, g splitGeom) int {
+func (m model) splitListRowAt(rows []queueRow, y int, g splitlayout.Geom) int {
 	if len(rows) == 0 {
 		return -1
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -33,8 +35,60 @@ func splitModel(opts ...testModelOption) model {
 		withSelection(1, 2),
 	}
 	m := initTestModel(append(base, opts...)...)
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	return m
+}
+
+func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
+	fixtures := []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{"breakpoint", 140, 36},
+		{"intermediate", 180, 40},
+		{"wide", 300, 50},
+	}
+	focuses := []struct {
+		name  string
+		value focusPane
+	}{
+		{"list", focusList},
+		{"detail", focusDetail},
+	}
+	want := map[string]string{
+		"dark/breakpoint/list":      "16c59f415ca9ec5daa7a8998313d2ba084b70b08c47e3a523493b7ce278a400e",
+		"dark/breakpoint/detail":    "cd2ad24ef21ed8be7fca382ff2b684002505cf626d84397535026fd424fd55d7",
+		"dark/intermediate/list":    "733aeac3bdbc25e03db268729dd4fb6a29f883f102c52686bf015b398e24ed70",
+		"dark/intermediate/detail":  "d1f0b0a0efa4fce32d53a716c2c16fd58b7603df68be1116707fc901e05b01b6",
+		"dark/wide/list":            "4245007c602ce08649be675ada0d20eb9979bb7509d28eb9a3d69276c4c46ea3",
+		"dark/wide/detail":          "ca947a35d3d32fe22068c86fa5c96a2dd31b009899a0de6d6f09602b21459723",
+		"light/breakpoint/list":     "1dce9a5c2275e8e15c2aa9e517184d6658e224d501235269a3150f0b627c6a5f",
+		"light/breakpoint/detail":   "47ebd84e5c81b880c8da6bfae5350188658fcc162e2b20e1e9081562d046c354",
+		"light/intermediate/list":   "943f7c72b1a6938c742a15d0cec5e267499d4e69ef7665fc843f2ef80b8aea15",
+		"light/intermediate/detail": "cf7c22c0edaa000acc90943e3040a55e8a3a9f259097e9904041d9db1f640e9f",
+		"light/wide/list":           "bc6cccd8cd8a22b73c1f00df7ee09503661522918f77bdf694fd6fb19954769d",
+		"light/wide/detail":         "5dd92cec5a484df798c525516efd015e7798f4330f6cd3404a0b56d28a96ee76",
+	}
+	for _, colorMode := range []string{"dark", "light"} {
+		for _, fixture := range fixtures {
+			for _, focus := range focuses {
+				name := colorMode + "/" + fixture.name + "/" + focus.name
+				t.Run(name, func(t *testing.T) {
+					t.Setenv("NO_COLOR", "")
+					t.Setenv("ROBOREV_COLOR_MODE", colorMode)
+					m := splitModel(
+						withReview(splitTestReview()),
+						withDimensions(fixture.width, fixture.height),
+					)
+					m.focus = focus.value
+					got := fmt.Sprintf("%x", sha256.Sum256([]byte(m.renderSplit())))
+					t.Logf("sha256=%s", got)
+					assert.Equal(t, want[name], got)
+				})
+			}
+		}
+	}
 }
 
 func TestRenderSplitShowsBothPanes(t *testing.T) {
@@ -55,7 +109,7 @@ func TestViewContentDispatchesToSplit(t *testing.T) {
 	assert.Contains(t, m.viewContent(), "first finding")
 
 	// Stacked mode still renders the plain queue.
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	assert.NotContains(t, m.viewContent(), "first finding")
 }
 
@@ -105,7 +159,7 @@ func TestSplitInfoLineStaleReview(t *testing.T) {
 
 	footerRows := m.splitFooterRows()
 	footerLines := len(reflowHelpRows(footerRows, m.width))
-	g := splitGeometry(m.width, m.height, footerLines)
+	g := splitLayoutConfig.Geometry(m.width, m.height, footerLines)
 
 	info := m.splitInfoLine(g)
 	assert.NotContains(t, info, "of")
@@ -119,7 +173,7 @@ func TestStateSnapshotIncludesLayout(t *testing.T) {
 	assert.Equal(t, "split", snap.Layout)
 	assert.Equal(t, "list", snap.Focus)
 
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	snap = m.buildStateResponse().Data.(stateSnapshot)
 	assert.Equal(t, "stacked", snap.Layout)
 	assert.Empty(t, snap.Focus)
@@ -163,7 +217,7 @@ func splitFirstDataRowY(t *testing.T, m model, marker string) int {
 func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
-	g := splitGeometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
 
 	// Click a list row: selects it, keeps/sets list focus.
 	firstDataY := splitFirstDataRowY(t, m, "cccc333") // job 3's GitRef, first visible row
@@ -175,7 +229,7 @@ func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
 	// Click in the detail pane while the loaded review still belongs to
 	// job 2 (the follow-fetch for job 3 hasn't landed): no-op, per the
 	// stale-review guard (Finding 2, selectedReviewLoaded).
-	res, _ = got.handleSplitMouse(mouseClickAt(g.listOuterW+5, 10))
+	res, _ = got.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	stale := res.(model)
 	assert.Equal(focusList, stale.focus, "must not enter detail focus with a stale review for a different job")
 	assert.Equal(viewQueue, stale.currentView)
@@ -185,7 +239,7 @@ func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
 	dataY2 := splitFirstDataRowY(t, got, "bbbb222")
 	res, _ = got.handleSplitMouse(mouseClickAt(5, dataY2))
 	got = res.(model)
-	res, _ = got.handleSplitMouse(mouseClickAt(g.listOuterW+5, 10))
+	res, _ = got.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	got = res.(model)
 	assert.Equal(focusDetail, got.focus)
 	assert.Equal(viewReview, got.currentView)
@@ -195,10 +249,10 @@ func TestSplitMouseWheelScrollsPaneUnderCursor(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewScroll = 5
-	g := splitGeometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
 
 	// Wheel over detail pane scrolls the review, regardless of focus.
-	res, _ := m.handleSplitMouse(mouseWheelAt(g.listOuterW+5, 10, tea.MouseWheelUp))
+	res, _ := m.handleSplitMouse(mouseWheelAt(g.ListOuterW+5, 10, tea.MouseWheelUp))
 	assert.Less(res.(model).reviewScroll, 5)
 
 	// Wheel over list pane moves the queue selection.
@@ -364,9 +418,9 @@ func TestSplitExternalRerunBlocksStaleReviewActions(t *testing.T) {
 	assert.Equal(focusList, tabbed.focus)
 
 	// A detail-pane click must refuse as well.
-	g := splitGeometry(got.width, got.height,
+	g := splitLayoutConfig.Geometry(got.width, got.height,
 		len(reflowHelpRows(got.splitFooterRows(), got.width)))
-	res, _ = got.handleSplitMouse(mouseClickAt(g.listOuterW+5, 10))
+	res, _ = got.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	clicked := res.(model)
 	assert.Equal(viewQueue, clicked.currentView)
 	assert.Equal(focusList, clicked.focus)
@@ -990,12 +1044,12 @@ func TestWindowResizeSwitchesLayout(t *testing.T) {
 
 	res, _ := m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 150, Height: 40})
 	m = res.(model)
-	assert.Equal(layoutSplit, m.layout)
+	assert.Equal(splitlayout.Split, m.layout)
 	assert.Equal(focusList, m.focus)
 
 	res, _ = m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = res.(model)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 	assert.Equal(viewQueue, m.currentView)
 }
 
@@ -1013,7 +1067,7 @@ func TestWindowResizeRestartsPaneLogAtNewWidth(t *testing.T) {
 
 	res, cmd := m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 180, Height: 45})
 	got := res.(model)
-	assert.Equal(layoutSplit, got.layout)
+	assert.Equal(splitlayout.Split, got.layout)
 	assert.Greater(got.paneLogSeq, uint64(5))
 	assert.Equal(int64(0), got.paneLogOffset)
 	assert.Empty(got.paneLogLines)
@@ -1033,14 +1087,14 @@ func TestWindowResizeLeavesPaneLogAloneInStacked(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(0, 3),
 	)
-	m.layout = layoutStacked
-	m.preferredLayout = layoutStacked
+	m.layout = splitlayout.Stacked
+	m.preferredLayout = splitlayout.Stacked
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
 	m.paneLogLines = []logLine{{text: "line"}}
 
 	res, _ := m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 100, Height: 30})
 	got := res.(model)
-	assert.Equal(layoutStacked, got.layout)
+	assert.Equal(splitlayout.Stacked, got.layout)
 	assert.Equal(uint64(5), got.paneLogSeq)
 	assert.Equal([]logLine{{text: "line"}}, got.paneLogLines)
 }
@@ -1088,20 +1142,20 @@ func TestToggleLayoutKey(t *testing.T) {
 
 	res, _ := m.handleToggleLayoutKey()
 	m = res.(model)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 	assert.True(m.layoutLocked)
 
 	res, _ = m.handleToggleLayoutKey()
 	m = res.(model)
-	assert.Equal(layoutSplit, m.layout)
+	assert.Equal(splitlayout.Split, m.layout)
 
 	// Too small: stays stacked, flashes.
-	m.layout = layoutStacked
-	m.preferredLayout = layoutStacked
+	m.layout = splitlayout.Stacked
+	m.preferredLayout = splitlayout.Stacked
 	m.width, m.height = 100, 30
 	res, _ = m.handleToggleLayoutKey()
 	m = res.(model)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 	assert.NotEmpty(m.flashMessage)
 }
 
@@ -1118,14 +1172,14 @@ func TestBootstrapDetailPreservesScrollOnMatchingReview(t *testing.T) {
 		withSelection(1, 2),
 		withReview(splitTestReview()), // JobID 2, matches selection
 	)
-	m.layout = layoutStacked
-	m.preferredLayout = layoutStacked
+	m.layout = splitlayout.Stacked
+	m.preferredLayout = splitlayout.Stacked
 	m.reviewScroll = 15
 	prevGen := m.detailFollowGen
 
 	res, cmd := m.handleToggleLayoutKey()
 	got := res.(model)
-	assert.Equal(layoutSplit, got.layout)
+	assert.Equal(splitlayout.Split, got.layout)
 	assert.Equal(15, got.reviewScroll)
 	assert.Equal(prevGen, got.detailFollowGen)
 	assert.Nil(cmd)
@@ -1142,13 +1196,13 @@ func TestBootstrapDetailSchedulesWhenNoMatchingReview(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(1, 2),
 	)
-	m.layout = layoutStacked
-	m.preferredLayout = layoutStacked
+	m.layout = splitlayout.Stacked
+	m.preferredLayout = splitlayout.Stacked
 	prevGen := m.detailFollowGen
 
 	res, cmd := m.handleToggleLayoutKey()
 	got := res.(model)
-	assert.Equal(layoutSplit, got.layout)
+	assert.Equal(splitlayout.Split, got.layout)
 	assert.Greater(got.detailFollowGen, prevGen)
 	assert.NotNil(cmd)
 }
@@ -1282,7 +1336,7 @@ func TestResizeAcrossBreakpointPreservesCommentEditor(t *testing.T) {
 	m = res.(model)
 	assert.Equal(viewKindComment, m.currentView)
 	assert.Equal("in progress comment", m.commentText)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 }
 
 // TestResizeAcrossBreakpointPreservesLogView is the same as
@@ -1297,7 +1351,7 @@ func TestResizeAcrossBreakpointPreservesLogView(t *testing.T) {
 	res, _ := m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = res.(model)
 	assert.Equal(viewLog, m.currentView)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 }
 
 // TestTransientViewExitReconcilesSplitFocus covers a transient view (help)
@@ -1317,12 +1371,12 @@ func TestTransientViewExitReconcilesSplitFocus(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = res.(model)
 	assert.Equal(viewHelp, m.currentView)
-	assert.Equal(layoutStacked, m.layout)
+	assert.Equal(splitlayout.Stacked, m.layout)
 
 	res, _ = m.Update(tea.WindowSizeMsg{Width: 150, Height: 40})
 	m = res.(model)
 	assert.Equal(viewHelp, m.currentView)
-	assert.Equal(layoutSplit, m.layout)
+	assert.Equal(splitlayout.Split, m.layout)
 
 	m, cmd := pressSpecial(m, tea.KeyEscape)
 	assert.Nil(cmd)
@@ -1363,8 +1417,8 @@ func TestPaneLogWidthUsesDetailPaneNotTerminalWidth(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
-	assert.Equal(g.detailInnerW, m.paneLogWidth())
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	assert.Equal(g.DetailInnerW, m.paneLogWidth())
 	assert.NotEqual(m.width, m.paneLogWidth())
 }
 
@@ -1848,7 +1902,7 @@ func TestSplitTransientRoundTripPrompt(t *testing.T) {
 	got2, _ := pressSpecial(got, tea.KeyEscape)
 	assert.Equal(viewReview, got2.currentView)
 	assert.Equal(focusDetail, got2.focus)
-	assert.Equal(layoutSplit, got2.layout)
+	assert.Equal(splitlayout.Split, got2.layout)
 	require.NotNil(t, got2.currentReview)
 	assert.True(got2.splitActive())
 	assert.Contains(got2.viewContent(), "first finding") // back in the split pane
@@ -1869,7 +1923,7 @@ func TestSplitTransientRoundTripHelp(t *testing.T) {
 	got2, _ := pressSpecial(got, tea.KeyEscape)
 	assert.Equal(viewReview, got2.currentView)
 	assert.Equal(focusDetail, got2.focus)
-	assert.Equal(layoutSplit, got2.layout)
+	assert.Equal(splitlayout.Split, got2.layout)
 	assert.True(got2.splitActive())
 }
 
@@ -1886,7 +1940,7 @@ func TestResizeBelowBreakpointWhileDetailFocused(t *testing.T) {
 
 	res, _ := m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 100, Height: 30})
 	got := res.(model)
-	assert.Equal(layoutStacked, got.layout)
+	assert.Equal(splitlayout.Stacked, got.layout)
 	assert.Equal(viewReview, got.currentView)
 	require.NotNil(t, got.currentReview)
 	assert.Equal(int64(2), got.currentReview.JobID)
@@ -1894,7 +1948,7 @@ func TestResizeBelowBreakpointWhileDetailFocused(t *testing.T) {
 
 	res2, _ := got.handleWindowSizeMsg(tea.WindowSizeMsg{Width: 150, Height: 40})
 	got2 := res2.(model)
-	assert.Equal(layoutSplit, got2.layout)
+	assert.Equal(splitlayout.Split, got2.layout)
 	assert.Equal(focusDetail, got2.focus)
 	assert.Equal(viewReview, got2.currentView)
 	require.NotNil(t, got2.currentReview)
@@ -1915,8 +1969,8 @@ func TestWindowResizeRefillsToPaneCapacityInSplit(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(1, 2),
 	)
-	m.layout = layoutSplit
-	m.preferredLayout = layoutSplit
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
 	m.layoutLocked = true
 	m.hasMore = true
 	m.loadingJobs = false         // newModel starts in a "loading" state; the refill gate requires it clear
@@ -1955,7 +2009,7 @@ func TestSplitInfoLineShowsFlash(t *testing.T) {
 	m.setFlash("No older review", 2*time.Second, viewQueue)
 
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
 	info := m.splitInfoLine(g)
 	assert.Contains(info, "No older review")
 
@@ -1975,7 +2029,7 @@ func TestReviewFollowFetchFailureShowsInPane(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2 // job 2: done
 
@@ -2037,7 +2091,7 @@ func TestPaneLogOutputErrorShowsInPaneAndStopsTick(t *testing.T) {
 // (sweep item 7): viewContent()'s dispatch is a single if/return chain --
 // splitActive() (pane renderer, keyed to the detail pane's inner width) is
 // checked BEFORE the full-screen viewReview branch (keyed to m.width), and
-// the two are mutually exclusive (splitActive() requires layoutSplit;
+// the two are mutually exclusive (splitActive() requires splitlayout.Split;
 // leaving split falls through to the full-screen branch). Only one of the
 // two renderers can run per View() call, so mdCache.lastReviewMaxScroll
 // can't drift between them mid-frame. This regression test locks that in:
@@ -2063,7 +2117,7 @@ func TestMdCacheMaxScrollSingleRendererPerFrame(t *testing.T) {
 	paneMaxScroll := m.mdCache.lastReviewMaxScroll
 	assert.Positive(paneMaxScroll)
 
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	require.False(t, m.splitActive())
 	_ = m.viewContent() // full-screen renderer: keyed to m.width
 	fullMaxScroll := m.mdCache.lastReviewMaxScroll
@@ -2343,8 +2397,8 @@ func TestQueuePaneRowCapacityMatchesRenderInCompactMode(t *testing.T) {
 	m.jobs = jobs
 
 	footerRows := m.splitFooterRows()
-	g := splitGeometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
-	lines := m.renderQueuePaneBody(g.listInnerW, g.listInnerH)
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	lines := m.renderQueuePaneBody(g.ListInnerW, g.ListInnerH)
 
 	nonBlank := 0
 	for _, l := range lines {
@@ -2353,7 +2407,7 @@ func TestQueuePaneRowCapacityMatchesRenderInCompactMode(t *testing.T) {
 		}
 	}
 	assert.Equal(nonBlank, m.queuePaneRowCapacity())
-	assert.Less(m.queuePaneRowCapacity(), g.listInnerH, "compact mode still reserves the header/separator budget even though it isn't drawn")
+	assert.Less(m.queuePaneRowCapacity(), g.ListInnerH, "compact mode still reserves the header/separator budget even though it isn't drawn")
 }
 
 // ---------------------------------------------------------------------------
@@ -2459,7 +2513,7 @@ func TestSplitActiveExcludesTasksOriginReview(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.tasksEnabled = true
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone},
@@ -2488,14 +2542,14 @@ func TestSplitActiveExcludesTasksOriginReview(t *testing.T) {
 // TestSplitEscQuitReturnTasksOriginReviewToTasksView covers Finding 1's
 // knock-on effect (a): the split esc/q shortcuts (handleEscKey/
 // handleQuitKey) that normally jump straight back to viewQueue when
-// layout==layoutSplit && currentView==viewReview must NOT fire for a
+// layout==splitlayout.Split && currentView==viewReview must NOT fire for a
 // tasks-origin review -- they must fall through to the general
 // reviewFromView-based return logic instead, landing back on viewTasks.
 func TestSplitEscQuitReturnTasksOriginReviewToTasksView(t *testing.T) {
 	assert := assert.New(t)
 	newTasksOriginReview := func() model {
 		m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40))
-		m.layout = layoutSplit
+		m.layout = splitlayout.Split
 		m.reviewFromView = viewTasks
 		m.currentReview = makeReview(20, &storage.ReviewJob{ID: 101}, withReviewOutput("fix output"))
 		return m.normalizeSplitState()
@@ -2525,7 +2579,7 @@ func TestSplitActiveStillTrueForQueueOriginReview(t *testing.T) {
 
 // TestSplitNormalizeStateHarmlessForTasksOriginReview covers Finding 1's
 // knock-on effect (b): normalizeSplitState unconditionally sets
-// focus=focusDetail for currentView==viewReview while layout==layoutSplit,
+// focus=focusDetail for currentView==viewReview while layout==splitlayout.Split,
 // including for a tasks-origin review that (per splitActive()'s exclusion)
 // renders full-screen rather than via the split pane. Proves the flip is
 // harmless: m.focus is only ever consumed by code gated on splitActive()
@@ -2536,7 +2590,7 @@ func TestSplitActiveStillTrueForQueueOriginReview(t *testing.T) {
 func TestSplitNormalizeStateHarmlessForTasksOriginReview(t *testing.T) {
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.reviewFromView = viewTasks
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 101}, withReviewOutput("fix output"))
 	m.focus = focusList // arbitrary pre-state
@@ -2587,9 +2641,9 @@ func TestSplitMouseClickIntoDetailStampsQueueOrigin(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewFromView = viewTasks // stale
-	g := splitGeometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
 
-	res, _ := m.handleSplitMouse(mouseClickAt(g.listOuterW+5, 10))
+	res, _ := m.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	got := res.(model)
 	assert.Equal(viewQueue, got.reviewFromView)
 	assert.Equal(focusDetail, got.focus)
@@ -2774,7 +2828,7 @@ func TestCtrlSelectJobStackedLeavesPaneLogAlone(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
 
 	params, err := json.Marshal(map[string]int64{"job_id": 2})
@@ -2924,7 +2978,7 @@ func TestToggleLayoutInvalidatesTailWhenLeavingSplit(t *testing.T) {
 	// L: split -> stacked.
 	res, _ := m.handleToggleLayoutKey()
 	stacked := res.(model)
-	require.Equal(layoutStacked, stacked.layout)
+	require.Equal(splitlayout.Stacked, stacked.layout)
 	assert.Equal(uint64(6), stacked.paneLogSeq, "the abandoned tail must be invalidated")
 	assert.False(stacked.paneLogStreaming, "state must not claim a tail whose poll chain is dead")
 
@@ -2935,7 +2989,7 @@ func TestToggleLayoutInvalidatesTailWhenLeavingSplit(t *testing.T) {
 	// L: back to split, same running job still selected.
 	res2, cmd2 := stacked.handleToggleLayoutKey()
 	split := res2.(model)
-	require.Equal(layoutSplit, split.layout)
+	require.Equal(splitlayout.Split, split.layout)
 	require.NotNil(cmd2, "returning to split must arm the detail follow")
 	tick, ok := cmd2().(detailFollowTickMsg)
 	require.True(ok, "expected a detailFollowTickMsg")
@@ -3199,7 +3253,7 @@ func TestEnterKeyStillDispatchesFetchInStackedLayout(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(1, 2), // job 2: done
 	)
-	require.Equal(layoutStacked, m.layout)
+	require.Equal(splitlayout.Stacked, m.layout)
 
 	res, cmd := m.handleEnterKey()
 	got := res.(model)
@@ -3348,9 +3402,9 @@ func TestSplitMouseClickIntoDetailNoOpWhenSelectedReviewStale(t *testing.T) {
 	assert := assert.New(t)
 	// currentReview is for job 2; selection is on job 3 (running).
 	m := splitModel(withReview(splitTestReview()), withSelection(0, 3))
-	g := splitGeometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
 
-	res, _ := m.handleSplitMouse(mouseClickAt(g.listOuterW+5, 10))
+	res, _ := m.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	got := res.(model)
 	assert.Equal(focusList, got.focus, "detail-side click must not enter detail focus with a stale review")
 	assert.Equal(viewQueue, got.currentView)
@@ -3487,7 +3541,7 @@ func TestNormalizeSplitStateRepairsStaleReviewViewStacked(t *testing.T) {
 		withSelection(1, 2), // job 2: done, review open
 		withReview(splitTestReview()),
 	)
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	res, _ := m.Update(rerunResultMsg{jobID: 2})
 	got, ok := res.(model)
@@ -3547,7 +3601,7 @@ func TestNormalizeSplitStateRerunOfDifferentJobLeavesReviewOpen(t *testing.T) {
 		withSelection(1, 2), // job 2: done, review open
 		withReview(splitTestReview()),
 	)
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	res, _ := m.Update(rerunResultMsg{jobID: 3}) // unrelated job
 	got, ok := res.(model)
@@ -3652,7 +3706,7 @@ func TestFetchReviewFollowStampsCurrentGen(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 	m.detailFollowGen = 7
@@ -3699,7 +3753,7 @@ func TestQueueEnterLandsAtUnchangedGenInStackedMode(t *testing.T) {
 	m.currentView = viewQueue
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2 // job 2: done
-	require.Equal(layoutStacked, m.layout)
+	require.Equal(splitlayout.Stacked, m.layout)
 
 	cmd := m.enterReviewCmd(m.jobs[1])
 	msg := cmd()
@@ -3991,7 +4045,7 @@ func TestSplitListCommentResultRefreshesViaFollow(t *testing.T) {
 	require := require.New(t)
 	responses := []storage.Response{{ID: 1, Response: "a new comment"}}
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), responses))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.currentView = viewQueue
 	m.focus = focusList
 	m.jobs = testQueueJobs()
@@ -4114,7 +4168,7 @@ func TestStackedPromptEscStillClearsCurrentReview(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(1, 2),
 	)
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.promptFromQueue = true
 	m.currentReview = splitTestReview()
 
@@ -4295,7 +4349,7 @@ func TestSplitReconcileDetailResetsSignalExactlyOnceOnSuccess(t *testing.T) {
 	freshReview := *splitTestReview()
 	freshReview.Job.FinishedAt = &finish
 	_, m := mockServerModel(t, mockReviewHandler(freshReview, nil))
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 	oldReview := splitTestReview()
@@ -4444,7 +4498,7 @@ func TestSplitReconcileDetailRejectsOlderFollowResponseAfterNewerAccepted(t *tes
 		}
 	}
 	_, m := mockServerModel(t, handler)
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 	review := splitTestReview()
@@ -4500,7 +4554,7 @@ func TestSplitReconcileDetailRetriesAfterFollowFetchFailsAndInFlightClears(t *te
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2
 	review := splitTestReview()
@@ -4559,7 +4613,7 @@ func TestSplitReconcileDetailNormalDonePathDispatchesSingleFetch(t *testing.T) {
 // while a different job was selected, or is simply still in flight); the
 // selection is mutated to a DIFFERENT job B without going through
 // scheduleDetailFollow (exactly what handleCtrlSelectJob does while
-// layout != layoutSplit: selectedJobID changes directly, no gen bump, no
+// layout != splitlayout.Split: selectedJobID changes directly, no gen bump, no
 // tracking clear -- control_handlers.go). Re-entering split,
 // maybeBootstrapDetail's JobID-only bootstrap-skip (layout.go) doesn't
 // consult the tracking at all, so it can't help either. Job B then
@@ -4593,7 +4647,7 @@ func TestSplitReconcileDetailStalePendingForOldJobDoesNotBlockDifferentJob(t *te
 
 	// Selection is mutated to job B WITHOUT going through
 	// scheduleDetailFollow, the way handleCtrlSelectJob does while
-	// layout != layoutSplit. currentReview is left untouched by that
+	// layout != splitlayout.Split. currentReview is left untouched by that
 	// mutation (it's a raw selectedJobID change, not a review load).
 	m.selectedIdx, m.selectedJobID = 1, 3
 
@@ -5244,7 +5298,7 @@ func TestCommentResultStackedSkipsRefreshOnceTheSelectionMovedOn(t *testing.T) {
 		withTestJobs(job2, job3),
 		withSelection(0, 2),
 	)
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.currentReview = &storage.Review{
 		VerdictBool: testutil.ReviewFixtureVerdict("job 2 review"), ID: 20, JobID: 2, Agent: "codex", Output: "job 2 review",
 	}
@@ -5392,7 +5446,7 @@ func TestLogNavFromTasksDoesNotScheduleDetailFollow(t *testing.T) {
 
 // TestLogNavInStackedDoesNotScheduleDetailFollow confirms the stepLogNav fix
 // is a no-op outside split layout: followSelectionChange gates on
-// m.layout != layoutSplit, so stacked-mode log nav still moves
+// m.layout != splitlayout.Split, so stacked-mode log nav still moves
 // selectedJobID/opens the new job's log exactly as before, with no follow
 // side effects -- there is no persistent detail pane to follow.
 func TestLogNavInStackedDoesNotScheduleDetailFollow(t *testing.T) {
@@ -5404,7 +5458,7 @@ func TestLogNavInStackedDoesNotScheduleDetailFollow(t *testing.T) {
 		withTestJobs(testQueueJobs()...),
 		withSelection(1, 2),
 	)
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.logFromView = viewQueue
 	m.logJobID = 2
 	prevGen := m.detailFollowGen
@@ -5633,7 +5687,7 @@ func TestStackedPreRerunResponseRejectedAfterReturnToJob(t *testing.T) {
 	m.currentView = viewQueue
 	m.jobs = testQueueJobs()
 	m.selectedIdx, m.selectedJobID = 1, 2 // X = job 2 (done), selected
-	require.Equal(layoutStacked, m.layout)
+	require.Equal(splitlayout.Stacked, m.layout)
 
 	// 1. Start loading X. The real dispatcher stamps the request with X's
 	//    attempt counter as it stands right now (0 -- no rerun observed).
@@ -5938,7 +5992,7 @@ func TestPromptNavInStackedUnaffected(t *testing.T) {
 	m.paneLogStreaming = true
 	m.paneLogSeq = 3
 	prevGen := m.detailFollowGen
-	require.Equal(layoutStacked, m.layout)
+	require.Equal(splitlayout.Stacked, m.layout)
 
 	res, _ := m.handleKeyMsg(tea.KeyPressMsg{Code: tea.KeyRight})
 	got := res.(model)
@@ -6215,7 +6269,7 @@ func TestTasksKeysInStackedUnaffected(t *testing.T) {
 	m.paneLogStreaming = true
 	m.paneLogSeq = 3
 	prevGen := m.detailFollowGen
-	require.Equal(layoutStacked, m.layout)
+	require.Equal(splitlayout.Stacked, m.layout)
 
 	got, cmd := pressKey(m, 'P')
 
@@ -6499,7 +6553,7 @@ func TestLeaveSplitClosesPanelWithDiscardedReview(t *testing.T) {
 	m.fixPromptJobID = 2
 	m.fixPromptText = "typed for job 2"
 
-	m.applyLayout(layoutStacked)
+	m.applyLayout(splitlayout.Stacked)
 	require.Nil(m.currentReview, "sanity: the leave discarded the review")
 	assert.False(m.reviewFixPanelOpen, "the panel must close with the review it was bound to")
 	assert.Equal(int64(0), m.fixPromptJobID)
@@ -6756,7 +6810,7 @@ func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
 	m.focus = focusDetail
 	m.paneReviewSeenNonTerminalJob = 2 // job 2's external rerun was observed
 
-	m.applyLayout(layoutStacked)
+	m.applyLayout(splitlayout.Stacked)
 	assert.Equal(viewQueue, m.currentView, "a stale review must not carry into stacked full-screen")
 	assert.Nil(m.currentReview)
 
@@ -6764,7 +6818,7 @@ func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
 	m2 := splitModel(withReview(splitTestReview()))
 	m2.currentView = viewReview
 	m2.focus = focusDetail
-	m2.applyLayout(layoutStacked)
+	m2.applyLayout(splitlayout.Stacked)
 	assert.Equal(viewReview, m2.currentView)
 	assert.NotNil(m2.currentReview)
 
@@ -6778,7 +6832,7 @@ func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
 		VerdictBool: testutil.ReviewFixtureVerdict("fix review"), JobID: 99, Output: "fix review",
 	}
 	m3.selectedJobID = 99
-	m3.applyLayout(layoutStacked)
+	m3.applyLayout(splitlayout.Stacked)
 	assert.Equal(viewReview, m3.currentView)
 	assert.NotNil(m3.currentReview)
 }
@@ -6796,7 +6850,7 @@ func TestDistractionFreeForcesStackedAtSplitDims(t *testing.T) {
 
 	got, _ := pressKey(m, 'D')
 	assert.True(got.distractionFree)
-	assert.Equal(layoutStacked, got.layout)
+	assert.Equal(splitlayout.Stacked, got.layout)
 	assert.False(got.splitActive())
 	out := got.viewContent()
 	assert.NotContains(out, "│", "no split pane borders in distraction-free")
@@ -6804,14 +6858,14 @@ func TestDistractionFreeForcesStackedAtSplitDims(t *testing.T) {
 
 	// L must not re-engage the split composition while active.
 	got2, _ := pressKey(got, 'L')
-	assert.Equal(layoutStacked, got2.layout)
+	assert.Equal(splitlayout.Stacked, got2.layout)
 	assertFlashMessage(t, got2, viewQueue,
 		"Split layout is unavailable in distraction-free mode (press D to exit)")
 
 	// Toggling D off restores split at these dimensions.
 	got3, _ := pressKey(got2, 'D')
 	assert.False(got3.distractionFree)
-	assert.Equal(layoutSplit, got3.layout)
+	assert.Equal(splitlayout.Split, got3.layout)
 }
 
 // TestRunningPromptSurvivesJobFailure: the prompt view over a running job
@@ -7641,7 +7695,7 @@ func TestStackedNavigateAwayAndBackAbandonsPendingOpen(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	// Enter on job 2 (done): dispatches the ordinary fetch, arms the
 	// pending-open intent.
@@ -7680,7 +7734,7 @@ func TestStackedNavigateAwayAndBackAbandonsPendingFixPanel(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.tasksEnabled = true
 
 	res, cmd := m.handleFixKey()
@@ -7778,7 +7832,7 @@ func TestStackedMouseWheelAwayAbandonsPendingOpen(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	res, cmd := m.handleEnterKey()
 	got := res.(model)
@@ -7812,7 +7866,7 @@ func TestStackedMouseClickAwayAbandonsPendingFixPanel(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.tasksEnabled = true
 
 	res, cmd := m.handleFixKey()
@@ -7854,7 +7908,7 @@ func TestStackedNormalizationDisarmsPendingFixPanel(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.tasksEnabled = true
 
 	res, cmd := m.handleFixKey()
@@ -7910,7 +7964,7 @@ func TestStackedOpenFixPanelSurvivesRefreshNormalization(t *testing.T) {
 	m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2),
 		withReview(splitTestReview()))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 	m.tasksEnabled = true
 	m.reviewFixPanelOpen = true
 	m.fixPromptJobID = 2
@@ -7941,7 +7995,7 @@ func TestFilterResetDoomsArmedEraDispatch(t *testing.T) {
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
-	m.layout = layoutStacked
+	m.layout = splitlayout.Stacked
 
 	res, cmd := m.handleEnterKey()
 	m = res.(model)
@@ -7989,7 +8043,7 @@ func TestSplitBootstrapClosesJobMismatchedPanel(t *testing.T) {
 	m.reviewFixPanelFocused = true
 	m.fixPromptJobID = 2
 
-	m.layout = layoutSplit
+	m.layout = splitlayout.Split
 	got, _ := m.maybeBootstrapDetail()
 	assert.False(got.reviewFixPanelOpen,
 		"engaging split with a panel bound to another job must close it")
@@ -8001,7 +8055,7 @@ func TestSplitBootstrapClosesJobMismatchedPanel(t *testing.T) {
 		withReview(splitTestReview()))
 	m2.reviewFixPanelOpen = true
 	m2.fixPromptJobID = 2
-	m2.layout = layoutSplit
+	m2.layout = splitlayout.Split
 	got2, _ := m2.maybeBootstrapDetail()
 	assert.True(got2.reviewFixPanelOpen,
 		"a panel bound to the selected job survives the engage")

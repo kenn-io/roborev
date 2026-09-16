@@ -6,6 +6,7 @@ import (
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -108,7 +109,7 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 	// no-op in split (list focus) regardless of the selected job's status;
 	// tab remains the way to focus the detail pane. Stacked layout is
 	// unaffected.
-	if m.layout == layoutSplit {
+	if m.layout == splitlayout.Split {
 		return m, nil
 	}
 	job, ok := m.selectedJob()

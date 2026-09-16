@@ -354,8 +354,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 gitlab.com/gitlab-org/api/client-go/v2 v2.64.0 h1:PrLDC9rS6je6scB0VgXAh6gmoB7fk50bgdweKT37Vdg=
 gitlab.com/gitlab-org/api/client-go/v2 v2.64.0/go.mod h1:jLHVjfgFX/BsZnWXp6OsoXv1hKzBp2tSnNoxQTl3A08=
-go.kenn.io/kit v0.24.1 h1:WJ+uBBKblFaU6KaCjJ0+TH6C7YOoR59txfFzv4UB9EE=
-go.kenn.io/kit v0.24.1/go.mod h1:dO7SImegZe4P9PdnxuANdSQFbnrUvF3eE6/RDOfOMqo=
+go.kenn.io/kit v0.25.1-0.20260916151000-8d12dde8c69a h1:TtsquAZoPA56X12vz1ppPdY3n3QM0Upx/0Nz3j87vF8=
+go.kenn.io/kit v0.25.1-0.20260916151000-8d12dde8c69a/go.mod h1:V00Jeg/76GKfElznsZSpISjPhThyot9kwb94igbQXbA=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/bridges/prometheus v0.69.0 h1:saQoWg5845Q8TojpqeVStS7zGwVZ6bc5W2PJavTPiBM=
