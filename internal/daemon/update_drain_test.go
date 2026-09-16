@@ -233,39 +233,40 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 }
 
 func TestWaitUpdateDrainExpiresAndReopensClaims(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	prepareUpdateDrain(t, server, "owner-expiry", "wait")
+	synctest.Test(t, func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		prepareUpdateDrain(t, server, "owner-expiry", "wait")
 
-	server.shutdownDrainMu.Lock()
-	lease := server.updateDrain
-	lease.expiresAt = time.Now().Add(-time.Second)
-	server.updateCoordinator.armExpiryLocked(lease, time.Millisecond)
-	server.shutdownDrainMu.Unlock()
-
-	require.Eventually(t, func() bool {
+		time.Sleep(updateLeaseDuration)
+		synctest.Wait()
 		draining, err := db.IsShutdownDraining()
-		return err == nil && !draining
-	}, time.Second, 10*time.Millisecond)
+		require.NoError(t, err)
+		assert.False(t, draining)
+	})
 }
 
 func TestPrepareUpdateDrainTimerUsesAdvertisedExpiry(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	base := time.Now()
-	var calls int
-	server.updateCoordinator.now = func() time.Time {
-		calls++
-		if calls == 1 {
-			return base
+	synctest.Test(t, func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		base := time.Now()
+		var calls int
+		server.updateCoordinator.now = func() time.Time {
+			calls++
+			if calls == 1 {
+				return base
+			}
+			return base.Add(2 * updateLeaseDuration)
 		}
-		return base.Add(2 * updateLeaseDuration)
-	}
 
-	prepareUpdateDrain(t, server, "owner-expired-during-prepare", "wait")
+		prepareUpdateDrain(t, server, "owner-expired-during-prepare", "wait")
 
-	require.Eventually(t, func() bool {
+		// Advance the clock so the clamped zero-delay timer can fire.
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
 		draining, err := db.IsShutdownDraining()
-		return err == nil && !draining
-	}, time.Second, 10*time.Millisecond)
+		require.NoError(t, err)
+		assert.False(t, draining)
+	})
 }
 
 func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
@@ -304,12 +305,13 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 }
 
 func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {
-	server, db, dir := newTestServer(t)
-	createTestJob(t, db, dir, "rollback-running", "test")
-	claimed, err := db.ClaimJob("worker-update")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	_, err = db.Exec(`
+	synctest.Test(t, func(t *testing.T) {
+		server, db, dir := newTestServer(t)
+		createTestJob(t, db, dir, "rollback-running", "test")
+		claimed, err := db.ClaimJob("worker-update")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		_, err = db.Exec(`
 		CREATE TRIGGER fail_update_drain_release
 		BEFORE UPDATE ON daemon_state
 		WHEN NEW.key = 'shutdown_draining' AND NEW.value = 'false'
@@ -317,28 +319,30 @@ func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {
 			SELECT RAISE(FAIL, 'synthetic release failure');
 		END
 	`)
-	require.NoError(t, err)
+		require.NoError(t, err)
 
-	w := postUpdateDrain(t, server, "/api/update/prepare", map[string]string{
-		"owner_id": "owner-rollback",
-		"policy":   "abort",
+		w := postUpdateDrain(t, server, "/api/update/prepare", map[string]string{
+			"owner_id": "owner-rollback",
+			"policy":   "abort",
+		})
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		active, policy, expiresAt := server.updateDrainStatus()
+		assert.True(t, active)
+		assert.Equal(t, "abort", policy)
+		assert.False(t, expiresAt.After(time.Now()))
+		draining, err := db.IsShutdownDraining()
+		require.NoError(t, err)
+		assert.True(t, draining)
+
+		_, err = db.Exec(`DROP TRIGGER fail_update_drain_release`)
+		require.NoError(t, err)
+		time.Sleep(updateRecoveryRetryInterval)
+		synctest.Wait()
+		draining, err = db.IsShutdownDraining()
+		require.NoError(t, err)
+		assert.False(t, draining)
 	})
-
-	assert.Equal(t, http.StatusConflict, w.Code)
-	active, policy, expiresAt := server.updateDrainStatus()
-	assert.True(t, active)
-	assert.Equal(t, "abort", policy)
-	assert.False(t, expiresAt.After(time.Now()))
-	draining, err := db.IsShutdownDraining()
-	require.NoError(t, err)
-	assert.True(t, draining)
-
-	_, err = db.Exec(`DROP TRIGGER fail_update_drain_release`)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		draining, drainErr := db.IsShutdownDraining()
-		return drainErr == nil && !draining
-	}, time.Second, 10*time.Millisecond)
 }
 
 func TestReleaseUpdateDrainCannotClearShutdownOwnership(t *testing.T) {

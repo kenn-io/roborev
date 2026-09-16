@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -127,48 +128,42 @@ func TestStopRetriesDrainPreparationAfterTransientFailure(t *testing.T) {
 }
 
 func TestStopBoundsDrainStateCleanupWithSharedContext(t *testing.T) {
-	testenv.SetDataDir(t)
-	server := setupTestServer(t)
-	require.NoError(t, WriteRuntime(
-		DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
-		nil,
-		"test",
-		nil,
-	))
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetDataDir(t)
+		server := setupTestServer(t)
+		require.NoError(t, WriteRuntime(
+			DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
+			nil,
+			"test",
+			nil,
+		))
 
-	originalTimeout := shutdownCleanupTimeout
-	originalRetryInterval := shutdownCleanupRetryInterval
-	shutdownCleanupTimeout = 30 * time.Millisecond
-	shutdownCleanupRetryInterval = time.Millisecond
-	t.Cleanup(func() {
-		shutdownCleanupTimeout = originalTimeout
-		shutdownCleanupRetryInterval = originalRetryInterval
-	})
+		originalTimeout := shutdownCleanupTimeout
+		originalRetryInterval := shutdownCleanupRetryInterval
+		shutdownCleanupTimeout = 30 * time.Millisecond
+		shutdownCleanupRetryInterval = time.Millisecond
+		t.Cleanup(func() {
+			shutdownCleanupTimeout = originalTimeout
+			shutdownCleanupRetryInterval = originalRetryInterval
+		})
 
-	server.workerPool.wg.Add(1)
-	close(server.workerPool.readyCh)
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- server.Stop() }()
-	require.Eventually(t, func() bool {
+		server.workerPool.wg.Add(1)
+		close(server.workerPool.readyCh)
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- server.Stop() }()
+		synctest.Wait()
 		draining, err := server.db.IsShutdownDraining()
-		return err == nil && draining
-	}, time.Second, time.Millisecond)
+		require.NoError(t, err)
+		assert.True(t, draining)
 
-	_, err := server.db.Exec(`DROP TABLE daemon_state`)
-	require.NoError(t, err)
-	server.workerPool.wg.Done()
+		_, err = server.db.Exec(`DROP TABLE daemon_state`)
+		require.NoError(t, err)
+		server.workerPool.wg.Done()
 
-	var stopErr error
-	require.Eventually(t, func() bool {
-		select {
-		case stopErr = <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
-	require.ErrorContains(t, stopErr, "clear shutdown drain state")
-	assert.NoFileExists(t, RuntimePath())
+		stopErr := <-stopDone
+		require.ErrorContains(t, stopErr, "clear shutdown drain state")
+		assert.NoFileExists(t, RuntimePath())
+	})
 }
 
 func TestServerStartClearsInterruptedShutdownDrain(t *testing.T) {
@@ -190,46 +185,33 @@ func TestServerStartClearsInterruptedShutdownDrain(t *testing.T) {
 }
 
 func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
-	testenv.SetDataDir(t)
-	server := setupTestServer(t)
-	require.NoError(t, WriteRuntime(
-		DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
-		nil,
-		"test",
-		nil,
-	))
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetDataDir(t)
+		server := setupTestServer(t)
+		require.NoError(t, WriteRuntime(
+			DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
+			nil,
+			"test",
+			nil,
+		))
 
-	server.workerPool.wg.Add(1)
-	close(server.workerPool.readyCh)
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- server.Stop() }()
+		server.workerPool.wg.Add(1)
+		close(server.workerPool.readyCh)
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- server.Stop() }()
 
-	require.Eventually(t, func() bool {
+		synctest.Wait()
 		draining, err := server.db.IsShutdownDraining()
-		return err == nil && draining
-	}, time.Second, time.Millisecond)
-	assert.FileExists(t, RuntimePath())
-	assert.Never(t, func() bool {
-		select {
-		case <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, 20*time.Millisecond, time.Millisecond)
+		require.NoError(t, err)
+		assert.True(t, draining)
+		assert.FileExists(t, RuntimePath())
+		assert.Empty(t, stopDone)
 
-	server.workerPool.wg.Done()
-	var stopErr error
-	require.Eventually(t, func() bool {
-		select {
-		case stopErr = <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
-	require.NoError(t, stopErr)
-	assert.NoFileExists(t, RuntimePath())
+		server.workerPool.wg.Done()
+		stopErr := <-stopDone
+		require.NoError(t, stopErr)
+		assert.NoFileExists(t, RuntimePath())
+	})
 }
 
 func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {

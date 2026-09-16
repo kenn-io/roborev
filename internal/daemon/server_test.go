@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -75,30 +76,16 @@ func (s *safeRecorder) wasFlushed() bool {
 	return s.Flushed
 }
 
-// waitForSubscriberIncrease polls until subscriber count increases from initialCount
-func waitForSubscriberIncrease(b Broadcaster, initialCount int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if b.SubscriberCount() > initialCount {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
+// Call from the bubble root so the subscription settles before inspection.
+func waitForSubscriberIncrease(b Broadcaster, initialCount int) bool {
+	synctest.Wait()
+	return b.SubscriberCount() > initialCount
 }
 
-// waitForEvents polls until the response body contains at least minEvents newline-delimited events
-func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		body := w.bodyString()
-		count := strings.Count(body, "\n")
-		if count >= minEvents {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
+// Call from the bubble root so event writes settle before inspection.
+func waitForEvents(w *safeRecorder, minEvents int) bool {
+	synctest.Wait()
+	return strings.Count(w.bodyString(), "\n") >= minEvents
 }
 
 // newTestServer creates a Server with a test DB and default config.
