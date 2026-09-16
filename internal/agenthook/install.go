@@ -190,7 +190,17 @@ func validatedKitInstallOptions(
 			return kitagenthook.InstallOptions{}, err
 		}
 	}
-	return kitInstallOptions(agent, opts), nil
+	kitOpts := kitInstallOptions(agent, opts)
+	if agent == kitagenthook.AgentClaude && opts.Command == "" {
+		commands, err := kitagenthook.BuildCommand(kitOpts.Executable, kitOpts.Arguments...)
+		if err != nil {
+			return kitagenthook.InstallOptions{}, err
+		}
+		kitOpts.Executable = ""
+		kitOpts.Arguments = nil
+		kitOpts.Command = commands.POSIX
+	}
+	return kitOpts, nil
 }
 
 func kitInstallOptions(agent kitagenthook.Agent, opts InstallOptions) kitagenthook.InstallOptions {
