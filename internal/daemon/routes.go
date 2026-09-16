@@ -1,9 +1,8 @@
 package daemon
 
 import (
-	"encoding/json"
 	"encoding/json/jsontext"
-	jsonv2 "encoding/json/v2"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/pprof"
@@ -13,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
@@ -28,18 +28,23 @@ func humaConfig(title string) huma.Config {
 	})
 
 	cfg := huma.DefaultConfig(title, version.Version)
+	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
+		if t == reflect.TypeFor[agenthook.Response]() {
+			return "AgentHookResponse"
+		}
+		return huma.DefaultSchemaNamer(t, hint)
+	})
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
-			return jsonv2.MarshalWrite(
+			return json.MarshalWrite(
 				w,
 				value,
-				json.DefaultOptionsV1(),
-				jsonv2.FormatNilSliceAsNull(false),
+				json.FormatNilSliceAsNull(false),
 				jsontext.EscapeForHTML(false),
 			)
 		},
 		Unmarshal: func(data []byte, value any) error {
-			return jsonv2.Unmarshal(data, value, json.DefaultOptionsV1())
+			return json.Unmarshal(data, value)
 		},
 	}
 	cfg.Formats = map[string]huma.Format{
@@ -492,14 +497,18 @@ func (s *Server) registerAgentHookRoutes(mux *http.ServeMux) {
 	cfg.DocsPath = ""
 	cfg.SchemasPath = ""
 	api := humago.New(mux, cfg)
+	s.registerAgentHookOperations(api)
+}
 
-	huma.Get(api, "/api/agent-hook/sessions", s.humaAgentHookSessions)
+func (s *Server) registerAgentHookOperations(api huma.API) {
+	huma.Get(api, "/api/agent-hook/sessions", s.humaAgentHookSessions, func(o *huma.Operation) { o.OperationID = "list-agent-hook-sessions" })
 	huma.Post(api, "/api/agent-hook/event", s.humaAgentHookEvent,
 		func(o *huma.Operation) {
 			o.MaxBodyBytes = -1
+			o.OperationID = "record-agent-hook-event"
 		})
-	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset)
-	huma.Post(api, "/api/agent-hook/fix-done", s.humaAgentHookFixDone)
+	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset, func(o *huma.Operation) { o.OperationID = "reset-agent-hook-sessions" })
+	huma.Post(api, "/api/agent-hook/fix-done", s.humaAgentHookFixDone, func(o *huma.Operation) { o.OperationID = "complete-agent-hook-fix" })
 }
 
 // OpenAPISpec returns the daemon OpenAPI document generated from the Huma
@@ -508,7 +517,8 @@ func OpenAPISpec() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
 	(&Server{}).registerBrowserRoutes(api)
-	return json.MarshalIndent(api.OpenAPI(), "", "  ")
+	(&Server{}).registerAgentHookOperations(api)
+	return json.Marshal(api.OpenAPI(), jsontext.WithIndent("  "))
 }
 
 // OpenAPISpecYAML returns the daemon OpenAPI document as YAML generated from
@@ -517,6 +527,7 @@ func OpenAPISpecYAML() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
 	(&Server{}).registerBrowserRoutes(api)
+	(&Server{}).registerAgentHookOperations(api)
 	return api.OpenAPI().YAML()
 }
 
@@ -526,6 +537,7 @@ func OpenAPISpec30() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
 	(&Server{}).registerBrowserRoutes(api)
+	(&Server{}).registerAgentHookOperations(api)
 	spec, err := api.OpenAPI().Downgrade()
 	if err != nil {
 		return nil, err
@@ -534,7 +546,7 @@ func OpenAPISpec30() ([]byte, error) {
 	if err := json.Unmarshal(spec, &formatted); err != nil {
 		return nil, err
 	}
-	return json.MarshalIndent(formatted, "", "  ")
+	return json.Marshal(formatted, jsontext.WithIndent("  "))
 }
 
 // OpenAPISpec30YAML returns a downgraded OpenAPI 3.0 document as YAML.
@@ -542,6 +554,7 @@ func OpenAPISpec30YAML() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
 	(&Server{}).registerBrowserRoutes(api)
+	(&Server{}).registerAgentHookOperations(api)
 	return api.OpenAPI().DowngradeYAML()
 }
 

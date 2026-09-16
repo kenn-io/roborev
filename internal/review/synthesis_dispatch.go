@@ -2,7 +2,7 @@ package review
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -93,10 +93,10 @@ func RunSynthesisAgent(
 
 	invoke()
 	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-	return decodeSynthesisResult(a, reviews, json.RawMessage(output), err)
+	return decodeSynthesisResult(a, reviews, jsontext.Value(output), err)
 }
 
-func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw json.RawMessage, err error) (SynthesisDocument, error) {
+func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {
 	if err != nil {
 		return SynthesisDocument{}, err
 	}

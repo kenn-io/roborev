@@ -2,7 +2,7 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const maxErrorBodyBytes = 64 << 10
@@ -33,7 +34,7 @@ func NewHTTPBackend(baseURL string, client *http.Client) *HTTPBackend {
 
 func (b *HTTPBackend) Status(ctx context.Context) (*storage.DaemonStatus, error) {
 	var status storage.DaemonStatus
-	if err := b.getJSON(ctx, "/api/status", nil, &status); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) { return api.GetStatusRaw(ctx) }, &status); err != nil {
 		return nil, err
 	}
 	return &status, nil
@@ -50,7 +51,9 @@ func (b *HTTPBackend) ListRepos(ctx context.Context, q ReposQuery) ([]storage.Re
 	var body struct {
 		Repos []storage.RepoWithCount `json:"repos"`
 	}
-	if err := b.getJSON(ctx, "/api/repos", params, &body); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.ListReposRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &body); err != nil {
 		return nil, err
 	}
 	return body.Repos, nil
@@ -61,7 +64,9 @@ func (b *HTTPBackend) ListBranches(ctx context.Context, repoPath string) ([]stor
 	var body struct {
 		Branches []storage.BranchWithCount `json:"branches"`
 	}
-	if err := b.getJSON(ctx, "/api/branches", params, &body); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.ListBranchesRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &body); err != nil {
 		return nil, err
 	}
 	return body.Branches, nil
@@ -103,7 +108,9 @@ func (b *HTTPBackend) ListJobs(ctx context.Context, q JobsQuery) (JobsPage, erro
 		HasMore    bool                `json:"has_more"`
 		NextCursor *string             `json:"next_cursor"`
 	}
-	if err := b.getJSON(ctx, "/api/jobs", params, &body); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.ListJobsRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &body); err != nil {
 		return JobsPage{}, err
 	}
 	page := JobsPage{Jobs: body.Jobs, HasMore: body.HasMore}
@@ -121,7 +128,9 @@ func (b *HTTPBackend) GetReview(ctx context.Context, ref ReviewRef) (*storage.Re
 		params.Set("sha", ref.SHA)
 	}
 	var review storage.Review
-	if err := b.getJSON(ctx, "/api/review", params, &review); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.GetReviewRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &review); err != nil {
 		return nil, err
 	}
 	return &review, nil
@@ -131,7 +140,9 @@ func (b *HTTPBackend) ListComments(ctx context.Context, ref CommentRef) ([]stora
 	var body struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := b.getJSON(ctx, "/api/comments", commentRefParams(ref), &body); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.ListCommentsRaw(ctx, nil, roborevclient.WithQuery(commentRefParams(ref)))
+	}, &body); err != nil {
 		return nil, err
 	}
 	return body.Responses, nil
@@ -140,7 +151,9 @@ func (b *HTTPBackend) ListComments(ctx context.Context, ref CommentRef) ([]stora
 func (b *HTTPBackend) GetJobOutput(ctx context.Context, jobID int64) (JobOutput, error) {
 	params := url.Values{"job_id": {strconv.FormatInt(jobID, 10)}}
 	var output JobOutput
-	if err := b.getJSON(ctx, "/api/job/output", params, &output); err != nil {
+	if err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.GetJobOutputRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &output); err != nil {
 		return JobOutput{}, err
 	}
 	return output, nil
@@ -159,17 +172,12 @@ func commentRefParams(ref CommentRef) url.Values {
 	return params
 }
 
-func (b *HTTPBackend) getJSON(ctx context.Context, path string, params url.Values, out any) error {
-	target := b.baseURL + path
-	if len(params) > 0 {
-		target += "?" + params.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+func (b *HTTPBackend) getJSON(call func(*roborevclient.Client) (*http.Response, error), out any) error {
+	api, err := roborevclient.NewWithHTTPClient(b.baseURL, b.client)
 	if err != nil {
-		return NewError(ErrorCodeInternal, fmt.Sprintf("build request for %s: %v", path, err))
+		return NewError(ErrorCodeInternal, fmt.Sprintf("build daemon client: %v", err))
 	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := b.client.Do(req)
+	resp, err := call(api)
 	if err != nil {
 		return NewError(ErrorCodeUnavailable, fmt.Sprintf("roborev daemon request failed: %v", err))
 	}
@@ -177,8 +185,8 @@ func (b *HTTPBackend) getJSON(ctx context.Context, path string, params url.Value
 	if resp.StatusCode != http.StatusOK {
 		return httpStatusError(resp)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return NewError(ErrorCodeInternal, fmt.Sprintf("decode %s response: %v", path, err))
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
+		return NewError(ErrorCodeInternal, fmt.Sprintf("decode daemon response: %v", err))
 	}
 	return nil
 }

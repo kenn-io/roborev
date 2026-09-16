@@ -1,19 +1,22 @@
 package streamfmt
 
-import "encoding/json"
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+)
 
 type claudeDecoder struct{}
 
 type claudeStreamEvent struct {
-	Type    string          `json:"type"`
-	Message json.RawMessage `json:"message,omitempty"`
+	Type    string         `json:"type"`
+	Message jsontext.Value `json:"message,omitempty"`
 }
 
 type claudeContentBlock struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	Type  string         `json:"type"`
+	Text  string         `json:"text,omitempty"`
+	Name  string         `json:"name,omitempty"`
+	Input jsontext.Value `json:"input,omitempty"`
 }
 
 func (*claudeDecoder) Decode(line string) []Event {
@@ -33,7 +36,7 @@ func (*claudeDecoder) Decode(line string) []Event {
 
 func (*claudeDecoder) Flush() []Event { return nil }
 
-func decodeClaudeContent(raw json.RawMessage) []Event {
+func decodeClaudeContent(raw jsontext.Value) []Event {
 	var blocks []claudeContentBlock
 	if err := json.Unmarshal(raw, &blocks); err == nil {
 		events := make([]Event, 0, len(blocks))
@@ -58,14 +61,14 @@ func decodeClaudeContent(raw json.RawMessage) []Event {
 // decodeClaudeMessage accepts the nested message object shared by Claude and
 // Pi while rejecting Grok's string-valued error message.
 func decodeClaudeMessage(
-	raw json.RawMessage,
-) (role string, content json.RawMessage, ok bool) {
+	raw jsontext.Value,
+) (role string, content jsontext.Value, ok bool) {
 	if len(raw) == 0 || string(raw) == "null" || raw[0] == '"' {
 		return "", nil, false
 	}
 	var message struct {
-		Role    string          `json:"role,omitempty"`
-		Content json.RawMessage `json:"content,omitempty"`
+		Role    string         `json:"role,omitempty"`
+		Content jsontext.Value `json:"content,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &message); err != nil {
 		return "", nil, false

@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func syncCmd() *cobra.Command {
@@ -140,7 +141,7 @@ func syncNowCmd() *cobra.Command {
 			client := ep.HTTPClient(6 * time.Minute)
 
 			// Use streaming endpoint to show progress
-			resp, err := client.Post(addr+"/api/sync/now?stream=1", "application/json", nil)
+			resp, err := newDaemonAPI(addr, client).SyncNowRaw(cmd.Context(), &generated.SyncNowRequestOptions{Query: &generated.SyncNowQuery{Stream: new("1")}})
 			if err != nil {
 				return fmt.Errorf("failed to trigger sync: %w", err)
 			}

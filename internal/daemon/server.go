@@ -3,7 +3,8 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -4104,7 +4105,7 @@ func (s *Server) humaStreamEvents(
 		defer s.broadcaster.Unsubscribe(subID)
 		flusher.Flush()
 
-		encoder := json.NewEncoder(writer)
+		encoder := jsontext.NewEncoder(writer)
 		for {
 			select {
 			case <-hctx.Context().Done():
@@ -4113,7 +4114,7 @@ func (s *Server) humaStreamEvents(
 				if !ok {
 					return
 				}
-				if err := encoder.Encode(event); err != nil {
+				if err := json.MarshalEncode(encoder, event); err != nil {
 					return
 				}
 				flusher.Flush()
@@ -4145,7 +4146,7 @@ func parseHumaJobID(ctx huma.Context, value, missingMessage string) (int64, bool
 func writeHumaJSON(ctx huma.Context, status int, v any) {
 	ctx.SetHeader("Content-Type", "application/json")
 	ctx.SetStatus(status)
-	if err := json.NewEncoder(ctx.BodyWriter()).Encode(v); err != nil {
+	if err := json.MarshalWrite(ctx.BodyWriter(), v); err != nil {
 		_, _ = io.WriteString(
 			ctx.BodyWriter(),
 			fmt.Sprintf(`{"error":"failed to write JSON response: %v"}`, err),

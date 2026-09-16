@@ -1,7 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 type exportCICostOpts struct {
@@ -63,9 +66,8 @@ Legacy cursors cannot be resumed against a regular export, or vice versa.`),
 				}
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(doc)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, doc)
 		},
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
@@ -163,7 +165,7 @@ func fetchExportCICostPage(
 		params.Set("legacy", "true")
 	}
 
-	resp, err := ep.HTTPClient(30 * time.Second).Get(ep.BaseURL() + "/api/export/ci-costs?" + params.Encode())
+	resp, err := ep.APIClient(30*time.Second).ExportCiCostsRaw(context.Background(), nil, roborevclient.WithQuery(params))
 	if err != nil {
 		return daemon.ExportCICostDocument{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -178,7 +180,7 @@ func fetchExportCICostPage(
 			resp.Status, strings.TrimSpace(string(body)))
 	}
 	var doc daemon.ExportCICostDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
 		return daemon.ExportCICostDocument{}, fmt.Errorf("failed to parse export response: %w", err)
 	}
 	return doc, nil

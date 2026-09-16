@@ -2,9 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/skills"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 type checkStatus string
@@ -146,8 +146,7 @@ func checkRepoRegistered(repoRoot string, inGitRepo, daemonUp bool) quickstartCh
 
 func repoTracked(repoRoot string) (bool, error) {
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(5 * time.Second).Get(
-		ep.BaseURL() + "/api/repos/resolve?path=" + url.QueryEscape(repoRoot))
+	resp, err := ep.APIClient(5*time.Second).ResolveRepoRaw(context.Background(), &generated.ResolveRepoRequestOptions{Query: &generated.ResolveRepoQuery{Path: new(repoRoot)}})
 	if err != nil {
 		return false, err
 	}
@@ -158,7 +157,7 @@ func repoTracked(repoRoot string) (bool, error) {
 	var body struct {
 		Tracked bool `json:"tracked"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &body); err != nil {
 		return false, err
 	}
 	return body.Tracked, nil

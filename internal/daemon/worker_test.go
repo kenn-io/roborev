@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -49,7 +50,7 @@ type workerTestContext struct {
 
 type structuredWorkerTestAgent struct {
 	name   string
-	result json.RawMessage
+	result jsontext.Value
 	// prompt records the last prompt passed to ReviewWithSchema.
 	prompt   string
 	onPrompt func(string, string)
@@ -65,9 +66,9 @@ func (a *structuredWorkerTestAgent) Review(
 func (a *structuredWorkerTestAgent) ReviewWithSchema(
 	_ context.Context,
 	repoPath, _, reviewPrompt string,
-	_ json.RawMessage,
+	_ jsontext.Value,
 	_ io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	a.prompt = reviewPrompt
 	if a.onPrompt != nil {
 		a.onPrompt(repoPath, reviewPrompt)
@@ -335,7 +336,7 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
 	agentName := "structured-review-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version":2,
   "summary":"Review complete.",
   "verdict":"fail",
@@ -432,7 +433,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	agentName := "structured-review-config-severity-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
 	  "schema_version":2,
 	  "summary":"High: no actionable findings.",
 	  "verdict":"pass",
@@ -1459,7 +1460,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		agentName := "prebuilt-structured-after-failover"
 		fake := &structuredWorkerTestAgent{
 			name:   agentName,
-			result: json.RawMessage(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+			result: jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
 		}
 		agent.Register(fake)
 		t.Cleanup(func() { agent.Unregister(agentName) })
@@ -1479,7 +1480,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		agentName := "prebuilt-structured-at-cap"
 		fake := &structuredWorkerTestAgent{
 			name:   agentName,
-			result: json.RawMessage(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+			result: jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
 			onPrompt: func(repoPath, prepared string) {
 				files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
 				require.NoError(t, err)
@@ -1507,7 +1508,7 @@ func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing
 	agentName := "ci-custom-review-default-config-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version":2,
   "summary":"Default-branch review instructions loaded.",
   "verdict":"pass",
@@ -1564,7 +1565,7 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	agentName := "ci-custom-review-invalid-config-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
   "schema_version":2,
   "summary":"Global review instructions loaded from the default branch.",
   "verdict":"pass",

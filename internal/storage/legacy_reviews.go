@@ -2,7 +2,8 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -61,7 +62,7 @@ func (db *DB) migrateLegacyReviews() error {
 	}
 	type pending struct {
 		id      int64
-		raw     json.RawMessage
+		raw     jsontext.Value
 		verdict any
 		reason  string
 	}
@@ -75,9 +76,9 @@ func (db *DB) migrateLegacyReviews() error {
 			rows.Close()
 			return err
 		}
-		candidate := json.RawMessage(raw.String)
+		candidate := jsontext.Value(raw.String)
 		if len(candidate) == 0 {
-			candidate = json.RawMessage(output)
+			candidate = jsontext.Value(output)
 		}
 		doc, decodeErr := structuredreview.Decode(candidate)
 		if decodeErr == nil && jobType == JobTypeSynthesis {
@@ -136,7 +137,7 @@ func (db *DB) migrateLegacyReviews() error {
 
 // ResolveLegacyReview imports an explicitly converted document. It preserves
 // the archived record for audit and never accepts a Markdown replacement.
-func (db *DB) ResolveLegacyReview(id int64, raw json.RawMessage) error {
+func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 	machineID, err := db.GetMachineID()
 	if err != nil {
 		return err
@@ -242,10 +243,10 @@ func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 
 // LegacyReviewSource fixes the review-number mapping used by a conversion.
 type LegacyReviewSource struct {
-	Number   int             `json:"number"`
-	Agent    string          `json:"agent"`
-	Document json.RawMessage `json:"document,omitempty"`
-	Markdown string          `json:"markdown,omitempty"`
+	Number   int            `json:"number"`
+	Agent    string         `json:"agent"`
+	Document jsontext.Value `json:"document,omitempty"`
+	Markdown string         `json:"markdown,omitempty"`
 }
 
 // legacySynthesisSources retains the successful, substantive input order used
@@ -267,7 +268,7 @@ func legacySynthesisSources(q querier, jobID int64) ([]LegacyReviewSource, error
 		if err := rows.Scan(&agent, &reviewType, &raw, &markdown); err != nil {
 			return nil, err
 		}
-		if source, ok := legacySource(agent, reviewType, json.RawMessage(raw), markdown); ok {
+		if source, ok := legacySource(agent, reviewType, jsontext.Value(raw), markdown); ok {
 			source.Number = len(sources) + 1
 			sources = append(sources, source)
 		}
@@ -275,7 +276,7 @@ func legacySynthesisSources(q querier, jobID int64) ([]LegacyReviewSource, error
 	return sources, rows.Err()
 }
 
-func legacySource(agent, reviewType string, raw json.RawMessage, markdown string) (LegacyReviewSource, bool) {
+func legacySource(agent, reviewType string, raw jsontext.Value, markdown string) (LegacyReviewSource, bool) {
 	doc, err := structuredreview.Decode(raw)
 	if err == nil {
 		if doc.UnableToReview() {

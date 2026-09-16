@@ -3,7 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -101,12 +102,18 @@ func ensureAntigravityReviewPermissions(ctx context.Context, settingsPath string
 	switch {
 	case err == nil:
 		if trimmed := trimSpaceBytes(raw); len(trimmed) > 0 {
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.UseNumber()
-			if err := decoder.Decode(&doc); err != nil {
+			decoder := jsontext.NewDecoder(bytes.NewReader(raw))
+			if err := json.UnmarshalDecode(decoder, &doc, json.WithUnmarshalers(json.UnmarshalFromFunc(func(dec *jsontext.Decoder, value *any) error {
+				if dec.PeekKind() != '0' {
+					return errors.ErrUnsupported
+				}
+				raw, err := dec.ReadValue()
+				*value = raw.Clone()
+				return err
+			}))); err != nil {
 				return fmt.Errorf("parse %s: %w", settingsPath, err)
 			}
-			if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 				if err == nil {
 					err = errors.New("multiple JSON values")
 				}
@@ -204,7 +211,7 @@ func writeSettingsJSON(path string, doc map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(doc, "", "  ")
+	data, err := json.Marshal(doc, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return err
 	}

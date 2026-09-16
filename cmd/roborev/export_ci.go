@@ -1,7 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 type exportCIMetricsOpts struct {
@@ -71,9 +74,8 @@ export, or vice versa.`),
 				}
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(doc)
+			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+			return json.MarshalEncode(enc, doc)
 		},
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
@@ -167,7 +169,7 @@ func fetchExportCIMetricsPage(ep daemon.DaemonEndpoint, opts exportCIMetricsOpts
 		params.Set("legacy", "true")
 	}
 
-	resp, err := ep.HTTPClient(30 * time.Second).Get(ep.BaseURL() + "/api/export/ci-metrics?" + params.Encode())
+	resp, err := ep.APIClient(30*time.Second).ExportCiMetricsRaw(context.Background(), nil, roborevclient.WithQuery(params))
 	if err != nil {
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -181,7 +183,7 @@ func fetchExportCIMetricsPage(ep daemon.DaemonEndpoint, opts exportCIMetricsOpts
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var doc daemon.ExportCIMetricsDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
 		return daemon.ExportCIMetricsDocument{}, fmt.Errorf("failed to parse export response: %w", err)
 	}
 	return doc, nil

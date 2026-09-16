@@ -1,7 +1,8 @@
 package streamfmt
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -27,21 +28,21 @@ type grokToolInfo struct {
 }
 
 type grokStreamEvent struct {
-	Type              string          `json:"type"`
-	Message           json.RawMessage `json:"message,omitempty"`
-	Data              string          `json:"data,omitempty"`
-	Status            string          `json:"status,omitempty"`
-	Error             string          `json:"error,omitempty"`
-	Content           json.RawMessage `json:"content,omitempty"`
-	ToolCallID        string          `json:"toolCallId,omitempty"`
-	ToolName          string          `json:"toolName,omitempty"`
-	AlternateToolName string          `json:"tool_name,omitempty"`
-	Args              json.RawMessage `json:"args,omitempty"`
-	Parameters        json.RawMessage `json:"parameters,omitempty"`
-	RawInput          json.RawMessage `json:"rawInput,omitempty"`
-	RawOutput         json.RawMessage `json:"rawOutput,omitempty"`
-	Title             string          `json:"title,omitempty"`
-	Kind              string          `json:"kind,omitempty"`
+	Type              string         `json:"type"`
+	Message           jsontext.Value `json:"message,omitempty"`
+	Data              string         `json:"data,omitempty"`
+	Status            string         `json:"status,omitempty"`
+	Error             string         `json:"error,omitempty"`
+	Content           jsontext.Value `json:"content,omitempty"`
+	ToolCallID        string         `json:"toolCallId,omitempty"`
+	ToolName          string         `json:"toolName,omitempty"`
+	AlternateToolName string         `json:"tool_name,omitempty"`
+	Args              jsontext.Value `json:"args,omitempty"`
+	Parameters        jsontext.Value `json:"parameters,omitempty"`
+	RawInput          jsontext.Value `json:"rawInput,omitempty"`
+	RawOutput         jsontext.Value `json:"rawOutput,omitempty"`
+	Title             string         `json:"title,omitempty"`
+	Kind              string         `json:"kind,omitempty"`
 }
 
 func (d *grokDecoder) Decode(line string) []Event {
@@ -229,7 +230,7 @@ func grokFailureDetail(streamEvent grokStreamEvent) string {
 	return extractFailureFromJSON(streamEvent.Content)
 }
 
-func extractFailureFromJSON(raw json.RawMessage) string {
+func extractFailureFromJSON(raw jsontext.Value) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
@@ -237,7 +238,7 @@ func extractFailureFromJSON(raw json.RawMessage) string {
 		return strings.TrimSpace(sanitizeControl(value))
 	}
 
-	var object map[string]json.RawMessage
+	var object map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &object); err == nil {
 		for _, key := range []string{"error", "message", "stderr", "detail"} {
 			if value := jsonString(object[key]); value != "" {
@@ -246,7 +247,7 @@ func extractFailureFromJSON(raw json.RawMessage) string {
 		}
 	}
 
-	var blocks []json.RawMessage
+	var blocks []jsontext.Value
 	if err := json.Unmarshal(raw, &blocks); err == nil {
 		for _, rawBlock := range blocks {
 			if value := jsonStringField(rawBlock); value != "" {

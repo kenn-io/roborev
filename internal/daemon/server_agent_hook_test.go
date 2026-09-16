@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -240,7 +241,7 @@ func TestAgentHookEventAcceptsLargeToolResponse(t *testing.T) {
 		Event: agenthook.Input{
 			SessionID:     "session-1",
 			HookEventName: "Notification",
-			ToolResponse: json.RawMessage(
+			ToolResponse: jsontext.Value(
 				`{"output":"` + strings.Repeat("x", 1<<20) + `"}`,
 			),
 		},

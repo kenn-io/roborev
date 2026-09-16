@@ -2,7 +2,8 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"uuid"
 
@@ -54,7 +55,7 @@ func (p *PgPool) UnresolvedLegacyReviews(ctx context.Context) ([]PostgresLegacyR
 	return records, nil
 }
 
-func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json.RawMessage) error {
+func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw jsontext.Value) error {
 	doc, err := structuredreview.Decode(raw)
 	if err != nil {
 		return err
@@ -64,7 +65,7 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var record json.RawMessage
+	var record jsontext.Value
 	var jobUUID uuid.UUID
 	var jobType, threshold string
 	err = tx.QueryRow(ctx, `SELECT l.record, j.uuid, j.job_type, COALESCE(j.min_severity, '')
@@ -130,7 +131,7 @@ func postgresLegacySources(ctx context.Context, q pgLegacyQuerier, jobUUID uuid.
 		if err := rows.Scan(&agent, &reviewType, &raw, &markdown); err != nil {
 			return nil, err
 		}
-		if source, ok := legacySource(agent, reviewType, json.RawMessage(raw), markdown); ok {
+		if source, ok := legacySource(agent, reviewType, jsontext.Value(raw), markdown); ok {
 			source.Number = len(sources) + 1
 			sources = append(sources, source)
 		}

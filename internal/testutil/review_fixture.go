@@ -1,7 +1,8 @@
 package testutil
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/structuredreview"
@@ -38,9 +39,9 @@ func CompleteReviewFixture(db *storage.DB, id int64, agent, prompt, summary stri
 }
 
 // ReviewFixtureJSON describes a synthetic fixture, not a legacy conversion.
-func ReviewFixtureJSON(summary string) json.RawMessage {
-	if json.Valid([]byte(summary)) {
-		return json.RawMessage(summary)
+func ReviewFixtureJSON(summary string) jsontext.Value {
+	if jsontext.Value([]byte(summary)).IsValid() {
+		return jsontext.Value(summary)
 	}
 	doc := structuredreview.Document{
 		SchemaVersion: structuredreview.SchemaVersion, Summary: summary,

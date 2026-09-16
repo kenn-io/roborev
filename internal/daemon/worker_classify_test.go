@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"os"
 	"path/filepath"
@@ -258,14 +258,14 @@ func TestProcessClassifyJobUsesStoredAgent(t *testing.T) {
 	var configuredCalls, selectedCalls int
 	configured := &fakeSchemaAgent{
 		name: "configured-classifier",
-		classifyFn: func(context.Context) (json.RawMessage, error) {
+		classifyFn: func(context.Context) (jsontext.Value, error) {
 			configuredCalls++
 			return []byte(`{"design_review": false, "reason": "configured"}`), nil
 		},
 	}
 	selected := &fakeSchemaAgent{
 		name: "selected-classifier",
-		classifyFn: func(context.Context) (json.RawMessage, error) {
+		classifyFn: func(context.Context) (jsontext.Value, error) {
 			selectedCalls++
 			return []byte(`{"design_review": false, "reason": "selected"}`), nil
 		},

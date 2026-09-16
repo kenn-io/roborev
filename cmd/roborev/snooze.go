@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/daemon"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const defaultAgentHookSnooze = 8 * time.Hour
@@ -77,15 +77,7 @@ func runSnooze(cmd *cobra.Command, enabled bool, duration time.Duration) error {
 		return fmt.Errorf("encode agent hook snooze: %w", err)
 	}
 	ep := getDaemonEndpoint()
-	httpReq, err := http.NewRequestWithContext(
-		cmd.Context(), http.MethodPost,
-		ep.BaseURL()+"/api/agent-hook/snooze", bytes.NewReader(body),
-	)
-	if err != nil {
-		return fmt.Errorf("create agent hook snooze request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := ep.HTTPClient(5 * time.Second).Do(httpReq)
+	resp, err := ep.APIClient(5*time.Second).SetAgentHookSnoozeRaw(cmd.Context(), nil, roborevclient.WithBody(body))
 	if err != nil {
 		return fmt.Errorf("update agent hook snooze: %w", err)
 	}

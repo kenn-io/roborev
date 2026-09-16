@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"math"
@@ -476,7 +476,7 @@ func canonicalizeExperimentDefinition(definition ExperimentDefinition) ([]byte, 
 	slices.Sort(workflows)
 	encoded, err := json.Marshal(canonicalExperimentDefinition{
 		Ratio: *definition.Ratio, Workflows: workflows, Config: definition.Config,
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		return nil, "", err
 	}
@@ -722,7 +722,7 @@ func ExperimentOverridesCIFlatMatrix(repoCfg *RepoConfig) bool {
 // FingerprintExperimentConfig returns the canonical hash stored with an
 // assignment after the caller has resolved the complete review-unit plan.
 func FingerprintExperimentConfig(value any) (string, error) {
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}
@@ -733,7 +733,7 @@ func FingerprintExperimentConfig(value any) (string, error) {
 // review plan. The JSON lets a later rerun restore the attributed plan after
 // execution-time failover mutates the job row.
 func EncodeExperimentConfig(value any) (string, string, error) {
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return "", "", err
 	}

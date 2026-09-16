@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func runCmd() *cobra.Command {
@@ -197,7 +197,7 @@ func reportRunSkipped(
 	cmd *cobra.Command, opts runOptions, skipped daemon.EnqueueSkippedResponse,
 ) error {
 	if opts.jsonOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(skipped)
+		return json.MarshalWrite(cmd.OutOrStdout(), skipped)
 	}
 	if !opts.quiet {
 		cmd.Println(skipped.Reason)
@@ -254,8 +254,7 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 	})
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(10*time.Second).
-		Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -286,7 +285,7 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(receipt)
+		return json.MarshalWrite(cmd.OutOrStdout(), receipt)
 	}
 
 	if !opts.quiet {

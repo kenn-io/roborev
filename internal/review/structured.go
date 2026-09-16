@@ -1,7 +1,7 @@
 package review
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 
 	"go.kenn.io/roborev/internal/structuredreview"
@@ -13,7 +13,7 @@ type StructuredReview = structuredreview.Document
 
 type StructuredFinding = structuredreview.Finding
 
-func DecodeStructuredReview(raw json.RawMessage) (StructuredReview, error) {
+func DecodeStructuredReview(raw jsontext.Value) (StructuredReview, error) {
 	return structuredreview.Decode(raw)
 }
 

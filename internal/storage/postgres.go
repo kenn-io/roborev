@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"log"
@@ -1178,7 +1178,7 @@ type PulledReview struct {
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
-	StructuredOutput   json.RawMessage
+	StructuredOutput   jsontext.Value
 	ReviewedFileCount  *int
 	ExcludedFileCount  *int
 	UpdatedByMachineID uuid.UUID
@@ -1243,7 +1243,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		}
 
 		lastUpdatedAt = r.UpdatedAt
-		r.StructuredOutput = append(json.RawMessage(nil), structuredOutput...)
+		r.StructuredOutput = append(jsontext.Value(nil), structuredOutput...)
 		r.ReviewedFileCount = reviewedFileCount
 		r.ExcludedFileCount = excludedFileCount
 		reviews = append(reviews, r)
@@ -1338,7 +1338,7 @@ func nullString(s string) any {
 	return s
 }
 
-func nullJSON(raw json.RawMessage) any {
+func nullJSON(raw jsontext.Value) any {
 	if len(raw) == 0 {
 		return nil
 	}

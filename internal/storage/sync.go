@@ -2,7 +2,7 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -641,7 +641,7 @@ type SyncableReview struct {
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
-	StructuredOutput   json.RawMessage
+	StructuredOutput   jsontext.Value
 	ReviewedFileCount  *int
 	ExcludedFileCount  *int
 	UpdatedByMachineID uuid.UUID
@@ -698,7 +698,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 			r.VerdictBool = new(verdictBool.Bool)
 		}
 		if structuredOutput.Valid {
-			r.StructuredOutput = json.RawMessage(structuredOutput.String)
+			r.StructuredOutput = jsontext.Value(structuredOutput.String)
 		}
 		if reviewedFileCount.Valid {
 			r.ReviewedFileCount = new(int)

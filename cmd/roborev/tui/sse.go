@@ -2,7 +2,8 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"time"
@@ -70,15 +71,7 @@ func sseReadLoop(
 		}
 	}()
 
-	client := endpoint.HTTPClient(0)
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet,
-		endpoint.BaseURL()+"/api/stream/events", nil,
-	)
-	if err != nil {
-		return false, err
-	}
-	resp, err := client.Do(req)
+	resp, err := endpoint.APIClient(0).StreamEventsRaw(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -88,10 +81,10 @@ func sseReadLoop(
 		return false, fmt.Errorf("stream events: %s", resp.Status)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	decoder := jsontext.NewDecoder(resp.Body)
 	for {
 		var event daemon.Event
-		if err := decoder.Decode(&event); err != nil {
+		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			select {
 			case <-stopCh:
 				return connected, nil

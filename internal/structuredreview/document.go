@@ -2,7 +2,9 @@ package structuredreview
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -31,7 +33,7 @@ var Schema = schema(false)
 // combined finding keeps its provenance.
 var SourcedSchema = schema(true)
 
-func schema(withSources bool) json.RawMessage {
+func schema(withSources bool) jsontext.Value {
 	required := `["severity", "problem", "fix", "location"]`
 	sources := ""
 	if withSources {
@@ -43,7 +45,7 @@ func schema(withSources bool) json.RawMessage {
             "items": {"type": "integer", "minimum": 1}
           }`
 	}
-	return json.RawMessage(fmt.Sprintf(`{
+	return jsontext.Value(fmt.Sprintf(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "summary", "verdict", "findings"],
@@ -119,18 +121,17 @@ type documentWire struct {
 }
 
 type findingWire struct {
-	Severity string          `json:"severity"`
-	Problem  string          `json:"problem"`
-	Fix      string          `json:"fix"`
-	Location json.RawMessage `json:"location"`
-	Sources  []int           `json:"sources"`
+	Severity string         `json:"severity"`
+	Problem  string         `json:"problem"`
+	Fix      string         `json:"fix"`
+	Location jsontext.Value `json:"location"`
+	Sources  []int          `json:"sources"`
 }
 
-func Decode(raw json.RawMessage) (Document, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
+func Decode(raw jsontext.Value) (Document, error) {
+	dec := jsontext.NewDecoder(bytes.NewReader(raw))
 	var wire documentWire
-	if err := dec.Decode(&wire); err != nil {
+	if err := json.UnmarshalDecode(dec, &wire, json.RejectUnknownMembers(true)); err != nil {
 		return Document{}, fmt.Errorf("decode structured review: %w", err)
 	}
 	if err := ensureEOF(dec); err != nil {
@@ -239,10 +240,10 @@ func (r Document) RequireSources(reviewCount int) error {
 	return nil
 }
 
-func ensureEOF(dec *json.Decoder) error {
+func ensureEOF(dec *jsontext.Decoder) error {
 	var extra any
-	err := dec.Decode(&extra)
-	if err == io.EOF {
+	err := json.UnmarshalDecode(dec, &extra, json.RejectUnknownMembers(true))
+	if errors.Is(err, io.EOF) {
 		return nil
 	}
 	if err != nil {

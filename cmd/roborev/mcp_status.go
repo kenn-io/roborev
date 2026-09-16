@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"time"
@@ -98,7 +99,7 @@ func discoverMCPListeners(timeout time.Duration) ([]mcpListenerStatus, error) {
 
 func writeMCPStatus(out io.Writer, listeners []mcpListenerStatus, asJSON bool) error {
 	if asJSON {
-		return json.NewEncoder(out).Encode(listeners)
+		return json.MarshalEncode(jsontext.NewEncoder(out), listeners)
 	}
 	if len(listeners) == 0 {
 		_, err := fmt.Fprintln(out, "No HTTP MCP listeners are running.")

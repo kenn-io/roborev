@@ -8,6 +8,8 @@ import (
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
+
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // MaxUnixPathLen is the platform socket path length limit.
@@ -93,4 +95,13 @@ func (e DaemonEndpoint) ConfigAddr() string {
 // Port returns the TCP port, or 0 for Unix sockets.
 func (e DaemonEndpoint) Port() int {
 	return e.kitEndpoint().Port()
+}
+
+// APIClient returns the generated API client using this endpoint's transport.
+func (e DaemonEndpoint) APIClient(timeout time.Duration) *roborevclient.Client {
+	api, err := roborevclient.NewWithHTTPClient(e.BaseURL(), e.HTTPClient(timeout))
+	if err != nil {
+		panic(fmt.Sprintf("create daemon API client: %v", err))
+	}
+	return api
 }

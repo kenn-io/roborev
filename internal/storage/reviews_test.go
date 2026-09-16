@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"testing"
 	"uuid"
 
@@ -572,7 +572,7 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
 			Output: "## Summary\n\nHigh: no actionable findings.\n\n" +
 				"No findings at or above the configured severity threshold.\n",
 			Verdict: VerdictPass,
-			StructuredOutput: json.RawMessage(`{
+			StructuredOutput: jsontext.Value(`{
 	  "schema_version":1,
 	  "summary":"High: no actionable findings.",
   "findings":[

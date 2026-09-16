@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // lifecycleOut receives daemon start/restart notices. Commands whose stdout is
@@ -215,7 +215,7 @@ func registerRepo(repoPath string) error {
 		return err
 	}
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(5*time.Second).Post(ep.BaseURL()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	resp, err := ep.APIClient(5*time.Second).RegisterRepoRaw(context.Background(), nil, roborevclient.WithBody(body))
 	if err != nil {
 		return err // connection error (*url.Error wrapping net.Error)
 	}

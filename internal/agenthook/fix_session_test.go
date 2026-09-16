@@ -2,7 +2,7 @@ package agenthook
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
@@ -144,14 +144,14 @@ func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 		{
 			Agent: "claude", Event: Input{
 				SessionID: "session-a", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash",
-				ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+				ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 			},
 			CommitThreshold: 1, Instruction: "Resolve reviews.",
 		},
 		{
 			Agent: "codex", Event: Input{
 				SessionID: "session-b", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash",
-				ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+				ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 			},
 			CommitThreshold: 1, Instruction: "Resolve reviews.",
 		},
@@ -293,7 +293,7 @@ func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
 	post, err := store.Record(Request{
 		Agent: "hermes", Event: Input{
 			SessionID: "session-a", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash",
-			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 		},
 		CommitThreshold: 1, Instruction: "Resolve reviews.", DeferPostToolReminder: true,
 	})

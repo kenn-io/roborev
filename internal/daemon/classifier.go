@@ -2,7 +2,8 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -19,7 +20,7 @@ import (
 const classifyReasonMaxLen = 200
 
 // classifySchema is embedded in every classify call.
-var classifySchema = json.RawMessage(`{
+var classifySchema = jsontext.Value(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["design_review", "reason"],
@@ -92,15 +93,14 @@ func (c *classifierAdapter) Decide(ctx context.Context, in autotype.Input) (bool
 // decodeClassifyResult parses exactly one JSON object with DisallowUnknownFields
 // and requires both design_review and reason. Defense in depth after the agent
 // returns schema-constrained output; no generic schema-validation dependency.
-func decodeClassifyResult(raw json.RawMessage) (classifyResult, error) {
+func decodeClassifyResult(raw jsontext.Value) (classifyResult, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
 		return classifyResult{}, fmt.Errorf("invalid classifier output: empty")
 	}
-	dec := json.NewDecoder(strings.NewReader(trimmed))
-	dec.DisallowUnknownFields()
+	dec := jsontext.NewDecoder(strings.NewReader(trimmed))
 	var out classifyResult
-	if err := dec.Decode(&out); err != nil {
+	if err := json.UnmarshalDecode(dec, &out, json.RejectUnknownMembers(true)); err != nil {
 		return classifyResult{}, fmt.Errorf("invalid classifier output: %w (%q)", err, string(raw))
 	}
 	// Reject trailing documents or non-whitespace junk after the first value.

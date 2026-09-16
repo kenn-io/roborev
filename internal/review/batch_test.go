@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -65,7 +66,7 @@ func (m *mockAgent) CommandLine() string {
 
 type structuredBatchAgent struct {
 	mockAgent
-	result json.RawMessage
+	result jsontext.Value
 }
 
 func (a *structuredBatchAgent) WithReasoning(
@@ -87,9 +88,9 @@ func (a *structuredBatchAgent) WithModel(model string) agent.Agent {
 func (a *structuredBatchAgent) ReviewWithSchema(
 	_ context.Context,
 	_, _, _ string,
-	_ json.RawMessage,
+	_ jsontext.Value,
 	_ io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	return a.result, a.err
 }
 
@@ -393,7 +394,7 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	}}
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
-		result: json.RawMessage(`{
+		result: jsontext.Value(`{
 	  "schema_version":2,
 	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",

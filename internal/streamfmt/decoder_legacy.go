@@ -1,7 +1,8 @@
 package streamfmt
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 )
 
@@ -89,7 +90,7 @@ func legacyProtocolForAgent(agent string) legacyProtocol {
 }
 
 func detectLegacyProtocol(line string) legacyProtocol {
-	var probe map[string]json.RawMessage
+	var probe map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(line), &probe); err != nil {
 		return legacyLiteral
 	}

@@ -384,7 +384,7 @@ type DaemonStatus struct {
 	UpdateDrainExpiresAt string            `json:"update_drain_expires_at,omitempty"`
 	Network              string            `json:"network,omitempty"`
 	Address              string            `json:"address,omitempty"`
-	Port                 int               `json:"port,omitempty"`
+	Port                 int               `json:"port,omitempty,omitzero"`
 	MachineID            *uuid.UUID        `json:"machine_id,omitempty" format:"uuid"` // Local machine ID for remote job detection
 	ConfigReloadedAt     string            `json:"config_reloaded_at,omitempty"`       // Last config reload timestamp (RFC3339Nano)
 	ConfigReloadCounter  uint64            `json:"config_reload_counter,omitempty"`    // Monotonic reload counter (for sub-second detection)

@@ -3,7 +3,8 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -1134,7 +1135,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 type ReviewCompletion struct {
 	Output           string
 	Verdict          Verdict
-	StructuredOutput json.RawMessage
+	StructuredOutput jsontext.Value
 	MinSeverity      string
 	FileCoverage     *ReviewFileCoverage
 }
@@ -1200,7 +1201,7 @@ func (db *DB) completeJob(
 	finalOutput := completion.Output
 	if requiresReviewDocument(jobType) {
 		if len(completion.StructuredOutput) == 0 {
-			completion.StructuredOutput = json.RawMessage(completion.Output)
+			completion.StructuredOutput = jsontext.Value(completion.Output)
 		}
 		doc, err := structuredreview.Decode(completion.StructuredOutput)
 		if err != nil {
@@ -1274,7 +1275,7 @@ func (db *DB) completeJob(
 	return nil
 }
 
-func validateStructuredOutputForWrite(raw json.RawMessage) error {
+func validateStructuredOutputForWrite(raw jsontext.Value) error {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -2719,7 +2720,7 @@ func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult
 			return nil, fmt.Errorf("scan panel member review: %w", err)
 		}
 		if structuredOutput.Valid {
-			r.StructuredOutput = json.RawMessage(structuredOutput.String)
+			r.StructuredOutput = jsontext.Value(structuredOutput.String)
 			doc, err := structuredreview.Decode(r.StructuredOutput)
 			if err != nil {
 				return nil, err

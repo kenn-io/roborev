@@ -2,13 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 var errReviewNotFound = errors.New("review not found")
@@ -23,12 +25,7 @@ func newDaemonReviewAPI(baseURL string, client *http.Client) daemonReviewAPI {
 }
 
 func (a daemonReviewAPI) getJob(ctx context.Context, jobID int64) (*storage.ReviewJob, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/jobs?id=%d", a.baseURL, jobID), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := a.client.Do(req)
+	resp, err := newDaemonAPI(a.baseURL, a.client).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 	if err != nil {
 		return nil, fmt.Errorf("fetch job: %w", err)
 	}
@@ -42,7 +39,7 @@ func (a daemonReviewAPI) getJob(ctx context.Context, jobID int64) (*storage.Revi
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("parse job: %w", err)
 	}
 	if len(result.Jobs) == 0 {
@@ -52,12 +49,7 @@ func (a daemonReviewAPI) getJob(ctx context.Context, jobID int64) (*storage.Revi
 }
 
 func (a daemonReviewAPI) getReview(ctx context.Context, jobID int64, label string) (*storage.Review, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/review?job_id=%d", a.baseURL, jobID), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create %s request: %w", label, err)
-	}
-
-	resp, err := a.client.Do(req)
+	resp, err := newDaemonAPI(a.baseURL, a.client).GetReviewRaw(ctx, &generated.GetReviewRequestOptions{Query: &generated.GetReviewQuery{JobID: &jobID}})
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", label, err)
 	}
@@ -72,8 +64,16 @@ func (a daemonReviewAPI) getReview(ctx context.Context, jobID int64, label strin
 	}
 
 	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", label, err)
 	}
 	return &review, nil
+}
+
+func newDaemonAPI(baseURL string, httpClient *http.Client) *roborevclient.Client {
+	api, err := roborevclient.NewWithHTTPClient(baseURL, httpClient)
+	if err != nil {
+		panic(fmt.Sprintf("create daemon API client: %v", err))
+	}
+	return api
 }

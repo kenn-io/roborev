@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"log"
 	"maps"
 	"os"

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // Maximum time to wait for an analysis job to complete
@@ -362,8 +363,8 @@ func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemon
 			AnalysisType: analysisType.Name,
 			Files:        relPaths,
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		return enc.Encode(result)
+		enc := jsontext.NewEncoder(cmd.OutOrStdout())
+		return json.MarshalEncode(enc, result)
 	}
 
 	if !opts.quiet {
@@ -439,8 +440,8 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 			AnalysisType: analysisType.Name,
 			Files:        fileNames,
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		return enc.Encode(result)
+		enc := jsontext.NewEncoder(cmd.OutOrStdout())
+		return json.MarshalEncode(enc, result)
 	}
 
 	if !opts.quiet {
@@ -538,7 +539,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
-	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -883,7 +884,7 @@ func markJobClosed(ctx context.Context, serverAddr string, jobID int64) error {
 	})
 
 	_, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (struct{}, error) {
-		resp, err := doFixDaemonRequest(ctx, http.MethodPost, addr+"/api/review/close", reqBody)
+		resp, err := newDaemonAPI(addr, getDaemonHTTPClient(30*time.Second)).CloseReviewRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err != nil {
 			return struct{}{}, err
 		}

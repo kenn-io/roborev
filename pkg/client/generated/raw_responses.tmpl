@@ -1,0 +1,98 @@
+{{/*
+Copyright 2026 DoorDash, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/}}
+
+{{- /*
+This template emits only the envelope type declarations (the wrapper struct
+and per-status typed header structs). Output is appended to responses.go so
+the wrapper sits next to the body type aliases it references. No header /
+imports / package decl - those come from the surrounding file.
+*/ -}}
+
+{{ define "client-with-response-types" }}
+{{- $args := . -}}
+{{- $operations := $args.operations -}}
+
+{{- range $operations }}{{ $op := . }}
+{{- range $rcd := $op.Response.Successes }}
+{{- if gt (len $rcd.Headers) 0 }}
+type {{ index $op.HeaderTypeNames $rcd.StatusCode }} struct {
+    {{- range $hName, $hSchema := $rcd.Headers }}
+    {{ genTypeName $hName }} string `header:"{{ escapeGoString $hName }}"`
+    {{- end }}
+}
+{{ end -}}
+{{- end -}}
+{{- range $rcd := $op.Response.Errors }}
+{{- if gt (len $rcd.Headers) 0 }}
+type {{ index $op.HeaderTypeNames $rcd.StatusCode }} struct {
+    {{- range $hName, $hSchema := $rcd.Headers }}
+    {{ genTypeName $hName }} string `header:"{{ escapeGoString $hName }}"`
+    {{- end }}
+}
+{{ end -}}
+{{- end }}
+
+type {{$op.WithResponseTypeName}} struct {
+    HTTPResponse *http.Response
+    Body         []byte
+    StatusCode   int
+    {{- range $rcd := $op.Response.Successes }}
+        {{- if and (ne $rcd.ResponseName "struct{}") (not $rcd.IsRaw) (ne $rcd.NameTag "") }}
+    {{$rcd.NameTag}}{{$rcd.StatusCode}} *{{$rcd.ResponseName}}
+        {{- end }}
+        {{- if gt (len $rcd.Headers) 0 }}
+    Headers{{$rcd.StatusCode}} *{{ index $op.HeaderTypeNames $rcd.StatusCode }}
+        {{- end }}
+    {{- end }}
+    {{- range $rcd := $op.Response.Errors }}
+        {{- if and (ne $rcd.ResponseName "struct{}") (not $rcd.IsRaw) (ne $rcd.NameTag "") }}
+    {{$rcd.NameTag}}{{$rcd.StatusCode}} *{{$rcd.ResponseName}}
+        {{- end }}
+        {{- if gt (len $rcd.Headers) 0 }}
+    Headers{{$rcd.StatusCode}} *{{ index $op.HeaderTypeNames $rcd.StatusCode }}
+        {{- end }}
+    {{- end }}
+}
+
+{{ end }}{{- /* end range operations */ -}}
+{{ end -}}
+
+{{ template "client-with-response-types" dict "operations" .Operations }}
+
+// RawClient uses generated request options without buffering response bodies.
+// Callers own and must close each response body.
+type RawClient struct {
+    apiClient runtime.APIClient
+    doer runtime.HttpRequestDoer
+}
+
+func NewRawClient(apiClient runtime.APIClient, doer runtime.HttpRequestDoer) *RawClient {
+    return &RawClient{apiClient: apiClient, doer: doer}
+}
+
+{{range .Operations}}{{$op := .}}
+func (c *RawClient) {{$op.ID}}Raw(ctx context.Context{{ if $op.HasRequestOptions }}, options *{{$op.ID | ucFirst}}RequestOptions{{end}}, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+    {{if $op.HasRequestOptions}}if options == nil { options = &{{$op.ID | ucFirst}}RequestOptions{} }{{end}}
+    req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+        RequestURL: c.apiClient.GetBaseURL() + "{{escapeGoString $op.Path}}",
+        Method: "{{$op.Method}}",
+        {{if $op.HasRequestOptions}}Options: options,{{end}}
+        {{if $op.Body}}ContentType: "{{$op.Body.ContentType}}",{{end}}
+    }, reqEditors...)
+    if err != nil { return nil, fmt.Errorf("error creating request: %w", err) }
+    return c.doer.Do(ctx, req)
+}
+{{end}}

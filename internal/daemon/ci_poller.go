@@ -3,7 +3,8 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -3488,7 +3489,7 @@ func toReviewResult(
 		ReviewType:       br.ReviewType,
 		Output:           br.Output,
 		Verdict:          verdict,
-		StructuredOutput: append(json.RawMessage(nil), br.StructuredOutput...),
+		StructuredOutput: append(jsontext.Value(nil), br.StructuredOutput...),
 		Status:           br.Status,
 		Error:            br.Error,
 		Skipped:          br.Status == string(storage.JobStatusSkipped),

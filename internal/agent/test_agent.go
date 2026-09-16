@@ -2,7 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -144,7 +145,7 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	shortSHA := gitrepo.ShortSHA(commitSHA)
 	sessionLine := fmt.Sprintf(`{"type":"session","id":%q}`+"\n", sessionID)
 	body := fmt.Sprintf("%s\n\nCommit: %s\nRepo: %s", a.Output, shortSHA, repoPath)
-	if json.Valid([]byte(a.Output)) {
+	if jsontext.Value([]byte(a.Output)).IsValid() {
 		body = a.Output
 	} else if strings.Contains(prompt, `"schema_version":2`) {
 		raw, err := json.Marshal(map[string]any{"schema_version": 2, "summary": a.Output, "verdict": "pass", "findings": []any{}})

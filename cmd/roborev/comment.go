@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func commentCmd() *cobra.Command {
@@ -137,8 +139,7 @@ Examples:
 			reqBody, _ := json.Marshal(reqData)
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
-			resp, err := ep.HTTPClient(5*time.Second).Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+			resp, err := ep.APIClient(5*time.Second).AddCommentRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -195,8 +196,7 @@ func closeCmd() *cobra.Command {
 			})
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
-			resp, err := ep.HTTPClient(5*time.Second).Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+			resp, err := ep.APIClient(5*time.Second).CloseReviewRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}

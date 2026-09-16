@@ -3,7 +3,7 @@
 package review
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -30,7 +30,7 @@ type ReviewResult struct {
 	Structured *StructuredReview
 	// StructuredOutput is the unfiltered JSON returned by the agent. Queued
 	// reviews persist it so a later panel threshold can use the same findings.
-	StructuredOutput json.RawMessage
+	StructuredOutput jsontext.Value
 	// MinSeverity is the threshold already applied to Verdict (and, for
 	// structured reviews, to the rendered Output). Findings are never dropped,
 	// so a later consumer can re-derive the verdict under its own threshold.

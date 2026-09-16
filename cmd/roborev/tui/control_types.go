@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -10,8 +10,8 @@ import (
 
 // controlRequest is the JSON envelope for incoming control commands.
 type controlRequest struct {
-	Command string          `json:"command"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	Command string         `json:"command"`
+	Params  jsontext.Value `json:"params,omitempty"`
 }
 
 // controlResponse is the JSON envelope for outgoing control responses.

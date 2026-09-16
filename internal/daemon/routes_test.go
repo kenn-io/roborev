@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -234,7 +235,7 @@ func TestHumaGetStatusUsesEmptyActiveSnoozeArray(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var body struct {
-		ActiveSnoozes json.RawMessage `json:"active_snoozes"`
+		ActiveSnoozes jsontext.Value `json:"active_snoozes"`
 	}
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	assert.JSONEq(t, `[]`, string(body.ActiveSnoozes))

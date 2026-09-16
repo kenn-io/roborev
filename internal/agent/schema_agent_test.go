@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,7 +20,7 @@ type fakeSchemaAgent struct {
 	*TestAgent
 	name    string
 	command string
-	result  json.RawMessage
+	result  jsontext.Value
 	err     error
 }
 
@@ -49,8 +49,8 @@ func (f *fakeSchemaAgent) WithModel(model string) Agent {
 
 func (f *fakeSchemaAgent) ClassifyWithSchema(
 	ctx context.Context, repoPath, gitRef, prompt string,
-	schema json.RawMessage, out io.Writer,
-) (json.RawMessage, error) {
+	schema jsontext.Value, out io.Writer,
+) (jsontext.Value, error) {
 	return f.result, f.err
 }
 

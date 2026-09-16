@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"sync"
 	"testing"
 	"time"
@@ -134,13 +134,13 @@ func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
 func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 	tests := []struct {
 		name string
-		raw  json.RawMessage
+		raw  jsontext.Value
 	}{
-		{name: "malformed JSON", raw: json.RawMessage(`{"schema_version":1`)},
-		{name: "missing version", raw: json.RawMessage(`{"summary":"Done.","findings":[]}`)},
-		{name: "unsupported version", raw: json.RawMessage(`{"schema_version":2,"summary":"Done.","findings":[]}`)},
-		{name: "missing findings", raw: json.RawMessage(`{"schema_version":1,"summary":"Done."}`)},
-		{name: "missing required location", raw: json.RawMessage(`{"schema_version":1,"summary":"Done.","findings":[{"severity":"low","problem":"Problem.","fix":"Fix."}]}`)},
+		{name: "malformed JSON", raw: jsontext.Value(`{"schema_version":1`)},
+		{name: "missing version", raw: jsontext.Value(`{"summary":"Done.","findings":[]}`)},
+		{name: "unsupported version", raw: jsontext.Value(`{"schema_version":2,"summary":"Done.","findings":[]}`)},
+		{name: "missing findings", raw: jsontext.Value(`{"schema_version":1,"summary":"Done."}`)},
+		{name: "missing required location", raw: jsontext.Value(`{"schema_version":1,"summary":"Done.","findings":[{"severity":"low","problem":"Problem.","fix":"Fix."}]}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

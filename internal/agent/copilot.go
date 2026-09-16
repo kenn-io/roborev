@@ -3,7 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -308,10 +309,10 @@ func (a *CopilotAgent) commandArgs(
 type copilotEvent struct {
 	Type string `json:"type"`
 	Data struct {
-		MessageID    string            `json:"messageId,omitempty"`
-		Content      string            `json:"content,omitempty"`
-		ToolCalls    []json.RawMessage `json:"toolCalls,omitempty"`
-		ToolRequests []json.RawMessage `json:"toolRequests,omitempty"`
+		MessageID    string           `json:"messageId,omitempty"`
+		Content      string           `json:"content,omitempty"`
+		ToolCalls    []jsontext.Value `json:"toolCalls,omitempty"`
+		ToolRequests []jsontext.Value `json:"toolRequests,omitempty"`
 	} `json:"data,omitempty"`
 }
 

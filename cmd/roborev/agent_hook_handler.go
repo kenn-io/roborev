@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 
@@ -32,7 +33,7 @@ func newRoborevAgentHookHandler(
 func (h roborevAgentHookHandler) request(
 	common kitagenthook.CommonInput,
 	toolName string,
-	toolInput json.RawMessage,
+	toolInput jsontext.Value,
 ) (agenthook.Request, error) {
 	input := agenthook.Input{
 		SessionID:      common.SessionID,

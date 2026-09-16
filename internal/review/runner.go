@@ -2,7 +2,7 @@ package review
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 
@@ -12,7 +12,7 @@ import (
 
 // invokeReview uses the same read-capable agent entry point for ordinary and
 // synthesis reviews. The caller supplies the prompt and output schema.
-func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt string, schema json.RawMessage, out io.Writer) (string, error) {
+func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer) (string, error) {
 	if structured, ok := a.(agent.StructuredReviewAgent); ok {
 		raw, err := structured.ReviewWithSchema(ctx, repoPath, gitRef, prompt, schema, out)
 		return string(raw), err
@@ -37,12 +37,12 @@ func RunAgentReview(
 	if err != nil {
 		return ReviewResult{}, err
 	}
-	if !json.Valid([]byte(raw)) {
+	if !jsontext.Value([]byte(raw)).IsValid() {
 		if noVerdict := NoVerdict(raw); noVerdict != nil {
 			return ReviewResult{}, noVerdict
 		}
 	}
-	structured, err := DecodeStructuredReview(json.RawMessage(raw))
+	structured, err := DecodeStructuredReview(jsontext.Value(raw))
 	if err != nil {
 		return ReviewResult{}, err
 	}
@@ -57,7 +57,7 @@ func RunAgentReview(
 		Output:           output,
 		Verdict:          storage.VerdictFromPassed(structured.Passed(minSeverity)),
 		Structured:       &structured,
-		StructuredOutput: append(json.RawMessage(nil), raw...),
+		StructuredOutput: append(jsontext.Value(nil), raw...),
 		MinSeverity:      minSeverity,
 	}, nil
 }

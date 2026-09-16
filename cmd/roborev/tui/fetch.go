@@ -2,7 +2,8 @@ package tui
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/update"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -393,13 +395,7 @@ func (m model) checkForUpdate() tea.Cmd {
 
 func (m model) fetchReleaseNotes() tea.Cmd {
 	return func() tea.Msg {
-		req, err := http.NewRequestWithContext(
-			m.apiContext(), http.MethodGet, m.endpoint.BaseURL()+"/api/releases", nil,
-		)
-		if err != nil {
-			return releaseNotesErrMsg{err: err}
-		}
-		resp, err := m.client.Do(req)
+		resp, err := newDaemonAPI(m.endpoint, m.client).ListReleasesRaw(m.apiContext())
 		if err != nil {
 			return releaseNotesErrMsg{err: err}
 		}
@@ -410,7 +406,7 @@ func (m model) fetchReleaseNotes() tea.Cmd {
 			)}
 		}
 		var result daemon.ReleaseNotesResponse
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 2<<20), &result); err != nil {
 			return releaseNotesErrMsg{err: fmt.Errorf("decode release notes: %w", err)}
 		}
 		return releaseNotesMsg{releases: result.Releases, stale: result.Stale}
@@ -1000,12 +996,13 @@ func (m model) fetchReviewForPrompt(jobID int64, promptSeq uint64) tea.Cmd {
 // the msg carries err and the handler leaves the panel uncached so a later
 // expand retries.
 func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
-	baseURL := m.endpoint.BaseURL()
-	client := m.client
+	api := newDaemonAPI(m.endpoint, m.client)
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true&include_findings=true", baseURL,
-			neturl.QueryEscape(runUUID.String())) //nolint:forbidigo // HTTP query parameter boundary.
-		resp, err := client.Get(url)
+		resp, err := api.ListJobsRaw(m.apiContext(), &daemonclient.ListJobsRequestOptions{Query: &daemonclient.ListJobsQuery{
+			PanelRun: new(runUUID.String()), Limit: new(int64(0)),
+			OmitPrompt:      new(daemonclient.ListJobsQueryOmitPromptTrue),
+			IncludeFindings: new(daemonclient.ListJobsQueryIncludeFindingsTrue),
+		}})
 		if err != nil {
 			return panelMembersMsg{runUUID: runUUID, err: err}
 		}
@@ -1016,7 +1013,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			return panelMembersMsg{runUUID: runUUID, err: err}
 		}
 		members := make([]storage.ReviewJob, 0, len(result.Jobs))
@@ -1118,18 +1115,17 @@ type logFetchResult struct {
 }
 
 func fetchLog(jobID int64, state logFetchState) logFetchResult {
-	url := fmt.Sprintf(
-		"%s/api/job/log?job_id=%d&offset=%d",
-		state.baseURL, jobID, state.offset,
-	)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	api, err := roborevclient.NewWithHTTPClient(state.baseURL, state.client)
 	if err != nil {
 		return logFetchResult{err: err}
 	}
+	options := &daemonclient.GetJobLogRequestOptions{Query: &daemonclient.GetJobLogQuery{
+		JobID: new(strconv.FormatInt(jobID, 10)), Offset: new(strconv.FormatInt(state.offset, 10)),
+	}}
 	if state.agent != "" {
-		req.Header.Set("X-Job-Agent", state.agent)
+		options.Header = &daemonclient.GetJobLogHeaders{XJobAgent: &state.agent}
 	}
-	resp, err := state.client.Do(req)
+	resp, err := api.GetJobLogRaw(context.Background(), options)
 	if err != nil {
 		return logFetchResult{err: err}
 	}

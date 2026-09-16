@@ -1,19 +1,19 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"time"
 
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 // Client provides an interface for interacting with the roborev daemon.
@@ -89,8 +89,8 @@ func (c *HTTPClient) SetPollInterval(interval time.Duration) {
 	c.pollInterval = interval
 }
 
-func (c *HTTPClient) getReview(url string) (*storage.Review, error) {
-	resp, err := c.httpClient.Get(url)
+func (c *HTTPClient) getReview(query *generated.GetReviewQuery) (*storage.Review, error) {
+	resp, err := c.apiClient().GetReviewRaw(context.Background(), &generated.GetReviewRequestOptions{Query: query})
 	if err != nil {
 		return nil, err
 	}
@@ -104,18 +104,18 @@ func (c *HTTPClient) getReview(url string) (*storage.Review, error) {
 	}
 
 	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 		return nil, err
 	}
 	return &review, nil
 }
 
 func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
-	return c.getReview(fmt.Sprintf("%s/api/review?sha=%s", c.baseURL, sha))
+	return c.getReview(&generated.GetReviewQuery{Sha: &sha})
 }
 
 func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
-	return c.getReview(fmt.Sprintf("%s/api/review?job_id=%d", c.baseURL, jobID))
+	return c.getReview(&generated.GetReviewQuery{JobID: &jobID})
 }
 
 func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
@@ -124,7 +124,7 @@ func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
 		"closed": true,
 	})
 
-	resp, err := c.httpClient.Post(c.baseURL+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.apiClient().CloseReviewRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 		"comment":   comment,
 	})
 
-	resp, err := c.httpClient.Post(c.baseURL+"/api/comment", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.apiClient().AddCommentRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 		Agent:    agentName,
 	})
 
-	resp, err := c.httpClient.Post(c.baseURL+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.apiClient().EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -178,7 +178,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 	}
 
 	var job storage.ReviewJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &job); err != nil {
 		return 0, err
 	}
 
@@ -186,7 +186,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 }
 
 func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/jobs?id=%d", c.baseURL, jobID))
+	resp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 	if err != nil {
 		return nil, fmt.Errorf("polling job %d: %w", jobID, err)
 	}
@@ -199,7 +199,7 @@ func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
 	}
 	if len(result.Jobs) == 0 {
@@ -254,10 +254,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	}
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
-	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
-		c.baseURL, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
-
-	resp, err := c.httpClient.Get(queryURL)
+	resp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +267,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
 	}
 
@@ -281,8 +278,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	// Fallback: if repo filter yielded no results, try git_ref only.
 	// This handles worktrees where daemon stores the main repo root path
 	// but the caller uses the worktree path.
-	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", c.baseURL, url.QueryEscape(sha))
-	fallbackResp, err := c.httpClient.Get(fallbackURL)
+	fallbackResp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
@@ -295,7 +291,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	var fallbackResult struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(fallbackResp.Body).Decode(&fallbackResult); err != nil {
+	if err := json.UnmarshalRead(fallbackResp.Body, &fallbackResult); err != nil {
 		return nil, fmt.Errorf("fallback query for %s: decode error: %w", sha, err)
 	}
 
@@ -334,10 +330,7 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 	// Use server-side status filtering to find pending jobs.
 	// Query for queued first, then running - this avoids pagination issues.
 	for _, status := range []string{"queued", "running"} {
-		queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&status=%s&limit=1",
-			c.baseURL, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo), status)
-
-		resp, err := c.httpClient.Get(queryURL)
+		resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &gitRef, Repo: []string{normalizedRepo}, Status: &status, Limit: new(int64(1))}})
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +343,7 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
 		}
@@ -365,7 +358,7 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 }
 
 func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/comments?job_id=%d", c.baseURL, jobID))
+	resp, err := c.apiClient().ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +371,7 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -399,21 +392,21 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	// Prefer commit_id (unambiguous), fall back to SHA only when
 	// gitRef looks like a hex commit SHA (not a task label).
 	commitID, gitRef = legacyCommentLookupTarget(commitID, gitRef)
-	var legacyURL string
+	var legacyQuery *generated.ListCommentsQuery
 	if commitID > 0 {
-		legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", c.baseURL, commitID)
+		legacyQuery = &generated.ListCommentsQuery{CommitID: &commitID}
 	} else if gitRef != "" {
-		legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", c.baseURL, gitRef)
+		legacyQuery = &generated.ListCommentsQuery{Sha: &gitRef}
 	}
-	if legacyURL != "" {
-		legacyResp, err := c.httpClient.Get(legacyURL)
+	if legacyQuery != nil {
+		legacyResp, err := c.apiClient().ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: legacyQuery})
 		if err == nil {
 			defer legacyResp.Body.Close()
 			if legacyResp.StatusCode == http.StatusOK {
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				if json.NewDecoder(legacyResp.Body).Decode(&result) == nil {
+				if json.UnmarshalRead(legacyResp.Body, &result) == nil {
 					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}
@@ -448,10 +441,7 @@ func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Post(
-		c.baseURL+"/api/remap", "application/json",
-		bytes.NewReader(reqBody),
-	)
+	resp, err := c.apiClient().RemapJobsRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -463,8 +453,16 @@ func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
 	}
 
 	var result RemapResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *HTTPClient) apiClient() *roborevclient.Client {
+	api, err := roborevclient.NewWithHTTPClient(c.baseURL, c.httpClient)
+	if err != nil {
+		panic(fmt.Sprintf("create daemon API client: %v", err))
+	}
+	return api
 }

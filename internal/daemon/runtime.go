@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -468,11 +468,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/ping", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := ep.HTTPClient(timeout).Do(req)
+	resp, err := ep.APIClient(timeout).PingRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +477,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
 	}
 	var info PingInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &info); err != nil {
 		return nil, fmt.Errorf("decode daemon ping: %w", err)
 	}
 	if !info.OK {
@@ -657,18 +653,12 @@ func requestGracefulDaemonShutdown(
 	ep DaemonEndpoint,
 	confirmedDead func() bool,
 ) bool {
-	client := ep.HTTPClient(0)
+	client := ep.APIClient(0)
 	for {
 		if confirmedDead() {
 			return true
 		}
-		req, err := http.NewRequestWithContext(
-			ctx, http.MethodPost, ep.BaseURL()+"/api/shutdown", nil,
-		)
-		if err != nil {
-			return false
-		}
-		resp, err := client.Do(req)
+		resp, err := client.ShutdownRaw(ctx)
 		if err == nil {
 			accepted := resp.StatusCode >= http.StatusOK &&
 				resp.StatusCode < http.StatusMultipleChoices

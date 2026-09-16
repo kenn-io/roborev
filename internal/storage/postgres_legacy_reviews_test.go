@@ -3,7 +3,7 @@
 package storage
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"testing"
 	"time"
 	"uuid"
@@ -35,7 +35,7 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) {
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, reviewID).Scan(&active))
 	assert.Zero(t, active)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
-	raw := json.RawMessage(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
 		UUID: reviewID, JobUUID: jobID,
 		Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
@@ -68,7 +68,7 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'prompt', 'No issues found.', $3)`, memberReviewID, memberID, defaultTestMachineID)
 			require.NoError(t, err)
 			require.NoError(t, pool.migrateLegacyReviews(ctx))
-			clean := json.RawMessage(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
+			clean := jsontext.Value(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
 			require.NoError(t, pool.ResolveLegacyReview(ctx, memberReviewID, clean))
 			_, err = pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at) SELECT $1, record, migration_error, resolved_at FROM legacy_reviews WHERE uuid = $2`, uuid.New(), memberReviewID)
 			require.NoError(t, err)
@@ -91,8 +91,8 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 	assert.Equal(t, "test (security)", record.Sources[0].Agent)
 	assert.Equal(t, reviewID, record.ID)
 	assert.Equal(t, "Legacy finding", record.Output)
-	raw := json.RawMessage(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
-	require.Error(t, pool.ResolveLegacyReview(ctx, reviewID, json.RawMessage(`invalid`)))
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
+	require.Error(t, pool.ResolveLegacyReview(ctx, reviewID, jsontext.Value(`invalid`)))
 	require.NoError(t, pool.ResolveLegacyReview(ctx, reviewID, raw))
 	pulled, _, err := pool.PullReviews(ctx, defaultTestMachineID, []uuid.UUID{jobID}, "", 10)
 	require.NoError(t, err)

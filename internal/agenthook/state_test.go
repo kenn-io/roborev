@@ -3,6 +3,7 @@ package agenthook
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"os/exec"
@@ -501,7 +502,7 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 				CWD:           repo.Path(),
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
@@ -601,7 +602,7 @@ func TestDeferredReminderAcknowledgesReviewIDsAtDelivery(t *testing.T) {
 	queued, err := store.Record(Request{
 		Event: Input{
 			SessionID: "session-1", CWD: repo.Path(), HookEventName: "PostToolUse",
-			ToolName: "Bash", ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"true"`)},
+			ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"true"`)},
 		},
 		FailedReviewThreshold: 1,
 		Instruction:           "Resolve reviews.",
@@ -644,7 +645,7 @@ func TestRecordToolUseSkipsNonShellToolNames(t *testing.T) {
 				CWD:           repo.Path(),
 				HookEventName: eventName,
 				ToolName:      "Read",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m ignored"`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m ignored"`)},
 			},
 			CommitThreshold: 1,
 		})
@@ -768,7 +769,7 @@ func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 				CWD:           cwd,
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
 			},
 			CommitThreshold: 1,
 			Instruction:     "Run roborev fix.",
@@ -824,7 +825,7 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 				CWD:           repo.Path(),
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
 			},
 			CommitThreshold: 1,
 			Instruction:     "Run roborev fix.",
@@ -900,7 +901,7 @@ func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *test
 				CWD:           cwd,
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
 			},
 			CommitThreshold:       1,
 			FailedReviewThreshold: 2,
@@ -1143,7 +1144,7 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 			CWD:           repo.Path(),
 			HookEventName: "PreToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
 		},
 		CommitThreshold: 1,
 		Instruction:     "Run roborev fix.",
@@ -1321,7 +1322,7 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m test"`)},
 		},
 		CommitThreshold:       1,
 		FailedReviewThreshold: 0,
@@ -1350,7 +1351,7 @@ func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PreToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)},
 		},
 		CommitThreshold: 5,
 		Instruction:     "Run roborev fix.",
@@ -1387,7 +1388,7 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 5,
 		Instruction:     "Run roborev fix.",
@@ -1401,7 +1402,7 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 	// A real commit moves HEAD; the next commit command counts it.
 	repo.CommitFile("feature.go", "package main\n", "second")
 	commit := base
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	_, err = store.Record(commit)
 
 	require.NoError(t, err)
@@ -1425,7 +1426,7 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 10,
 		Instruction:     "Run roborev fix.",
@@ -1435,18 +1436,18 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	require.NoError(t, err)
 	first := repo.CommitFile("feature-a.go", "package main\n", "detached")
 	commitReq := baseReq
-	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m detached"`)}
+	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m detached"`)}
 	_, err = store.Record(commitReq)
 	require.NoError(t, err)
 
 	repo.CheckoutBranchForce("feature/attached")
 	checkoutReq := baseReq
-	checkoutReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
+	checkoutReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkoutReq)
 	require.NoError(t, err)
 
 	second := repo.CommitFile("feature-b.go", "package main\n", "attached")
-	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m attached"`)}
+	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m attached"`)}
 	_, err = store.Record(commitReq)
 	require.NoError(t, err)
 
@@ -1496,7 +1497,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 2,
 		Instruction:     "Run roborev fix.",
@@ -1506,19 +1507,19 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	require.NoError(t, err)
 	repo.CommitFile("feature-a.go", "package main\n", "detached")
 	commitReq := baseReq
-	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m detached"`)}
+	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m detached"`)}
 	resp, err := store.Record(commitReq)
 	require.NoError(t, err)
 	assert.False(resp.Triggered)
 
 	repo.CheckoutBranchForce("feature/attached")
 	checkoutReq := baseReq
-	checkoutReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
+	checkoutReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkoutReq)
 	require.NoError(t, err)
 
 	repo.CommitFile("feature-b.go", "package main\n", "attached")
-	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m attached"`)}
+	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m attached"`)}
 	resp, err = store.Record(commitReq)
 	require.NoError(t, err)
 	assert.False(resp.Triggered)
@@ -1526,7 +1527,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
 	repo.AmendCommit("attached amended", "feature-b.go")
 	failed = true
-	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m attached amended"`)}
+	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m attached amended"`)}
 	resp, err = store.Record(commitReq)
 	require.NoError(t, err)
 
@@ -1559,7 +1560,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 		},
 		CommitThreshold:       1,
 		FailedReviewThreshold: 1,
@@ -1572,20 +1573,20 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 
 	repo.CheckoutBranchForce("feature/attached")
 	checkout := baseReq
-	checkout.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
+	checkout.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkout)
 	require.NoError(t, err)
 
 	repo.CommitFile("feature-b.go", "package main\n", "attached")
 	commit := baseReq
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m attached"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m attached"`)}
 	atCommit, err := store.Record(commit)
 	require.NoError(t, err)
 	assert.False(atCommit.Triggered)
 
 	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
 	repo.AmendCommit("attached amended", "feature-b.go")
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m attached amended"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m attached amended"`)}
 	atAmend, err := store.Record(commit)
 	require.NoError(t, err)
 
@@ -1616,7 +1617,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 				CWD:           cwd,
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
@@ -1659,7 +1660,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 				CWD:           repo.Path(),
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
@@ -1719,7 +1720,7 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 			CWD:           outer.Path(),
 			HookEventName: "PreToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": cmd},
+			ToolInput:     map[string]jsontext.Value{"command": cmd},
 		},
 		CommitThreshold: 1,
 		Instruction:     "Run roborev fix.",
@@ -1773,7 +1774,7 @@ func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
 				CWD:           repo.Path(),
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
 			},
 			CommitThreshold: 1,
 			Instruction:     "Run roborev fix.",
@@ -1829,7 +1830,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 1,
 		Instruction:     "Run roborev fix.",
@@ -1843,7 +1844,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	// nothing prompts and the counter stays at the threshold.
 	repo.CommitFile("feature.go", "package main\n", "second")
 	commit := base
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	atCommit, err := store.Record(commit)
 	require.NoError(t, err)
 	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
@@ -1853,7 +1854,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	// already-met threshold must prompt now rather than waiting for a new commit.
 	failed = true
 	later := base
-	later.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
 	atLater, err := store.Record(later)
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "a met commit threshold must prompt once reviews appear")
@@ -1888,7 +1889,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 1,
 		Instruction:     "Run roborev fix.",
@@ -1899,7 +1900,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 
 	repo.CommitFile("feature.go", "package main\n", "second")
 	commit := base
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	atCommit, err := store.Record(commit)
 	require.NoError(t, err)
 	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
@@ -1907,7 +1908,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	repo.WriteFile("feature.go", "package main\nconst feature = true\n")
 	amended := repo.AmendCommit("second amended", "feature.go")
 	amend := base
-	amend.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m second amended"`)}
+	amend.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
 	require.NoError(t, err)
 	assert.False(atAmend.Triggered, "amend still waits for the commit's review")
@@ -1918,7 +1919,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 
 	failed = true
 	later := base
-	later.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
 	atLater, err := store.Record(later)
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "amended deferred commit must prompt once reviews appear")
@@ -1948,7 +1949,7 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
 		},
 		CommitThreshold: 2,
 		Instruction:     "Run roborev fix.",
@@ -1959,19 +1960,19 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 
 	first := repo.CommitFile("first.go", "package main\n", "first")
 	commit := base
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m first"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m first"`)}
 	_, err = store.Record(commit)
 	require.NoError(t, err)
 
 	repo.CommitFile("second.go", "package main\n", "second")
-	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	_, err = store.Record(commit)
 	require.NoError(t, err)
 
 	repo.WriteFile("second.go", "package main\nconst second = true\n")
 	amended := repo.AmendCommit("second amended", "second.go")
 	amend := base
-	amend.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m second amended"`)}
+	amend.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
 	require.NoError(t, err)
 	assert.False(atAmend.Triggered, "amend still waits for reviews")
@@ -1982,7 +1983,7 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 
 	failed = true
 	later := base
-	later.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
 	atLater, err := store.Record(later)
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "both pending commits count once reviews appear")
@@ -2000,7 +2001,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 			SessionID: "session-1",
 			CWD:       repo.Path(),
 			ToolName:  "Bash",
-			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+			ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
 		},
 		CommitThreshold:       1,
 		Instruction:           "Resolve reviews.",
@@ -2286,7 +2287,7 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 		},
 		FailedReviewThreshold: 1,
 		Instruction:           "Resolve reviews.",
@@ -2319,7 +2320,7 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 			CWD:           repo.Path(),
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
 		},
 		FailedReviewThreshold: 2,
 		Instruction:           "Resolve reviews.",
@@ -2366,7 +2367,7 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 			SessionID: "session-1",
 			CWD:       repo.Path(),
 			ToolName:  "Bash",
-			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+			ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
 		},
 		CommitThreshold:       1,
 		Instruction:           "Resolve reviews.",
@@ -2559,10 +2560,10 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 			switch event {
 			case "PreToolUse":
 				input.ToolName = "Bash"
-				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)}
+				input.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m test"`)}
 			case "PostToolUse":
 				input.ToolName = "Bash"
-				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+				input.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
 			}
 			store := &StateStore{
 				reviews: reviews,

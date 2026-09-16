@@ -1,7 +1,8 @@
 package agenthook
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -13,24 +14,24 @@ import (
 )
 
 type Input struct {
-	SessionID      string                     `json:"session_id"`
-	TranscriptPath string                     `json:"transcript_path,omitempty"`
-	CWD            string                     `json:"cwd,omitempty"`
-	HookEventName  string                     `json:"hook_event_name,omitempty"`
-	TurnID         string                     `json:"turn_id,omitempty"`
-	StopHookActive bool                       `json:"stop_hook_active,omitempty"`
-	LastAssistant  string                     `json:"last_assistant_message,omitempty"`
-	ToolName       string                     `json:"tool_name,omitempty"`
-	ToolUseID      string                     `json:"tool_use_id,omitempty"`
-	ToolInput      map[string]json.RawMessage `json:"tool_input,omitempty"`
-	ToolResponse   json.RawMessage            `json:"tool_response,omitempty"`
+	SessionID      string                    `json:"session_id"`
+	TranscriptPath string                    `json:"transcript_path,omitempty"`
+	CWD            string                    `json:"cwd,omitempty"`
+	HookEventName  string                    `json:"hook_event_name,omitempty"`
+	TurnID         string                    `json:"turn_id,omitempty"`
+	StopHookActive bool                      `json:"stop_hook_active,omitempty"`
+	LastAssistant  string                    `json:"last_assistant_message,omitempty"`
+	ToolName       string                    `json:"tool_name,omitempty"`
+	ToolUseID      string                    `json:"tool_use_id,omitempty"`
+	ToolInput      map[string]jsontext.Value `json:"tool_input,omitempty"`
+	ToolResponse   jsontext.Value            `json:"tool_response,omitempty"`
 }
 
 // DecodeInput normalizes Claude-style snake_case and Grok Build camelCase
 // hook envelopes for the one profile that kit does not yet expose.
 func DecodeInput(r io.Reader) (Input, error) {
-	var raw map[string]json.RawMessage
-	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+	var raw map[string]jsontext.Value
+	if err := json.UnmarshalRead(r, &raw); err != nil {
 		return Input{}, err
 	}
 	var input Input
@@ -69,7 +70,7 @@ func NormalizeHookEventName(name string) string {
 	}
 }
 
-func firstString(raw map[string]json.RawMessage, keys ...string) string {
+func firstString(raw map[string]jsontext.Value, keys ...string) string {
 	for _, key := range keys {
 		value, ok := raw[key]
 		if !ok {
@@ -83,7 +84,7 @@ func firstString(raw map[string]json.RawMessage, keys ...string) string {
 	return ""
 }
 
-func firstBool(raw map[string]json.RawMessage, keys ...string) bool {
+func firstBool(raw map[string]jsontext.Value, keys ...string) bool {
 	for _, key := range keys {
 		value, ok := raw[key]
 		if !ok {
@@ -97,7 +98,7 @@ func firstBool(raw map[string]json.RawMessage, keys ...string) bool {
 	return false
 }
 
-func firstRaw(raw map[string]json.RawMessage, keys ...string) (json.RawMessage, bool) {
+func firstRaw(raw map[string]jsontext.Value, keys ...string) (jsontext.Value, bool) {
 	for _, key := range keys {
 		value, ok := raw[key]
 		if ok && len(value) > 0 && string(value) != "null" {

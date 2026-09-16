@@ -1,7 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +19,8 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 // showPanelMember is one reviewer in the additive show --json panel block.
@@ -115,7 +119,7 @@ Examples:
 			addr := ep.BaseURL()
 			client := ep.HTTPClient(5 * time.Second)
 
-			var queryURL string
+			query := url.Values{}
 			var displayRef string
 			// jobIDForPromptFallback carries the numeric job ID when the
 			// lookup is keyed by job ID, so a 404 from /api/review (no
@@ -136,7 +140,7 @@ Examples:
 				if resolved, err := gitrepo.Resolve(ctx, root, sha); err == nil {
 					sha = resolved
 				}
-				queryURL = addr + "/api/review?sha=" + sha
+				query.Set("sha", sha)
 				displayRef = gitrepo.ShortSHA(sha)
 			} else {
 				arg := args[0]
@@ -161,7 +165,7 @@ Examples:
 				}
 
 				if isJobID {
-					queryURL = addr + "/api/review?job_id=" + arg
+					query.Set("job_id", arg)
 					displayRef = "job " + arg
 					if id, perr := strconv.ParseInt(arg, 10, 64); perr == nil {
 						jobIDForPromptFallback = id
@@ -171,12 +175,12 @@ Examples:
 					if resolvedSHA != "" {
 						sha = resolvedSHA
 					}
-					queryURL = addr + "/api/review?sha=" + sha
+					query.Set("sha", sha)
 					displayRef = gitrepo.ShortSHA(sha)
 				}
 			}
 
-			resp, err := client.Get(queryURL)
+			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
@@ -193,7 +197,7 @@ Examples:
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
-			} else if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
@@ -212,9 +216,8 @@ Examples:
 						out.Panel = &block
 					}
 				}
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(&out)
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, &out)
 			}
 
 			// Avoid redundant "job X (job X, ...)" output
@@ -274,7 +277,7 @@ Examples:
 // cmd/roborev/tui/handlers_review.go), which reads Prompt straight off the
 // job object because no review row exists until the job completes.
 func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, out *storage.Review) bool {
-	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 	if err != nil {
 		return false
 	}
@@ -286,7 +289,7 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || len(result.Jobs) == 0 {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil || len(result.Jobs) == 0 {
 		return false
 	}
 
@@ -314,9 +317,7 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 // panel with >=50 rows is not truncated (the synthesis row also counts toward
 // the default cap).
 func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]storage.ReviewJob, error) {
-	u := addr + "/api/jobs?panel_run=" +
-		url.QueryEscape(runUUID.String()) + "&limit=0" //nolint:forbidigo // HTTP query parameter boundary.
-	resp, err := client.Get(u)
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{PanelRun: new(runUUID.String()), Limit: new(int64(0))}})
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +329,7 @@ func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]s
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -350,8 +351,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	var responses []storage.Response
 
 	// Fetch by job ID
-	commentsURL := addr + fmt.Sprintf("/api/comments?job_id=%d", review.JobID)
-	if resp, err := client.Get(commentsURL); err != nil {
+	if resp, err := newDaemonAPI(addr, client).ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &review.JobID}}); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not fetch comments for job %d: %v\n", review.JobID, err)
 	} else if resp != nil {
 		defer resp.Body.Close()
@@ -359,7 +359,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 			var result struct {
 				Responses []storage.Response `json:"responses"`
 			}
-			if json.NewDecoder(resp.Body).Decode(&result) == nil {
+			if json.UnmarshalRead(resp.Body, &result) == nil {
 				responses = result.Responses
 			}
 		}
@@ -367,17 +367,17 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 
 	// Also fetch legacy commit-based comments and merge.
 	// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
-	var legacyURL string
+	var legacyQuery *generated.ListCommentsQuery
 	if review.Job != nil {
 		commitID, fallbackSHA := review.Job.LegacyCommentLookupTarget()
 		if commitID > 0 {
-			legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", commitID)
+			legacyQuery = &generated.ListCommentsQuery{CommitID: &commitID}
 		} else if fallbackSHA != "" {
-			legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", fallbackSHA)
+			legacyQuery = &generated.ListCommentsQuery{Sha: &fallbackSHA}
 		}
 	}
-	if legacyURL != "" {
-		if resp, err := client.Get(legacyURL); err != nil {
+	if legacyQuery != nil {
+		if resp, err := newDaemonAPI(addr, client).ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: legacyQuery}); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not fetch legacy comments: %v\n", err)
 		} else if resp != nil {
 			defer resp.Body.Close()
@@ -385,7 +385,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				if json.NewDecoder(resp.Body).Decode(&result) == nil {
+				if json.UnmarshalRead(resp.Body, &result) == nil {
 					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}

@@ -2,7 +2,8 @@ package agenthook
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -72,7 +73,7 @@ func LoadState(reviews ReviewSource) (*StateStore, error) {
 	defer file.Close()
 
 	var snap Snapshot
-	if err := json.NewDecoder(file).Decode(&snap); err != nil {
+	if err := json.UnmarshalRead(file, &snap); err != nil {
 		return nil, fmt.Errorf("decode agent hook state: %w", err)
 	}
 	if snap.Sessions != nil {
@@ -104,9 +105,8 @@ func (s *StateStore) saveLocked() error {
 		}
 	}()
 
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(Snapshot{Sessions: s.sessions, FixSessions: s.fixSessions}); err != nil {
+	enc := jsontext.NewEncoder(tmp, jsontext.WithIndent("  "))
+	if err := json.MarshalEncode(enc, Snapshot{Sessions: s.sessions, FixSessions: s.fixSessions}); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("encode agent hook state: %w", err)
 	}

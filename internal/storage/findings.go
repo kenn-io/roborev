@@ -2,7 +2,7 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strings"
 
 	"go.kenn.io/roborev/internal/structuredreview"
@@ -23,7 +23,7 @@ func ReviewFindingCounts(structuredOutput *string) *FindingCounts {
 	if structuredOutput == nil || *structuredOutput == "" {
 		return nil
 	}
-	document, err := structuredreview.Decode(json.RawMessage(*structuredOutput))
+	document, err := structuredreview.Decode(jsontext.Value(*structuredOutput))
 	if err != nil || document.UnableToReview() {
 		return nil
 	}

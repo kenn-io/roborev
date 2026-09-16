@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 var (
@@ -42,9 +44,8 @@ func statusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			webStatus := webUIStatus{}
 			writeJSONResult := func(result statusJSONResult) error {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(result)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, result)
 			}
 			writeStatusUnavailable := func(err error) error {
 				if jsonOutput {
@@ -92,9 +93,8 @@ func statusCmd() *cobra.Command {
 			webStatus = discoverWebUI(statusDiscover)
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
-			client := ep.HTTPClient(2 * time.Second)
-			resp, err := client.Get(addr + "/api/status")
+			client := ep.APIClient(2 * time.Second)
+			resp, err := client.GetStatusRaw(cmd.Context())
 			if err != nil {
 				return writeStatusUnavailable(err)
 			}
@@ -106,17 +106,17 @@ func statusCmd() *cobra.Command {
 			}
 
 			var status storage.DaemonStatus
-			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &status); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			// Get health status
-			healthResp, err := client.Get(addr + "/api/health")
+			healthResp, err := client.GetHealthRaw(cmd.Context())
 			var health *storage.HealthStatus
 			if err == nil {
 				defer healthResp.Body.Close()
 				var decoded storage.HealthStatus
-				if err := json.NewDecoder(healthResp.Body).Decode(&decoded); err != nil {
+				if err := json.UnmarshalRead(healthResp.Body, &decoded); err != nil {
 					log.Printf("failed to parse health response: %v", err)
 				} else {
 					health = &decoded
@@ -125,14 +125,14 @@ func statusCmd() *cobra.Command {
 
 			// Get recent jobs
 			var jobs []storage.ReviewJob
-			resp, err = client.Get(addr + "/api/jobs?limit=10")
+			resp, err = client.ListJobsRaw(cmd.Context(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{Limit: new(int64(10))}})
 			if err == nil {
 				defer resp.Body.Close()
 
 				var jobsResp struct {
 					Jobs []storage.ReviewJob `json:"jobs"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err == nil {
+				if err := json.UnmarshalRead(resp.Body, &jobsResp); err == nil {
 					jobs = jobsResp.Jobs
 				}
 			}

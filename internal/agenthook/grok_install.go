@@ -2,7 +2,8 @@ package agenthook
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -120,14 +121,20 @@ func readGrokConfig(path string) (map[string]any, error) {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return map[string]any{}, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(body))
 	var root map[string]any
-	if err := decoder.Decode(&root); err != nil {
+	if err := json.UnmarshalDecode(decoder, &root, json.WithUnmarshalers(json.UnmarshalFromFunc(func(dec *jsontext.Decoder, value *any) error {
+		if dec.PeekKind() != '0' {
+			return errors.ErrUnsupported
+		}
+		raw, err := dec.ReadValue()
+		*value = raw.Clone()
+		return err
+	}))); err != nil {
 		return nil, fmt.Errorf("decode Grok Build hook config %s: %w", path, err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = errors.New("multiple JSON values")
 		}
@@ -140,7 +147,7 @@ func readGrokConfig(path string) (map[string]any, error) {
 }
 
 func marshalGrokConfig(root map[string]any) ([]byte, error) {
-	body, err := json.MarshalIndent(root, "", "  ")
+	body, err := json.Marshal(root, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}

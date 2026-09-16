@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func compactCmd() *cobra.Command {
@@ -187,14 +187,7 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 	}
 
 	ep := getDaemonEndpoint()
-	req, err := http.NewRequestWithContext(ctx, "POST", ep.BaseURL()+"/api/jobs/batch", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("create batch request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := ep.HTTPClient(30 * time.Second)
-	resp, err := client.Do(req)
+	resp, err := ep.APIClient(30*time.Second).BatchJobsRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("batch fetch: %w", err)
 	}
@@ -208,7 +201,7 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 	var batchResp struct {
 		Results map[int64]storage.JobWithReview `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&batchResp); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &batchResp); err != nil {
 		return nil, fmt.Errorf("decode batch response: %w", err)
 	}
 	return batchResp.Results, nil
@@ -555,7 +548,7 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 	}
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon: %w", err)
 	}
@@ -608,7 +601,7 @@ func cancelJob(serverAddr string, jobID int64) error {
 	if err != nil {
 		return fmt.Errorf("marshal cancel request: %w", err)
 	}
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(serverAddr+"/api/job/cancel", "application/json", bytes.NewReader(reqBody))
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(10*time.Second)).CancelJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}

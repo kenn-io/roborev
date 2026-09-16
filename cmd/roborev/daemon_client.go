@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +15,8 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 // waitForJob polls until a job completes and displays the review
@@ -142,9 +142,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	}
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
-	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
-		addr, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
-	resp, err := client.Get(queryURL)
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +155,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
 	}
 
@@ -170,8 +168,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	// Fetch jobs and filter client-side to avoid cross-repo mismatch
 	// Use high limit since we're filtering client-side; in practice same SHA
 	// across many repos is rare
-	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", addr, url.QueryEscape(sha))
-	fallbackResp, err := client.Get(fallbackURL)
+	fallbackResp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
@@ -184,7 +181,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	var fallbackResult struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
-	if err := json.NewDecoder(fallbackResp.Body).Decode(&fallbackResult); err != nil {
+	if err := json.UnmarshalRead(fallbackResp.Body, &fallbackResult); err != nil {
 		return nil, fmt.Errorf("fallback query for %s: decode error: %w", sha, err)
 	}
 
@@ -224,7 +221,6 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 // enqueueReview enqueues a review job and returns the job ID
 func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	ep := getDaemonEndpoint()
-	addr := ep.BaseURL()
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath: repoPath,
@@ -232,7 +228,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 		Agent:    agentName,
 	})
 
-	resp, err := ep.HTTPClient(10*time.Second).Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -244,7 +240,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	}
 
 	var job storage.ReviewJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &job); err != nil {
 		return 0, err
 	}
 
@@ -257,7 +253,7 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	addr := ep.BaseURL()
 	client := ep.HTTPClient(5 * time.Second)
 
-	resp, err := client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID))
+	resp, err := newDaemonAPI(addr, client).ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +266,7 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return nil, err
 	}
 

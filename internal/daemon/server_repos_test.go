@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -558,9 +558,9 @@ func TestHandleListBranches(t *testing.T) {
 	// job 5 left empty
 
 	type branchesResponse struct {
-		Branches       []json.RawMessage `json:"branches"`
-		TotalCount     int               `json:"total_count"`
-		NullsRemaining int               `json:"nulls_remaining"`
+		Branches       []jsontext.Value `json:"branches"`
+		TotalCount     int              `json:"total_count"`
+		NullsRemaining int              `json:"nulls_remaining"`
 	}
 
 	t.Run("list all branches", func(t *testing.T) {

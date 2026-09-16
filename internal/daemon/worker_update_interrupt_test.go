@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 	"testing"
 	"time"
@@ -252,7 +252,7 @@ func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
 	backupName := "update-classifier-backup"
 	agent.Register(&fakeSchemaAgent{
 		name: primaryName,
-		classifyFn: func(ctx context.Context) (json.RawMessage, error) {
+		classifyFn: func(ctx context.Context) (jsontext.Value, error) {
 			close(started)
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -260,7 +260,7 @@ func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
 	})
 	agent.Register(&fakeSchemaAgent{
 		name: backupName,
-		classifyFn: func(context.Context) (json.RawMessage, error) {
+		classifyFn: func(context.Context) (jsontext.Value, error) {
 			backupInvoked <- struct{}{}
 			return []byte(`{"design_review":false,"reason":"backup"}`), nil
 		},

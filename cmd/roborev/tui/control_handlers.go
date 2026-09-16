@@ -1,7 +1,8 @@
 package tui
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"time"
@@ -210,7 +211,7 @@ func (m model) resolveRepoFilter(name string) []string {
 // mutations propagate through Bubble Tea's Update chain.
 
 func (m model) handleCtrlSetFilter(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		Repo   *string `json:"repo"`
@@ -261,7 +262,7 @@ func (m model) handleCtrlSetFilter(
 }
 
 func (m model) handleCtrlClearFilter(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		Repo   bool `json:"repo"`
@@ -302,7 +303,7 @@ func (m model) handleCtrlClearFilter(
 }
 
 func (m model) handleCtrlSetHideClosed(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		HideClosed bool `json:"hide_closed"`
@@ -319,7 +320,7 @@ func (m model) handleCtrlSetHideClosed(
 }
 
 func (m model) handleCtrlSelectJob(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		JobID int64 `json:"job_id"`
@@ -371,7 +372,7 @@ func (m model) handleCtrlSelectJob(
 }
 
 func (m model) handleCtrlSetView(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		View string `json:"view"`
@@ -412,7 +413,7 @@ func (m model) handleCtrlSetView(
 }
 
 func (m model) handleCtrlCloseReview(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		JobID  int64 `json:"job_id"`
@@ -513,7 +514,7 @@ func (m model) handleCtrlCloseReview(
 }
 
 func (m model) handleCtrlCancelJob(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		JobID int64 `json:"job_id"`
@@ -590,7 +591,7 @@ func (m model) handleCtrlCancelJob(
 }
 
 func (m model) handleCtrlRerunJob(
-	raw json.RawMessage,
+	raw jsontext.Value,
 ) (model, controlResponse, tea.Cmd) {
 	var params struct {
 		JobID int64 `json:"job_id"`

@@ -3,7 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -474,7 +475,7 @@ func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
 // classifyArgs builds argv for a schema-constrained one-shot classify call.
 // Structural isolation: non-empty tools seed + denylist (seed+defaults+MCP),
 // disable subagents/web/memory/plan, cap to one turn, never always-approve.
-func (a *GrokAgent) classifyArgs(schema json.RawMessage, promptFile string) []string {
+func (a *GrokAgent) classifyArgs(schema jsontext.Value, promptFile string) []string {
 	args := []string{
 		"--no-auto-update",
 		"--output-format", "json",
@@ -496,9 +497,9 @@ func (a *GrokAgent) classifyArgs(schema json.RawMessage, promptFile string) []st
 func (a *GrokAgent) ClassifyWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	tmpFile, err := os.CreateTemp("", "roborev-grok-classify-*.md")
 	if err != nil {
 		return nil, fmt.Errorf("create temp classify prompt: %w", err)
@@ -542,9 +543,9 @@ func (a *GrokAgent) ClassifyWithSchema(
 func (a *GrokAgent) ReviewWithSchema(
 	ctx context.Context,
 	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
+	schema jsontext.Value,
 	out io.Writer,
-) (json.RawMessage, error) {
+) (jsontext.Value, error) {
 	tmpFile, err := os.CreateTemp("", "roborev-grok-review-*.md")
 	if err != nil {
 		return nil, fmt.Errorf("create temp structured review prompt: %w", err)
@@ -608,14 +609,14 @@ func (a *GrokAgent) ReviewWithSchema(
 // Grok emits camelCase structuredOutput / structuredOutputError (see
 // xai-grok-pager headless reducer attach_structured_output).
 type grokJSONResult struct {
-	Type                  string          `json:"type"`
-	Message               string          `json:"message"`
-	Text                  string          `json:"text"`
-	StructuredOutput      json.RawMessage `json:"structuredOutput"`
-	StructuredOutputError string          `json:"structuredOutputError"`
+	Type                  string         `json:"type"`
+	Message               string         `json:"message"`
+	Text                  string         `json:"text"`
+	StructuredOutput      jsontext.Value `json:"structuredOutput"`
+	StructuredOutputError string         `json:"structuredOutputError"`
 }
 
-func parseGrokClassifyJSON(raw []byte) (json.RawMessage, error) {
+func parseGrokClassifyJSON(raw []byte) (jsontext.Value, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("grok classifier produced empty output")
@@ -626,9 +627,9 @@ func parseGrokClassifyJSON(raw []byte) (json.RawMessage, error) {
 	if idx := bytes.IndexByte(trimmed, '{'); idx > 0 {
 		decIn = trimmed[idx:]
 	}
-	dec := json.NewDecoder(bytes.NewReader(decIn))
+	dec := jsontext.NewDecoder(bytes.NewReader(decIn))
 	var result grokJSONResult
-	if err := dec.Decode(&result); err != nil {
+	if err := json.UnmarshalDecode(dec, &result); err != nil {
 		return nil, fmt.Errorf("grok classifier output is not JSON: %w", err)
 	}
 	// Reject trailing JSON documents or non-whitespace junk after the first value.
@@ -661,27 +662,27 @@ func parseGrokClassifyJSON(raw []byte) (json.RawMessage, error) {
 
 var _ StructuredReviewAgent = (*GrokAgent)(nil)
 
-func validateGrokClassifyJSON(label string, raw json.RawMessage) (json.RawMessage, error) {
+func validateGrokClassifyJSON(label string, raw jsontext.Value) (jsontext.Value, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("grok %s is empty", label)
 	}
-	if !json.Valid(trimmed) {
+	if !jsontext.Value(trimmed).IsValid() {
 		return nil, fmt.Errorf("grok %s is not valid JSON: %q", label, string(raw))
 	}
 	if trimmed[0] != '{' {
 		return nil, fmt.Errorf("grok %s is not a JSON object: %q", label, string(trimmed))
 	}
 	// Exactly one JSON value; reject trailing documents inside the field.
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-	var obj map[string]json.RawMessage
-	if err := dec.Decode(&obj); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(trimmed))
+	var obj map[string]jsontext.Value
+	if err := json.UnmarshalDecode(dec, &obj); err != nil {
 		return nil, fmt.Errorf("grok %s is not a JSON object: %w", label, err)
 	}
-	if dec.More() {
+	if dec.PeekKind() != 0 {
 		return nil, fmt.Errorf("grok %s contains trailing JSON", label)
 	}
-	return json.RawMessage(append([]byte(nil), trimmed...)), nil
+	return jsontext.Value(append([]byte(nil), trimmed...)), nil
 }
 
 // Compile-time assertion that GrokAgent implements SchemaAgent and SessionAgent.

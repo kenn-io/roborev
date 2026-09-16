@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 
@@ -12,6 +12,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func costCmd() *cobra.Command {
@@ -46,7 +47,6 @@ Examples:
 			}
 
 			ep := getDaemonEndpoint()
-			addr := ep.BaseURL()
 
 			if !allRepos && repoPath == "" {
 				root, err := gitrepo.MainRoot(ctx, ".")
@@ -60,19 +60,19 @@ Examples:
 				}
 			}
 
-			params := url.Values{}
+			params := generated.GetCostQuery{}
 			if repoPath != "" {
-				params.Set("repo", repoPath)
+				params.Repo = []string{repoPath}
 			}
 			if branch != "" {
-				params.Set("branch", branch)
+				params.Branch = new(branch)
 			}
 			if since != "" {
-				params.Set("since", since)
+				params.Since = new(since)
 			}
 
-			client := ep.HTTPClient(10 * time.Second)
-			resp, err := client.Get(addr + "/api/cost?" + params.Encode())
+			client := ep.APIClient(10 * time.Second)
+			resp, err := client.GetCostRaw(cmd.Context(), &generated.GetCostRequestOptions{Query: &params})
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -83,14 +83,13 @@ Examples:
 			}
 
 			var cost storage.CostAggregate
-			if err := json.NewDecoder(resp.Body).Decode(&cost); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &cost); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			if jsonOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(cost)
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, cost)
 			}
 
 			cmd.Println(formatCostLine(cost))

@@ -20,11 +20,12 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	daemonclient "go.kenn.io/roborev/internal/daemon_client"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
 // listJobsResponse is the JSON shape returned by GET /api/jobs.
@@ -3102,18 +3103,18 @@ func TestListJobsOmitPrompt(t *testing.T) {
 
 	ts := httptest.NewServer(server.httpServer.Handler)
 	t.Cleanup(ts.Close)
-	client, err := daemonclient.NewClientWithResponses(ts.URL)
+	client, err := roborevclient.NewWithHTTPClient(ts.URL, ts.Client())
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	repoFilter := []string{repo.RootPath}
-	omit := daemonclient.ListJobsParamsOmitPromptTrue
+	omit := daemonclient.ListJobsQueryOmitPromptTrue
 
-	listJobs := func(t *testing.T, params *daemonclient.ListJobsParams) []daemonclient.ReviewJob {
+	listJobs := func(t *testing.T, params *daemonclient.ListJobsQuery) []daemonclient.ReviewJob {
 		t.Helper()
-		resp, err := client.ListJobsWithResponse(ctx, params)
+		resp, err := client.ListJobsWithResponse(ctx, &daemonclient.ListJobsRequestOptions{Query: params})
 		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode(), "body: %s", resp.Body)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "body: %s", resp.Body)
 		require.NotNil(t, resp.JSON200)
 		require.NotNil(t, resp.JSON200.Jobs)
 		return resp.JSON200.Jobs
@@ -3122,7 +3123,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	jobByID := func(t *testing.T, jobs []daemonclient.ReviewJob, id int64) daemonclient.ReviewJob {
 		t.Helper()
 		for _, j := range jobs {
-			if j.Id == id {
+			if j.ID == id {
 				return j
 			}
 		}
@@ -3131,7 +3132,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	}
 
 	t.Run("default includes prompt", func(t *testing.T) {
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter})
+		jobs := listJobs(t, &daemonclient.ListJobsQuery{Repo: repoFilter})
 		require.Len(t, jobs, 2)
 		done := jobByID(t, jobs, doneJob.ID)
 		require.NotNil(t, done.Prompt)
@@ -3139,7 +3140,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	})
 
 	t.Run("omit_prompt=true strips terminal jobs, keeps queued", func(t *testing.T) {
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter, OmitPrompt: &omit})
+		jobs := listJobs(t, &daemonclient.ListJobsQuery{Repo: repoFilter, OmitPrompt: &omit})
 		require.Len(t, jobs, 2)
 		done := jobByID(t, jobs, doneJob.ID)
 		assert.Nil(done.Prompt)
@@ -3150,14 +3151,14 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	})
 
 	t.Run("omit_prompt=true strips prompt on terminal single-job lookup", func(t *testing.T) {
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Id: &doneJob.ID, OmitPrompt: &omit})
+		jobs := listJobs(t, &daemonclient.ListJobsQuery{ID: &doneJob.ID, OmitPrompt: &omit})
 		require.Len(t, jobs, 1)
 		assert.Nil(jobs[0].Prompt)
 		assert.Nil(jobs[0].DiffContent)
 	})
 
 	t.Run("omit_prompt=true keeps prompt on queued single-job lookup", func(t *testing.T) {
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Id: &queuedJob.ID, OmitPrompt: &omit})
+		jobs := listJobs(t, &daemonclient.ListJobsQuery{ID: &queuedJob.ID, OmitPrompt: &omit})
 		require.Len(t, jobs, 1)
 		require.NotNil(t, jobs[0].Prompt)
 		assert.Equal("a queued prompt", *jobs[0].Prompt)

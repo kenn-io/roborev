@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/daemon"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 var (
@@ -42,7 +42,9 @@ func postAgentHookRequest(
 		return agenthook.Response{}, err
 	}
 	body, err := doAgentHookRequest(
-		ctx, ep, http.MethodPost, "/api/agent-hook/event", req,
+		ctx, ep, func(ctx context.Context, api *roborevclient.Client, body []byte) (*http.Response, error) {
+			return api.RecordAgentHookEventRaw(ctx, nil, roborevclient.WithBody(body))
+		}, req,
 	)
 	if err != nil {
 		return agenthook.Response{}, err
@@ -87,7 +89,9 @@ func postAgentHookFixDoneRequest(
 		return err
 	}
 	_, err = doAgentHookRequest(
-		ctx, ep, http.MethodPost, "/api/agent-hook/fix-done",
+		ctx, ep, func(ctx context.Context, api *roborevclient.Client, body []byte) (*http.Response, error) {
+			return api.CompleteAgentHookFixRaw(ctx, nil, roborevclient.WithBody(body))
+		},
 		daemon.AgentHookFixDoneRequest{FixSessionID: fixSessionID},
 	)
 	return err
@@ -102,7 +106,9 @@ func runAgentHookStatus(stdout io.Writer) error {
 		return err
 	}
 	body, err := doAgentHookRequest(
-		context.Background(), ep, http.MethodGet, "/api/agent-hook/sessions", nil,
+		context.Background(), ep, func(ctx context.Context, api *roborevclient.Client, _ []byte) (*http.Response, error) {
+			return api.ListAgentHookSessionsRaw(ctx)
+		}, nil,
 	)
 	if err != nil {
 		return err
@@ -123,7 +129,9 @@ func runAgentHookReset(opts agenthook.ResetOptions, sessionID string, stdout io.
 		return err
 	}
 	body, err := doAgentHookRequest(
-		context.Background(), ep, http.MethodPost, "/api/agent-hook/reset",
+		context.Background(), ep, func(ctx context.Context, api *roborevclient.Client, body []byte) (*http.Response, error) {
+			return api.ResetAgentHookSessionsRaw(ctx, nil, roborevclient.WithBody(body))
+		},
 		map[string]any{"all": opts.All, "session_id": sessionID},
 	)
 	if err != nil {
@@ -136,25 +144,18 @@ func runAgentHookReset(opts agenthook.ResetOptions, sessionID string, stdout io.
 func doAgentHookRequest(
 	ctx context.Context,
 	ep daemon.DaemonEndpoint,
-	method, path string,
+	call func(context.Context, *roborevclient.Client, []byte) (*http.Response, error),
 	reqBody any,
 ) ([]byte, error) {
-	var body io.Reader
+	var body []byte
 	if reqBody != nil {
 		encoded, err := json.Marshal(reqBody)
 		if err != nil {
 			return nil, err
 		}
-		body = bytes.NewReader(encoded)
+		body = encoded
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, method, ep.BaseURL()+path, body)
-	if err != nil {
-		return nil, err
-	}
-	if reqBody != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := ep.HTTPClient(5 * time.Second).Do(httpReq)
+	resp, err := call(ctx, ep.APIClient(5*time.Second), body)
 	if err != nil {
 		return nil, err
 	}

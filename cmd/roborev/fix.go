@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +24,8 @@ import (
 	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 var (
@@ -789,16 +790,15 @@ func queryOpenJobs(
 	jobs, err := withFixDaemonRetryContext(ctx, getDaemonEndpoint().BaseURL(), func(addr string) ([]storage.ReviewJob, error) {
 		// omit_prompt: discovery only needs job metadata; prompts would add
 		// megabytes of JSON on repos with a long review history.
-		queryURL := fmt.Sprintf(
-			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0&omit_prompt=true",
-			addr, url.QueryEscape(repoRoot),
-		)
-		if branch != "" {
-			queryURL += "&branch=" + url.QueryEscape(branch) +
-				"&branch_include_empty=true"
+		query := &generated.ListJobsQuery{
+			Status: new("done"), Repo: []string{repoRoot}, Closed: new(generated.ListJobsQueryClosedFalse),
+			Limit: new(int64(0)), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
 		}
-
-		resp, err := doFixDaemonRequest(ctx, http.MethodGet, queryURL, nil)
+		if branch != "" {
+			query.Branch = &branch
+			query.BranchIncludeEmpty = new(generated.ListJobsQueryBranchIncludeEmptyTrue)
+		}
+		resp, err := newDaemonAPI(addr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: query})
 		if err != nil {
 			return nil, err
 		}
@@ -814,7 +814,7 @@ func queryOpenJobs(
 		var jobsResp struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &jobsResp); err != nil {
 			return nil, fmt.Errorf("decode response: %w", err)
 		}
 
@@ -1660,12 +1660,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.ReviewJob, error) {
 		client := getDaemonHTTPClient(30 * time.Second)
 
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID), nil)
-		if err != nil {
-			return nil, err
-		}
-
-		resp, err := client.Do(req)
+		resp, err := newDaemonAPI(addr, client).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 		if err != nil {
 			return nil, err
 		}
@@ -1679,7 +1674,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 		var jobsResp struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &jobsResp); err != nil {
 			return nil, err
 		}
 
@@ -1696,12 +1691,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.Review, error) {
 		client := getDaemonHTTPClient(30 * time.Second)
 
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID), nil)
-		if err != nil {
-			return nil, err
-		}
-
-		resp, err := client.Do(req)
+		resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, &generated.GetReviewRequestOptions{Query: &generated.GetReviewQuery{JobID: &jobID}})
 		if err != nil {
 			return nil, err
 		}
@@ -1713,7 +1703,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 		}
 
 		var review storage.Review
-		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 			return nil, err
 		}
 
@@ -1729,12 +1719,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		client := getDaemonHTTPClient(30 * time.Second)
 
 		// Fetch by job ID
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID), nil)
-		if err != nil {
-			return nil, err
-		}
-
-		resp, err := client.Do(req)
+		resp, err := newDaemonAPI(addr, client).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 		if err != nil {
 			return nil, err
 		}
@@ -1748,7 +1733,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		var result struct {
 			Responses []storage.Response `json:"responses"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 			return nil, err
 		}
 		responses := result.Responses
@@ -1757,25 +1742,22 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		// Prefer commit_id (unambiguous), fall back to SHA only when
 		// gitRef looks like a hex SHA (not a task label like "run").
 		commitID, gitRef = legacyCommentLookupTarget(commitID, gitRef)
-		var legacyURL string
+		var legacyQuery *generated.ListCommentsQuery
 		if commitID > 0 {
-			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
+			legacyQuery = &generated.ListCommentsQuery{CommitID: &commitID}
 		} else if gitRef != "" {
-			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
+			legacyQuery = &generated.ListCommentsQuery{Sha: &gitRef}
 		}
-		if legacyURL != "" {
-			legacyReq, err := http.NewRequestWithContext(ctx, "GET", legacyURL, nil)
+		if legacyQuery != nil {
+			legacyResp, err := newDaemonAPI(addr, client).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: legacyQuery})
 			if err == nil {
-				legacyResp, err := client.Do(legacyReq)
-				if err == nil {
-					defer legacyResp.Body.Close()
-					if legacyResp.StatusCode == http.StatusOK {
-						var legacyResult struct {
-							Responses []storage.Response `json:"responses"`
-						}
-						if json.NewDecoder(legacyResp.Body).Decode(&legacyResult) == nil {
-							responses = storage.MergeResponses(responses, legacyResult.Responses)
-						}
+				defer legacyResp.Body.Close()
+				if legacyResp.StatusCode == http.StatusOK {
+					var legacyResult struct {
+						Responses []storage.Response `json:"responses"`
+					}
+					if json.UnmarshalRead(legacyResp.Body, &legacyResult) == nil {
+						responses = storage.MergeResponses(responses, legacyResult.Responses)
 					}
 				}
 			}
@@ -1967,7 +1949,7 @@ func addJobResponse(ctx context.Context, serverAddr string, jobID int64, comment
 
 	currentAddr := serverAddr
 	for attempt := 0; ; attempt++ {
-		resp, err := doFixDaemonRequest(ctx, http.MethodPost, currentAddr+"/api/comment", reqBody)
+		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClient(30*time.Second)).AddCommentRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -2047,7 +2029,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	})
 
 	for attempt := 0; ; attempt++ {
-		resp, err := doFixDaemonRequest(ctx, http.MethodPost, currentAddr+"/api/enqueue", reqBody)
+		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClient(30*time.Second)).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err == nil {
 			defer resp.Body.Close()
 
@@ -2101,8 +2083,7 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 }
 
 func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
-	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
@@ -2111,17 +2092,18 @@ func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, err
 		return false, nil
 	}
 	var result struct {
-		Jobs []struct{ ID int64 } `json:"jobs"`
+		Jobs []struct {
+			ID int64 `json:"id"`
+		} `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, nil
 	}
 	return len(result.Jobs) > 0, nil
 }
 
 func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
-	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
@@ -2131,17 +2113,18 @@ func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, 
 		return false, fmt.Errorf("fetch jobs failed (%d): %s", resp.StatusCode, body)
 	}
 	var result struct {
-		Jobs []struct{ ID int64 } `json:"jobs"`
+		Jobs []struct {
+			ID int64 `json:"id"`
+		} `json:"jobs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, err
 	}
 	return len(result.Jobs) > 0, nil
 }
 
 func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, commenter, response string) (bool, error) {
-	checkURL := fmt.Sprintf("%s/api/comments?job_id=%d", serverAddr, jobID)
-	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 	if err != nil {
 		return false, err
 	}
@@ -2153,7 +2136,7 @@ func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, 
 	var result struct {
 		Responses []storage.Response `json:"responses"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return false, err
 	}
 	for _, existing := range result.Responses {
@@ -2218,22 +2201,4 @@ func waitForFixDaemonRecovery(ctx context.Context) (string, error) {
 		}
 		fixDaemonSleep(fixDaemonRecoveryPoll)
 	}
-}
-
-func doFixDaemonRequest(ctx context.Context, method, requestURL string, body []byte) (*http.Response, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, requestURL, reader)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return getDaemonHTTPClient(30 * time.Second).Do(req)
 }
