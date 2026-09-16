@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/tui/splitlayout"
@@ -40,6 +41,14 @@ func splitModel(opts ...testModelOption) model {
 }
 
 func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
+	t.Setenv("CLICOLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+	previousOutput := termenv.DefaultOutput()
+	termenv.SetDefaultOutput(termenv.NewOutput(nil, termenv.WithProfile(termenv.TrueColor)))
+	t.Cleanup(func() {
+		termenv.SetDefaultOutput(previousOutput)
+	})
+
 	fixtures := []struct {
 		name   string
 		width  int
