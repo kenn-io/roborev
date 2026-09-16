@@ -45,6 +45,9 @@ func GlamourStyle() gansi.StyleConfig {
 	default:
 		style = styles.LightStyleConfig
 		isDark = termenv.HasDarkBackground()
+		if winDark, ok := platformHasDarkBackground(); ok {
+			isDark = winDark
+		}
 		if isDark {
 			style = styles.DarkStyleConfig
 		}
