@@ -144,6 +144,9 @@ binary explicitly when needed:
 roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
 ```
 
+On Windows, generated Claude Code hook commands use Git Bash-compatible quoting,
+including for Scoop installation paths.
+
 `--command` supplies one complete command for an explicit profile. It must
 directly invoke `agent-hook run` and select exactly one matching `--agent`;
 shell pipelines, chaining, command substitutions, and wrappers are rejected.

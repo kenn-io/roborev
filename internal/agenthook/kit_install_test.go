@@ -29,6 +29,22 @@ func TestKitInstallOptionsUseProfileSpecificRunArguments(t *testing.T) {
 	}
 }
 
+func TestKitInstallOptionsUsePOSIXCommandForClaude(t *testing.T) {
+	executable := `C:\Users\example\scoop\apps\roborev\current\roborev.exe`
+	opts, err := validatedKitInstallOptions(kitagenthook.AgentClaude, InstallOptions{
+		Executable: executable,
+		Timeout:    10 * time.Second,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		`'C:\Users\example\scoop\apps\roborev\current\roborev.exe' agent-hook run --agent claude '--source=roborev-agent-hook'`,
+		opts.Command,
+	)
+	assert.Empty(t, opts.Executable)
+	assert.Empty(t, opts.Arguments)
+}
+
 func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 	tests := []struct {
 		name    string
