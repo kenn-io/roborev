@@ -685,7 +685,8 @@ func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -2555,7 +2556,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/jobs":
-			time.Sleep(100 * time.Millisecond)
+			<-r.Context().Done()
 		case "/api/enqueue":
 			enqueueCalls.Add(1)
 			w.WriteHeader(http.StatusCreated)
@@ -2569,9 +2570,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	defer cancel()
 
 	err := enqueueIfNeeded(ctx, ts.URL, repo.Dir, sha)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		require.NoError(t, err, "expected context deadline exceeded, got %v")
-	}
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.EqualValues(t, 0, enqueueCalls.Load())
 }
 
@@ -2646,7 +2645,7 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -2658,9 +2657,7 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 	defer cancel()
 
 	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		require.NoError(t, err, "expected context deadline exceeded, got %v")
-	}
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestRunFixList(t *testing.T) {

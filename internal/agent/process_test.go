@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -24,35 +25,34 @@ func (c *countingCloser) Close() error {
 }
 
 func TestCloseOnContextDoneClosesOnCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	closer := &countingCloser{}
-	stop := closeOnContextDone(ctx, closer, nil)
-	defer stop()
+		closer := &countingCloser{}
+		stop := closeOnContextDone(ctx, closer, nil)
+		defer stop()
 
-	cancel()
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if closer.closed.Load() == 1 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	require.Equal(t, int32(1), closer.closed.Load(), "expected closer to be closed after context cancellation")
+		cancel()
+		synctest.Wait()
+
+		require.Equal(t, int32(1), closer.closed.Load(), "expected closer to be closed after context cancellation")
+	})
 }
 
 func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	closer := &countingCloser{}
-	stop := closeOnContextDone(ctx, closer, nil)
-	stop()
-	cancel()
-	time.Sleep(20 * time.Millisecond)
+		closer := &countingCloser{}
+		stop := closeOnContextDone(ctx, closer, nil)
+		stop()
+		cancel()
+		synctest.Wait()
 
-	require.Equal(t, int32(0), closer.closed.Load(), "closer should not be closed after stop()")
+		require.Equal(t, int32(0), closer.closed.Load(), "closer should not be closed after stop()")
+	})
 }
 
 func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
@@ -224,18 +224,20 @@ func TestContextPipeCloseClassifiesSIGPIPEWithoutKill(t *testing.T) {
 	require.Error(t, runErr)
 	require.Contains(t, runErr.Error(), "signal: broken pipe")
 
-	tracker := &subprocessTracker{}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	closer := &countingCloser{}
-	stop := closeOnContextDone(ctx, closer, tracker)
-	defer stop()
-	require.Eventually(t, tracker.closedPipeOnContext.Load,
-		time.Second, time.Millisecond,
-		"the context-driven close must record itself on the tracker")
-	require.False(t, tracker.canceledByContext.Load(),
-		"sanity: the kill-based marker never fired in this ordering")
+	synctest.Test(t, func(t *testing.T) {
+		tracker := &subprocessTracker{}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		closer := &countingCloser{}
+		stop := closeOnContextDone(ctx, closer, tracker)
+		defer stop()
+		synctest.Wait()
+		require.True(t, tracker.closedPipeOnContext.Load(),
+			"the context-driven close must record itself on the tracker")
+		require.False(t, tracker.canceledByContext.Load(),
+			"sanity: the kill-based marker never fired in this ordering")
 
-	require.ErrorIs(t, contextProcessError(ctx, tracker, runErr, nil), context.Canceled,
-		"SIGPIPE after a context-driven pipe close is context termination")
+		require.ErrorIs(t, contextProcessError(ctx, tracker, runErr, nil), context.Canceled,
+			"SIGPIPE after a context-driven pipe close is context termination")
+	})
 }
