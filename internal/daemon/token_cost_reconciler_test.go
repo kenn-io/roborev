@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -197,87 +198,67 @@ func TestTokenCostReconcilerAdvancesPastUnavailableCandidate(t *testing.T) {
 }
 
 func TestTokenCostReconcilerShutdownCancelsProviderLookup(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	seedTokenCostCandidate(t, tc, "blocking-session", `{}`)
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		seedTokenCostCandidate(t, tc, "blocking-session", `{}`)
 
-	started := make(chan struct{})
-	tc.Pool.tokenUsageFetcher = func(ctx context.Context, _ string) (*tokens.Usage, error) {
-		close(started)
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	tc.Pool.Start()
-	require.Eventually(t, func() bool {
-		select {
-		case <-started:
-			return true
-		default:
-			return false
+		started := make(chan struct{})
+		tc.Pool.tokenUsageFetcher = func(ctx context.Context, _ string) (*tokens.Usage, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
 		}
-	}, time.Second, 5*time.Millisecond)
+		tc.Pool.Start()
+		synctest.Wait()
+		<-started
 
-	stopped := make(chan struct{})
-	go func() {
-		tc.Pool.Stop()
-		close(stopped)
-	}()
-	require.Eventually(t, func() bool {
-		select {
-		case <-stopped:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, 5*time.Millisecond)
+		stopped := make(chan struct{})
+		go func() {
+			tc.Pool.Stop()
+			close(stopped)
+		}()
+		synctest.Wait()
+		<-stopped
+	})
 }
 
 func TestTokenCostReconcilerMergesWithUsageSavedDuringLookup(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	job := seedTokenCostCandidate(
-		t, tc, "concurrent-session", `{"total_output_tokens":10}`,
-	)
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		job := seedTokenCostCandidate(
+			t, tc, "concurrent-session", `{"total_output_tokens":10}`,
+		)
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
-		close(started)
-		<-release
-		return &tokens.Usage{HasCost: true, CostUSD: 0.33}, nil
-	}
-	tc.Pool.Start()
-	t.Cleanup(tc.Pool.Stop)
-	require.Eventually(t, func() bool {
-		select {
-		case <-started:
-			return true
-		default:
-			return false
+		started := make(chan struct{})
+		release := make(chan struct{})
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			close(started)
+			<-release
+			return &tokens.Usage{HasCost: true, CostUSD: 0.33}, nil
 		}
-	}, time.Second, 5*time.Millisecond)
+		tc.Pool.Start()
+		t.Cleanup(tc.Pool.Stop)
+		synctest.Wait()
+		<-started
 
-	require.NoError(t, tc.DB.SaveJobTokenUsage(
-		job.ID,
-		"concurrent-session",
-		`{"total_output_tokens":20,"peak_context_tokens":200}`,
-	))
-	close(release)
+		require.NoError(t, tc.DB.SaveJobTokenUsage(
+			job.ID,
+			"concurrent-session",
+			`{"total_output_tokens":20,"peak_context_tokens":200}`,
+		))
+		close(release)
 
-	require.Eventually(t, func() bool {
+		synctest.Wait()
+
 		updated, err := tc.DB.GetJobByID(job.ID)
-		if err != nil {
-			return false
-		}
+		require.NoError(t, err)
 		usage := tokens.ParseJSON(updated.TokenUsage)
-		return usage != nil && usage.HasCost
-	}, time.Second, 5*time.Millisecond)
-
-	updated, err := tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	usage := tokens.ParseJSON(updated.TokenUsage)
-	require.NotNil(t, usage)
-	assert.Equal(t, int64(20), usage.OutputTokens)
-	assert.Equal(t, int64(200), usage.PeakContextTokens)
-	assert.InDelta(t, 0.33, usage.CostUSD, 1e-9)
+		require.NotNil(t, usage)
+		assert.True(t, usage.HasCost)
+		assert.Equal(t, int64(20), usage.OutputTokens)
+		assert.Equal(t, int64(200), usage.PeakContextTokens)
+		assert.InDelta(t, 0.33, usage.CostUSD, 1e-9)
+	})
 }
 
 func TestTokenCostRetryAdmissionIsBounded(t *testing.T) {

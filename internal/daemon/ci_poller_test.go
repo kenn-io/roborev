@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -221,84 +222,80 @@ func (h *ciPollerHarness) CaptureSkippedChecks() *[]capturedSkippedCheck {
 }
 
 func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	getter := &mutableConfigGetter{cfg: h.Cfg}
-	h.Poller.cfgGetter = getter
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		getter := &mutableConfigGetter{cfg: h.Cfg}
+		h.Poller.cfgGetter = getter
 
-	reqCh := make(chan discordWebhookPayload, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		var payload discordWebhookPayload
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-		reqCh <- payload
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
+		reqCh := make(chan discordWebhookPayload, 2)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			var payload discordWebhookPayload
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			reqCh <- payload
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		transport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		defer func() { http.DefaultTransport = transport }()
 
-	_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
-		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
-	_, err := h.DB.Exec(`UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
-	require.NoError(t, err)
+		_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
+			[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
+		_, err := h.DB.Exec(`UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
+		require.NoError(t, err)
 
-	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
-	assert.Empty(t, reqCh, "empty URL skips notification")
+		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+		synctest.Wait()
+		assert.Empty(t, reqCh, "empty URL skips notification")
 
-	h.Cfg.CI.DiscordWebhookURL = server.URL
-	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+		h.Cfg.CI.DiscordWebhookURL = server.URL
+		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
 
-	payload := receiveDiscordPayload(t, reqCh)
-	require.Len(t, payload.Embeds, 1)
-	assert.Equal(t, "roborev CI job failed", payload.Embeds[0].Title)
-	fields := discordEmbedFieldsByName(payload.Embeds[0].Fields)
-	assert.Equal(t, "2", fields["Retry count"])
+		payload := receiveDiscordPayload(t, reqCh)
+		require.Len(t, payload.Embeds, 1)
+		assert.Equal(t, "roborev CI job failed", payload.Embeds[0].Title)
+		fields := discordEmbedFieldsByName(payload.Embeds[0].Fields)
+		assert.Equal(t, "2", fields["Retry count"])
 
-	h.Cfg.CI.DiscordWebhookURL = ""
-	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
-	assert.Empty(t, reqCh, "cleared URL skips future notifications")
+		h.Cfg.CI.DiscordWebhookURL = ""
+		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+		synctest.Wait()
+		assert.Empty(t, reqCh, "cleared URL skips future notifications")
+	})
 }
 
 func TestCIPollerDiscordWebhookPostDoesNotBlockFailedEvent(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 
-	requestStarted := make(chan struct{}, 1)
-	releaseResponse := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		requestStarted <- struct{}{}
-		<-releaseResponse
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(func() {
-		close(releaseResponse)
+		requestStarted := make(chan struct{}, 1)
+		releaseResponse := make(chan struct{})
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			requestStarted <- struct{}{}
+			<-releaseResponse
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		transport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		defer func() { http.DefaultTransport = transport }()
+		t.Cleanup(func() {
+			close(releaseResponse)
+		})
+		h.Cfg.CI.DiscordWebhookURL = server.URL
+
+		_, _, members := h.seedCIPanelRun(t, "acme/api", 4, "headsha444", "base..headsha444",
+			[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
+
+		done := make(chan struct{}, 1)
+		go func() {
+			h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+			done <- struct{}{}
+		}()
+		synctest.Wait()
+		require.Len(t, done, 1, "failed event returns while the webhook response is blocked")
+		require.Len(t, requestStarted, 1)
 	})
-	h.Cfg.CI.DiscordWebhookURL = server.URL
-
-	_, _, members := h.seedCIPanelRun(t, "acme/api", 4, "headsha444", "base..headsha444",
-		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
-
-	done := make(chan struct{})
-	go func() {
-		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
-		close(done)
-	}()
-
-	require.Eventually(t, func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}, 200*time.Millisecond, 10*time.Millisecond)
-	require.Eventually(t, func() bool {
-		select {
-		case <-requestStarted:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestCIPollerDiscordWebhookIgnoresNonCIJobs(t *testing.T) {
@@ -328,51 +325,48 @@ func TestCIPollerDiscordWebhookIgnoresNonCIJobs(t *testing.T) {
 }
 
 func TestCIPollerDiscordWebhookDedupesQuotaCooldownPerAgent(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.AgentQuotaCooldown = "5m"
-	reqCh := make(chan discordWebhookPayload, 3)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		var payload discordWebhookPayload
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-		reqCh <- payload
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-	h.Cfg.CI.DiscordWebhookURL = server.URL
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.AgentQuotaCooldown = "5m"
+		reqCh := make(chan discordWebhookPayload, 3)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			var payload discordWebhookPayload
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			reqCh <- payload
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		transport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		defer func() { http.DefaultTransport = transport }()
+		h.Cfg.CI.DiscordWebhookURL = server.URL
 
-	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
-	h.Poller.discordNowFn = func() time.Time { return now }
-	quotaErr := review.QuotaErrorPrefix + "agent codex quota cooldown active"
-	_, _, firstMembers := h.seedCIPanelRun(t, "acme/api", 2, "headsha222", "base..headsha222",
-		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: quotaErr}})
-	_, _, secondMembers := h.seedCIPanelRun(t, "acme/api", 3, "headsha333", "base..headsha333",
-		[]jobSpec{{Agent: "codex", ReviewType: "review", Status: "failed", Error: quotaErr}})
+		now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+		h.Poller.discordNowFn = func() time.Time { return now }
+		quotaErr := review.QuotaErrorPrefix + "agent codex quota cooldown active"
+		_, _, firstMembers := h.seedCIPanelRun(t, "acme/api", 2, "headsha222", "base..headsha222",
+			[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: quotaErr}})
+		_, _, secondMembers := h.seedCIPanelRun(t, "acme/api", 3, "headsha333", "base..headsha333",
+			[]jobSpec{{Agent: "codex", ReviewType: "review", Status: "failed", Error: quotaErr}})
 
-	h.Poller.handleReviewFailed(ciEvent(firstMembers[0].ID, "review.failed"))
-	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
+		h.Poller.handleReviewFailed(ciEvent(firstMembers[0].ID, "review.failed"))
+		h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
 
-	receiveDiscordPayload(t, reqCh)
-	assert.Empty(t, reqCh, "same-agent quota cooldown is deduped globally")
+		receiveDiscordPayload(t, reqCh)
+		synctest.Wait()
+		assert.Empty(t, reqCh, "same-agent quota cooldown is deduped globally")
 
-	now = now.Add(5*time.Minute + time.Second)
-	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
-	receiveDiscordPayload(t, reqCh)
-	assert.Empty(t, reqCh, "dedupe expires after configured quota cooldown")
+		now = now.Add(5*time.Minute + time.Second)
+		h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
+		receiveDiscordPayload(t, reqCh)
+		synctest.Wait()
+		assert.Empty(t, reqCh, "dedupe expires after configured quota cooldown")
+	})
 }
 
 func receiveDiscordPayload(t *testing.T, ch <-chan discordWebhookPayload) discordWebhookPayload {
 	t.Helper()
-	var payload discordWebhookPayload
-	require.Eventually(t, func() bool {
-		select {
-		case payload = <-ch:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
-	return payload
+	return <-ch
 }
 
 type jobSpec struct {
@@ -1032,105 +1026,96 @@ func TestCIPollerStartStopHealth(t *testing.T) {
 }
 
 func TestCIPollerStopDrainsQueuedEventsBeforeReturning(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	comments := h.CaptureComments()
-	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 91, "stop-drain-head", "base..stop-drain-head",
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
-	h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
-	queuedPanel, queuedSynth, _ := h.seedCIPanelRun(t, "acme/api", 92, "stop-drain-queued", "base..stop-drain-queued",
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding B"}})
-	h.completeSynthesisWithReview(t, queuedSynth.ID, "## Combined findings\nVerified finding B.")
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 91, "stop-drain-head", "base..stop-drain-head",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+		h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
+		queuedPanel, queuedSynth, _ := h.seedCIPanelRun(t, "acme/api", 92, "stop-drain-queued", "base..stop-drain-queued",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding B"}})
+		h.completeSynthesisWithReview(t, queuedSynth.ID, "## Combined findings\nVerified finding B.")
 
-	broadcaster := NewBroadcaster()
-	h.Poller.broadcaster = broadcaster
-	h.Poller.prPostTargetFn = func(_ context.Context, _ string, pr int) (panelPostTarget, error) {
-		if pr == 91 {
-			return panelPostTarget{Open: true, HeadSHA: "stop-drain-head"}, nil
+		broadcaster := NewBroadcaster()
+		h.Poller.broadcaster = broadcaster
+		h.Poller.prPostTargetFn = func(_ context.Context, _ string, pr int) (panelPostTarget, error) {
+			if pr == 91 {
+				return panelPostTarget{Open: true, HeadSHA: "stop-drain-head"}, nil
+			}
+			return panelPostTarget{Open: true, HeadSHA: "stop-drain-queued"}, nil
 		}
-		return panelPostTarget{Open: true, HeadSHA: "stop-drain-queued"}, nil
-	}
-	releasePost := make(chan struct{})
-	postStarted := make(chan struct{})
-	h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
-		if pr == 91 {
-			close(postStarted)
-			<-releasePost
+		releasePost := make(chan struct{})
+		postStarted := make(chan struct{})
+		h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
+			if pr == 91 {
+				close(postStarted)
+				<-releasePost
+			}
+			*comments = append(*comments, capturedComment{repo, pr, body})
+			return nil
 		}
-		*comments = append(*comments, capturedComment{repo, pr, body})
-		return nil
-	}
-	require.NoError(t, h.Poller.Start())
-	broadcaster.Broadcast(ciEvent(synth.ID, "review.completed"))
-	<-postStarted
-	broadcaster.Broadcast(ciEvent(queuedSynth.ID, "review.completed"))
+		require.NoError(t, h.Poller.Start())
+		broadcaster.Broadcast(ciEvent(synth.ID, "review.completed"))
+		<-postStarted
+		broadcaster.Broadcast(ciEvent(queuedSynth.ID, "review.completed"))
 
-	stopDone := make(chan struct{})
-	go func() {
-		h.Poller.Stop()
-		close(stopDone)
-	}()
-	assert.Never(t, func() bool {
-		select {
-		case <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, 20*time.Millisecond, time.Millisecond)
+		stopDone := make(chan struct{}, 1)
+		go func() {
+			h.Poller.Stop()
+			stopDone <- struct{}{}
+		}()
+		synctest.Wait()
+		assert.Empty(t, stopDone, "stop waits for the blocked post")
 
-	close(releasePost)
-	require.Eventually(t, func() bool {
-		select {
-		case <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
-	assert.Len(t, *comments, 2)
-	assert.True(t, h.panelPostedAt(t, panel.ID))
-	assert.True(t, h.panelPostedAt(t, queuedPanel.ID))
+		close(releasePost)
+		synctest.Wait()
+		<-stopDone
+		assert.Len(t, *comments, 2)
+		assert.True(t, h.panelPostedAt(t, panel.ID))
+		assert.True(t, h.panelPostedAt(t, queuedPanel.ID))
+	})
 }
 
 func TestServerStopKeepsCIEventListenerUntilWorkersFinish(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	comments := h.CaptureComments()
-	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 93, "worker-finish-head", "base..worker-finish-head",
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
-	h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 93, "worker-finish-head", "base..worker-finish-head",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+		h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
 
-	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-	baseSubscribers := server.Broadcaster().SubscriberCount()
-	h.Poller.broadcaster = server.Broadcaster()
-	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
-		return panelPostTarget{Open: true, HeadSHA: "worker-finish-head"}, nil
-	}
-	require.NoError(t, h.Poller.Start())
-	server.SetCIPoller(h.Poller)
+		server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+		baseSubscribers := server.Broadcaster().SubscriberCount()
+		h.Poller.broadcaster = server.Broadcaster()
+		h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+			return panelPostTarget{Open: true, HeadSHA: "worker-finish-head"}, nil
+		}
+		require.NoError(t, h.Poller.Start())
+		server.SetCIPoller(h.Poller)
 
-	releaseWorker := make(chan struct{})
-	server.workerPool.wg.Add(1)
-	close(server.workerPool.readyCh)
-	go func() {
-		<-releaseWorker
-		server.Broadcaster().Broadcast(ciEvent(synth.ID, "review.completed"))
-		server.workerPool.wg.Done()
-	}()
+		releaseWorker := make(chan struct{})
+		server.workerPool.wg.Add(1)
+		close(server.workerPool.readyCh)
+		go func() {
+			<-releaseWorker
+			server.Broadcaster().Broadcast(ciEvent(synth.ID, "review.completed"))
+			server.workerPool.wg.Done()
+		}()
 
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- server.Stop() }()
-	require.Eventually(t, func() bool {
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- server.Stop() }()
+		synctest.Wait()
 		healthy, _ := h.Poller.HealthCheck()
-		return !healthy
-	}, time.Second, time.Millisecond)
-	assert.Equal(t, baseSubscribers+1, server.Broadcaster().SubscriberCount())
-	require.ErrorContains(t, h.Poller.Start(), "already running or stopping")
+		require.False(t, healthy)
+		assert.Equal(t, baseSubscribers+1, server.Broadcaster().SubscriberCount())
+		require.ErrorContains(t, h.Poller.Start(), "already running or stopping")
 
-	close(releaseWorker)
-	require.NoError(t, <-stopDone)
-	assert.Len(t, *comments, 1)
-	assert.True(t, h.panelPostedAt(t, panel.ID))
-	assert.Zero(t, server.Broadcaster().SubscriberCount())
+		close(releaseWorker)
+		require.NoError(t, <-stopDone)
+		assert.Len(t, *comments, 1)
+		assert.True(t, h.panelPostedAt(t, panel.ID))
+		assert.Zero(t, server.Broadcaster().SubscriberCount())
+	})
 }
 
 func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
