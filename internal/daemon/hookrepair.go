@@ -34,15 +34,14 @@ func repairRegisteredHooks(ctx context.Context, repos []storage.Repo) {
 }
 
 func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
-	insideGitDir, err := githook.HooksDirInsideGitDir(ctx, root)
+	insideGitDir, err := githook.HooksInsideGitDir(ctx, root)
 	if err != nil {
 		// Registered repo may have been deleted; nothing to repair.
 		return
 	}
 	if !insideGitDir {
-		// The hooks directory resolves outside the git dir (for example
-		// core.hooksPath into a working tree), where it may hold tracked
-		// or user-managed files the daemon must not modify. Warn instead.
+		// The hooks directory or a hook symlink points outside Git metadata,
+		// or a symlink cannot be resolved. Leave user-managed files alone.
 		for _, warning := range readOnlyHookWarnings(ctx, root, binaryPath) {
 			log.Print(warning)
 		}

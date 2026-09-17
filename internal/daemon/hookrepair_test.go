@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,25 @@ func writeFakeBinary(t *testing.T, name string) string {
 
 func TestRepairRepoHooksAtStartup(t *testing.T) {
 	t.Parallel()
+
+	t.Run("never writes individual hooks symlinked into worktree", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires elevated privileges on Windows")
+		}
+		repo := testutil.NewTestRepoWithCommit(t)
+		for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
+			stale := "#!/bin/sh\n# roborev " + name + " hook v0\necho custom\n"
+			repo.CommitFile(".githooks/"+name, stale, "Add tracked hook")
+		}
+		for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
+			require.NoError(t, os.Symlink(filepath.Join(repo.Root, ".githooks", name), repo.GetHookPath(name)))
+		}
+
+		repairRepoHooksAtStartup(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+
+		assert.Empty(t, repo.Run("status", "--porcelain"))
+	})
 
 	t.Run("rewrites stale managed hook to current binary", func(t *testing.T) {
 		t.Parallel()
