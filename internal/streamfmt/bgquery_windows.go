@@ -3,22 +3,17 @@
 package streamfmt
 
 import (
-	"bufio"
 	"os"
 	"regexp"
 	"strconv"
 	"time"
 
+	xwindows "github.com/charmbracelet/x/windows"
 	"golang.org/x/sys/windows"
 )
 
-// windowsBackgroundQueryTimeout bounds how long we wait for a terminal to
-// answer an OSC 11 background-color query before giving up.
-const windowsBackgroundQueryTimeout = 300 * time.Millisecond
-
 // oscBackgroundPattern matches an OSC 11 background-color reply, e.g.
-// "\x1b]11;rgb:1e1e/1e1e/1e1e" (terminator, BEL or ST, is stripped by the
-// caller before matching).
+// "\x1b]11;rgb:1e1e/1e1e/1e1e" followed by BEL or ST.
 var oscBackgroundPattern = regexp.MustCompile(`\x1b\]11;rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)`)
 
 // platformHasDarkBackground queries the terminal's background color via
@@ -43,40 +38,52 @@ func platformHasDarkBackground() (isDark bool, ok bool) {
 	if err := windows.SetConsoleMode(stdin, rawMode); err != nil {
 		return false, false
 	}
-	defer windows.SetConsoleMode(stdin, oldMode)
+	defer func() { _ = windows.SetConsoleMode(stdin, oldMode) }()
 
 	if _, err := os.Stdout.WriteString("\x1b]11;?\x1b\\"); err != nil {
 		return false, false
 	}
 
-	type readResult struct {
-		line string
-		err  error
-	}
-	resultCh := make(chan readResult, 1)
-	go func() {
-		// The reply is terminated by BEL (\a); a terminal that answers with
-		// ST (ESC \) instead still contains a \a-free line here, which
-		// oscBackgroundPattern still matches on the digits before the
-		// terminator, so both forms parse correctly.
-		reply, err := bufio.NewReader(os.Stdin).ReadString('\a')
-		resultCh <- readResult{reply, err}
-	}()
-
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			return false, false
+	// Query before bubbletea takes stdin. Wait for input records, not text:
+	// ReadConsole/ReadFile can block even when a non-text event signals stdin.
+	// Reading one record at a time leaves input after the terminator queued.
+	var char rune
+	var repeats uint16
+	reply, err := readOSCBackground(func(remaining time.Duration) (rune, error) {
+		if repeats > 0 {
+			repeats--
+			return char, nil
 		}
-		return parseOSCBackgroundIsDark(res.line)
-	case <-time.After(windowsBackgroundQueryTimeout):
-		// The query goroutine is left running; if the terminal answers late,
-		// stray bytes may be consumed from stdin by it rather than by
-		// whatever reads stdin next. This mirrors the same tradeoff termenv
-		// itself makes on Unix (a bounded wait before giving up), and is why
-		// this query must run once at startup, before bubbletea takes stdin.
+		wait, err := windows.WaitForSingleObject(stdin, uint32((remaining+time.Millisecond-1)/time.Millisecond))
+		if err != nil {
+			return 0, err
+		}
+		if wait != windows.WAIT_OBJECT_0 {
+			return 0, os.ErrDeadlineExceeded
+		}
+		var record xwindows.InputRecord
+		var n uint32
+		if err := xwindows.PeekConsoleInput(stdin, &record, 1, &n); err != nil || n == 0 {
+			return 0, err
+		}
+		if err := xwindows.ReadConsoleInput(stdin, &record, 1, &n); err != nil {
+			return 0, err
+		}
+		if record.EventType != xwindows.KEY_EVENT {
+			return 0, nil
+		}
+		key := record.KeyEvent()
+		if !key.KeyDown {
+			return 0, nil
+		}
+		char = key.Char
+		repeats = max(key.RepeatCount, 1) - 1
+		return char, nil
+	})
+	if err != nil {
 		return false, false
 	}
+	return parseOSCBackgroundIsDark(reply)
 }
 
 func parseOSCBackgroundIsDark(reply string) (isDark bool, ok bool) {
