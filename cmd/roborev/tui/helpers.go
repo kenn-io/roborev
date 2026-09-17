@@ -425,12 +425,10 @@ type markdownCache struct {
 	lastPromptMaxScroll int
 }
 
-// newMarkdownCache creates a markdownCache, detecting terminal background
-// color now (before bubbletea enters raw mode and takes over stdin).
-// Delegates style and color profile resolution to the streamfmt package,
-// which respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
+// newMarkdownCache creates an initial palette without reading stdin. Bubble Tea
+// detects the terminal background after its input loop starts.
 func newMarkdownCache(tabWidth int) *markdownCache {
-	style := streamfmt.GlamourStyle()
+	style := streamfmt.InitialGlamourStyle()
 	profile := streamfmt.ResolveColorProfile()
 	if tabWidth <= 0 {
 		tabWidth = 2

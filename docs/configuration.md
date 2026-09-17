@@ -1376,6 +1376,15 @@ ROBOREV_COLOR_MODE=dark roborev tui
 `NO_COLOR` is set, all ANSI color sequences are stripped regardless of
 `ROBOREV_COLOR_MODE`.
 
+In Windows Terminal, standalone commands such as `log`, `fix`, and `refine`
+attempt background detection once, provided standard input and output are
+console handles and no input is queued. They wait up to five seconds, matching
+termenv's Unix query timeout, then keep the dark palette if detection fails. The
+query leaves unrelated input untouched. A terminal reply arriving after
+detection stops can remain queued for the next reader; forcing `dark` or `light`
+avoids the query. The TUI instead receives background replies through its active
+input loop and does not wait for detection during startup.
+
 ### Model Selection
 
 The `default_model` setting specifies which model agents should use. The format

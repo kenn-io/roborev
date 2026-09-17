@@ -878,7 +878,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		daemonVersion:       daemonVersion,
 		client:              httpClient,
 		api:                 newDaemonAPI(ep, httpClient),
-		glamourStyle:        streamfmt.GlamourStyle(),
+		glamourStyle:        streamfmt.InitialGlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		width:               80, // sensible defaults until we get WindowSizeMsg
@@ -937,7 +937,7 @@ func (m model) Init() tea.Cmd {
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
 	}
-	if runtime.GOOS == "windows" && os.Getenv("WT_SESSION") != "" && autoColorMode() {
+	if autoColorMode() && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
 		// Bubble Tea owns stdin and recognizes late replies alongside user input.
 		cmds = append(cmds, tea.RequestBackgroundColor)
 	}

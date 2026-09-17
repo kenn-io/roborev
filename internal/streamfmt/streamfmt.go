@@ -39,15 +39,28 @@ func GlamourStyle() gansi.StyleConfig {
 		isDark = false
 	case mode == "none" || termenv.EnvNoColor():
 	default:
-		isDark = termenv.HasDarkBackground()
+		isDark = platformHasDarkBackground()
 	}
 	return GlamourStyleForBackground(isDark)
 }
 
-// GlamourStyleForBackground builds a zero-margin style from an already resolved
-// background and updates adaptive colors without reading terminal input.
-// Callers must resolve color-mode overrides before calling it.
+// InitialGlamourStyle selects an initial TUI palette without terminal queries.
+// A writer without a file descriptor allows termenv's environment fallback while
+// preventing terminal I/O. Bubble Tea supplies the detected background later.
+func InitialGlamourStyle() gansi.StyleConfig {
+	output := termenv.NewOutput(io.Discard, termenv.WithTTY(true))
+	return GlamourStyleForBackground(output.HasDarkBackground())
+}
+
+// GlamourStyleForBackground builds a zero-margin style from a detected background
+// without reading terminal input. Explicit color-mode overrides take precedence.
 func GlamourStyleForBackground(isDark bool) gansi.StyleConfig {
+	switch mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE")); {
+	case mode == "light":
+		isDark = false
+	case mode == "dark" || mode == "none" || termenv.EnvNoColor():
+		isDark = true
+	}
 	style := styles.LightStyleConfig
 	if isDark {
 		style = styles.DarkStyleConfig

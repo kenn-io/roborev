@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,7 +49,7 @@ func TestWindowsProbeFixture_VersionFlagsAndPositionals(t *testing.T) {
 		data, readErr := os.ReadFile(marker)
 		require.NoError(t, readErr)
 		assert.Contains(t, string(data), "positional:random-prompt")
-		assert.False(t, strings.Contains(string(data), "positional:--version"),
+		assert.NotContains(t, string(data), "positional:--version",
 			"version flags must not mark as positional")
 	})
 }
