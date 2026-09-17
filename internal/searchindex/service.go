@@ -348,12 +348,20 @@ func (service *Service) searchSemantic(
 	if err != nil {
 		return semanticLegResult{}, err
 	}
-	if len(candidates) >= target {
+	if candidateGroupCount(candidates) >= target {
 		return semanticLegResult{
 			Candidates: candidates, Query: queryVector, GenerationKey: key,
 		}, nil
 	}
 	return service.searchSemanticDeep(ctx, key, queryVector, filters)
+}
+
+func candidateGroupCount(candidates []rankedCandidate) int {
+	groups := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		groups[candidate.GroupKey] = struct{}{}
+	}
+	return len(groups)
 }
 
 func (service *Service) searchSemanticDeep(

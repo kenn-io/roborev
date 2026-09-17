@@ -4,6 +4,37 @@ import "slices"
 
 const reciprocalRankConstant = 60
 
+func rankLegCandidatesPreservingGroups(
+	candidates []rankedCandidate, compare func(rankedCandidate, rankedCandidate) int,
+) []rankedCandidate {
+	best := make(map[string]rankedCandidate, len(candidates))
+	for _, candidate := range candidates {
+		current, found := best[candidate.GroupKey]
+		if !found || compare(candidate, current) < 0 {
+			best[candidate.GroupKey] = candidate
+		}
+	}
+	groups := make([]rankedCandidate, 0, len(best))
+	for _, candidate := range best {
+		groups = append(groups, candidate)
+	}
+	slices.SortFunc(groups, compare)
+	ranks := make(map[string]int, len(groups))
+	for i, candidate := range groups {
+		ranks[candidate.GroupKey] = i + 1
+	}
+	for i := range candidates {
+		candidates[i].Rank = ranks[candidates[i].GroupKey]
+	}
+	slices.SortFunc(candidates, func(left, right rankedCandidate) int {
+		if left.Rank != right.Rank {
+			return left.Rank - right.Rank
+		}
+		return compare(left, right)
+	})
+	return candidates
+}
+
 func groupLegCandidates(candidates []rankedCandidate) []rankedCandidate {
 	if len(candidates) == 0 {
 		return nil
@@ -29,6 +60,9 @@ func groupLegCandidates(candidates []rankedCandidate) []rankedCandidate {
 func betterWithinLeg(candidate, current rankedCandidate) bool {
 	if candidate.Rank > 0 && current.Rank > 0 && candidate.Rank != current.Rank {
 		return candidate.Rank < current.Rank
+	}
+	if candidate.identifier != current.identifier {
+		return candidate.identifier
 	}
 	if candidate.Score != current.Score {
 		return candidate.Score > current.Score

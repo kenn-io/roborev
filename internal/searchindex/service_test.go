@@ -302,6 +302,54 @@ func TestServiceHydrationRepeatsCanonicalLivenessFiltersAndContentHash(t *testin
 	}
 }
 
+func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
+	ctx := context.Background()
+	panel := "00000000-0000-4000-8000-000000009999"
+	older := queryTestDocument(1, panel, "older panel member", queryDocOptions{})
+	newer := queryTestDocument(2, panel, "newer panel member", queryDocOptions{})
+
+	t.Run("lexical", func(t *testing.T) {
+		index := openQueryTestIndex(t)
+		_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{older, newer}, nil)
+		require.NoError(t, err)
+		store := newServiceStore(older, newer)
+		stale := store.docs[newer.DocKey]
+		stale.Output = "canonical content changed"
+		store.docs[newer.DocKey] = stale
+		service := NewService(store, index, nil,
+			&serviceRuntime{health: HealthSnapshot{MirrorComplete: true, VectorState: "unconfigured"}})
+
+		result, err := service.Search(ctx, SearchParams{Query: "main", Mode: ModeLexical, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, result.Hits, 1)
+		assert.Equal(t, older.Source.ReviewID, result.Hits[0].ReviewID)
+	})
+
+	t.Run("semantic", func(t *testing.T) {
+		index := openQueryTestIndex(t)
+		_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{older, newer}, nil)
+		require.NoError(t, err)
+		model := vector.Generation{Model: "panel-alternate", Dimensions: 2}
+		seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{
+			older.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{0.8, 0.6}}},
+			newer.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+		})
+		store := newServiceStore(older, newer)
+		stale := store.docs[newer.DocKey]
+		stale.Output = "canonical content changed"
+		store.docs[newer.DocKey] = stale
+		service := NewService(store, index,
+			&serviceEmbedder{model: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
+
+		result, err := service.Search(ctx, SearchParams{
+			Query: "matching meaning", Mode: ModeSemantic, Limit: 1,
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Hits, 1)
+		assert.Equal(t, older.Source.ReviewID, result.Hits[0].ReviewID)
+	})
+}
+
 func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *testing.T) {
 	ctx := context.Background()
 	index := openQueryTestIndex(t)

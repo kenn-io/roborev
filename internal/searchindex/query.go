@@ -82,8 +82,9 @@ func containsSearchToken(value string) bool {
 	}) >= 0
 }
 
-// SearchLexical returns at most limit panel-grouped lexical candidates.
-// Exact identifiers and full or short commit SHA matches precede FTS rank.
+// SearchLexical returns candidates from at most limit panel groups while
+// retaining alternate members until canonical hydration. Exact identifiers
+// and full or short commit SHA matches precede FTS rank.
 func (index *Index) SearchLexical(
 	ctx context.Context, query string, filters SearchFilters, limit int,
 ) ([]rankedCandidate, error) {
@@ -104,32 +105,33 @@ func (index *Index) SearchLexical(
 		}
 	}
 
-	byGroup := make(map[string]rankedCandidate, len(exact)+len(lexical))
+	byDocument := make(map[string]rankedCandidate, len(exact)+len(lexical))
 	for _, candidate := range lexical {
-		byGroup[candidate.GroupKey] = candidate
+		byDocument[candidate.DocKey] = candidate
 	}
 	for _, candidate := range exact {
-		if previous, ok := byGroup[candidate.GroupKey]; ok {
+		if previous, ok := byDocument[candidate.DocKey]; ok {
 			candidate.MatchedIn = stableMatches(append(candidate.MatchedIn, previous.MatchedIn...))
 			if candidate.Excerpt == "" {
 				candidate.Excerpt = previous.Excerpt
 			}
 		}
-		byGroup[candidate.GroupKey] = candidate
+		byDocument[candidate.DocKey] = candidate
 	}
 
-	merged := make([]rankedCandidate, 0, len(byGroup))
-	for _, candidate := range byGroup {
+	merged := make([]rankedCandidate, 0, len(byDocument))
+	for _, candidate := range byDocument {
 		merged = append(merged, candidate)
 	}
-	slices.SortFunc(merged, compareLexicalCandidates)
-	if len(merged) > limit {
-		merged = merged[:limit]
+	merged = rankLegCandidatesPreservingGroups(merged, compareLexicalCandidates)
+	firstBeyondLimit := len(merged)
+	for i, candidate := range merged {
+		if candidate.Rank > limit {
+			firstBeyondLimit = i
+			break
+		}
 	}
-	for i := range merged {
-		merged[i].Rank = i + 1
-	}
-	return merged, nil
+	return merged[:firstBeyondLimit], nil
 }
 
 func (index *Index) searchExactIdentifiers(
@@ -166,13 +168,20 @@ func (index *Index) searchExactIdentifiers(
 				ORDER BY finished_at DESC, job_id DESC, doc_key ASC
 			       ) AS group_rank
 			  FROM matches
+		), top_groups AS (
+			SELECT group_key
+			  FROM ranked
+			 WHERE group_rank = 1
+			 ORDER BY finished_at DESC, job_id DESC, doc_key ASC
+			 LIMIT ?
 		)
-		SELECT doc_key, review_id, review_uuid, job_id, job_uuid, group_key,
-		       repo_id, repo_name, branch, git_ref, commit_sha, finished_at,
-		       verdict, closed, panel_role, content, content_hash
-		  FROM ranked WHERE group_rank = 1
-		 ORDER BY finished_at DESC, job_id DESC, doc_key ASC
-		 LIMIT ?`)
+		SELECT ranked.doc_key, ranked.review_id, ranked.review_uuid,
+		       ranked.job_id, ranked.job_uuid, ranked.group_key,
+		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
+		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
+		       ranked.panel_role, ranked.content, ranked.content_hash
+		  FROM ranked JOIN top_groups USING (group_key)
+		 ORDER BY ranked.finished_at DESC, ranked.job_id DESC, ranked.doc_key ASC`)
 	args = append(args, limit)
 	rows, err := index.db.QueryContext(ctx, statement.String(), args...)
 	if err != nil {
@@ -220,14 +229,22 @@ func (index *Index) searchFTS(
 				ORDER BY lexical_score ASC, finished_at DESC, job_id DESC, doc_key ASC
 			       ) AS group_rank
 			  FROM matches
+		), top_groups AS (
+			SELECT group_key
+			  FROM ranked
+			 WHERE group_rank = 1
+			 ORDER BY lexical_score ASC, finished_at DESC, job_id DESC, doc_key ASC
+			 LIMIT ?
 		)
-		SELECT doc_key, review_id, review_uuid, job_id, job_uuid, group_key,
-		       repo_id, repo_name, branch, git_ref, commit_sha, finished_at,
-		       verdict, closed, panel_role, content, content_hash,
-		       lexical_score, excerpt
-		  FROM ranked WHERE group_rank = 1
-		 ORDER BY lexical_score ASC, finished_at DESC, job_id DESC, doc_key ASC
-		 LIMIT ?`)
+		SELECT ranked.doc_key, ranked.review_id, ranked.review_uuid,
+		       ranked.job_id, ranked.job_uuid, ranked.group_key,
+		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
+		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
+		       ranked.panel_role, ranked.content, ranked.content_hash,
+		       ranked.lexical_score, ranked.excerpt
+		  FROM ranked JOIN top_groups USING (group_key)
+		 ORDER BY ranked.lexical_score ASC, ranked.finished_at DESC,
+		          ranked.job_id DESC, ranked.doc_key ASC`)
 	args = append(args, limit)
 	rows, err := index.db.QueryContext(ctx, statement.String(), args...)
 	if err != nil {
@@ -474,7 +491,7 @@ func (index *Index) semanticCandidates(
 		candidate.MatchedIn = []string{MatchSemantic}
 		candidates = append(candidates, candidate)
 	}
-	slices.SortFunc(candidates, func(left, right rankedCandidate) int {
+	return rankLegCandidatesPreservingGroups(candidates, func(left, right rankedCandidate) int {
 		if left.Score != right.Score {
 			if left.Score > right.Score {
 				return -1
@@ -482,8 +499,7 @@ func (index *Index) semanticCandidates(
 			return 1
 		}
 		return compareCandidateTie(left, right)
-	})
-	return groupLegCandidates(candidates), nil
+	}), nil
 }
 
 func (index *Index) readCandidate(ctx context.Context, docKey string) (rankedCandidate, bool, error) {
