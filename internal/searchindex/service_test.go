@@ -350,6 +350,32 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
 	})
 }
 
+func TestServiceRejectsStaleLexicalIdentifiersDuringHydration(t *testing.T) {
+	ctx := context.Background()
+	doc := queryTestDocument(1, "group", "unchanged review content", queryDocOptions{
+		branch: "old-branch",
+	})
+	index := openQueryTestIndex(t)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	store := newServiceStore(doc)
+	updated := store.docs[doc.DocKey]
+	updated.Branch = "new-branch"
+	store.docs[doc.DocKey] = updated
+	canonical := searchdoc.Render(updated)
+	require.Equal(t, doc.ContentHash, canonical.ContentHash)
+	require.NotEqual(t, doc.Identifiers, canonical.Identifiers)
+	runtime := &serviceRuntime{health: HealthSnapshot{MirrorComplete: true, VectorState: "unconfigured"}}
+	service := NewService(store, index, nil, runtime)
+
+	result, err := service.Search(ctx, SearchParams{
+		Query: "old-branch", Mode: ModeLexical, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result.Hits)
+	assert.Equal(t, 1, runtime.wakes)
+}
+
 func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *testing.T) {
 	ctx := context.Background()
 	index := openQueryTestIndex(t)

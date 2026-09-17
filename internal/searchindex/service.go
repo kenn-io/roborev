@@ -452,6 +452,7 @@ func (service *Service) hydrate(
 		}
 		document := searchdoc.Render(*source)
 		if document.DocKey != candidate.DocKey || document.ContentHash != candidate.ContentHash ||
+			lexicalIdentifiersChanged(candidate, document) ||
 			!sourceMatchesFilters(*source, filters) {
 			service.wake()
 			continue
@@ -482,6 +483,11 @@ func (service *Service) hydrate(
 	return groupLegCandidates(hydrated), nil
 }
 
+func lexicalIdentifiersChanged(candidate rankedCandidate, document searchdoc.Document) bool {
+	lexical := hasMatch(candidate.MatchedIn, MatchIdentifier) || hasMatch(candidate.MatchedIn, MatchLexical)
+	return lexical && candidate.identifiers != document.Identifiers
+}
+
 func hydrateCandidate(candidate rankedCandidate, document searchdoc.Document, repoPath string) rankedCandidate {
 	source := document.Source
 	candidate.DocKey = document.DocKey
@@ -501,6 +507,7 @@ func hydrateCandidate(candidate rankedCandidate, document searchdoc.Document, re
 	candidate.PanelRole = source.PanelRole
 	candidate.Content = document.Content
 	candidate.ContentHash = document.ContentHash
+	candidate.identifiers = document.Identifiers
 	// RepoPath and the remaining canonical-only fields are carried by the hit.
 	candidate.repoPath = repoPath
 	candidate.commitSubject = source.CommitSubject

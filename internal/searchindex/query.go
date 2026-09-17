@@ -54,6 +54,7 @@ type rankedCandidate struct {
 	MatchedIn     []string
 	Excerpt       string
 	identifier    bool
+	identifiers   string
 	repoPath      string
 	commitSubject string
 	reviewType    string
@@ -147,7 +148,7 @@ func (index *Index) searchExactIdentifiers(
 			       COALESCE(m.finished_at, '') AS finished_at,
 			       COALESCE(m.verdict, '') AS verdict, m.closed,
 			       COALESCE(m.panel_role, '') AS panel_role,
-			       m.content, m.content_hash
+			       m.content, m.content_hash, f.identifiers
 			  FROM review_mirror m
 			  JOIN review_fts f ON f.doc_key = m.doc_key
 			 WHERE (
@@ -179,7 +180,8 @@ func (index *Index) searchExactIdentifiers(
 		       ranked.job_id, ranked.job_uuid, ranked.group_key,
 		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
 		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
-		       ranked.panel_role, ranked.content, ranked.content_hash
+		       ranked.panel_role, ranked.content, ranked.content_hash,
+		       ranked.identifiers
 		  FROM ranked JOIN top_groups USING (group_key)
 		 ORDER BY ranked.finished_at DESC, ranked.job_id DESC, ranked.doc_key ASC`)
 	args = append(args, limit)
@@ -214,7 +216,8 @@ func (index *Index) searchFTS(
 			       COALESCE(m.finished_at, '') AS finished_at,
 			       COALESCE(m.verdict, '') AS verdict, m.closed,
 			       COALESCE(m.panel_role, '') AS panel_role,
-			       m.content, m.content_hash, bm25(review_fts) AS lexical_score,
+			       m.content, m.content_hash, review_fts.identifiers,
+			       bm25(review_fts) AS lexical_score,
 			       snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) AS excerpt
 			  FROM review_fts
 			  JOIN review_mirror m ON m.doc_key = review_fts.doc_key
@@ -241,6 +244,7 @@ func (index *Index) searchFTS(
 		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
 		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
 		       ranked.panel_role, ranked.content, ranked.content_hash,
+		       ranked.identifiers,
 		       ranked.lexical_score, ranked.excerpt
 		  FROM ranked JOIN top_groups USING (group_key)
 		 ORDER BY ranked.lexical_score ASC, ranked.finished_at DESC,
@@ -292,6 +296,7 @@ func scanCandidateBase(scanner rowScanner, extra *candidateScoreExcerptScanner) 
 		&candidate.RepoID, &candidate.RepoName, &candidate.Branch, &candidate.GitRef,
 		&candidate.CommitSHA, &finishedAt, &candidate.Verdict, &closed,
 		&candidate.PanelRole, &candidate.Content, &candidate.ContentHash,
+		&candidate.identifiers,
 	}
 	if extra != nil {
 		destinations = append(destinations, &candidate.Score, &candidate.Excerpt)
@@ -509,7 +514,7 @@ func (index *Index) readCandidate(ctx context.Context, docKey string) (rankedCan
 		       repo_id, repo_name, COALESCE(branch, ''), git_ref,
 		       COALESCE(commit_sha, ''), COALESCE(finished_at, ''),
 		       COALESCE(verdict, ''), closed, COALESCE(panel_role, ''),
-		       content, content_hash
+		       content, content_hash, ''
 		  FROM review_mirror WHERE doc_key = ?`, docKey)
 	candidate, finishedAt, closed, err := scanCandidateBase(row, nil)
 	if err != nil {
