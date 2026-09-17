@@ -44,41 +44,50 @@ func platformHasDarkBackground() (isDark bool, ok bool) {
 		return false, false
 	}
 
-	// Query before bubbletea takes stdin. Wait for input records, not text:
-	// ReadConsole/ReadFile can block even when a non-text event signals stdin.
-	// Reading one record at a time leaves input after the terminator queued.
-	var char rune
-	var repeats uint16
+	// Query before bubbletea takes stdin. Keep all records queued until a
+	// complete reply is recognized, including prefixes shared with user input.
+	var records []xwindows.InputRecord
+	var offset, repeats int
 	reply, err := readOSCBackground(func(remaining time.Duration) (rune, error) {
-		if repeats > 0 {
-			repeats--
-			return char, nil
+		deadline := time.Now().Add(remaining)
+		// ponytail: re-scan the short OSC reply; batch decoding if this grows
+		// beyond background-color queries. Re-peeking also sees repeat counts
+		// that grow as more characters arrive in the same console record.
+		records = make([]xwindows.InputRecord, offset+1)
+		for {
+			var n uint32
+			if err := xwindows.PeekConsoleInput(stdin, &records[0], uint32(len(records)), &n); err != nil {
+				return 0, err
+			}
+			pos := offset
+			for i, record := range records[:n] {
+				if record.EventType != xwindows.KEY_EVENT || !record.KeyEvent().KeyDown {
+					return 0, nil
+				}
+				key := record.KeyEvent()
+				count := int(max(key.RepeatCount, 1))
+				if pos < count {
+					records = records[:i+1]
+					repeats = count - pos - 1
+					offset++
+					return key.Char, nil
+				}
+				pos -= count
+			}
+			remaining = time.Until(deadline)
+			if remaining <= 0 {
+				return 0, os.ErrDeadlineExceeded
+			}
+			// A partial reply keeps the input handle signaled. Poll without
+			// removing it, so timeout leaves the entire input sequence intact.
+			time.Sleep(min(time.Millisecond, remaining))
 		}
-		wait, err := windows.WaitForSingleObject(stdin, uint32((remaining+time.Millisecond-1)/time.Millisecond))
-		if err != nil {
-			return 0, err
+	}, func() error {
+		if repeats != 0 {
+			return errNotOSCBackground
 		}
-		if wait != windows.WAIT_OBJECT_0 {
-			return 0, os.ErrDeadlineExceeded
-		}
-		var record xwindows.InputRecord
 		var n uint32
-		if err := xwindows.PeekConsoleInput(stdin, &record, 1, &n); err != nil || n == 0 {
-			return 0, err
-		}
-		if err := xwindows.ReadConsoleInput(stdin, &record, 1, &n); err != nil {
-			return 0, err
-		}
-		if record.EventType != xwindows.KEY_EVENT {
-			return 0, nil
-		}
-		key := record.KeyEvent()
-		if !key.KeyDown {
-			return 0, nil
-		}
-		char = key.Char
-		repeats = max(key.RepeatCount, 1) - 1
-		return char, nil
+		return xwindows.ReadConsoleInput(stdin, &records[0], uint32(len(records)), &n)
 	})
 	if err != nil {
 		return false, false
