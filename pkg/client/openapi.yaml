@@ -1825,6 +1825,8 @@ components:
           items:
             $ref: "#/components/schemas/ErrorEntry"
           type: array
+        search:
+          $ref: "#/components/schemas/SearchHealth"
         uptime:
           type: string
         version:
@@ -3110,6 +3112,183 @@ components:
         - output
         - created_at
         - closed
+      type: object
+    SearchCoverage:
+      additionalProperties: false
+      properties:
+        embedding_backlog:
+          format: int64
+          type: integer
+        embeddings_configured:
+          type: boolean
+        mirror_backlog:
+          format: int64
+          type: integer
+        mirror_complete:
+          type: boolean
+        skipped:
+          format: int64
+          type: integer
+        vector_state:
+          type: string
+      required:
+        - mirror_complete
+        - embeddings_configured
+        - vector_state
+        - embedding_backlog
+        - skipped
+      type: object
+    SearchHealth:
+      additionalProperties: false
+      properties:
+        active_generation:
+          type: string
+        embedded:
+          format: int64
+          type: integer
+        embedding_backlog:
+          format: int64
+          type: integer
+        embeddings_configured:
+          type: boolean
+        eta_seconds:
+          format: int64
+          type: integer
+        indexed:
+          format: int64
+          type: integer
+        last_error:
+          type: string
+        last_error_status:
+          format: int64
+          type: integer
+        last_progress_at:
+          format: date-time
+          type: string
+        last_success_at:
+          format: date-time
+          type: string
+        mirror_backlog:
+          format: int64
+          type: integer
+        mirror_complete:
+          type: boolean
+        rate_per_second:
+          format: double
+          type: number
+        skipped:
+          format: int64
+          type: integer
+        vector_state:
+          type: string
+      required:
+        - indexed
+        - mirror_complete
+        - embeddings_configured
+        - embedded
+        - skipped
+        - embedding_backlog
+        - vector_state
+      type: object
+    SearchHit:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        branch:
+          type: string
+        closed:
+          type: boolean
+        commit_sha:
+          type: string
+        commit_subject:
+          type: string
+        excerpt:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        git_ref:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        job_uuid:
+          type: string
+        matched_in:
+          items:
+            type: string
+          type: array
+        panel_role:
+          type: string
+        repo_name:
+          type: string
+        repo_path:
+          type: string
+        review_id:
+          format: int64
+          type: integer
+        review_type:
+          type: string
+        review_uuid:
+          type: string
+        score:
+          format: double
+          type: number
+        verdict:
+          type: string
+      required:
+        - job_id
+        - review_id
+        - repo_name
+        - repo_path
+        - git_ref
+        - review_type
+        - agent
+        - closed
+        - finished_at
+        - score
+        - matched_in
+        - excerpt
+      type: object
+    SearchResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/SearchResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        bounded:
+          type: boolean
+        bounded_reason:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+        degraded:
+          type: boolean
+        degraded_reason:
+          type: string
+        hits:
+          items:
+            $ref: "#/components/schemas/SearchHit"
+          type: array
+        mode:
+          type: string
+        partial:
+          type: boolean
+        query:
+          type: string
+      required:
+        - query
+        - mode
+        - degraded
+        - bounded
+        - partial
+        - coverage
+        - hits
       type: object
     SessionState:
       additionalProperties: false
@@ -4946,6 +5125,102 @@ paths:
       summary: Close or reopen a review
       tags:
         - reviews
+  /api/search:
+    get:
+      operationId: searchReviews
+      parameters:
+        - description: Required review search query (maximum 2,000 UTF-8 runes)
+          explode: false
+          in: query
+          name: q
+          required: true
+          schema:
+            description: Required review search query (maximum 2,000 UTF-8 runes)
+            maxLength: 2000
+            minLength: 1
+            type: string
+        - description: "Search mode: auto, lexical, hybrid, or semantic"
+          explode: false
+          in: query
+          name: mode
+          schema:
+            default: auto
+            description: "Search mode: auto, lexical, hybrid, or semantic"
+            enum:
+              - auto
+              - lexical
+              - hybrid
+              - semantic
+            type: string
+        - description: Repository path, name, or registered identity
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Repository path, name, or registered identity
+            type: string
+        - description: Exact branch name
+          explode: false
+          in: query
+          name: branch
+          schema:
+            description: Exact branch name
+            type: string
+        - description: Go duration or RFC3339 lower bound
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Go duration or RFC3339 lower bound
+            type: string
+        - description: "Review verdict: pass or fail"
+          explode: false
+          in: query
+          name: verdict
+          schema:
+            description: "Review verdict: pass or fail"
+            enum:
+              - pass
+              - fail
+            type: string
+        - description: "Review state: all, open, or closed"
+          explode: false
+          in: query
+          name: state
+          schema:
+            default: all
+            description: "Review state: all, open, or closed"
+            enum:
+              - all
+              - open
+              - closed
+            type: string
+        - description: Maximum grouped results (default 20, range 1..100)
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 20
+            description: Maximum grouped results (default 20, range 1..100)
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Search completed review history
+      tags:
+        - Reviews
   /api/shutdown:
     post:
       operationId: shutdown

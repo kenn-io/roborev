@@ -368,6 +368,9 @@ type Config struct {
 	// Read-only MCP endpoint served on the daemon API listener
 	MCP MCPConfig `toml:"mcp"`
 
+	// Review-history search configuration
+	Search SearchConfig `toml:"search"`
+
 	// Agent-specific behavior
 	Agent AgentConfig `toml:"agent"`
 
@@ -611,6 +614,9 @@ func (c *Config) Validate() (err error) {
 		return markExperimentConfigError(err)
 	}
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if err := validateEmbeddingConfig(c.Search.Embeddings); err != nil {
 		return err
 	}
 	reasoning := []namedConfigValue{
@@ -983,6 +989,9 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return err
 	}
+	if err := normalizeSearchConfig(&cfg.Search); err != nil {
+		return err
+	}
 	return normalizeWebConfig(&cfg.Web)
 }
 
@@ -1299,6 +1308,12 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
+	if md.IsDefined("search") {
+		return fmt.Errorf(
+			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"search",
+		)
+	}
 	if md.IsDefined("fix_guidelines") {
 		return fmt.Errorf(
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",

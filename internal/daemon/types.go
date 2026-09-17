@@ -4,6 +4,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
@@ -173,6 +175,44 @@ type ExportReviewsDocument struct {
 // ExportReviewsOutput is the response for GET /api/export/reviews.
 type ExportReviewsOutput struct {
 	Body ExportReviewsDocument
+}
+
+// -- GET /api/search --
+
+// searchLimit preserves the endpoint's stable handler-owned HTTP 400 errors
+// while publishing the integer contract consumed by generated clients.
+type searchLimit string
+
+func (searchLimit) Schema(huma.Registry) *huma.Schema {
+	minimum := float64(1)
+	maximum := float64(100)
+	return &huma.Schema{
+		Type: huma.TypeInteger, Default: 20,
+		Minimum: &minimum, Maximum: &maximum,
+	}
+}
+
+// SearchInput contains review-search text and filters. String query fields are
+// validated by the handler so invalid requests consistently return HTTP 400.
+type SearchInput struct {
+	Query   string      `query:"q" required:"true" minLength:"1" maxLength:"2000" doc:"Required review search query (maximum 2,000 UTF-8 runes)"`
+	Mode    string      `query:"mode" default:"auto" enum:"auto,lexical,hybrid,semantic" doc:"Search mode: auto, lexical, hybrid, or semantic"`
+	Repo    string      `query:"repo" doc:"Repository path, name, or registered identity"`
+	Branch  string      `query:"branch" doc:"Exact branch name"`
+	Since   string      `query:"since" doc:"Go duration or RFC3339 lower bound"`
+	Verdict string      `query:"verdict" enum:"pass,fail" doc:"Review verdict: pass or fail"`
+	State   string      `query:"state" default:"all" enum:"all,open,closed" doc:"Review state: all, open, or closed"`
+	Limit   searchLimit `query:"limit" doc:"Maximum grouped results (default 20, range 1..100)"`
+}
+
+type SearchCoverage = storage.SearchCoverage
+
+type SearchHit = storage.SearchHit
+
+type SearchResponse = storage.SearchResponse
+
+type SearchOutput struct {
+	Body SearchResponse
 }
 
 // -- GET /api/export/ci-metrics --

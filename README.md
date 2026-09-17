@@ -1,3 +1,7 @@
+---
+last_edited: 2026-09-17
+---
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/docs/assets/static/logo-with-text-dark-bg.svg">
   <img alt="roborev" src="https://roborev.io/docs/assets/static/logo-with-text-light.svg">
@@ -84,6 +88,9 @@ You can also choose the exact binary path with
 - **Review Verification** - `roborev compact` verifies findings against
   current code, filters false positives, and consolidates related issues
   into a single review.
+- **Review History Search** - Search completed reviews across repositories by
+  keyword or meaning. Lexical search stays local and needs no embedding
+  provider; semantic and hybrid modes are optional.
 - **Extensible Hooks** - Run shell commands on review events. Built-in
   [beads](https://github.com/steveyegge/beads) and [kata](https://github.com/kenn-io/kata)
   integrations create trackable issues from review failures automatically.
@@ -217,6 +224,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
+| `roborev search <query>...` | Search completed review history across repositories |
 | `roborev export reviews` | Export completed reviews as JSON |
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev export ci-costs` | Export job-level CI costs as JSON |
@@ -225,6 +233,12 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
 
 See [full command reference](https://roborev.io/docs/commands/) for all options.
+
+Review history search is global by default and supports repository, branch,
+time, verdict, and open/closed filters. Lexical search works with no provider
+configuration or network call. See the
+[search guide](https://roborev.io/docs/search/) for semantic and hybrid setup,
+freshness, privacy, and recovery behavior.
 
 ### Exporting review history
 

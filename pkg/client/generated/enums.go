@@ -176,6 +176,63 @@ func (l ListJobsQueryIncludeFindings) Validate() error {
 	}
 }
 
+// SearchReviewsQueryMode Search mode: auto, lexical, hybrid, or semantic
+type SearchReviewsQueryMode string
+
+const (
+	Auto     SearchReviewsQueryMode = "auto"
+	Hybrid   SearchReviewsQueryMode = "hybrid"
+	Lexical  SearchReviewsQueryMode = "lexical"
+	Semantic SearchReviewsQueryMode = "semantic"
+)
+
+// Validate checks if the SearchReviewsQueryMode value is valid
+func (s SearchReviewsQueryMode) Validate() error {
+	switch s {
+	case Auto, Hybrid, Lexical, Semantic:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchReviewsQueryMode value, got: %v", s))
+	}
+}
+
+// SearchReviewsQueryVerdict Review verdict: pass or fail
+type SearchReviewsQueryVerdict string
+
+const (
+	Fail SearchReviewsQueryVerdict = "fail"
+	Pass SearchReviewsQueryVerdict = "pass"
+)
+
+// Validate checks if the SearchReviewsQueryVerdict value is valid
+func (s SearchReviewsQueryVerdict) Validate() error {
+	switch s {
+	case Fail, Pass:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchReviewsQueryVerdict value, got: %v", s))
+	}
+}
+
+// SearchReviewsQueryState Review state: all, open, or closed
+type SearchReviewsQueryState string
+
+const (
+	All    SearchReviewsQueryState = "all"
+	Closed SearchReviewsQueryState = "closed"
+	Open   SearchReviewsQueryState = "open"
+)
+
+// Validate checks if the SearchReviewsQueryState value is valid
+func (s SearchReviewsQueryState) Validate() error {
+	switch s {
+	case All, Closed, Open:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchReviewsQueryState value, got: %v", s))
+	}
+}
+
 // GetSummaryQueryAll Include per-repo breakdown
 type GetSummaryQueryAll string
 

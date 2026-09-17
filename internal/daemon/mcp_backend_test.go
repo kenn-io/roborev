@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -222,6 +224,118 @@ func TestMCPBackendCommentsByCommitID(t *testing.T) {
 	require.NoError(err)
 	require.Len(comments, 1, "only the legacy commit-linked comment from the seed")
 	assert.Equal("legacy thanks", comments[0].Response)
+}
+
+func TestMCPBackendSearchCallsSharedServiceWithExactParameters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server, db := newMCPTestServer(t, true)
+	repo, err := db.GetOrCreateRepo("/src/example", "github.com/example/repo")
+	require.NoError(err)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	server.searchNow = func() time.Time { return now }
+	searcher := &recordingReviewSearcher{result: searchindex.SearchResult{
+		Query: "needle", Mode: searchindex.ModeHybrid,
+		Coverage: searchindex.SearchCoverage{MirrorComplete: true, VectorState: searchindex.VectorActive},
+		Hits:     []searchindex.SearchHit{{JobID: 11, ReviewID: 12, RepoName: "repo", RepoPath: "/src/example"}},
+	}}
+	server.search = searcher
+
+	got, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{
+		Query: "needle", Mode: "hybrid", Repo: repo.Identity, Branch: "Feature/Search",
+		Since: "24h", Verdict: "fail", State: "open", Limit: 7,
+	})
+	require.NoError(err)
+	params := searcher.lastParams(t)
+	assert.Equal("needle", params.Query)
+	assert.Equal(searchindex.ModeHybrid, params.Mode)
+	assert.Equal(repo.ID, params.RepoID)
+	assert.Equal("Feature/Search", params.Branch)
+	require.NotNil(params.Since)
+	assert.Equal(now.Add(-24*time.Hour), *params.Since)
+	assert.Equal("fail", params.Verdict)
+	assert.Equal(searchindex.StateOpen, params.State)
+	assert.Equal(7, params.Limit)
+	assert.Equal(searchResponseFromResult(searcher.result), got)
+}
+
+func TestMCPBackendSearchClassifiesRepoResolutionErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server, db := newMCPTestServer(t, true)
+	server.search = &recordingReviewSearcher{}
+
+	call := func(repo string) (*mcpserver.Error, error) {
+		t.Helper()
+		_, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{
+			Query: "needle", Repo: repo, Limit: 20,
+		})
+		require.Error(err)
+		backendErr, ok := errors.AsType[*mcpserver.Error](err)
+		require.True(ok, "expected *mcpserver.Error, got %T", err)
+		return backendErr, err
+	}
+
+	// Unknown repositories keep the stable invalid-argument message.
+	backendErr, _ := call("missing")
+	assert.Equal(mcpserver.ErrorCodeInvalidArgument, backendErr.Code)
+	assert.Equal("repository not found", backendErr.Message)
+
+	// Repository lookup failures keep the generic private message and never
+	// surface database details to the client.
+	require.NoError(db.Close())
+	backendErr, err := call("/src/example")
+	assert.Equal(mcpserver.ErrorCodeInvalidArgument, backendErr.Code)
+	assert.Equal("search request is invalid", backendErr.Message)
+	assert.NotContains(err.Error(), "sql: database is closed")
+}
+
+func TestMCPBackendSearchReturnsStablePrivateErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantCode string
+		wantText string
+	}{
+		{
+			name: "embeddings unconfigured",
+			err: &searchindex.ModeError{
+				Status: http.StatusBadRequest, Reason: searchindex.ReasonEmbeddingsUnconfigured,
+			},
+			wantCode: mcpserver.ErrorCodeInvalidArgument,
+			wantText: "embeddings are not configured",
+		},
+		{
+			name: "mode unavailable",
+			err: &searchindex.ModeError{
+				Status: http.StatusServiceUnavailable, Reason: searchindex.ReasonSemanticUnavailable,
+				Err: errors.New("provider-secret"),
+			},
+			wantCode: mcpserver.ErrorCodeUnavailable,
+			wantText: "semantic search is unavailable",
+		},
+		{
+			name:     "runtime",
+			err:      errors.New("query needle-secret failed at https://provider.invalid"),
+			wantCode: mcpserver.ErrorCodeInternal,
+			wantText: "review search failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := newMCPTestServer(t, true)
+			server.search = &recordingReviewSearcher{err: tc.err}
+			_, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{
+				Query: "needle-secret", Mode: "semantic", State: "all", Limit: 20,
+			})
+			backendErr, ok := errors.AsType[*mcpserver.Error](err)
+			require.True(t, ok, "expected *mcpserver.Error, got %T", err)
+			assert.Equal(t, tc.wantCode, backendErr.Code)
+			assert.Equal(t, tc.wantText, backendErr.Message)
+			assert.NotContains(t, err.Error(), "needle-secret")
+			assert.NotContains(t, err.Error(), "provider.invalid")
+			assert.NotContains(t, err.Error(), "provider-secret")
+		})
+	}
 }
 
 func TestReviewBrowserURLsInAPIResponses(t *testing.T) {

@@ -18,7 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/searchindex"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -398,4 +401,147 @@ func TestDiscoverDaemonForStartHonorsCanceledContext(t *testing.T) {
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, ready)
+}
+
+func TestDaemonSearchOpensDerivedSidecarWithoutEmbeddingsAndClosesIt(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	search, err := newDaemonSearch(t.Context(), db, dbPath, config.DefaultConfig())
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(filepath.Dir(dbPath), "reviews.search.db"), search.path)
+	assert.FileExists(t, search.path)
+
+	result, err := search.service.Search(t.Context(), searchindex.SearchParams{
+		Query: "needle", Mode: searchindex.ModeLexical, Limit: 20,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result.Hits)
+	assert.Equal(t, searchindex.ModeLexical, result.Mode)
+
+	require.NoError(t, search.Close())
+	_, err = search.index.GenerationAvailable(t.Context(), "missing")
+	require.Error(t, err)
+}
+
+func TestDaemonSearchClosesSidecarOnConstructionFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		configure  func(*config.Config)
+		wantError  string
+		notInError string
+	}{
+		{
+			name: "partial config",
+			configure: func(cfg *config.Config) {
+				cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: "https://embeddings.example"}
+			},
+			wantError: "base_url, model, and dims",
+		},
+		{
+			name: "missing environment credential",
+			configure: func(cfg *config.Config) {
+				cfg.Search.Embeddings = &config.EmbeddingConfig{
+					BaseURL: "https://embeddings.example", Model: "model", Dims: 2,
+					APIKeyEnv: "ROBOREV_TEST_MISSING_EMBEDDING_KEY",
+				}
+			},
+			wantError:  "ROBOREV_TEST_MISSING_EMBEDDING_KEY",
+			notInError: "embeddings.example",
+		},
+		{
+			name: "invalid embedding client",
+			configure: func(cfg *config.Config) {
+				cfg.Search.Embeddings = &config.EmbeddingConfig{
+					BaseURL: "file:///tmp/provider", Model: "model", Dims: 2,
+				}
+			},
+			wantError: "base_url must use HTTP or HTTPS",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "reviews")
+			db, err := storage.Open(dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+			originalClose := closeDaemonSearchIndex
+			closeCalls := 0
+			closeDaemonSearchIndex = func(index *searchindex.Index) error {
+				closeCalls++
+				return originalClose(index)
+			}
+			t.Cleanup(func() { closeDaemonSearchIndex = originalClose })
+
+			cfg := config.DefaultConfig()
+			tc.configure(cfg)
+			_, err = newDaemonSearch(t.Context(), db, dbPath, cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantError)
+			if tc.notInError != "" {
+				assert.NotContains(t, err.Error(), tc.notInError)
+			}
+			assert.Equal(t, 1, closeCalls)
+		})
+	}
+}
+
+type fakeDaemonLifecycle struct {
+	startErr error
+	stopErr  error
+	starts   int
+	stops    int
+}
+
+func (f *fakeDaemonLifecycle) Start(context.Context) error {
+	f.starts++
+	return f.startErr
+}
+
+func (f *fakeDaemonLifecycle) Stop() error {
+	f.stops++
+	return f.stopErr
+}
+
+type fakeSearchCloser struct {
+	err   error
+	calls int
+}
+
+func (f *fakeSearchCloser) Close() error {
+	f.calls++
+	return f.err
+}
+
+func TestRunDaemonWithSearchClosesSidecarOnEveryExit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		startErr error
+		stopErr  error
+		closeErr error
+	}{
+		{name: "normal shutdown"},
+		{name: "startup failure", startErr: errors.New("listen failed")},
+		{name: "shutdown failure", stopErr: errors.New("drain failed")},
+		{name: "sidecar close failure", closeErr: errors.New("close failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &fakeDaemonLifecycle{startErr: tc.startErr, stopErr: tc.stopErr}
+			search := &fakeSearchCloser{err: tc.closeErr}
+
+			err := runDaemonWithSearch(t.Context(), server, search)
+			assert.Equal(t, 1, server.starts)
+			assert.Equal(t, 1, server.stops)
+			assert.Equal(t, 1, search.calls)
+			for _, expected := range []error{tc.startErr, tc.stopErr, tc.closeErr} {
+				if expected != nil {
+					require.ErrorIs(t, err, expected)
+				}
+			}
+		})
+	}
 }

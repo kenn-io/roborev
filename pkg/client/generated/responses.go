@@ -236,6 +236,10 @@ type CloseReviewResponse = CloseReviewOutputBody
 
 type CloseReviewErrorResponse = ErrorModel
 
+type SearchReviewsResponse = SearchResponse
+
+type SearchReviewsErrorResponse = ErrorModel
+
 type ShutdownResponse = ShutdownOutputBody
 
 type ShutdownErrorResponse = ErrorModel
@@ -573,6 +577,13 @@ type CloseReviewResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *CloseReviewResponse
+}
+
+type SearchReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchReviewsResponse
 }
 
 type ShutdownResp struct {
@@ -1244,6 +1255,21 @@ func (c *RawClient) CloseReviewRaw(ctx context.Context, options *CloseReviewRequ
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) SearchReviewsRaw(ctx context.Context, options *SearchReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &SearchReviewsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/search",
+		Method:     "GET",
+		Options:    options,
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

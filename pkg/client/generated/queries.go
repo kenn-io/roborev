@@ -279,6 +279,69 @@ type GetReviewQuery struct {
 	Sha *string `json:"sha,omitempty"`
 }
 
+type SearchReviewsQuery struct {
+	// Q Required review search query (maximum 2,000 UTF-8 runes)
+	Q string `json:"q" validate:"required,max=2000,min=1"`
+
+	// Mode Search mode: auto, lexical, hybrid, or semantic
+	Mode *SearchReviewsQueryMode `json:"mode,omitempty"`
+
+	// Repo Repository path, name, or registered identity
+	Repo *string `json:"repo,omitempty"`
+
+	// Branch Exact branch name
+	Branch *string `json:"branch,omitempty"`
+
+	// Since Go duration or RFC3339 lower bound
+	Since *string `json:"since,omitempty"`
+
+	// Verdict Review verdict: pass or fail
+	Verdict *SearchReviewsQueryVerdict `json:"verdict,omitempty"`
+
+	// State Review state: all, open, or closed
+	State *SearchReviewsQueryState `json:"state,omitempty"`
+
+	// Limit Maximum grouped results (default 20, range 1..100)
+	Limit *int `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+}
+
+func (s SearchReviewsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Q, "required,max=2000,min=1"); err != nil {
+		errors = errors.Append("Q", err)
+	}
+	if s.Mode != nil {
+		if v, ok := any(s.Mode).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Mode", err)
+			}
+		}
+	}
+	if s.Verdict != nil {
+		if v, ok := any(s.Verdict).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Verdict", err)
+			}
+		}
+	}
+	if s.State != nil {
+		if v, ok := any(s.State).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("State", err)
+			}
+		}
+	}
+	if s.Limit != nil {
+		if err := typesValidator.Var(s.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type StreamEventsQuery struct {
 	// Repo Filter events by repo root path
 	Repo *string `json:"repo,omitempty"`

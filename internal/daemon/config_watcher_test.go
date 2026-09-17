@@ -351,6 +351,24 @@ enabled = false
 	assert.True(t, h.Watcher.Config().MCP.Enabled, "the mounted MCP endpoint cannot change until restart")
 }
 
+func TestConfigWatcherPreservesRestartRequiredEmbeddingSearchConfig(t *testing.T) {
+	h := newConfigWatcherHarness(t, `[search.embeddings]
+base_url = "https://api.example.test/v1"
+model = "embed-old"
+dims = 1024
+`)
+
+	h.updateConfigAndWait(t, `[search.embeddings]
+base_url = "https://api.example.test/v1"
+model = "embed-new"
+dims = 768
+`)
+
+	require.NotNil(t, h.Watcher.Config().Search.Embeddings)
+	assert.Equal(t, "embed-old", h.Watcher.Config().Search.Embeddings.Model)
+	assert.Equal(t, 1024, h.Watcher.Config().Search.Embeddings.Dims)
+}
+
 func TestConfigGetter_Interface(t *testing.T) {
 	// Verify both StaticConfig and ConfigWatcher implement ConfigGetter
 	var _ ConfigGetter = (*StaticConfig)(nil)

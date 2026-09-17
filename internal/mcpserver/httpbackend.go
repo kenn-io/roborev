@@ -1,8 +1,11 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -157,6 +160,159 @@ func (b *HTTPBackend) GetJobOutput(ctx context.Context, jobID int64) (JobOutput,
 		return JobOutput{}, err
 	}
 	return output, nil
+}
+
+// Search reads completed review history through the daemon's search endpoint.
+func (b *HTTPBackend) Search(ctx context.Context, q SearchQuery) (storage.SearchResponse, error) {
+	params := url.Values{"q": {q.Query}}
+	if q.Mode != "" {
+		params.Set("mode", q.Mode)
+	}
+	if q.Repo != "" {
+		params.Set("repo", q.Repo)
+	}
+	if q.Branch != "" {
+		params.Set("branch", q.Branch)
+	}
+	if q.Since != "" {
+		params.Set("since", q.Since)
+	}
+	if q.Verdict != "" {
+		params.Set("verdict", q.Verdict)
+	}
+	if q.State != "" {
+		params.Set("state", q.State)
+	}
+	if q.Limit > 0 {
+		params.Set("limit", strconv.Itoa(q.Limit))
+	}
+
+	api, err := roborevclient.NewWithHTTPClient(b.baseURL, b.client)
+	if err != nil {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "build review search request")
+	}
+	resp, err := api.SearchReviewsRaw(ctx, nil, roborevclient.WithQuery(params))
+	if err != nil {
+		return storage.SearchResponse{}, NewError(ErrorCodeUnavailable, "roborev daemon is unavailable")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return storage.SearchResponse{}, searchHTTPStatusError(resp, q.Mode)
+	}
+
+	var body jsontext.Value
+	decoder := jsontext.NewDecoder(resp.Body)
+	if err := json.UnmarshalDecode(decoder, &body); err != nil {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "invalid response from roborev daemon")
+	}
+	var trailing any
+	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "invalid response from roborev daemon")
+	}
+	if !validSearchResponseJSON(body) {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "invalid response from roborev daemon")
+	}
+	var result storage.SearchResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "invalid response from roborev daemon")
+	}
+	if result.Query == "" || result.Mode == "" {
+		return storage.SearchResponse{}, NewError(ErrorCodeInternal, "invalid response from roborev daemon")
+	}
+	if result.Hits == nil {
+		result.Hits = []storage.SearchHit{}
+	}
+	return result, nil
+}
+
+func validSearchResponseJSON(body jsontext.Value) bool {
+	var response map[string]jsontext.Value
+	if err := json.Unmarshal(body, &response); err != nil || response == nil {
+		return false
+	}
+	if !hasNonNullJSONMembers(response,
+		"query", "mode", "degraded", "bounded", "partial", "coverage",
+	) {
+		return false
+	}
+	hitsJSON, ok := response["hits"]
+	if !ok {
+		return false
+	}
+
+	var coverage map[string]jsontext.Value
+	if err := json.Unmarshal(response["coverage"], &coverage); err != nil ||
+		!hasNonNullJSONMembers(coverage,
+			"mirror_complete", "embeddings_configured", "vector_state", "embedding_backlog", "skipped",
+		) {
+		return false
+	}
+	if bytes.Equal(bytes.TrimSpace(hitsJSON), []byte("null")) {
+		return true
+	}
+	var hits []jsontext.Value
+	if err := json.Unmarshal(hitsJSON, &hits); err != nil {
+		return false
+	}
+	for _, hitJSON := range hits {
+		var hit map[string]jsontext.Value
+		if err := json.Unmarshal(hitJSON, &hit); err != nil ||
+			!hasNonNullJSONMembers(hit,
+				"job_id", "review_id", "repo_name", "repo_path", "git_ref", "review_type", "agent",
+				"closed", "finished_at", "score", "matched_in", "excerpt",
+			) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasNonNullJSONMembers(object map[string]jsontext.Value, members ...string) bool {
+	if object == nil {
+		return false
+	}
+	for _, member := range members {
+		value, ok := object[member]
+		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return false
+		}
+	}
+	return true
+}
+
+func searchHTTPStatusError(resp *http.Response, mode string) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	var problem struct {
+		Detail string `json:"detail"`
+		Error  string `json:"error"`
+	}
+	_ = json.Unmarshal(body, &problem)
+	reason := problem.Detail
+	if reason == "" {
+		reason = problem.Error
+	}
+	if mode == "semantic" || mode == "hybrid" {
+		switch reason {
+		case "embeddings are not configured":
+			return NewError(ErrorCodeInvalidArgument, reason)
+		case "semantic search is unavailable", "semantic candidate ceiling exhausted":
+			return NewError(ErrorCodeUnavailable, reason)
+		}
+	}
+
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return NewError(ErrorCodeInvalidArgument, "search request is invalid")
+	case http.StatusBadGateway, http.StatusGatewayTimeout:
+		return NewError(ErrorCodeUnavailable, "roborev daemon is unavailable")
+	case http.StatusServiceUnavailable:
+		return NewError(ErrorCodeUnavailable, "review search is unavailable")
+	default:
+		if mode == "semantic" || mode == "hybrid" {
+			return NewError(ErrorCodeUnavailable, "review search is unavailable")
+		}
+		return NewError(ErrorCodeInternal, "review search failed")
+	}
 }
 
 func commentRefParams(ref CommentRef) url.Values {

@@ -2,20 +2,27 @@ package mcpserver
 
 import (
 	"context"
+	jsonv1 "encoding/json"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"go.kenn.io/roborev/internal/storage"
 )
 
 const (
-	defaultJobLimit = 50
-	maxJobLimit     = 500
-	maxOutputLines  = 2000
+	defaultJobLimit     = 50
+	maxJobLimit         = 500
+	maxOutputLines      = 2000
+	defaultSearchLimit  = 20
+	maxSearchLimit      = 100
+	maxSearchQueryRunes = 2000
 )
 
 type statusInput struct{}
@@ -144,6 +151,17 @@ type jobOutputResult struct {
 	HasMore        bool `json:"has_more"`
 }
 
+type searchInput struct {
+	Query   string `json:"query"`
+	Mode    string `json:"mode,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	Since   string `json:"since,omitempty"`
+	Verdict string `json:"verdict,omitempty"`
+	State   string `json:"state,omitempty"`
+	Limit   *int   `json:"limit,omitempty"`
+}
+
 func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_status",
@@ -180,6 +198,80 @@ func (s *Server) registerTools() {
 			"so earlier output of very long jobs may be gone. Useful for running or failed jobs; " +
 			"completed reviews are better read with roborev_get_review.",
 	}, wrapTool(s.getJobOutput))
+	s.registerSearchTool()
+}
+
+func (s *Server) registerSearchTool() {
+	readOnly := false
+	outputSchema, err := jsonschema.For[storage.SearchResponse](&jsonschema.ForOptions{})
+	if err != nil {
+		panic(fmt.Errorf("build review search output schema: %w", err))
+	}
+	s.mcp.AddTool(&mcp.Tool{
+		Name: "roborev_search_reviews",
+		Description: "Search completed review history. Use auto for discovery, lexical for exact paths, " +
+			"identifiers, or quoted errors, and semantic for wording-independent retrieval when specifically needed.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint: true, DestructiveHint: &readOnly, IdempotentHint: true, OpenWorldHint: &readOnly,
+		},
+		InputSchema: searchToolInputSchema(), OutputSchema: outputSchema,
+	}, s.callSearchTool)
+}
+
+func searchToolInputSchema() *jsonschema.Schema {
+	minQueryRunes := 1
+	maxQueryRunes := maxSearchQueryRunes
+	minimumLimit := float64(1)
+	maximumLimit := float64(maxSearchLimit)
+	return &jsonschema.Schema{
+		Type: "object", Required: []string{"query"},
+		Properties: map[string]*jsonschema.Schema{
+			"query": {
+				Type: "string", MinLength: &minQueryRunes, MaxLength: &maxQueryRunes,
+				Description: "review search query",
+			},
+			"mode": {
+				Type:    "string",
+				Enum:    []any{"auto", "lexical", "hybrid", "semantic"},
+				Default: jsonv1.RawMessage(`"auto"`),
+			},
+			"repo":    {Type: "string", Description: "repository path, name, or registered identity"},
+			"branch":  {Type: "string", Description: "exact branch name"},
+			"since":   {Type: "string", Description: "positive Go duration or RFC3339 lower bound"},
+			"verdict": {Type: "string", Enum: []any{"pass", "fail"}},
+			"state": {
+				Type:    "string",
+				Enum:    []any{"all", "open", "closed"},
+				Default: jsonv1.RawMessage(`"all"`),
+			},
+			"limit": {
+				Type:    "integer",
+				Minimum: &minimumLimit, Maximum: &maximumLimit,
+				Default: jsonv1.RawMessage(`20`),
+			},
+		},
+	}
+}
+
+func (s *Server) callSearchTool(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var input searchInput
+	if len(req.Params.Arguments) > 0 {
+		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
+			return toolErrorResult(NewError(ErrorCodeInvalidArgument, "search arguments are invalid"))
+		}
+	}
+	output, err := s.search(ctx, input)
+	if err != nil {
+		return toolErrorResult(err)
+	}
+	content, err := json.Marshal(output)
+	if err != nil {
+		return nil, fmt.Errorf("marshal MCP search output: %w", err)
+	}
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(content)}},
+		StructuredContent: jsonv1.RawMessage(content),
+	}, nil
 }
 
 type toolError struct {
@@ -201,17 +293,20 @@ func wrapTool[In, Out any](
 		if err == nil {
 			return nil, out, nil
 		}
-		payload := toolErrorOutput{Error: toolError{Code: errorCode(err), Message: err.Error()}}
-		content, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			return nil, out, fmt.Errorf("marshal MCP tool error: %w", marshalErr)
-		}
-		result := &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: string(content)}},
-		}
-		result.SetError(err)
-		return result, out, nil
+		result, resultErr := toolErrorResult(err)
+		return result, out, resultErr
 	}
+}
+
+func toolErrorResult(err error) (*mcp.CallToolResult, error) {
+	payload := toolErrorOutput{Error: toolError{Code: errorCode(err), Message: err.Error()}}
+	content, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("marshal MCP tool error: %w", marshalErr)
+	}
+	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(content)}}}
+	result.SetError(err)
+	return result, nil
 }
 
 func (s *Server) status(ctx context.Context, _ statusInput) (statusOutput, error) {
@@ -389,6 +484,105 @@ func (s *Server) getJobOutput(ctx context.Context, in jobOutputInput) (jobOutput
 		Truncated:      truncated,
 		HasMore:        output.HasMore,
 	}, nil
+}
+
+func (s *Server) search(ctx context.Context, in searchInput) (storage.SearchResponse, error) {
+	query, err := normalizeSearchInput(in)
+	if err != nil {
+		return storage.SearchResponse{}, err
+	}
+	result, err := s.backend.Search(ctx, query)
+	if err != nil {
+		return storage.SearchResponse{}, privateSearchError(err)
+	}
+	if result.Hits == nil {
+		result.Hits = []storage.SearchHit{}
+	}
+	return result, nil
+}
+
+func normalizeSearchInput(in searchInput) (SearchQuery, error) {
+	query := strings.TrimSpace(in.Query)
+	if query == "" {
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument, "query is required")
+	}
+	if utf8.RuneCountInString(query) > maxSearchQueryRunes {
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument,
+			fmt.Sprintf("query must be at most %d UTF-8 runes", maxSearchQueryRunes))
+	}
+	mode := in.Mode
+	if mode == "" {
+		mode = "auto"
+	}
+	switch mode {
+	case "auto", "lexical", "hybrid", "semantic":
+	default:
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument,
+			"mode must be auto, lexical, hybrid, or semantic")
+	}
+	state := in.State
+	if state == "" {
+		state = "all"
+	}
+	switch state {
+	case "all", "open", "closed":
+	default:
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument,
+			"state must be all, open, or closed")
+	}
+	if in.Verdict != "" && in.Verdict != "pass" && in.Verdict != "fail" {
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument, "verdict must be pass or fail")
+	}
+	since := strings.TrimSpace(in.Since)
+	if since != "" {
+		if duration, parseErr := time.ParseDuration(since); parseErr != nil || duration <= 0 {
+			if _, timestampErr := time.Parse(time.RFC3339, since); timestampErr != nil {
+				return SearchQuery{}, NewError(ErrorCodeInvalidArgument,
+					"since must be a positive Go duration or RFC3339 timestamp")
+			}
+		}
+	}
+	limit := defaultSearchLimit
+	if in.Limit != nil {
+		limit = *in.Limit
+	}
+	if limit < 1 || limit > maxSearchLimit {
+		return SearchQuery{}, NewError(ErrorCodeInvalidArgument, "limit must be between 1 and 100")
+	}
+	return SearchQuery{
+		Query: query, Mode: mode, Repo: strings.TrimSpace(in.Repo), Branch: in.Branch,
+		Since: since, Verdict: in.Verdict, State: state, Limit: limit,
+	}, nil
+}
+
+func privateSearchError(err error) error {
+	backendErr, ok := errors.AsType[*Error](err)
+	if !ok {
+		return NewError(ErrorCodeInternal, "review search failed")
+	}
+	switch backendErr.Code {
+	case ErrorCodeInvalidArgument:
+		if backendErr.Message == "repository not found" || backendErr.Message == "search request is invalid" {
+			return NewError(ErrorCodeInvalidArgument, backendErr.Message)
+		}
+		return NewError(ErrorCodeInvalidArgument, "search request is invalid")
+	case ErrorCodeUnavailable:
+		switch backendErr.Message {
+		case "embeddings are not configured", "semantic search is unavailable",
+			"semantic candidate ceiling exhausted", "review search is unavailable",
+			"roborev daemon is unavailable":
+			return NewError(ErrorCodeUnavailable, backendErr.Message)
+		default:
+			return NewError(ErrorCodeUnavailable, "review search is unavailable")
+		}
+	case ErrorCodeInternal:
+		if backendErr.Message == "invalid response from roborev daemon" {
+			return NewError(ErrorCodeInternal, backendErr.Message)
+		}
+		return NewError(ErrorCodeInternal, "review search failed")
+	default:
+		return NewError(ErrorCodeInternal, "review search failed")
+	}
 }
 
 // allComments merges job-linked comments with legacy commit-linked comments

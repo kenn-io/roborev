@@ -18,11 +18,30 @@ type SyncWorker struct {
 	pgPool          *PgPool
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex // protects running and pgPool
+	mu              sync.Mutex // protects running, pgPool, and afterPullWrite
 	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
+	afterPullWrite  func()
+}
+
+// SetAfterPullWrite registers a callback for successfully committed local
+// canonical writes made by the pull path. The callback may be replaced or
+// cleared while the worker is running.
+func (w *SyncWorker) SetAfterPullWrite(fn func()) {
+	w.mu.Lock()
+	w.afterPullWrite = fn
+	w.mu.Unlock()
+}
+
+func (w *SyncWorker) notifyAfterPullWrite() {
+	w.mu.Lock()
+	fn := w.afterPullWrite
+	w.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // NewSyncWorker creates a new sync worker
@@ -846,7 +865,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, r := range reviews {
-			if err := w.db.UpsertPulledReview(r); err != nil {
+			if err := w.pullReview(r); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull review %s: %w", r.UUID, err)
 			}
@@ -891,7 +910,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				SourceMachineID: r.SourceMachineID,
 				CreatedAt:       r.CreatedAt,
 			}
-			if err := w.db.UpsertPulledResponse(pr); err != nil {
+			if err := w.pullResponse(pr); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull response %s: %w", r.UUID, err)
 			}
@@ -999,22 +1018,57 @@ func formatTimestampIDCursor(cursorTime time.Time, cursorID int64) string {
 // pullJob inserts a pulled job into SQLite, creating repo/commit as needed
 func (w *SyncWorker) pullJob(j PulledJob) error {
 	// Get or create repo by identity
-	repoID, err := w.db.GetOrCreateRepoByIdentity(j.RepoIdentity)
+	repoID, repoChanged, err := w.db.getOrCreateRepoByIdentity(j.RepoIdentity)
 	if err != nil {
 		return fmt.Errorf("get or create repo: %w", err)
+	}
+	if repoChanged {
+		w.notifyAfterPullWrite()
 	}
 
 	// Get or create commit if we have one
 	var commitID *int64
 	if j.CommitSHA != "" {
-		id, err := w.db.GetOrCreateCommitByRepoAndSHA(repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
+		id, changed, err := w.db.getOrCreateCommitByRepoAndSHA(repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 		if err != nil {
 			return fmt.Errorf("get or create commit: %w", err)
 		}
 		commitID = &id
+		if changed {
+			w.notifyAfterPullWrite()
+		}
 	}
 
-	return w.db.UpsertPulledJob(j, repoID, commitID)
+	changed, err := w.db.upsertPulledJob(j, repoID, commitID)
+	if err != nil {
+		return err
+	}
+	if changed {
+		w.notifyAfterPullWrite()
+	}
+	return nil
+}
+
+func (w *SyncWorker) pullReview(review PulledReview) error {
+	changed, err := w.db.upsertPulledReview(review)
+	if err != nil {
+		return err
+	}
+	if changed {
+		w.notifyAfterPullWrite()
+	}
+	return nil
+}
+
+func (w *SyncWorker) pullResponse(response PulledResponse) error {
+	changed, err := w.db.upsertPulledResponse(response)
+	if err != nil {
+		return err
+	}
+	if changed {
+		w.notifyAfterPullWrite()
+	}
+	return nil
 }
 
 // HealthCheck returns the health status of the sync worker

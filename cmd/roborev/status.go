@@ -188,6 +188,41 @@ func statusCmd() *cobra.Command {
 						fmt.Printf("  %s %s: healthy\n", checkmark, comp.Name)
 					}
 				}
+				if health.Search != nil {
+					fmt.Println("Search:")
+					mirrorState := "scanning"
+					if health.Search.MirrorComplete {
+						mirrorState = "complete"
+					}
+					mirrorBacklog := "unknown pending"
+					if health.Search.MirrorBacklog != nil {
+						mirrorBacklog = fmt.Sprintf("%d pending", *health.Search.MirrorBacklog)
+					}
+					fmt.Printf("  Lexical: %d indexed, mirror %s, %s\n",
+						health.Search.Indexed, mirrorState, mirrorBacklog)
+					if health.Search.EmbeddingsConfigured {
+						vectorLine := fmt.Sprintf("  Vectors: %s, %d embedded, %d pending, %d skipped",
+							health.Search.VectorState, health.Search.Embedded,
+							health.Search.EmbeddingBacklog, health.Search.Skipped)
+						if health.Search.RatePerSecond != nil {
+							vectorLine += fmt.Sprintf(", %.2f/s", *health.Search.RatePerSecond)
+						}
+						if health.Search.ETASeconds != nil {
+							vectorLine += fmt.Sprintf(", ETA %s",
+								(time.Duration(*health.Search.ETASeconds) * time.Second).String())
+						}
+						fmt.Println(vectorLine)
+					} else {
+						fmt.Println("  Vectors: disabled")
+					}
+					if health.Search.LastError != "" {
+						errorLine := "  Error: " + health.Search.LastError
+						if health.Search.LastErrorStatus != 0 {
+							errorLine += fmt.Sprintf(" (HTTP %d)", health.Search.LastErrorStatus)
+						}
+						fmt.Println(errorLine)
+					}
+				}
 				fmt.Println()
 
 				// Display recent errors if any

@@ -134,9 +134,9 @@ func TestBackfillTokensUsesCodexJobLogsWithoutAgentsviewEligibleSession(t *testi
 	sharedSessionA := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
 	sharedSessionB := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
 
-	writeCodexUsageLog(t, missingSession.ID, "missing-session-thread", 1000, 100, 200)
-	writeCodexUsageLog(t, sharedSessionA.ID, "shared-session", 2000, 200, 300)
-	writeCodexUsageLog(t, sharedSessionB.ID, "shared-session", 3000, 300, 400)
+	writeCodexUsageLog(t, missingSession, "missing-session-thread", 1000, 100, 200)
+	writeCodexUsageLog(t, sharedSessionA, "shared-session", 2000, 200, 300)
+	writeCodexUsageLog(t, sharedSessionB, "shared-session", 3000, 300, 400)
 
 	cmd := backfillTokensCmd()
 	cmd.SetArgs(nil)
@@ -178,7 +178,7 @@ func TestBackfillTokensRejectsLogFromPriorCanceledAttempt(t *testing.T) {
 	)
 	require.NoError(t, err)
 	job := enqueueCompleteJob(t, db, repo.ID, commit.ID, "prior-session")
-	writeCodexUsageLog(t, job.ID, "prior-session", 1000, 100, 200)
+	writeCodexUsageLog(t, job, "prior-session", 1000, 100, 200)
 
 	require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
 	claimed, err := db.ClaimJob("worker-2")
@@ -219,14 +219,14 @@ func enqueueCompleteJob(
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
-	return job
+	return claimed
 }
 
 func writeCodexUsageLog(
-	t *testing.T, jobID int64, threadID string, input, cached, output int64,
+	t *testing.T, job *storage.ReviewJob, threadID string, input, cached, output int64,
 ) {
 	t.Helper()
-	logPath := daemon.JobLogPath(jobID)
+	logPath := daemon.JobLogPath(job.ID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
 	require.NoError(t, os.WriteFile(logPath, []byte(
 		`{"type":"thread.started","thread_id":"`+threadID+`"}`+"\n"+
@@ -235,4 +235,7 @@ func writeCodexUsageLog(
 			fmt.Sprintf("%d", cached)+`,"output_tokens":`+
 			fmt.Sprintf("%d", output)+`}}`+"\n",
 	), 0o600))
+	require.NotNil(t, job.StartedAt)
+	logTime := job.StartedAt.Add(time.Second).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
 }

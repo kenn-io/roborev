@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ type fakeBackend struct {
 	getReviewFn    func(context.Context, ReviewRef) (*storage.Review, error)
 	listCommentsFn func(context.Context, CommentRef) ([]storage.Response, error)
 	getJobOutputFn func(context.Context, int64) (JobOutput, error)
+	searchFn       func(context.Context, SearchQuery) (storage.SearchResponse, error)
 }
 
 func (f *fakeBackend) Status(ctx context.Context) (*storage.DaemonStatus, error) {
@@ -71,6 +74,13 @@ func (f *fakeBackend) GetJobOutput(ctx context.Context, jobID int64) (JobOutput,
 		return JobOutput{}, nil
 	}
 	return f.getJobOutputFn(ctx, jobID)
+}
+
+func (f *fakeBackend) Search(ctx context.Context, query SearchQuery) (storage.SearchResponse, error) {
+	if f.searchFn == nil {
+		return storage.SearchResponse{}, nil
+	}
+	return f.searchFn(ctx, query)
 }
 
 // connectSession runs the server over an in-memory transport and returns a
@@ -128,8 +138,67 @@ func TestRegisteredToolsAndGuidanceAreReadOnly(t *testing.T) {
 		"roborev_list_comments",
 		"roborev_list_jobs",
 		"roborev_list_repos",
+		"roborev_search_reviews",
 		"roborev_status",
 	}, names)
+	var searchTool *mcp.Tool
+	for _, tool := range tools.Tools {
+		if tool.Name == "roborev_search_reviews" {
+			searchTool = tool
+			break
+		}
+	}
+	require.NotNil(searchTool)
+	require.NotNil(searchTool.Annotations)
+	assert.True(searchTool.Annotations.ReadOnlyHint)
+	require.NotNil(searchTool.Annotations.DestructiveHint)
+	assert.False(*searchTool.Annotations.DestructiveHint)
+	assert.True(searchTool.Annotations.IdempotentHint)
+	require.NotNil(searchTool.Annotations.OpenWorldHint)
+	assert.False(*searchTool.Annotations.OpenWorldHint)
+	assert.Contains(searchTool.Description, "auto")
+	assert.Contains(searchTool.Description, "lexical")
+	assert.Contains(searchTool.Description, "semantic")
+
+	inputSchema, ok := searchTool.InputSchema.(map[string]any)
+	require.True(ok, "input schema type: %T", searchTool.InputSchema)
+	inputProperties, ok := inputSchema["properties"].(map[string]any)
+	require.True(ok)
+	assert.ElementsMatch([]string{"query", "mode", "repo", "branch", "since", "verdict", "state", "limit"},
+		mapKeys(inputProperties))
+	required, ok := inputSchema["required"].([]any)
+	require.True(ok, "required schema type: %T", inputSchema["required"])
+	assert.Contains(required, "query")
+	querySchema, ok := inputProperties["query"].(map[string]any)
+	require.True(ok)
+	assert.InDelta(float64(1), querySchema["minLength"], 0)
+	assert.InDelta(float64(2000), querySchema["maxLength"], 0)
+	modeSchema, ok := inputProperties["mode"].(map[string]any)
+	require.True(ok)
+	assert.ElementsMatch([]any{"auto", "lexical", "hybrid", "semantic"}, modeSchema["enum"])
+	assert.Equal("auto", modeSchema["default"])
+	stateSchema, ok := inputProperties["state"].(map[string]any)
+	require.True(ok)
+	assert.ElementsMatch([]any{"all", "open", "closed"}, stateSchema["enum"])
+	assert.Equal("all", stateSchema["default"])
+	verdictSchema, ok := inputProperties["verdict"].(map[string]any)
+	require.True(ok)
+	assert.ElementsMatch([]any{"pass", "fail"}, verdictSchema["enum"])
+	limitSchema, ok := inputProperties["limit"].(map[string]any)
+	require.True(ok)
+	assert.InDelta(float64(1), limitSchema["minimum"], 0)
+	assert.InDelta(float64(100), limitSchema["maximum"], 0)
+	assert.InDelta(float64(20), limitSchema["default"], 0)
+	outputSchema, ok := searchTool.OutputSchema.(map[string]any)
+	require.True(ok, "output schema type: %T", searchTool.OutputSchema)
+	outputRequired, ok := outputSchema["required"].([]any)
+	require.True(ok, "output required type: %T", outputSchema["required"])
+	assert.ElementsMatch([]any{"query", "mode", "degraded", "bounded", "partial", "coverage", "hits"},
+		outputRequired)
+	outputProperties, ok := outputSchema["properties"].(map[string]any)
+	require.True(ok)
+	assert.Contains(outputProperties, "coverage")
+	assert.Contains(outputProperties, "hits")
 
 	resources, err := session.ListResources(t.Context(), nil)
 	require.NoError(err)
@@ -139,9 +208,146 @@ func TestRegisteredToolsAndGuidanceAreReadOnly(t *testing.T) {
 	require.NoError(err)
 	require.Len(read.Contents, 1)
 	assert.Contains(read.Contents[0].Text, "roborev_get_review")
+	assert.Contains(read.Contents[0].Text, "roborev_search_reviews")
+	assert.Contains(read.Contents[0].Text, "returned `job_id`")
+	assert.Contains(read.Contents[0].Text, "only when needed")
+	assert.Contains(read.Contents[0].Text, "`partial` means")
+	assert.Contains(read.Contents[0].Text, "`bounded` means")
+	assert.Contains(read.Contents[0].Text, "`degraded` means")
 
 	_, err = session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: "roborev://mcp/missing"})
 	assert.Error(err)
+}
+
+func mapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func TestMCPSearchAppliesDefaultsAndPreservesResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var got SearchQuery
+	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
+		got = query
+		return storage.SearchResponse{Query: query.Query, Mode: "lexical", Hits: nil}, nil
+	}}
+	session := connectSession(t, backend)
+
+	result := callTool(t, session, "roborev_search_reviews", map[string]any{"query": "  needle  "})
+	require.False(result.IsError)
+	assert.Equal(SearchQuery{Query: "needle", Mode: "auto", State: "all", Limit: 20}, got)
+	var out storage.SearchResponse
+	decodeText(t, result, &out)
+	require.NotNil(result.StructuredContent)
+	structuredJSON, err := json.Marshal(result.StructuredContent)
+	require.NoError(err)
+	var structuredOut storage.SearchResponse
+	require.NoError(json.Unmarshal(structuredJSON, &structuredOut))
+	assert.Equal(out, structuredOut)
+	assert.Equal("needle", out.Query)
+	assert.Equal("lexical", out.Mode)
+	assert.NotNil(out.Hits)
+	assert.Empty(out.Hits)
+}
+
+func TestMCPSearchPreservesExactFilters(t *testing.T) {
+	var got SearchQuery
+	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
+		got = query
+		return storage.SearchResponse{Hits: []storage.SearchHit{}}, nil
+	}}
+	session := connectSession(t, backend)
+
+	result := callTool(t, session, "roborev_search_reviews", map[string]any{
+		"query": "needle", "mode": "hybrid", "repo": " repo/name ",
+		"branch": " Feature/Search ", "since": "24h", "verdict": "fail",
+		"state": "closed", "limit": 7,
+	})
+	require.False(t, result.IsError)
+	assert.Equal(t, SearchQuery{
+		Query: "needle", Mode: "hybrid", Repo: "repo/name", Branch: " Feature/Search ",
+		Since: "24h", Verdict: "fail", State: "closed", Limit: 7,
+	}, got)
+}
+
+func TestMCPSearchValidatesBeforeBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]any
+		message string
+	}{
+		{name: "blank query", args: map[string]any{"query": " \t"}, message: "query is required"},
+		{name: "query rune limit", args: map[string]any{"query": strings.Repeat("界", 2001)}, message: "query must be at most 2000 UTF-8 runes"},
+		{name: "mode", args: map[string]any{"query": "needle", "mode": "dense"}, message: "mode must be auto, lexical, hybrid, or semantic"},
+		{name: "state", args: map[string]any{"query": "needle", "state": "active"}, message: "state must be all, open, or closed"},
+		{name: "verdict", args: map[string]any{"query": "needle", "verdict": "maybe"}, message: "verdict must be pass or fail"},
+		{name: "since", args: map[string]any{"query": "needle", "since": "yesterday"}, message: "since must be a positive Go duration or RFC3339 timestamp"},
+		{name: "negative since", args: map[string]any{"query": "needle", "since": "-1h"}, message: "since must be a positive Go duration or RFC3339 timestamp"},
+		{name: "zero limit", args: map[string]any{"query": "needle", "limit": 0}, message: "limit must be between 1 and 100"},
+		{name: "negative limit", args: map[string]any{"query": "needle", "limit": -1}, message: "limit must be between 1 and 100"},
+		{name: "large limit", args: map[string]any{"query": "needle", "limit": 101}, message: "limit must be between 1 and 100"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			backend := &fakeBackend{searchFn: func(_ context.Context, _ SearchQuery) (storage.SearchResponse, error) {
+				calls++
+				return storage.SearchResponse{}, nil
+			}}
+			result := callTool(t, connectSession(t, backend), "roborev_search_reviews", tc.args)
+			require.True(t, result.IsError)
+			var failure toolErrorOutput
+			decodeText(t, result, &failure)
+			assert.Equal(t, ErrorCodeInvalidArgument, failure.Error.Code)
+			assert.Contains(t, failure.Error.Message, tc.message)
+			assert.Zero(t, calls)
+		})
+	}
+}
+
+func TestMCPSearchReturnsStablePrivateErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode string
+		wantText string
+	}{
+		{
+			name:     "explicit unavailable",
+			err:      NewError(ErrorCodeUnavailable, "semantic search is unavailable"),
+			wantCode: ErrorCodeUnavailable,
+			wantText: "unavailable: semantic search is unavailable",
+		},
+		{
+			name:     "unexpected backend",
+			err:      errors.New("needle-secret https://daemon.invalid provider-secret"),
+			wantCode: ErrorCodeInternal,
+			wantText: "internal: review search failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &fakeBackend{searchFn: func(_ context.Context, _ SearchQuery) (storage.SearchResponse, error) {
+				return storage.SearchResponse{}, tc.err
+			}}
+			result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "needle-secret", "mode": "semantic"})
+			require.True(t, result.IsError)
+			var failure toolErrorOutput
+			decodeText(t, result, &failure)
+			assert.Equal(t, tc.wantCode, failure.Error.Code)
+			assert.Equal(t, tc.wantText, failure.Error.Message)
+			encoded := result.Content[0].(*mcp.TextContent).Text
+			assert.NotContains(t, encoded, "needle-secret")
+			assert.NotContains(t, encoded, "daemon.invalid")
+			assert.NotContains(t, encoded, "provider-secret")
+		})
+	}
 }
 
 func TestListJobsAppliesLimitsAndTrimsRows(t *testing.T) {
