@@ -7,7 +7,7 @@ import (
 	"log"
 	"strings"
 
-	googlegithub "github.com/google/go-github/v90/github"
+	googlegithub "github.com/google/go-github/v91/github"
 
 	"go.kenn.io/roborev/internal/review"
 )
@@ -70,8 +70,8 @@ func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNum
 	if err != nil {
 		return err
 	}
-	_, _, err = c.api.Issues.CreateComment(ctx, owner, repo, prNumber, &googlegithub.IssueComment{
-		Body: ptr(body),
+	_, _, err = c.api.Issues.CreateComment(ctx, owner, repo, prNumber, googlegithub.IssueCommentRequest{
+		Body: body,
 	})
 	if err != nil {
 		return fmt.Errorf("create PR comment: %w", err)
@@ -109,8 +109,8 @@ func (c *Client) patchComment(ctx context.Context, ghRepo string, commentID int6
 	if err != nil {
 		return err
 	}
-	_, _, err = c.api.Issues.EditComment(ctx, owner, repo, commentID, &googlegithub.IssueComment{
-		Body: ptr(body),
+	_, _, err = c.api.Issues.UpdateComment(ctx, owner, repo, commentID, googlegithub.IssueCommentRequest{
+		Body: body,
 	})
 	if err != nil {
 		return fmt.Errorf("edit issue comment: %w", err)

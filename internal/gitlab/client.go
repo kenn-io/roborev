@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	gogitlab "gitlab.com/gitlab-org/api/client-go/v2"
+	gogitlab "gitlab.com/gitlab-org/api/client-go/v3"
 
 	"go.kenn.io/roborev/internal/procutil"
 )
