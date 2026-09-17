@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -135,6 +136,48 @@ func (b mcpBackend) GetJobOutput(_ context.Context, jobID int64) (mcpserver.JobO
 		Lines:   lines,
 		HasMore: snapshot.HasMore,
 	}, nil
+}
+
+func (b mcpBackend) Search(
+	ctx context.Context, query mcpserver.SearchQuery,
+) (storage.SearchResponse, error) {
+	if b.server.search == nil {
+		return storage.SearchResponse{}, mcpserver.NewError(
+			mcpserver.ErrorCodeUnavailable, "review search is unavailable")
+	}
+	input := &SearchInput{
+		Query: query.Query, Mode: query.Mode, Repo: query.Repo, Branch: query.Branch,
+		Since: query.Since, Verdict: query.Verdict, State: query.State,
+		Limit: searchLimit(strconv.Itoa(query.Limit)),
+	}
+	params, err := b.server.searchParams(input)
+	if err != nil {
+		message := "search request is invalid"
+		if errors.Is(err, errSearchRepoNotFound) {
+			message = errSearchRepoNotFound.Error()
+		}
+		return storage.SearchResponse{}, mcpserver.NewError(mcpserver.ErrorCodeInvalidArgument, message)
+	}
+	result, err := b.server.search.Search(ctx, params)
+	if err != nil {
+		if modeErr, ok := errors.AsType[*searchindex.ModeError](err); ok {
+			switch modeErr.Reason {
+			case searchindex.ReasonEmbeddingsUnconfigured:
+				return storage.SearchResponse{}, mcpserver.NewError(
+					mcpserver.ErrorCodeInvalidArgument, modeErr.Reason)
+			case searchindex.ReasonSemanticUnavailable, searchindex.ReasonSemanticCeiling:
+				return storage.SearchResponse{}, mcpserver.NewError(
+					mcpserver.ErrorCodeUnavailable, modeErr.Reason)
+			}
+		}
+		return storage.SearchResponse{}, mcpserver.NewError(
+			mcpserver.ErrorCodeInternal, "review search failed")
+	}
+	response := searchResponseFromResult(result)
+	if response.Hits == nil {
+		response.Hits = []storage.SearchHit{}
+	}
+	return response, nil
 }
 
 // mcpError maps Huma status errors onto the stable MCP error codes.

@@ -3,6 +3,7 @@
  */
 import type { ComponentHealth } from "./componentHealth";
 import type { ErrorEntry } from "./errorEntry";
+import type { SearchHealth } from "./searchHealth";
 
 export interface HealthStatus {
   /** A URL to the JSON Schema for this object. */
@@ -11,6 +12,7 @@ export interface HealthStatus {
   error_count_24h: number;
   healthy: boolean;
   recent_errors: ErrorEntry[];
+  search?: SearchHealth;
   uptime: string;
   version: string;
 }

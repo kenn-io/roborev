@@ -12,6 +12,8 @@ import type {
   ExportReviewsParams,
   GetReviewParams,
   Review,
+  SearchResponse,
+  SearchReviewsParams,
 } from "../models";
 
 import { roborevFetch } from "../../generated-fetch";
@@ -187,5 +189,34 @@ export const closeReview = async (
       ...getHeaders(options?.headers),
     },
     body: JSON.stringify(closeReviewRequest),
+  });
+};
+
+export const getSearchReviewsUrl = (params: SearchReviewsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/search?${stringifiedParams}`
+    : `/api/search`;
+};
+
+/**
+ * @summary Search completed review history
+ */
+export const searchReviews = async (
+  params: SearchReviewsParams,
+  options?: RequestInit,
+): Promise<SearchResponse> => {
+  return roborevFetch<SearchResponse>(getSearchReviewsUrl(params), {
+    ...options,
+    method: "GET",
   });
 };

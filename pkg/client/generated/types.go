@@ -1552,6 +1552,7 @@ type HealthStatus struct {
 	ErrorCount24H int64             `json:"error_count_24h"`
 	Healthy       bool              `json:"healthy"`
 	RecentErrors  []ErrorEntry      `json:"recent_errors" validate:"required"`
+	Search        *SearchHealth     `json:"search,omitempty"`
 	Uptime        string            `json:"uptime" validate:"required"`
 	Version       string            `json:"version" validate:"required"`
 }
@@ -1569,6 +1570,13 @@ func (h HealthStatus) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("RecentErrors[%d]", i), err)
+			}
+		}
+	}
+	if h.Search != nil {
+		if v, ok := any(h.Search).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Search", err)
 			}
 		}
 	}
@@ -2631,6 +2639,107 @@ type ReviewProjectionReview struct {
 
 func (r ReviewProjectionReview) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type SearchCoverage struct {
+	EmbeddingBacklog     int64  `json:"embedding_backlog"`
+	EmbeddingsConfigured bool   `json:"embeddings_configured"`
+	MirrorBacklog        *int64 `json:"mirror_backlog,omitempty"`
+	MirrorComplete       bool   `json:"mirror_complete"`
+	Skipped              int64  `json:"skipped"`
+	VectorState          string `json:"vector_state" validate:"required"`
+}
+
+func (s SearchCoverage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SearchHealth struct {
+	ActiveGeneration     *string    `json:"active_generation,omitempty"`
+	Embedded             int64      `json:"embedded"`
+	EmbeddingBacklog     int64      `json:"embedding_backlog"`
+	EmbeddingsConfigured bool       `json:"embeddings_configured"`
+	EtaSeconds           *int64     `json:"eta_seconds,omitempty"`
+	Indexed              int64      `json:"indexed"`
+	LastError            *string    `json:"last_error,omitempty"`
+	LastErrorStatus      *int64     `json:"last_error_status,omitempty"`
+	LastProgressAt       *time.Time `json:"last_progress_at,omitempty"`
+	LastSuccessAt        *time.Time `json:"last_success_at,omitempty"`
+	MirrorBacklog        *int64     `json:"mirror_backlog,omitempty"`
+	MirrorComplete       bool       `json:"mirror_complete"`
+	RatePerSecond        *float64   `json:"rate_per_second,omitempty"`
+	Skipped              int64      `json:"skipped"`
+	VectorState          string     `json:"vector_state" validate:"required"`
+}
+
+func (s SearchHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SearchHit struct {
+	Agent         string    `json:"agent" validate:"required"`
+	Branch        *string   `json:"branch,omitempty"`
+	Closed        bool      `json:"closed"`
+	CommitSha     *string   `json:"commit_sha,omitempty"`
+	CommitSubject *string   `json:"commit_subject,omitempty"`
+	Excerpt       string    `json:"excerpt" validate:"required"`
+	FinishedAt    time.Time `json:"finished_at" validate:"required"`
+	GitRef        string    `json:"git_ref" validate:"required"`
+	JobID         int64     `json:"job_id"`
+	JobUUID       *string   `json:"job_uuid,omitempty"`
+	MatchedIn     []string  `json:"matched_in" validate:"required"`
+	PanelRole     *string   `json:"panel_role,omitempty"`
+	RepoName      string    `json:"repo_name" validate:"required"`
+	RepoPath      string    `json:"repo_path" validate:"required"`
+	ReviewID      int64     `json:"review_id"`
+	ReviewType    string    `json:"review_type" validate:"required"`
+	ReviewUUID    *string   `json:"review_uuid,omitempty"`
+	Score         float64   `json:"score"`
+	Verdict       *string   `json:"verdict,omitempty"`
+}
+
+func (s SearchHit) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SearchResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema         *string        `json:"$schema,omitempty"`
+	Bounded        bool           `json:"bounded"`
+	BoundedReason  *string        `json:"bounded_reason,omitempty"`
+	Coverage       SearchCoverage `json:"coverage"`
+	Degraded       bool           `json:"degraded"`
+	DegradedReason *string        `json:"degraded_reason,omitempty"`
+	Hits           []SearchHit    `json:"hits" validate:"required"`
+	Mode           string         `json:"mode" validate:"required"`
+	Partial        bool           `json:"partial"`
+	Query          string         `json:"query" validate:"required"`
+}
+
+func (s SearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	for i, item := range s.Hits {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hits[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if err := typesValidator.Var(s.Query, "required"); err != nil {
+		errors = errors.Append("Query", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SessionState struct {

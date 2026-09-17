@@ -345,6 +345,45 @@ func TestFormatUpdateDrainStatus(t *testing.T) {
 	assert.Empty(t, formatUpdateDrainStatus(storage.DaemonStatus{}, now))
 }
 
+func TestStatusCmdShowsSearchHealthWithoutDegradingDaemon(t *testing.T) {
+	backlog := int64(3)
+	rate := 1.5
+	eta := int64(8)
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnStatus: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			_ = json.NewEncoder(w).Encode(storage.DaemonStatus{Version: version.Version})
+			return true
+		},
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			if r.URL.Path != "/api/health" {
+				return false
+			}
+			_ = json.NewEncoder(w).Encode(storage.HealthStatus{
+				Healthy: true, Version: version.Version,
+				Search: &storage.SearchHealth{
+					Indexed: 12, MirrorComplete: true, MirrorBacklog: &backlog,
+					EmbeddingsConfigured: true, Embedded: 5, Skipped: 2,
+					EmbeddingBacklog: 7, VectorState: "unavailable",
+					RatePerSecond: &rate, ETASeconds: &eta,
+					LastError: "embedding authentication rejected", LastErrorStatus: 401,
+				},
+			})
+			return true
+		},
+	})
+	defer md.Close()
+
+	output := captureStdout(t, func() {
+		require.NoError(t, statusCmd().Execute())
+	})
+
+	assert.Contains(t, output, "Health: OK")
+	assert.Contains(t, output, "Search:")
+	assert.Contains(t, output, "Lexical: 12 indexed, mirror complete, 3 pending")
+	assert.Contains(t, output, "Vectors: unavailable, 5 embedded, 7 pending, 2 skipped, 1.50/s, ETA 8s")
+	assert.Contains(t, output, "Error: embedding authentication rejected (HTTP 401)")
+}
+
 func TestStatusCmdJSONIncludesActiveSnoozes(t *testing.T) {
 	until := time.Date(2026, 8, 10, 20, 30, 0, 0, time.UTC)
 	snooze := storage.AgentHookSnooze{

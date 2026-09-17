@@ -22,6 +22,20 @@ type Backend interface {
 	GetReview(context.Context, ReviewRef) (*storage.Review, error)
 	ListComments(context.Context, CommentRef) ([]storage.Response, error)
 	GetJobOutput(ctx context.Context, jobID int64) (JobOutput, error)
+	Search(context.Context, SearchQuery) (storage.SearchResponse, error)
+}
+
+// SearchQuery contains validated review-search text and filters. Branch is
+// matched exactly; empty optional fields mean no filter.
+type SearchQuery struct {
+	Query   string
+	Mode    string
+	Repo    string
+	Branch  string
+	Since   string
+	Verdict string
+	State   string
+	Limit   int
 }
 
 // ReposQuery filters tracked repositories.

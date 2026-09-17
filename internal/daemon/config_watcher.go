@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -210,6 +211,8 @@ func (cw *ConfigWatcher) reloadConfig() {
 	newCfg.Web = oldCfg.Web
 	requestedMCP := newCfg.MCP
 	newCfg.MCP = oldCfg.MCP
+	requestedSearch := newCfg.Search
+	newCfg.Search = oldCfg.Search
 	cw.cfg = newCfg
 	cw.lastReloadedAt = time.Now()
 	cw.reloadCounter++
@@ -227,6 +230,9 @@ func (cw *ConfigWatcher) reloadConfig() {
 	}
 	if requestedMCP != oldCfg.MCP {
 		log.Printf("Config change: [mcp] settings changed (requires daemon restart to take effect)")
+	}
+	if !reflect.DeepEqual(requestedSearch, oldCfg.Search) {
+		log.Printf("Config change: [search] settings changed (requires daemon restart to take effect)")
 	}
 
 	// Broadcast config reloaded event to notify connected clients

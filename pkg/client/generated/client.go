@@ -175,6 +175,10 @@ type ClientInterface interface {
 	CloseReview(ctx context.Context, options *CloseReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseReviewResponse, error)
 	CloseReviewWithResponse(ctx context.Context, options *CloseReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseReviewResp, error)
 
+	// SearchReviews Search completed review history
+	SearchReviews(ctx context.Context, options *SearchReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchReviewsResponse, error)
+	SearchReviewsWithResponse(ctx context.Context, options *SearchReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchReviewsResp, error)
+
 	// Shutdown Gracefully shut down the daemon
 	Shutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResponse, error)
 	ShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResp, error)
@@ -2621,6 +2625,81 @@ func (c *Client) CloseReview(ctx context.Context, options *CloseReviewRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/review/close")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchReviews Search completed review history
+func (c *Client) SearchReviews(ctx context.Context, options *SearchReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchReviewsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"branch":  {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":   {Style: "form", Explode: &[]bool{false}[0]},
+		"mode":    {Style: "form", Explode: &[]bool{false}[0]},
+		"q":       {Style: "form", Explode: &[]bool{false}[0]},
+		"repo":    {Style: "form", Explode: &[]bool{false}[0]},
+		"since":   {Style: "form", Explode: &[]bool{false}[0]},
+		"state":   {Style: "form", Explode: &[]bool{false}[0]},
+		"verdict": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/search",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/search")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

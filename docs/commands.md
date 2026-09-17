@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-17
 title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
 ---
@@ -15,6 +16,7 @@ roborev init [--agent <name>]    # Initialize repo + daemon + hook
 roborev fix                      # Fix open reviews
 roborev daemon status            # Check daemon, web UI, and queue
 roborev status                   # Backward-compatible status alias
+roborev search "query"           # Search completed review history
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
 roborev cancel <job_id>          # Cancel one queued or running job
@@ -194,6 +196,47 @@ See: [Terminal UI](/docs/integrations/tui/)
 !!! tip
 
     Press `l` in the TUI to open the log viewer for any job (running or completed).
+
+## Searching Review History
+
+```bash
+roborev search "retry provider failures" --agent
+roborev search "database is locked" --lexical
+roborev search "shutdown race" --semantic --repo roborev
+roborev search "authentication" --branch main --since 720h --verdict fail --open
+roborev search "deadlock" --limit 10 --json
+```
+
+Search covers all repositories in the local review database unless `--repo` is
+set. It does not infer a repository from the current directory. Results are
+grouped so one multi-agent panel occupies at most one result slot, while the
+returned job ID and excerpt identify the panel member that matched.
+
+| Flag | Description |
+|------|-------------|
+| `--repo <path-or-name>` | Filter by repository path, name, or registered identity |
+| `--branch <name>` | Filter by exact branch name |
+| `--since <value>` | Lower bound as a positive Go duration or RFC3339 timestamp |
+| `--verdict pass\|fail` | Filter by parsed verdict |
+| `--open` | Search open reviews only; mutually exclusive with `--closed` |
+| `--closed` | Search closed reviews only; mutually exclusive with `--open` |
+| `--limit <n>` | Return 1 to 100 grouped results; default 20 |
+| `--lexical` | Local full-text and identifier search; never calls an embedding provider |
+| `--hybrid` | Require lexical and semantic retrieval, then combine their ranking |
+| `--semantic` | Require semantic retrieval |
+| `--agent` | Emit a concise header and one key=value row per result; formatting only |
+| `--json` | Emit the daemon search response unchanged; mutually exclusive with `--agent` |
+
+With no mode flag, `auto` uses hybrid search when the current vector generation
+is ready. Without embeddings configured, it uses ordinary lexical search. A
+configured semantic path that is temporarily unavailable falls back to lexical
+with a degradation reason. Quoted and unquoted query words behave the same.
+Human output also reports `partial` coverage, bounded semantic retrieval, and
+mirror/vector progress. A hexadecimal lexical query from 7 through 40 characters
+matches commit SHA prefixes case-insensitively.
+
+See [Review History Search](/docs/search/) for mode semantics, Voyage setup,
+privacy, freshness, panel grouping, and the HTTP/MCP interfaces.
 
 ## Canceling a Job
 

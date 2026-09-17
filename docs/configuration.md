@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-17
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -1045,13 +1046,61 @@ column_borders = true             # Show separators between TUI columns
     used automatically. No action is required, but new configs should use the new
     name.
 
+### Review Search Embeddings
+
+Lexical review-history search needs no configuration and never calls an
+embedding provider. Semantic and hybrid search use an optional global-only
+`[search.embeddings]` block in `~/.roborev/config.toml`:
+
+```toml
+[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-4-large"
+dims = 1024
+api_key_env = "VOYAGE_API_KEY"
+input_type_mode = "retrieval"
+batch_size = 64
+timeout_seconds = 30
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `base_url` | - | OpenAI-compatible endpoint base; Roborev appends `/embeddings` |
+| `model` | - | Provider model identifier |
+| `dims` | - | Required positive response dimension |
+| `api_key` | - | Optional inline bearer credential; mutually exclusive with `api_key_env` |
+| `api_key_env` | - | Environment variable containing the bearer credential; preferred to `api_key` |
+| `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
+| `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
+| `batch_size` | `64` | Maximum documents per provider request |
+| `timeout_seconds` | `30` | Provider request timeout in seconds |
+| `trust_private_network` | `false` | Allow a bearer token over HTTP to a trusted private-network endpoint |
+
+`base_url`, `model`, and `dims` must be configured together. A configured
+`api_key_env` must exist and contain a non-empty value when the daemon starts.
+Embedding settings require a daemon restart and cannot be overridden in
+`.roborev.toml`.
+
+For Voyage, this release supports the default 1,024-dimensional output from
+`voyage-4-large`. Roborev validates `dims` but does not send Voyage's
+provider-specific `output_dimension` field, so non-default Voyage dimensions are
+outside this release.
+
+Enabling hosted embeddings sends rendered review and response prose to the
+provider. That prose may quote code, paths, URLs, or logs. Raw prompts, diffs,
+patches, command lines, job logs, token data, repository paths, and remote
+identities are excluded from embedding input. See
+[Review History Search](/docs/search/) for the full privacy boundary, backfill
+behavior, health fields, and sidecar recovery.
+
 ### Hot-Reload
 
 The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
 **Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, the `[mcp]` section, and the `[sync]` section.
+`[web]` section, the `[mcp]` section, the `[sync]` section, and the `[search]`
+section.
 
 ### Browser Application
 
@@ -1335,6 +1384,7 @@ systemctl --user enable --now roborev
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
 | `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous daemon telemetry |
 | `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
+| `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key_env` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ### Telemetry

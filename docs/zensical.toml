@@ -21,6 +21,7 @@ nav = [
     {"Review Event Hooks"  = "guides/hooks.md"},
   ]},
   {"CLI Commands" = "commands.md"},
+  {"Review History Search" = "search.md"},
   {"Terminal UI" = "integrations/tui.md"},
   {"Browser UI" = "web-ui.md"},
   {"Configuration" = "configuration.md"},

@@ -676,7 +676,7 @@ func (db *DB) AddCommentToJobWithSource(jobID int64, responder, response, source
 // GetCommentsForCommit returns all comments for a commit
 func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 	rows, err := db.Query(`
-		SELECT id, commit_id, job_id, responder, response, source, created_at
+		SELECT id, commit_id, job_id, responder, response, source, created_at, uuid
 		FROM responses
 		WHERE commit_id = ?
 		ORDER BY created_at ASC
@@ -691,7 +691,8 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 		var r Response
 		var createdAt string
 		var commitIDNull, jobIDNull sql.NullInt64
-		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt); err != nil {
+		var responseUUID sql.Null[uuid.UUID]
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt, &responseUUID); err != nil {
 			return nil, err
 		}
 		if commitIDNull.Valid {
@@ -699,6 +700,9 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 		}
 		if jobIDNull.Valid {
 			r.JobID = &jobIDNull.Int64
+		}
+		if responseUUID.Valid {
+			r.UUID = &responseUUID.V
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		responses = append(responses, r)
@@ -710,7 +714,7 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 // GetCommentsForJob returns all comments linked to a job
 func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 	rows, err := db.Query(`
-		SELECT id, commit_id, job_id, responder, response, source, created_at
+		SELECT id, commit_id, job_id, responder, response, source, created_at, uuid
 		FROM responses
 		WHERE job_id = ?
 		ORDER BY created_at ASC
@@ -725,7 +729,8 @@ func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 		var r Response
 		var createdAt string
 		var commitIDNull, jobIDNull sql.NullInt64
-		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt); err != nil {
+		var responseUUID sql.Null[uuid.UUID]
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt, &responseUUID); err != nil {
 			return nil, err
 		}
 		if commitIDNull.Valid {
@@ -733,6 +738,9 @@ func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 		}
 		if jobIDNull.Valid {
 			r.JobID = &jobIDNull.Int64
+		}
+		if responseUUID.Valid {
+			r.UUID = &responseUUID.V
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		responses = append(responses, r)

@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-17
 title: MCP Server
 description: Expose roborev review data to AI agents over the Model Context Protocol using stdio or streamable HTTP
 ---
@@ -6,9 +7,9 @@ description: Expose roborev review data to AI agents over the Model Context Prot
 roborev ships an optional
 [Model Context Protocol](https://modelcontextprotocol.io) server so coding
 agents can read review results without shelling out to the CLI. The server is
-read-only: it lists repositories, branches, and jobs, and returns review output,
-comments, and streamed job output. It never enqueues, cancels, closes, or
-comments on reviews.
+read-only: it searches review history, lists repositories, branches, and jobs,
+and returns review output, comments, and streamed job output. It never enqueues,
+cancels, closes, or comments on reviews.
 
 Two transports are available and both expose the same tools.
 
@@ -98,9 +99,23 @@ The JSON form is an array, empty when no daemon has `[mcp]` enabled.
 | `roborev_get_review` | Full review output, verdict, and finding counts for a job id or commit SHA |
 | `roborev_list_comments` | Developer responses attached to a review |
 | `roborev_get_job_output` | The last lines of the agent's streamed output for a job, at most 2,000, with the size of the daemon's retained snapshot |
+| `roborev_search_reviews` | Search completed review history by text or meaning, globally or with repository, branch, time, verdict, and state filters |
 
 Job listings omit prompts and diffs. Review results omit the prompt and return
 `verdict` as `pass`, `fail`, or empty when no verdict exists yet.
+
+`roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
+`verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use
+`auto` for normal discovery, `lexical` for exact paths, identifiers, SHA
+prefixes, or quoted errors, and `semantic` only when wording-independent
+retrieval is specifically needed. Panel reviews are grouped into one result; the
+returned `job_id` identifies the member whose content matched.
+
+Search responses include `degraded`, `partial`, and `bounded` state plus mirror
+and vector coverage. Fetch a matched review with `roborev_get_review`, then use
+`roborev_list_comments` only when its responses are needed. See
+[Review History Search](/docs/search/) for exact mode, freshness, privacy, and
+coverage semantics.
 
 Errors are returned as tool errors with a stable `code` of `not_found`,
 `invalid_argument`, `unavailable`, or `internal`.
@@ -108,7 +123,8 @@ Errors are returned as tool errors with a stable `code` of `not_found`,
 ## Guidance resource
 
 The server publishes a `roborev://mcp/guidance` Markdown resource describing the
-recommended call order: status, repositories, jobs, then review detail.
+recommended call order: status, search, exact review detail, then responses as
+needed.
 
 ## Review links
 

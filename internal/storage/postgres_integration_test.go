@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -571,6 +572,100 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 			return false
 		}, "Expected job UUID '%s', got %s", remoteJobUUID, jobs[0].UUID)
 	}
+}
+
+func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *testing.T) {
+	env := newIntegrationEnv(t)
+	const identity = "git@github.com:test/search-wake.git"
+
+	source := env.setupNode("search-wake-source", identity, "1h")
+	targetDB := env.openDB("search-wake-target.db")
+	_, err := targetDB.GetOrCreateRepo(filepath.Join(env.TmpDir, "search-wake-target"), identity)
+	require.NoError(t, err)
+	target := startSyncWorkerNoSync(t, targetDB, env.pgURL, "search-wake-target", "1h")
+
+	job, review := createCompletedReview(
+		t, source.DB, source.Repo.ID, "feedface12345678", "Test", "Synced search",
+		"prompt", "PostgreSQL pulled semantic history",
+	)
+	_, err = source.DB.AddCommentToJob(job.ID, "human", "synced response")
+	require.NoError(t, err)
+	_, err = source.Worker.SyncNow()
+	require.NoError(t, err)
+
+	var wakes atomic.Int64
+	target.SetAfterPullWrite(func() { wakes.Add(1) })
+	stats, err := target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.PulledJobs)
+	assert.Equal(t, 1, stats.PulledReviews)
+	assert.Equal(t, 1, stats.PulledResponses)
+	assert.Equal(t, int64(4), wakes.Load(), "commit, job, review, and response each wake after commit")
+
+	document, err := targetDB.GetSearchDocument(t.Context(), review.UUID.String())
+	require.NoError(t, err)
+	require.NotNil(t, document)
+	assert.Equal(t, "PostgreSQL pulled semantic history", document.StructuredOutput["summary"])
+	require.Len(t, document.Responses, 1)
+	assert.Equal(t, "synced response", document.Responses[0].Response)
+
+	var sidecarTables int
+	err = env.Pool.pool.QueryRow(env.Ctx, `
+		SELECT COUNT(*)
+		  FROM information_schema.tables
+		 WHERE table_schema = 'roborev'
+		   AND (table_name LIKE 'review_vectors%'
+		        OR table_name LIKE 'review_mirror%'
+		        OR table_name LIKE 'review_fts%'
+		        OR table_name LIKE 'search_%')
+	`).Scan(&sidecarTables)
+	require.NoError(t, err)
+	assert.Zero(t, sidecarTables, "derived search state must stay out of PostgreSQL")
+
+	wakesBeforeReplay := wakes.Load()
+	_, err = target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, wakesBeforeReplay, wakes.Load(), "cursor lookback replay must not wake search")
+}
+
+func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t *testing.T) {
+	env := newIntegrationEnv(t)
+	const identity = "git@github.com:test/search-wake-late-failure.git"
+
+	source := env.setupNode("search-wake-failure-source", identity, "1h")
+	targetDB := env.openDB("search-wake-failure-target.db")
+	_, err := targetDB.GetOrCreateRepo(filepath.Join(env.TmpDir, "search-wake-failure-target"), identity)
+	require.NoError(t, err)
+	target := startSyncWorkerNoSync(t, targetDB, env.pgURL, "search-wake-failure-target", "1h")
+
+	job, review := createCompletedReview(
+		t, source.DB, source.Repo.ID, "deadbeef12345678", "Test", "Synced search failure",
+		"prompt", "review that fails after its job commits",
+	)
+	_, err = source.Worker.SyncNow()
+	require.NoError(t, err)
+
+	_, err = targetDB.Exec(`
+		CREATE TRIGGER fail_pulled_review_insert
+		BEFORE INSERT ON reviews
+		BEGIN
+			SELECT RAISE(ABORT, 'injected pulled review failure');
+		END
+	`)
+	require.NoError(t, err)
+	var wakes atomic.Int64
+	target.SetAfterPullWrite(func() { wakes.Add(1) })
+
+	stats, err := target.SyncNow()
+	require.ErrorContains(t, err, "injected pulled review failure")
+	assert.Nil(t, stats)
+	assert.Equal(t, int64(2), wakes.Load(), "committed commit and job writes must notify before review failure")
+
+	var jobCount, reviewCount int
+	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobCount))
+	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews WHERE uuid = ?`, review.UUID).Scan(&reviewCount))
+	assert.Equal(t, 1, jobCount)
+	assert.Zero(t, reviewCount)
 }
 
 func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {

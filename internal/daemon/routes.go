@@ -93,6 +93,17 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"reviews"}
 		})
 
+	huma.Get(api, "/api/search", s.humaSearchReviews,
+		func(o *huma.Operation) {
+			o.OperationID = "searchReviews"
+			o.Summary = "Search completed review history"
+			o.Tags = []string{"Reviews"}
+			// Search validates parameters in the handler so all client mistakes
+			// retain this endpoint's stable HTTP 400 contract. The input types and
+			// tags still describe the exact generated OpenAPI schema.
+			o.SkipValidateParams = true
+		})
+
 	huma.Get(api, "/api/ui/review-projection", s.humaGetReviewProjection,
 		func(o *huma.Operation) {
 			o.OperationID = "get-review-projection"

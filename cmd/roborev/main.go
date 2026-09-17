@@ -52,6 +52,7 @@ func main() {
 	rootCmd.AddCommand(unpauseCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(showCmd())
+	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(commentCmd())
 	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(closeCmd())

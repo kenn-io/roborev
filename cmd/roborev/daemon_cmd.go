@@ -9,12 +9,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/embedding"
+	"go.kenn.io/roborev/internal/searchdoc"
+	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/version"
@@ -25,6 +29,91 @@ var (
 	daemonStop     = stopDaemon
 	daemonDiscover = uiRuntimeInfo
 )
+
+var (
+	openDaemonSearchIndex  = searchindex.Open
+	closeDaemonSearchIndex = func(index *searchindex.Index) error { return index.Close() }
+)
+
+type daemonSearch struct {
+	path       string
+	index      *searchindex.Index
+	service    *searchindex.Service
+	reconciler *searchindex.Reconciler
+	closeOnce  sync.Once
+	closeErr   error
+}
+
+func newDaemonSearch(
+	ctx context.Context, db *storage.DB, dbPath string, cfg *config.Config,
+) (_ *daemonSearch, err error) {
+	path := searchindex.PathFor(dbPath)
+	index, err := openDaemonSearchIndex(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("open search sidecar: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, closeDaemonSearchIndex(index))
+		}
+	}()
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("validate daemon config: %w", err)
+	}
+
+	var embedder searchindex.Embedder
+	embeddings := cfg.Search.Embeddings
+	if embeddings != nil && strings.TrimSpace(embeddings.BaseURL) != "" {
+		apiKey, err := embeddings.ResolveAPIKey()
+		if err != nil {
+			return nil, err
+		}
+		client, err := embedding.New(embedding.Config{
+			BaseURL: embeddings.BaseURL, Model: embeddings.Model, APIKey: apiKey,
+			Salt: embeddings.FingerprintSalt, RecipeVersion: searchdoc.RecipeVersion,
+			Dims: embeddings.Dims, BatchSize: embeddings.BatchSize,
+			Timeout:             time.Duration(embeddings.TimeoutSeconds) * time.Second,
+			InputTypeMode:       embeddings.InputTypeMode,
+			TrustPrivateNetwork: embeddings.TrustPrivateNetwork,
+		})
+		if err != nil {
+			return nil, err
+		}
+		embedder = client
+	}
+
+	reconciler := searchindex.NewReconciler(db, index, embedder, searchindex.ReconcilerConfig{})
+	service := searchindex.NewService(db, index, embedder, reconciler)
+	return &daemonSearch{
+		path: path, index: index, service: service, reconciler: reconciler,
+	}, nil
+}
+
+func (s *daemonSearch) Close() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = closeDaemonSearchIndex(s.index)
+	})
+	return s.closeErr
+}
+
+type daemonLifecycle interface {
+	Start(context.Context) error
+	Stop() error
+}
+
+type searchCloser interface {
+	Close() error
+}
+
+func runDaemonWithSearch(
+	ctx context.Context, server daemonLifecycle, search searchCloser,
+) error {
+	startErr := server.Start(ctx)
+	stopErr := server.Stop()
+	closeErr := search.Close()
+	return errors.Join(startErr, stopErr, closeErr)
+}
 
 func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -167,8 +256,7 @@ func daemonRunCmd() *cobra.Command {
 			// Load configuration from specified path
 			cfg, err := config.LoadGlobalFrom(configPath)
 			if err != nil {
-				log.Printf("Warning: failed to load config from %s: %v", configPath, err)
-				cfg = config.DefaultConfig()
+				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 			}
 
 			// Fail fast on invalid auto-design heuristic config. An
@@ -198,6 +286,12 @@ func daemonRunCmd() *cobra.Command {
 			}
 			defer db.Close()
 			log.Printf("Database: %s", dbPath)
+
+			search, err := newDaemonSearch(cmd.Context(), db, dbPath, cfg)
+			if err != nil {
+				return err
+			}
+			log.Printf("Search database: %s", search.path)
 
 			telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 				Database: db,
@@ -231,6 +325,7 @@ func daemonRunCmd() *cobra.Command {
 				}
 
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
+				syncWorker.SetAfterPullWrite(search.reconciler.Wake)
 				if err := syncWorker.Start(); err != nil {
 					log.Printf("Warning: failed to start sync worker: %v", err)
 				} else {
@@ -247,6 +342,7 @@ func daemonRunCmd() *cobra.Command {
 			if webDevOrigin != "" {
 				serverOptions = append(serverOptions, daemon.WithWebDevelopmentOrigin(webDevOrigin))
 			}
+			serverOptions = append(serverOptions, daemon.WithSearch(search.service, search.reconciler))
 			server := daemon.NewServer(db, cfg, configPath, serverOptions...)
 			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {
@@ -291,9 +387,7 @@ func daemonRunCmd() *cobra.Command {
 
 			// Start blocks until HTTP serving stops. Join Stop before returning so
 			// the process cannot exit while workers are still finalizing.
-			startErr := server.Start(ctx)
-			stopErr := server.Stop()
-			return errors.Join(startErr, stopErr)
+			return runDaemonWithSearch(ctx, server, search)
 		},
 	}
 

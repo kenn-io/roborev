@@ -353,6 +353,69 @@ type Response struct {
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`                       // Last sync time
 }
 
+// CompareResponses orders responses by creation time and stable sync identity,
+// falling back to the database-local ID only when UUIDs do not distinguish them.
+func CompareResponses(left Response, right Response) int {
+	if comparison := left.CreatedAt.Compare(right.CreatedAt); comparison != 0 {
+		return comparison
+	}
+	leftHasUUID := left.UUID != nil
+	rightHasUUID := right.UUID != nil
+	if leftHasUUID != rightHasUUID {
+		if leftHasUUID {
+			return -1
+		}
+		return 1
+	}
+	if leftHasUUID {
+		if comparison := strings.Compare(left.UUID.String(), right.UUID.String()); comparison != 0 {
+			return comparison
+		}
+	}
+	if left.ID < right.ID {
+		return -1
+	}
+	if left.ID > right.ID {
+		return 1
+	}
+	return 0
+}
+
+// SearchReviewSource is the allowlisted canonical data used to derive one
+// review search document. It deliberately excludes prompts, diffs, patches,
+// logs, paths, remote identities, and token data.
+type SearchReviewSource struct {
+	ReviewID int64
+	JobID    int64
+	RepoID   int64
+
+	ReviewUUID string
+	JobUUID    string
+
+	RepoName string
+	Branch   string
+
+	GitRef    string
+	CommitSHA string
+
+	CommitSubject string
+
+	ReviewType string
+	PanelRole  string
+
+	PanelRunUUID string
+
+	Agent   string
+	Verdict string
+
+	Closed     bool
+	FinishedAt time.Time
+
+	Output           string
+	StructuredOutput StructuredOutput
+	Responses        []Response
+}
+
 // AutoDesignStatus carries per-outcome counters for the automatic
 // design-review router. Only emitted when the feature is effectively
 // enabled for at least one repo on the daemon.
@@ -401,6 +464,26 @@ type HealthStatus struct {
 	Components   []ComponentHealth `json:"components"`
 	RecentErrors []ErrorEntry      `json:"recent_errors"`
 	ErrorCount   int               `json:"error_count_24h"`
+	Search       *SearchHealth     `json:"search,omitempty"`
+}
+
+// SearchHealth is a compact, sanitized snapshot of search reconciliation.
+type SearchHealth struct {
+	Indexed              int64      `json:"indexed"`
+	MirrorComplete       bool       `json:"mirror_complete"`
+	MirrorBacklog        *int64     `json:"mirror_backlog,omitempty"`
+	EmbeddingsConfigured bool       `json:"embeddings_configured"`
+	Embedded             int64      `json:"embedded"`
+	Skipped              int64      `json:"skipped"`
+	EmbeddingBacklog     int64      `json:"embedding_backlog"`
+	VectorState          string     `json:"vector_state"`
+	ActiveGeneration     string     `json:"active_generation,omitempty"`
+	LastSuccessAt        *time.Time `json:"last_success_at,omitempty"`
+	LastProgressAt       *time.Time `json:"last_progress_at,omitempty"`
+	RatePerSecond        *float64   `json:"rate_per_second,omitempty"`
+	ETASeconds           *int64     `json:"eta_seconds,omitempty"`
+	LastError            string     `json:"last_error,omitempty"`
+	LastErrorStatus      int        `json:"last_error_status,omitempty"`
 }
 
 // ComponentHealth represents the health of a single component
