@@ -16,7 +16,7 @@ All notable changes to roborev, grouped by minor release.
     pull request. GitHub comments display only findings at or above the
     threshold. This applies to `review_min_severity`, `--min-severity`, and the
     CI poller's `min_severity`. See
-    [Severity Filtering](/guides/reviewing-code/#severity-filtering).
+    [Severity Filtering](/docs/guides/reviewing-code/#severity-filtering).
 - Codex, Claude Code, Pi, and Grok now return structured findings for every
     review type, not only custom ones. Verdicts come from the reported
     severities instead of from parsing Markdown, and the review output uses one
@@ -24,7 +24,7 @@ All notable changes to roborev, grouped by minor release.
     2 and records the agent's own verdict alongside the findings. An agent that
     reports it could not review the change fails the job, so an unreadable diff
     no longer looks like a clean pass. See
-    [Custom Review Types](/advanced/custom-review-types/#structured-results-and-compatible-agents).
+    [Custom Review Types](/docs/advanced/custom-review-types/#structured-results-and-compatible-agents).
 
 **Bug fixes**
 

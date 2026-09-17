@@ -269,7 +269,8 @@ branch filtering continues to group the review under `(none)`.
 The default-visible "Cost" column shows the model-pricing estimate from
 [agentsview](/docs/commands/#token-usage) for jobs that have reported usage. The
 cell stays blank for unpriced models, for jobs whose usage has not been fetched
-yet, and on agentsview versions older than 0.30.0.
+yet, or when the installed AgentsView CLI does not support
+`session usage --no-sync` and usage lookup reports a provider error.
 
 For panel parent rows, the cost column shows known member costs as soon as they
 are available, including while other members are still running or unpriced.
