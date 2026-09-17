@@ -914,9 +914,6 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
 	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
 	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
-	if runtime.GOOS == "windows" {
-		hookScript = "@echo off\r\n>\"%ROBOREV_HOOK_MARKER%\" echo hook ran\r\n"
-	}
 	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "post-checkout"), []byte(hookScript), 0o755))
 	config := exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
 	require.NoError(t, config.Run())

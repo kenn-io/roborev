@@ -199,7 +199,9 @@ non-interactive. Verify one with
 `GIT_TERMINAL_PROMPT=0 git ls-remote <submodule-url> HEAD` before running
 refine. This change does not copy credential values or helper configuration into
 agent inputs, the parent environment, or repository files. Existing provider
-credential rules remain in effect.
+credential handling follows each configured agent's existing rules. A global
+`core.hooksPath` can also run the operator's own hooks while submodules are
+checked out, so keep that configuration trusted.
 
 ## Security Considerations
 
