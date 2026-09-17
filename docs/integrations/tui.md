@@ -441,6 +441,9 @@ content from interfering with your terminal.
 
 The TUI automatically adapts to light and dark terminals. Colors are selected
 based on your terminal's background to ensure readability in both environments.
+In Windows Terminal, the TUI requests the background color after its input loop
+starts and applies the palette when the terminal replies. It stays responsive
+while waiting; if no reply arrives, it keeps the default dark palette.
 
 To override auto-detection, set the `ROBOREV_COLOR_MODE` environment variable:
 

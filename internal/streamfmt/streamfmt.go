@@ -32,25 +32,25 @@ func TerminalWidth(w io.Writer) int {
 // TUI's rendering. It respects ROBOREV_COLOR_MODE and NO_COLOR.
 func GlamourStyle() gansi.StyleConfig {
 	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
-	var style gansi.StyleConfig
 	isDark := true
 	switch {
 	case mode == "dark":
-		style = styles.DarkStyleConfig
 	case mode == "light":
-		style = styles.LightStyleConfig
 		isDark = false
 	case mode == "none" || termenv.EnvNoColor():
-		style = styles.DarkStyleConfig
 	default:
-		style = styles.LightStyleConfig
 		isDark = termenv.HasDarkBackground()
-		if winDark, ok := platformHasDarkBackground(); ok {
-			isDark = winDark
-		}
-		if isDark {
-			style = styles.DarkStyleConfig
-		}
+	}
+	return GlamourStyleForBackground(isDark)
+}
+
+// GlamourStyleForBackground builds a zero-margin style from an already resolved
+// background and updates adaptive colors without reading terminal input.
+// Callers must resolve color-mode overrides before calling it.
+func GlamourStyleForBackground(isDark bool) gansi.StyleConfig {
+	style := styles.LightStyleConfig
+	if isDark {
+		style = styles.DarkStyleConfig
 	}
 	termstyle.SetDarkBackground(isDark)
 	zeroMargin := uint(0)

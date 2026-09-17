@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/termenv"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
@@ -129,7 +131,7 @@ type model struct {
 	daemonVersion        string
 	client               *http.Client
 	api                  *roborevclient.Client
-	glamourStyle         gansi.StyleConfig // detected once at init
+	glamourStyle         gansi.StyleConfig // updated when the terminal reports its background
 	jobs                 []storage.ReviewJob
 	jobStats             storage.JobStats       // aggregate done/closed/open from server
 	cost                 *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
@@ -935,10 +937,23 @@ func (m model) Init() tea.Cmd {
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
 	}
+	if runtime.GOOS == "windows" && os.Getenv("WT_SESSION") != "" && autoColorMode() {
+		// Bubble Tea owns stdin and recognizes late replies alongside user input.
+		cmds = append(cmds, tea.RequestBackgroundColor)
+	}
 	if m.sseCh != nil {
 		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
 	}
 	return tea.Batch(cmds...)
+}
+
+func autoColorMode() bool {
+	switch strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE")) {
+	case "dark", "light", "none":
+		return false
+	default:
+		return !termenv.EnvNoColor()
+	}
 }
 
 func (m model) tasksWorkflowEnabled() bool {
@@ -1117,6 +1132,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		if !autoColorMode() {
+			return m, nil
+		}
+		m.glamourStyle = streamfmt.GlamourStyleForBackground(msg.IsDark())
+		m.mdCache.glamourStyle = m.glamourStyle
+		m.mdCache.reviewWidth = -1
+		m.mdCache.promptWidth = -1
+		if m.currentView == viewHelp && m.helpFromView == viewLog {
+			// Hidden log responses are discarded. Rebuild after closing help.
+			m.logFmtr = nil
+		}
+		if m.currentView == viewLog || m.paneLogStreaming {
+			// Rebuild logs just as on resize; an in-flight fetch may still
+			// own the old formatter, so do not change it in place.
+			result, cmd = m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		} else {
+			result = m
+		}
 	case tea.KeyMsg:
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
@@ -1252,6 +1286,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if resumeCmd != nil {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
+		}
+		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
+			refreshed, refreshCmd := rm.handleWindowSizeMsg(tea.WindowSizeMsg{Width: rm.width, Height: rm.height})
+			return refreshed, tea.Batch(cmd, refreshCmd)
 		}
 		result = rm
 	}
