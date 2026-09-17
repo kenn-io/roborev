@@ -195,9 +195,9 @@ Refine's temporary worktree initializes submodules with your normal Git
 configuration, so credential helpers, `url.insteadOf` rewrites, and proxy
 settings from your global and system config apply. Terminal prompts and
 configured askpass fallbacks stay disabled, so the credential source has to be
-non-interactive. Verify one with
-`GIT_TERMINAL_PROMPT=0 git ls-remote <submodule-url> HEAD` before running
-refine. This change does not copy credential values or helper configuration into
+non-interactive. Clear `GIT_ASKPASS` and set `GIT_TERMINAL_PROMPT=0`, then run
+`git -c core.askPass= ls-remote <submodule-url> HEAD` before running refine.
+Refine's worktree setup copies no credential values or helper configuration into
 agent inputs, the parent environment, or repository files. Existing provider
 credential handling follows each configured agent's existing rules. A global
 `core.hooksPath` can also run the operator's own hooks while submodules are

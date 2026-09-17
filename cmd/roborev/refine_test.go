@@ -949,7 +949,7 @@ func TestRefineGitRunnerCredentialHelper(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "credentials")
 	store := "https://synthetic-user:synthetic-password@credential-test.invalid/private/repo.git\n"
 	require.NoError(t, os.WriteFile(storePath, []byte(store), 0o600))
-	helper := "store --file=" + filepath.ToSlash(storePath)
+	helper := "store --file=\"" + filepath.ToSlash(storePath) + "\""
 	config := exec.Command("git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
 	require.NoError(t, config.Run())
 
