@@ -493,11 +493,68 @@ exit 99
 	assert.Contains(t, err.Error(), "usage exploded")
 }
 
-func TestFetchForSessionRejectsUnsupportedCLIWithoutFallback(t *testing.T) {
+func TestFetchForSessionFallsBackWithoutNoSync(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("AGENTSVIEW_TEST_CALLS", calls)
+	installFakeAgentsview(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$AGENTSVIEW_TEST_CALLS"
+case "$*" in
+  "session usage s --format json --no-sync")
+    echo "unknown flag: --no-sync" >&2
+    exit 1
+    ;;
+  "session usage s --format json")
+    echo '{"session_id":"s","total_output_tokens":1000,"peak_context_tokens":2000,"cost_usd":0.42,"has_cost":true}'
+    exit 0
+    ;;
+esac
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	assert.Equal(t, &Usage{
+		OutputTokens: 1000, PeakContextTokens: 2000,
+		CostUSD: 0.42, HasCost: true,
+	}, usage)
+	got, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "session usage s --format json --no-sync\nsession usage s --format json\n", string(got))
+}
+
+func TestFetchForSessionFallsBackToTokenUse(t *testing.T) {
 	for _, message := range []string{
 		"unknown command: session usage",
 		"unknown subcommand: usage",
-		"unknown flag: --no-sync",
+	} {
+		t.Run(message, func(t *testing.T) {
+			installFakeAgentsview(t, fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  "session usage s --format json --no-sync")
+    echo %q >&2
+    exit 1
+    ;;
+  "token-use s")
+    echo '{"session_id":"s","total_output_tokens":1000,"peak_context_tokens":2000}'
+    exit 0
+    ;;
+esac
+echo "unexpected args: $@" >&2
+exit 99
+`, message))
+
+			usage, err := FetchForSession(context.Background(), "s")
+			require.NoError(t, err)
+			assert.Equal(t, &Usage{OutputTokens: 1000, PeakContextTokens: 2000}, usage)
+		})
+	}
+}
+
+func TestFetchForSessionDoesNotFallbackOnUsageFailure(t *testing.T) {
+	for _, message := range []string{
+		"usage query failed",
+		"unknown flag: --format",
 	} {
 		t.Run(message, func(t *testing.T) {
 			calls := filepath.Join(t.TempDir(), "calls")
@@ -536,6 +593,53 @@ exit %d
 			require.NoError(t, err)
 			assert.Nil(t, usage)
 		})
+	}
+}
+
+func TestFetchForSessionFallbackErrors(t *testing.T) {
+	for _, command := range []string{"session usage s --format json", "token-use s"} {
+		for _, result := range []struct {
+			code   int
+			stderr string
+		}{
+			{1, ""},
+			{1, "database unavailable"},
+			{2, ""},
+			{3, ""},
+			{42, "usage query failed"},
+		} {
+			t.Run(fmt.Sprintf("%s/exit%d/%s", command, result.code, result.stderr), func(t *testing.T) {
+				unsupported := "unknown flag: --no-sync"
+				if command == "token-use s" {
+					unsupported = "unknown command: session usage"
+				}
+				installFakeAgentsview(t, fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  "session usage s --format json --no-sync")
+    echo %q >&2
+    exit 1
+    ;;
+  %q)
+    printf '%%s' %q >&2
+    exit %d
+    ;;
+esac
+echo "unexpected args: $@" >&2
+exit 99
+`, unsupported, command, result.stderr, result.code))
+
+				usage, err := FetchForSession(context.Background(), "s")
+				assert.Nil(t, usage)
+				if result.code == 2 || result.code == 3 ||
+					(command == "token-use s" && result.code == 1 && result.stderr == "") {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), fmt.Sprintf("exit %d", result.code))
+					assert.Contains(t, err.Error(), result.stderr)
+				}
+			})
+		}
 	}
 }
 

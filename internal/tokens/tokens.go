@@ -61,7 +61,8 @@ type FetchConfig struct {
 }
 
 // agentsviewResponse is the JSON shape returned by
-// `agentsview session usage <id> --format json --no-sync`.
+// `agentsview session usage <id> --format json` and the deprecated
+// `agentsview token-use <id>` command.
 type agentsviewResponse struct {
 	SessionID         string        `json:"session_id"`
 	Agent             string        `json:"agent"`
@@ -219,8 +220,23 @@ func fetchForSessionCLI(
 		ctx, timeout, binPath,
 		"session", "usage", sessionID, "--format", "json", "--no-sync",
 	)
+	// Older CLIs can still report costs, but their usage queries may sync sources.
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 &&
+		strings.Contains(string(exitErr.Stderr), "unknown flag: --no-sync") {
+		out, err = runAgentsviewCommand(
+			ctx, timeout, binPath,
+			"session", "usage", sessionID, "--format", "json",
+		)
+	}
 	if err != nil {
-		return nil, handleSessionUsageError(err)
+		if shouldFallbackToTokenUse(err) {
+			out, err = runAgentsviewCommand(ctx, timeout, binPath, "token-use", sessionID)
+			if err != nil {
+				return nil, handleTokenUseError(out, err)
+			}
+		} else {
+			return nil, handleSessionUsageError(err)
+		}
 	}
 
 	var resp agentsviewResponse
@@ -261,6 +277,16 @@ func runAgentsviewCommand(
 	return buildAgentsviewCmd(cmdCtx, binPath, args...).Output()
 }
 
+func shouldFallbackToTokenUse(err error) bool {
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exitErr.ExitCode() != 1 {
+		return false
+	}
+	stderr := strings.ToLower(string(exitErr.Stderr))
+	return strings.Contains(stderr, "unknown command") ||
+		strings.Contains(stderr, "unknown subcommand")
+}
+
 func handleSessionUsageError(err error) error {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		// agentsview usage exit codes: 2 = session not found,
@@ -277,6 +303,19 @@ func handleSessionUsageError(err error) error {
 		}
 	}
 	return fmt.Errorf("agentsview usage: %w", err)
+}
+
+func handleTokenUseError(out []byte, err error) error {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		// Earlier token-use versions signalled not-found with exit 1 and
+		// empty output; later versions use the same 2/3 codes as session usage.
+		if exitErr.ExitCode() == 2 || exitErr.ExitCode() == 3 ||
+			(exitErr.ExitCode() == 1 && len(out) == 0 && len(exitErr.Stderr) == 0) {
+			return nil
+		}
+		return fmt.Errorf("agentsview token-use: exit %d: %s", exitErr.ExitCode(), exitErr.Stderr)
+	}
+	return fmt.Errorf("agentsview token-use: %w", err)
 }
 
 func fetchForSessionHTTP(

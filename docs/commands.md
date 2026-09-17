@@ -647,19 +647,20 @@ with a message instead of queuing a job.
 ## Token Usage
 
 Token usage is tracked automatically for completed jobs when `agentsview` is
-installed and supports `session usage --no-sync`. Usage appears in the TUI
-review header and `roborev show` output (e.g. `118.0k ctx · 28.8k out`). Lookups
-read archived usage, including subagents, without synchronizing source
-transcripts. Run AgentsView's watcher or synchronize separately to keep the
-archive current. Older CLIs report a provider error; roborev does not retry
-without `--no-sync` or fall back to `token-use`, because those commands can
-synchronize sources.
+installed. Usage appears in the TUI review header and `roborev show` output
+(e.g. `118.0k ctx · 28.8k out`). When supported, roborev uses
+`session usage --no-sync` to read archived usage, including subagents, without
+synchronizing source transcripts. Run AgentsView's watcher or synchronize
+separately to keep the archive current. On older CLIs, roborev retries without
+`--no-sync` or uses the legacy `token-use` command when `session usage` is
+unavailable. These fallback commands may synchronize sources.
 
 When pricing is available, the usage summary also includes a model-pricing cost
 estimate (e.g. `118.0k ctx · 28.8k out · ~$0.42`), and the TUI queue displays a
 default-visible "Cost" column with the per-job estimate. The cost column stays
 blank for unpriced models and for jobs whose usage has not yet been fetched. The
 tilde marks the value as a model-pricing estimate rather than a billed amount.
+AgentsView versions without cost support still provide token counts.
 
 Fresh agent sessions can finish before agentsview has indexed their final usage.
 roborev briefly retries a missing session lookup before storing the job-log

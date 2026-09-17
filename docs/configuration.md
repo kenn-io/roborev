@@ -1379,10 +1379,12 @@ default_model = "anthropic/claude-opus-4-8"
 ### Cost Usage Endpoint
 
 By default, roborev looks up token usage and cost estimates through the local
-`agentsview session usage --no-sync` CLI. Usage reads include archived subagent
-usage without synchronizing source transcripts. AgentsView must support
-`session usage --no-sync`; older CLIs report a provider error. Run AgentsView's
-watcher or synchronize separately to keep the archive current.
+`agentsview` CLI. It prefers `session usage --no-sync` to include archived
+subagent usage without synchronizing source transcripts. Run AgentsView's
+watcher or synchronize separately to keep the archive current. Older CLIs remain
+supported: roborev retries without `--no-sync` if the flag is unknown, or falls
+back to `token-use` if `session usage` is unavailable. These fallback commands
+may synchronize sources.
 
 You can route lookup through an HTTP endpoint instead:
 
