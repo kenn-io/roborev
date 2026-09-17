@@ -6,6 +6,7 @@ import (
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -52,10 +53,10 @@ func (m model) moveSelectionToJobID(id int64) model {
 }
 
 func (m model) tasksVisibleWindow(totalJobs int) (int, int, int) {
-	tasksHelpRows := [][]helpItem{
-		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"?", "help"}, {"T/esc", "back"}},
+	tasksHelpRows := [][]helplayout.HelpItem{
+		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}, {Key: "x", Description: "cancel"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
 	}
-	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
+	tasksHelpLines := len(convertAndReflowHelpRows(tasksHelpRows, m.width))
 	visibleRows := max(m.height-(6+tasksHelpLines), 1)
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {

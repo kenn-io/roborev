@@ -3,6 +3,9 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 )
 
 func (m model) renderFilterView() string {
@@ -38,10 +41,10 @@ func (m model) renderFilterView() string {
 	flatList := m.filterFlatList
 
 	// Calculate visible rows
-	filterHelpRows := [][]helpItem{
-		{{"↑/↓", "nav"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
+	filterHelpRows := [][]helplayout.HelpItem{
+		{{Key: "↑/↓", Description: "nav"}, {Key: "→/←", Description: "expand/collapse"}, {Key: "↵", Description: "select"}, {Key: "esc", Description: "cancel"}, {Key: "type to search", Description: ""}},
 	}
-	filterHelpLines := len(reflowHelpRows(filterHelpRows, m.width))
+	filterHelpLines := len(convertAndReflowHelpRows(filterHelpRows, m.width))
 	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(N)
 	reservedLines := 6 + filterHelpLines
 	visibleRows := max(m.height-reservedLines, 0)
@@ -123,7 +126,7 @@ func (m model) renderFilterView() string {
 	}
 	b.WriteString("\x1b[K\n")
 
-	b.WriteString(renderHelpTable(filterHelpRows, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(filterHelpRows, m.width), helpTableStyles))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J")
 

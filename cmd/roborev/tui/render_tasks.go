@@ -10,6 +10,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	"github.com/mattn/go-runewidth"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -160,21 +162,21 @@ func (m model) renderTasksView() string {
 	if len(m.fixJobs) == 0 {
 		b.WriteString("\n  No fix tasks. Press F on a review to trigger a background fix.\n")
 		b.WriteString("\n")
-		emptyHelp := []helpItem{{"T", "back to queue"}, {"F", "fix review"}}
+		emptyHelp := []helplayout.HelpItem{{Key: "T", Description: "back to queue"}, {Key: "F", Description: "fix review"}}
 		if !m.noQuit {
-			emptyHelp = append(emptyHelp, helpItem{"q", "quit"})
+			emptyHelp = append(emptyHelp, helplayout.HelpItem{Key: "q", Description: "quit"})
 		}
-		b.WriteString(renderHelpTable([][]helpItem{emptyHelp}, m.width))
+		b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{emptyHelp}, m.width), helpTableStyles))
 		b.WriteString("\x1b[K\x1b[J")
 		return b.String()
 	}
 
 	// Help row calculation for visible rows
-	tasksHelpRows := [][]helpItem{
-		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}},
-		{{"x", "cancel"}, {"o", "options"}, {"?", "help"}, {"T/esc", "back"}},
+	tasksHelpRows := [][]helplayout.HelpItem{
+		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}},
+		{{Key: "x", Description: "cancel"}, {Key: "o", Description: "options"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
 	}
-	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
+	tasksHelpLines := len(convertAndReflowHelpRows(tasksHelpRows, m.width))
 	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
 	visibleRows = max(visibleRows, 1)
 
@@ -412,7 +414,7 @@ func (m model) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(renderHelpTable(tasksHelpRows, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(tasksHelpRows, m.width), helpTableStyles))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()
@@ -520,13 +522,13 @@ func (m model) renderPatchView() string {
 		b.WriteString(helpStyle.Render(label))
 		b.WriteString(display)
 		b.WriteString("\x1b[K\n")
-		b.WriteString(renderHelpTable([][]helpItem{
-			{{"enter", "save"}, {"esc", "cancel"}},
-		}, m.width))
+		b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+			{{Key: "enter", Description: "save"}, {Key: "esc", Description: "cancel"}},
+		}, m.width), helpTableStyles))
 	} else {
-		b.WriteString(renderHelpTable([][]helpItem{
-			{{"j/k/↑/↓", "scroll"}, {"s", "save"}, {"esc", "back to tasks"}},
-		}, m.width))
+		b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+			{{Key: "j/k/↑/↓", Description: "scroll"}, {Key: "s", Description: "save"}, {Key: "esc", Description: "back to tasks"}},
+		}, m.width), helpTableStyles))
 	}
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()

@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/helplayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -896,10 +897,10 @@ func TestNoQuit_QueueHelpOmitsQuit(t *testing.T) {
 	normalRows := normal.queueHelpRows()
 	noQuitRows := noQuit.queueHelpRows()
 
-	hasQuit := func(rows [][]helpItem) bool {
+	hasQuit := func(rows [][]helplayout.HelpItem) bool {
 		for _, row := range rows {
 			for _, item := range row {
-				if item.key == "q" {
+				if item.Key == "q" {
 					return true
 				}
 			}

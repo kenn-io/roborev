@@ -6,24 +6,26 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 	"go.kenn.io/kit/tui/splitlayout"
 )
 
 // splitFooterRows returns the help table for the focused pane.
-func (m model) splitFooterRows() [][]helpItem {
+func (m model) splitFooterRows() [][]helplayout.HelpItem {
 	if m.focus == focusDetail {
-		rows := [][]helpItem{
-			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "close"}, {"y", "copy"}},
-			{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"L", "layout"}, {"esc", "back to list"}, {"?", "commands"}},
+		rows := [][]helplayout.HelpItem{
+			{{Key: "p", Description: "prompt"}, {Key: "c", Description: "comment"}, {Key: "m", Description: "commit"}, {Key: "a", Description: "close"}, {Key: "y", Description: "copy"}},
+			{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "L", Description: "layout"}, {Key: "esc", Description: "back to list"}, {Key: "?", Description: "commands"}},
 		}
 		if m.tasksWorkflowEnabled() {
-			rows[0] = append(rows[0], helpItem{"F", "fix"})
+			rows[0] = append(rows[0], helplayout.HelpItem{Key: "F", Description: "fix"})
 		}
 		return rows
 	}
 	rows := filterHelpItem(m.queueHelpRows(), "↵")
 	last := len(rows) - 1
-	rows[last] = append(rows[last], helpItem{"L", "layout"}, helpItem{"tab", "focus detail"})
+	rows[last] = append(rows[last], helplayout.HelpItem{Key: "L", Description: "layout"}, helplayout.HelpItem{Key: "tab", Description: "focus detail"})
 	return rows
 }
 
@@ -31,12 +33,12 @@ func (m model) splitFooterRows() [][]helpItem {
 // removed. Enter is a no-op with the queue focused in split layout (the
 // detail pane already follows the cursor), so the split footer omits the
 // "↵ review" hint that queueHelpRows carries for the stacked layout.
-func filterHelpItem(rows [][]helpItem, key string) [][]helpItem {
-	out := make([][]helpItem, len(rows))
+func filterHelpItem(rows [][]helplayout.HelpItem, key string) [][]helplayout.HelpItem {
+	out := make([][]helplayout.HelpItem, len(rows))
 	for i, row := range rows {
-		filtered := make([]helpItem, 0, len(row))
+		filtered := make([]helplayout.HelpItem, 0, len(row))
 		for _, item := range row {
-			if item.key == key {
+			if item.Key == key {
 				continue
 			}
 			filtered = append(filtered, item)
@@ -50,7 +52,7 @@ func filterHelpItem(rows [][]helpItem, key string) [][]helpItem {
 // panes, full-width info line and help footer.
 func (m model) renderSplit() string {
 	footerRows := m.splitFooterRows()
-	footerLines := len(reflowHelpRows(footerRows, m.width))
+	footerLines := len(convertAndReflowHelpRows(footerRows, m.width))
 	g := splitLayoutConfig.Geometry(m.width, m.height, footerLines)
 
 	title := m.renderQueueTitle()
@@ -71,7 +73,7 @@ func (m model) renderSplit() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailPane)
 
 	info := m.splitInfoLine(g)
-	footer := renderHelpTable(footerRows, m.width)
+	footer := helprender.RenderHelpTable(convertAndReflowHelpRows(footerRows, m.width), helpTableStyles)
 
 	return title + "\x1b[K\n" + body + "\n" + info + "\x1b[K\n" + footer + "\x1b[K\x1b[J"
 }
@@ -118,7 +120,7 @@ func (m model) splitInfoLine(g splitlayout.Geom) string {
 func (m model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mouse := msg.Mouse()
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 
 	switch msg.(type) {
 	case tea.MouseWheelMsg:
@@ -202,7 +204,7 @@ func (m model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // about the row budget.
 func (m model) queuePaneRowCapacity() int {
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 	return max(g.ListInnerH-2, 1)
 }
 

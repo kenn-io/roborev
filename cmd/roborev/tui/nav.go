@@ -2,6 +2,7 @@ package tui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"go.kenn.io/kit/tui/helplayout"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -183,7 +184,7 @@ func (m *model) logViewLookupJob() *storage.ReviewJob {
 func (m *model) logVisibleLines() int {
 	// title + separator + status + help(N)
 	helpRows := m.logHelpRows()
-	reserved := 3 + len(reflowHelpRows(helpRows, m.width))
+	reserved := 3 + len(convertAndReflowHelpRows(helpRows, m.width))
 	job := m.logViewLookupJob()
 	// Command header may span multiple lines when expanded; classify rows
 	// add their own reasoning header lines.
@@ -193,18 +194,18 @@ func (m *model) logVisibleLines() int {
 }
 
 // logHelpRows returns the help row items for the log view.
-func (m *model) logHelpRows() [][]helpItem {
-	helpRow := []helpItem{
-		{"↑/↓", "scroll"},
-		{"←/→", "prev/next"},
-		{"g", "toggle top/bottom"},
-		{"i", "expand cmd"},
+func (m *model) logHelpRows() [][]helplayout.HelpItem {
+	helpRow := []helplayout.HelpItem{
+		{Key: "↑/↓", Description: "scroll"},
+		{Key: "←/→", Description: "prev/next"},
+		{Key: "g", Description: "toggle top/bottom"},
+		{Key: "i", Description: "expand cmd"},
 	}
 	if m.logStreaming {
-		helpRow = append(helpRow, helpItem{"x", "cancel"})
+		helpRow = append(helpRow, helplayout.HelpItem{Key: "x", Description: "cancel"})
 	}
-	helpRow = append(helpRow, helpItem{"esc/q", "back"})
-	return [][]helpItem{helpRow}
+	helpRow = append(helpRow, helplayout.HelpItem{Key: "esc/q", Description: "back"})
+	return [][]helplayout.HelpItem{helpRow}
 }
 
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current

@@ -18,9 +18,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
-	"github.com/mattn/go-runewidth"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/config"
@@ -68,6 +68,12 @@ var (
 	helpDescStyle = lipgloss.NewStyle().
 			Foreground(adaptiveColor("248", "240")) // Dimmer gray for descriptions
 
+	helpTableStyles = helprender.Styles{
+		Key:         helpKeyStyle,
+		Description: helpDescStyle,
+		BorderColor: adaptiveColor("248", "242"),
+	}
+
 	errorStyle = lipgloss.NewStyle().
 			Foreground(adaptiveColor("124", "196")).Bold(true) // Red
 
@@ -81,158 +87,18 @@ var (
 			Foreground(adaptiveColor("136", "226")).Bold(true) // Yellow/Gold
 )
 
-// reflowHelpRows redistributes items across rows so that when rendered
-// as an aligned table (columns sized to the widest cell), the result
-// fits within width. Each cell's visible width is key + space + desc,
-// and non-first columns add 2 chars (▕ border + padding). If width is
-// <= 0, rows are returned unchanged.
-func reflowHelpRows(rows [][]helpItem, width int) [][]helpItem {
+func convertAndReflowHelpRows(rows [][]helplayout.HelpItem, width int) [][]helplayout.HelpItem {
 	if width <= 0 {
 		return rows
 	}
-
-	// cellWidth returns the visible width of a help item (key + space + desc,
-	// or just key when desc is empty).
-	cellWidth := func(item helpItem) int {
-		w := runewidth.StringWidth(item.key)
-		if item.desc != "" {
-			w += 1 + runewidth.StringWidth(item.desc)
-		}
-		return w
-	}
-
-	// Find the max items in any single input row.
-	maxItemsPerRow := 0
+	// The local renderer omitted empty source rows at positive widths.
+	var nonempty [][]helplayout.HelpItem
 	for _, row := range rows {
-		if len(row) > maxItemsPerRow {
-			maxItemsPerRow = len(row)
+		if len(row) > 0 {
+			nonempty = append(nonempty, row)
 		}
 	}
-
-	// Try ncols from max down to 1. For each candidate, chunk every
-	// input row into sub-rows of at most ncols items, compute aligned
-	// column widths, and check if the total fits within width.
-	for ncols := maxItemsPerRow; ncols >= 1; ncols-- {
-		var candidate [][]helpItem
-		for _, row := range rows {
-			for i := 0; i < len(row); i += ncols {
-				end := min(i+ncols, len(row))
-				candidate = append(candidate, row[i:end])
-			}
-		}
-
-		// Compute max column widths across all candidate rows.
-		colW := make([]int, ncols)
-		for _, crow := range candidate {
-			for c, item := range crow {
-				if w := cellWidth(item); w > colW[c] {
-					colW[c] = w
-				}
-			}
-		}
-
-		// Total rendered width.
-		total := 0
-		for c, w := range colW {
-			total += w
-			if c > 0 {
-				total += 2 // ▕ + padding
-			}
-		}
-
-		if total <= width {
-			return candidate
-		}
-	}
-
-	// Fallback: one item per row.
-	var result [][]helpItem
-	for _, row := range rows {
-		for _, item := range row {
-			result = append(result, []helpItem{item})
-		}
-	}
-	return result
-}
-
-// renderHelpTable renders helpItem entries as an aligned table.
-// Keys and descriptions are two-tone gray, separated by a thin ▕ border
-// that is hidden for column 0 and trailing empty cells.
-func renderHelpTable(rows [][]helpItem, width int) string {
-	rows = reflowHelpRows(rows, width)
-	if len(rows) == 0 {
-		return ""
-	}
-
-	borderColor := adaptiveColor("248", "242")
-	cellStyle := lipgloss.NewStyle()
-	// PaddingLeft gaps the ▕ from cell text.
-	cellWithBorder := lipgloss.NewStyle().
-		PaddingLeft(1).
-		Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
-		BorderForeground(borderColor)
-
-	// Pad rows to the same number of columns so the table aligns.
-	maxCols := 0
-	for _, row := range rows {
-		if len(row) > maxCols {
-			maxCols = len(row)
-		}
-	}
-
-	// Compute minimum visible width per column.
-	colMinW := make([]int, maxCols)
-	for _, row := range rows {
-		for c, item := range row {
-			w := runewidth.StringWidth(item.key)
-			if item.desc != "" {
-				w += 1 + runewidth.StringWidth(item.desc)
-			}
-			if w > colMinW[c] {
-				colMinW[c] = w
-			}
-		}
-	}
-
-	// Track which cells have content for conditional borders.
-	empty := make([][]bool, len(rows))
-
-	t := table.New().
-		BorderTop(false).
-		BorderBottom(false).
-		BorderLeft(false).
-		BorderRight(false).
-		BorderColumn(false).
-		BorderRow(false).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			minW := 0
-			if col < len(colMinW) {
-				minW = colMinW[col]
-			}
-			if col == 0 || (row < len(empty) && col < len(empty[row]) && empty[row][col]) {
-				return cellStyle.Width(minW)
-			}
-			return cellWithBorder.Width(minW + 2) // +2 for ▕ border + padding
-		}).
-		Wrap(false)
-
-	for ri, row := range rows {
-		styled := make([]string, maxCols)
-		empty[ri] = make([]bool, maxCols)
-		for i, item := range row {
-			if item.desc != "" {
-				styled[i] = helpKeyStyle.Render(item.key) + " " + helpDescStyle.Render(item.desc)
-			} else {
-				styled[i] = helpKeyStyle.Render(item.key)
-			}
-		}
-		for i := len(row); i < maxCols; i++ {
-			empty[ri][i] = true
-		}
-		t = t.Row(styled...)
-	}
-
-	return t.Render()
+	return helplayout.ReflowRows(nonempty, width, helprender.ColumnGap)
 }
 
 // fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)

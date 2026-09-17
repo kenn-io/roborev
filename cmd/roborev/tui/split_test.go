@@ -168,7 +168,7 @@ func TestSplitInfoLineStaleReview(t *testing.T) {
 	m.focus = focusDetail
 
 	footerRows := m.splitFooterRows()
-	footerLines := len(reflowHelpRows(footerRows, m.width))
+	footerLines := len(convertAndReflowHelpRows(footerRows, m.width))
 	g := splitLayoutConfig.Geometry(m.width, m.height, footerLines)
 
 	info := m.splitInfoLine(g)
@@ -227,7 +227,7 @@ func splitFirstDataRowY(t *testing.T, m model, marker string) int {
 func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
-	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(convertAndReflowHelpRows(m.splitFooterRows(), 150)))
 
 	// Click a list row: selects it, keeps/sets list focus.
 	firstDataY := splitFirstDataRowY(t, m, "cccc333") // job 3's GitRef, first visible row
@@ -259,7 +259,7 @@ func TestSplitMouseWheelScrollsPaneUnderCursor(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewScroll = 5
-	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(convertAndReflowHelpRows(m.splitFooterRows(), 150)))
 
 	// Wheel over detail pane scrolls the review, regardless of focus.
 	res, _ := m.handleSplitMouse(mouseWheelAt(g.ListOuterW+5, 10, tea.MouseWheelUp))
@@ -429,7 +429,7 @@ func TestSplitExternalRerunBlocksStaleReviewActions(t *testing.T) {
 
 	// A detail-pane click must refuse as well.
 	g := splitLayoutConfig.Geometry(got.width, got.height,
-		len(reflowHelpRows(got.splitFooterRows(), got.width)))
+		len(convertAndReflowHelpRows(got.splitFooterRows(), got.width)))
 	res, _ = got.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	clicked := res.(model)
 	assert.Equal(viewQueue, clicked.currentView)
@@ -1427,7 +1427,7 @@ func TestPaneLogWidthUsesDetailPaneNotTerminalWidth(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 	assert.Equal(g.DetailInnerW, m.paneLogWidth())
 	assert.NotEqual(m.width, m.paneLogWidth())
 }
@@ -2019,7 +2019,7 @@ func TestSplitInfoLineShowsFlash(t *testing.T) {
 	m.setFlash("No older review", 2*time.Second, viewQueue)
 
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 	info := m.splitInfoLine(g)
 	assert.Contains(info, "No older review")
 
@@ -2407,7 +2407,7 @@ func TestQueuePaneRowCapacityMatchesRenderInCompactMode(t *testing.T) {
 	m.jobs = jobs
 
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 	lines := m.renderQueuePaneBody(g.ListInnerW, g.ListInnerH)
 
 	nonBlank := 0
@@ -2651,7 +2651,7 @@ func TestSplitMouseClickIntoDetailStampsQueueOrigin(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewFromView = viewTasks // stale
-	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(convertAndReflowHelpRows(m.splitFooterRows(), 150)))
 
 	res, _ := m.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	got := res.(model)
@@ -3286,12 +3286,12 @@ func TestSplitFooterListFocusOmitsEnterHint(t *testing.T) {
 	var sawEnter, sawTab bool
 	for _, row := range rows {
 		for _, item := range row {
-			if item.key == "↵" {
+			if item.Key == "↵" {
 				sawEnter = true
 			}
-			if item.key == "tab" {
+			if item.Key == "tab" {
 				sawTab = true
-				assert.Equal("focus detail", item.desc)
+				assert.Equal("focus detail", item.Description)
 			}
 		}
 	}
@@ -3412,7 +3412,7 @@ func TestSplitMouseClickIntoDetailNoOpWhenSelectedReviewStale(t *testing.T) {
 	assert := assert.New(t)
 	// currentReview is for job 2; selection is on job 3 (running).
 	m := splitModel(withReview(splitTestReview()), withSelection(0, 3))
-	g := splitLayoutConfig.Geometry(150, 40, len(reflowHelpRows(m.splitFooterRows(), 150)))
+	g := splitLayoutConfig.Geometry(150, 40, len(convertAndReflowHelpRows(m.splitFooterRows(), 150)))
 
 	res, _ := m.handleSplitMouse(mouseClickAt(g.ListOuterW+5, 10))
 	got := res.(model)

@@ -103,12 +103,6 @@ type columnOption struct {
 	enabled bool   // visible/on
 }
 
-// helpItem is a single help-bar entry with a key label and description.
-type helpItem struct {
-	key  string
-	desc string
-}
-
 // logOutputMsg delivers output lines from the daemon
 type logOutputMsg struct {
 	lines     []logLine

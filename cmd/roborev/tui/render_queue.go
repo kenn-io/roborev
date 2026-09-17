@@ -14,6 +14,8 @@ import (
 	"charm.land/lipgloss/v2/table"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -95,58 +97,58 @@ func decorateRefCell(ref string, r queueRow, color bool) string {
 
 // withExpandHint returns the help rows with a "space — expand" entry appended
 // to the last row. Used only when the selected row is a panel parent.
-func withExpandHint(rows [][]helpItem) [][]helpItem {
+func withExpandHint(rows [][]helplayout.HelpItem) [][]helplayout.HelpItem {
 	if len(rows) == 0 {
-		return [][]helpItem{{{"space", "expand"}}}
+		return [][]helplayout.HelpItem{{{Key: "space", Description: "expand"}}}
 	}
-	out := make([][]helpItem, len(rows))
+	out := make([][]helplayout.HelpItem, len(rows))
 	copy(out, rows)
 	last := len(out) - 1
-	out[last] = append(append([]helpItem(nil), out[last]...), helpItem{"space", "expand"})
+	out[last] = append(append([]helplayout.HelpItem(nil), out[last]...), helplayout.HelpItem{Key: "space", Description: "expand"})
 	return out
 }
 
-func (m model) queueHelpRows() [][]helpItem {
-	row1 := []helpItem{
-		{"x", "cancel"},
-		{"r", "rerun"},
-		{"R", "rerun new agent"},
-		{"l", "log"},
-		{"p", "prompt"},
-		{"c", "comment"},
-		{"y", "copy"},
-		{"m", "commit"},
+func (m model) queueHelpRows() [][]helplayout.HelpItem {
+	row1 := []helplayout.HelpItem{
+		{Key: "x", Description: "cancel"},
+		{Key: "r", Description: "rerun"},
+		{Key: "R", Description: "rerun new agent"},
+		{Key: "l", Description: "log"},
+		{Key: "p", Description: "prompt"},
+		{Key: "c", Description: "comment"},
+		{Key: "y", Description: "copy"},
+		{Key: "m", Description: "commit"},
 	}
 	if m.tasksWorkflowEnabled() {
-		row1 = append(row1, helpItem{"F", "fix"})
+		row1 = append(row1, helplayout.HelpItem{Key: "F", Description: "fix"})
 	}
-	row1 = append(row1, helpItem{"o", "options"})
-	row2 := []helpItem{
-		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "close"},
+	row1 = append(row1, helplayout.HelpItem{Key: "o", Description: "options"})
+	row2 := []helplayout.HelpItem{
+		{Key: "↑/↓", Description: "nav"}, {Key: "↵", Description: "review"}, {Key: "a", Description: "close"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
-		row2 = append(row2, helpItem{"f", "filter"})
+		row2 = append(row2, helplayout.HelpItem{Key: "f", Description: "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"})
+	row2 = append(row2, helplayout.HelpItem{Key: "h", Description: "hide"})
 	if m.shouldShowClassifyJobs() {
-		row2 = append(row2, helpItem{"s", "hide classify"})
+		row2 = append(row2, helplayout.HelpItem{Key: "s", Description: "hide classify"})
 	} else {
-		row2 = append(row2, helpItem{"s", "show classify"})
+		row2 = append(row2, helplayout.HelpItem{Key: "s", Description: "show classify"})
 	}
-	row2 = append(row2, helpItem{"D", "focus"})
+	row2 = append(row2, helplayout.HelpItem{Key: "D", Description: "focus"})
 	pauseLabel := "pause"
 	if m.status.QueuePaused {
 		pauseLabel = "resume"
 	}
-	row2 = append(row2, helpItem{"P", pauseLabel})
+	row2 = append(row2, helplayout.HelpItem{Key: "P", Description: pauseLabel})
 	if m.tasksWorkflowEnabled() {
-		row2 = append(row2, helpItem{"T", "tasks"})
+		row2 = append(row2, helplayout.HelpItem{Key: "T", Description: "tasks"})
 	}
-	row2 = append(row2, helpItem{"?", "help"})
+	row2 = append(row2, helplayout.HelpItem{Key: "?", Description: "help"})
 	if !m.noQuit {
-		row2 = append(row2, helpItem{"q", "quit"})
+		row2 = append(row2, helplayout.HelpItem{Key: "q", Description: "quit"})
 	}
-	return [][]helpItem{row1, row2}
+	return [][]helplayout.HelpItem{row1, row2}
 }
 
 func (m model) renderRerunAgentView() string {
@@ -171,9 +173,9 @@ func (m model) renderRerunAgentView() string {
 	for i := end - start; i < visibleRows; i++ {
 		b.WriteString("\x1b[K\n")
 	}
-	b.WriteString(renderHelpTable([][]helpItem{{
-		{"Up/Down", "navigate"}, {"Enter", "rerun"}, {"Esc", "cancel"},
-	}}, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{{
+		{Key: "Up/Down", Description: "navigate"}, {Key: "Enter", Description: "rerun"}, {Key: "Esc", Description: "cancel"},
+	}}, m.width), helpTableStyles))
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
@@ -193,7 +195,7 @@ func (m model) queueHelpLines() int {
 	if m.selectedRowHasChildren() {
 		rows = withExpandHint(rows)
 	}
-	return len(reflowHelpRows(rows, m.width))
+	return len(convertAndReflowHelpRows(rows, m.width))
 }
 
 // queueCompact returns true when chrome should be hidden
@@ -660,7 +662,7 @@ func (m model) renderQueueView() string {
 		if selectedHasChildren {
 			helpRows = withExpandHint(helpRows)
 		}
-		b.WriteString(renderHelpTable(helpRows, m.width))
+		b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(helpRows, m.width), helpTableStyles))
 	}
 
 	output := b.String()
@@ -1643,10 +1645,10 @@ func (m model) renderColumnOptionsView() string {
 	}
 
 	b.WriteString("\n")
-	helpRows := [][]helpItem{
-		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, {"space", "toggle"}, {"esc", "close"}},
+	helpRows := [][]helplayout.HelpItem{
+		{{Key: "↑/↓", Description: "navigate"}, {Key: "j/k", Description: "reorder"}, {Key: "space", Description: "toggle"}, {Key: "esc", Description: "close"}},
 	}
-	b.WriteString(renderHelpTable(helpRows, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(helpRows, m.width), helpTableStyles))
 
 	return b.String()
 }

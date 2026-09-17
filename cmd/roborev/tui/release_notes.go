@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/muesli/termenv"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 )
 
 func (m model) handleReleaseNotesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -111,9 +113,9 @@ func (m model) renderReleaseNotesView() string {
 	for i := end - scroll; i < visible; i++ {
 		b.WriteString("\x1b[K\n")
 	}
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"j/k", "scroll"}, {"pgup/pgdn", "page"}, {"u", "refresh"}, {"esc/q", "close"}},
-	}, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+		{{Key: "j/k", Description: "scroll"}, {Key: "pgup/pgdn", Description: "page"}, {Key: "u", Description: "refresh"}, {Key: "esc/q", Description: "close"}},
+	}, m.width), helpTableStyles))
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }

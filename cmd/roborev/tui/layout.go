@@ -584,7 +584,7 @@ func (m model) preserveOrClearReviewOnQueueReturn() model {
 // drift apart.
 func (m model) paneLogWidth() int {
 	footerRows := m.splitFooterRows()
-	g := splitLayoutConfig.Geometry(m.width, m.height, len(reflowHelpRows(footerRows, m.width)))
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
 	return g.DetailInnerW
 }
 

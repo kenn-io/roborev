@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -84,7 +86,7 @@ func (m model) renderLogView() string {
 
 	// Calculate visible area (must match logVisibleLines())
 	logHelp := m.logHelpRows()
-	logHelpLines := len(reflowHelpRows(logHelp, m.width))
+	logHelpLines := len(convertAndReflowHelpRows(logHelp, m.width))
 	reservedLines := (2 + logHelpLines) + headerLines // title + cmd(N, in headerLines) + sep + status + help(N)
 	visibleLines := max(m.height-reservedLines, 1)
 
@@ -138,7 +140,7 @@ func (m model) renderLogView() string {
 	b.WriteString(statusStyle.Render(status))
 	b.WriteString("\x1b[K\n")
 
-	b.WriteString(renderHelpTable(logHelp, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(logHelp, m.width), helpTableStyles))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
 
@@ -454,9 +456,9 @@ func (m model) renderHelpView() string {
 		linesWritten++
 	}
 
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"↑/↓", "scroll"}, {"esc/q/?", "close"}},
-	}, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+		{{Key: "↑/↓", Description: "scroll"}, {Key: "esc/q/?", Description: "close"}},
+	}, m.width), helpTableStyles))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
 

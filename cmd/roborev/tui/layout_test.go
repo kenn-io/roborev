@@ -80,7 +80,7 @@ func TestSplitGeometry(t *testing.T) {
 func TestSplitGeometryWithDetailFocus(t *testing.T) {
 	m := splitModel(withReview(splitTestReview()), withDimensions(180, 40))
 	m.focus = focusDetail
-	footerLines := len(reflowHelpRows(m.splitFooterRows(), m.width))
+	footerLines := len(convertAndReflowHelpRows(m.splitFooterRows(), m.width))
 	g := splitLayoutConfig.Geometry(m.width, m.height, footerLines)
 
 	assert.Equal(t, 2, footerLines)

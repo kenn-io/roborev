@@ -8,6 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+	"go.kenn.io/kit/tui/helplayout"
+	"go.kenn.io/kit/tui/helprender"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -191,14 +193,14 @@ func (m model) renderReviewView() string {
 	}
 
 	// Help table rows
-	reviewHelpRows := [][]helpItem{
-		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "close"}, {"y", "copy"}},
-		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
+	reviewHelpRows := [][]helplayout.HelpItem{
+		{{Key: "p", Description: "prompt"}, {Key: "c", Description: "comment"}, {Key: "m", Description: "commit"}, {Key: "a", Description: "close"}, {Key: "y", Description: "copy"}},
+		{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "?", Description: "commands"}, {Key: "esc", Description: "back"}},
 	}
 	if m.tasksWorkflowEnabled() {
-		reviewHelpRows[0] = append(reviewHelpRows[0], helpItem{"F", "fix"})
+		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "F", Description: "fix"})
 	}
-	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
+	helpLines := len(convertAndReflowHelpRows(reviewHelpRows, m.width))
 
 	// Compute location line count (repo path + ref + branch can wrap)
 	locationLines := 0
@@ -321,7 +323,7 @@ func (m model) renderReviewView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
 
-	b.WriteString(renderHelpTable(reviewHelpRows, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(reviewHelpRows, m.width), helpTableStyles))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -364,10 +366,10 @@ func (m model) renderPromptView() string {
 	}
 
 	// Reserve: title + command(N, headerLines) + scroll indicator(1) + help(N) + margin(1)
-	promptHelpRows := [][]helpItem{
-		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"i", "toggle cmd"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
+	promptHelpRows := [][]helplayout.HelpItem{
+		{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "i", Description: "toggle cmd"}, {Key: "p", Description: "toggle prompt/review"}, {Key: "?", Description: "commands"}, {Key: "esc", Description: "back"}},
 	}
-	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
+	promptHelpLines := len(convertAndReflowHelpRows(promptHelpRows, m.width))
 	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)
 
 	// Clamp scroll position to valid range
@@ -402,7 +404,7 @@ func (m model) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(renderHelpTable(promptHelpRows, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(promptHelpRows, m.width), helpTableStyles))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -481,9 +483,9 @@ func (m model) renderRespondView() string {
 		linesWritten++
 	}
 
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"↵", "submit"}, {"esc", "cancel"}},
-	}, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+		{{Key: "↵", Description: "submit"}, {Key: "esc", Description: "cancel"}},
+	}, m.width), helpTableStyles))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -543,9 +545,9 @@ func (m model) renderCommitMsgView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"↑/↓", "scroll"}, {"esc/q", "back"}},
-	}, m.width))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows([][]helplayout.HelpItem{
+		{{Key: "↑/↓", Description: "scroll"}, {Key: "esc/q", Description: "back"}},
+	}, m.width), helpTableStyles))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 

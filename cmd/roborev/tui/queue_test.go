@@ -3377,8 +3377,8 @@ func TestQueueHelpLinesAccountForExpandHint(t *testing.T) {
 			m := seededPanelModel(t) // jobs = [20 standalone, 10 parent]
 			m.width = w
 
-			base := len(reflowHelpRows(m.queueHelpRows(), w))
-			hinted := len(reflowHelpRows(withExpandHint(m.queueHelpRows()), w))
+			base := len(convertAndReflowHelpRows(m.queueHelpRows(), w))
+			hinted := len(convertAndReflowHelpRows(withExpandHint(m.queueHelpRows()), w))
 			if hinted > base {
 				extraLineWidths++
 			} else if hinted == base {
