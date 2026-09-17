@@ -189,6 +189,17 @@ task or analysis jobs, which have free-form output without severity labels.
 - **Clean working tree**: No uncommitted changes
 - **Feature branch**: By default, compares against the default branch
 - **Use `--since`**: To refine specific commits on any branch, including main
+- **Submodule access**: Private submodules must be reachable non-interactively
+
+Refine's temporary worktree initializes submodules with your normal Git
+configuration, so credential helpers, `url.insteadOf` rewrites, and proxy
+settings from your global and system config apply. Terminal prompts and
+configured askpass fallbacks stay disabled, so the credential source has to be
+non-interactive. Verify one with
+`GIT_TERMINAL_PROMPT=0 git ls-remote <submodule-url> HEAD` before running
+refine. This change does not copy credential values or helper configuration into
+agent inputs, the parent environment, or repository files. Existing provider
+credential rules remain in effect.
 
 ## Security Considerations
 
