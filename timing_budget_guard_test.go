@@ -456,11 +456,7 @@ func literalDurationValue(expr ast.Expr, timeAliases map[string]bool) (constant.
 			if constant.Sign(right) == 0 {
 				return nil, false
 			}
-			op := token.QUO
-			if left.Kind() == constant.Int && right.Kind() == constant.Int {
-				op = token.QUO_ASSIGN
-			}
-			return constant.BinaryOp(left, op, right), true
+			return constant.BinaryOp(left, token.QUO, right), true
 		default:
 			return nil, false
 		}
