@@ -111,17 +111,14 @@ var reviewedPollingBudgets = map[pollingBudget]pollingBudgetAllowance{
 	},
 }
 
-// externalPollingBudgets keeps the inventory name used by source searches.
-var externalPollingBudgets = reviewedPollingBudgets
-
 var externalPollingHelpers = map[string]string{
-	"cmd/roborev/daemon_integration_test.go:147":          "waitFor observes a separately built daemon process",
-	"cmd/roborev/update_daemon_test.go:347":               "waitForUpdateTestSignal observes an update daemon",
-	"internal/daemon/config_watcher_test.go:111":          "requireNever observes fsnotify debounce; caller is line 302",
-	"internal/daemon/worker_classify_test.go:311":         "waitForEvent observes worker delivery",
-	"internal/daemon/worker_update_interrupt_test.go:323": "waitForUpdateSignal observes worker interruption",
-	"internal/storage/postgres_integration_test.go:266":   "waitForSyncWorkerConnection observes PostgreSQL",
-	"internal/testutil/testutil.go:315":                   "WaitForJobStatus observes SQLite-backed job state",
+	"cmd/roborev/daemon_integration_test.go:waitFor":                            "waitFor observes a separately built daemon process",
+	"cmd/roborev/update_daemon_test.go:waitForUpdateTestSignal":                 "waitForUpdateTestSignal observes an update daemon",
+	"internal/daemon/config_watcher_test.go:requireNever":                       "requireNever observes fsnotify debounce; caller is TestConfigWatcher_InvalidConfigDoesNotCrash",
+	"internal/daemon/worker_classify_test.go:waitForEvent":                      "waitForEvent observes worker delivery",
+	"internal/daemon/worker_update_interrupt_test.go:waitForUpdateSignal":       "waitForUpdateSignal observes worker interruption",
+	"internal/storage/postgres_integration_test.go:waitForSyncWorkerConnection": "waitForSyncWorkerConnection observes PostgreSQL",
+	"internal/testutil/testutil.go:WaitForJobStatus":                            "WaitForJobStatus observes SQLite-backed job state",
 }
 
 var pollingAssertions = map[string]bool{
@@ -147,10 +144,45 @@ func TestNoUnreviewedLiteralPollingBudgets(t *testing.T) {
 	found, err := scanPollingBudgetRepository(root)
 	require.NoError(t, err)
 
-	require.NotEmpty(t, externalPollingHelpers)
-	unlisted, stale := comparePollingBudgets(found, externalPollingBudgets)
+	helperStale, err := comparePollingHelpers(root, externalPollingHelpers)
+	require.NoError(t, err)
+	assert.Empty(t, helperStale, "stale external polling helpers: %s", strings.Join(helperStale, ", "))
+	unlisted, stale := comparePollingBudgets(found, reviewedPollingBudgets)
 	assert.Empty(t, unlisted, "unreviewed literal polling calls:\n%s", strings.Join(unlisted, "\n"))
 	assert.Empty(t, stale, "stale reviewed polling calls:\n%s", strings.Join(stale, "\n"))
+}
+
+func comparePollingHelpers(root string, allowed map[string]string) ([]string, error) {
+	var stale []string
+	for key := range allowed {
+		separator := strings.LastIndexByte(key, ':')
+		if separator < 0 {
+			stale = append(stale, key)
+			continue
+		}
+		relPath, funcName := key[:separator], key[separator+1:]
+		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relPath)))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", relPath, err)
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), relPath, source, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", relPath, err)
+		}
+		found := false
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Name.Name == funcName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			stale = append(stale, key)
+		}
+	}
+	sort.Strings(stale)
+	return stale, nil
 }
 
 func scanPollingBudgetRepository(root string) ([]pollingBudgetCall, error) {

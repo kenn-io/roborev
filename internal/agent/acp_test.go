@@ -600,6 +600,8 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			}()
 
 			synctest.Wait()
+			require.True(t, client.terminalsMutex.TryLock(), "WaitForTerminalExit holds terminalsMutex")
+			client.terminalsMutex.Unlock()
 			<-addDone
 
 			blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: new(0)})

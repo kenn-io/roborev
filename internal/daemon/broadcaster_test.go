@@ -45,6 +45,17 @@ func assertNoEventWithin(t *testing.T, ch <-chan Event) {
 	}
 }
 
+func requireEvent(t *testing.T, ch <-chan Event) Event {
+	t.Helper()
+	select {
+	case event := <-ch:
+		return event
+	default:
+		require.FailNow(t, "expected an event on the subscriber channel")
+		return Event{}
+	}
+}
+
 func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
@@ -56,7 +67,7 @@ func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 	})
 	broadcaster.Broadcast(testEvent)
 
-	received := <-eventCh
+	received := requireEvent(t, eventCh)
 	assertEventFields(t, received, testEvent)
 }
 
@@ -71,8 +82,8 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 	broadcaster.Broadcast(newTestEvent(3, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha3" }))
 
 	// Should receive only events for repo1 (JobID 1 and 3)
-	e1 := <-eventCh
-	e2 := <-eventCh
+	e1 := requireEvent(t, eventCh)
+	e2 := requireEvent(t, eventCh)
 
 	// Should not receive more events (repo2 event was filtered out)
 	assertNoEventWithin(t, eventCh)
@@ -92,7 +103,7 @@ func TestStreamMultipleEvents(t *testing.T) {
 
 	// Receive all 3 events
 	for i := 1; i <= 3; i++ {
-		e := <-eventCh
+		e := requireEvent(t, eventCh)
 		assert.Equal(t, int64(i), e.JobID)
 	}
 }
@@ -108,11 +119,11 @@ func TestBroadcaster_MultiSubscriber(t *testing.T) {
 	broadcaster.Broadcast(newTestEvent(123, func(e *Event) { e.Repo = "/path/to/repo1" }))
 
 	// catch-all should receive
-	e1 := <-chAll
+	e1 := requireEvent(t, chAll)
 	assert.Equal(t, int64(123), e1.JobID)
 
 	// exact-match should receive
-	e2 := <-chRepo1
+	e2 := requireEvent(t, chRepo1)
 	assert.Equal(t, int64(123), e2.JobID)
 
 	// mismatch should NOT receive
@@ -146,8 +157,12 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	b.Unsubscribe(id)
 
 	// Verify channel is closed
-	_, ok := <-ch
-	assert.False(t, ok, "expected channel to be closed after unsubscribe")
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "expected channel to be closed after unsubscribe")
+	default:
+		require.FailNow(t, "unsubscribe did not close the subscriber channel")
+	}
 
 	assert.Zero(t, b.SubscriberCount())
 }
@@ -173,7 +188,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 		require.Len(t, done, 1, "broadcast did not complete")
 
 		for i := range testBufferSize {
-			e := <-ch
+			e := requireEvent(t, ch)
 			assert.Equal(t, int64(i), e.JobID)
 		}
 

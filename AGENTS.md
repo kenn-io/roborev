@@ -216,7 +216,7 @@ Test conventions:
 - Use `testing/synctest` for Go timeout and retry tests. Assert behavior under
   virtual time rather than sleeps or wall-clock completion thresholds.
 - Bare literal `Eventually` and `Never` budgets must use `testing/synctest` or
-  appear in `externalPollingBudgets` with the external work they observe.
+  appear in `reviewedPollingBudgets` with the external work they observe.
   Examples include subprocesses, sockets, file locks, SQLite locks, PostgreSQL,
   and fsnotify.
 - Keep changes simple; avoid over-engineering.

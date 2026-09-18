@@ -202,7 +202,12 @@ func TestOutputBuffer_Subscribe(t *testing.T) {
 	assert.Equal("initial", initial[0].Text)
 
 	ob.Append(1, OutputLine{Text: "new", Type: "text"})
-	line := <-ch
+	var line OutputLine
+	select {
+	case line = <-ch:
+	default:
+		require.FailNow("Append did not deliver the subscribed line")
+	}
 	assert.Equal("new", line.Text)
 }
 
@@ -233,8 +238,12 @@ func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 
 	ob.CloseJob(1)
 
-	_, ok := <-ch
-	assert.False(ok, "expected channel to be closed after CloseJob")
+	select {
+	case _, ok := <-ch:
+		assert.False(ok, "expected channel to be closed after CloseJob")
+	default:
+		require.FailNow(t, "CloseJob did not close the subscriber channel")
+	}
 }
 
 func TestOutputWriter_Write(t *testing.T) {
