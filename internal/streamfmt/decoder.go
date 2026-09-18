@@ -28,6 +28,14 @@ func DecoderForAgent(agent string) Decoder {
 	}
 }
 
+// AgentUsesJSONL reports whether the agent's live log is newline-delimited JSON.
+// Literal-text agents, including ACP, are false so a running job can stream an
+// unterminated tail.
+func AgentUsesJSONL(agent string) bool {
+	_, literal := DecoderForAgent(agent).(*literalDecoder)
+	return !literal
+}
+
 type literalDecoder struct{}
 
 func (literalDecoder) Decode(line string) []Event {

@@ -602,7 +602,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 		job2, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID,
 			GitRef: "ghi789",
-			Agent:  "test",
+			Agent:  "codex",
 		})
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -783,7 +783,7 @@ func TestHandleJobLogAutoDesignFailoverSignalsReset(t *testing.T) {
 func TestJobLogSafeEnd(t *testing.T) {
 	t.Run("empty file", func(t *testing.T) {
 		f := writeTempFile(t, []byte{})
-		if got := jobLogSafeEnd(f, 0); got != 0 {
+		if got := jobLogSafeEnd(f, 0, false); got != 0 {
 			assert.Condition(t, func() bool {
 				return false
 			}, "expected 0, got %d", got)
@@ -793,36 +793,43 @@ func TestJobLogSafeEnd(t *testing.T) {
 	t.Run("ends with newline", func(t *testing.T) {
 		data := []byte("line1\nline2\n")
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), true)
 		assert.Equal(t, int64(len(data)), got, "full data length should be returned when data ends with newline")
 	})
 
 	t.Run("partial line at end", func(t *testing.T) {
 		data := []byte("line1\npartial")
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), false)
 		assert.Equal(t, int64(len(data)), got, "unterminated plain text after a complete line should be tailed")
 	})
 
 	t.Run("json partial line at end", func(t *testing.T) {
 		data := []byte("line1\n{\"type\":\"assistant\"")
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), true)
 		assert.Equal(t, int64(6), got, "unterminated JSONL after a complete line must wait for a newline")
 	})
 
 	t.Run("no newlines at all", func(t *testing.T) {
 		data := []byte("no-newlines-here")
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), false)
 		assert.Equal(t, int64(len(data)), got, "unterminated plain text should be tailed while running")
 	})
 
 	t.Run("json with no newlines stays hidden", func(t *testing.T) {
 		data := []byte(`{"type":"assistant","message":{"content":`)
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), true)
 		assert.Equal(t, int64(0), got, "unterminated JSONL must wait for a newline")
+	})
+
+	t.Run("literal json-looking tail is served", func(t *testing.T) {
+		data := []byte(`{"type":"assistant","message":{"content":`)
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)), false)
+		assert.Equal(t, int64(len(data)), got, "literal-text agents must stream a brace-prefixed tail")
 	})
 
 	t.Run("large partial beyond 64KB", func(t *testing.T) {
@@ -832,7 +839,7 @@ func TestJobLogSafeEnd(t *testing.T) {
 		partial := "{" + strings.Repeat("x", 100*1024)
 		data := []byte(completeLine + partial)
 		f := writeTempFile(t, data)
-		got := jobLogSafeEnd(f, int64(len(data)))
+		got := jobLogSafeEnd(f, int64(len(data)), true)
 		want := int64(len(completeLine))
 		assert.Equal(t, want, got, "partial JSON chunk should align at the end of complete line")
 	})
@@ -871,6 +878,39 @@ func TestHandleJobLogRunningPlainText(t *testing.T) {
 	offset, err := strconv.ParseInt(w.Header().Get("X-Log-Offset"), 10, 64)
 	require.NoError(t, err)
 	assert.Equal(t, int64(len(payload)), offset)
+}
+
+func TestHandleJobLogRunningLiteralBracePrefix(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "brace-log-repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "abc1234",
+		Agent:  "test",
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker-brace")
+	require.NoError(t, err)
+
+	const payload = `{"note":"unterminated assistant text`
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+		nil,
+	)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// Unterminated brace-prefixed text is not a JSON document, so JSONEq
+	// cannot compare it.
+	assert.Equal(t, payload, w.Body.String()) //nolint:testifylint
 }
 
 func writeTempFile(t *testing.T, data []byte) *os.File {

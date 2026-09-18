@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
@@ -1145,7 +1146,7 @@ func (s *Server) getMachineID() *uuid.UUID {
 	return &s.machineID
 }
 
-func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
+func jobLogSafeEnd(f *os.File, fileSize int64, jsonl bool) int64 {
 	if fileSize == 0 {
 		return 0
 	}
@@ -1158,15 +1159,10 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 	if last[0] == '\n' {
 		return fileSize
 	}
-
-	completeEnd := jobLogLastNewlineEnd(f, fileSize)
-	// JSONL frames must wait for a newline so we never serve a truncated
-	// object. Unterminated plain text (ACP message chunks) can be tailed
-	// immediately so a running job's live log is not blank.
-	if jobLogLooksLikeJSONAt(f, completeEnd, fileSize) {
-		return completeEnd
+	if !jsonl {
+		return fileSize
 	}
-	return fileSize
+	return jobLogLastNewlineEnd(f, fileSize)
 }
 
 func jobLogLastNewlineEnd(f *os.File, fileSize int64) int64 {
@@ -1188,29 +1184,6 @@ func jobLogLastNewlineEnd(f *os.File, fileSize int64) int64 {
 		pos = readStart
 	}
 	return 0
-}
-
-func jobLogLooksLikeJSONAt(f *os.File, start, end int64) bool {
-	if end <= start {
-		return false
-	}
-	n := min(end-start, 64)
-	buf := make([]byte, n)
-	nread, err := f.ReadAt(buf, start)
-	if err != nil && err != io.EOF {
-		return true
-	}
-	for _, b := range buf[:nread] {
-		switch b {
-		case ' ', '\t':
-			continue
-		case '{':
-			return true
-		default:
-			return false
-		}
-	}
-	return false
 }
 
 func isValidGitRef(ref string) bool {
@@ -3980,7 +3953,7 @@ func (s *Server) humaJobLog(
 
 		endPos := fileSize
 		if job.Status == storage.JobStatusRunning {
-			endPos = jobLogSafeEnd(f, fileSize)
+			endPos = jobLogSafeEnd(f, fileSize, streamfmt.AgentUsesJSONL(logAgent))
 		}
 		if offset > endPos {
 			offset = endPos
