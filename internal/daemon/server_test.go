@@ -338,55 +338,23 @@ func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *te
 
 func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenServeAlreadyExited(t *testing.T) {
 	serveErrCh := make(chan error)
-	done := make(chan error, 1)
-	go func() {
-		done <- awaitServeExitOnUnreadyStartup(true, serveErrCh)
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "expected nil error, got %v", err)
-		}
-	case <-time.After(time.Second):
-		require.Condition(t, func() bool {
-			return false
-		}, "awaitServeExitOnUnreadyStartup blocked even though serve had already exited")
-	}
+	require.NoError(t, awaitServeExitOnUnreadyStartup(true, serveErrCh))
 }
 
 func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
-	t.Parallel()
-	serveErrCh := make(chan error)
-	done := make(chan error, 1)
-	go func() {
-		done <- awaitServeExitOnUnreadyStartup(false, serveErrCh)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		serveErrCh := make(chan error)
+		done := make(chan error, 1)
+		go func() {
+			done <- awaitServeExitOnUnreadyStartup(false, serveErrCh)
+		}()
 
-	select {
-	case err := <-done:
-		require.Condition(t, func() bool {
-			return false
-		}, "expected helper to block before serve exit, got %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+		synctest.Wait()
+		require.Empty(t, done)
 
-	serveErrCh <- http.ErrServerClosed
-
-	select {
-	case err := <-done:
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "expected nil error, got %v", err)
-		}
-	case <-time.After(time.Second):
-		require.Condition(t, func() bool {
-			return false
-		}, "awaitServeExitOnUnreadyStartup did not return after serve exited")
-	}
+		serveErrCh <- http.ErrServerClosed
+		require.NoError(t, <-done)
+	})
 }
 
 func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -969,28 +970,21 @@ command = "`+touchCmd(markerFile)+`"
 
 func TestHookRunnerStopUnsubscribes(t *testing.T) {
 	t.Parallel()
-	broadcaster := NewBroadcaster()
-	cfg := &config.Config{}
+	synctest.Test(t, func(t *testing.T) {
+		broadcaster := NewBroadcaster()
+		cfg := &config.Config{}
 
-	before := broadcaster.SubscriberCount()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster, log.Default())
-	afterSub := broadcaster.SubscriberCount()
-	if afterSub != before+1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected subscriber count %d after NewHookRunner, got %d", before+1, afterSub)
-	}
+		before := broadcaster.SubscriberCount()
+		hr := NewHookRunner(NewStaticConfig(cfg), broadcaster, log.Default())
+		afterSub := broadcaster.SubscriberCount()
+		assert.Equal(t, before+1, afterSub, "subscriber count after NewHookRunner")
 
-	hr.Stop()
-	// Give the goroutine a moment to exit
-	time.Sleep(100 * time.Millisecond)
+		hr.Stop()
+		synctest.Wait()
 
-	afterStop := broadcaster.SubscriberCount()
-	if afterStop != before {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected subscriber count %d after Stop, got %d", before, afterStop)
-	}
+		afterStop := broadcaster.SubscriberCount()
+		assert.Equal(t, before, afterStop, "subscriber count after Stop")
+	})
 }
 
 // writeRepoConfig writes a .roborev.toml file into repoDir, failing the test on error.
@@ -1134,29 +1128,24 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 }
 
 func TestWaitUntilIdle_StopDoesNotDeadlock(t *testing.T) {
-	cfg := &config.Config{
-		Hooks: []config.HookConfig{
-			{Event: "review.completed", Command: "true"},
-		},
-	}
-	b := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), b, log.Default())
+	synctest.Test(t, func(t *testing.T) {
+		cfg := &config.Config{
+			Hooks: []config.HookConfig{
+				{Event: "review.completed", Command: "true"},
+			},
+		}
+		b := NewBroadcaster()
+		hr := NewHookRunner(NewStaticConfig(cfg), b, log.Default())
 
-	done := make(chan struct{})
-	go func() {
-		hr.WaitUntilIdle()
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			hr.WaitUntilIdle()
+			close(done)
+		}()
 
-	// Give WaitUntilIdle time to block on idleCh send
-	time.Sleep(10 * time.Millisecond)
-	hr.Stop()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		require.Condition(t, func() bool {
-			return false
-		}, "WaitUntilIdle deadlocked after Stop")
-	}
+		// Let WaitUntilIdle reach the listener before stopping it.
+		synctest.Wait()
+		hr.Stop()
+		<-done
+	})
 }

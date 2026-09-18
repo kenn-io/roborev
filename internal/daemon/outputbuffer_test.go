@@ -201,17 +201,9 @@ func TestOutputBuffer_Subscribe(t *testing.T) {
 	require.Len(initial, 1)
 	assert.Equal("initial", initial[0].Text)
 
-	// Add more lines after subscription
-	go func() {
-		ob.Append(1, OutputLine{Text: "new", Type: "text"})
-	}()
-
-	select {
-	case line := <-ch:
-		assert.Equal("new", line.Text)
-	case <-time.After(100 * time.Millisecond):
-		require.Condition(func() bool { return false }, "timeout waiting for subscribed line")
-	}
+	ob.Append(1, OutputLine{Text: "new", Type: "text"})
+	line := <-ch
+	assert.Equal("new", line.Text)
 }
 
 func TestOutputBuffer_SubscribeCancel(t *testing.T) {
@@ -233,7 +225,6 @@ func TestOutputBuffer_SubscribeCancel(t *testing.T) {
 
 func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 
 	ob := NewOutputBuffer(1024, 4096)
 
@@ -242,13 +233,8 @@ func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 
 	ob.CloseJob(1)
 
-	// Channel should be closed
-	select {
-	case _, ok := <-ch:
-		assert.False(ok, "expected channel to be closed after CloseJob")
-	case <-time.After(100 * time.Millisecond):
-		require.Condition(func() bool { return false }, "channel not closed after CloseJob")
-	}
+	_, ok := <-ch
+	assert.False(ok, "expected channel to be closed after CloseJob")
 }
 
 func TestOutputWriter_Write(t *testing.T) {

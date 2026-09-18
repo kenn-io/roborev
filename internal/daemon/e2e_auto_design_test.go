@@ -293,17 +293,8 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 	`, e.row.ID, sha).Scan(&rowCount))
 	assert.Equal(1, rowCount)
 
-	// Counters: the promotion increments TriggeredClassifier.
-	// Wait briefly since the worker path runs in a goroutine.
-	var snap storage.AutoDesignStatus
-	for range 60 {
-		snap = AutoDesignMetricsSnapshot()
-		if snap.TriggeredClassifier > 0 {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	assert.EqualValues(1, snap.TriggeredClassifier)
+	// RecordClassifier runs before the promotion awaited above.
+	assert.EqualValues(1, AutoDesignMetricsSnapshot().TriggeredClassifier)
 }
 
 func TestE2EAutoDesign_ClassifierPath_SkipsAmbiguous(t *testing.T) {
@@ -331,16 +322,8 @@ func TestE2EAutoDesign_ClassifierPath_SkipsAmbiguous(t *testing.T) {
 	assert.Equal("review", got.JobType)
 	assert.Contains(got.SkipReason, "local rename")
 
-	// Counter: classifier-no bumps SkippedClassifier. Race with the
-	// worker goroutine — poll briefly.
-	var snap storage.AutoDesignStatus
-	for range 60 {
-		snap = AutoDesignMetricsSnapshot()
-		if snap.SkippedClassifier > 0 {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	// RecordClassifier runs before the skip awaited above.
+	snap := AutoDesignMetricsSnapshot()
 	assert.EqualValues(1, snap.SkippedClassifier)
 	assert.EqualValues(0, snap.ClassifierFailed)
 }
@@ -460,16 +443,8 @@ classifier_timeout_seconds = 1
 	assert.Equal("review", got.JobType)
 	assert.NotEmpty(got.SkipReason)
 
-	// Counter: ClassifierFailed bumps. Poll for the goroutine.
-	var snap storage.AutoDesignStatus
-	for range 80 {
-		snap = AutoDesignMetricsSnapshot()
-		if snap.ClassifierFailed > 0 {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	assert.EqualValues(1, snap.ClassifierFailed)
+	// RecordClassifier runs before the skip awaited above.
+	assert.EqualValues(1, AutoDesignMetricsSnapshot().ClassifierFailed)
 }
 
 // e2eAutoDesignAgentCols returns the (agent, model) pair persisted on

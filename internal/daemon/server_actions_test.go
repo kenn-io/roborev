@@ -1390,12 +1390,7 @@ func TestHandleCloseReview_RepoFilteredSubscriber(t *testing.T) {
 	}
 
 	// Wrong-repo subscriber does not receive the event
-	select {
-	case event := <-wrongCh:
-		require.FailNow(t, "wrong-repo subscriber received event", "event: %v", event)
-	case <-time.After(50 * time.Millisecond):
-		// expected — no event
-	}
+	require.Empty(t, wrongCh, "wrong-repo subscriber received an event")
 }
 
 func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
