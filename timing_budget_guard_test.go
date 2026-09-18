@@ -523,7 +523,7 @@ func TestFixture(t *testing.T) {
 	}
 	other.Never(t, cond, 12*time.Millisecond, time.Millisecond)
 	const named = 13*time.Millisecond
-	check.Never(t, cond, named, time.Millisecond)
+	assertions.Never(cond, named, time.Millisecond)
 }
 `
 	calls, err := subSecondPollingBudgets("fixture_test.go", []byte(source))
@@ -563,6 +563,37 @@ func TestPollingBudgetAllowancesReportUnlistedAndStale(t *testing.T) {
 	assert.Equal(t, []string{"a_test.go:30: TestListed.Never waits 250ms", "b_test.go:20: TestUnlisted.Eventually waits 20ms"}, gotUnlisted)
 	assert.Equal(t, []string{"c_test.go: TestRemoved.Never waits 200ms (file lock, 1 missing)"}, gotStale)
 	t.Log("duplicate occurrence -> unlisted; removed occurrence -> stale")
+}
+
+func TestPollingHelperInventoryReportsStaleAndSourceErrors(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "valid.go"),
+		[]byte("package fixture\nfunc TestPresent() {}\n"),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "broken.go"),
+		[]byte("package fixture\nfunc Test("),
+		0o600,
+	))
+
+	stale, err := comparePollingHelpers(root, map[string]string{
+		"valid.go:TestPresent": "present",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, stale)
+
+	stale, err = comparePollingHelpers(root, map[string]string{
+		"valid.go:TestMissing": "missing",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"valid.go:TestMissing"}, stale)
+
+	_, err = comparePollingHelpers(root, map[string]string{
+		"broken.go:TestBroken": "broken source",
+	})
+	require.Error(t, err)
 }
 
 func TestPollingBudgetScannerReportsParseErrors(t *testing.T) {

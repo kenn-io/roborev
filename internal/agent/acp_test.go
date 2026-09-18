@@ -567,6 +567,8 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	t.Run("WaitForTerminalExit does not block other terminal operations", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			blockedDone := make(chan struct{})
+			var closeBlocked sync.Once
+			t.Cleanup(func() { closeBlocked.Do(func() { close(blockedDone) }) })
 			blockedTerminal := &acpTerminal{
 				id:   "blocked",
 				done: blockedDone,
@@ -590,22 +592,17 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 				close(waitDone)
 			}()
 
-			addDone := make(chan struct{})
-			go func() {
-				client.addTerminal(&acpTerminal{
-					id:   "secondary",
-					done: make(chan struct{}),
-				})
-				close(addDone)
-			}()
-
 			synctest.Wait()
 			require.True(t, client.terminalsMutex.TryLock(), "WaitForTerminalExit holds terminalsMutex")
 			client.terminalsMutex.Unlock()
-			<-addDone
+
+			client.addTerminal(&acpTerminal{
+				id:   "secondary",
+				done: make(chan struct{}),
+			})
 
 			blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: new(0)})
-			close(blockedDone)
+			closeBlocked.Do(func() { close(blockedDone) })
 			synctest.Wait()
 			<-waitDone
 
