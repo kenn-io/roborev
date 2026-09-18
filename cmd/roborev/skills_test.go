@@ -55,7 +55,7 @@ func TestSkillsInstallRejectsUnsupportedAgentWithoutCreatingPath(t *testing.T) {
 	cmd.SetArgs([]string{"install", "--path", skillsDir, "--agent", "unknown"})
 
 	err := cmd.Execute()
-	require.EqualError(t, err, `unsupported agent "unknown" (expected claude, codex, droid, or grok)`)
+	require.EqualError(t, err, `unsupported agent "unknown" (expected a supported hook agent)`)
 
 	_, statErr := os.Stat(skillsDir)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)

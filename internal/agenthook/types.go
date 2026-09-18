@@ -124,6 +124,7 @@ func (i Input) Command() string {
 }
 
 type Request struct {
+	MCP                   bool               `json:"-"`
 	Agent                 kitagenthook.Agent `json:"agent"`
 	Event                 Input              `json:"event"`
 	Threshold             int                `json:"threshold"`

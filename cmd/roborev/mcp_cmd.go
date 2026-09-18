@@ -42,7 +42,7 @@ func mcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Model Context Protocol server for roborev review data",
-		Long: `Expose read-only roborev review data to MCP clients.
+		Long: `Expose roborev review data to MCP clients.
 
 Two transports are available:
 
@@ -52,19 +52,21 @@ Two transports are available:
          daemon to serve streamable HTTP at <daemon address>/mcp.
 
 Both transports expose the same tools: status, repositories, branches, jobs,
-reviews, comments, and job output. Nothing is written.
+reviews, comments, and job output. Tools can also comment, close reviews,
+snooze Agent Hooks, and complete hook fix sessions. Reviews cannot be started.
 
 'roborev mcp status' lists daemons currently serving the HTTP endpoint.`,
 	}
 	cmd.AddCommand(mcpServeCmd())
 	cmd.AddCommand(mcpStatusCmd())
+	cmd.AddCommand(mcpInstallCmd())
 	return cmd
 }
 
 func mcpServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
-		Short: "Serve read-only roborev tools over stdio",
+		Short: "Serve roborev tools over stdio",
 		Long: `Serve the roborev MCP tools over stdin/stdout.
 
 The daemon is started when needed. With an explicit --server address the

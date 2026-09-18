@@ -15,6 +15,7 @@ import (
 )
 
 type fakeBackend struct {
+	Backend
 	statusFn       func(context.Context) (*storage.DaemonStatus, error)
 	listReposFn    func(context.Context, ReposQuery) ([]storage.RepoWithCount, error)
 	listBranchesFn func(context.Context, string) ([]storage.BranchWithCount, error)
@@ -109,7 +110,7 @@ func decodeText(t *testing.T, result *mcp.CallToolResult, out any) {
 	require.NoError(t, json.Unmarshal([]byte(text.Text), out))
 }
 
-func TestRegisteredToolsAndGuidanceAreReadOnly(t *testing.T) {
+func TestRegisteredToolsAndGuidance(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	session := connectSession(t, &fakeBackend{})
@@ -122,12 +123,16 @@ func TestRegisteredToolsAndGuidanceAreReadOnly(t *testing.T) {
 	}
 	slices.Sort(names)
 	assert.Equal([]string{
+		"roborev_add_comment",
+		"roborev_close_review",
+		"roborev_complete_fix",
 		"roborev_get_job_output",
 		"roborev_get_review",
 		"roborev_list_branches",
 		"roborev_list_comments",
 		"roborev_list_jobs",
 		"roborev_list_repos",
+		"roborev_snooze",
 		"roborev_status",
 	}, names)
 

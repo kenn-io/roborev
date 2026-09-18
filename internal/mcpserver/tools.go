@@ -68,6 +68,7 @@ type listJobsInput struct {
 }
 
 type jobRow struct {
+	PanelRole     string                 `json:"panel_role,omitempty"`
 	WebURL        string                 `json:"web_url,omitempty" jsonschema:"browser URL for this review on its owning daemon; use this URL when linking to the review"`
 	ID            int64                  `json:"id"`
 	UUID          string                 `json:"uuid,omitempty"`
@@ -492,6 +493,7 @@ func (in reviewRefInput) ref() (ReviewRef, error) {
 
 func newJobRow(job *storage.ReviewJob) jobRow {
 	row := jobRow{
+		PanelRole:     job.PanelRole,
 		WebURL:        job.WebURL,
 		ID:            job.ID,
 		RepoPath:      job.RepoPath,

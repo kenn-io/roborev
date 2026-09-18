@@ -331,7 +331,7 @@ func assertSkillsInstalled(t *testing.T, homeDir string, tc agentCase) {
 func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
 	setupTestEnv(t)
 
-	results, err := Install()
+	results, err := Install(nil)
 	require.NoError(t, err, "Install failed")
 
 	claudeResult := findResultByAgent(t, results, AgentClaude)
@@ -347,7 +347,7 @@ func TestInstallWhenDirExists(t *testing.T) {
 			agentDir := filepath.Join(tmpHome, tc.configDir)
 			require.NoError(t, os.MkdirAll(agentDir, 0o755))
 
-			results, err := Install()
+			results, err := Install(nil)
 			require.NoError(t, err, "Install failed")
 
 			res := findResultByAgent(t, results, tc.agent)
@@ -364,7 +364,7 @@ func TestInstallWritesCodexInvocationPolicies(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0o755))
 	}
 
-	_, err := Install()
+	_, err := Install(nil)
 	require.NoError(t, err)
 
 	for _, skill := range expectedSkillDirNamesForAgent(t, AgentCodex) {
@@ -387,7 +387,7 @@ func TestInstallWritesCodexInvocationPolicies(t *testing.T) {
 func TestCodexStatusRequiresCurrentPolicy(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0o755))
-	_, err := Install()
+	_, err := Install(nil)
 	require.NoError(t, err)
 
 	skill := expectedSkillDirNamesForAgent(t, AgentCodex)[0]
@@ -408,7 +408,7 @@ func TestUpdateAddsCodexPolicyToSkillOnlyInstall(t *testing.T) {
 	skill := expectedSkillDirNamesForAgent(t, AgentCodex)[0]
 	createMockSkill(t, tmpHome, AgentCodex, skill)
 
-	results, err := Update()
+	results, err := Update(nil)
 	require.NoError(t, err)
 	findResultByAgent(t, results, AgentCodex)
 
@@ -434,7 +434,7 @@ func TestInstallHonorsConfigDirEnvOverride(t *testing.T) {
 			configDir := t.TempDir()
 			t.Setenv(tt.envVar, configDir)
 
-			results, err := Install()
+			results, err := Install(nil)
 			require.NoError(t, err, "Install failed")
 
 			res := findResultByAgent(t, results, tt.agent)
@@ -476,7 +476,7 @@ func TestInstallSkipsWhenConfigDirEnvOverrideMissing(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	t.Setenv("CLAUDE_CONFIG_DIR", missing)
 
-	results, err := Install()
+	results, err := Install(nil)
 	require.NoError(t, err, "Install failed")
 
 	claudeResult := findResultByAgent(t, results, AgentClaude)
@@ -493,7 +493,7 @@ func TestInstallIdempotent(t *testing.T) {
 	err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755)
 	require.NoError(t, err)
 
-	results1, err := Install()
+	results1, err := Install(nil)
 	require.NoError(t, err, "First install failed: %v", err)
 
 	expectedSkills := expectedSkillDirNamesForAgent(t, AgentClaude)
@@ -502,7 +502,7 @@ func TestInstallIdempotent(t *testing.T) {
 	require.Len(t, claude1.Installed, len(expectedSkills), "first install: expected %d installed, got %d", len(expectedSkills), len(claude1.Installed))
 	require.Empty(t, claude1.Updated, "first install: expected 0 updated, got %d", len(claude1.Updated))
 
-	results2, err := Install()
+	results2, err := Install(nil)
 	require.NoError(t, err, "Second install failed: %v", err)
 
 	claude2 := findResultByAgent(t, results2, AgentClaude)
@@ -516,7 +516,7 @@ func TestInstallToPathDefaultsToSelectedAgentDestination(t *testing.T) {
 			skillsDir := filepath.Join(t.TempDir(), "custom", "skills")
 			expectedSkills := expectedSkillDirNamesForAgent(t, agent)
 
-			result, err := InstallToPath(agent, skillsDir)
+			result, err := InstallToPath(agent, skillsDir, nil)
 			require.NoError(t, err)
 			assert.Equal(t, agent, result.Agent)
 			assert.Len(t, result.Installed, len(expectedSkills))
@@ -533,7 +533,7 @@ func TestInstallToPathDefaultsToSelectedAgentDestination(t *testing.T) {
 func TestInstallToPathWritesCodexPolicies(t *testing.T) {
 	skillsDir := filepath.Join(t.TempDir(), "custom", "skills")
 
-	result, err := InstallToPath(AgentCodex, skillsDir)
+	result, err := InstallToPath(AgentCodex, skillsDir, nil)
 	require.NoError(t, err)
 	assert.Equal(t, AgentCodex, result.Agent)
 
@@ -548,12 +548,12 @@ func TestInstallToPathIsIdempotent(t *testing.T) {
 	skillsDir := filepath.Join(t.TempDir(), "skills")
 	expectedSkills := expectedSkillDirNamesForAgent(t, AgentClaude)
 
-	first, err := InstallToPath(AgentClaude, skillsDir)
+	first, err := InstallToPath(AgentClaude, skillsDir, nil)
 	require.NoError(t, err)
 	assert.Len(t, first.Installed, len(expectedSkills))
 	assert.Empty(t, first.Updated)
 
-	second, err := InstallToPath(AgentClaude, skillsDir)
+	second, err := InstallToPath(AgentClaude, skillsDir, nil)
 	require.NoError(t, err)
 	assert.Empty(t, second.Installed)
 	assert.Len(t, second.Updated, len(expectedSkills))
@@ -565,7 +565,7 @@ func TestInstallToPathRemovesLegacySkills(t *testing.T) {
 	require.NoError(t, os.MkdirAll(legacyDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte("old"), 0o644))
 
-	_, err := InstallToPath(AgentClaude, skillsDir)
+	_, err := InstallToPath(AgentClaude, skillsDir, nil)
 	require.NoError(t, err)
 
 	_, err = os.Stat(legacyDir)
@@ -575,8 +575,8 @@ func TestInstallToPathRemovesLegacySkills(t *testing.T) {
 func TestInstallToPathRejectsUnsupportedAgentWithoutCreatingDestination(t *testing.T) {
 	skillsDir := filepath.Join(t.TempDir(), "skills")
 
-	_, err := InstallToPath(Agent("unknown"), skillsDir)
-	require.EqualError(t, err, `unsupported agent "unknown" (expected claude, codex, droid, or grok)`)
+	_, err := InstallToPath(Agent("unknown"), skillsDir, nil)
+	require.EqualError(t, err, `unsupported agent "unknown" (expected a supported hook agent)`)
 
 	_, statErr := os.Stat(skillsDir)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
@@ -664,7 +664,7 @@ func TestInstallRemovesLegacySkills(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0o755))
 			createMockSkill(t, tmpHome, tc.agent, "roborev-address")
 
-			_, err := Install()
+			_, err := Install(nil)
 			require.NoError(t, err)
 
 			legacyDir := filepath.Join(tmpHome, tc.legacyDir, "skills", "roborev-address")
@@ -687,7 +687,7 @@ func TestUpdateRemovesLegacySkills(t *testing.T) {
 	require.NoError(t, os.MkdirAll(legacyDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte("old"), 0o644))
 
-	_, err := Update()
+	_, err := Update(nil)
 	require.NoError(t, err)
 
 	// Legacy skill should be removed
@@ -704,7 +704,7 @@ func TestUpdateLegacyOnlyInstall(t *testing.T) {
 			// User only has the deprecated skill — no current skills
 			createMockSkill(t, tmpHome, tc.agent, "roborev-address")
 
-			results, err := Update()
+			results, err := Update(nil)
 			require.NoError(t, err)
 
 			require.Len(t, results, 1)
@@ -804,7 +804,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			tmpHome := setupTestEnv(t)
 			tt.setup(t, tmpHome)
 
-			results, err := Update()
+			results, err := Update(nil)
 			require.NoError(t, err, "Update failed: %v", err)
 			requireResultCount(t, results, tt.wantResults)
 
@@ -874,13 +874,13 @@ func TestListSkillsReportsSupportedAgents(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
 		skillsByDir["roborev-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
 		skillsByDir["roborev-lookahead-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
 		skillsByDir["roborev-lookahead-review-branch"].SupportedAgents)
 }
 
@@ -1398,7 +1398,7 @@ func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 		tmpHome := setupTestEnv(t)
 		require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, ".factory"), 0o755))
 
-		results, err := Install()
+		results, err := Install(nil)
 		require.NoError(t, err)
 		res := findResultByAgent(t, results, AgentDroid)
 		assert.False(t, res.Skipped)
@@ -1412,7 +1412,7 @@ func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 
 	t.Run("skipped when .factory absent", func(t *testing.T) {
 		setupTestEnv(t)
-		results, err := Install()
+		results, err := Install(nil)
 		require.NoError(t, err)
 		res := findResultByAgent(t, results, AgentDroid)
 		assert.True(t, res.Skipped, "Droid should be skipped when ~/.factory does not exist")
@@ -1426,7 +1426,7 @@ func TestDroidSkillOperationsUseHomeEnvWhenUserHomeDirDiffers(t *testing.T) {
 	stubUserHomeDir(t, userHome)
 	require.NoError(t, os.MkdirAll(filepath.Join(envHome, ".factory"), 0o755))
 
-	results, err := Install()
+	results, err := Install(nil)
 	require.NoError(t, err)
 	droidInstall := findResultByAgent(t, results, AgentDroid)
 	require.False(t, droidInstall.Skipped, "Droid should use HOME for Factory config discovery")
@@ -1440,7 +1440,7 @@ func TestDroidSkillOperationsUseHomeEnvWhenUserHomeDirDiffers(t *testing.T) {
 
 	assert.True(t, IsInstalled(AgentDroid), "Droid installed detection should use HOME")
 
-	updates, err := Update()
+	updates, err := Update(nil)
 	require.NoError(t, err)
 	droidUpdate := findResultByAgent(t, updates, AgentDroid)
 	assert.NotEmpty(t, droidUpdate.Updated, "Droid update should use HOME")

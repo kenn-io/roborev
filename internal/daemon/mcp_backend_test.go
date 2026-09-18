@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/storage"
@@ -256,6 +258,68 @@ func TestReviewBrowserURLsInAPIResponses(t *testing.T) {
 					assert.Equal(t, tc.want, out["web_url"])
 				}
 			}
+		})
+	}
+}
+
+func TestMCPWriteToolsPersistThroughBothBackends(t *testing.T) {
+	for _, transport := range []string{"http", "stdio-backend"} {
+		t.Run(transport, func(t *testing.T) {
+			assert := assert.New(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+			state, err := json.Marshal(agenthook.Snapshot{FixSessions: map[string]agenthook.FixSession{
+				"worktree": {ID: id, Agent: "codex", SessionID: "session", ExpiresAt: time.Now().Add(time.Hour)},
+			}})
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
+			require.NoError(t, os.WriteFile(agenthook.StatePath(), state, 0o600))
+			server, db := newMCPTestServer(t, true)
+			repo := filepath.ToSlash(t.TempDir())
+			job := seedCompletedReview(t, db, repo)
+			api := httptest.NewServer(server.httpServer.Handler)
+			t.Cleanup(api.Close)
+			endpoint := api.URL + mcpserver.HTTPPath
+			if transport == "stdio-backend" {
+				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test")
+				httpBridge := httptest.NewServer(bridge.HTTPHandler())
+				t.Cleanup(httpBridge.Close)
+				endpoint = httpBridge.URL + mcpserver.HTTPPath
+			}
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+			session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: endpoint, DisableStandaloneSSE: true}, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+			call := func(name string, args map[string]any) {
+				result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
+				require.NoError(t, err)
+				require.False(t, result.IsError, "%s: %v", name, result.Content[0].(*mcp.TextContent).Text)
+			}
+			call("roborev_add_comment", map[string]any{"job_id": job.ID, "commenter": "agent", "comment": "Verified the fix."})
+			comments, err := db.GetCommentsForJob(job.ID)
+			require.NoError(t, err)
+			require.NotEmpty(t, comments)
+			assert.Equal("Verified the fix.", comments[len(comments)-1].Response)
+			call("roborev_close_review", map[string]any{"job_id": job.ID})
+			review, err := db.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			assert.True(review.Closed)
+			until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+			call("roborev_snooze", map[string]any{"repo_path": repo, "worktree_path": repo, "branch": "main", "enabled": true, "snoozed_until": until.Format(time.RFC3339)})
+			snoozes, err := db.ListActiveAgentHookSnoozes(time.Now())
+			require.NoError(t, err)
+			require.Len(t, snoozes, 1)
+			assert.Equal(until, snoozes[0].SnoozedUntil)
+			call("roborev_snooze", map[string]any{"repo_path": repo, "worktree_path": repo, "branch": "main", "enabled": false})
+			snoozes, err = db.ListActiveAgentHookSnoozes(time.Now())
+			require.NoError(t, err)
+			assert.Empty(snoozes)
+			call("roborev_complete_fix", map[string]any{"fix_session_id": id.String()})
+			persisted, err := os.ReadFile(agenthook.StatePath())
+			require.NoError(t, err)
+			var snapshot agenthook.Snapshot
+			require.NoError(t, json.Unmarshal(persisted, &snapshot))
+			assert.Empty(snapshot.FixSessions)
 		})
 	}
 }

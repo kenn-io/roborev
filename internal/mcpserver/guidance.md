@@ -1,7 +1,9 @@
 # Roborev MCP guidance
 
-These tools read review data from the local roborev daemon. They never enqueue,
-cancel, close, or comment on reviews; use the `roborev` CLI for those actions.
+These tools read review data, comment on and close existing reviews, snooze
+Agent Hooks, and complete hook fix sessions. Review creation and cancellation
+remain CLI operations. Use the MCP connection for the same daemon that issued
+the review IDs or fix-session UUID.
 
 ## Suggested flow
 
@@ -29,3 +31,20 @@ cancel, close, or comment on reviews; use the `roborev` CLI for those actions.
 - Job `status` is one of `queued`, `running`, `done`, `failed`, `canceled`,
   `applied`, `rebased`, or `skipped`.
 - Listings are capped; use `next_cursor` from `roborev_list_jobs` to page.
+
+## Updating existing reviews
+
+Use `roborev_add_comment` with `job_id`, `commenter`, and `comment` to record
+what changed or why a finding is invalid. After the comment succeeds and all
+findings are resolved or invalid, call `roborev_close_review` with `job_id`.
+Read back the review and comments to verify. For panels, use the synthesis
+parent; `job.panel_role` identifies members. Ask for the parent ID if it is
+not already known.
+
+Use `roborev_snooze` with `repo_path`, `worktree_path`, `branch`, and `enabled`.
+When enabling, supply a future RFC3339 `snoozed_until`. Disabling resumes
+reminders. Reviews continue running.
+
+When Agent Hook supplies a fix-session UUID, finish auditing the original
+reviews, then call `roborev_complete_fix` with that exact `fix_session_id`, even
+when deferred findings remain open. Never invent or discover a session UUID.

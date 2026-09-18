@@ -99,11 +99,26 @@ func grokHookCommand(opts InstallOptions) (string, error) {
 		if selected != AgentGrok {
 			return "", fmt.Errorf("hook command selects %s, not %s", selected, AgentGrok)
 		}
+		if opts.RoborevServerAddr != "" {
+			args, err := kitagenthook.BuildCommand("--roborev-server", opts.RoborevServerAddr)
+			if err != nil {
+				return "", err
+			}
+			command += " " + args.Native
+		}
+		if opts.MCP {
+			command += " --mcp"
+		}
 		return command + " " + agentHookMarker, nil
 	}
-	commands, err := kitagenthook.BuildCommand(
-		opts.Executable, "agent-hook", "run", "--agent", string(AgentGrok), agentHookMarker,
-	)
+	args := []string{"agent-hook", "run", "--agent", string(AgentGrok), agentHookMarker}
+	if opts.RoborevServerAddr != "" {
+		args = append(args, "--roborev-server", opts.RoborevServerAddr)
+	}
+	if opts.MCP {
+		args = append(args, "--mcp")
+	}
+	commands, err := kitagenthook.BuildCommand(opts.Executable, args...)
 	if err != nil {
 		return "", err
 	}

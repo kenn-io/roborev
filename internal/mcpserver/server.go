@@ -10,13 +10,13 @@ import (
 // HTTPPath is the path the streamable HTTP endpoint is served on.
 const HTTPPath = "/mcp"
 
-// Server wraps an MCP server whose tools read roborev data through a Backend.
+// Server wraps an MCP server whose tools access roborev data through a Backend.
 type Server struct {
 	backend Backend
 	mcp     *mcp.Server
 }
 
-// New builds a server exposing the read-only roborev tools. backend must not
+// New builds a server exposing the roborev tools. backend must not
 // be nil.
 func New(backend Backend, version string) *Server {
 	if backend == nil {
@@ -31,6 +31,7 @@ func New(backend Backend, version string) *Server {
 		}},
 	)
 	s.registerTools()
+	s.registerWriteTools()
 	s.registerGuidance()
 	return s
 }

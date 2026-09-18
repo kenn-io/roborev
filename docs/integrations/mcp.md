@@ -5,12 +5,78 @@ description: Expose roborev review data to AI agents over the Model Context Prot
 
 roborev ships an optional
 [Model Context Protocol](https://modelcontextprotocol.io) server so coding
-agents can read review results without shelling out to the CLI. The server is
-read-only: it lists repositories, branches, and jobs, and returns review output,
-comments, and streamed job output. It never enqueues, cancels, closes, or
-comments on reviews.
+agents can read review results without shelling out to the CLI. The server lists
+repositories, branches, and jobs, and returns review output, comments, and
+streamed job output. It can also comment on and close existing reviews, snooze
+Agent Hooks, and complete hook fix sessions. It cannot start or cancel reviews.
 
 Two transports are available and both expose the same tools.
+
+## Install for coding agents
+
+`roborev mcp install` configures agents whose user configuration directories
+exist. Skills, Agent Hooks, and MCP installation support Claude Code, Codex,
+Factory Droid, Grok Build, Copilot, Cursor, Gemini, Hermes, and Qwen.
+
+```bash
+roborev mcp install
+roborev mcp install --agent codex
+roborev mcp install --agent all --dry-run
+roborev mcp install --agent gemini --transport http --url http://127.0.0.1:7373/mcp
+```
+
+Stdio is the default. Use `--binary` to pin an installed executable or shim, and
+the global `--server` flag to target a specific daemon. HTTP installation
+requires `--transport http --url <daemon MCP URL>` and uses the existing daemon
+endpoint. Enable `[mcp]` in that daemon's config as described below.
+Installation does not start or restart the daemon.
+
+Use `--config` with one `--agent` to select a custom MCP configuration file. The
+installer replaces the `roborev` entry and preserves other settings and servers.
+It reserializes the configuration, so formatting and comments may change.
+`--dry-run` prints the merged configuration without writing it.
+
+| Agent | User MCP configuration |
+| --- | --- |
+| Claude Code | `~/.claude.json` |
+| Codex | `~/.codex/config.toml` |
+| Factory Droid | `~/.factory/mcp.json` |
+| Grok Build | `~/.grok/config.toml` |
+| Copilot | `~/.copilot/mcp-config.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Gemini | `~/.gemini/settings.json` |
+| Hermes | `~/.hermes/config.yaml` |
+| Qwen | `~/.qwen/settings.json` |
+
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`, `COPILOT_HOME`, `QWEN_HOME`, and
+`HERMES_HOME` overrides are honored. Gemini uses `$GEMINI_CLI_HOME/.gemini/`
+when `GEMINI_CLI_HOME` is set. With `CLAUDE_CONFIG_DIR`, Claude's file is
+`.claude.json` inside that directory.
+
+## Opt into MCP skills and hooks
+
+```bash
+roborev skills install --mcp
+roborev agent-hook install --mcp
+```
+
+Hook installation with `--mcp` also installs the MCP configuration and bundled
+MCP skills for each selected agent. For an existing daemon HTTP endpoint:
+
+```bash
+roborev agent-hook install --agent codex --mcp --mcp-transport http --mcp-url http://127.0.0.1:7373/mcp
+```
+
+The HTTP URL also selects the hook's daemon. `--roborev-server` can explicitly
+select a daemon for a stdio installation. `agent-hook run --mcp` emits MCP
+instructions, and `agent-hook dump --mcp` prints hooks that pass that flag.
+
+Skill updates preserve the installed mode unless `--mcp` or `--mcp=false` is
+explicitly supplied. Use `roborev skills install --mcp=false` and reinstall
+hooks without `--mcp` to return to CLI mode. Existing MCP registrations remain.
+Review creation and the refine CLI still use the CLI; no MCP tool starts a
+review. Missing MCP tools produce a connection error rather than silently
+switching the skill back to CLI reads.
 
 ## Stdio
 
@@ -91,6 +157,10 @@ The JSON form is an array, empty when no daemon has `[mcp]` enabled.
 
 | Tool | Purpose |
 |------|---------|
+| `roborev_add_comment` | Add a comment with `job_id`, `commenter`, and `comment` |
+| `roborev_close_review` | Close an existing review by `job_id` |
+| `roborev_snooze` | Snooze or resume reminders using `repo_path`, `worktree_path`, `branch`, `enabled`, and an RFC3339 `snoozed_until` when enabled |
+| `roborev_complete_fix` | Complete the exact `fix_session_id` UUID supplied by Agent Hook |
 | `roborev_status` | Daemon version, queue counts, and worker usage |
 | `roborev_list_repos` | Tracked repositories with job counts; returns the `root_path` used by other tools |
 | `roborev_list_branches` | Branches with job counts for one repository |

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -157,4 +158,36 @@ func mcpError(err error) error {
 	default:
 		return mcpserver.NewError(mcpserver.ErrorCodeInternal, message)
 	}
+}
+
+func (b mcpBackend) AddComment(ctx context.Context, in mcpserver.AddCommentInput) (*storage.Response, error) {
+	out, err := b.server.humaAddComment(ctx, &AddCommentInput{Body: AddCommentRequest{JobID: in.JobID, Commenter: in.Commenter, Comment: in.Comment}})
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	return out.Body, nil
+}
+
+func (b mcpBackend) CloseReview(ctx context.Context, jobID int64) error {
+	_, err := b.server.humaCloseReview(ctx, &CloseReviewInput{Body: CloseReviewRequest{JobID: jobID, Closed: true}})
+	if err != nil {
+		return mcpError(err)
+	}
+	return nil
+}
+
+func (b mcpBackend) Snooze(ctx context.Context, in mcpserver.SnoozeInput) (mcpserver.SnoozeOutput, error) {
+	out, err := b.server.humaSetAgentHookSnooze(ctx, &AgentHookSnoozeInput{Body: AgentHookSnoozeRequest{RepoPath: in.RepoPath, WorktreePath: in.WorktreePath, Branch: in.Branch, Enabled: in.Enabled, SnoozedUntil: in.SnoozedUntil}})
+	if err != nil {
+		return mcpserver.SnoozeOutput{}, mcpError(err)
+	}
+	return mcpserver.SnoozeOutput{Snoozed: out.Body.Snoozed, SnoozedUntil: out.Body.SnoozedUntil}, nil
+}
+
+func (b mcpBackend) CompleteFix(ctx context.Context, id uuid.UUID) error {
+	_, err := b.server.humaAgentHookFixDone(ctx, &AgentHookFixDoneInput{Body: AgentHookFixDoneRequest{FixSessionID: id}})
+	if err != nil {
+		return mcpError(err)
+	}
+	return nil
 }

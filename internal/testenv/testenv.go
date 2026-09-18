@@ -93,7 +93,7 @@ func setDataDirEnv(dir string) func() {
 // CLAUDE_CONFIG_DIR replacing ~/.claude) so tests that redirect HOME never
 // resolve paths into a developer's real agent configuration.
 func unsetAgentConfigDirEnv() func() {
-	keys := []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"}
+	keys := []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "HERMES_HOME", "COPILOT_HOME", "GEMINI_CLI_HOME", "QWEN_HOME"}
 	restores := make([]func(), 0, len(keys))
 	for _, key := range keys {
 		orig, has := os.LookupEnv(key)

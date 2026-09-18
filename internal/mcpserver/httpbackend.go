@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -182,7 +183,7 @@ func (b *HTTPBackend) getJSON(call func(*roborevclient.Client) (*http.Response, 
 		return NewError(ErrorCodeUnavailable, fmt.Sprintf("roborev daemon request failed: %v", err))
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return httpStatusError(resp)
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {
@@ -220,4 +221,55 @@ func httpStatusError(resp *http.Response) error {
 		code = ErrorCodeUnavailable
 	}
 	return NewError(code, message)
+}
+
+func (b *HTTPBackend) AddComment(ctx context.Context, in AddCommentInput) (*storage.Response, error) {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	var out storage.Response
+	err = b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.AddCommentRaw(ctx, nil, roborevclient.WithBody(body))
+	}, &out)
+	return &out, err
+}
+
+func (b *HTTPBackend) CloseReview(ctx context.Context, jobID int64) error {
+	body, err := json.Marshal(struct {
+		JobID  int64 `json:"job_id"`
+		Closed bool  `json:"closed"`
+	}{jobID, true})
+	if err != nil {
+		return err
+	}
+	var out successOutput
+	return b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.CloseReviewRaw(ctx, nil, roborevclient.WithBody(body))
+	}, &out)
+}
+
+func (b *HTTPBackend) Snooze(ctx context.Context, in SnoozeInput) (SnoozeOutput, error) {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return SnoozeOutput{}, err
+	}
+	var out SnoozeOutput
+	err = b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.SetAgentHookSnoozeRaw(ctx, nil, roborevclient.WithBody(body))
+	}, &out)
+	return out, err
+}
+
+func (b *HTTPBackend) CompleteFix(ctx context.Context, id uuid.UUID) error {
+	body, err := json.Marshal(completeFixInput{FixSessionID: id})
+	if err != nil {
+		return err
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	return b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.CompleteAgentHookFixRaw(ctx, nil, roborevclient.WithBody(body))
+	}, &out)
 }

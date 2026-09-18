@@ -346,7 +346,8 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	var output map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 	assert.Equal(t, "block", output["decision"])
-	assert.Equal(t, "resolve reviews", output["reason"])
+	assert.Contains(t, output["reason"], "resolve reviews")
+	assert.Contains(t, output["reason"], "roborev-fix skill is missing")
 }
 
 func TestRunAgentHookReportsCodexFixSkillStateInTriggeredReminder(t *testing.T) {
@@ -368,7 +369,7 @@ func TestRunAgentHookReportsCodexFixSkillStateInTriggeredReminder(t *testing.T) 
 		{
 			name: "current",
 			install: func(t *testing.T, skillsDir string) {
-				_, err := skills.InstallToPath(skills.AgentCodex, skillsDir)
+				_, err := skills.InstallToPath(skills.AgentCodex, skillsDir, nil)
 				require.NoError(t, err)
 			},
 		},
@@ -593,4 +594,26 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 			tt.check(t, got.Event)
 		})
 	}
+}
+
+func TestRunAgentHookMCPCompletesWithExactSession(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(agenthook.Response{Triggered: true, TriggeredBy: "fix_session", FixSessionID: new(id), Reason: "Finish the fix."})
+	}))
+	t.Cleanup(server.Close)
+	opts := agenthook.DefaultOptions()
+	opts.MCP = true
+	opts.RoborevServerAddr = server.URL
+	var out bytes.Buffer
+	require.NoError(t, runAgentHook(kitagenthook.AgentCodex, opts,
+		strings.NewReader(`{"session_id":"session","hook_event_name":"Stop"}`), &out, io.Discard))
+	var response struct {
+		Reason string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &response))
+	assert.Contains(t, response.Reason, "roborev_complete_fix")
+	assert.Contains(t, response.Reason, id.String())
+	assert.Contains(t, response.Reason, server.URL)
+	assert.NotContains(t, response.Reason, "agent-hook fix-done")
 }
