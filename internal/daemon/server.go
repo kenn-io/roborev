@@ -1159,7 +1159,17 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 		return fileSize
 	}
 
-	// Scan backwards in 64KB chunks to find last newline.
+	completeEnd := jobLogLastNewlineEnd(f, fileSize)
+	// JSONL frames must wait for a newline so we never serve a truncated
+	// object. Unterminated plain text (ACP message chunks) can be tailed
+	// immediately so a running job's live log is not blank.
+	if jobLogLooksLikeJSONAt(f, completeEnd, fileSize) {
+		return completeEnd
+	}
+	return fileSize
+}
+
+func jobLogLastNewlineEnd(f *os.File, fileSize int64) int64 {
 	const chunkSize = 64 * 1024
 	buf := make([]byte, chunkSize)
 	pos := fileSize
@@ -1177,10 +1187,30 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 		}
 		pos = readStart
 	}
-
-	// Entire file has no newline — serve nothing to avoid
-	// a partial line.
 	return 0
+}
+
+func jobLogLooksLikeJSONAt(f *os.File, start, end int64) bool {
+	if end <= start {
+		return false
+	}
+	n := min(end-start, 64)
+	buf := make([]byte, n)
+	nread, err := f.ReadAt(buf, start)
+	if err != nil && err != io.EOF {
+		return true
+	}
+	for _, b := range buf[:nread] {
+		switch b {
+		case ' ', '\t':
+			continue
+		case '{':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func isValidGitRef(ref string) bool {

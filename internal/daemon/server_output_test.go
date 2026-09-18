@@ -801,27 +801,76 @@ func TestJobLogSafeEnd(t *testing.T) {
 		data := []byte("line1\npartial")
 		f := writeTempFile(t, data)
 		got := jobLogSafeEnd(f, int64(len(data)))
-		assert.Equal(t, int64(6), got, "\"line1\\n\" should return index 6")
+		assert.Equal(t, int64(len(data)), got, "unterminated plain text after a complete line should be tailed")
+	})
+
+	t.Run("json partial line at end", func(t *testing.T) {
+		data := []byte("line1\n{\"type\":\"assistant\"")
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)))
+		assert.Equal(t, int64(6), got, "unterminated JSONL after a complete line must wait for a newline")
 	})
 
 	t.Run("no newlines at all", func(t *testing.T) {
 		data := []byte("no-newlines-here")
 		f := writeTempFile(t, data)
 		got := jobLogSafeEnd(f, int64(len(data)))
-		assert.Equal(t, int64(0), got, "files without newlines should return 0")
+		assert.Equal(t, int64(len(data)), got, "unterminated plain text should be tailed while running")
+	})
+
+	t.Run("json with no newlines stays hidden", func(t *testing.T) {
+		data := []byte(`{"type":"assistant","message":{"content":`)
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)))
+		assert.Equal(t, int64(0), got, "unterminated JSONL must wait for a newline")
 	})
 
 	t.Run("large partial beyond 64KB", func(t *testing.T) {
-		// A complete line followed by a partial line > 64KB.
+		// A complete line followed by a partial JSON line > 64KB.
 		// The chunked backward scan should still find the newline.
 		completeLine := "line1\n"
-		partial := strings.Repeat("x", 100*1024) // 100KB
+		partial := "{" + strings.Repeat("x", 100*1024)
 		data := []byte(completeLine + partial)
 		f := writeTempFile(t, data)
 		got := jobLogSafeEnd(f, int64(len(data)))
 		want := int64(len(completeLine))
-		assert.Equal(t, want, got, "partial chunk should align at the end of complete line")
+		assert.Equal(t, want, got, "partial JSON chunk should align at the end of complete line")
 	})
+}
+
+func TestHandleJobLogRunningPlainText(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "plain-log-repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "abc1234",
+		Agent:  "test",
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker-plain")
+	require.NoError(t, err)
+
+	const payload = "agent still streaming this review"
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+		nil,
+	)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "running", w.Header().Get("X-Job-Status"))
+	assert.Equal(t, payload, w.Body.String())
+	offset, err := strconv.ParseInt(w.Header().Get("X-Log-Offset"), 10, 64)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), offset)
 }
 
 func writeTempFile(t *testing.T, data []byte) *os.File {

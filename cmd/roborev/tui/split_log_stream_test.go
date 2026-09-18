@@ -19,6 +19,59 @@ import (
 // If the split-pane tail drops job identity at startup, provider-shaped output
 // can be decoded with the wrong protocol instead of following the selected
 // agent and source.
+func TestPaneLogPollAppendsNewBytesWhileRunning(t *testing.T) {
+	const firstLine = "first streamed line"
+	const secondLine = "second streamed line"
+	firstBody := firstLine + "\n"
+	secondBody := secondLine + "\n"
+
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(firstBody)))
+			_, _ = fmt.Fprint(w, firstBody)
+		case fmt.Sprintf("%d", len(firstBody)):
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(firstBody)+len(secondBody)))
+			_, _ = fmt.Fprint(w, secondBody)
+		default:
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+		}
+	})
+	m.currentView = viewQueue
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
+	m.width, m.height = 150, 40
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+
+	started, cmd := m.startPaneLog(job)
+	m = started.(model)
+	require.NotNil(t, cmd)
+	first, ok := cmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	updated, _ := m.handlePaneLogOutputMsg(first)
+	m = updated.(model)
+	assert.Equal(t, []string{firstLine}, plainLogLines(m.paneLogLines))
+	assert.True(t, m.paneLogStreaming)
+
+	ticked, fetchCmd := m.handlePaneLogTickMsg(paneLogTickMsg{seq: m.paneLogSeq})
+	m = ticked.(model)
+	require.NotNil(t, fetchCmd)
+	second, ok := fetchCmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	updated, _ = m.handlePaneLogOutputMsg(second)
+	m = updated.(model)
+	assert.Equal(t, []string{firstLine, secondLine}, plainLogLines(m.paneLogLines))
+	assert.True(t, m.paneLogStreaming)
+}
+
 func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	mixed := strings.Join([]string{
