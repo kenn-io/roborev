@@ -337,8 +337,21 @@ func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *te
 }
 
 func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenServeAlreadyExited(t *testing.T) {
-	serveErrCh := make(chan error)
-	require.NoError(t, awaitServeExitOnUnreadyStartup(true, serveErrCh))
+	synctest.Test(t, func(t *testing.T) {
+		serveErrCh := make(chan error)
+		done := make(chan error, 1)
+		go func() {
+			done <- awaitServeExitOnUnreadyStartup(true, serveErrCh)
+		}()
+
+		synctest.Wait()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		default:
+			require.FailNow(t, "serve-exited path did not return")
+		}
+	})
 }
 
 func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {

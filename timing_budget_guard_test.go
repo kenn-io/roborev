@@ -594,6 +594,11 @@ func TestPollingHelperInventoryReportsStaleAndSourceErrors(t *testing.T) {
 		"broken.go:TestBroken": "broken source",
 	})
 	require.Error(t, err)
+
+	_, err = comparePollingHelpers(root, map[string]string{
+		"missing.go:TestMissing": "missing source",
+	})
+	require.ErrorContains(t, err, "read missing.go")
 }
 
 func TestPollingBudgetScannerReportsParseErrors(t *testing.T) {

@@ -148,7 +148,7 @@ test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
 
 test-timing-budgets:
-	go test -run 'Test(NoUnreviewedLiteralPollingBudgets|PollingBudget)' .
+	go test -run 'Test(NoUnreviewedLiteralPollingBudgets|PollingBudget|PollingHelper)' .
 
 test-codex-skill-eval:
 	ROBOREV_RUN_CODEX_SKILL_EVAL=1 ROBOREV_CODEX_SKILL_EVAL_MODELS="$(CODEX_SKILL_EVAL_MODELS)" go test -tags=codexeval ./internal/skills -run TestCodexSkillExplicitInvocation -count=1 -v
