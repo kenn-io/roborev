@@ -1487,18 +1487,14 @@ func (m model) handleLogOutputMsg(
 		m.logAgent = msg.agent
 		m.logSource = msg.source
 
-		if msg.append {
-			if len(msg.lines) > 0 {
-				m.logLines = append(
-					m.logLines, msg.lines...,
-				)
-			}
-		} else {
-			m.logLines = msg.lines
-			if m.logLines == nil && !msg.hasMore {
-				m.logLines = []logLine{}
-			}
+		m.logLines = applyIncrementalLogLines(
+			m.logLines, msg.lines, msg.append,
+			msg.append && m.logPending != "" && len(msg.lines) > 0,
+		)
+		if !msg.append && m.logLines == nil && !msg.hasMore {
+			m.logLines = []logLine{}
 		}
+		m.logPending = msg.pending
 		m.logOffset = msg.newOffset
 		m.logStreaming = msg.hasMore
 		if m.logFollow && len(m.logLines) > 0 {
@@ -1598,17 +1594,11 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	}
 	m.paneLogAgent = msg.agent
 	m.paneLogSource = msg.source
-	if msg.append {
-		if len(msg.lines) > 0 {
-			m.paneLogLines = append(m.paneLogLines, msg.lines...)
-		}
-	} else {
-		// Non-incremental fetch: either the initial full fetch or a
-		// server-side offset reset (log truncated/rotated). Replace
-		// rather than append so stale pre-reset lines don't linger
-		// mixed in with the replacement log.
-		m.paneLogLines = msg.lines
-	}
+	m.paneLogLines = applyIncrementalLogLines(
+		m.paneLogLines, msg.lines, msg.append,
+		msg.append && m.paneLogPending != "" && len(msg.lines) > 0,
+	)
+	m.paneLogPending = msg.pending
 	if over := len(m.paneLogLines) - paneLogMaxLines; over > 0 {
 		m.paneLogLines = m.paneLogLines[over:]
 	}
@@ -2320,6 +2310,7 @@ func (m model) handleWindowSizeMsg(
 				m.paneLogSeq++
 				m.paneLogOffset = 0
 				m.paneLogLines = nil
+				m.paneLogPending = ""
 				m.paneLogFmtr = streamfmt.NewWithWidth(
 					io.Discard, m.paneLogWidth(), m.glamourStyle,
 					decoderForJobLog(m.paneLogAgent, m.paneLogSource),
@@ -2350,6 +2341,7 @@ func (m model) handleWindowSizeMsg(
 	if m.currentView == viewLog {
 		m.logOffset = 0
 		m.logLines = nil
+		m.logPending = ""
 		m.logFmtr = streamfmt.NewWithWidth(
 			io.Discard, msg.Width, m.glamourStyle,
 			decoderForJobLog(m.logAgent, m.logSource),

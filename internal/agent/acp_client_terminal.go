@@ -80,6 +80,7 @@ type acpClient struct {
 	output              io.Writer
 	result              *bytes.Buffer
 	resultMutex         sync.Mutex
+	liveLogNeedNL       bool // true when the last live-log write did not end a line
 	sessionID           string
 	repoRoot            string
 	terminals           map[string]*acpTerminal // Active terminals by ID

@@ -600,6 +600,7 @@ func (m model) startPaneLog(job storage.ReviewJob) (tea.Model, tea.Cmd) {
 	m.paneLogSource = job.Source
 	m.paneLogLines = nil
 	m.paneLogOffset = 0
+	m.paneLogPending = ""
 	m.paneLogSeq++
 	m.paneLogStreaming = true
 	m.paneLogPaused = false

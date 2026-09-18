@@ -72,6 +72,59 @@ func TestPaneLogPollAppendsNewBytesWhileRunning(t *testing.T) {
 	assert.True(t, m.paneLogStreaming)
 }
 
+func TestPaneLogPollGrowsUnterminatedLastRow(t *testing.T) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "3")
+			_, _ = fmt.Fprint(w, "Hel")
+		case "3":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "5")
+			_, _ = fmt.Fprint(w, "lo")
+		case "5":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "12")
+			_, _ = fmt.Fprint(w, " world\n")
+		default:
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+		}
+	})
+	m.currentView = viewQueue
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
+	m.width, m.height = 150, 40
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+
+	started, cmd := m.startPaneLog(job)
+	m = started.(model)
+	first, ok := cmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	updated, _ := m.handlePaneLogOutputMsg(first)
+	m = updated.(model)
+	assert.Equal(t, []string{"Hel"}, plainLogLines(m.paneLogLines))
+
+	second, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	updated, _ = m.handlePaneLogOutputMsg(second)
+	m = updated.(model)
+	assert.Equal(t, []string{"Hello"}, plainLogLines(m.paneLogLines))
+
+	third, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, third.err)
+	updated, _ = m.handlePaneLogOutputMsg(third)
+	m = updated.(model)
+	assert.Equal(t, []string{"Hello world"}, plainLogLines(m.paneLogLines))
+}
+
 func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	mixed := strings.Join([]string{

@@ -1040,6 +1040,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		width:   m.width,
 		style:   m.glamourStyle,
 		offset:  m.logOffset,
+		pending: m.logPending,
 		fmtr:    m.logFmtr,
 		agent:   m.logAgent,
 		source:  m.logSource,
@@ -1057,6 +1058,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 			source:    result.source,
 			seq:       seq,
 			fmtr:      result.fmtr,
+			pending:   result.pending,
 		}
 	}
 }
@@ -1070,6 +1072,7 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		width:   m.paneLogWidth(),
 		style:   m.glamourStyle,
 		offset:  m.paneLogOffset,
+		pending: m.paneLogPending,
 		fmtr:    m.paneLogFmtr,
 		agent:   m.paneLogAgent,
 		source:  m.paneLogSource,
@@ -1088,6 +1091,7 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 			source:    result.source,
 			seq:       seq,
 			fmtr:      result.fmtr,
+			pending:   result.pending,
 		}
 	}
 }
@@ -1098,6 +1102,7 @@ type logFetchState struct {
 	width   int
 	style   gansi.StyleConfig
 	offset  int64
+	pending string
 	fmtr    *streamfmt.Formatter
 	agent   string
 	source  string
@@ -1112,6 +1117,7 @@ type logFetchResult struct {
 	agent     string
 	source    string
 	fmtr      *streamfmt.Formatter
+	pending   string
 }
 
 func fetchLog(jobID int64, state logFetchState) logFetchResult {
@@ -1161,6 +1167,7 @@ func fetchLog(jobID int64, state logFetchState) logFetchResult {
 	isIncremental := state.offset > 0 && state.fmtr != nil
 	if newOffset < state.offset || identityChanged || serverReset {
 		isIncremental = false
+		state.pending = ""
 	}
 	if newOffset == state.offset && isIncremental && hasMore {
 		return logFetchResult{
@@ -1169,6 +1176,24 @@ func fetchLog(jobID int64, state logFetchState) logFetchResult {
 			append:    true,
 			agent:     responseAgent,
 			source:    responseSource,
+			pending:   state.pending,
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return logFetchResult{err: err}
+	}
+	combined := state.pending + string(body)
+	toRender := combined
+	pending := ""
+	if hasMore {
+		if i := strings.LastIndexByte(combined, '\n'); i >= 0 {
+			toRender = combined[:i+1]
+			pending = combined[i+1:]
+		} else {
+			toRender = ""
+			pending = combined
 		}
 	}
 
@@ -1187,8 +1212,17 @@ func fetchLog(jobID int64, state logFetchState) logFetchResult {
 	if hasMore {
 		renderLog = streamfmt.RenderLogChunkWith
 	}
-	if err := renderLog(resp.Body, renderFmtr); err != nil {
-		return logFetchResult{err: err}
+	if toRender != "" {
+		if err := renderLog(strings.NewReader(toRender), renderFmtr); err != nil {
+			return logFetchResult{err: err}
+		}
+	} else if !hasMore {
+		renderFmtr.Flush()
+	}
+	if pending != "" {
+		if err := streamfmt.RenderLogChunkWith(strings.NewReader(pending), renderFmtr); err != nil {
+			return logFetchResult{err: err}
+		}
 	}
 
 	raw := buf.String()
@@ -1210,7 +1244,21 @@ func fetchLog(jobID int64, state logFetchState) logFetchResult {
 		agent:     responseAgent,
 		source:    responseSource,
 		fmtr:      renderFmtr,
+		pending:   pending,
 	}
+}
+
+func applyIncrementalLogLines(dst, src []logLine, appendMode, replacePending bool) []logLine {
+	if !appendMode {
+		return src
+	}
+	if replacePending && len(dst) > 0 {
+		dst = dst[:len(dst)-1]
+	}
+	if len(src) == 0 {
+		return dst
+	}
+	return append(dst, src...)
 }
 
 func decoderForJobLog(agent, source string) streamfmt.Decoder {

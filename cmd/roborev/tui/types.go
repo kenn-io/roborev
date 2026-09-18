@@ -114,6 +114,7 @@ type logOutputMsg struct {
 	source    string               // response source used by fmtr
 	seq       uint64               // fetch sequence number for stale detection
 	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	pending   string               // unterminated raw suffix for the next poll
 }
 
 // logTickMsg triggers a refresh of the log output
@@ -134,6 +135,7 @@ type paneLogOutputMsg struct {
 	source    string               // response source used by fmtr
 	seq       uint64               // fetch sequence number for stale detection
 	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	pending   string               // unterminated raw suffix for the next poll
 }
 
 // paneLogTickMsg triggers a poll of the split detail pane's live log tail.

@@ -277,6 +277,7 @@ type model struct {
 	logReviewAnchored bool                 // Opened from a review-rooted context
 	logFollow         bool                 // True if auto-scrolling to bottom (follow mode)
 	logOffset         int64                // Byte offset for next incremental fetch
+	logPending        string               // Unterminated raw suffix shown as the last live row
 	logFmtr           *streamfmt.Formatter // Persistent formatter across polls
 	logAgent          string               // Agent protocol identity retained across formatter rebuilds
 	logSource         string               // Job source retained for legacy mixed-log compatibility
@@ -488,6 +489,7 @@ type model struct {
 	paneLogJobID     int64                // job whose log is being tailed
 	paneLogLines     []logLine            // buffered rendered lines (capped, see paneLogMaxLines)
 	paneLogOffset    int64                // byte offset for next incremental fetch
+	paneLogPending   string               // unterminated raw suffix shown as the last live row
 	paneLogFmtr      *streamfmt.Formatter // persistent formatter across polls
 	paneLogAgent     string               // agent protocol identity retained across formatter rebuilds
 	paneLogSource    string               // job source retained for legacy mixed-log compatibility

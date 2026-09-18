@@ -391,3 +391,42 @@ func TestSessionUpdateStreamsToolCallsToLiveLog(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "findings", client.result.String())
 }
+
+func TestSessionUpdateSeparatesToolLineFromPriorText(t *testing.T) {
+	t.Parallel()
+
+	var liveLog bytes.Buffer
+	client := &acpClient{
+		agent:     &ACPAgent{SessionID: "sess-1"},
+		sessionID: "sess-1",
+		output:    &liveLog,
+		result:    &bytes.Buffer{},
+	}
+
+	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content:       acp.TextBlock("commentary"),
+				SessionUpdate: "agent_message_chunk",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.StartReadToolCall(
+			acp.ToolCallId("call-1"),
+			"Read main.go",
+			"internal/example/main.go",
+		),
+	})
+	require.NoError(t, err)
+
+	got := liveLog.String()
+	assert.Contains(t, got, "commentary\n")
+	assert.Contains(t, got, "[tool] Read main.go")
+	assert.NotContains(t, got, "commentary[tool]")
+	assert.Equal(t, "commentary", client.result.String())
+}

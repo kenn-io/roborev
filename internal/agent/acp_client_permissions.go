@@ -111,6 +111,7 @@ func (c *acpClient) SessionUpdate(ctx context.Context, params acp.SessionNotific
 				if _, err := c.output.Write([]byte(text)); err != nil {
 					return err
 				}
+				c.liveLogNeedNL = text != "" && !strings.HasSuffix(text, "\n")
 			}
 			c.result.WriteString(text)
 		}
@@ -125,6 +126,12 @@ func (c *acpClient) SessionUpdate(ctx context.Context, params acp.SessionNotific
 func (c *acpClient) writeLiveLogLocked(line string) error {
 	if c.output == nil || line == "" {
 		return nil
+	}
+	if c.liveLogNeedNL {
+		if _, err := c.output.Write([]byte("\n")); err != nil {
+			return err
+		}
+		c.liveLogNeedNL = false
 	}
 	if !strings.HasSuffix(line, "\n") {
 		line += "\n"
