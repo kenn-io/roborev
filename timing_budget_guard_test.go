@@ -208,7 +208,7 @@ func scanPollingBudgetRepository(root string) ([]pollingBudgetCall, error) {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", relPath, err)
 		}
-		calls, err := subSecondPollingBudgets(filepath.ToSlash(relPath), source)
+		calls, err := literalPollingBudgets(filepath.ToSlash(relPath), source)
 		if err != nil {
 			return err
 		}
@@ -253,9 +253,8 @@ func comparePollingBudgets(found []pollingBudgetCall, allowed map[pollingBudget]
 	return unlisted, stale
 }
 
-// subSecondPollingBudgets keeps the registered helper name. It returns every
-// supported literal budget so the guard reviews 1s and longer literals too.
-func subSecondPollingBudgets(relPath string, source []byte) ([]pollingBudgetCall, error) {
+// literalPollingBudgets returns every supported literal-duration testify polling call in source.
+func literalPollingBudgets(relPath string, source []byte) ([]pollingBudgetCall, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, relPath, source, 0)
 	if err != nil {
@@ -526,7 +525,7 @@ func TestFixture(t *testing.T) {
 	assertions.Never(cond, named, time.Millisecond)
 }
 `
-	calls, err := subSecondPollingBudgets("fixture_test.go", []byte(source))
+	calls, err := literalPollingBudgets("fixture_test.go", []byte(source))
 	require.NoError(t, err)
 	got := make([]pollingBudget, len(calls))
 	for i, call := range calls {
@@ -602,7 +601,7 @@ func TestPollingHelperInventoryReportsStaleAndSourceErrors(t *testing.T) {
 }
 
 func TestPollingBudgetScannerReportsParseErrors(t *testing.T) {
-	_, err := subSecondPollingBudgets("broken_test.go", []byte("package broken\nfunc Test("))
+	_, err := literalPollingBudgets("broken_test.go", []byte("package broken\nfunc Test("))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse broken_test.go")
 }
