@@ -490,14 +490,28 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rawDB.Exec(`ALTER TABLE review_jobs DROP COLUMN session_resumed`)
 	require.NoError(t, err)
+	// Include unstarted attempts, unique sessions, and unset session IDs.
+	// Duplicate detection must consider all attempts, not only the rows in
+	// the partial index for started sessions.
+	_, err = rawDB.Exec(`INSERT INTO review_jobs
+		(repo_id, git_ref, agent, session_id, started_at)
+		VALUES (?, 'unstarted-reuse', 'test', 'reused-session', NULL),
+		       (?, 'unstarted-a', 'test', 'unstarted-session', NULL),
+		       (?, 'unstarted-b', 'test', 'unstarted-session', NULL),
+		       (?, 'unique-session', 'test', 'unique-session', NULL),
+		       (?, 'empty-session-a', 'test', '', NULL),
+		       (?, 'empty-session-b', 'test', '', NULL),
+		       (?, 'null-session-a', 'test', NULL, NULL),
+		       (?, 'null-session-b', 'test', NULL, NULL)`,
+		repo.ID, repo.ID, repo.ID, repo.ID, repo.ID, repo.ID, repo.ID, repo.ID)
+	require.NoError(t, err)
 	require.NoError(t, rawDB.Close())
 
 	db, err = Open(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	rows, err := db.Query(`
-		SELECT session_resumed FROM review_jobs
-		WHERE id IN (?, ?) ORDER BY id`, first.ID, second.ID)
+		SELECT session_resumed FROM review_jobs ORDER BY id`)
 	require.NoError(t, err)
 	defer rows.Close()
 	var markers []int
@@ -507,7 +521,37 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 		markers = append(markers, marker)
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, []int{1, 1}, markers)
+	assert.Equal(t, []int{1, 1, 1, 1, 1, 0, 0, 0, 0, 0}, markers)
+}
+
+func BenchmarkSessionResumedMigration(b *testing.B) {
+	for _, jobs := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("jobs=%d", jobs), func(b *testing.B) {
+			db, err := Open(filepath.Join(b.TempDir(), "reviews.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, db.Close()) })
+			repo, err := db.GetOrCreateRepo(b.TempDir())
+			require.NoError(b, err)
+			_, err = db.Exec(`
+				WITH RECURSIVE sequence(n) AS (
+					SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
+				)
+				INSERT INTO review_jobs
+					(repo_id, git_ref, agent, status, session_id, started_at, uuid)
+				SELECT ?, 'abc123', 'test', 'done', printf('session-%d', n),
+				       '2026-01-01 00:00:00',
+				       printf('00000000-0000-4000-8000-%012d', n)
+				FROM sequence`, jobs, repo.ID)
+			require.NoError(b, err)
+			for b.Loop() {
+				b.StopTimer()
+				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN session_resumed`)
+				require.NoError(b, err)
+				b.StartTimer()
+				require.NoError(b, db.migrate())
+			}
+		})
+	}
 }
 
 func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {

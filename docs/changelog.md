@@ -38,6 +38,11 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Upgrading from before 0.67.0 no longer repeatedly scans the full review
+    history while migrating provider sessions, which could delay daemon startup.
+    Git hook repair also reads registered repositories without running
+    migrations, so it can proceed while the daemon holds a database write lock.
+
 - GitHub PR comments again group findings by severity and hide findings below
     the configured minimum. Full reviews retain all findings.
 

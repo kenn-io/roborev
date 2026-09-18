@@ -146,7 +146,7 @@ func registeredHookRepos() ([]string, error) {
 		return nil, fmt.Errorf("stat repo database: %w", err)
 	}
 
-	db, err := storage.Open(dbPath)
+	db, err := storage.OpenReadOnly(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open repo database: %w", err)
 	}
