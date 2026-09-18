@@ -1162,7 +1162,34 @@ func jobLogSafeEnd(f *os.File, fileSize int64, jsonl bool) int64 {
 	if !jsonl {
 		return fileSize
 	}
-	return jobLogLastNewlineEnd(f, fileSize)
+	if jobLogTailStartsWithJSON(f, fileSize) {
+		return jobLogLastNewlineEnd(f, fileSize)
+	}
+	return fileSize
+}
+
+func jobLogTailStartsWithJSON(f *os.File, fileSize int64) bool {
+	start := jobLogLastNewlineEnd(f, fileSize)
+	if start >= fileSize {
+		return false
+	}
+	n := min(fileSize-start, 64)
+	buf := make([]byte, n)
+	got, err := f.ReadAt(buf, start)
+	if err != nil && err != io.EOF {
+		return true
+	}
+	for _, b := range buf[:got] {
+		switch b {
+		case ' ', '\t':
+			continue
+		case '{':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func jobLogLastNewlineEnd(f *os.File, fileSize int64) int64 {

@@ -125,6 +125,63 @@ func TestPaneLogPollGrowsUnterminatedLastRow(t *testing.T) {
 	assert.Equal(t, []string{"Hello world"}, plainLogLines(m.paneLogLines))
 }
 
+func TestPaneLogPollReplacesAllWrappedPendingRows(t *testing.T) {
+	// Incremental replacement used to drop only the last rendered row. A
+	// growing unterminated suffix that wraps then duplicated earlier wrap
+	// fragments on every poll.
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		if offset != "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(bodies["0"])+len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	m.currentView = viewQueue
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
+	m.width, m.height = 80, 24
+	wrapWidth := m.paneLogWidth()
+	require.Greater(t, wrapWidth, 4)
+	first := strings.Repeat("x", wrapWidth+3)
+	second := strings.Repeat("x", wrapWidth)
+	bodies["0"] = first
+	bodies[fmt.Sprintf("%d", len(first))] = second
+	full := first + second
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+
+	started, cmd := m.startPaneLog(job)
+	m = started.(model)
+	firstMsg, ok := cmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	updated, _ := m.handlePaneLogOutputMsg(firstMsg)
+	m = updated.(model)
+	firstRows := plainLogLines(m.paneLogLines)
+	require.Greater(t, len(firstRows), 1, "unterminated suffix must wrap")
+	assert.Equal(t, first, strings.Join(firstRows, ""))
+
+	secondMsg, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	updated, _ = m.handlePaneLogOutputMsg(secondMsg)
+	m = updated.(model)
+	rows := plainLogLines(m.paneLogLines)
+	assert.Greater(t, len(rows), len(firstRows))
+	assert.Equal(t, full, strings.Join(rows, ""))
+}
+
 func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	mixed := strings.Join([]string{

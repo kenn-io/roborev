@@ -811,6 +811,20 @@ func TestJobLogSafeEnd(t *testing.T) {
 		assert.Equal(t, int64(6), got, "unterminated JSONL after a complete line must wait for a newline")
 	})
 
+	t.Run("jsonl stderr partial is served", func(t *testing.T) {
+		data := []byte("line1\nwarning: retrying")
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)), true)
+		assert.Equal(t, int64(len(data)), got, "unterminated stderr after a complete JSONL line should be tailed")
+	})
+
+	t.Run("jsonl stderr with no newline is served", func(t *testing.T) {
+		data := []byte("warning: retrying")
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)), true)
+		assert.Equal(t, int64(len(data)), got, "unterminated stderr should be tailed while running")
+	})
+
 	t.Run("no newlines at all", func(t *testing.T) {
 		data := []byte("no-newlines-here")
 		f := writeTempFile(t, data)
@@ -911,6 +925,42 @@ func TestHandleJobLogRunningLiteralBracePrefix(t *testing.T) {
 	// Unterminated brace-prefixed text is not a JSON document, so JSONEq
 	// cannot compare it.
 	assert.Equal(t, payload, w.Body.String()) //nolint:testifylint
+}
+
+func TestHandleJobLogRunningJSONLStderr(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "jsonl-stderr-repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "abc1234",
+		Agent:  "codex",
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker-jsonl-stderr")
+	require.NoError(t, err)
+
+	complete := `{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}` + "\n"
+	stderrTail := "warning: retrying model"
+	payload := complete + stderrTail
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+		nil,
+	)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, payload, w.Body.String())
+	offset, err := strconv.ParseInt(w.Header().Get("X-Log-Offset"), 10, 64)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), offset)
 }
 
 func writeTempFile(t *testing.T, data []byte) *os.File {

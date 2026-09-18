@@ -1049,16 +1049,17 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		result := fetchLog(jobID, state)
 		return logOutputMsg{
-			lines:     result.lines,
-			hasMore:   result.hasMore,
-			err:       result.err,
-			newOffset: result.newOffset,
-			append:    result.append,
-			agent:     result.agent,
-			source:    result.source,
-			seq:       seq,
-			fmtr:      result.fmtr,
-			pending:   result.pending,
+			lines:       result.lines,
+			hasMore:     result.hasMore,
+			err:         result.err,
+			newOffset:   result.newOffset,
+			append:      result.append,
+			agent:       result.agent,
+			source:      result.source,
+			seq:         seq,
+			fmtr:        result.fmtr,
+			pending:     result.pending,
+			pendingRows: result.pendingRows,
 		}
 	}
 }
@@ -1081,17 +1082,18 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		result := fetchLog(jobID, state)
 		return paneLogOutputMsg{
-			jobID:     jobID,
-			lines:     result.lines,
-			hasMore:   result.hasMore,
-			err:       result.err,
-			newOffset: result.newOffset,
-			append:    result.append,
-			agent:     result.agent,
-			source:    result.source,
-			seq:       seq,
-			fmtr:      result.fmtr,
-			pending:   result.pending,
+			jobID:       jobID,
+			lines:       result.lines,
+			hasMore:     result.hasMore,
+			err:         result.err,
+			newOffset:   result.newOffset,
+			append:      result.append,
+			agent:       result.agent,
+			source:      result.source,
+			seq:         seq,
+			fmtr:        result.fmtr,
+			pending:     result.pending,
+			pendingRows: result.pendingRows,
 		}
 	}
 }
@@ -1109,15 +1111,16 @@ type logFetchState struct {
 }
 
 type logFetchResult struct {
-	lines     []logLine
-	hasMore   bool
-	err       error
-	newOffset int64
-	append    bool
-	agent     string
-	source    string
-	fmtr      *streamfmt.Formatter
-	pending   string
+	lines       []logLine
+	hasMore     bool
+	err         error
+	newOffset   int64
+	append      bool
+	agent       string
+	source      string
+	fmtr        *streamfmt.Formatter
+	pending     string
+	pendingRows int
 }
 
 func fetchLog(jobID int64, state logFetchState) logFetchResult {
@@ -1212,48 +1215,64 @@ func fetchLog(jobID int64, state logFetchState) logFetchResult {
 	if hasMore {
 		renderLog = streamfmt.RenderLogChunkWith
 	}
+	var lines []logLine
 	if toRender != "" {
 		if err := renderLog(strings.NewReader(toRender), renderFmtr); err != nil {
 			return logFetchResult{err: err}
 		}
+		lines = append(lines, splitRenderedLogLines(buf.String())...)
+		buf.Reset()
 	} else if !hasMore {
 		renderFmtr.Flush()
+		lines = append(lines, splitRenderedLogLines(buf.String())...)
+		buf.Reset()
 	}
+	pendingRows := 0
 	if pending != "" {
 		if err := streamfmt.RenderLogChunkWith(strings.NewReader(pending), renderFmtr); err != nil {
 			return logFetchResult{err: err}
 		}
-	}
-
-	raw := buf.String()
-	var lines []logLine
-	if raw != "" {
-		for line := range strings.SplitSeq(raw, "\n") {
-			lines = append(lines, logLine{text: line})
-		}
-		if len(lines) > 0 && lines[len(lines)-1].text == "" {
-			lines = lines[:len(lines)-1]
-		}
+		pendingLines := splitRenderedLogLines(buf.String())
+		pendingRows = len(pendingLines)
+		lines = append(lines, pendingLines...)
 	}
 
 	return logFetchResult{
-		lines:     lines,
-		hasMore:   hasMore,
-		newOffset: newOffset,
-		append:    isIncremental,
-		agent:     responseAgent,
-		source:    responseSource,
-		fmtr:      renderFmtr,
-		pending:   pending,
+		lines:       lines,
+		hasMore:     hasMore,
+		newOffset:   newOffset,
+		append:      isIncremental,
+		agent:       responseAgent,
+		source:      responseSource,
+		fmtr:        renderFmtr,
+		pending:     pending,
+		pendingRows: pendingRows,
 	}
 }
 
-func applyIncrementalLogLines(dst, src []logLine, appendMode, replacePending bool) []logLine {
+func splitRenderedLogLines(raw string) []logLine {
+	if raw == "" {
+		return nil
+	}
+	var lines []logLine
+	for line := range strings.SplitSeq(raw, "\n") {
+		lines = append(lines, logLine{text: line})
+	}
+	if len(lines) > 0 && lines[len(lines)-1].text == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func applyIncrementalLogLines(dst, src []logLine, appendMode bool, replaceCount int) []logLine {
 	if !appendMode {
 		return src
 	}
-	if replacePending && len(dst) > 0 {
-		dst = dst[:len(dst)-1]
+	if replaceCount > 0 {
+		if replaceCount > len(dst) {
+			replaceCount = len(dst)
+		}
+		dst = dst[:len(dst)-replaceCount]
 	}
 	if len(src) == 0 {
 		return dst

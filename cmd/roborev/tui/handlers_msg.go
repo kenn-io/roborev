@@ -1487,14 +1487,20 @@ func (m model) handleLogOutputMsg(
 		m.logAgent = msg.agent
 		m.logSource = msg.source
 
+		replaceCount := 0
+		if msg.append && m.logPending != "" && len(msg.lines) > 0 {
+			replaceCount = m.logPendingRows
+		}
 		m.logLines = applyIncrementalLogLines(
-			m.logLines, msg.lines, msg.append,
-			msg.append && m.logPending != "" && len(msg.lines) > 0,
+			m.logLines, msg.lines, msg.append, replaceCount,
 		)
 		if !msg.append && m.logLines == nil && !msg.hasMore {
 			m.logLines = []logLine{}
 		}
 		m.logPending = msg.pending
+		if !msg.append || len(msg.lines) > 0 {
+			m.logPendingRows = msg.pendingRows
+		}
 		m.logOffset = msg.newOffset
 		m.logStreaming = msg.hasMore
 		if m.logFollow && len(m.logLines) > 0 {
@@ -1594,11 +1600,17 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	}
 	m.paneLogAgent = msg.agent
 	m.paneLogSource = msg.source
+	replaceCount := 0
+	if msg.append && m.paneLogPending != "" && len(msg.lines) > 0 {
+		replaceCount = m.paneLogPendingRows
+	}
 	m.paneLogLines = applyIncrementalLogLines(
-		m.paneLogLines, msg.lines, msg.append,
-		msg.append && m.paneLogPending != "" && len(msg.lines) > 0,
+		m.paneLogLines, msg.lines, msg.append, replaceCount,
 	)
 	m.paneLogPending = msg.pending
+	if !msg.append || len(msg.lines) > 0 {
+		m.paneLogPendingRows = msg.pendingRows
+	}
 	if over := len(m.paneLogLines) - paneLogMaxLines; over > 0 {
 		m.paneLogLines = m.paneLogLines[over:]
 	}
@@ -2311,6 +2323,7 @@ func (m model) handleWindowSizeMsg(
 				m.paneLogOffset = 0
 				m.paneLogLines = nil
 				m.paneLogPending = ""
+				m.paneLogPendingRows = 0
 				m.paneLogFmtr = streamfmt.NewWithWidth(
 					io.Discard, m.paneLogWidth(), m.glamourStyle,
 					decoderForJobLog(m.paneLogAgent, m.paneLogSource),
@@ -2342,6 +2355,7 @@ func (m model) handleWindowSizeMsg(
 		m.logOffset = 0
 		m.logLines = nil
 		m.logPending = ""
+		m.logPendingRows = 0
 		m.logFmtr = streamfmt.NewWithWidth(
 			io.Discard, msg.Width, m.glamourStyle,
 			decoderForJobLog(m.logAgent, m.logSource),

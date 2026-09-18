@@ -75,6 +75,51 @@ func TestTUILogFetchWrapsChunkedGrokTextAtPaneWidth(t *testing.T) {
 	}
 }
 
+func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		if offset != "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(bodies["0"])+len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	const wrapWidth = 12
+	m.width, m.height = wrapWidth, 24
+	first := strings.Repeat("x", wrapWidth+3)
+	second := strings.Repeat("x", wrapWidth)
+	bodies["0"] = first
+	bodies[fmt.Sprintf("%d", len(first))] = second
+	full := first + second
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	firstMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	m, _ = updateModel(t, m, firstMsg)
+	firstRows := plainLogLines(m.logLines)
+	require.Greater(t, len(firstRows), 1, "unterminated suffix must wrap")
+	assert.Equal(t, first, strings.Join(firstRows, ""))
+
+	secondMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	m, _ = updateModel(t, m, secondMsg)
+	rows := plainLogLines(m.logLines)
+	assert.Greater(t, len(rows), len(firstRows))
+	assert.Equal(t, full, strings.Join(rows, ""))
+}
+
 // If the full-screen log opener drops the selected agent, provider-shaped
 // frames can be interpreted with the wrong protocol or hidden from users who
 // need unknown-agent output for diagnosis.

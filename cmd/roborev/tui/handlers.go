@@ -1006,6 +1006,7 @@ func (m model) openLogView(
 	m.logSource = job.Source
 	m.logLines = nil
 	m.logPending = ""
+	m.logPendingRows = 0
 	m.logScroll = 0
 	m.logFromView = fromView
 	m.currentView = viewLog
