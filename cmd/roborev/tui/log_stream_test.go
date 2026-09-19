@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -118,6 +119,59 @@ func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
 	rows := plainLogLines(m.logLines)
 	assert.Greater(t, len(rows), len(firstRows))
 	assert.Equal(t, full, strings.Join(rows, ""))
+}
+
+func TestTUILogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		off, err := strconv.Atoi(offset)
+		if err != nil {
+			http.Error(w, "bad offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", strconv.Itoa(off+len(body)))
+		_, _ = fmt.Fprint(w, body)
+	})
+	const wrapWidth = 12
+	m.width, m.height = wrapWidth, 24
+	complete := "done\n"
+	firstPending := strings.Repeat("x", wrapWidth+3)
+	secondPending := strings.Repeat("x", wrapWidth)
+	bodies["0"] = complete
+	bodies[strconv.Itoa(len(complete))] = firstPending
+	bodies[strconv.Itoa(len(complete)+len(firstPending))] = secondPending
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	firstMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	m, _ = updateModel(t, m, firstMsg)
+	assert.Equal(t, []string{"done"}, plainLogLines(m.logLines))
+
+	secondMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	m, _ = updateModel(t, m, secondMsg)
+	afterFirstPending := plainLogLines(m.logLines)
+	require.Greater(t, len(afterFirstPending), 2, "unterminated suffix must wrap")
+	assert.Equal(t, "done"+firstPending, strings.Join(afterFirstPending, ""))
+
+	thirdMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, thirdMsg.err)
+	m, _ = updateModel(t, m, thirdMsg)
+	rows := plainLogLines(m.logLines)
+	assert.Equal(t, "done"+firstPending+secondPending, strings.Join(rows, ""))
 }
 
 func TestTUILogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -180,6 +181,69 @@ func TestPaneLogPollReplacesAllWrappedPendingRows(t *testing.T) {
 	rows := plainLogLines(m.paneLogLines)
 	assert.Greater(t, len(rows), len(firstRows))
 	assert.Equal(t, full, strings.Join(rows, ""))
+}
+
+func TestPaneLogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		off, err := strconv.Atoi(offset)
+		if err != nil {
+			http.Error(w, "bad offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", strconv.Itoa(off+len(body)))
+		_, _ = fmt.Fprint(w, body)
+	})
+	m.currentView = viewQueue
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
+	m.width, m.height = 80, 24
+	wrapWidth := m.paneLogWidth()
+	require.Greater(t, wrapWidth, 4)
+	complete := "done\n"
+	firstPending := strings.Repeat("x", wrapWidth+3)
+	secondPending := strings.Repeat("x", wrapWidth)
+	bodies["0"] = complete
+	bodies[strconv.Itoa(len(complete))] = firstPending
+	bodies[strconv.Itoa(len(complete)+len(firstPending))] = secondPending
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+
+	started, cmd := m.startPaneLog(job)
+	m = started.(model)
+	firstMsg, ok := cmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	updated, _ := m.handlePaneLogOutputMsg(firstMsg)
+	m = updated.(model)
+	assert.Equal(t, []string{"done"}, plainLogLines(m.paneLogLines))
+
+	secondMsg, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	updated, _ = m.handlePaneLogOutputMsg(secondMsg)
+	m = updated.(model)
+	afterFirstPending := plainLogLines(m.paneLogLines)
+	require.Greater(t, len(afterFirstPending), 2, "unterminated suffix must wrap")
+	assert.Equal(t, "done"+firstPending, strings.Join(afterFirstPending, ""))
+
+	thirdMsg, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, thirdMsg.err)
+	updated, _ = m.handlePaneLogOutputMsg(thirdMsg)
+	m = updated.(model)
+	rows := plainLogLines(m.paneLogLines)
+	assert.Equal(t, "done"+firstPending+secondPending, strings.Join(rows, ""))
 }
 
 func TestPaneLogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {

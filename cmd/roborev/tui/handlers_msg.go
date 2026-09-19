@@ -1489,8 +1489,8 @@ func (m model) handleLogOutputMsg(
 
 		oldPending := m.logPending
 		replaceCount := 0
-		pendingChanged := msg.append && oldPending != "" &&
-			(len(msg.lines) > 0 || msg.pending != oldPending)
+		pendingChanged := msg.append &&
+			(msg.pending != oldPending || (oldPending != "" && len(msg.lines) > 0))
 		if pendingChanged {
 			replaceCount = m.logPendingRows
 		}
@@ -1605,8 +1605,8 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	m.paneLogSource = msg.source
 	oldPending := m.paneLogPending
 	replaceCount := 0
-	pendingChanged := msg.append && oldPending != "" &&
-		(len(msg.lines) > 0 || msg.pending != oldPending)
+	pendingChanged := msg.append &&
+		(msg.pending != oldPending || (oldPending != "" && len(msg.lines) > 0))
 	if pendingChanged {
 		replaceCount = m.paneLogPendingRows
 	}
