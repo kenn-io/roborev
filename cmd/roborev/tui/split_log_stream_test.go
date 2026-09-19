@@ -182,6 +182,55 @@ func TestPaneLogPollReplacesAllWrappedPendingRows(t *testing.T) {
 	assert.Equal(t, full, strings.Join(rows, ""))
 }
 
+func TestPaneLogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
+	const incomplete = `{"type":"end"`
+	bodies := map[string]string{
+		"0":                                incomplete,
+		fmt.Sprintf("%d", len(incomplete)): "}\n",
+	}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(incomplete)+len(body)))
+		if offset == "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	m.currentView = viewQueue
+	m.layout = splitlayout.Split
+	m.preferredLayout = splitlayout.Split
+	m.width, m.height = 80, 24
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "grok",
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+
+	started, cmd := m.startPaneLog(job)
+	m = started.(model)
+	first, ok := cmd().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	updated, _ := m.handlePaneLogOutputMsg(first)
+	m = updated.(model)
+	require.Equal(t, []string{incomplete}, plainLogLines(m.paneLogLines))
+
+	second, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	updated, _ = m.handlePaneLogOutputMsg(second)
+	m = updated.(model)
+	assert.Empty(t, plainLogLines(m.paneLogLines))
+	assert.Empty(t, m.paneLogPending)
+	assert.Zero(t, m.paneLogPendingRows)
+}
+
 func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	mixed := strings.Join([]string{

@@ -120,6 +120,47 @@ func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
 	assert.Equal(t, full, strings.Join(rows, ""))
 }
 
+func TestTUILogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
+	const incomplete = `{"type":"end"`
+	bodies := map[string]string{
+		"0":                                incomplete,
+		fmt.Sprintf("%d", len(incomplete)): "}\n",
+	}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(incomplete)+len(body)))
+		if offset == "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	m.width, m.height = 80, 24
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "grok",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	first, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	m, _ = updateModel(t, m, first)
+	require.Equal(t, []string{incomplete}, plainLogLines(m.logLines))
+
+	second, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	m, _ = updateModel(t, m, second)
+	assert.Empty(t, plainLogLines(m.logLines))
+	assert.Empty(t, m.logPending)
+	assert.Zero(t, m.logPendingRows)
+}
+
 // If the full-screen log opener drops the selected agent, provider-shaped
 // frames can be interpreted with the wrong protocol or hidden from users who
 // need unknown-agent output for diagnosis.

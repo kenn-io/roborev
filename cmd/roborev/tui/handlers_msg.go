@@ -1487,8 +1487,11 @@ func (m model) handleLogOutputMsg(
 		m.logAgent = msg.agent
 		m.logSource = msg.source
 
+		oldPending := m.logPending
 		replaceCount := 0
-		if msg.append && m.logPending != "" && len(msg.lines) > 0 {
+		pendingChanged := msg.append && oldPending != "" &&
+			(len(msg.lines) > 0 || msg.pending != oldPending)
+		if pendingChanged {
 			replaceCount = m.logPendingRows
 		}
 		m.logLines = applyIncrementalLogLines(
@@ -1498,7 +1501,7 @@ func (m model) handleLogOutputMsg(
 			m.logLines = []logLine{}
 		}
 		m.logPending = msg.pending
-		if !msg.append || len(msg.lines) > 0 {
+		if !msg.append || pendingChanged {
 			m.logPendingRows = msg.pendingRows
 		}
 		m.logOffset = msg.newOffset
@@ -1600,15 +1603,18 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	}
 	m.paneLogAgent = msg.agent
 	m.paneLogSource = msg.source
+	oldPending := m.paneLogPending
 	replaceCount := 0
-	if msg.append && m.paneLogPending != "" && len(msg.lines) > 0 {
+	pendingChanged := msg.append && oldPending != "" &&
+		(len(msg.lines) > 0 || msg.pending != oldPending)
+	if pendingChanged {
 		replaceCount = m.paneLogPendingRows
 	}
 	m.paneLogLines = applyIncrementalLogLines(
 		m.paneLogLines, msg.lines, msg.append, replaceCount,
 	)
 	m.paneLogPending = msg.pending
-	if !msg.append || len(msg.lines) > 0 {
+	if !msg.append || pendingChanged {
 		m.paneLogPendingRows = msg.pendingRows
 	}
 	if over := len(m.paneLogLines) - paneLogMaxLines; over > 0 {
