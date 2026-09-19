@@ -200,6 +200,7 @@ func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *
 
 	var info *RuntimeInfo
 	var startErr error
+	// Wall-clock wait: real daemon listener startup.
 	require.Eventually(t, func() bool {
 		select {
 		case startErr = <-errCh:
@@ -219,6 +220,7 @@ func stopTestServer(t *testing.T, server *Server, errCh <-chan error) {
 	t.Helper()
 	require.NoError(t, server.Stop())
 	var stopErr error
+	// Wall-clock wait: real daemon listener shutdown.
 	require.Eventually(t, func() bool {
 		select {
 		case stopErr = <-errCh:

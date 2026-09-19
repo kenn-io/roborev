@@ -228,6 +228,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	stopDone := make(chan error, 1)
 	go func() { stopDone <- server.Stop() }()
 
+	// Wall-clock wait: real browser listener and worker shutdown.
 	require.Eventually(t, func() bool {
 		draining, drainErr := server.db.IsShutdownDraining()
 		return drainErr == nil && draining
@@ -239,6 +240,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 
 	server.workerPool.wg.Done()
 	var stopErr error
+	// Wall-clock wait: real browser listener and worker shutdown.
 	require.Eventually(t, func() bool {
 		select {
 		case stopErr = <-stopDone:
@@ -248,6 +250,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 		}
 	}, time.Second, time.Millisecond)
 	require.NoError(t, stopErr)
+	// Wall-clock wait: real browser listener and worker shutdown.
 	assert.Eventually(t, func() bool {
 		client := &http.Client{Timeout: 50 * time.Millisecond}
 		response, requestErr := client.Get(runtime.Origin + "/api/ping")

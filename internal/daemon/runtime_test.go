@@ -909,6 +909,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	}()
 
 	var result bool
+	// Wall-clock wait: daemon process exit and loopback endpoint reuse.
 	completedWhileEndpointAlive := assert.Eventually(t, func() bool {
 		select {
 		case result = <-done:
@@ -919,6 +920,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	}, time.Second, 10*time.Millisecond)
 	server.Close()
 	if !completedWhileEndpointAlive {
+		// Wall-clock wait: daemon process exit and loopback endpoint reuse.
 		require.Eventually(t, func() bool {
 			select {
 			case result = <-done:

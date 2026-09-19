@@ -651,6 +651,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 			server.workerPool.CancelJob(job.ID)
 			<-finished
 		})
+		// Wall-clock wait: worker-backed cancellation and hook completion.
 		require.Eventually(t, func() bool {
 			select {
 			case <-started:
@@ -670,6 +671,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 		handler.ServeHTTP(recorder, request)
 
 		require.Equal(t, http.StatusOK, recorder.Code)
+		// Wall-clock wait: worker-backed cancellation and hook completion.
 		require.Eventually(t, func() bool {
 			select {
 			case <-finished:

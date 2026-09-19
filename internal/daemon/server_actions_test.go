@@ -348,6 +348,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 		server.workerPool.CancelJob(job.ID)
 		<-finished
 	})
+	// Wall-clock wait: worker-backed job cancellation.
 	require.Eventually(t, func() bool {
 		select {
 		case <-started:
@@ -365,6 +366,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	// Wall-clock wait: worker-backed job cancellation.
 	require.Eventually(t, func() bool {
 		select {
 		case <-finished:

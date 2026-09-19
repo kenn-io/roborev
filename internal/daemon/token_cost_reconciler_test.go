@@ -43,6 +43,7 @@ func TestDelayedTokenCostRetriesAfterImmediateCaptureMiss(t *testing.T) {
 	tc.Pool.Start()
 	t.Cleanup(tc.Pool.Stop)
 
+	// Wall-clock wait: SQLite-backed token reconciliation.
 	require.Eventually(t, func() bool {
 		updated, err := tc.DB.GetJobByID(job.ID)
 		if err != nil {
@@ -74,6 +75,7 @@ func TestTokenCostReconcilerDiscoversPersistedCandidateAtStartup(t *testing.T) {
 	tc.Pool.Start()
 	t.Cleanup(tc.Pool.Stop)
 
+	// Wall-clock wait: SQLite-backed token reconciliation.
 	require.Eventually(t, func() bool {
 		updated, err := tc.DB.GetJobByID(job.ID)
 		if err != nil {
@@ -121,6 +123,7 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	tc.Pool.Start()
 	t.Cleanup(tc.Pool.Stop)
 
+	// Wall-clock wait: SQLite-backed token reconciliation retry.
 	require.Eventually(t, func() bool {
 		updated, err := tc.DB.GetJobByID(job.ID)
 		if err != nil {
@@ -181,6 +184,7 @@ func TestTokenCostReconcilerAdvancesPastUnavailableCandidate(t *testing.T) {
 	tc.Pool.Start()
 	t.Cleanup(tc.Pool.Stop)
 
+	// Wall-clock wait: SQLite-backed token reconciliation.
 	require.Eventually(t, func() bool {
 		updated, err := tc.DB.GetJobByID(second.ID)
 		if err != nil {
