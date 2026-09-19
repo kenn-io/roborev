@@ -2,12 +2,11 @@ package daemon
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 // newTestEvent creates an Event with sensible defaults. Override fields via opts.
@@ -37,22 +36,23 @@ func assertEventFields(t *testing.T, got Event, expected Event) {
 	assert.Equal(t, expected.Verdict, got.Verdict, "event verdict")
 }
 
-func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) {
+func assertNoEventWithin(t *testing.T, ch <-chan Event) {
 	t.Helper()
-	// fast path non-blocking check
 	select {
-	case e := <-ch:
-		require.Failf(t, "Received unexpected event", "%+v", e)
-		return
+	case event, ok := <-ch:
+		assert.False(t, ok, "received unexpected event: %+v", event)
 	default:
 	}
+}
 
-	// timeout-backed check
+func requireEvent(t *testing.T, ch <-chan Event) Event {
+	t.Helper()
 	select {
-	case e := <-ch:
-		require.Failf(t, "Received unexpected event", "%+v", e)
-	case <-time.After(duration):
-		// OK
+	case event := <-ch:
+		return event
+	default:
+		require.FailNow(t, "expected an event on the subscriber channel")
+		return Event{}
 	}
 }
 
@@ -67,7 +67,7 @@ func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 	})
 	broadcaster.Broadcast(testEvent)
 
-	received := testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
+	received := requireEvent(t, eventCh)
 	assertEventFields(t, received, testEvent)
 }
 
@@ -82,11 +82,11 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 	broadcaster.Broadcast(newTestEvent(3, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha3" }))
 
 	// Should receive only events for repo1 (JobID 1 and 3)
-	e1 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
-	e2 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
+	e1 := requireEvent(t, eventCh)
+	e2 := requireEvent(t, eventCh)
 
 	// Should not receive more events (repo2 event was filtered out)
-	assertNoEventWithin(t, eventCh, 100*time.Millisecond)
+	assertNoEventWithin(t, eventCh)
 
 	assert.Equal(t, int64(1), e1.JobID)
 	assert.Equal(t, int64(3), e2.JobID)
@@ -103,7 +103,7 @@ func TestStreamMultipleEvents(t *testing.T) {
 
 	// Receive all 3 events
 	for i := 1; i <= 3; i++ {
-		e := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
+		e := requireEvent(t, eventCh)
 		assert.Equal(t, int64(i), e.JobID)
 	}
 }
@@ -119,15 +119,15 @@ func TestBroadcaster_MultiSubscriber(t *testing.T) {
 	broadcaster.Broadcast(newTestEvent(123, func(e *Event) { e.Repo = "/path/to/repo1" }))
 
 	// catch-all should receive
-	e1 := testutil.ReceiveWithTimeout(t, chAll, 500*time.Millisecond)
+	e1 := requireEvent(t, chAll)
 	assert.Equal(t, int64(123), e1.JobID)
 
 	// exact-match should receive
-	e2 := testutil.ReceiveWithTimeout(t, chRepo1, 500*time.Millisecond)
+	e2 := requireEvent(t, chRepo1)
 	assert.Equal(t, int64(123), e2.JobID)
 
 	// mismatch should NOT receive
-	assertNoEventWithin(t, chRepo2, 100*time.Millisecond)
+	assertNoEventWithin(t, chRepo2)
 }
 
 func TestBroadcaster_Subscribe(t *testing.T) {
@@ -157,44 +157,41 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	b.Unsubscribe(id)
 
 	// Verify channel is closed
-	_, ok := <-ch
-	assert.False(t, ok, "expected channel to be closed after unsubscribe")
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "expected channel to be closed after unsubscribe")
+	default:
+		require.FailNow(t, "unsubscribe did not close the subscriber channel")
+	}
 
 	assert.Zero(t, b.SubscriberCount())
 }
 
 func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
-	b := NewBroadcaster()
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBroadcaster()
 
-	_, ch := b.Subscribe("")
+		_, ch := b.Subscribe("")
 
-	const testBufferSize = 10 // Must match channel buffer size in NewBroadcaster
+		const testBufferSize = 10 // Must match channel buffer size in NewBroadcaster
 
-	// Fill the channel buffer
-	for i := range testBufferSize {
-		b.Broadcast(Event{JobID: int64(i)})
-	}
+		for i := range testBufferSize {
+			b.Broadcast(Event{JobID: int64(i)})
+		}
 
-	// Broadcast one more event - should not block even though channel is full
-	done := make(chan bool, 1)
-	go func() {
-		b.Broadcast(Event{JobID: 999})
-		done <- true
-	}()
+		done := make(chan struct{}, 1)
+		go func() {
+			b.Broadcast(Event{JobID: 999})
+			done <- struct{}{}
+		}()
+		synctest.Wait()
+		require.Len(t, done, 1, "broadcast did not complete")
 
-	select {
-	case <-done:
-		// OK - broadcast didn't block
-	case <-time.After(100 * time.Millisecond):
-		require.Fail(t, "broadcast blocked when channel was full")
-	}
+		for i := range testBufferSize {
+			e := requireEvent(t, ch)
+			assert.Equal(t, int64(i), e.JobID)
+		}
 
-	// Verify we received the first testBufferSize events (not the dropped one)
-	for i := range testBufferSize {
-		e := <-ch
-		assert.Equal(t, int64(i), e.JobID)
-	}
-
-	// Channel should be empty now
-	assertNoEventWithin(t, ch, 10*time.Millisecond)
+		assertNoEventWithin(t, ch)
+	})
 }

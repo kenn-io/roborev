@@ -262,6 +262,7 @@ func TestPostCommitBatchSerializesConcurrentHooks(t *testing.T) {
 		errCh <- err
 	}()
 
+	// Wall-clock wait: postcommit file lock contention and loopback enqueue.
 	serialized := assert.Never(t, func() bool {
 		return requests.Load() > 1
 	}, 200*time.Millisecond, 10*time.Millisecond)

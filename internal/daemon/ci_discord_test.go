@@ -9,7 +9,6 @@ import (
 	neturl "net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,15 +133,8 @@ func TestPostDiscordWebhookPostsJSON(t *testing.T) {
 
 	assert.True(t, ok)
 	assert.Empty(t, logs)
-	var got request
-	require.Eventually(t, func() bool {
-		select {
-		case got = <-reqCh:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
+	require.Len(t, reqCh, 1)
+	got := <-reqCh
 	assert.Equal(t, "application/json", got.contentType)
 	require.Len(t, got.payload.Embeds, 1)
 	assert.Equal(t, "roborev CI job failed", got.payload.Embeds[0].Title)

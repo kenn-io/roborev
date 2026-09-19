@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -26,17 +27,23 @@ import (
 )
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
-	var dead atomic.Bool
-	var returned atomic.Bool
-	go func() {
-		waitForGracefulDaemonExit(time.Millisecond, dead.Load)
-		returned.Store(true)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		var dead atomic.Bool
+		var returned atomic.Bool
+		go func() {
+			waitForGracefulDaemonExit(time.Second, dead.Load)
+			returned.Store(true)
+		}()
 
-	assert.Never(t, returned.Load, 20*time.Millisecond, time.Millisecond)
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		assert.False(t, returned.Load())
 
-	dead.Store(true)
-	assert.Eventually(t, returned.Load, time.Second, time.Millisecond)
+		dead.Store(true)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		assert.True(t, returned.Load())
+	})
 }
 
 const (
@@ -902,6 +909,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	}()
 
 	var result bool
+	// Wall-clock wait: daemon process exit and loopback endpoint reuse.
 	completedWhileEndpointAlive := assert.Eventually(t, func() bool {
 		select {
 		case result = <-done:
@@ -912,6 +920,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	}, time.Second, 10*time.Millisecond)
 	server.Close()
 	if !completedWhileEndpointAlive {
+		// Wall-clock wait: daemon process exit and loopback endpoint reuse.
 		require.Eventually(t, func() bool {
 			select {
 			case result = <-done:

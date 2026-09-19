@@ -348,6 +348,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 		server.workerPool.CancelJob(job.ID)
 		<-finished
 	})
+	// Wall-clock wait: worker-backed job cancellation.
 	require.Eventually(t, func() bool {
 		select {
 		case <-started:
@@ -365,6 +366,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	// Wall-clock wait: worker-backed job cancellation.
 	require.Eventually(t, func() bool {
 		select {
 		case <-finished:
@@ -1390,12 +1392,7 @@ func TestHandleCloseReview_RepoFilteredSubscriber(t *testing.T) {
 	}
 
 	// Wrong-repo subscriber does not receive the event
-	select {
-	case event := <-wrongCh:
-		require.FailNow(t, "wrong-repo subscriber received event", "event: %v", event)
-	case <-time.After(50 * time.Millisecond):
-		// expected — no event
-	}
+	require.Empty(t, wrongCh, "wrong-repo subscriber received an event")
 }
 
 func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {

@@ -215,6 +215,10 @@ Test conventions:
   separate clipping, rejection, or snapshot policies.
 - Use `testing/synctest` for Go timeout and retry tests. Assert behavior under
   virtual time rather than sleeps or wall-clock completion thresholds.
+- Keep wall-clock `Eventually` and `Never` waits only for external work that
+  `testing/synctest` cannot observe, and name that work in a comment at the
+  call site. Examples include subprocesses, sockets, file locks, SQLite locks,
+  PostgreSQL, and fsnotify.
 - Keep changes simple; avoid over-engineering.
 - Prefer Go stdlib over new dependencies.
 - No emojis in code or output (commit messages are fine).

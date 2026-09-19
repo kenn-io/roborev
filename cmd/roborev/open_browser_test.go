@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -46,30 +47,27 @@ func TestOpenBrowserUsesPlatformCommandWithoutShell(t *testing.T) {
 }
 
 func TestOpenBrowserDoesNotWaitForLongRunningOpener(t *testing.T) {
-	originalGOOS := browserGOOS
-	originalStart := startBrowserCommand
-	browserGOOS = "linux"
-	release := make(chan struct{})
-	startBrowserCommand = func(string, ...string) (func() error, error) {
-		return func() error {
-			<-release
-			return nil
-		}, nil
-	}
-	t.Cleanup(func() {
-		close(release)
-		browserGOOS = originalGOOS
-		startBrowserCommand = originalStart
-	})
+	synctest.Test(t, func(t *testing.T) {
+		originalGOOS := browserGOOS
+		originalStart := startBrowserCommand
+		browserGOOS = "linux"
+		release := make(chan struct{})
+		startBrowserCommand = func(string, ...string) (func() error, error) {
+			return func() error {
+				<-release
+				return nil
+			}, nil
+		}
+		t.Cleanup(func() {
+			close(release)
+			browserGOOS = originalGOOS
+			startBrowserCommand = originalStart
+		})
 
-	returned := make(chan error, 1)
-	go func() {
-		returned <- platformOpenBrowserURL("https://example.com/reviews")
-	}()
-	require.Eventually(t, func() bool {
-		return len(returned) == 1
-	}, time.Second, 10*time.Millisecond)
-	require.NoError(t, <-returned)
+		start := time.Now()
+		require.NoError(t, platformOpenBrowserURL("https://example.com/reviews"))
+		assert.Equal(t, browserOpenerFailureWindow, time.Since(start))
+	})
 }
 
 func TestOpenBrowserReturnsStartFailure(t *testing.T) {

@@ -196,6 +196,7 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
 
 	stopTestServer(t, server, errCh)
+	// Wall-clock wait: real browser listener and runtime publication.
 	assert.Eventually(t, func() bool {
 		client := &http.Client{Timeout: 50 * time.Millisecond}
 		coreResponse, coreErr := client.Get("http://" + runtime.Address + "/api/ping")
@@ -235,6 +236,7 @@ func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
 		}
 		responseCh <- response
 	}()
+	// Wall-clock wait: real browser listener shutdown and stream delivery.
 	require.Eventually(t, func() bool {
 		return server.broadcaster.SubscriberCount() > initialSubscribers
 	}, time.Second, 10*time.Millisecond)
@@ -261,6 +263,7 @@ func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
 			_ = server.browserServer.Close()
 		}
 	})
+	// Wall-clock wait: real browser listener shutdown and stream delivery.
 	require.Eventually(t, func() bool { return len(stopped) == 1 }, time.Second, 10*time.Millisecond)
 	require.NoError(t, <-stopped)
 	assert.NoError(t, <-errCh)
