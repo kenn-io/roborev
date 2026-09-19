@@ -176,7 +176,7 @@ func TestRunDumpWritesCompleteNativeConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	var stdout bytes.Buffer
 
-	err := RunDump(DumpOptions{
+	err := RunDump(InstallOptions{
 		Agent:      "qwen",
 		Executable: "/opt/bin/roborev",
 		ConfigPath: path,

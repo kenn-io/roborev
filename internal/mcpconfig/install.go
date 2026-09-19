@@ -18,8 +18,6 @@ import (
 )
 
 type Options struct {
-	// BaseData supplies an in-memory hook plan to merge before committing a shared file.
-	BaseData   []byte
 	ConfigDir  string
 	Agent      skills.Agent
 	ConfigPath string
@@ -39,20 +37,40 @@ type Result struct {
 // Install merges one server entry. An explicit URL selects the existing daemon's
 // HTTP endpoint; stdio runs the installed binary and uses its daemon discovery.
 func Install(opts Options) (Result, error) {
-	if opts.Transport == "" {
-		opts.Transport = "stdio"
-	}
 	if err := Validate(opts); err != nil {
 		return Result{}, err
 	}
-	dir, err := skills.ConfigDir(opts.Agent)
+	name, err := ConfigPath(opts)
 	if err != nil {
 		return Result{}, err
+	}
+	original, err := os.ReadFile(name)
+	if err != nil && !os.IsNotExist(err) {
+		return Result{}, err
+	}
+	data, err := Merge(original, opts)
+	if err != nil {
+		return Result{}, fmt.Errorf("%s: %w", name, err)
+	}
+	result := Result{Path: name, Data: data, Changed: !bytes.Equal(original, data)}
+	if !opts.DryRun && result.Changed {
+		if err := agentconfig.Write(name, data); err != nil {
+			return Result{}, err
+		}
+	}
+	return result, nil
+}
+
+// ConfigPath resolves the destination without reading or parsing configuration.
+func ConfigPath(opts Options) (string, error) {
+	dir, err := skills.ConfigDir(opts.Agent)
+	if err != nil {
+		return "", err
 	}
 	if opts.ConfigDir != "" {
 		dir = opts.ConfigDir
 	}
-	name, key, format := "", "mcpServers", "json"
+	name := ""
 	switch opts.Agent {
 	case skills.AgentClaude:
 		name = ".claude.json"
@@ -61,12 +79,12 @@ func Install(opts Options) (Result, error) {
 		} else {
 			home, err := os.UserHomeDir()
 			if err != nil {
-				return Result{}, err
+				return "", err
 			}
 			name = filepath.Join(home, name)
 		}
 	case skills.AgentCodex, skills.AgentGrok:
-		name, key, format = "config.toml", "mcp_servers", "toml"
+		name = "config.toml"
 	case skills.AgentDroid, skills.AgentCursor:
 		name = "mcp.json"
 	case skills.AgentCopilot:
@@ -74,7 +92,7 @@ func Install(opts Options) (Result, error) {
 	case skills.AgentGemini, skills.AgentQwen:
 		name = "settings.json"
 	case skills.AgentHermes:
-		name, key, format = "config.yaml", "mcp_servers", "yaml"
+		name = "config.yaml"
 	}
 	if !filepath.IsAbs(name) {
 		name = filepath.Join(dir, name)
@@ -82,14 +100,25 @@ func Install(opts Options) (Result, error) {
 	if opts.ConfigPath != "" {
 		name = opts.ConfigPath
 	}
-	data, err := os.ReadFile(name)
-	if err != nil && !os.IsNotExist(err) {
-		return Result{}, err
+	return name, nil
+}
+
+// Merge adds the MCP entry to configuration bytes without accessing the filesystem.
+func Merge(data []byte, opts Options) ([]byte, error) {
+	if opts.Transport == "" {
+		opts.Transport = "stdio"
 	}
-	original := data
-	if opts.BaseData != nil {
-		data = opts.BaseData
+	if err := Validate(opts); err != nil {
+		return nil, err
 	}
+	key, format := "mcpServers", "json"
+	switch opts.Agent {
+	case skills.AgentCodex, skills.AgentGrok:
+		key, format = "mcp_servers", "toml"
+	case skills.AgentHermes:
+		key, format = "mcp_servers", "yaml"
+	}
+	var err error
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(data)) > 0 {
 		switch format {
@@ -101,16 +130,16 @@ func Install(opts Options) (Result, error) {
 			err = json.Unmarshal(data, &doc)
 		}
 		if err != nil {
-			return Result{}, fmt.Errorf("read %s: %w", name, err)
+			return nil, fmt.Errorf("parse MCP config: %w", err)
 		}
 	}
 	if doc == nil {
-		return Result{}, fmt.Errorf("%s must contain a configuration object", name)
+		return nil, fmt.Errorf("MCP config must contain a configuration object")
 	}
 	servers, ok := doc[key].(map[string]any)
 	if !ok {
 		if _, exists := doc[key]; exists {
-			return Result{}, fmt.Errorf("%s in %s must be an object", key, name)
+			return nil, fmt.Errorf("%s must be an object", key)
 		}
 		servers = map[string]any{}
 		doc[key] = servers
@@ -155,16 +184,9 @@ func Install(opts Options) (Result, error) {
 		buf.WriteByte('\n')
 	}
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
-	result := Result{Path: name, Data: buf.Bytes(), Changed: !bytes.Equal(original, buf.Bytes())}
-	if opts.DryRun || !result.Changed {
-		return result, nil
-	}
-	if err := agentconfig.Write(name, result.Data); err != nil {
-		return Result{}, err
-	}
-	return result, nil
+	return buf.Bytes(), nil
 }
 
 // DaemonAddress resolves the API base URL belonging to an existing MCP endpoint.

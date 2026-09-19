@@ -68,7 +68,7 @@ func TestRunDumpGrokDoesNotWriteSource(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, source, 0o600))
 	var stdout bytes.Buffer
 
-	err := RunDump(DumpOptions{
+	err := RunDump(InstallOptions{
 		Agent: "grok", Command: "/opt/roborev agent-hook run --agent grok",
 		ConfigPath: path, Timeout: 10 * time.Second,
 	}, &stdout)

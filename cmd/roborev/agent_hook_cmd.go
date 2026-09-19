@@ -182,7 +182,7 @@ func agentHookInstallCmd() *cobra.Command {
 }
 
 func agentHookDumpCmd() *cobra.Command {
-	opts := agenthook.DumpOptions{Timeout: 10 * time.Second}
+	opts := agenthook.InstallOptions{Timeout: 10 * time.Second}
 	cmd := &cobra.Command{
 		Use:                   "dump",
 		Short:                 "Print an agent's hook config as JSON",

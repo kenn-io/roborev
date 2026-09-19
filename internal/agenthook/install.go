@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -36,40 +37,37 @@ type InstallOptions struct {
 	DryRun            bool
 }
 
-type DumpOptions struct {
-	MCP               bool
-	MCPTransport      string
-	MCPURL            string
-	RoborevServerAddr string
-	Agent             string
-	Executable        string
-	Command           string
-	ConfigPath        string
-	Timeout           time.Duration
+func resolveMCPDaemon(enabled bool, transport, url, server string) (string, error) {
+	if !enabled && (url != "" || (transport != "" && transport != "stdio")) {
+		return "", fmt.Errorf("MCP transport options require --mcp")
+	}
+	if enabled {
+		if err := mcpconfig.Validate(mcpconfig.Options{Transport: transport, URL: url}); err != nil {
+			return "", err
+		}
+	}
+	if transport == "http" {
+		address, err := mcpconfig.DaemonAddress(url)
+		if err != nil {
+			return "", err
+		}
+		if server != "" {
+			return "", fmt.Errorf("--mcp-url selects the hook daemon; omit --roborev-server for HTTP MCP")
+		}
+		if _, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback}); err != nil {
+			return "", fmt.Errorf("MCP hook daemon: %w", err)
+		}
+		server = address
+	}
+	return server, nil
 }
 
 func RunInstall(opts InstallOptions, stdout io.Writer) error {
-	if !opts.MCP && (opts.MCPURL != "" || (opts.MCPTransport != "" && opts.MCPTransport != "stdio")) {
-		return fmt.Errorf("MCP transport options require --mcp")
+	address, err := resolveMCPDaemon(opts.MCP, opts.MCPTransport, opts.MCPURL, opts.RoborevServerAddr)
+	if err != nil {
+		return err
 	}
-	if opts.MCP {
-		if err := mcpconfig.Validate(mcpconfig.Options{Transport: opts.MCPTransport, URL: opts.MCPURL}); err != nil {
-			return err
-		}
-	}
-	if opts.MCPTransport == "http" {
-		address, err := mcpconfig.DaemonAddress(opts.MCPURL)
-		if err != nil {
-			return err
-		}
-		if opts.RoborevServerAddr != "" {
-			return fmt.Errorf("--mcp-url selects the hook daemon; omit --roborev-server for HTTP MCP")
-		}
-		if _, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback}); err != nil {
-			return fmt.Errorf("MCP hook daemon: %w", err)
-		}
-		opts.RoborevServerAddr = address
-	}
+	opts.RoborevServerAddr = address
 	if opts.Timeout < 0 {
 		return fmt.Errorf("timeout must be >= 0")
 	}
@@ -97,28 +95,12 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 	return errors.Join(errs...)
 }
 
-func RunDump(opts DumpOptions, stdout io.Writer) error {
-	if !opts.MCP && (opts.MCPURL != "" || (opts.MCPTransport != "" && opts.MCPTransport != "stdio")) {
-		return fmt.Errorf("MCP transport options require --mcp")
+func RunDump(opts InstallOptions, stdout io.Writer) error {
+	address, err := resolveMCPDaemon(opts.MCP, opts.MCPTransport, opts.MCPURL, opts.RoborevServerAddr)
+	if err != nil {
+		return err
 	}
-	if opts.MCP {
-		if err := mcpconfig.Validate(mcpconfig.Options{Transport: opts.MCPTransport, URL: opts.MCPURL}); err != nil {
-			return err
-		}
-	}
-	if opts.MCPTransport == "http" {
-		address, err := mcpconfig.DaemonAddress(opts.MCPURL)
-		if err != nil {
-			return err
-		}
-		if opts.RoborevServerAddr != "" {
-			return fmt.Errorf("--mcp-url selects the hook daemon; omit --roborev-server for HTTP MCP")
-		}
-		if _, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback}); err != nil {
-			return fmt.Errorf("MCP hook daemon: %w", err)
-		}
-		opts.RoborevServerAddr = address
-	}
+	opts.RoborevServerAddr = address
 
 	if opts.Timeout < 0 {
 		return fmt.Errorf("timeout must be >= 0")
@@ -135,20 +117,8 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 			return err
 		}
 	}
-	installOpts := InstallOptions{
-		MCP:               opts.MCP,
-		MCPTransport:      opts.MCPTransport,
-		MCPURL:            opts.MCPURL,
-		RoborevServerAddr: opts.RoborevServerAddr,
-		Agent:             raw,
-		Executable:        opts.Executable,
-		Command:           opts.Command,
-		ConfigPath:        opts.ConfigPath,
-		Timeout:           opts.Timeout,
-		DryRun:            true,
-	}
 
-	result, err := planNativeHooks(agent, installOpts)
+	result, err := planNativeHooks(agent, opts)
 	if err != nil {
 		return profileError(agent, opts.ConfigPath, err)
 	}
@@ -192,18 +162,27 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 			Agent: skills.Agent(agent), ConfigDir: dir, Executable: executable,
 			Transport: opts.MCPTransport, URL: opts.MCPURL, Server: opts.RoborevServerAddr, DryRun: true,
 		}
-		mcpResult, err := mcpconfig.Install(mcpOpts)
+		path, err := mcpconfig.ConfigPath(mcpOpts)
 		if err != nil {
 			return kitagenthook.Result{}, err
 		}
-		shared := filepath.Clean(mcpResult.Path) == filepath.Clean(planned.ConfigPath)
+		shared := filepath.Clean(path) == filepath.Clean(planned.ConfigPath)
+		var mcpResult mcpconfig.Result
 		if shared {
-			mcpOpts.BaseData = planned.Data
+			// Kit owns hook parsing and returns bytes. Merge that result once,
+			// without re-reading or planning the existing MCP configuration.
+			data, err := mcpconfig.Merge(planned.Data, mcpOpts)
+			if err != nil {
+				return kitagenthook.Result{}, err
+			}
+			planned.Changed = planned.Changed || !bytes.Equal(planned.Data, data)
+			planned.Data = data
+			mcpResult = mcpconfig.Result{Path: path, Data: data, Changed: planned.Changed}
+		} else {
 			mcpResult, err = mcpconfig.Install(mcpOpts)
 			if err != nil {
 				return kitagenthook.Result{}, err
 			}
-			planned.Data, planned.Changed = mcpResult.Data, mcpResult.Changed
 		}
 		if opts.DryRun {
 			fmt.Fprintf(stdout, "MCP configuration in %s (changed: %t):\n%s\n", mcpResult.Path, mcpResult.Changed, mcpResult.Data)
