@@ -22,8 +22,10 @@ func TestHookMaintenanceSymlinkTargets(t *testing.T) {
 	for _, action := range []string{"auto-install", "automatic-repair", "explicit-repair"} {
 		for _, target := range []string{"worktree", "git dir", "dangling"} {
 			t.Run(action+"/"+target, func(t *testing.T) {
+				assert := assert.New(t)
 				repo := testutil.NewTestRepoWithCommit(t)
-				stale := "#!/bin/sh\n# roborev pre-push hook v0\necho custom\n"
+				stale := "#!/bin/sh\n# roborev pre-push hook v0\n" +
+					"ROBOREV=\"/old/roborev\"\n\"$ROBOREV\" post-commit --flush-push\n"
 				repo.CommitFile(".githooks/pre-push", stale, "Add tracked hook")
 				hookTarget := filepath.Join(repo.Root, ".githooks", "pre-push")
 				switch target {
@@ -52,19 +54,22 @@ func TestHookMaintenanceSymlinkTargets(t *testing.T) {
 					cmd.SetArgs(args)
 					require.NoError(t, cmd.Execute())
 				}
+				linkTarget, err := os.Readlink(repo.GetHookPath("pre-push"))
+				require.NoError(t, err, "maintenance must preserve the hook symlink")
+				assert.Equal(hookTarget, linkTarget)
 				content, err := os.ReadFile(hookTarget)
 				if target == "dangling" {
 					require.ErrorIs(t, err, os.ErrNotExist)
 				} else {
 					require.NoError(t, err)
 					if target == "git dir" || action == "explicit-repair" {
-						assert.Contains(t, string(content), githook.PrePushVersionMarker)
+						assert.Contains(string(content), githook.PrePushVersionMarker)
 					} else {
-						assert.Equal(t, stale, string(content))
+						assert.Equal(stale, string(content))
 					}
 				}
 				if target != "worktree" || action != "explicit-repair" {
-					assert.Empty(t, repo.Run("status", "--porcelain"))
+					assert.Empty(repo.Run("status", "--porcelain"))
 				}
 			})
 		}

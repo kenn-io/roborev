@@ -574,6 +574,12 @@ func InstallWithOptions(hooksDir, hookName string, opts InstallOptions) error {
 
 	existing, err := os.ReadFile(hookPath)
 	if err == nil && !opts.Force {
+		// Upgrade cleanup can remove a standalone hook. Resolve the target
+		// first so cleanup and replacement preserve the user's symlink.
+		hookPath, err = filepath.EvalSymlinks(hookPath)
+		if err != nil {
+			return fmt.Errorf("resolve %s hook: %w", hookName, err)
+		}
 		existingStr := string(existing)
 		if !strings.Contains(
 			strings.ToLower(existingStr), "roborev",

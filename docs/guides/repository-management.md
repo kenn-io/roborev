@@ -178,7 +178,9 @@ directory, automatic maintenance leaves those files unchanged.
 
 Automatic maintenance also skips the repository if an individual hook symlinks
 outside Git metadata or its symlink target cannot be resolved. This includes
-dangling symlinks, which could otherwise create files in the working tree.
+dangling symlinks, which could otherwise create files in the working tree. When
+a hook symlink resolves inside Git metadata, upgrades preserve the symlink and
+update its target.
 
 To install or upgrade hooks in those locations, explicitly run `roborev init` or
 `roborev install-hook`. To refresh only existing roborev-managed hooks, run
