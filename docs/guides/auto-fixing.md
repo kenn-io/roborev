@@ -199,9 +199,9 @@ non-interactive. Clear `GIT_ASKPASS` and set `GIT_TERMINAL_PROMPT=0`, then run
 `git -c core.askPass= ls-remote <submodule-url> HEAD` before running refine.
 Refine's worktree setup copies no credential values or helper configuration into
 agent inputs, the parent environment, or repository files. Existing provider
-credential handling follows each configured agent's existing rules. A global
-`core.hooksPath` can also run the operator's own hooks while submodules are
-checked out, so keep that configuration trusted.
+credential handling follows each configured agent's existing rules. Git hooks
+stay disabled throughout temporary worktree setup, including submodule
+initialization, even when your config sets `core.hooksPath`.
 
 ## Security Considerations
 

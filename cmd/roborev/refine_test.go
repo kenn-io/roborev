@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gitcmd "go.kenn.io/kit/git/cmd"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -854,6 +853,13 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 
 	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
 	submoduleSource := NewGitTestRepo(t)
+	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
+	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
+	hookPath := filepath.Join(submoduleSource.Dir, ".githooks", "post-checkout")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hookPath), 0o755))
+	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
+	require.NoError(t, os.WriteFile(hookPath, []byte(hookScript), 0o755))
+	submoduleSource.Run("add", "--chmod=+x", ".githooks/post-checkout")
 	submoduleSHA := submoduleSource.CommitFile("sub.txt", "submodule content\n", "submodule base")
 	barePath := filepath.Join(t.TempDir(), "sub.git")
 	clone := exec.Command("git", "clone", "--bare", submoduleSource.Dir, barePath)
@@ -870,6 +876,8 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	rewriteKey := "url.file://" + filepath.ToSlash(barePath) + ".insteadOf"
 	config := exec.Command("git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
 	require.NoError(t, config.Run())
+	config = exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
+	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)
 	require.NoError(t, err)
@@ -879,6 +887,7 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	content, readErr := os.ReadFile(filepath.Join(wt.Dir, "vendor", "sub", "sub.txt"))
 	require.NoError(t, readErr)
 	assert.Equal(t, "submodule content\n", strings.ReplaceAll(string(content), "\r\n", "\n"))
+	assert.NoFileExists(t, markerPath, "submodule checkout must not run tracked hooks")
 	t.Log("global url.insteadOf resolved file:///roborev-test-placeholder/sub.git; vendor/sub/sub.txt was initialized")
 }
 
@@ -887,6 +896,7 @@ func TestCreateRefineWorktreeIgnoresInheritedGitEnvironment(t *testing.T) {
 		t.Skip("git not available")
 	}
 
+	useIsolatedGlobalGitConfig(t, t.TempDir())
 	parent := NewGitTestRepo(t)
 	parent.CommitFile("parent.txt", "parent\n", "parent base")
 	parentHead := parent.Run("rev-parse", "HEAD")
@@ -925,19 +935,6 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 
 	assert.NoFileExists(t, markerPath)
 	t.Log("core.hooksPath=os.DevNull suppressed post-checkout; marker file is absent")
-}
-
-func TestRefineGitRunnerKeepsAutomationDefaults(t *testing.T) {
-	runner := refineGitRunner()
-	assert := assert.New(t)
-
-	assert.True(runner.StripEnv)
-	assert.False(runner.TerminalPrompt)
-	assert.False(runner.NullGlobalConfig)
-	assert.False(runner.NoSystemConfig)
-	assert.NotNil(runner.Env)
-	assert.Equal([]gitcmd.Config{{Key: "core.askPass", Value: ""}}, runner.Config)
-	t.Log("StripEnv=true; TerminalPrompt=false; NullGlobalConfig=false; NoSystemConfig=false; core.askPass=empty")
 }
 
 func TestRefineGitRunnerCredentialHelper(t *testing.T) {

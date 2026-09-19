@@ -93,6 +93,7 @@ func setupFastPolling(t *testing.T) {
 func setupRefineRepo(t *testing.T) (string, string) {
 	t.Helper()
 
+	useIsolatedGlobalGitConfig(t, t.TempDir())
 	repo := NewGitTestRepo(t)
 	repo.CommitFile("file.txt", "base", "base commit")
 

@@ -1369,12 +1369,16 @@ type refineSubmoduleSnapshot struct {
 // command-scope config would only add a redundant subprocess.
 //
 // Env must be non-nil: gitworktree.Create replaces a runner whose Env is nil
-// with gitcmd.New().
+// with gitcmd.New(). Disable hooks for every setup command, including submodule
+// checkouts, where a relative core.hooksPath could run tracked scripts.
 func refineGitRunner() gitcmd.Runner {
 	return gitcmd.Runner{
-		Env:                         os.Environ(),
-		StripEnv:                    true,
-		Config:                      []gitcmd.Config{{Key: "core.askPass", Value: ""}},
+		Env:      os.Environ(),
+		StripEnv: true,
+		Config: []gitcmd.Config{
+			{Key: "core.askPass", Value: ""},
+			{Key: "core.hooksPath", Value: os.DevNull},
+		},
 		DisableSafeDirectoryForward: true,
 	}
 }
