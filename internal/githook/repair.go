@@ -75,14 +75,14 @@ func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string)
 	return !hookUsesBinary(s, binaryPath)
 }
 
-// HooksDirInsideGitDir reports whether the repo's effective hooks directory
-// lies inside the repository's git directory or common git directory — the
+// HooksInsideGitDir reports whether the repo's effective hooks directory and
+// managed hook symlink targets lie inside its git or common git directory — the
 // layout roborev's own hook installs use, including linked worktrees. Any
 // other location (core.hooksPath into a working tree, an external shared
 // hooks directory) may hold tracked or user-managed files, so background
 // processes and automatic CLI maintenance must only write hooks when this
 // reports true. Explicit installation and repair may opt into other locations.
-func HooksDirInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
+func HooksInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
 	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("get hooks path: %w", err)
@@ -93,15 +93,38 @@ func HooksDirInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
 	}
 	// Git reports some paths physically (--git-path resolves symlinks) and
 	// others logically, so canonicalize before comparing.
-	hooksDir = canonicalizePath(hooksDir)
-	if isPathWithin(hooksDir, canonicalizePath(gitDir)) {
-		return true, nil
-	}
+	gitDir = canonicalizePath(gitDir)
 	commonDir, err := gitCommonDir(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("get git common dir: %w", err)
 	}
-	return isPathWithin(hooksDir, canonicalizePath(commonDir)), nil
+	commonDir = canonicalizePath(commonDir)
+	inside := func(path string) bool {
+		return isPathWithin(path, gitDir) || isPathWithin(path, commonDir)
+	}
+	if !inside(canonicalizePath(hooksDir)) {
+		return false, nil
+	}
+	for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
+		path := filepath.Join(hooksDir, name)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("inspect %s hook: %w", name, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(path)
+		// A dangling link can create an outside file during companion install.
+		// Leave unresolved links to explicit maintenance as well.
+		if err != nil || !inside(resolved) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // canonicalizePath resolves symlinks in the longest existing prefix of path

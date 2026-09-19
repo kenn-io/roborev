@@ -74,7 +74,7 @@ func repairHooks(ctx context.Context, opts repairHookOptions) error {
 	var warnings []error
 	for _, root := range roots {
 		if opts.gitDirOnly {
-			insideGitDir, err := githook.HooksDirInsideGitDir(ctx, root)
+			insideGitDir, err := githook.HooksInsideGitDir(ctx, root)
 			if err != nil || !insideGitDir {
 				continue
 			}

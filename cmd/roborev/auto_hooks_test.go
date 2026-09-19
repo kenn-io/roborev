@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,67 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestHookMaintenanceSymlinkTargets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows")
+	}
+	for _, action := range []string{"auto-install", "automatic-repair", "explicit-repair"} {
+		for _, target := range []string{"worktree", "git dir", "dangling"} {
+			t.Run(action+"/"+target, func(t *testing.T) {
+				assert := assert.New(t)
+				repo := testutil.NewTestRepoWithCommit(t)
+				stale := "#!/bin/sh\n# roborev pre-push hook v0\n" +
+					"ROBOREV=\"/old/roborev\"\n\"$ROBOREV\" post-commit --flush-push\n"
+				repo.CommitFile(".githooks/pre-push", stale, "Add tracked hook")
+				hookTarget := filepath.Join(repo.Root, ".githooks", "pre-push")
+				switch target {
+				case "git dir":
+					hookTarget = filepath.Join(repo.GitDir, "managed-pre-push")
+					require.NoError(t, os.WriteFile(hookTarget, []byte(stale), 0o755))
+				case "dangling":
+					hookTarget = filepath.Join(repo.Root, ".githooks", "missing")
+				}
+				root := filepath.Join(t.TempDir(), "wt")
+				repo.Run("worktree", "add", "--detach", root)
+				require.NoError(t, os.Symlink(hookTarget, repo.GetHookPath("pre-push")))
+				// A managed post-commit makes a missing pre-push eligible for install.
+				repo.WriteHook(githook.GeneratePostCommit())
+				if action == "auto-install" {
+					autoInstallHooks(t.Context(), root)
+				} else {
+					t.Chdir(root)
+					binary, err := os.Executable()
+					require.NoError(t, err)
+					cmd := installHookCmd()
+					args := []string{"repair", "--binary", binary}
+					if action == "automatic-repair" {
+						args = append(args, "--git-dir-only")
+					}
+					cmd.SetArgs(args)
+					require.NoError(t, cmd.Execute())
+				}
+				linkTarget, err := os.Readlink(repo.GetHookPath("pre-push"))
+				require.NoError(t, err, "maintenance must preserve the hook symlink")
+				assert.Equal(hookTarget, linkTarget)
+				content, err := os.ReadFile(hookTarget)
+				if target == "dangling" {
+					require.ErrorIs(t, err, os.ErrNotExist)
+				} else {
+					require.NoError(t, err)
+					if target == "git dir" || action == "explicit-repair" {
+						assert.Contains(string(content), githook.PrePushVersionMarker)
+					} else {
+						assert.Equal(stale, string(content))
+					}
+				}
+				if target != "worktree" || action != "explicit-repair" {
+					assert.Empty(repo.Run("status", "--porcelain"))
+				}
+			})
+		}
+	}
+}
 
 func TestAutoInstallHooks(t *testing.T) {
 	t.Parallel()

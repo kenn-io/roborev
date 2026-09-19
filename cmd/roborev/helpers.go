@@ -121,7 +121,7 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 // explicit uninstall-hook is respected. Like daemon startup repair, automatic
 // maintenance must leave working-tree and external shared hooks alone.
 func autoInstallHooks(ctx context.Context, repoPath string) {
-	insideGitDir, err := githook.HooksDirInsideGitDir(ctx, repoPath)
+	insideGitDir, err := githook.HooksInsideGitDir(ctx, repoPath)
 	if err != nil || !insideGitDir {
 		return
 	}
