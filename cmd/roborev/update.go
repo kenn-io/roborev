@@ -382,12 +382,7 @@ func repairHooksAfterUpdateResult(binDir string, run repairHookRunner) error {
 }
 
 func installedSkillsNeedUpdate() bool {
-	return slices.ContainsFunc([]skills.Agent{
-		skills.AgentClaude,
-		skills.AgentCodex,
-		skills.AgentDroid,
-		skills.AgentGrok,
-	}, skills.IsInstalled)
+	return slices.ContainsFunc(skills.Agents(), skills.IsInstalled)
 }
 
 func updateSkillsAfterUpdateResult(binDir string) error {

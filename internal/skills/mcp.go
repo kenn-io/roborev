@@ -39,37 +39,5 @@ func renderMCPSkill(content []byte) []byte {
 		}
 		return []byte(text + "\n" + mcpModeMarker + "\n\n" + string(body))
 	}
-	// Review-producing workflows still need the CLI for creation. Reads and
-	// bookkeeping use MCP; this contract also applies to their examples.
-	header := mcpModeMarker + `
-
-## MCP transport
-
-Use the roborev MCP tools for reads and review bookkeeping in this workflow.
-The CLI remains necessary for starting reviews and running refine. Interpret
-read/write CLI examples below using these MCP equivalents:
-
-| Operation | MCP tool and arguments |
-| --- | --- |
-| Status | roborev_status |
-| Find repository | roborev_list_repos; use its root_path |
-| List jobs | roborev_list_jobs with repo_path and branch; follow next_cursor |
-| Read review | roborev_get_review with job_id or sha |
-| Read comments | roborev_list_comments with job_id |
-| Read running output | roborev_get_job_output with job_id |
-| Comment | roborev_add_comment with job_id, commenter, comment |
-| Close | roborev_close_review with job_id |
-
-MCP verdicts are pass, fail, or empty. Poll roborev_list_jobs for completion
-before reading a newly queued review. Use synthesis parents for panels.
-Use the agent's tool discovery to resolve server prefixes. If tools are missing,
-report the MCP connection error; do not silently fall back to CLI reads.
-
-`
-	// Insert after frontmatter, leaving the skill's invocation metadata intact.
-	if end := strings.Index(text[4:], "\n---"); strings.HasPrefix(text, "---\n") && end >= 0 {
-		pos := end + 8
-		text = text[:pos] + "\n\n" + header + text[pos:]
-	}
-	return []byte(text)
+	return content
 }

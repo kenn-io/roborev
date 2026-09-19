@@ -1046,7 +1046,7 @@ See: [Agent Skills](/docs/guides/agent-skills/)
 ## MCP Server
 
 ```bash
-roborev mcp serve                # Serve read-only review tools over stdio
+roborev mcp serve                # Serve review reads and bookkeeping tools over stdio
 roborev mcp status               # List daemons serving the HTTP MCP endpoint
 roborev mcp status --json        # Same as a JSON listener array
 ```

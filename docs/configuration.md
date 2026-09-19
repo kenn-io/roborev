@@ -1147,9 +1147,10 @@ definitions.
 
 ### MCP Server
 
-The daemon can serve a read-only
-[Model Context Protocol](/docs/integrations/mcp/) endpoint at `/mcp` on its API
-listener. It is off by default:
+The daemon can serve a [Model Context Protocol](/docs/integrations/mcp/)
+endpoint at `/mcp` on its API listener. It supports review reads, comments,
+closure, snoozing, and hook fix completion. It cannot start reviews. It is off
+by default:
 
 ```toml
 [mcp]

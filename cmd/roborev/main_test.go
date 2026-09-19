@@ -815,6 +815,25 @@ func TestInstalledSkillsNeedUpdateForGrokOnlyInstall(t *testing.T) {
 	assert.True(t, installedSkillsNeedUpdate())
 }
 
+func TestInstalledSkillsNeedUpdateForQwenOnlyInstall(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(tmpHome, "missing-claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, "missing-codex"))
+
+	qwenHome := filepath.Join(tmpHome, "qwen")
+	t.Setenv("QWEN_HOME", qwenHome)
+	skillDir := filepath.Join(qwenHome, "skills", "roborev-fix")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644,
+	))
+
+	assert.True(t, skills.IsInstalled(skills.AgentQwen))
+	assert.True(t, installedSkillsNeedUpdate())
+}
+
 func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	var gotOpts repairHookOptions
 	repairHooksAfterUpdate("/tmp/bin", false, func(opts repairHookOptions) error {

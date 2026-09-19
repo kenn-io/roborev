@@ -104,9 +104,8 @@ CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build harnesses
 and adds optional hooks after configured turn, commit, or failed-review
 thresholds are met. Reminders name exact review IDs, invoke the bundled
 `roborev-fix` skill, and never run `roborev fix --open`. Hook installation
-updates bundled skills for Claude Code, Codex, Factory Droid, and Grok Build.
-Other profiles receive no CLI fallback. Hermes delivers queued post-tool
-reminders at `Stop`; Cursor records the same events but emits no control
+updates bundled skills for every supported profile. Hermes delivers queued
+post-tool reminders at `Stop`; Cursor records the same events but emits no control
 response.
 Installed hooks post events to the regular roborev daemon. That daemon evaluates
 the reminders and persists session counters and delivered review IDs in
@@ -222,7 +221,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev export ci-costs` | Export job-level CI costs as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
-| `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
+| `roborev skills install` | Install bundled skills for supported agent profiles |
 
 See [full command reference](https://roborev.io/docs/commands/) for all options.
 

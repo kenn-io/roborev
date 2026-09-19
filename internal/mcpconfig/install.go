@@ -13,10 +13,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
+	"go.kenn.io/roborev/internal/agentconfig"
 	"go.kenn.io/roborev/internal/skills"
 )
 
 type Options struct {
+	// BaseData supplies an in-memory hook plan to merge before committing a shared file.
+	BaseData   []byte
 	ConfigDir  string
 	Agent      skills.Agent
 	ConfigPath string
@@ -39,16 +42,8 @@ func Install(opts Options) (Result, error) {
 	if opts.Transport == "" {
 		opts.Transport = "stdio"
 	}
-	if opts.Transport != "stdio" && opts.Transport != "http" {
-		return Result{}, fmt.Errorf("transport must be stdio or http")
-	}
-	if opts.Transport == "http" {
-		if _, err := DaemonAddress(opts.URL); err != nil {
-			return Result{}, err
-		}
-	}
-	if opts.Transport == "stdio" && opts.URL != "" {
-		return Result{}, fmt.Errorf("--url requires --transport http")
+	if err := Validate(opts); err != nil {
+		return Result{}, err
 	}
 	dir, err := skills.ConfigDir(opts.Agent)
 	if err != nil {
@@ -91,8 +86,12 @@ func Install(opts Options) (Result, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return Result{}, err
 	}
+	original := data
+	if opts.BaseData != nil {
+		data = opts.BaseData
+	}
 	doc := map[string]any{}
-	if len(data) > 0 {
+	if len(bytes.TrimSpace(data)) > 0 {
 		switch format {
 		case "toml":
 			err = toml.Unmarshal(data, &doc)
@@ -158,14 +157,11 @@ func Install(opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{Path: name, Data: buf.Bytes(), Changed: !bytes.Equal(data, buf.Bytes())}
+	result := Result{Path: name, Data: buf.Bytes(), Changed: !bytes.Equal(original, buf.Bytes())}
 	if opts.DryRun || !result.Changed {
 		return result, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return Result{}, err
-	}
-	if err := os.WriteFile(name, result.Data, 0o600); err != nil {
+	if err := agentconfig.Write(name, result.Data); err != nil {
 		return Result{}, err
 	}
 	return result, nil
@@ -179,4 +175,23 @@ func DaemonAddress(rawURL string) (string, error) {
 	}
 	u.Path = ""
 	return u.String(), nil
+}
+
+// Validate checks transport arguments before configuration discovery.
+func Validate(opts Options) error {
+	if opts.Transport == "" {
+		opts.Transport = "stdio"
+	}
+	if opts.Transport != "stdio" && opts.Transport != "http" {
+		return fmt.Errorf("transport must be stdio or http")
+	}
+	if opts.Transport == "http" {
+		if _, err := DaemonAddress(opts.URL); err != nil {
+			return err
+		}
+	}
+	if opts.Transport == "stdio" && opts.URL != "" {
+		return fmt.Errorf("--url requires --transport http")
+	}
+	return nil
 }

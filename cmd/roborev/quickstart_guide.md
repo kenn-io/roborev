@@ -15,9 +15,8 @@ reviews). When review work piles up, it returns a self-contained fix instruction
 before the session goes cold. The write -> review -> fix loop closes without you
 asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
 Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
-Hook installation updates bundled skills for Claude Code, Codex, Factory Droid,
-and Grok Build. Other profiles receive no CLI fallback. Claude Desktop does not
-expose harness hooks, so only Layer 1 runs there.
+Hook installation updates bundled skills for every supported profile.
+Claude Desktop does not expose harness hooks, so only Layer 1 runs there.
 
 Quickstart health checks cover Claude Code, Codex, and Grok Build. Use
 `roborev agent-hook install` and agent-native config inspection to manage the

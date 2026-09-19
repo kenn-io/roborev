@@ -51,3 +51,18 @@ func TestSkillsInstallCommandSelectsMCPMode(t *testing.T) {
 	assert.Contains(t, string(body), "roborev_get_review")
 	assert.Contains(t, string(body), "roborev_complete_fix")
 }
+
+func TestMCPInstallValidatesBeforeAgentDetection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "COPILOT_HOME", "GEMINI_CLI_HOME", "HERMES_HOME", "QWEN_HOME"} {
+		t.Setenv(key, filepath.Join(home, key))
+	}
+
+	for _, args := range [][]string{{"install", "--transport", "invalid"}, {"install", "--transport", "http"}} {
+		cmd := mcpCmd()
+		cmd.SetArgs(args)
+		require.Error(t, cmd.Execute())
+	}
+}

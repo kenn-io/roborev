@@ -23,6 +23,9 @@ func mcpInstallCmd() *cobra.Command {
 			if opts.ConfigPath != "" && (selected == "" || selected == "all") {
 				return fmt.Errorf("--config requires one --agent")
 			}
+			if err := mcpconfig.Validate(opts); err != nil {
+				return err
+			}
 			if opts.Transport == "stdio" {
 				resolved, err := githook.ResolveRoborevPath(binary)
 				if err != nil {

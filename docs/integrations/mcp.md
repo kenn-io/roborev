@@ -33,7 +33,9 @@ Installation does not start or restart the daemon.
 
 Use `--config` with one `--agent` to select a custom MCP configuration file. The
 installer replaces the `roborev` entry and preserves other settings and servers.
-It reserializes the configuration, so formatting and comments may change.
+It reserializes the configuration, so formatting and comments may change. Files
+are replaced atomically, preserving existing permissions and symlink targets.
+Avoid editing the same configuration concurrently during installation.
 `--dry-run` prints the merged configuration without writing it.
 
 | Agent | User MCP configuration |
@@ -67,9 +69,13 @@ MCP skills for each selected agent. For an existing daemon HTTP endpoint:
 roborev agent-hook install --agent codex --mcp --mcp-transport http --mcp-url http://127.0.0.1:7373/mcp
 ```
 
-The HTTP URL also selects the hook's daemon. `--roborev-server` can explicitly
-select a daemon for a stdio installation. `agent-hook run --mcp` emits MCP
-instructions, and `agent-hook dump --mcp` prints hooks that pass that flag.
+The HTTP URL also selects the hook's daemon and must use plain HTTP on a
+loopback address supported by the daemon client. `--roborev-server` can
+explicitly select a daemon for a stdio installation. Hook dry runs show the
+final MCP configuration and planned skill directory. Claude MCP configuration is
+resolved independently of a hook `--config` path, using its normal home or
+`CLAUDE_CONFIG_DIR` location. `agent-hook run --mcp` emits MCP instructions, and
+`agent-hook dump --mcp` prints hooks that pass that flag.
 
 Skill updates preserve the installed mode unless `--mcp` or `--mcp=false` is
 explicitly supplied. Use `roborev skills install --mcp=false` and reinstall

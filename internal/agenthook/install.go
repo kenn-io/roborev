@@ -10,7 +10,9 @@ import (
 	"unicode"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
+	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/agentconfig"
 	"go.kenn.io/roborev/internal/mcpconfig"
 	"go.kenn.io/roborev/internal/skills"
 )
@@ -50,6 +52,11 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 	if !opts.MCP && (opts.MCPURL != "" || (opts.MCPTransport != "" && opts.MCPTransport != "stdio")) {
 		return fmt.Errorf("MCP transport options require --mcp")
 	}
+	if opts.MCP {
+		if err := mcpconfig.Validate(mcpconfig.Options{Transport: opts.MCPTransport, URL: opts.MCPURL}); err != nil {
+			return err
+		}
+	}
 	if opts.MCPTransport == "http" {
 		address, err := mcpconfig.DaemonAddress(opts.MCPURL)
 		if err != nil {
@@ -57,6 +64,9 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 		}
 		if opts.RoborevServerAddr != "" {
 			return fmt.Errorf("--mcp-url selects the hook daemon; omit --roborev-server for HTTP MCP")
+		}
+		if _, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback}); err != nil {
+			return fmt.Errorf("MCP hook daemon: %w", err)
 		}
 		opts.RoborevServerAddr = address
 	}
@@ -77,7 +87,7 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 
 	var errs []error
 	for _, agent := range agents {
-		result, runErr := runInstall(agent, opts)
+		result, runErr := runInstall(agent, opts, stdout)
 		if runErr != nil {
 			errs = append(errs, profileError(agent, opts.ConfigPath, runErr))
 			continue
@@ -91,6 +101,11 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	if !opts.MCP && (opts.MCPURL != "" || (opts.MCPTransport != "" && opts.MCPTransport != "stdio")) {
 		return fmt.Errorf("MCP transport options require --mcp")
 	}
+	if opts.MCP {
+		if err := mcpconfig.Validate(mcpconfig.Options{Transport: opts.MCPTransport, URL: opts.MCPURL}); err != nil {
+			return err
+		}
+	}
 	if opts.MCPTransport == "http" {
 		address, err := mcpconfig.DaemonAddress(opts.MCPURL)
 		if err != nil {
@@ -98,6 +113,9 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 		}
 		if opts.RoborevServerAddr != "" {
 			return fmt.Errorf("--mcp-url selects the hook daemon; omit --roborev-server for HTTP MCP")
+		}
+		if _, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback}); err != nil {
+			return fmt.Errorf("MCP hook daemon: %w", err)
 		}
 		opts.RoborevServerAddr = address
 	}
@@ -149,36 +167,55 @@ func planNativeHooks(agent kitagenthook.Agent, opts InstallOptions) (kitagenthoo
 	return kitagenthook.PlanInstall(agent, kitOpts)
 }
 
-func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Result, error) {
+func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer) (kitagenthook.Result, error) {
 	planned, err := planNativeHooks(agent, opts)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
 	if opts.MCP {
 		dir := ""
-		if opts.ConfigPath != "" {
+		if opts.ConfigPath != "" && agent != kitagenthook.AgentClaude {
 			dir = filepath.Dir(opts.ConfigPath)
 			if (agent == AgentGrok || agent == kitagenthook.AgentCopilot) && strings.EqualFold(filepath.Base(dir), "hooks") {
 				dir = filepath.Dir(dir)
 			}
 		}
-		mcpResult, err := mcpconfig.Install(mcpconfig.Options{
-			Agent: skills.Agent(agent), ConfigDir: dir, Executable: opts.Executable,
-			Transport: opts.MCPTransport, URL: opts.MCPURL, Server: opts.RoborevServerAddr, DryRun: opts.DryRun,
-		})
-		if err != nil {
-			return kitagenthook.Result{}, err
-		}
-		// Gemini, Qwen, and Hermes keep hooks and MCP servers in the same file.
-		// Re-read the merged MCP configuration before committing the hook plan.
-		if !opts.DryRun && filepath.Clean(mcpResult.Path) == filepath.Clean(planned.ConfigPath) {
-			planned, err = planNativeHooks(agent, opts)
+		executable := opts.Executable
+		if opts.Command != "" {
+			fields, err := splitHookCommand(opts.Command)
 			if err != nil {
 				return kitagenthook.Result{}, err
 			}
+			executable = fields[0] // planNativeHooks has validated the command.
+		}
+		mcpOpts := mcpconfig.Options{
+			Agent: skills.Agent(agent), ConfigDir: dir, Executable: executable,
+			Transport: opts.MCPTransport, URL: opts.MCPURL, Server: opts.RoborevServerAddr, DryRun: true,
+		}
+		mcpResult, err := mcpconfig.Install(mcpOpts)
+		if err != nil {
+			return kitagenthook.Result{}, err
+		}
+		shared := filepath.Clean(mcpResult.Path) == filepath.Clean(planned.ConfigPath)
+		if shared {
+			mcpOpts.BaseData = planned.Data
+			mcpResult, err = mcpconfig.Install(mcpOpts)
+			if err != nil {
+				return kitagenthook.Result{}, err
+			}
+			planned.Data, planned.Changed = mcpResult.Data, mcpResult.Changed
+		}
+		if opts.DryRun {
+			fmt.Fprintf(stdout, "MCP configuration in %s (changed: %t):\n%s\n", mcpResult.Path, mcpResult.Changed, mcpResult.Data)
+		} else if !shared && mcpResult.Changed {
+			if err := agentconfig.Write(mcpResult.Path, mcpResult.Data); err != nil {
+				return kitagenthook.Result{}, err
+			}
+			fmt.Fprintf(stdout, "installed MCP configuration in %s\n", mcpResult.Path)
 		}
 	}
 	if opts.DryRun {
+		fmt.Fprintf(stdout, "would install or update bundled %s skills in %s (MCP: %t)\n", agent, agentHookSkillsDir(agent, planned.ConfigPath), opts.MCP)
 		return planned, nil
 	}
 	if err := installAgentHookSkills(agent, planned.ConfigPath, opts.MCP); err != nil {
@@ -187,7 +224,7 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Res
 	if !planned.Changed {
 		return planned, nil
 	}
-	if err := commitAgentHookConfig(planned.ConfigPath, planned.Data); err != nil {
+	if err := agentconfig.Write(planned.ConfigPath, planned.Data); err != nil {
 		return planned, err
 	}
 	return planned, nil
@@ -196,14 +233,18 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Res
 func installAgentHookSkills(agent kitagenthook.Agent, configPath string, mcp bool) error {
 	skillAgent := skills.Agent(agent)
 
+	if _, err := skills.InstallToPath(skillAgent, agentHookSkillsDir(agent, configPath), &mcp); err != nil {
+		return fmt.Errorf("install bundled %s skills: %w", skillAgent, err)
+	}
+	return nil
+}
+
+func agentHookSkillsDir(agent kitagenthook.Agent, configPath string) string {
 	configDir := filepath.Dir(configPath)
 	if (agent == AgentGrok || agent == kitagenthook.AgentCopilot) && strings.EqualFold(filepath.Base(configDir), "hooks") {
 		configDir = filepath.Dir(configDir)
 	}
-	if _, err := skills.InstallToPath(skillAgent, filepath.Join(configDir, "skills"), &mcp); err != nil {
-		return fmt.Errorf("install bundled %s skills: %w", skillAgent, err)
-	}
-	return nil
+	return filepath.Join(configDir, "skills")
 }
 
 func validatedKitInstallOptions(

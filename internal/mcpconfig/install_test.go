@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -97,4 +98,41 @@ func TestInstallDryRunAndInvalidInputPreserveConfig(t *testing.T) {
 	actual, err = os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, initial, actual)
+}
+
+func TestInstallWhitespaceOnlyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	require.NoError(t, os.WriteFile(path, []byte(" \n\t"), 0o600))
+	_, err := Install(Options{Agent: skills.AgentDroid, ConfigPath: path})
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+	assert.Contains(t, doc["mcpServers"], "roborev")
+}
+
+func TestInstallPreservesConfigSymlinkAndMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared.json")
+	path := filepath.Join(dir, "mcp.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o640))
+	require.NoError(t, os.Symlink(target, path))
+	_, err := Install(Options{Agent: skills.AgentDroid, ConfigPath: path})
+	require.NoError(t, err)
+	link, err := os.Readlink(path)
+	require.NoError(t, err)
+	assert.Equal(t, target, link)
+	info, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+	assert.Equal(t, "dark", doc["theme"])
+	assert.Contains(t, doc["mcpServers"], "roborev")
 }
