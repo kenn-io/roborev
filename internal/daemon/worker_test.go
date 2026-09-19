@@ -762,7 +762,7 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	cfg := config.DefaultConfig()
-	cfg.DefaultMaxPromptSize = 6000
+	cfg.DefaultMaxPromptSize = 10000
 	gitRef := baseSHA + ".." + headSHA
 	created, members, _, err := db.CreateCIPanelRun("acme/api", 104, headSHA,
 		[]storage.EnqueueOpts{{
@@ -2267,7 +2267,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
 			agentCalled = true
 			capturedPrompt = p
-			require.LessOrEqual(t, len(p), 6000, "submitted prompt must stay within configured cap")
+			require.LessOrEqual(t, len(p), 10000, "submitted prompt must stay within configured cap")
 			files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
 			require.NoError(t, err)
 			require.Len(t, files, 1)
@@ -2286,7 +2286,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 	// Keep the cap above the system-prompt size so the snapshot-reference
 	// fallback still fits; the large diff below far exceeds it either way,
 	// so the external-snapshot path still triggers.
-	cfg.DefaultMaxPromptSize = 6000
+	cfg.DefaultMaxPromptSize = 10000
 	tc.reconfigurePool(cfg)
 
 	var content strings.Builder
