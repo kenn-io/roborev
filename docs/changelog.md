@@ -9,6 +9,11 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Codex reviews pass `--thread-source roborev` so the resulting session files
+    record `thread_source=roborev` instead of `user`. Older Codex CLIs that
+    reject the flag keep the previous invocation.
+- Droid reviews pass `--tag roborev` so Factory session logs can filter roborev
+    jobs.
 - Panel subagents can be marked `non_voting = true` to trial a new agent or
     model risk free. A non-voting member reviews every target like any other
     member and its review is stored and viewable, but it is excluded from

@@ -84,7 +84,7 @@ func (a *DroidAgent) CommandLine() string {
 }
 
 func (a *DroidAgent) buildArgs(agenticMode bool) []string {
-	args := []string{"exec"}
+	args := []string{"exec", "--tag", "roborev"}
 
 	// Set autonomy level based on agentic mode
 	if agenticMode {

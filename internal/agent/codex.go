@@ -24,12 +24,15 @@ type CodexAgent struct {
 	SuppressSkillInstructions bool           // Whether to suppress Codex skill instructions
 	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
 	ConfigOverrides           []string       // Extra `-c key=value` overrides injected from roborev config
+	omitThreadSource          bool           // True when this Codex CLI rejects --thread-source
 }
 
 const (
 	codexDangerousFlag         = "--dangerously-bypass-approvals-and-sandbox"
 	codexAutoApproveFlag       = "--full-auto"
 	codexIgnoreUserConfigFlag  = "--ignore-user-config"
+	codexThreadSourceFlag      = "--thread-source"
+	codexThreadSourceRoborev   = "roborev"
 	codexDisableSkillsConfig   = "skills.include_instructions=false"
 	codexReadOnlySandboxConfig = `sandbox_mode="read-only"`
 )
@@ -38,6 +41,7 @@ var (
 	codexDangerousSupport        sync.Map
 	codexAutoApproveSupport      sync.Map
 	codexIgnoreUserConfigSupport sync.Map
+	codexThreadSourceSupport     sync.Map
 )
 
 // errNoCodexJSON indicates no valid codex --json events were parsed.
@@ -72,6 +76,7 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		SuppressSkillInstructions: a.SuppressSkillInstructions,
 		IgnoreUserConfig:          a.IgnoreUserConfig,
 		ConfigOverrides:           a.ConfigOverrides,
+		omitThreadSource:          a.omitThreadSource,
 	}
 }
 
@@ -211,6 +216,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		args = append(args, "resume")
 	}
 	args = append(args, "--json")
+	if !a.omitThreadSource {
+		args = append(args, codexThreadSourceFlag, codexThreadSourceRoborev)
+	}
 	if a.IgnoreUserConfig {
 		args = append(args, codexIgnoreUserConfigFlag)
 	}
@@ -340,6 +348,36 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 	return supported, nil
 }
 
+// codexSupportsThreadSource reports whether `codex exec` accepts
+// --thread-source at the exec position. Older CLIs reject the flag.
+func codexSupportsThreadSource(
+	ctx context.Context, command string, ignoreUserConfig bool,
+) (bool, error) {
+	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
+	if cached, ok := codexThreadSourceSupport.Load(cacheKey); ok {
+		return cached.(bool), nil
+	}
+
+	args := []string{"exec"}
+	if ignoreUserConfig {
+		args = append(args, codexIgnoreUserConfigFlag)
+	}
+	args = append(args, codexThreadSourceFlag, codexThreadSourceRoborev, "--help")
+	cmd := exec.CommandContext(ctx, command, args...)
+	configureCapabilityProbe(ctx, cmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		codexThreadSourceSupport.Store(cacheKey, false)
+		return false, nil
+	}
+	supported := strings.Contains(string(output), codexThreadSourceFlag)
+	codexThreadSourceSupport.Store(cacheKey, supported)
+	return supported, nil
+}
+
 func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	return a.review(ctx, repoPath, commitSHA, prompt, "", output)
 }
@@ -362,6 +400,18 @@ func (a *CodexAgent) review(
 			clone.IgnoreUserConfig = false
 			runAgent = &clone
 		}
+	}
+
+	threadSourceOK, err := codexSupportsThreadSource(
+		ctx, runAgent.Command, runAgent.IgnoreUserConfig,
+	)
+	if err != nil {
+		return "", err
+	}
+	if !threadSourceOK {
+		clone := *runAgent
+		clone.omitThreadSource = true
+		runAgent = &clone
 	}
 
 	if agenticMode {
