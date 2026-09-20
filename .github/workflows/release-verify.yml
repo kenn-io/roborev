@@ -75,7 +75,7 @@ jobs:
           mkdir assets
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
             --pattern '*.tar.gz' --pattern '*.zip' \
-            --pattern '*.deb' --pattern '*.rpm' \
+            --pattern '*.deb' --pattern '*.rpm' --pattern '*.json' \
             --pattern 'SHA256SUMS'
 
       - name: Verify required assets are present
