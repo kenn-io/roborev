@@ -159,6 +159,8 @@ jobs:
           # the extraction dir must be derived from the full asset name.
           for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
+            # Source archives are checksum-verified above and contain no binary.
+            case "$asset" in roborev_*_source.tar.gz) continue ;; esac
             dir="../extracted/$asset"
             mkdir "$dir"
             case "$asset" in
