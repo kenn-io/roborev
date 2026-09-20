@@ -86,6 +86,7 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	require.NoError(session.Close())
 	_ = stdinW.Close()
 	var serveErr error
+	// Wall-clock wait: MCP subprocess stdio delivery.
 	require.Eventually(func() bool {
 		select {
 		case serveErr = <-done:

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -564,70 +565,60 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 
 	t.Run("WaitForTerminalExit does not block other terminal operations", func(t *testing.T) {
-		blockedDone := make(chan struct{})
-		blockedTerminal := &acpTerminal{
-			id:   "blocked",
-			done: blockedDone,
-		}
-		client.addTerminal(blockedTerminal)
-
-		waitDone := make(chan struct{})
-		waitErr := make(chan error, 1)
-		waitResp := make(chan acp.WaitForTerminalExitResponse, 1)
-		go func() {
-			resp, err := client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
-				SessionId:  "test-session",
-				TerminalId: "blocked",
-			})
-			if err != nil {
-				waitErr <- err
-				close(waitDone)
-				return
+		synctest.Test(t, func(t *testing.T) {
+			blockedDone := make(chan struct{})
+			var closeBlocked sync.Once
+			t.Cleanup(func() { closeBlocked.Do(func() { close(blockedDone) }) })
+			blockedTerminal := &acpTerminal{
+				id:   "blocked",
+				done: blockedDone,
 			}
-			waitResp <- resp
-			close(waitDone)
-		}()
+			client.addTerminal(blockedTerminal)
 
-		addDone := make(chan struct{})
-		go func() {
+			waitDone := make(chan struct{})
+			waitErr := make(chan error, 1)
+			waitResp := make(chan acp.WaitForTerminalExitResponse, 1)
+			go func() {
+				resp, err := client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
+					SessionId:  "test-session",
+					TerminalId: "blocked",
+				})
+				if err != nil {
+					waitErr <- err
+					close(waitDone)
+					return
+				}
+				waitResp <- resp
+				close(waitDone)
+			}()
+
+			synctest.Wait()
+			require.True(t, client.terminalsMutex.TryLock(), "WaitForTerminalExit holds terminalsMutex")
+			client.terminalsMutex.Unlock()
+
 			client.addTerminal(&acpTerminal{
 				id:   "secondary",
 				done: make(chan struct{}),
 			})
-			close(addDone)
-		}()
 
-		select {
-		case <-addDone:
+			blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: new(0)})
+			closeBlocked.Do(func() { close(blockedDone) })
+			synctest.Wait()
+			<-waitDone
 
-		case <-time.After(200 * time.Millisecond):
-			require.Condition(t, func() bool { return false }, "addTerminal blocked while WaitForTerminalExit was waiting")
-		}
+			select {
+			case err := <-waitErr:
+				require.NoError(t, err, "WaitForTerminalExit returned error: %v", err)
+			default:
+			}
 
-		blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: new(0)})
-		close(blockedDone)
-
-		select {
-		case <-waitDone:
-		case <-time.After(2 * time.Second):
-			require.Condition(t, func() bool { return false }, "WaitForTerminalExit did not return after done channel close")
-		}
-
-		select {
-		case err := <-waitErr:
-			require.NoError(t, err, "WaitForTerminalExit returned error: %v")
-		default:
-		}
-
-		select {
-		case resp := <-waitResp:
+			require.Len(t, waitResp, 1, "missing WaitForTerminalExit response")
+			resp := <-waitResp
 			require.Equal(t, new(0), resp.ExitCode, "Expected exit code 0, got %+v", resp)
-		default:
-			require.Condition(t, func() bool { return false }, "missing WaitForTerminalExit response")
-		}
 
-		client.removeTerminal("blocked")
-		client.removeTerminal("secondary")
+			client.removeTerminal("blocked")
+			client.removeTerminal("secondary")
+		})
 	})
 }
 

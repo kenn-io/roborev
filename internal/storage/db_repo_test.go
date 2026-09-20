@@ -71,6 +71,7 @@ func TestGetOrCreateCommitConcurrentInsert(t *testing.T) {
 		}()
 	}
 
+	// Wall-clock wait: SQLite concurrent insert contention.
 	require.Eventually(t, func() bool {
 		return db.Stats().InUse >= 3
 	}, time.Second, time.Millisecond,

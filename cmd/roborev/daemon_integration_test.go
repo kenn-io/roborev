@@ -470,6 +470,7 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 			require.NoError(t, err)
 			secondSHA := repo.CommitFile("second.txt", "second\n", "second")
 			queued := enqueueUpdateJob(t, old.endpoint, repo.Path(), secondSHA)
+			// Wall-clock wait: HTTP status from a separately built daemon process.
 			assert.Never(t, func() bool {
 				job, err := readUpdateJob(old.endpoint, queued.ID)
 				return err != nil || job.Status != storage.JobStatusQueued
@@ -548,6 +549,7 @@ func startIsolatedUpdateDaemon(
 			}
 		}
 	})
+	// Wall-clock wait: update daemon subprocess exit.
 	require.Eventually(t, func() bool {
 		info, err := daemon.ReadRuntimeForPID(cmd.Process.Pid)
 		if err != nil || !daemon.IsDaemonAlive(info.Endpoint()) {

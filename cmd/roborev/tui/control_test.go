@@ -1033,9 +1033,12 @@ func TestControlSocketRoundtrip(t *testing.T) {
 		// exit; leaking it for this short-lived test is harmless.
 	})
 
-	// Give the program time to complete Init() and reach its
-	// steady-state event loop.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the first Update, the signal Run uses before it starts
+	// the control listener.
+	select {
+	case <-m.ready:
+	case <-runDone:
+	}
 
 	cleanup, err := startControlListener(socketPath, p)
 	require.NoError(t, err, "startControlListener")
@@ -1114,22 +1117,14 @@ func TestControlSocketInvalidJSON(t *testing.T) {
 	assert.False(t, resp.OK, "expected error for invalid JSON")
 }
 
-// newTestProgram creates a tea.Program backed by a mock HTTP server
-// so that Init() commands complete quickly.
+// newTestProgram creates a tea.Program for listener-only tests. Callers do
+// not wait for the event loop before sending input.
 func newTestProgram(t *testing.T) *tea.Program {
 	t.Helper()
-	ts := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]any{})
-		},
-	))
-	t.Cleanup(ts.Close)
-	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	p := tea.NewProgram(m, tea.WithoutRenderer())
-	go func() { _, _ = p.Run() }()
-	t.Cleanup(func() { p.Kill() })
-	time.Sleep(100 * time.Millisecond)
-	return p
+	return tea.NewProgram(
+		newModel(testEndpoint, withExternalIODisabled()),
+		tea.WithoutRenderer(),
+	)
 }
 
 // --- Stale socket safety tests ---

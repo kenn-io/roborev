@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -544,13 +545,14 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 	assert.Equal(t, "browser_remote", source)
 	server.hookRunner.WaitUntilIdle()
 	assert.NoFileExists(t, markerFile)
+	var event Event
 	select {
-	case event := <-eventCh:
-		assert.Equal(t, "review.commented", event.Type)
-		assert.Equal(t, job.ID, event.JobID)
-	case <-time.After(time.Second):
-		require.FailNow(t, "timed out waiting for review.commented event")
+	case event = <-eventCh:
+	default:
+		require.FailNow(t, "review.commented event was not broadcast")
 	}
+	assert.Equal(t, "review.commented", event.Type)
+	assert.Equal(t, job.ID, event.JobID)
 }
 
 func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
@@ -649,6 +651,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 			server.workerPool.CancelJob(job.ID)
 			<-finished
 		})
+		// Wall-clock wait: worker-backed cancellation and hook completion.
 		require.Eventually(t, func() bool {
 			select {
 			case <-started:
@@ -668,6 +671,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 		handler.ServeHTTP(recorder, request)
 
 		require.Equal(t, http.StatusOK, recorder.Code)
+		// Wall-clock wait: worker-backed cancellation and hook completion.
 		require.Eventually(t, func() bool {
 			select {
 			case <-finished:
@@ -855,61 +859,64 @@ func TestBrowserHandlerStreamsStopWithSession(t *testing.T) {
 	}
 
 	t.Run("logout", func(t *testing.T) {
-		started := make(chan struct{})
-		core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-			close(started)
-			<-request.Context().Done()
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				close(started)
+				<-request.Context().Done()
+			})
+			handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+			credentials, err := sessions.Login(testBrowserAuthToken)
+			require.NoError(t, err)
+			cancel, done := startStream(t, handler, sessions, credentials)
+			defer cancel()
+			synctest.Wait()
+			select {
+			case <-started:
+			default:
+				require.FailNow(t, "browser stream did not start")
+			}
+
+			logout := browserRequest(http.MethodDelete, "/api/ui/session", nil)
+			logout.AddCookie(sessions.Cookie(credentials.Ambient))
+			logout.Header.Set(WebSessionHeader, credentials.Tab)
+			logout.Header.Set(WebCSRFHeader, credentials.CSRF)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, logout)
+			require.Equal(t, http.StatusNoContent, recorder.Code)
+			synctest.Wait()
+			select {
+			case <-done:
+			default:
+				require.FailNow(t, "logout did not stop the browser stream")
+			}
 		})
-		handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
-		credentials, err := sessions.Login(testBrowserAuthToken)
-		require.NoError(t, err)
-		cancel, done := startStream(t, handler, sessions, credentials)
-		defer cancel()
-		<-started
-
-		logout := browserRequest(http.MethodDelete, "/api/ui/session", nil)
-		logout.AddCookie(sessions.Cookie(credentials.Ambient))
-		logout.Header.Set(WebSessionHeader, credentials.Tab)
-		logout.Header.Set(WebCSRFHeader, credentials.CSRF)
-		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, logout)
-		require.Equal(t, http.StatusNoContent, recorder.Code)
-
-		stopped := false
-		select {
-		case <-done:
-			stopped = true
-		case <-time.After(250 * time.Millisecond):
-		}
-		cancel()
-		<-done
-		assert.True(t, stopped, "logout must cancel an active browser stream")
 	})
 
 	t.Run("expiry", func(t *testing.T) {
-		started := make(chan struct{})
-		core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-			close(started)
-			<-request.Context().Done()
-		})
-		handler, sessions := newBrowserHandlerFixtureWithCoreAndTTL(
-			t, testBrowserAuthToken, core, 50*time.Millisecond,
-		)
-		credentials, err := sessions.Login(testBrowserAuthToken)
-		require.NoError(t, err)
-		cancel, done := startStream(t, handler, sessions, credentials)
-		defer cancel()
-		<-started
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				close(started)
+				<-request.Context().Done()
+			})
+			handler, sessions := newBrowserHandlerFixtureWithCoreAndTTL(
+				t, testBrowserAuthToken, core, 50*time.Millisecond,
+			)
+			credentials, err := sessions.Login(testBrowserAuthToken)
+			require.NoError(t, err)
+			cancel, done := startStream(t, handler, sessions, credentials)
+			defer cancel()
+			<-started
 
-		expired := false
-		select {
-		case <-done:
-			expired = true
-		case <-time.After(500 * time.Millisecond):
-		}
-		cancel()
-		<-done
-		assert.True(t, expired, "session expiry must cancel an active browser stream")
+			time.Sleep(50 * time.Millisecond)
+			synctest.Wait()
+			select {
+			case <-done:
+			default:
+				require.FailNow(t, "session expiry did not stop the browser stream")
+			}
+		})
 	})
 }
 
