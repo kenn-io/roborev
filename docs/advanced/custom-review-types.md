@@ -3,12 +3,12 @@ title: Custom Review Types
 description: Define reusable schema-constrained reviews with Go templates
 ---
 
-Custom review types let you give a domain-specific review a name and run it
-through the normal roborev workflows:
+Custom review types let you give a specialized review a name and run it through
+the normal roborev workflows:
 
 ```bash
-roborev review --type thermonuclear
-roborev review --branch --type thermonuclear
+roborev review --type api-contract
+roborev review --branch --type api-contract
 ```
 
 Define a type in `.roborev.toml` for one repository or in
@@ -21,10 +21,10 @@ agent = "codex"
 reasoning = "thorough"
 ```
 
-The template supplies the review rubric. Roborev still constructs the commit or
-range context, project guidelines, diff, and oversized-diff snapshot
-instructions. It also owns the output schema, severity filtering, pass/fail
-verdict, and final Markdown rendering.
+The template supplies instructions for what the reviewer should check. Roborev
+still constructs the commit or range context, project guidelines, diff, and
+oversized-diff snapshot instructions. It also owns the output schema, severity
+filtering, pass/fail verdict, and final Markdown rendering.
 
 ## Configuration reference
 
@@ -94,7 +94,7 @@ Templates use Go's `text/template` syntax and receive these values:
 
 | Value | Type | Description |
 |-------|------|-------------|
-| `.ReviewType` | string | Configured type name, such as `thermonuclear` |
+| `.ReviewType` | string | Configured type name, such as `api-contract` |
 | `.Includes` | map | Contents of every configured named include |
 
 Invalid template syntax and execution errors fail prompt construction with a

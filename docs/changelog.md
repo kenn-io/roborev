@@ -5,55 +5,174 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.68.0
+
+<small>2026-09-20</small>
+
+Before updating, check the
+[0.68.0 upgrade instructions](/docs/installation/#upgrading-to-0680).
+
+**New features**
+
+- Define custom review types in `.roborev.toml` or global configuration, with
+    reusable templates, included files, and agent, model, or reasoning settings.
+    Custom types support Codex, Claude Code, Pi, and Grok. See
+    [Custom Review Types](/docs/advanced/custom-review-types/).
+- Connect coding agents through the optional Model Context Protocol server with
+    `roborev mcp serve` or the daemon's HTTP endpoint. MCP tools read reviews
+    and record comments, closures, snoozes, and completed hook fix sessions.
+    Review creation stays on the CLI. See [MCP Server](/docs/integrations/mcp/).
+- Configure MCP with `roborev mcp install`, or select it for skills and Agent
+    Hooks with `--mcp`. Installation supports Claude Code, Codex, Factory Droid,
+    Grok Build, Copilot, Cursor, Gemini, Hermes, and Qwen. CLI mode remains the
+    default. See
+    [MCP installation](/docs/integrations/mcp/#install-for-coding-agents).
+- Trial a reviewer without affecting the result by setting `non_voting = true`
+    on a panel member. Panels combine multiple reviewers into one review.
+    Non-voting reviews remain available to read, but do not affect or delay the
+    combined verdict, PR comment, or CI status. See
+    [Subagent Review Panels](/docs/advanced/subagent-review-panels/#subagents).
+- Choose review models and reasoning effort per project from global
+    configuration, matched by Git remote. Separate settings control the combined
+    panel review, and optional overrides replace settings pinned to panel
+    members. See
+    [Project Defaults by Git Remote](/docs/configuration/#project-defaults-by-git-remote).
+- Skip automatic post-commit reviews for branch families with
+    `excluded_branch_patterns` in `.roborev.toml`, such as `worktree-agent-*`.
+    See [Excluded Branches](/docs/configuration/#excluded-branches).
+- Rerun a completed or failed ordinary job with another agent by pressing `R` in
+    the terminal interface. The rerun uses that agent's defaults and replaces
+    the previous review. Lowercase `r` keeps the existing rerun behavior. See
+    [Terminal queue](/docs/integrations/tui/#queue-view).
+- See reviewed and excluded file counts for committed and range reviews in
+    `roborev show`, terminal review details, and the review API. See
+    [Viewing Reviews](/docs/commands/#viewing-reviews).
+- Read recent release notes before updating. Press `u` in the terminal interface
+    or open them from the web application header.
+- List jobs across every branch in the current repository with
+    `roborev list --all-branches`.
+- Copy review Markdown with the new copy button in the web review view. See
+    [Browser review workspace](/docs/web-ui/#reviews-workspace).
 
 **Improvements**
 
-- Codex reviews pass `--thread-source roborev` so the resulting session files
-    record `thread_source=roborev` instead of `user`. Older Codex CLIs that
-    reject the flag keep the previous invocation.
-- Droid reviews pass `--tag roborev` so Factory session logs can filter roborev
-    jobs.
-- Panel subagents can be marked `non_voting = true` to trial a new agent or
-    model risk free. A non-voting member reviews every target like any other
-    member and its review is stored and viewable, but it is excluded from
-    synthesis, the panel verdict, the CI commit status, and the PR comment body.
-    Its review carries an advisory banner and member listings label it
-    `(non-voting)`. Synthesis no longer waits for a non-voting member to finish,
-    and a non-voting design member does not replace the automatic design review.
-    The flag is a synced job column, so the SQLite and PostgreSQL schemas gain
-    `non_voting`. A panel must keep at least one voting member. See
-    [Subagent Review Panels](/advanced/subagent-review-panels/#subagents).
-- Reviews with a minimum severity now keep every finding instead of dropping the
-    ones below the threshold. The threshold only decides the verdict: a review
-    fails when any finding is at or above it and passes otherwise, so
-    low-severity notes remain in stored reviews without failing your commit or
-    pull request. GitHub comments display only findings at or above the
-    threshold. This applies to `review_min_severity`, `--min-severity`, and the
-    CI poller's `min_severity`. See
+- Reviews retain findings below `review_min_severity` or `--min-severity`. The
+    threshold determines pass or fail without removing lower-severity findings
+    from the stored review. Passing reviews do not trigger fixes. They close
+    automatically when `auto_close_passing_reviews` is enabled. GitHub comments
+    show only findings at or above the threshold. See
     [Severity Filtering](/docs/guides/reviewing-code/#severity-filtering).
-- Codex, Claude Code, Pi, and Grok now return structured findings for every
-    review type, not only custom ones. Verdicts come from the reported
-    severities instead of from parsing Markdown, and the review output uses one
-    consistent summary and findings layout. The structured schema is now version
-    2 and records the agent's own verdict alongside the findings. An agent that
-    reports it could not review the change fails the job, so an unreadable diff
-    no longer looks like a clean pass. See
-    [Custom Review Types](/docs/advanced/custom-review-types/#structured-results-and-compatible-agents).
+- Codex, Claude Code, Pi, and Grok return structured findings for all review
+    types. Combined panel reviews identify which reviewers reported each
+    finding. Pi reviews now require the `pi-json-schema` extension. See
+    [Pi Structured Output](/docs/agents/#pi-structured-output).
+- Review history stores and syncs validated JSON, with Markdown generated for
+    display and export. During upgrade, reviews that cannot be converted
+    faithfully move to an archive and disappear from normal review views. Use
+    `roborev legacy-reviews export` and `import` to convert and restore them.
+    See
+    [Legacy review migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration).
+- Compare reviews directly in the queue. Both interfaces show review types,
+    while the terminal queue also shows recorded reasoning effort and finding
+    severity counts.
+- Large reviews retain complete prompts, findings, discussion, and diagnostics
+    without the former fixed cutoffs. Prompts above the inline budget move to a
+    file the reviewer reads. Model context limits, configured policies, and
+    provider comment limits still apply. See
+    [Large Diffs](/docs/guides/reviewing-code/#large-diffs).
+- Follow-up branch reviews receive earlier reviews and responses as optional
+    context when the branch keeps the same base.
+- CI queues load faster with large review histories, and upgrades from before
+    0.67.0 avoid repeated history scans during daemon startup. The web
+    application also begins loading reviews sooner.
+- CLI JSON and MCP job listings and review results include `web_url` when the
+    daemon has an active browser listener. See
+    [Review links](/docs/integrations/mcp/#review-links).
+- Codex and Droid review sessions carry a `roborev` label in their session
+    metadata or logs. Older Codex versions keep their existing invocation.
+- AgentsView usage lookup prefers archived usage, including subagents, without
+    synchronizing source transcripts when supported. Older versions retain token
+    reporting through fallback commands.
+- CI review processes no longer inherit publishing credentials or Git credential
+    helpers. Regenerate existing CI configurations to adopt the changes. Copilot
+    requires a separate `COPILOT_GITHUB_TOKEN` with Copilot Requests permission.
+    See
+    [Generated CI workflows](/docs/integrations/github/#how-the-generated-workflow-works).
+- Obsolete Agent Hook registrations now require manual removal before
+    reinstalling. If an outdated hook reports an error, remove its command from
+    the agent configuration and run `roborev agent-hook install`. See
+    [Agent Hook runtime](/docs/agent-hook/#runtime-model).
+- Roborev no longer provides Nix flake packaging.
+- Fix agents check Git history when asked to restore or revert behavior,
+    preserving established names and migration definitions when compatible with
+    current requirements. See
+    [Responding to Reviews](/docs/guides/responding-to-reviews/#auto-fix-with-roborev-fix).
 
 **Bug fixes**
 
-- Upgrading from before 0.67.0 no longer repeatedly scans the full review
-    history while migrating provider sessions, which could delay daemon startup.
-    Git hook repair also reads registered repositories without running
-    migrations, so it can proceed while the daemon holds a database write lock.
+- Reviews that report an unreadable diff no longer count as reviews that found
+    problems. They fail over to a configured backup or finish with a
+    `no-verdict` error. Panels with no usable reviewer output finish as errors
+    without posting PR comments.
+- CI reviewers and combined panel reviews use their configured backup agent and
+    model when the primary reaches a quota, session limit, or cooldown.
+- Git hook repair reads registered repositories without running migrations, so
+    it can proceed while the daemon holds a database write lock.
+- GitHub Enterprise Server authentication uses the configured Enterprise API for
+    GitHub App token exchange and repository operations. Set `ci.github_api_url`
+    to `https://HOST/api/v3` and restart the daemon.
+- Automatic Git hook maintenance leaves working-tree and external hooks
+    unchanged, including hooks reached through symlinks. Update these hooks
+    explicitly with `roborev init`, `roborev install-hook`, or
+    `roborev install-hook repair`. See
+    [Git hook maintenance](/docs/guides/repository-management/#git-hook-maintenance).
+- Agent Hook fix reminders assign one active fix session per worktree,
+    preventing concurrent reminders from directing multiple sessions to edit it.
+    Reminders also warn when the active fix skill is missing or outdated.
+- `roborev refine` initializes private HTTPS submodules with your configured Git
+    credentials.
+- Claude Code hooks preserve Windows paths when Git Bash launches
+    Scoop-installed roborev binaries.
+- Non-agentic Pi reviews use read-only tools, plus the structured-output tool
+    when needed. Agentic jobs and runs with `allow_unsafe_agents = true` retain
+    Pi's default tools.
+- Antigravity review tools use the exact review worktree as their workspace.
+- Bundled Codex skills follow `AGENTS.md`. Branch-review skills fetch missing
+    remote branches before retrying validation.
+- Live logs show Agent Client Protocol tool calls and streamed plain text before
+    a newline arrives. Empty logs display "Waiting for output...".
+- Automatic colors use Windows Terminal's reported background when available.
+    Explicit light and dark modes remain available if detection fails.
+- Diffs containing invalid UTF-8 no longer prevent agents from reading review
+    prompts. Repository files remain unchanged.
+- Failed reviews in the web application show the recorded failure reason instead
+    of a generic empty-output message.
 
-- GitHub PR comments again group findings by severity and hide findings below
-    the configured minimum. Full reviews retain all findings.
+**Acknowledgements**
 
-- Non-agentic Pi reviews can no longer run commands or change files. They use
-    Pi's read-only repository tools, while agentic jobs keep the default tool
-    set. Structured reviews also retain their required JSON output tool.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for custom
+    review types, MCP workflows, non-voting panel members, structured review
+    storage, severity handling, CI fixes, and Agent Hook improvements.
+- Thanks to [Rod Boev](https://github.com/rodboev) for alternate-agent reruns,
+    file coverage, queue details, branch exclusion patterns, prior branch-review
+    context, private submodule initialization, and more reliable tests.
+- Thanks to [Wes McKinney](https://github.com/wesm) for project-specific model
+    and reasoning settings, faster CI queues and upgrades, Git hook maintenance
+    fixes, browser error messages, and the rebuilt documentation site.
+- Thanks to [Shun Kakinoki](https://github.com/shunkakinoki) for archived
+    AgentsView usage lookup and Antigravity worktree selection.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for streaming
+    running-job output into the terminal log view.
+- Thanks to [Novica Nakov](https://github.com/novica) for automatic Windows
+    Terminal background detection.
+- Thanks to [skundalkar](https://github.com/skundalkar) for preserving
+    historical names and migration definitions in restoration fixes.
+- Thanks to [subaru-ye](https://github.com/subaru-ye) for keeping automatic hook
+    maintenance from changing working-tree and external hooks.
+
+[Full release changes](https://github.com/kenn-io/roborev/compare/v0.67.0...v0.68.0).
+
+______________________________________________________________________
 
 ## 0.67.0
 

@@ -17,6 +17,35 @@ changes when working in a growing Go project.
 - Config loading and resolution: `internal/config/config.go`
 - Prompt construction: `internal/prompt/prompt.go`
 - TUI entry point: `cmd/roborev/tui/tui.go`
+- Release documentation workflow: `docs/README.md`
+
+## Documentation Style
+
+- Write documentation for humans and agents in plain language: name who does
+  what, use short sentences, and explain unfamiliar terms. Prefer bullets for
+  independent facts, numbered steps for sequences, and paragraphs for rationale.
+- Living architecture describes the system, not the history of implementing it.
+  Separate implemented behavior, approved-but-unbuilt work, proposals, and
+  historical decisions. Do not turn every document into a mandatory template.
+- Organize around reader questions: purpose, what works today, responsibilities,
+  how it works, rules and failure behavior, and open decisions. Use only the
+  sections the topic needs. Keep detailed protocol definitions below the
+  overview or in focused linked documents.
+- Make the opening useful on its own. State the purpose briefly and list current
+  capabilities and gaps separately; do not pack status, ownership, restrictions,
+  and future work into one paragraph.
+- Give each bullet one main idea. Use a small table for repeated comparisons and
+  a diagram when it clarifies a relationship or sequence. Neither is required
+  decoration, and a long paragraph does not become readable by adding a bullet.
+- State rules directly, then explain non-obvious reasons. Preserve exact field
+  names, authorization checks, failure conditions, and protocol requirements;
+  simpler wording must not weaken the contract.
+- Update the relevant section instead of appending a narration of the latest
+  change. Give each fact one owning document and link to it elsewhere. Indexes
+  should route readers, not duplicate detailed implementation status.
+- Keep superseded designs outside the normal reading path in clearly marked
+  historical sections or linked documents. Preserve decision rationale,
+  approvals, and active exceptions, including their removal conditions.
 
 ## Architecture At A Glance
 
@@ -48,7 +77,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 | `internal/git/` | Shared git helpers for refs, diffs, branch logic, repo discovery | `git.go` |
 | `internal/worktree/` | Temporary worktree creation, patch capture/apply/check | `worktree.go` |
 | `internal/skills/` | Embedded Codex/Claude skill files and installer logic | `skills.go`, `internal/skills/claude/`, `internal/skills/codex/` |
-| `internal/mcpserver/` | Read-only MCP server: tools, guidance resource, HTTP-API backend for stdio | `server.go`, `tools.go`, `backend.go`, `httpbackend.go` |
+| `internal/mcpserver/` | MCP tools for reading reviews and updating review and hook state; no review creation | `server.go`, `tools.go`, `backend.go`, `httpbackend.go` |
 | `internal/streamfmt/` | Formatting streamed agent output for CLI and TUI | `streamfmt.go`, `render.go` |
 | `internal/githook/` | Hook install/upgrade logic | `githook.go` |
 | `internal/github/` | GitHub REST helpers used by CI/comment flows | `comment.go` |

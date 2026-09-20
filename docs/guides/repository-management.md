@@ -166,6 +166,8 @@ Without this, you'd get duplicate repository entries, scattered reviews, and
 confusion about which reviews belong to which code. With worktree support,
 everything is consolidated under the main repository.
 
+### Git Hook Maintenance
+
 If your repository uses `core.hooksPath` (common with Husky and other hook
 managers), roborev resolves relative paths against the main repository root so
 the post-commit hook fires correctly from linked worktrees.
