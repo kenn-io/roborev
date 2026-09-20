@@ -157,6 +157,10 @@ roborev log <job_id>             # View job log
 `roborev list` filters to the current branch by default. Use `--all-branches` to
 omit the branch filter. `--all-branches` and `--branch` cannot be combined.
 
+`roborev list --json` and `roborev show --json` include `web_url` when the
+daemon has an active browser listener. See
+[Review links](/docs/integrations/mcp/#review-links) for how to use these URLs.
+
 When the argument is a numeric job ID, `--prompt` can display the stored prompt
 while the job is queued or running; review output does not exist until the job
 completes.

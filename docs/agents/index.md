@@ -251,8 +251,8 @@ a wrapper that exec's `gemini`.
 
 ## Pi Structured Output
 
-Pi can run normal review jobs and can also serve as the auto design-review
-classifier. roborev uses Pi's JSON schema output extension for classifier jobs.
+Pi requires the JSON schema output extension for all review types and for
+classification, which decides whether a change needs an automatic design review.
 The default extension source is `npm:@nqbao/pi-json-schema@0.1.1`.
 
 Install the default extension in Pi:
@@ -261,9 +261,10 @@ Install the default extension in Pi:
 pi install npm:@nqbao/pi-json-schema
 ```
 
-roborev still passes the configured extension source explicitly when it invokes
-classifier jobs. Installing it in Pi makes setup visible in `pi list` and avoids
-runtime package-fetch surprises in offline or locked-down environments.
+roborev passes the configured extension source explicitly when it invokes
+reviews or classifier jobs. Installing it in Pi makes setup visible in `pi list`
+and avoids runtime package-fetch surprises in offline or locked-down
+environments.
 
 Override the extension source in global config if you vendor or mirror it:
 

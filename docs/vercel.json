@@ -352,6 +352,16 @@
       "permanent": true
     },
     {
+      "source": "/integrations/mcp/",
+      "destination": "/docs/integrations/mcp/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/mcp.md",
+      "destination": "/docs/integrations/mcp.md",
+      "permanent": true
+    },
+    {
       "source": "/guides/troubleshooting/",
       "destination": "/docs/guides/troubleshooting/",
       "permanent": true

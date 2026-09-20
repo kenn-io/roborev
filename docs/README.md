@@ -164,6 +164,29 @@ bash docs/assets/update-static-assets-branch.sh --push
 This branch is separate from `docs-generated-assets` so normal screenshot
 regeneration cannot accidentally overwrite curated media.
 
+## Release Documentation
+
+Use the plain-language rules in [AGENTS.md](../AGENTS.md#documentation-style).
+
+1. Compare the new release tag with the previous release tag. Check release
+   notes against shipped changes; do not describe proposals as available.
+2. Move shipped `Unreleased` entries into a dated version section in
+   `changelog.md`. Group entries into new features, improvements, and bug fixes.
+   Lead with what users can do or what problem changed, and link to the owning
+   guide for instructions.
+3. Update those guides in place. Put upgrade actions in the installation guide
+   and link to the detailed configuration or migration instructions. Keep
+   historical release entries as history.
+4. Add acknowledgements based on authors and human co-authors in the release
+   range and merged pull requests. Verify public names and profile links, and
+   describe each contributor's work. Do not infer credit from commit counts or
+   private review activity.
+5. Run `make markdown`, `make markdown-ci`, and `make docs-check`. Review the
+   diff for stale instructions, broken links, and claims that need qualification.
+
+Documentation checks build locally. Publishing docs and editing GitHub release
+notes are separate actions; use the publishing workflow only when requested.
+
 ## Publishing
 
 The Vercel project should be linked from the repository root with `docs/` as the
