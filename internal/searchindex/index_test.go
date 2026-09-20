@@ -143,7 +143,7 @@ func TestRecoveryRecreatesStructurallyIncompleteSidecar(t *testing.T) {
 	db, err := sql.Open(sidecarDriver, path)
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `
-		DROP TABLE review_vectors_stamps;
+		DROP TABLE review_mirror;
 		CREATE TABLE obsolete_sidecar_data(value TEXT);`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -279,120 +279,44 @@ func TestRecoveryPreservesFilesForOperationalSchemaValidationError(t *testing.T)
 }
 
 func TestRecoveryRecreatesSameColumnTablesMissingRequiredKeys(t *testing.T) {
-	tests := []struct {
-		name    string
-		replace string
-	}{
-		{
-			name: "review mirror primary key",
-			replace: `
-				DROP TABLE review_mirror;
-				CREATE TABLE review_mirror (
-				  doc_key TEXT,
-				  review_id INTEGER NOT NULL,
-				  review_uuid TEXT,
-				  job_id INTEGER NOT NULL,
-				  job_uuid TEXT,
-				  group_key TEXT NOT NULL,
-				  repo_id INTEGER NOT NULL,
-				  repo_name TEXT NOT NULL,
-				  branch TEXT,
-				  git_ref TEXT NOT NULL,
-				  commit_sha TEXT,
-				  finished_at TEXT,
-				  verdict TEXT,
-				  closed INTEGER NOT NULL,
-				  panel_role TEXT,
-				  content TEXT NOT NULL,
-				  content_hash TEXT NOT NULL,
-				  embed_gen TEXT
-				);`,
-		},
-		{
-			name: "vector chunks composite primary key",
-			replace: `
-				DROP TABLE review_vectors_chunks;
-				CREATE TABLE review_vectors_chunks (
-				  ordinal INTEGER NOT NULL,
-				  doc_key NOT NULL,
-				  chunk_index INTEGER NOT NULL,
-				  vec_rowid INTEGER NOT NULL
-				);`,
-		},
-		{
-			name: "full generation unique key",
-			replace: `
-				DROP TABLE review_vectors_generations;
-				CREATE TABLE review_vectors_generations (
-				  ordinal INTEGER PRIMARY KEY,
-				  gen_key,
-				  fingerprint TEXT NOT NULL,
-				  dimension INTEGER NOT NULL,
-				  state TEXT NOT NULL
-				);
-				CREATE UNIQUE INDEX partial_generation_key
-				  ON review_vectors_generations(gen_key)
-				  WHERE gen_key IS NOT NULL;`,
-		},
-	}
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "reviews.search.db")
+	index, err := Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, index.Close())
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := context.Background()
-			path := filepath.Join(t.TempDir(), "reviews.search.db")
-			index, err := Open(ctx, path)
-			require.NoError(t, err)
-			require.NoError(t, index.Close())
+	db, err := sql.Open(sidecarDriver, path)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		DROP TABLE review_mirror;
+		CREATE TABLE review_mirror (
+		  doc_key TEXT,
+		  review_id INTEGER NOT NULL,
+		  review_uuid TEXT,
+		  job_id INTEGER NOT NULL,
+		  job_uuid TEXT,
+		  group_key TEXT NOT NULL,
+		  repo_id INTEGER NOT NULL,
+		  repo_name TEXT NOT NULL,
+		  branch TEXT,
+		  git_ref TEXT NOT NULL,
+		  commit_sha TEXT,
+		  finished_at TEXT,
+		  verdict TEXT,
+		  closed INTEGER NOT NULL,
+		  panel_role TEXT,
+		  content TEXT NOT NULL,
+		  content_hash TEXT NOT NULL,
+		  embed_gen TEXT
+		);
+		CREATE TABLE obsolete_sidecar_data(value TEXT);`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
 
-			db, err := sql.Open(sidecarDriver, path)
-			require.NoError(t, err)
-			_, err = db.ExecContext(ctx, test.replace+`
-				CREATE TABLE obsolete_sidecar_data(value TEXT);`)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-
-			index, err = Open(ctx, path)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, index.Close()) })
-			assertSidecarWasRebuilt(t, index.db)
-		})
-	}
-}
-
-func TestRecoveryRecreatesMissingOrOrdinaryGenerationVectorTable(t *testing.T) {
-	tests := []struct {
-		name    string
-		replace string
-	}{
-		{name: "missing", replace: `DROP TABLE review_vectors_v1;`},
-		{name: "ordinary", replace: `
-			DROP TABLE review_vectors_v1;
-			CREATE TABLE review_vectors_v1(embedding BLOB);`},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := context.Background()
-			path := filepath.Join(t.TempDir(), "reviews.search.db")
-			index, err := Open(ctx, path)
-			require.NoError(t, err)
-			require.NoError(t, index.vectors.EnsureGeneration(ctx, "gen-1",
-				vector.Generation{Model: "test", Dimensions: 3}, sqlitevec.StateActive))
-			require.NoError(t, index.Close())
-
-			db, err := sql.Open(sidecarDriver, path)
-			require.NoError(t, err)
-			_, err = db.ExecContext(ctx, test.replace+`
-				CREATE TABLE obsolete_sidecar_data(value TEXT);`)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-
-			index, err = Open(ctx, path)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, index.Close()) })
-			assertSidecarWasRebuilt(t, index.db)
-		})
-	}
+	index, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	assertSidecarWasRebuilt(t, index.db)
 }
 
 func assertSidecarWasRebuilt(t *testing.T, db *sql.DB) {

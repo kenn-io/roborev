@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -71,27 +69,6 @@ func TestEmbeddingNormalizesSmallFiniteVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, vectors, 1)
 	assert.Equal(t, []float32{1, 0}, vectors[0])
-}
-
-func TestEmbeddingAcceptsLongFiniteFloatComponentsAtFullBatchSize(t *testing.T) {
-	const (
-		inputCount = 64
-		dimensions = 1024
-		component  = "0.12345678901234567890123456789012345678901234567890"
-	)
-	vector := strings.TrimSuffix(strings.Repeat(component+",", dimensions), ",")
-	items := make([]string, inputCount)
-	for i := range items {
-		items[i] = `{"index":` + strconv.Itoa(i) + `,"embedding":[` + vector + `]}`
-	}
-	client := newEmbeddingTestClientWithConfig(t, http.StatusOK,
-		`{"data":[`+strings.Join(items, ",")+`]}`, "", Config{Dims: dimensions})
-
-	vectors, err := client.Embed(context.Background(), InputDocument, make([]string, inputCount))
-	require.NoError(t, err)
-	require.Len(t, vectors, inputCount)
-	assert.Len(t, vectors[0], dimensions)
-	assert.InDelta(t, 1.0/32.0, vectors[0][0], 1e-6)
 }
 
 func TestEmbeddingReordersResponseItemsByIndex(t *testing.T) {
@@ -196,47 +173,6 @@ func TestEmbeddingRetryAfterHTTPDate(t *testing.T) {
 		future := time.Now().UTC().Add(30 * time.Second).Format(http.TimeFormat)
 		assert.Equal(t, 30*time.Second, parseRetryAfter(future))
 	})
-}
-
-func TestEmbeddingRetryAfterNumericBounds(t *testing.T) {
-	const maxDuration = time.Duration(1<<63 - 1)
-	maxSeconds := int64(maxDuration / time.Second)
-	tests := []struct {
-		name   string
-		header string
-		want   time.Duration
-	}{
-		{name: "maximum whole seconds", header: strconv.FormatInt(maxSeconds, 10), want: time.Duration(maxSeconds) * time.Second},
-		{name: "duration overflow", header: strconv.FormatInt(maxSeconds+1, 10), want: maxDuration},
-		{name: "integer overflow", header: "18446744073709551615", want: maxDuration},
-		{name: "negative integer overflow", header: "-18446744073709551615", want: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, parseRetryAfter(tt.header))
-		})
-	}
-}
-
-func TestEmbeddingResponseSizeCap(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":"` + strings.Repeat("x", 2<<20) + `"}`))
-	}))
-	defer server.Close()
-	client, err := New(Config{BaseURL: server.URL, Model: "embed-large", Dims: 2})
-	require.NoError(t, err)
-
-	_, err = client.Embed(context.Background(), InputDocument, []string{"review text"})
-	require.EqualError(t, err, "embedding response exceeds size limit")
-}
-
-func TestEmbeddingRejectsResponseSizeLimitOverflow(t *testing.T) {
-	client := newEmbeddingTestClientWithConfig(t, http.StatusOK,
-		`{"data":[{"index":0,"embedding":[1]}]}`, "", Config{Dims: int(^uint(0) >> 1)})
-
-	_, err := client.Embed(context.Background(), InputDocument, []string{"review text"})
-	require.EqualError(t, err, "embedding response size limit overflow")
 }
 
 func TestEmbeddingRejectsUnsafeHTTPBearerTransport(t *testing.T) {

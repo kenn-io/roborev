@@ -56,9 +56,8 @@ type columnDefinition struct {
 }
 
 type tableDefinition struct {
-	name      string
-	columns   []columnDefinition
-	uniqueKey []string
+	name    string
+	columns []columnDefinition
 }
 
 var expectedSchema = []tableDefinition{
@@ -100,34 +99,6 @@ var expectedSchema = []tableDefinition{
 			{name: "identifiers"},
 		},
 	},
-	{
-		name: "review_vectors_generations",
-		columns: []columnDefinition{
-			{name: "ordinal", columnType: "INTEGER", primaryKey: 1},
-			{name: "gen_key"},
-			{name: "fingerprint", columnType: "TEXT", notNull: 1},
-			{name: "dimension", columnType: "INTEGER", notNull: 1},
-			{name: "state", columnType: "TEXT", notNull: 1},
-		},
-		uniqueKey: []string{"gen_key"},
-	},
-	{
-		name: "review_vectors_chunks",
-		columns: []columnDefinition{
-			{name: "ordinal", columnType: "INTEGER", notNull: 1, primaryKey: 1},
-			{name: "doc_key", notNull: 1, primaryKey: 2},
-			{name: "chunk_index", columnType: "INTEGER", notNull: 1, primaryKey: 3},
-			{name: "vec_rowid", columnType: "INTEGER", notNull: 1},
-		},
-	},
-	{
-		name: "review_vectors_stamps",
-		columns: []columnDefinition{
-			{name: "ordinal", columnType: "INTEGER", notNull: 1, primaryKey: 1},
-			{name: "doc_key", notNull: 1, primaryKey: 2},
-			{name: "revision"},
-		},
-	},
 }
 
 type schemaMismatchError struct{ reason string }
@@ -160,15 +131,6 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 		if !slices.Equal(columns, expected.columns) {
 			return &schemaMismatchError{reason: fmt.Sprintf("table %s has columns %+v, expected %+v", expected.name, columns, expected.columns)}
 		}
-		if len(expected.uniqueKey) > 0 {
-			hasKey, err := hasUniqueKey(ctx, db, expected.name, expected.uniqueKey)
-			if err != nil {
-				return fmt.Errorf("inspect search sidecar key on %s: %w", expected.name, err)
-			}
-			if !hasKey {
-				return &schemaMismatchError{reason: fmt.Sprintf("table %s lacks unique key %v", expected.name, expected.uniqueKey)}
-			}
-		}
 	}
 
 	var version string
@@ -191,7 +153,7 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 	if !found || compactSQL(ftsSQL) != "createvirtualtablereview_ftsusingfts5(doc_keyunindexed,content,identifiers,tokenize='unicode61')" {
 		return &schemaMismatchError{reason: "review_fts is not the expected FTS5 virtual table"}
 	}
-	return validateGenerationTables(ctx, db)
+	return nil
 }
 
 func tableColumns(ctx context.Context, db *sql.DB, table string) ([]columnDefinition, error) {
@@ -213,100 +175,6 @@ func tableColumns(ctx context.Context, db *sql.DB, table string) ([]columnDefini
 		columns = append(columns, column)
 	}
 	return columns, rows.Err()
-}
-
-func hasUniqueKey(ctx context.Context, db *sql.DB, table string, expected []string) (bool, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`PRAGMA index_list(%s)`, table))
-	if err != nil {
-		return false, err
-	}
-	var uniqueIndexes []string
-	for rows.Next() {
-		var sequence, unique, partial int
-		var name, origin string
-		if err := rows.Scan(&sequence, &name, &unique, &origin, &partial); err != nil {
-			_ = rows.Close()
-			return false, err
-		}
-		if unique == 1 && partial == 0 {
-			uniqueIndexes = append(uniqueIndexes, name)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return false, err
-	}
-	if err := rows.Close(); err != nil {
-		return false, err
-	}
-	for _, index := range uniqueIndexes {
-		columns, err := indexColumns(ctx, db, index)
-		if err != nil {
-			return false, err
-		}
-		if slices.Equal(columns, expected) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func indexColumns(ctx context.Context, db *sql.DB, index string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var columns []string
-	for rows.Next() {
-		var column string
-		if err := rows.Scan(&column); err != nil {
-			return nil, err
-		}
-		columns = append(columns, column)
-	}
-	return columns, rows.Err()
-}
-
-func validateGenerationTables(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx,
-		`SELECT ordinal, dimension FROM review_vectors_generations ORDER BY ordinal`)
-	if err != nil {
-		return fmt.Errorf("list search vector generations: %w", err)
-	}
-	type generation struct {
-		ordinal   int64
-		dimension int
-	}
-	var generations []generation
-	for rows.Next() {
-		var item generation
-		if err := rows.Scan(&item.ordinal, &item.dimension); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan search vector generation: %w", err)
-		}
-		generations = append(generations, item)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("scan search vector generations: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close search vector generations: %w", err)
-	}
-
-	for _, item := range generations {
-		name := fmt.Sprintf("review_vectors_v%d", item.ordinal)
-		definition, found, err := readTableSQL(ctx, db, name)
-		if err != nil {
-			return fmt.Errorf("read search vector table %s: %w", name, err)
-		}
-		want := fmt.Sprintf("createvirtualtable%susingvec0(embeddingfloat[%d]distance_metric=cosine)", name, item.dimension)
-		if item.dimension <= 0 || !found || compactSQL(definition) != want {
-			return &schemaMismatchError{reason: fmt.Sprintf("generation %d lacks its %d-dimensional vec0 table", item.ordinal, item.dimension)}
-		}
-	}
-	return nil
 }
 
 func readTableSQL(ctx context.Context, db *sql.DB, table string) (string, bool, error) {

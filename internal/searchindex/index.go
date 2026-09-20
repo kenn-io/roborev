@@ -114,7 +114,10 @@ func openOnce(ctx context.Context, path string) (_ *Index, err error) {
 		RevisionColumn: "content_hash",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bind search vector store: %w", err)
+		if newFile {
+			return nil, fmt.Errorf("bind search vector store: %w", err)
+		}
+		return nil, &schemaMismatchError{reason: err.Error()}
 	}
 	if newFile {
 		if err := validateSchema(ctx, db); err != nil {

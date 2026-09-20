@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"net/http"
@@ -29,13 +28,6 @@ const (
 
 	defaultBatchSize = 64
 	defaultTimeout   = 30 * time.Second
-
-	// A shortest round-trip decimal encoding of an IEEE 754 binary64 value is
-	// at most 24 bytes. Allow 64 bytes per component so compatible providers
-	// can emit additional finite decimal precision without making the response
-	// body unbounded.
-	maxJSONFloat64Bytes = 64
-	responseOverhead    = 1 << 20
 )
 
 // Config configures an embedding Client.
@@ -352,19 +344,8 @@ func (c *Client) embedBatch(ctx context.Context, kind InputKind, texts []string)
 		}
 	}
 
-	maxBytes, err := embeddingResponseSizeLimit(c.dims, len(texts))
-	if err != nil {
-		return nil, err
-	}
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("embedding: read response")
-	}
-	if int64(len(responseBody)) > maxBytes {
-		return nil, fmt.Errorf("embedding response exceeds size limit")
-	}
 	var decoded embedResponse
-	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("embedding response is invalid")
 	}
 	if len(decoded.Data) != len(texts) {
@@ -394,14 +375,6 @@ func (c *Client) embedBatch(ctx context.Context, kind InputKind, texts []string)
 		seen[index] = true
 	}
 	return vectors, nil
-}
-
-func embeddingResponseSizeLimit(dimensions, inputCount int) (int64, error) {
-	const maxInt64 = int64(1<<63 - 1)
-	if int64(dimensions) > (maxInt64-responseOverhead)/int64(inputCount)/maxJSONFloat64Bytes {
-		return 0, fmt.Errorf("embedding response size limit overflow")
-	}
-	return int64(dimensions)*int64(inputCount)*maxJSONFloat64Bytes + responseOverhead, nil
 }
 
 func (c *Client) decodeVector(index int, raw json.RawMessage) ([]float32, error) {
@@ -448,18 +421,11 @@ func sanitizeRequestError(err error) error {
 
 func parseRetryAfter(header string) time.Duration {
 	header = strings.TrimSpace(header)
-	const maxDuration = time.Duration(1<<63 - 1)
-	maxSeconds := int64(maxDuration / time.Second)
-	if seconds, err := strconv.ParseInt(header, 10, 64); err == nil {
-		if seconds < 0 {
-			return 0
-		}
-		if seconds > maxSeconds {
-			return maxDuration
-		}
+	if header == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(header); err == nil && seconds >= 0 {
 		return time.Duration(seconds) * time.Second
-	} else if errors.Is(err, strconv.ErrRange) && !strings.HasPrefix(header, "-") {
-		return maxDuration
 	}
 	when, err := http.ParseTime(header)
 	if err != nil {
