@@ -218,25 +218,6 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	assert.False(t, available)
 }
 
-func TestReconcilerFillYieldsAtTimeBudget(t *testing.T) {
-	index := openGenerationTestIndex(t)
-	store := &reconcilerStore{sources: makeSearchSources(3)}
-	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
-	embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
-		now = now.Add(31 * time.Second)
-		return [][]float32{{1, 0}}, nil
-	}
-	r := NewReconciler(store, index, embedder, ReconcilerConfig{
-		MaxFillBatches: 4, MaxFillTime: 30 * time.Second, Now: func() time.Time { return now },
-	})
-
-	more, err := r.reconcileTurn(context.Background())
-	require.NoError(t, err)
-	assert.True(t, more)
-	assert.Equal(t, 1, embedder.callCount())
-}
-
 func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 	var providerCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -257,14 +238,9 @@ func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 
 	more, err := r.reconcileTurn(context.Background())
 	require.NoError(t, err)
-	assert.True(t, more)
-	assert.Equal(t, int64(4), providerCalls.Load())
-	assert.Equal(t, int64(1), r.Health().EmbeddingBacklog)
-
-	more, err = r.reconcileTurn(context.Background())
-	require.NoError(t, err)
 	assert.False(t, more)
 	assert.Equal(t, int64(wantProviderCalls), providerCalls.Load())
+	assert.Equal(t, int64(0), r.Health().EmbeddingBacklog)
 	assert.Equal(t, client.Generation().Fingerprint(), r.Health().ActiveGeneration)
 }
 
@@ -418,7 +394,7 @@ func TestReconcilerSkipsOnlyProvenContentSpecific400(t *testing.T) {
 	store := &reconcilerStore{sources: makeSearchSources(1)}
 	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
 	embedder.embed = func(_ context.Context, texts []string) ([][]float32, error) {
-		if texts[0] == benignReplay(texts[0]) {
+		if texts[0] == benignChunkText(texts[0]) {
 			return [][]float32{{1, 0}}, nil
 		}
 		return nil, &embedding.APIError{StatusCode: http.StatusBadRequest}

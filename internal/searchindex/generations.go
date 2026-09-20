@@ -3,7 +3,6 @@ package searchindex
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -81,67 +80,35 @@ func (index *Index) SaveGenerationVectors(
 	return index.vectors.SaveVectors(ctx, key, pending.Doc, pending.Revision, vectors)
 }
 
-// semanticHit binds a chunk score to the content revision observed by its query.
-// Kit's vector.Hit does not carry a revision, so it cannot by itself survive a
-// mirror update between vector retrieval and candidate construction.
+// semanticHit binds a kit hit to the mirror revision observed just after the
+// vector query. Kit's Hit does not carry a revision, so this snapshot is what
+// stops a later mirror update from inheriting the previous vector score.
 type semanticHit struct {
 	vector.Hit[string]
 	ContentHash string
 }
 
-// QueryGeneration returns chunk-level hits and their content hashes from one
-// query snapshot within an explicit vector space.
+// QueryGeneration returns chunk-level hits from kit's sqlitevec store, with
+// the current mirror revision snapshotted for each document.
 func (index *Index) QueryGeneration(
 	ctx context.Context, key string, query vector.Vector, limit int,
 ) ([]semanticHit, error) {
-	var ordinal int64
-	var dimensions int
-	if err := index.db.QueryRowContext(ctx, `
-		SELECT ordinal, dimension
-		  FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal, &dimensions); err != nil {
-		return nil, fmt.Errorf("find semantic generation: %w", err)
-	}
-	if len(query) != dimensions {
-		return nil, fmt.Errorf("query has %d dimensions, generation expects %d", len(query), dimensions)
-	}
-	encoded, err := json.Marshal(query)
-	if err != nil {
-		return nil, fmt.Errorf("serialize semantic query: %w", err)
-	}
-	// Preserve kit v0.24.1's materialized KNN and CROSS JOIN: the vector
-	// scan must run once, before freshness filtering, with knn outermost.
-	// Select the revision alongside the score, never in a later stamp read.
-	statement := fmt.Sprintf(`
-		WITH knn AS MATERIALIZED (
-			SELECT rowid, distance FROM review_vectors_v%d
-			 WHERE embedding MATCH vec_f32(?) ORDER BY distance LIMIT ?
-		)
-		SELECT c.doc_key, c.chunk_index, knn.distance, m.content_hash
-		  FROM knn
-		 CROSS JOIN review_vectors_chunks c ON c.ordinal = ? AND c.vec_rowid = knn.rowid
-		  JOIN review_mirror m ON m.doc_key = c.doc_key
-		  JOIN review_vectors_stamps s ON s.ordinal = c.ordinal AND s.doc_key = c.doc_key
-		 WHERE m.embed_gen IS NOT NULL AND s.revision IS m.content_hash
-		 ORDER BY knn.distance`, ordinal)
-	rows, err := index.db.QueryContext(ctx, statement, string(encoded), limit, ordinal)
+	hits, err := index.vectors.QueryGeneration(ctx, key, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query semantic generation: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var hits []semanticHit
-	for rows.Next() {
-		var hit semanticHit
-		var distance float64
-		if err := rows.Scan(&hit.Doc, &hit.ChunkIndex, &distance, &hit.ContentHash); err != nil {
-			return nil, fmt.Errorf("scan semantic hit: %w", err)
+	out := make([]semanticHit, 0, len(hits))
+	for _, hit := range hits {
+		hash, ok, err := index.mirrorRevision(ctx, hit.Doc)
+		if err != nil {
+			return nil, err
 		}
-		hit.Score = float32(1 - distance)
-		hits = append(hits, hit)
+		if !ok {
+			continue
+		}
+		out = append(out, semanticHit{Hit: hit, ContentHash: hash})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan semantic hits: %w", err)
-	}
-	return hits, nil
+	return out, nil
 }
 
 // GenerationCounts returns fresh embedded, intentionally skipped, and pending counts.

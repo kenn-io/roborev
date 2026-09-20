@@ -3,13 +3,10 @@ package searchindex
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"go.kenn.io/kit/vector"
 
@@ -43,6 +40,9 @@ type Embedder interface {
 // ReconcilerConfig bounds each background reconciliation turn.
 type ReconcilerConfig struct {
 	MirrorPageSize int
+	// MaxFillBatches is the maximum number of pending documents kit Fill may
+	// start in one turn. Kit completes every started document, including
+	// those that span multiple provider calls.
 	MaxFillBatches int
 	MaxFillTime    time.Duration
 	SweepInterval  time.Duration
@@ -66,7 +66,6 @@ type Reconciler struct {
 	generationStarted  time.Time
 	generationBaseline int64
 	failures           int
-	partial            *partialEmbedding
 }
 
 // NewReconciler constructs a bounded, wake-coalescing reconciler.
@@ -265,55 +264,57 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	started := r.config.Now()
 	fillCtx, cancel := context.WithTimeout(ctx, r.config.MaxFillTime)
 	defer cancel()
-	providerCalls := 0
-	for providerCalls < r.config.MaxFillBatches && r.config.Now().Sub(started) < r.config.MaxFillTime {
-		batchSize := max(r.embedder.BatchSize(), 1)
-		pending, err := r.index.PendingGeneration(ctx, key, batchSize)
-		if err != nil {
-			return false, err
+	_, err = r.index.Fill(
+		fillCtx,
+		&turnLimitedStore{Store: r.index.vectors, remaining: r.config.MaxFillBatches},
+		key,
+		encodeDocuments(r.embedder),
+		max(r.embedder.BatchSize(), 1),
+		nil,
+	)
+	countsAfter, countErr := r.index.GenerationCounts(ctx, key)
+	if countErr == nil {
+		counts = countsAfter
+		if counts.Backlog == 0 && err == nil {
+			if activateErr := r.index.ActivateGeneration(ctx, key); activateErr != nil {
+				return false, activateErr
+			}
+			activeGeneration = key
 		}
-		if len(pending) == 0 {
-			break
-		}
-		used, stale, err := r.fillPendingBatch(fillCtx, key, pending, r.config.MaxFillBatches-providerCalls)
-		providerCalls += used
-		if err != nil {
-			return false, err
-		}
-		if stale || used == 0 {
-			break
-		}
+		r.updateGenerationHealth(key, counts, activeGeneration)
 	}
-
-	counts, err = r.index.GenerationCounts(ctx, key)
 	if err != nil {
-		return false, err
-	}
-	if counts.Backlog == 0 {
-		if err := r.index.ActivateGeneration(ctx, key); err != nil {
-			return false, err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return counts.Backlog > 0, err
 		}
-		activeGeneration = key
+		return counts.Backlog > 0, providerFailure(err)
 	}
-	r.updateGenerationHealth(key, counts, activeGeneration)
 	return counts.Backlog > 0, nil
 }
 
-type pendingDocument struct {
-	pending vector.Pending[string]
-	chunks  []vector.Chunk
+type turnLimitedStore struct {
+	vector.Store[string, string]
+	remaining int
 }
 
-type partialEmbedding struct {
-	generation string
-	revision   string
-	pending    vector.Pending[string]
-	chunks     []vector.Chunk
-	vectors    []vector.ChunkVector
-	next       int
+func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
+	if s.remaining <= 0 {
+		return nil, nil
+	}
+	if limit > s.remaining {
+		limit = s.remaining
+	}
+	pending, err := s.Store.PendingForGeneration(ctx, gen, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(pending) > s.remaining {
+		pending = pending[:s.remaining]
+	}
+	s.remaining -= len(pending)
+	return pending, nil
 }
 
 type embeddingProviderError struct{ cause error }
@@ -326,263 +327,6 @@ func providerFailure(err error) error {
 		return err
 	}
 	return &embeddingProviderError{cause: err}
-}
-
-func (r *Reconciler) fillPendingBatch(
-	ctx context.Context, key string, pending []vector.Pending[string], callBudget int,
-) (calls int, stale bool, err error) {
-	if callBudget <= 0 {
-		return 0, false, nil
-	}
-	batchSize := max(r.embedder.BatchSize(), 1)
-	if r.partial != nil {
-		currentRevision, found, err := r.index.mirrorRevision(ctx, r.partial.pending.Doc)
-		if err != nil {
-			return 0, false, err
-		}
-		if r.partial.generation != key || !found || currentRevision != r.partial.revision {
-			r.partial = nil
-		} else {
-			return r.fillPartial(ctx, key, batchSize, callBudget)
-		}
-	}
-	documents := make([]pendingDocument, 0, len(pending))
-	texts := make([]string, 0, batchSize)
-	for _, item := range pending {
-		chunks := vector.Split(item.Content, vector.SplitOptions{MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap})
-		if len(chunks) == 0 {
-			if err := r.index.SaveGenerationVectors(ctx, key, item, nil); err != nil {
-				if errors.Is(err, vector.ErrStale) {
-					return calls, true, nil
-				}
-				return calls, false, err
-			}
-			continue
-		}
-		if len(chunks) > batchSize {
-			r.partial = &partialEmbedding{
-				generation: key,
-				revision:   revisionText(item.Revision),
-				pending:    item,
-				chunks:     chunks,
-				vectors:    make([]vector.ChunkVector, 0, len(chunks)),
-			}
-			return r.fillPartial(ctx, key, batchSize, callBudget)
-		}
-		if len(texts) > 0 && len(texts)+len(chunks) > batchSize {
-			break
-		}
-		documents = append(documents, pendingDocument{pending: item, chunks: chunks})
-		for _, chunk := range chunks {
-			texts = append(texts, chunk.Text)
-		}
-		if len(texts) >= batchSize {
-			break
-		}
-	}
-	if len(texts) == 0 {
-		return calls, false, nil
-	}
-
-	vectors, err := r.embedder.Embed(ctx, embedding.InputDocument, texts)
-	calls++
-	if err != nil {
-		var apiErr *embedding.APIError
-		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
-			return calls, false, providerFailure(err)
-		}
-		return r.isolateBadRequest(ctx, key, documents, callBudget-calls, calls)
-	}
-	if err := validateEmbeddingResponse(vectors, len(texts), r.embedder.Generation().Dimensions); err != nil {
-		return calls, false, err
-	}
-	stale, err = r.saveEmbeddedDocuments(ctx, key, documents, vectors)
-	return calls, stale, err
-}
-
-func (r *Reconciler) fillPartial(
-	ctx context.Context, key string, batchSize, callBudget int,
-) (calls int, stale bool, err error) {
-	partial := r.partial
-	end := min(partial.next+batchSize, len(partial.chunks))
-	chunks := partial.chunks[partial.next:end]
-	texts := chunkTexts(chunks)
-	encoded, err := r.embedder.Embed(ctx, embedding.InputDocument, texts)
-	calls++
-	if err != nil {
-		var apiErr *embedding.APIError
-		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
-			return calls, false, providerFailure(err)
-		}
-		if calls >= callBudget {
-			return calls, false, providerFailure(err)
-		}
-		benign := make([]string, len(texts))
-		for i, text := range texts {
-			benign[i] = benignReplay(text)
-		}
-		encoded, err = r.embedder.Embed(ctx, embedding.InputDocument, benign)
-		calls++
-		if err != nil {
-			return calls, false, providerFailure(err)
-		}
-		if err := validateEmbeddingResponse(encoded, len(benign), r.embedder.Generation().Dimensions); err != nil {
-			return calls, false, err
-		}
-		if err := r.index.SaveGenerationVectors(ctx, key, partial.pending, nil); err != nil {
-			r.partial = nil
-			if errors.Is(err, vector.ErrStale) {
-				return calls, true, nil
-			}
-			return calls, false, err
-		}
-		r.partial = nil
-		return calls, false, nil
-	}
-	if err := validateEmbeddingResponse(encoded, len(texts), r.embedder.Generation().Dimensions); err != nil {
-		return calls, false, err
-	}
-	for i, chunk := range chunks {
-		partial.vectors = append(partial.vectors, vector.ChunkVector{
-			ChunkIndex: chunk.Index,
-			Vector:     vector.Vector(encoded[i]),
-		})
-	}
-	partial.next = end
-	if partial.next < len(partial.chunks) {
-		return calls, false, nil
-	}
-	r.partial = nil
-	if err := r.index.SaveGenerationVectors(ctx, key, partial.pending, partial.vectors); err != nil {
-		if errors.Is(err, vector.ErrStale) {
-			return calls, true, nil
-		}
-		return calls, false, err
-	}
-	return calls, false, nil
-}
-
-func (r *Reconciler) isolateBadRequest(
-	ctx context.Context, key string, documents []pendingDocument, budget, calls int,
-) (int, bool, error) {
-	for _, document := range documents {
-		texts := chunkTexts(document.chunks)
-		if len(documents) > 1 {
-			if budget == 0 {
-				return calls, false, nil
-			}
-			vectors, err := r.embedder.Embed(ctx, embedding.InputDocument, texts)
-			calls++
-			budget--
-			if err == nil {
-				if err := validateEmbeddingResponse(vectors, len(texts), r.embedder.Generation().Dimensions); err != nil {
-					return calls, false, err
-				}
-				stale, saveErr := r.saveEmbeddedDocuments(ctx, key, []pendingDocument{document}, vectors)
-				if saveErr != nil {
-					return calls, false, saveErr
-				}
-				if stale {
-					return calls, true, nil
-				}
-				continue
-			}
-			var apiErr *embedding.APIError
-			if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
-				return calls, false, providerFailure(err)
-			}
-		}
-		if budget == 0 {
-			return calls, false, &embedding.APIError{StatusCode: http.StatusBadRequest}
-		}
-		benign := make([]string, len(texts))
-		for i, text := range texts {
-			benign[i] = benignReplay(text)
-		}
-		encoded, err := r.embedder.Embed(ctx, embedding.InputDocument, benign)
-		calls++
-		budget--
-		if err != nil {
-			return calls, false, providerFailure(err)
-		}
-		if err := validateEmbeddingResponse(encoded, len(benign), r.embedder.Generation().Dimensions); err != nil {
-			return calls, false, err
-		}
-		if err := r.index.SaveGenerationVectors(ctx, key, document.pending, nil); err != nil {
-			if errors.Is(err, vector.ErrStale) {
-				return calls, true, nil
-			}
-			return calls, false, err
-		}
-	}
-	return calls, false, nil
-}
-
-func (r *Reconciler) saveEmbeddedDocuments(
-	ctx context.Context, key string, documents []pendingDocument, encoded [][]float32,
-) (bool, error) {
-	wanted := 0
-	for _, document := range documents {
-		wanted += len(document.chunks)
-	}
-	if err := validateEmbeddingResponse(encoded, wanted, r.embedder.Generation().Dimensions); err != nil {
-		return false, err
-	}
-	offset := 0
-	for _, document := range documents {
-		vectors := make([]vector.ChunkVector, len(document.chunks))
-		for i, chunk := range document.chunks {
-			vectors[i] = vector.ChunkVector{ChunkIndex: chunk.Index, Vector: vector.Vector(encoded[offset+i])}
-		}
-		offset += len(document.chunks)
-		if err := r.index.SaveGenerationVectors(ctx, key, document.pending, vectors); err != nil {
-			if errors.Is(err, vector.ErrStale) {
-				return true, nil
-			}
-			return false, err
-		}
-	}
-	return false, nil
-}
-
-func validateEmbeddingResponse(encoded [][]float32, wanted, dimensions int) error {
-	if len(encoded) != wanted {
-		return providerFailure(errors.New("embedding result count mismatch"))
-	}
-	for _, item := range encoded {
-		if len(item) != dimensions {
-			return providerFailure(errors.New("embedding result dimension mismatch"))
-		}
-	}
-	return nil
-}
-
-func revisionText(revision any) string {
-	switch value := revision.(type) {
-	case string:
-		return value
-	case []byte:
-		return string(value)
-	default:
-		return fmt.Sprint(value)
-	}
-}
-
-func chunkTexts(chunks []vector.Chunk) []string {
-	texts := make([]string, len(chunks))
-	for i, chunk := range chunks {
-		texts[i] = chunk.Text
-	}
-	return texts
-}
-
-func benignReplay(content string) string {
-	return strings.Map(func(value rune) rune {
-		if unicode.IsSpace(value) {
-			return value
-		}
-		return 'x'
-	}, content)
 }
 
 func (r *Reconciler) beginGeneration(key string, counts GenerationCounts, activeGeneration string) {

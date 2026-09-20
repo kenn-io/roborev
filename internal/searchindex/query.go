@@ -396,9 +396,10 @@ func parseCandidateTime(value string) time.Time {
 	return parsed
 }
 
-// QueryWithProbe returns fresh hits from the first limit raw neighbors plus,
-// when present, the raw hit beyond that ceiling. The probe is observed before
-// the mirror and generation-freshness joins that may suppress candidate rows.
+// QueryWithProbe returns fresh hits from kit's KNN plus, when present, the raw
+// neighbor beyond that ceiling. The probe is observed before freshness joins
+// that may suppress candidate rows; sqlite-vec must apply LIMIT before those
+// joins, so this extra read is local SQL rather than a kit Search flow.
 func (index *Index) QueryWithProbe(
 	ctx context.Context, key string, query vector.Vector, limit int,
 ) ([]semanticHit, *vector.Hit[string], error) {
@@ -460,37 +461,39 @@ func (index *Index) queryRawProbe(
 	return nil, nil
 }
 
+func semanticHitVectors(hits []semanticHit) []vector.Hit[string] {
+	out := make([]vector.Hit[string], len(hits))
+	for i, hit := range hits {
+		out[i] = hit.Hit
+	}
+	return out
+}
+
 func (index *Index) semanticCandidates(
 	ctx context.Context, hits []semanticHit, filters SearchFilters,
 ) ([]rankedCandidate, error) {
-	bestByDocument := make(map[string]semanticHit, len(hits))
-	documentOrder := make([]string, 0, len(hits))
+	rolled := vector.RollupByDocument(semanticHitVectors(hits))
+	best := make(map[string]semanticHit, len(hits))
 	for _, hit := range hits {
+		current, found := best[hit.Doc]
+		if !found || hit.Score > current.Score {
+			best[hit.Doc] = hit
+		}
+	}
+	candidates := make([]rankedCandidate, 0, len(rolled))
+	for _, hit := range rolled {
 		if float64(hit.Score) < semanticCosineFloor {
 			continue
 		}
-		if _, found := bestByDocument[hit.Doc]; found {
-			continue
-		}
-		bestByDocument[hit.Doc] = hit
-		documentOrder = append(documentOrder, hit.Doc)
-	}
-	if len(documentOrder) == 0 {
-		return nil, nil
-	}
-
-	candidates := make([]rankedCandidate, 0, len(documentOrder))
-	for _, docKey := range documentOrder {
-		candidate, found, err := index.readCandidate(ctx, docKey)
+		snapshot := best[hit.Doc]
+		candidate, found, err := index.readCandidate(ctx, hit.Doc)
 		if err != nil {
 			return nil, err
 		}
-		hit := bestByDocument[docKey]
-		if !found || candidate.ContentHash != hit.ContentHash || !candidateMatchesFilters(candidate, filters) {
+		if !found || candidate.ContentHash != snapshot.ContentHash || !candidateMatchesFilters(candidate, filters) {
 			continue
 		}
-		// Carry the query's revision through canonical hydration as well.
-		candidate.ContentHash = hit.ContentHash
+		candidate.ContentHash = snapshot.ContentHash
 		candidate.Score = float64(hit.Score)
 		candidate.ChunkIndex = hit.ChunkIndex
 		candidate.MatchedIn = []string{MatchSemantic}

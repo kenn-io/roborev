@@ -13,7 +13,6 @@ import (
 
 	"go.kenn.io/kit/vector"
 
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -330,15 +329,15 @@ func (service *Service) searchSemantic(
 	ctx context.Context, query string, filters SearchFilters, target int,
 ) (semanticLegResult, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, queryEmbeddingTimeout)
-	vectors, err := service.embedder.Embed(queryCtx, embedding.InputQuery, []string{query})
+	encoded, err := vector.EncodeBatched(queryCtx, encodeQueries(service.embedder), []vector.Chunk{{Index: 0, Text: query}})
 	cancel()
 	if err != nil {
 		return semanticLegResult{}, err
 	}
-	if len(vectors) != 1 {
-		return semanticLegResult{}, fmt.Errorf("query embedding returned %d vectors", len(vectors))
+	if len(encoded) != 1 {
+		return semanticLegResult{}, fmt.Errorf("query embedding returned %d vectors", len(encoded))
 	}
-	queryVector := vector.Vector(vectors[0])
+	queryVector := encoded[0]
 	key := service.embedder.Generation().Fingerprint()
 	raw, err := service.index.QueryGeneration(ctx, key, queryVector, target)
 	if err != nil {
