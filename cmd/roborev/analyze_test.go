@@ -529,7 +529,7 @@ func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
 	}))
 }
 
-func TestAnalysisProducerCaptureModes(t *testing.T) {
+func TestAnalysisAttributionModes(t *testing.T) {
 	capture := func(t *testing.T, run func(daemon.DaemonEndpoint) error) []daemon.EnqueueRequest {
 		t.Helper()
 		requests := make([]daemon.EnqueueRequest, 0, 2)
