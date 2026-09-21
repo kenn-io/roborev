@@ -65,7 +65,7 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 		require.NoError(t, err)
 		if status == "done" {
 			memberReviewID := uuid.New()
-			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'prompt', 'No issues found.', $3)`, memberReviewID, memberID, defaultTestMachineID)
+			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'prompt', 'The member wrote prose that roborev cannot read back.', $3)`, memberReviewID, memberID, defaultTestMachineID)
 			require.NoError(t, err)
 			require.NoError(t, pool.migrateLegacyReviews(ctx))
 			clean := jsontext.Value(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
@@ -111,4 +111,86 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 	}
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, reviewID).Scan(&original))
 	assert.Equal(t, "Legacy finding", original)
+}
+
+func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	insert := func(markdown string, verdict, closed bool) uuid.UUID {
+		jobID, reviewID := uuid.New(), uuid.New()
+		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, verdict_bool, closed, updated_by_machine_id)
+ VALUES ($1, $2, 'test', 'original prompt', $3, $4, $5, $6)`, reviewID, jobID, markdown, verdict, closed, defaultTestMachineID)
+		require.NoError(t, err)
+		return reviewID
+	}
+	type stored struct {
+		output, prompt, document string
+		verdict, closed          bool
+	}
+	read := func(id uuid.UUID) stored {
+		var got stored
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT output, prompt, structured_output::text, verdict_bool, closed FROM reviews WHERE uuid = $1`, id).
+			Scan(&got.output, &got.prompt, &got.document, &got.verdict, &got.closed))
+		return got
+	}
+	active := func(id uuid.UUID) int {
+		var count int
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, id).Scan(&count))
+		return count
+	}
+	wantDocument := `{"schema_version":1,"summary":"The change adds a save routine.","findings":[
+		{"severity":"high","problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","location":"store/save.go:88"},
+		{"severity":"low","problem":"The comment is stale.","fix":"Update the comment.","location":"store/save.go:12"}]}`
+
+	// The mirror upgrade converts what roborev can read back and archives the rest.
+	upgraded := insert(legacyFindingsMarkdown, false, true)
+	upgradedProse := insert(legacyProseMarkdown, false, false)
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	got := read(upgraded)
+	assert.Empty(t, got.output)
+	assert.JSONEq(t, wantDocument, got.document)
+	assert.False(t, got.verdict, "verdict is unchanged")
+	assert.True(t, got.closed, "closed state is unchanged")
+	assert.Equal(t, "original prompt", got.prompt)
+	assert.Zero(t, active(upgradedProse))
+	var reason string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT migration_error FROM legacy_reviews WHERE uuid = $1 AND resolved_at IS NULL`, upgradedProse).Scan(&reason))
+	assert.Contains(t, reason, "automatic conversion refused (unrecognized_format)")
+
+	// A mirror upgraded by an older release archived everything. convert
+	// restores the same reviews from the archive.
+	archived := insert(legacyFindingsMarkdown, false, true)
+	archivedMismatch := insert(legacyFindingsMarkdown, true, false)
+	for _, id := range []uuid.UUID{archived, archivedMismatch} {
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error)
+ SELECT r.uuid, to_jsonb(r), 'No valid review JSON document; AI conversion required' FROM reviews r WHERE r.uuid = $1`, id)
+		require.NoError(t, err)
+		_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, id)
+		require.NoError(t, err)
+	}
+
+	dryRun, err := pool.ConvertLegacyReviews(ctx, true)
+	require.NoError(t, err)
+	assert.Zero(t, active(archived), "a dry run restores nothing")
+
+	report, err := pool.ConvertLegacyReviews(ctx, false)
+	require.NoError(t, err)
+	dryRun.DryRun = false
+	assert.Equal(t, dryRun, report, "the dry run reports what the real run does")
+	assert.GreaterOrEqual(t, report.Converted, 1)
+	assert.GreaterOrEqual(t, report.Refused[LegacyRefusalVerdictMismatch], 1)
+	assert.GreaterOrEqual(t, report.Refused["unrecognized_format"], 1)
+	got = read(archived)
+	assert.JSONEq(t, wantDocument, got.document)
+	assert.False(t, got.verdict)
+	assert.True(t, got.closed)
+	assert.Zero(t, active(archivedMismatch), "a conversion that would change the verdict stays archived")
+
+	again, err := pool.ConvertLegacyReviews(ctx, false)
+	require.NoError(t, err)
+	assert.Zero(t, again.Converted, "a second run has nothing new to convert")
+	assert.Equal(t, 1, active(archived))
 }

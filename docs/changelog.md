@@ -5,6 +5,19 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Older Markdown reviews come back without an AI agent. During upgrade, roborev
+    now converts Markdown-only reviews that it wrote in a format it can read
+    back exactly, instead of archiving them. For reviews that an earlier release
+    already archived, run `roborev legacy-reviews convert`, with `--dry-run` to
+    see what would convert and why the rest would not. Roborev still does not
+    guess: a review stays archived when a finding lacks a severity, problem, or
+    fix, or when any text falls outside the recognized structure. See
+    [Automatic conversion](/docs/guides/reviewing-code/#automatic-conversion).
+
 ## 0.68.0
 
 <small>2026-09-20</small>

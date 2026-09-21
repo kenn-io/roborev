@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 // LegacyReviewMigrationNotice is shown when archived reviews need conversion.
-const LegacyReviewMigrationNotice = "Some reviews could not be converted to JSON. Their original records and migration errors are preserved in legacy_reviews and are excluded from normal review reads. Ask an AI agent to convert the unresolved records using the review JSON schema, then import the validated results with roborev legacy-reviews --db <database> import <id>. Run roborev legacy-reviews --db <database> export to prepare the migration input."
+const LegacyReviewMigrationNotice = "Some reviews could not be converted to JSON. Their original records and migration errors are preserved in legacy_reviews and are excluded from normal review reads. Stop the daemon and run roborev legacy-reviews --db <database> convert to restore the reviews roborev wrote in a format it can read back exactly. For the rest, ask an AI agent to convert the unresolved records using the review JSON schema, then import the validated results with roborev legacy-reviews --db <database> import <id>. Run roborev legacy-reviews --db <database> export to prepare the migration input."
 
 var ErrLegacyReviewMigration = errors.New("review requires legacy JSON migration")
 
@@ -31,8 +32,10 @@ const legacyReviewColumns = `id, job_id, agent, prompt, output, created_at, clos
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
  uuid, updated_by_machine_id, updated_at, synced_at`
 
-// migrateLegacyReviews retires prose records without inventing findings. The
-// original row is retained even when its existing JSON makes conversion exact.
+// migrateLegacyReviews retires prose records without inventing findings. A
+// Markdown review that roborev wrote in a format it can read back exactly is
+// converted in place. The original row is retained even when conversion is
+// exact.
 func (db *DB) migrateLegacyReviews() error {
 	machineID, err := db.GetMachineID()
 	if err != nil {
@@ -54,7 +57,7 @@ func (db *DB) migrateLegacyReviews() error {
 		return err
 	}
 
-	rows, err := tx.Query(`SELECT rv.id, rv.output, rv.structured_output, COALESCE(j.min_severity, ''), j.job_type, rv.verdict_bool
+	rows, err := tx.Query(`SELECT rv.id, rv.job_id, rv.output, rv.structured_output, COALESCE(j.min_severity, ''), j.job_type, rv.verdict_bool
  FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
  WHERE j.job_type IN ('review','range','dirty','synthesis','compact')`)
 	if err != nil {
@@ -65,14 +68,18 @@ func (db *DB) migrateLegacyReviews() error {
 		raw     jsontext.Value
 		verdict any
 		reason  string
+		// markdown is set when the row has no usable JSON. Conversion waits
+		// until the row cursor is closed because it may query panel members.
+		markdown *legacyMarkdown
+		jobID    int64
 	}
 	var updates []pending
 	for rows.Next() {
-		var id int64
+		var id, jobID int64
 		var output, threshold, jobType string
 		var raw sql.NullString
 		var oldVerdict sql.NullInt64
-		if err := rows.Scan(&id, &output, &raw, &threshold, &jobType, &oldVerdict); err != nil {
+		if err := rows.Scan(&id, &jobID, &output, &raw, &threshold, &jobType, &oldVerdict); err != nil {
 			rows.Close()
 			return err
 		}
@@ -90,6 +97,11 @@ func (db *DB) migrateLegacyReviews() error {
 		item := pending{id: id, raw: candidate}
 		if decodeErr != nil {
 			item.reason = "No valid review JSON document; AI conversion required: " + decodeErr.Error()
+			item.jobID = jobID
+			item.markdown = &legacyMarkdown{Markdown: output, JobType: jobType, MinSeverity: threshold}
+			if oldVerdict.Valid {
+				item.markdown.StoredVerdict = new(oldVerdict.Int64 != 0)
+			}
 		} else if doc.UnableToReview() && jobType == JobTypeSynthesis && oldVerdict.Valid {
 			// All-failed panel syntheses retain their blocking outcome.
 			item.verdict = oldVerdict.Int64
@@ -104,6 +116,29 @@ func (db *DB) migrateLegacyReviews() error {
 	}
 	if err := rows.Close(); err != nil {
 		return err
+	}
+	for i := range updates {
+		item := &updates[i]
+		if item.markdown == nil {
+			continue
+		}
+		if item.markdown.JobType == JobTypeSynthesis {
+			sources, err := legacySynthesisSources(tx, item.jobID)
+			if err != nil {
+				return err
+			}
+			item.markdown.SourceLabels = legacySourceLabels(sources)
+		}
+		raw, refusal := convertLegacyMarkdown(*item.markdown)
+		if refusal != nil {
+			item.reason += "; automatic conversion refused (" + refusal.Reason + "): " + refusal.Detail
+			continue
+		}
+		item.raw, item.reason = raw, ""
+		item.verdict = nil
+		if doc, err := structuredreview.Decode(raw); err == nil && !doc.UnableToReview() {
+			item.verdict = verdictToBool(VerdictFromPassed(doc.Passed(item.markdown.MinSeverity)))
+		}
 	}
 	for _, item := range updates {
 		if _, err := tx.Exec(`INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error, resolved_at)
@@ -204,11 +239,17 @@ type LegacyReview struct {
 	StructuredOutput string               `json:"previous_json"`
 	Reason           string               `json:"migration_error"`
 	Sources          []LegacyReviewSource `json:"sources,omitempty"`
+
+	// Stored facts an automatic conversion must agree with. The AI conversion
+	// input does not need them.
+	uuid          sql.Null[uuid.UUID]
+	minSeverity   string
+	storedVerdict *bool
 }
 
 func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 	rows, err := db.Query(`SELECT l.archive_id, l.job_id, COALESCE(j.job_type, ''), l.output,
- COALESCE(l.structured_output, ''), l.migration_error FROM legacy_reviews l
+ COALESCE(l.structured_output, ''), l.migration_error, l.uuid, COALESCE(j.min_severity, ''), l.verdict_bool FROM legacy_reviews l
  LEFT JOIN review_jobs j ON j.id = l.job_id WHERE l.resolved_at IS NULL ORDER BY l.archive_id`)
 	if err != nil {
 		return nil, err
@@ -217,8 +258,13 @@ func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 	result := []LegacyReview{}
 	for rows.Next() {
 		var r LegacyReview
-		if err := rows.Scan(&r.ID, &r.JobID, &r.JobType, &r.Output, &r.StructuredOutput, &r.Reason); err != nil {
+		var verdict sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.JobID, &r.JobType, &r.Output, &r.StructuredOutput, &r.Reason,
+			&r.uuid, &r.minSeverity, &verdict); err != nil {
 			return nil, err
+		}
+		if verdict.Valid {
+			r.storedVerdict = new(verdict.Int64 != 0)
 		}
 		result = append(result, r)
 	}

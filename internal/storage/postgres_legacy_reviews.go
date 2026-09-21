@@ -18,7 +18,8 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
  uuid UUID PRIMARY KEY, record JSONB NOT NULL, migration_error TEXT NOT NULL, resolved_at TIMESTAMPTZ)`); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT r.uuid, r.output, r.structured_output, j.job_type
+	rows, err := tx.Query(ctx, `SELECT r.uuid, r.output, r.structured_output, j.job_type, j.uuid,
+ COALESCE(j.min_severity, ''), r.verdict_bool
  FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid
  WHERE j.job_type IN ('review','range','dirty','synthesis','compact') FOR UPDATE OF r`)
 	if err != nil {
@@ -28,12 +29,18 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 		id     uuid.UUID
 		raw    jsontext.Value
 		reason string
+		// markdown is set when the row has no usable JSON. Conversion waits
+		// until the row cursor is closed because it may query panel members.
+		markdown *legacyMarkdown
+		jobUUID  uuid.UUID
+		verdict  *bool
 	}
 	var updates []update
 	for rows.Next() {
 		var u update
-		var output, jobType string
-		if err := rows.Scan(&u.id, &output, &u.raw, &jobType); err != nil {
+		var output, jobType, threshold string
+		var storedVerdict *bool
+		if err := rows.Scan(&u.id, &output, &u.raw, &jobType, &u.jobUUID, &threshold, &storedVerdict); err != nil {
 			rows.Close()
 			return err
 		}
@@ -46,6 +53,7 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 		}
 		if decodeErr != nil {
 			u.reason = "No valid review JSON document; AI conversion required: " + decodeErr.Error()
+			u.markdown = &legacyMarkdown{Markdown: output, JobType: jobType, MinSeverity: threshold, StoredVerdict: storedVerdict}
 		} else if output == "" {
 			continue
 		}
@@ -54,6 +62,28 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	for i := range updates {
+		u := &updates[i]
+		if u.markdown == nil {
+			continue
+		}
+		if u.markdown.JobType == JobTypeSynthesis {
+			sources, err := postgresLegacySources(ctx, tx, u.jobUUID)
+			if err != nil {
+				return err
+			}
+			u.markdown.SourceLabels = legacySourceLabels(sources)
+		}
+		raw, refusal := convertLegacyMarkdown(*u.markdown)
+		if refusal != nil {
+			u.reason += "; automatic conversion refused (" + refusal.Reason + "): " + refusal.Detail
+			continue
+		}
+		u.raw, u.reason = raw, ""
+		if doc, err := structuredreview.Decode(raw); err == nil && !doc.UnableToReview() {
+			u.verdict = new(doc.Passed(u.markdown.MinSeverity))
+		}
 	}
 	for _, u := range updates {
 		if _, err := tx.Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at)
@@ -66,8 +96,9 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 				return err
 			}
 		} else {
-			if _, err := tx.Exec(ctx, `UPDATE reviews SET output = '', structured_output = $2, updated_at = clock_timestamp()
-    WHERE uuid = $1`, u.id, []byte(u.raw)); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE reviews SET output = '', structured_output = $2, updated_at = clock_timestamp(),
+    verdict_bool = CASE WHEN $3 THEN $4::boolean ELSE verdict_bool END
+    WHERE uuid = $1`, u.id, []byte(u.raw), u.markdown != nil, u.verdict); err != nil {
 				return err
 			}
 		}

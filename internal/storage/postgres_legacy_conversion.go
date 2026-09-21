@@ -21,11 +21,16 @@ type PostgresLegacyReview struct {
 	StructuredOutput string               `json:"previous_json"`
 	Reason           string               `json:"migration_error"`
 	Sources          []LegacyReviewSource `json:"sources,omitempty"`
+
+	// Stored facts an automatic conversion must agree with.
+	minSeverity   string
+	storedVerdict *bool
 }
 
 func (p *PgPool) UnresolvedLegacyReviews(ctx context.Context) ([]PostgresLegacyReview, error) {
 	rows, err := p.pool.Query(ctx, `SELECT l.uuid, j.uuid, j.job_type,
- COALESCE(l.record->>'output', ''), COALESCE(l.record->>'structured_output', ''), l.migration_error
+ COALESCE(l.record->>'output', ''), COALESCE(l.record->>'structured_output', ''), l.migration_error,
+ COALESCE(j.min_severity, ''), (l.record->>'verdict_bool')::boolean
  FROM legacy_reviews l JOIN review_jobs j ON j.uuid = (l.record->>'job_uuid')::uuid
  WHERE l.resolved_at IS NULL ORDER BY l.uuid`)
 	if err != nil {
@@ -35,7 +40,8 @@ func (p *PgPool) UnresolvedLegacyReviews(ctx context.Context) ([]PostgresLegacyR
 	records := []PostgresLegacyReview{}
 	for rows.Next() {
 		var r PostgresLegacyReview
-		if err := rows.Scan(&r.ID, &r.JobUUID, &r.JobType, &r.Output, &r.StructuredOutput, &r.Reason); err != nil {
+		if err := rows.Scan(&r.ID, &r.JobUUID, &r.JobType, &r.Output, &r.StructuredOutput, &r.Reason,
+			&r.minSeverity, &r.storedVerdict); err != nil {
 			return nil, err
 		}
 		records = append(records, r)
@@ -107,6 +113,44 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// ConvertLegacyReviews is the PostgreSQL mirror's form of
+// DB.ConvertLegacyReviews. It imports each conversion through
+// ResolveLegacyReview.
+func (p *PgPool) ConvertLegacyReviews(ctx context.Context, dryRun bool) (LegacyConversionReport, error) {
+	report := newLegacyConversionReport(dryRun)
+	records, err := p.UnresolvedLegacyReviews(ctx)
+	if err != nil {
+		return report, err
+	}
+	report.Unresolved = len(records)
+	for _, record := range records {
+		var active bool
+		if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1 OR job_uuid = $2)`,
+			record.ID, record.JobUUID).Scan(&active); err != nil {
+			return report, err
+		}
+		if active {
+			report.Refused[LegacyRefusalActiveReviewExists]++
+			continue
+		}
+		raw, refusal := convertLegacyMarkdown(legacyMarkdown{
+			Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity,
+			StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources),
+		})
+		if refusal != nil {
+			report.Refused[refusal.Reason]++
+			continue
+		}
+		if !dryRun {
+			if err := p.ResolveLegacyReview(ctx, record.ID, raw); err != nil {
+				return report, err
+			}
+		}
+		report.Converted++
+	}
+	return report, nil
 }
 
 type pgLegacyQuerier interface {

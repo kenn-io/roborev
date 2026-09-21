@@ -466,18 +466,78 @@ review document. Markdown is generated for display and export. Findings below
 the configured severity threshold stay in the document, and synthesis documents
 retain their source references and reviewer labels.
 
-On database upgrade, roborev uses existing valid JSON as the authoritative
-review and archives the previous record. Records without valid JSON move to
-`legacy_reviews` with a `migration_error` explaining why they require
-conversion. They are excluded from normal review reads. Sync ignores
-Markdown-only review updates from older clients; it does not create new legacy
-records from them. Roborev does not guess missing severities, fixes, or
-synthesis sources, and does not launch an agent to convert historical records
-automatically.
+On database upgrade, roborev handles each older review in one of three ways:
 
-When unresolved records remain, roborev asks you to run an AI agent for the
-migration. Stop the daemon before importing results, and use the database path
-for the intended installation:
+- A review with valid JSON keeps that JSON as the authoritative review.
+- A Markdown-only review that roborev wrote in a format it can read back exactly
+    is converted to a JSON document. See
+    [Automatic conversion](#automatic-conversion).
+- Any other review moves to `legacy_reviews` with a `migration_error` that says
+    why it was not converted. It is excluded from normal review reads and from
+    `roborev export reviews`.
+
+In every case the original record stays archived in `legacy_reviews`. Sync
+ignores Markdown-only review updates from older clients. It does not create new
+legacy records from them, and they cannot replace a converted review.
+
+Roborev does not guess. It never invents a severity, a fix, or the sources of a
+combined panel review, and it never launches an agent to convert historical
+records. Automatic conversion keeps this rule: it only copies fields that the
+review text states.
+
+### Automatic conversion
+
+Roborev reads back these formats, which it defined itself:
+
+| Format | What it looks like |
+|--------|--------------------|
+| Rendered document | The Markdown roborev generates from a JSON review: `## Summary`, an optional `**Agent assessment:**` line, and `## Findings` with numbered severity headings |
+| Findings list | The output older review prompts asked for: `## Review Findings`, one group of `**Severity**`, `**Location**`, `**Problem**`, and `**Fix**` bullets per finding, and a `## Summary` section |
+| No issues | A review whose first or last line is `No issues found.`. The rest of the text becomes the summary |
+| Threshold marker | A review that is only `SEVERITY_THRESHOLD_MET`. The reviewer reported that every finding was below the minimum severity and recorded none, and the summary says so |
+
+A review stays archived, with the reason in `migration_error`, when:
+
+- a finding has no severity, problem, or fix, or its severity is not critical,
+    high, medium, or low
+- the review has no summary
+- any text falls outside the recognized structure, because converting would drop
+    or misplace it
+- it is a combined panel review with findings that do not name which member
+    reviews reported them
+- the converted findings would change the verdict roborev already recorded
+
+A converted review keeps its identity, job, verdict, closed state, and
+completion time. Its `updated_at` advances, because the stored review changed,
+and it syncs to the PostgreSQL mirror again. Older formats never stated the
+agent's own verdict, so their documents use review schema version 1, which has
+no `verdict` member. The review's pass or fail verdict is unchanged either way.
+
+Reviews archived by an earlier release are converted with one command. Check
+first with `--dry-run`, which only reads the database and can run while the
+daemon is running. It reports how many reviews would convert and counts the rest
+by reason:
+
+```bash
+roborev legacy-reviews --db /path/to/reviews.db convert --dry-run
+```
+
+Then stop the daemon, convert, and restart the daemon:
+
+```bash
+roborev legacy-reviews --db /path/to/reviews.db convert
+```
+
+`convert` validates each document the same way `import` does, keeps every
+original archived, and is safe to run again. It only looks at reviews that are
+still unresolved.
+
+### Converting the remaining reviews with an AI agent
+
+Reviews that stay archived need an AI agent, because reading them takes
+judgment. When unresolved records remain, roborev tells you at startup. Stop the
+daemon before importing results, and use the database path for the intended
+installation:
 
 ```bash
 roborev legacy-reviews --db /path/to/reviews.db export > migration-input.json
@@ -499,10 +559,13 @@ local database rather than adding it to a repository.
 
 The PostgreSQL mirror also archives legacy records and excludes them from active
 reviews. Its archive retains the original row as JSON in
-`legacy_reviews.record`. Use `--postgres-url` instead of `--db` to export and
+`legacy_reviews.record`. The mirror upgrade converts the same formats
+automatically. Use `--postgres-url` instead of `--db` to convert, export, and
 import these records. PostgreSQL archive IDs are UUIDs:
 
 ```bash
+roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
+roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert
 roborev legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
 roborev legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
 ```
