@@ -65,6 +65,101 @@ func ResolveAnalyzeConfigFromConfig(
 	}, nil
 }
 
+// ResolveScheduledAnalyzeConfigFromConfig applies the schedule workflow
+// between per-type analyze settings and the generic analyze workflow.
+func ResolveScheduledAnalyzeConfigFromConfig(repoCfg *RepoConfig, globalCfg *Config, analysisType string) (AnalyzeConfig, error) {
+	level := ""
+	if repoCfg != nil {
+		level = strings.TrimSpace(repoCfg.Schedule.Reasoning)
+	}
+	if level == "" && globalCfg != nil {
+		level = strings.TrimSpace(globalCfg.Schedule.Reasoning)
+	}
+	reasoning := ""
+	if repoCfg != nil {
+		reasoning = repoAnalyzeReasoning(repoCfg, analysisType)
+		if reasoning == "" {
+			reasoning = strings.TrimSpace(repoCfg.Schedule.Reasoning)
+		}
+		if reasoning == "" {
+			reasoning = strings.TrimSpace(repoCfg.ReviewReasoning)
+		}
+	}
+	if reasoning == "" && globalCfg != nil {
+		reasoning = globalAnalyzeReasoning(globalCfg, analysisType)
+		if reasoning == "" {
+			reasoning = strings.TrimSpace(globalCfg.Schedule.Reasoning)
+		}
+		if reasoning == "" {
+			reasoning = strings.TrimSpace(globalCfg.ReviewReasoning)
+		}
+	}
+	if reasoning == "" {
+		reasoning = level
+	}
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	reasoning, err := NormalizeReasoning(reasoning)
+	if err != nil {
+		return AnalyzeConfig{}, err
+	}
+	agentName := ""
+	model := ""
+	if repoCfg != nil {
+		agentName = repoAnalyzeField(repoCfg, analysisType, true)
+		model = repoAnalyzeField(repoCfg, analysisType, false)
+		if agentName == "" {
+			agentName = strings.TrimSpace(repoCfg.Schedule.Agent)
+		}
+		if model == "" {
+			model = strings.TrimSpace(repoCfg.Schedule.Model)
+		}
+		if agentName == "" {
+			agentName = repoWorkflowField(repoCfg, "review", reasoning, true)
+		}
+		if model == "" {
+			model = repoWorkflowField(repoCfg, "review", reasoning, false)
+		}
+		if agentName == "" {
+			agentName = strings.TrimSpace(repoCfg.Agent)
+		}
+		if model == "" {
+			model = strings.TrimSpace(repoCfg.Model)
+		}
+	}
+	if globalCfg != nil {
+		if agentName == "" {
+			agentName = globalAnalyzeField(globalCfg, analysisType, true)
+		}
+		if model == "" {
+			model = globalAnalyzeField(globalCfg, analysisType, false)
+		}
+		if agentName == "" {
+			agentName = strings.TrimSpace(globalCfg.Schedule.Agent)
+		}
+		if model == "" {
+			model = strings.TrimSpace(globalCfg.Schedule.Model)
+		}
+		if agentName == "" {
+			agentName = globalWorkflowField(globalCfg, "review", reasoning, true)
+		}
+		if model == "" {
+			model = globalWorkflowField(globalCfg, "review", reasoning, false)
+		}
+		if agentName == "" {
+			agentName = strings.TrimSpace(globalCfg.DefaultAgent)
+		}
+		if model == "" {
+			model = strings.TrimSpace(globalCfg.DefaultModel)
+		}
+	}
+	if agentName == "" {
+		agentName = "codex"
+	}
+	return AnalyzeConfig{Agent: agentName, Model: model, Reasoning: reasoning}, nil
+}
+
 func resolveAnalyzeAgent(
 	cli string,
 	repoCfg *RepoConfig,

@@ -798,6 +798,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Snapshot config once to ensure consistent settings throughout the job.
 	// This prevents mixed settings if config reloads mid-job.
 	cfg := wp.cfgGetter.Config()
+	if job.Source == storage.JobSourceScheduled {
+		defer agent.ScheduledExecutionLock()()
+	}
 
 	// Get timeout from config (per-repo or global, default 30 minutes), then
 	// overlay any frozen panel-member timeout captured at enqueue time.
@@ -932,6 +935,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			reviewPrompt = job.Prompt
 		}
 		promptToPersist = job.Prompt
+		if job.Source == storage.JobSourceScheduled {
+			prepared, prepErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{RepoPath: checkout.agentRepoPath, ConfigRepoPath: checkout.promptRepoPath})
+			if prepErr != nil {
+				wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare scheduled prompt: %v", prepErr))
+				return
+			}
+			reviewPrompt = prepared.Prompt
+			if prepared.Cleanup != nil {
+				defer prepared.Cleanup()
+			}
+		}
 	} else if job.UsesStoredPrompt() {
 		// Prompt-native job (task/compact) with missing prompt — likely a
 		// daemon version mismatch or storage issue. Fail clearly instead
@@ -1043,6 +1057,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
+	if job.Source == storage.JobSourceScheduled {
+		if job.Agentic || agent.AllowUnsafeAgents() || (strings.HasPrefix(agentName, "codex") && agent.CodexSandboxDisabled()) || !agent.SupportsScheduledReadOnly(a) {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, "scheduled analysis requires a read-only agent")
+			return
+		}
+	}
 	if agentName != job.Agent {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}

@@ -639,7 +639,8 @@ func (db *DB) claimJobAttempt(
 			WHERE status = 'queued'
 			  AND claim_blocked = 0
 			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
-			ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
+			ORDER BY CASE WHEN source = 'scheduled' THEN 1 ELSE 0 END,
+			         `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
 			LIMIT 1
 		)
 		AND NOT EXISTS (

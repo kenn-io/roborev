@@ -65,6 +65,7 @@ type Server struct {
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
 	ciPoller                *CIPoller
+	scheduler               *SchedulerService
 	hookRunner              *HookRunner
 	errorLog                *ErrorLog
 	activityLog             *ActivityLog
@@ -192,6 +193,7 @@ func newServerWithLogs(
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
+	s.scheduler = NewSchedulerService(db, configWatcher)
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db},
@@ -338,6 +340,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
+	s.scheduler.Start(ctx)
 	s.startSearch(ctx)
 
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh)
@@ -638,6 +641,10 @@ func (s *Server) stopOnce0() error {
 
 	// Stop config watcher
 	s.configWatcher.Stop()
+	// Stop scheduling before workers drain, so no new jobs can be enqueued.
+	if s.scheduler != nil {
+		s.scheduler.Stop()
+	}
 
 	// Prevent a browser listener that is still starting from becoming available
 	// after shutdown has begun. The active listener remains available while

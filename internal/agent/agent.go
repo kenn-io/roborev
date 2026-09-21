@@ -10,6 +10,38 @@ import (
 	"sync/atomic"
 )
 
+var scheduledExecutionMu sync.RWMutex
+
+// ScheduledExecutionLock freezes permission settings while a scheduled agent runs.
+func ScheduledExecutionLock() func() {
+	scheduledExecutionMu.RLock()
+	return scheduledExecutionMu.RUnlock
+}
+
+func WithScheduledPermissionWriteLock(fn func()) {
+	scheduledExecutionMu.Lock()
+	defer scheduledExecutionMu.Unlock()
+	fn()
+}
+
+func SupportsScheduledReadOnly(a Agent) bool {
+	if a == nil {
+		return false
+	}
+	switch v := a.(type) {
+	case *OpenCodeAgent:
+		return false
+	case *ACPAgent:
+		return !v.mutatingOperationsAllowed()
+	}
+	readOnlyAdapters := map[string]bool{
+		"claude-code": true, "codex": true, "copilot": true, "cursor": true,
+		"droid": true, "gemini": true, "grok": true, "kilo": true,
+		"kiro": true, "pi": true, "test": true,
+	}
+	return readOnlyAdapters[CanonicalName(a.Name())]
+}
+
 // ReasoningLevel controls how much reasoning/thinking an agent uses
 type ReasoningLevel string
 

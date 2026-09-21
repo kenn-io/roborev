@@ -8,6 +8,19 @@ import (
 	"strings"
 )
 
+func BuildOutputPrefix(analysisType string, filePaths []string) string {
+	sorted := append([]string(nil), filePaths...)
+	sort.Strings(sorted)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
+	sb.WriteString("**Files:**\n")
+	for _, path := range sorted {
+		fmt.Fprintf(&sb, "- %s\n", path)
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
+}
+
 //go:embed *.txt
 var promptFS embed.FS
 

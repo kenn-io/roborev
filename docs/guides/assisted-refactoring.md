@@ -56,6 +56,35 @@ Results appear in the TUI as jobs labeled with their analysis type (e.g.
 findings. You can then run `roborev fix` to address open findings, or pass
 specific job IDs with `roborev fix <job_id>`.
 
+## Scheduled analysis
+
+The daemon can revisit tracked source files on a schedule. The global gate and
+repository opt in are both required:
+
+```toml
+[schedule]
+enabled = true
+interval = "6h"
+types = ["refactor", "complexity"]
+paths = ["internal/"]
+max_files = 10
+agent = "codex"
+model = ""
+reasoning = "standard"
+```
+
+Add the same `[schedule]` table to `.roborev.toml` and set `enabled = true` for
+each repository. Repository values inherit global values field by field. An
+explicitly empty `paths = []` means all eligible source files. `max_files`
+counts distinct files across all selected analysis types.
+
+The first run selects files without a successful analysis baseline. Later runs
+select files whose contents changed since the commit in the latest successful
+record for that analysis type. Failed, canceled, skipped, and missing records do
+not become a baseline. Scheduled jobs are ordinary task jobs, run below review
+work, and use read-only agent permissions. `roborev fix` remains a separate
+foreground action.
+
 ## Branch Mode
 
 Use `--branch` to automatically analyze files changed on the current branch

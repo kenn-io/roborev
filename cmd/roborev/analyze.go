@@ -515,15 +515,7 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 // buildOutputPrefix creates a prefix showing which files were analyzed.
 // This is prepended to the agent's output for reliable file identification.
 func buildOutputPrefix(analysisType string, filePaths []string) string {
-	sort.Strings(filePaths)
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
-	sb.WriteString("**Files:**\n")
-	for _, path := range filePaths {
-		fmt.Fprintf(&sb, "- %s\n", path)
-	}
-	sb.WriteString("\n---\n\n")
-	return sb.String()
+	return analyze.BuildOutputPrefix(analysisType, filePaths)
 }
 
 // enqueueAnalysisJob sends a job to the daemon
@@ -1235,16 +1227,5 @@ func isCodeFile(path string) bool {
 
 // isSourceFile returns true if the file looks like source code
 func isSourceFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	sourceExts := map[string]bool{
-		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
-		".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true, ".cc": true,
-		".java": true, ".kt": true, ".scala": true, ".rb": true, ".php": true,
-		".swift": true, ".m": true, ".cs": true, ".fs": true, ".vb": true,
-		".sh": true, ".bash": true, ".zsh": true, ".fish": true,
-		".sql": true, ".graphql": true, ".proto": true,
-		".yaml": true, ".yml": true, ".toml": true, ".json": true,
-		".md": true, ".txt": true, ".html": true, ".css": true, ".scss": true,
-	}
-	return sourceExts[ext]
+	return git.IsSourceFile(path)
 }

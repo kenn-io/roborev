@@ -205,22 +205,28 @@ func (cw *ConfigWatcher) reloadConfig() {
 		return
 	}
 
-	cw.cfgMu.Lock()
-	oldCfg := cw.cfg
-	requestedWeb := newCfg.Web
-	newCfg.Web = oldCfg.Web
-	requestedMCP := newCfg.MCP
-	newCfg.MCP = oldCfg.MCP
-	requestedSearch := newCfg.Search
-	newCfg.Search = oldCfg.Search
-	cw.cfg = newCfg
-	cw.lastReloadedAt = time.Now()
-	cw.reloadCounter++
-	cw.cfgMu.Unlock()
-
-	// Update global agent settings
-	agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
-	agent.SetCodexSandboxDisabled(newCfg.DisableCodexSandbox)
+	var oldCfg *config.Config
+	var requestedWeb config.WebConfig
+	var requestedMCP config.MCPConfig
+	var requestedSearch config.SearchConfig
+	// Config and agent permission settings change under one lock. A worker that
+	// holds the read lock sees one complete policy for the whole invocation.
+	agent.WithScheduledPermissionWriteLock(func() {
+		cw.cfgMu.Lock()
+		oldCfg = cw.cfg
+		requestedWeb = newCfg.Web
+		newCfg.Web = oldCfg.Web
+		requestedMCP = newCfg.MCP
+		newCfg.MCP = oldCfg.MCP
+		requestedSearch = newCfg.Search
+		newCfg.Search = oldCfg.Search
+		cw.cfg = newCfg
+		cw.lastReloadedAt = time.Now()
+		cw.reloadCounter++
+		cw.cfgMu.Unlock()
+		agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
+		agent.SetCodexSandboxDisabled(newCfg.DisableCodexSandbox)
+	})
 	agent.SetAnthropicAPIKey(newCfg.AnthropicAPIKey)
 
 	// Log what changed (for debugging)

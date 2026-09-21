@@ -200,7 +200,8 @@ type Config struct {
 	FixReasoning               string                          `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze  map[string]AnalyzeConfig `toml:"analyze"`
+	Schedule ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -616,6 +617,9 @@ func (c *Config) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if err := c.Schedule.Validate(true); err != nil {
+		return err
+	}
 	if err := validateEmbeddingConfig(c.Search.Embeddings); err != nil {
 		return err
 	}
@@ -683,7 +687,8 @@ type RepoConfig struct {
 	Review ReviewConfig `toml:"review"`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze  map[string]AnalyzeConfig `toml:"analyze"`
+	Schedule ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
@@ -834,6 +839,9 @@ func (c *RepoConfig) Validate() (err error) {
 		err = markConfigValidationError(err)
 	}()
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if err := c.Schedule.Validate(false); err != nil {
 		return err
 	}
 	reasoning := []namedConfigValue{
