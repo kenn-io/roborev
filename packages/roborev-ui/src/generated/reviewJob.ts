@@ -10,6 +10,9 @@ export interface ReviewJob {
   readonly $schema?: string;
   agent: string;
   agentic: boolean;
+  analysis_commit_sha?: string;
+  analysis_files?: string[];
+  analysis_type?: string;
   backup_agent?: string;
   backup_model?: string;
   branch?: string;

@@ -102,6 +102,9 @@ type ReviewJob struct {
 	ReviewType          string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
 	PatchID             string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix        string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	AnalysisType        string     `json:"analysis_type,omitempty"`
+	AnalysisFiles       []string   `json:"analysis_files,omitempty"`
+	AnalysisCommitSHA   string     `json:"analysis_commit_sha,omitempty"`
 	SkipReason          string     `json:"skip_reason,omitempty"`   // Reason a design review was skipped (status=skipped only)
 	Source              string     `json:"source,omitempty"`        // Automation source; empty for explicit/user rows
 	ParentJobID         *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)

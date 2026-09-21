@@ -1836,6 +1836,7 @@ func (c *Client) ListJobs(ctx context.Context, options *ListJobsRequestOptions, 
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"analysis_type":        {Style: "form", Explode: &[]bool{false}[0]},
 		"before":               {Style: "form", Explode: &[]bool{false}[0]},
 		"branch":               {Style: "form", Explode: &[]bool{false}[0]},
 		"branch_empty":         {Style: "form", Explode: &[]bool{false}[0]},

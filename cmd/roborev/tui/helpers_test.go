@@ -1001,6 +1001,11 @@ func TestShortJobRef(t *testing.T) {
 			want: "analyze",
 		},
 		{
+			name: "recorded analysis type",
+			job:  storage.ReviewJob{GitRef: "analyze", AnalysisType: "refactor"},
+			want: "refactor",
+		},
+		{
 			name: "dirty review",
 			job: storage.ReviewJob{
 				GitRef:      fullSHA1,

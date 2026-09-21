@@ -41,6 +41,9 @@ type targetDescriptor struct {
 	promptPrebuilt    bool
 	outputPrefix      string
 	label             string // prompt jobs only (= gitRef display)
+	analysisType      string
+	analysisFiles     []string
+	analysisCommitSHA string
 	agentic           bool
 	requestedModel    string
 	requestedProvider string
@@ -56,6 +59,7 @@ func (d targetDescriptor) baseOpts() storage.EnqueueOpts {
 		PatchID: d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
 		WorktreePath: d.worktreePath, JobType: d.jobType, Prompt: d.prompt,
 		Source: d.source, PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
+		AnalysisType: d.analysisType, AnalysisFiles: append([]string(nil), d.analysisFiles...), AnalysisCommitSHA: d.analysisCommitSHA,
 		Agentic: d.agentic, RequestedModel: d.requestedModel, RequestedProvider: d.requestedProvider,
 	}
 }
@@ -190,7 +194,7 @@ func (s *Server) resolveInsightsPrompt(
 // gitRef/commitID/diffContent/patchID/sessionSHA stay empty; Label carries the
 // git_ref display value.
 func (s *Server) descriptorForPrompt(in freezeInputs) targetDescriptor {
-	return targetDescriptor{
+	desc := targetDescriptor{
 		repoID:            in.repo.ID,
 		branch:            in.req.Branch,
 		minSeverity:       in.normalizedMinSev,
@@ -203,6 +207,12 @@ func (s *Server) descriptorForPrompt(in freezeInputs) targetDescriptor {
 		requestedModel:    in.requestedModel,
 		requestedProvider: in.requestedProvider,
 	}
+	if in.req.JobType == "" || in.req.JobType == storage.JobTypeTask {
+		desc.analysisType = in.req.AnalysisType
+		desc.analysisFiles = append([]string(nil), in.req.AnalysisFiles...)
+		desc.analysisCommitSHA = in.req.AnalysisCommitSHA
+	}
+	return desc
 }
 
 // descriptorForDirty freezes an uncommitted-changes target. sessionSHA is HEAD

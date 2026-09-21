@@ -141,6 +141,8 @@ roborev list                     # List jobs for current repo/branch
 roborev list --all-branches      # List jobs for every branch in the current repo
 roborev list --open              # List only open reviews
 roborev list --closed            # List only closed reviews
+roborev list --analysis-type refactor # List recorded refactor analyses
+roborev list --file pkg/a.go     # List analyses that recorded this file
 roborev tui                      # Interactive terminal UI
 roborev tui --repo --branch      # Pre-filtered to current repo+branch
 roborev ui                       # Open the browser review workspace
@@ -153,9 +155,23 @@ roborev log <job_id>             # View job log
 | `--job` | Force interpretation as job ID |
 | `--prompt` | Show the prompt sent to the agent instead of the review output |
 | `--json` | Output as JSON for machine-readable workflows |
+| `--analysis-type <name>` | Filter by the recorded `roborev analyze` type |
+| `--file <path>` | Filter by an exact recorded repository-relative file path; repeatable |
 
 `roborev list` filters to the current branch by default. Use `--all-branches` to
 omit the branch filter. `--all-branches` and `--branch` cannot be combined.
+
+Jobs created by `roborev analyze` record the analysis type and the files that
+were supplied to the prompt. File paths use slash separators and are relative to
+the repository root. The file filter checks exact array membership, so
+`pkg/a.go` does not match `pkg` or `pkg/a.go.bak`. The table adds a `Files`
+column when a returned job has recorded files. Older jobs and pulled jobs have
+no analysis metadata.
+
+Analysis jobs also record `analysis_commit_sha` when the prompt contains the
+exact contents of tracked files at one commit. Dirty or untracked input and a
+path-only prompt leave that field empty. An unresolved commit does not prevent
+the job from being queued.
 
 `roborev list --json` and `roborev show --json` include `web_url` when the
 daemon has an active browser listener. See

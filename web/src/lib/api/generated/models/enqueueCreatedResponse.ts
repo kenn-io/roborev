@@ -8,6 +8,9 @@ import type { PanelSummary } from "./panelSummary";
 export interface EnqueueCreatedResponse {
   agent: string;
   agentic: boolean;
+  analysis_commit_sha?: string;
+  analysis_files?: string[];
+  analysis_type?: string;
   backup_agent?: string;
   backup_model?: string;
   branch?: string;

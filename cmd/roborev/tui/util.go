@@ -15,6 +15,9 @@ func shortRef(ref string) string {
 }
 
 func shortJobRef(job storage.ReviewJob) string {
+	if job.AnalysisType != "" {
+		return job.AnalysisType
+	}
 	if job.CommitID == nil && job.DiffContent == nil {
 		if job.GitRef == "prompt" {
 			return "run"

@@ -159,6 +159,12 @@ type ListJobsQuery struct {
 	// GitRef Filter by git ref
 	GitRef *string `json:"git_ref,omitempty"`
 
+	// AnalysisType Filter by recorded analysis type
+	AnalysisType *string `json:"analysis_type,omitempty"`
+
+	// AnalysisFile Filter by recorded analysis file (repeatable)
+	AnalysisFile []string `json:"analysis_file,omitempty"`
+
 	// Branch Filter by branch name
 	Branch *string `json:"branch,omitempty"`
 

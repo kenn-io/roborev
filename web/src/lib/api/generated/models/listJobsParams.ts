@@ -26,6 +26,14 @@ export type ListJobsParams = {
    */
   git_ref?: string;
   /**
+   * Filter by recorded analysis type
+   */
+  analysis_type?: string;
+  /**
+   * Filter by recorded analysis file (repeatable)
+   */
+  analysis_file?: string[];
+  /**
    * Filter by branch name
    */
   branch?: string;

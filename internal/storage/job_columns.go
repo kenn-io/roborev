@@ -47,7 +47,7 @@ const jobSelectColumnsBase = `
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''), j.source_machine_id,
 		       NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0), COALESCE(j.non_voting, 0),
 		       r.root_path, r.name, c.subject,
-		       j.dirty_files, `
+		       j.dirty_files, j.analysis_type, j.analysis_files, j.analysis_commit_sha, `
 
 // jobSelectColumns is the job-only column list. text chooses which large
 // payloads are loaded.
@@ -80,7 +80,8 @@ func jobScanDestinations(j *ReviewJob, f *reviewJobScanFields) []any {
 		&f.SkipReason, &f.Source, &f.SourceMachineID,
 		&f.PanelRunUUID, &f.PanelRole, &f.PanelName, &f.PanelMemberName, &f.PanelMemberIndex, &f.PanelMemberConfig, &f.ClaimBlocked, &f.NonVoting,
 		&j.RepoPath, &j.RepoName, &f.CommitSubject,
-		&f.DirtyFiles, &f.Prompt, &f.DiffContent, &f.Patch,
+		&f.DirtyFiles, &f.AnalysisType, &f.AnalysisFiles, &f.AnalysisCommitSHA,
+		&f.Prompt, &f.DiffContent, &f.Patch,
 	}
 }
 

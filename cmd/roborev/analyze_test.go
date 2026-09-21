@@ -489,10 +489,44 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		},
 	})
 
-	job, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
+	job, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", nil, analyzeOptions{agentName: "test"})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, int64(42), job.ID, "job.ID")
+}
+
+func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
+	var got daemon.EnqueueRequest
+	ts, _ := newMockServer(t, MockServerOpts{
+		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 42, Agent: "test", Status: storage.JobStatusQueued})
+		},
+	})
+
+	_, err := enqueueAnalysisJob(
+		t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "prompt", "", "refactor",
+		[]string{`pkg\b.go`, "pkg/a.go"},
+		analyzeOptions{analysisCommitSHA: "head-sha"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "refactor", got.AnalysisType)
+	assert.Equal(t, []string{"pkg/a.go", "pkg/b.go"}, got.AnalysisFiles)
+	assert.Equal(t, "head-sha", got.AnalysisCommitSHA)
+
+	repo := newTestGitRepo(t)
+	sha := repo.CommitFile("a.go", "package a\n", "add a")
+	assert.Equal(t, sha, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+		"a.go": "package a\n",
+	}))
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "a.go"), []byte("dirty\n"), 0o644))
+	assert.Empty(t, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+		"a.go": "dirty\n",
+	}))
+	assert.Empty(t, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+		"untracked.go": "package untracked\n",
+	}))
 }
 
 func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {
@@ -515,7 +549,7 @@ func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {
 		},
 	})
 
-	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "security", analyzeOptions{agentName: "test"})
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "security", nil, analyzeOptions{agentName: "test"})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, "security", gotReviewType, "security analysis should resolve security workflow config")
@@ -548,7 +582,7 @@ reasoning = "fast"
 		},
 	})
 
-	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", analyzeOptions{})
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, "gemini", got.Agent)
@@ -581,7 +615,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("no branch flag uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", nil, analyzeOptions{})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -589,7 +623,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", nil, analyzeOptions{branch: "HEAD"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -597,7 +631,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("named branch overrides current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", nil, analyzeOptions{branch: "feature-xyz"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "feature-xyz", *gotBranch, "expected branch 'feature-xyz'")
 	})
@@ -620,13 +654,14 @@ func TestGetBranchFiles(t *testing.T) {
 
 	t.Run("filters to code files only", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
-		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
+		files, commitSHA, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
 		require.NoError(t, err, "getBranchFiles")
 		assert.Len(t, files, 1, "expected 1 code file")
 		assert.Contains(t, files, "new.go", "expected new.go in results")
+		assert.Equal(t, repo.HeadSHA(), commitSHA, "branch analysis should record the selected target SHA")
 	})
 
 	t.Run("reads from git not working tree", func(t *testing.T) {
@@ -634,7 +669,7 @@ func TestGetBranchFiles(t *testing.T) {
 		// Modify working tree — should NOT affect branch analysis
 		_ = os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0o644)
 
-		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
+		files, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -649,7 +684,7 @@ func TestGetBranchFiles(t *testing.T) {
 		// Switch back to main, analyze feature branch by name
 		repo.SetHeadBranch("main")
 
-		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
+		files, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "feature",
 			baseBranch: "main",
 		})
@@ -662,7 +697,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.CheckoutNewBranch("docs-only", "main")
 		repo.CommitFile("readme.md", "# Hello", "add readme")
 
-		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
+		_, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -674,7 +709,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo := setupBranchTestRepo(t)
 		repo.SetHeadBranch("main")
 
-		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
+		_, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -706,7 +741,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 		repo.CommitFile("only-new.go", "package main\nfunc New() {}", "feature work")
 
-		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		files, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
 		require.NoError(t, err)
 		// b.go was already merged to upstream/main; must not be analyzed.
 		assert.NotContains(t, files, "b.go",
@@ -724,7 +759,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.SetBranchConfig("main", "remote", "upstream")
 		repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
-		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		_, _, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
 		require.Error(t, err, "expected error when on base branch")
 		assert.Contains(t, err.Error(), "already on main", "unexpected error")
 	})

@@ -704,6 +704,9 @@ type DurationStats struct {
 type EnqueueCreatedResponse struct {
 	Agent                 string                 `json:"agent" validate:"required"`
 	Agentic               bool                   `json:"agentic"`
+	AnalysisCommitSha     *string                `json:"analysis_commit_sha,omitempty"`
+	AnalysisFiles         []string               `json:"analysis_files,omitempty"`
+	AnalysisType          *string                `json:"analysis_type,omitempty"`
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
@@ -836,26 +839,29 @@ func (e EnqueueCreatedResponse) Validate() error {
 
 type EnqueueRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string  `json:"$schema,omitempty"`
-	Agent        *string  `json:"agent,omitempty"`
-	Agentic      *bool    `json:"agentic,omitempty"`
-	Branch       *string  `json:"branch,omitempty"`
-	CommitSha    *string  `json:"commit_sha,omitempty"`
-	CustomPrompt *string  `json:"custom_prompt,omitempty"`
-	DiffContent  *string  `json:"diff_content,omitempty"`
-	DirtyFiles   []string `json:"dirty_files,omitempty"`
-	GitRef       *string  `json:"git_ref,omitempty"`
-	JobType      *string  `json:"job_type,omitempty"`
-	MinSeverity  *string  `json:"min_severity,omitempty"`
-	Model        *string  `json:"model,omitempty"`
-	OutputPrefix *string  `json:"output_prefix,omitempty"`
-	Panel        *string  `json:"panel,omitempty"`
-	Provider     *string  `json:"provider,omitempty"`
-	Reasoning    *string  `json:"reasoning,omitempty"`
-	RepoPath     string   `json:"repo_path" validate:"required"`
-	ReviewType   *string  `json:"review_type,omitempty"`
-	Since        *string  `json:"since,omitempty"`
-	Source       *string  `json:"source,omitempty"`
+	Schema            *string  `json:"$schema,omitempty"`
+	Agent             *string  `json:"agent,omitempty"`
+	Agentic           *bool    `json:"agentic,omitempty"`
+	AnalysisCommitSha *string  `json:"analysis_commit_sha,omitempty"`
+	AnalysisFiles     []string `json:"analysis_files,omitempty"`
+	AnalysisType      *string  `json:"analysis_type,omitempty"`
+	Branch            *string  `json:"branch,omitempty"`
+	CommitSha         *string  `json:"commit_sha,omitempty"`
+	CustomPrompt      *string  `json:"custom_prompt,omitempty"`
+	DiffContent       *string  `json:"diff_content,omitempty"`
+	DirtyFiles        []string `json:"dirty_files,omitempty"`
+	GitRef            *string  `json:"git_ref,omitempty"`
+	JobType           *string  `json:"job_type,omitempty"`
+	MinSeverity       *string  `json:"min_severity,omitempty"`
+	Model             *string  `json:"model,omitempty"`
+	OutputPrefix      *string  `json:"output_prefix,omitempty"`
+	Panel             *string  `json:"panel,omitempty"`
+	Provider          *string  `json:"provider,omitempty"`
+	Reasoning         *string  `json:"reasoning,omitempty"`
+	RepoPath          string   `json:"repo_path" validate:"required"`
+	ReviewType        *string  `json:"review_type,omitempty"`
+	Since             *string  `json:"since,omitempty"`
+	Source            *string  `json:"source,omitempty"`
 }
 
 func (e EnqueueRequest) Validate() error {
@@ -1791,6 +1797,9 @@ type OverviewStats struct {
 type PanelEnqueueResponse struct {
 	Agent                 string                 `json:"agent" validate:"required"`
 	Agentic               bool                   `json:"agentic"`
+	AnalysisCommitSha     *string                `json:"analysis_commit_sha,omitempty"`
+	AnalysisFiles         []string               `json:"analysis_files,omitempty"`
+	AnalysisType          *string                `json:"analysis_type,omitempty"`
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
@@ -2375,6 +2384,9 @@ type ReviewJob struct {
 	Schema                *string                `json:"$schema,omitempty"`
 	Agent                 string                 `json:"agent" validate:"required"`
 	Agentic               bool                   `json:"agentic"`
+	AnalysisCommitSha     *string                `json:"analysis_commit_sha,omitempty"`
+	AnalysisFiles         []string               `json:"analysis_files,omitempty"`
+	AnalysisType          *string                `json:"analysis_type,omitempty"`
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`

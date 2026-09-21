@@ -83,16 +83,19 @@ type EnqueueOpts struct {
 	PatchID             string // Stable patch-id for rebase tracking
 	DiffContent         string // For dirty reviews (captured at enqueue time)
 	DirtyFiles          []string
-	Prompt              string // For task jobs (pre-stored prompt)
-	OutputPrefix        string // Prefix to prepend to review output
-	Agentic             bool   // Allow file edits and command execution
-	PromptPrebuilt      bool   // Prompt is prebuilt and should be used as-is by the worker
-	Label               string // Display label in TUI for task jobs (default: "prompt")
-	JobType             string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
-	Source              string // Automation source (empty = explicit/user row)
-	ParentJobID         int64  // Parent job being fixed (for fix jobs)
-	WorktreePath        string // Worktree checkout path (empty = use main repo root)
-	MinSeverity         string // Minimum severity filter (canonical: critical/high/medium/low or empty)
+	Prompt              string   // For task jobs (pre-stored prompt)
+	OutputPrefix        string   // Prefix to prepend to review output
+	AnalysisType        string   // Recorded analyze type
+	AnalysisFiles       []string // Repository-relative files supplied to analyze
+	AnalysisCommitSHA   string   // Commit whose contents were supplied to analyze
+	Agentic             bool     // Allow file edits and command execution
+	PromptPrebuilt      bool     // Prompt is prebuilt and should be used as-is by the worker
+	Label               string   // Display label in TUI for task jobs (default: "prompt")
+	JobType             string   // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
+	Source              string   // Automation source (empty = explicit/user row)
+	ParentJobID         int64    // Parent job being fixed (for fix jobs)
+	WorktreePath        string   // Worktree checkout path (empty = use main repo root)
+	MinSeverity         string   // Minimum severity filter (canonical: critical/high/medium/low or empty)
 	// Job-level failover override (F7): preferred over the workflow-resolved
 	// backup agent/model when the worker fails this job over to a backup.
 	BackupAgent string
@@ -282,6 +285,10 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	if err != nil {
 		return nil, err
 	}
+	analysisFilesJSON, err := encodeFileList(opts.AnalysisFiles)
+	if err != nil {
+		return nil, err
+	}
 
 	claimBlockedInt := 0
 	if opts.ClaimBlocked {
@@ -300,8 +307,9 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, session_resumed, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, dirty_files, prompt, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
-			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, claim_blocked, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, claim_blocked, source,
+			analysis_type, analysis_files, analysis_commit_sha)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID),
 		sessionResumedInt, opts.ResumeSourceJobUUID,
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
@@ -310,7 +318,8 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		nullString(opts.OutputPrefix), parentJobIDParam,
 		uid, machineID, nowStr, opts.WorktreePath, normalizeMinSeverityForWrite(opts.MinSeverity), opts.BackupAgent, opts.BackupModel,
 		opts.PanelRunUUID, nullString(opts.PanelRole), nullString(opts.PanelName),
-		nullString(opts.PanelMemberName), opts.PanelMemberIndex, nullString(opts.PanelMemberConfigJSON), nonVotingInt, claimBlockedInt, nullString(opts.Source))
+		nullString(opts.PanelMemberName), opts.PanelMemberIndex, nullString(opts.PanelMemberConfigJSON), nonVotingInt, claimBlockedInt, nullString(opts.Source),
+		nullString(opts.AnalysisType), nullString(analysisFilesJSON), nullString(opts.AnalysisCommitSHA))
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +343,9 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		ReviewType:            opts.ReviewType,
 		PatchID:               opts.PatchID,
 		DirtyFiles:            append([]string(nil), opts.DirtyFiles...),
+		AnalysisType:          opts.AnalysisType,
+		AnalysisFiles:         append([]string(nil), opts.AnalysisFiles...),
+		AnalysisCommitSHA:     opts.AnalysisCommitSHA,
 		Status:                JobStatusQueued,
 		EnqueuedAt:            now,
 		Prompt:                opts.Prompt,
@@ -1717,6 +1729,8 @@ type listJobsOptions struct {
 	closed             *bool
 	jobType            string
 	excludeJobType     string
+	analysisType       string
+	analysisFiles      []string
 	hideClassifyJobs   bool
 	repoPrefix         string
 	repoPaths          []string
@@ -1736,6 +1750,20 @@ type jobListPosition struct {
 // WithGitRef filters jobs by git ref.
 func WithGitRef(ref string) ListJobsOption {
 	return func(o *listJobsOptions) { o.gitRef = ref }
+}
+
+// WithAnalysisType filters jobs by the recorded analysis type.
+func WithAnalysisType(analysisType string) ListJobsOption {
+	return func(o *listJobsOptions) { o.analysisType = analysisType }
+}
+
+// WithAnalysisFile filters jobs by exact membership in the recorded file list.
+func WithAnalysisFile(file string) ListJobsOption {
+	return func(o *listJobsOptions) {
+		if file != "" {
+			o.analysisFiles = append(o.analysisFiles, file)
+		}
+	}
 }
 
 // WithBranch filters jobs by exact branch name.
@@ -1898,6 +1926,25 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
 		args = append(args, o.gitRef)
+	}
+	if o.analysisType != "" {
+		conditions = append(conditions, "j.analysis_type = ?")
+		args = append(args, o.analysisType)
+	}
+	for _, analysisFile := range o.analysisFiles {
+		conditions = append(conditions, `
+			CASE WHEN json_valid(j.analysis_files) THEN json_type(j.analysis_files) ELSE '' END = 'array'
+			AND NOT EXISTS (
+				SELECT 1
+			FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+				WHERE analysis_file.type <> 'text'
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+				WHERE analysis_file.type = 'text' AND analysis_file.value = ?
+			)`)
+		args = append(args, analysisFile)
 	}
 	if o.branchEmpty {
 		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
@@ -2847,17 +2894,25 @@ func (db *DB) HasAutoDesignSlotForCommit(repoID int64, sha string) (bool, error)
 }
 
 func encodeDirtyFiles(files []string) (string, error) {
+	return encodeFileList(files)
+}
+
+func encodeFileList(files []string) (string, error) {
 	if len(files) == 0 {
 		return "", nil
 	}
 	data, err := json.Marshal(files)
 	if err != nil {
-		return "", fmt.Errorf("encode dirty files: %w", err)
+		return "", fmt.Errorf("encode file list: %w", err)
 	}
 	return string(data), nil
 }
 
 func decodeDirtyFiles(data string) []string {
+	return decodeFileList(data)
+}
+
+func decodeFileList(data string) []string {
 	if data == "" {
 		return nil
 	}

@@ -7,6 +7,9 @@ export interface EnqueueRequest {
   readonly $schema?: string;
   agent?: string;
   agentic?: boolean;
+  analysis_commit_sha?: string;
+  analysis_files?: string[];
+  analysis_type?: string;
   branch?: string;
   commit_sha?: string;
   custom_prompt?: string;

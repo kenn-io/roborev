@@ -939,6 +939,14 @@ components:
           type: string
         agentic:
           type: boolean
+        analysis_commit_sha:
+          type: string
+        analysis_files:
+          items:
+            type: string
+          type: array
+        analysis_type:
+          type: string
         backup_agent:
           type: string
         backup_model:
@@ -1101,6 +1109,14 @@ components:
           type: string
         agentic:
           type: boolean
+        analysis_commit_sha:
+          type: string
+        analysis_files:
+          items:
+            type: string
+          type: array
+        analysis_type:
+          type: string
         branch:
           type: string
         commit_sha:
@@ -2098,6 +2114,14 @@ components:
           type: string
         agentic:
           type: boolean
+        analysis_commit_sha:
+          type: string
+        analysis_files:
+          items:
+            type: string
+          type: array
+        analysis_type:
+          type: string
         backup_agent:
           type: string
         backup_model:
@@ -2839,6 +2863,14 @@ components:
           type: string
         agentic:
           type: boolean
+        analysis_commit_sha:
+          type: string
+        analysis_files:
+          items:
+            type: string
+          type: array
+        analysis_type:
+          type: string
         backup_agent:
           type: string
         backup_model:
@@ -4515,6 +4547,22 @@ paths:
           schema:
             description: Filter by git ref
             type: string
+        - description: Filter by recorded analysis type
+          explode: false
+          in: query
+          name: analysis_type
+          schema:
+            description: Filter by recorded analysis type
+            type: string
+        - description: Filter by recorded analysis file (repeatable)
+          explode: true
+          in: query
+          name: analysis_file
+          schema:
+            description: Filter by recorded analysis file (repeatable)
+            items:
+              type: string
+            type: array
         - description: Filter by branch name
           explode: false
           in: query

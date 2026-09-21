@@ -364,7 +364,7 @@ export const getListJobsUrl = (params?: ListJobsParams) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ["repo"];
+    const explodeParameters = ["repo", "analysis_file"];
 
     if (Array.isArray(value) && explodeParameters.includes(key)) {
       value.forEach((v) => {

@@ -21,14 +21,16 @@ import (
 
 func listCmd() *cobra.Command {
 	var (
-		branch      string
-		allBranches bool
-		repoPath    string
-		limit       int
-		status      string
-		jsonOutput  bool
-		closed      bool
-		open        bool
+		branch        string
+		allBranches   bool
+		repoPath      string
+		limit         int
+		status        string
+		analysisType  string
+		analysisFiles []string
+		jsonOutput    bool
+		closed        bool
+		open          bool
 	)
 
 	cmd := &cobra.Command{
@@ -106,6 +108,19 @@ Examples:
 			if status != "" {
 				params.Status = new(status)
 			}
+			if analysisType != "" {
+				params.AnalysisType = new(analysisType)
+			}
+			if len(analysisFiles) > 0 {
+				basePath := localRepoPath
+				if basePath == "" {
+					basePath = repoPath
+				}
+				params.AnalysisFile = make([]string, 0, len(analysisFiles))
+				for _, file := range analysisFiles {
+					params.AnalysisFile = append(params.AnalysisFile, normalizeListFile(basePath, file))
+				}
+			}
 			if closed {
 				params.Closed = new(generated.ListJobsQueryClosed("true"))
 			} else if open {
@@ -144,7 +159,18 @@ Examples:
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+			showFiles := false
+			for _, j := range jobsResp.Jobs {
+				if len(j.AnalysisFiles) > 0 {
+					showFiles = true
+					break
+				}
+			}
+			if showFiles {
+				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\tFiles\n")
+			} else {
+				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+			}
 			for _, j := range jobsResp.Jobs {
 				elapsed := ""
 				if j.StartedAt != nil {
@@ -154,8 +180,13 @@ Examples:
 						elapsed = time.Since(*j.StartedAt).Round(time.Second).String() + "..."
 					}
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
-					j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed)
+				if showFiles {
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed, strings.Join(j.AnalysisFiles, ", "))
+				} else {
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
+						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed)
+				}
 			}
 			w.Flush()
 
@@ -172,6 +203,8 @@ Examples:
 	cmd.Flags().StringVar(&repoPath, "repo", "", "filter by repo path (default: current repo)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max number of jobs to return")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (queued, running, done, failed)")
+	cmd.Flags().StringVar(&analysisType, "analysis-type", "", "filter by recorded analysis type")
+	cmd.Flags().StringArrayVar(&analysisFiles, "file", nil, "filter by recorded repository-relative analysis file")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	cmd.Flags().BoolVar(&closed, "closed", false, "show only closed reviews")
 	cmd.Flags().BoolVar(&open, "open", false, "show only open reviews")
@@ -180,4 +213,16 @@ Examples:
 	cmd.MarkFlagsMutuallyExclusive("closed", "open")
 	cmd.MarkFlagsMutuallyExclusive("closed", "unaddressed")
 	return cmd
+}
+
+func normalizeListFile(repoRoot, file string) string {
+	clean := filepath.Clean(file)
+	if repoRoot != "" {
+		if abs, err := filepath.Abs(file); err == nil {
+			if rel, err := filepath.Rel(repoRoot, abs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				clean = rel
+			}
+		}
+	}
+	return filepath.ToSlash(clean)
 }

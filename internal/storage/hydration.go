@@ -40,6 +40,9 @@ type reviewJobScanFields struct {
 	Patch             sql.NullString
 	DiffContent       sql.NullString
 	DirtyFiles        sql.NullString
+	AnalysisType      sql.NullString
+	AnalysisFiles     sql.NullString
+	AnalysisCommitSHA sql.NullString
 	OutputPrefix      sql.NullString
 	CommandLine       sql.NullString
 	TokenUsage        sql.NullString
@@ -112,7 +115,16 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.DiffContent = &fields.DiffContent.String
 	}
 	if fields.DirtyFiles.Valid {
-		job.DirtyFiles = decodeDirtyFiles(fields.DirtyFiles.String)
+		job.DirtyFiles = decodeFileList(fields.DirtyFiles.String)
+	}
+	if fields.AnalysisType.Valid {
+		job.AnalysisType = fields.AnalysisType.String
+	}
+	if fields.AnalysisFiles.Valid {
+		job.AnalysisFiles = decodeFileList(fields.AnalysisFiles.String)
+	}
+	if fields.AnalysisCommitSHA.Valid {
+		job.AnalysisCommitSHA = fields.AnalysisCommitSHA.String
 	}
 	if fields.OutputPrefix.Valid {
 		job.OutputPrefix = fields.OutputPrefix.String

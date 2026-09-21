@@ -144,6 +144,25 @@ func TestListCommand(t *testing.T) {
 			wantQuery: []string{"status=done", "limit=10"},
 		},
 		{
+			name:      "analysis filters normalize and pass through",
+			args:      []string{"--analysis-type", "refactor", "--file", `pkg\a.go`},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"analysis_type=refactor", "analysis_file=pkg%2Fa.go"},
+		},
+		{
+			name: "files column appears for recorded metadata",
+			args: []string{"--all-branches"},
+			handler: jobsHandler([]storage.ReviewJob{{
+				ID:            1,
+				GitRef:        "refactor",
+				RepoName:      "myrepo",
+				Agent:         "test",
+				Status:        storage.JobStatusDone,
+				AnalysisFiles: []string{"pkg/a.go"},
+			}}, false),
+			wantOutput: []string{"Files", "pkg/a.go"},
+		},
+		{
 			name:    "explicit --repo to non-git path sends no branch",
 			args:    []string{"--repo", "/some/other/repo"},
 			handler: jobsHandler([]storage.ReviewJob{}, false),

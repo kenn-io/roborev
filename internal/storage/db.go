@@ -1423,6 +1423,20 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Analysis metadata is local SQLite history. Keep it nullable so legacy
+	// and pulled jobs remain distinguishable from jobs created by analyze.
+	for _, col := range []string{"analysis_type", "analysis_files", "analysis_commit_sha"} {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, col).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column: %w", col, err)
+		}
+		if count == 0 {
+			if _, err = db.Exec(fmt.Sprintf(`ALTER TABLE review_jobs ADD COLUMN %s TEXT`, col)); err != nil {
+				return fmt.Errorf("add %s column: %w", col, err)
+			}
+		}
+	}
+
 	// Keep a durable association for every started attempt that captured a
 	// session. Retry paths intentionally clear review_jobs.session_id, so the
 	// current row alone cannot prove that a cumulative provider session was
