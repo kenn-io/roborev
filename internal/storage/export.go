@@ -29,6 +29,10 @@ const (
 	exportReviewVerdictFail = "fail"
 )
 
+// exportReviewUpdatedAtExpr is the review's update time with the created_at
+// fallback for rows that predate updated_at or carry an empty value.
+const exportReviewUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
+
 var (
 	ErrExportCursorDatabaseMismatch = errors.New("export cursor database reset")
 	ErrExportCursorNotFound         = errors.New("export cursor no longer resolvable")
@@ -40,9 +44,12 @@ type ExportReviewsOptions struct {
 	Until      time.Time
 	Cursor     string
 	ClosedOnly bool
-	Repo       string
-	Project    string
-	Limit      int
+	// UpdatedSince is an inclusive lower bound on the review's updated_at. It
+	// is a filter, not a window: ordering and the cursor stay on completed_at.
+	UpdatedSince time.Time
+	Repo         string
+	Project      string
+	Limit        int
 }
 
 type ExportReviewsPage struct {
@@ -68,6 +75,8 @@ type ExportReview struct {
 	Model               *string                `json:"model"`
 	Cost                ExportReviewCost       `json:"cost"`
 	Content             *string                `json:"content"`
+	Closed              bool                   `json:"closed" doc:"True when the review is marked closed."`
+	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time."`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
 	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
@@ -105,6 +114,8 @@ type exportReviewRow struct {
 	jobUUID             uuid.UUID
 	verdictBool         int64
 	reviewCreated       string
+	closed              bool
+	reviewUpdated       sql.NullString
 	output              sql.NullString
 	status              string
 	enqueuedAt          string
@@ -220,6 +231,10 @@ func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCur
 	if opts.ClosedOnly {
 		conditions = append(conditions, "rv.closed = 1")
 	}
+	if !opts.UpdatedSince.IsZero() {
+		conditions = append(conditions, sqliteNormalizedTimestampExpr(exportReviewUpdatedAtExpr)+" >= datetime(?)")
+		args = append(args, opts.UpdatedSince.UTC().Format(time.RFC3339))
+	}
 	if opts.Repo != "" {
 		conditions = append(conditions, "COALESCE(NULLIF(TRIM(rp.identity), ''), rp.name) = ?")
 		args = append(args, opts.Repo)
@@ -240,7 +255,8 @@ func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCur
 	}
 
 	query := `
-		SELECT rv.uuid, j.uuid, rv.verdict_bool, rv.created_at, ` + outputExpr + `,
+		SELECT rv.uuid, j.uuid, rv.verdict_bool, rv.created_at,
+		       COALESCE(rv.closed, 0), rv.updated_at, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
 		       j.panel_run_uuid, j.panel_role, j.token_usage,
@@ -263,6 +279,8 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 		&row.jobUUID,
 		&row.verdictBool,
 		&row.reviewCreated,
+		&row.closed,
+		&row.reviewUpdated,
 		&row.output,
 		&row.status,
 		&row.enqueuedAt,
@@ -308,6 +326,8 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		Verdict:             exportVerdict(row.verdictBool),
 		CreatedAt:           formatExportTime(parseSQLiteTime(row.enqueuedAt)),
 		CompletedAt:         formatExportTime(completed),
+		Closed:              row.closed,
+		UpdatedAt:           formatExportTime(row.exportUpdatedAt(completed)),
 		DurationMS:          exportDurationMS(row.startedAt, row.finishedAt),
 		Project:             row.project,
 		Repo:                repo,
@@ -331,6 +351,18 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		review.Content = new(row.output.String)
 	}
 	return review
+}
+
+// exportUpdatedAt returns the review's updated_at, falling back to its
+// completion time when the row has no usable update time. The SQL filter in
+// exportReviewUpdatedAtExpr applies the same fallback.
+func (row exportReviewRow) exportUpdatedAt(completed time.Time) time.Time {
+	if row.reviewUpdated.Valid {
+		if updated := parseSQLiteTime(strings.TrimSpace(row.reviewUpdated.String)); !updated.IsZero() {
+			return updated
+		}
+	}
+	return completed
 }
 
 func (row exportReviewRow) exportCommitSHA() string {

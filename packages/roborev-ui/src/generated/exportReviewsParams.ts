@@ -24,6 +24,10 @@ export type ExportReviewsParams = {
    */
   closed_only?: boolean;
   /**
+   * Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at.
+   */
+  updated_since?: string;
+  /**
    * Exact exported repo identifier filter
    */
   repo?: string;

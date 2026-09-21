@@ -264,6 +264,12 @@ generation, `roborev export reviews` exits with code `3`; discard the cursor
 and retry with a window backfill. Other cursor rejections also require
 discarding the cursor before backfilling.
 
+Each exported review reports `closed` and `updated_at`. Closing or reopening a
+review does not move it past a `completed_at` cursor, so combine the cursor pull
+with `roborev export reviews --updated-since <time>` to pick up later close and
+reopen changes. See the
+[export reference](https://roborev.io/docs/commands/#exporting-reviews).
+
 Use `roborev export ci-metrics` to emit finalized CI panel runs — terminal
 outcome (`review_posted`, `no_review_posted`, `giveup_posted`, `abandoned`,
 or `unknown` for panels finalized before outcomes were recorded),

@@ -308,7 +308,7 @@ func TestHumaExportReviews(t *testing.T) {
 		Reviews       []storage.ExportReview `json:"reviews"`
 	}
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
-	assert.Equal(t, 1, body.SchemaVersion)
+	assert.Equal(t, 2, body.SchemaVersion)
 	assert.Equal(t, "roborev", body.Tool)
 	assert.NotEmpty(t, body.ToolVersion)
 	assert.NotEmpty(t, body.GeneratedAt)
@@ -345,6 +345,110 @@ func TestHumaExportReviews(t *testing.T) {
 	require.Len(t, page2.Reviews, 1)
 	assert.Equal(t, "fail", page2.Reviews[0].Verdict)
 	assert.Contains(t, *page2.Reviews[0].Content, "- Medium — issue")
+}
+
+func TestHumaExportReviewsUpdatedSincePicksUpLaterClose(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	assert := assert.New(t)
+	repo := testutil.CreateTestRepo(t, db)
+	untouched := testutil.CreateCompletedReview(t, db, repo.ID, "export-untouched", "test-agent", "No issues found.")
+	closedLater := testutil.CreateCompletedReview(t, db, repo.ID, "export-closed-later", "test-agent", "- Medium — issue")
+	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-01-05 00:00:00', updated_at = '2026-01-05T00:00:00Z' WHERE job_id = ?`, untouched.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-01-06 00:00:00', updated_at = '2026-01-06T00:00:00Z' WHERE job_id = ?`, closedLater.ID)
+	require.NoError(t, err)
+
+	type exportBody struct {
+		Truncated  bool             `json:"truncated"`
+		NextCursor *string          `json:"next_cursor"`
+		Reviews    []map[string]any `json:"reviews"`
+	}
+	export := func(query string) exportBody {
+		rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?"+query, nil)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var body exportBody
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+		return body
+	}
+
+	for _, profile := range []string{"metadata", "content"} {
+		before := export("profile=" + profile)
+		require.Len(t, before.Reviews, 2)
+		for _, review := range before.Reviews {
+			assert.Equal(false, review["closed"], profile)
+		}
+		assert.Equal("2026-01-05T00:00:00Z", before.Reviews[0]["updated_at"], profile)
+		assert.Equal("2026-01-06T00:00:00Z", before.Reviews[1]["updated_at"], profile)
+	}
+
+	// A consumer that already collected both reviews holds this cursor. The
+	// close below happens after it and does not move completed_at.
+	collected := export("profile=metadata")
+	require.NotNil(t, collected.NextCursor)
+	bound := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	closeBody, err := json.Marshal(CloseReviewRequest{JobID: closedLater.ID, Closed: true})
+	require.NoError(t, err)
+	closeRR := serveHuma(t, srv, http.MethodPost, "/api/review/close", closeBody)
+	require.Equal(t, http.StatusOK, closeRR.Code, closeRR.Body.String())
+
+	assert.Empty(export("profile=metadata&cursor="+url.QueryEscape(*collected.NextCursor)).Reviews,
+		"cursor resume does not return a review again after it is closed")
+
+	changed := export("profile=metadata&updated_since=" + url.QueryEscape(bound))
+	require.Len(t, changed.Reviews, 1)
+	assert.Equal("export-closed-later", changed.Reviews[0]["commit_sha"])
+	assert.Equal(true, changed.Reviews[0]["closed"])
+	assert.Equal("2026-01-06T00:00:00Z", changed.Reviews[0]["completed_at"])
+	updatedAt, ok := changed.Reviews[0]["updated_at"].(string)
+	require.True(t, ok, "updated_at must be a string")
+	updated, err := time.Parse(time.RFC3339, updatedAt)
+	require.NoError(t, err)
+	assert.Greater(updated, time.Date(2026, 1, 6, 0, 0, 0, 0, time.UTC))
+}
+
+func TestHumaExportReviewsUpdatedSincePaginatesWithCursor(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	seedHumaExportReviews(t, db, repo.ID, 6)
+	// Seeded reviews carry updated_at equal to their 2026-06-29 completion
+	// time. Move every other one past the bound.
+	_, err := db.Exec(`UPDATE reviews SET updated_at = '2026-08-01T00:00:00Z' WHERE id % 2 = 0`)
+	require.NoError(t, err)
+	var want int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM reviews WHERE id % 2 = 0`).Scan(&want))
+	require.Equal(t, 3, want)
+
+	var reviewIDs []uuid.UUID
+	cursor := ""
+	for {
+		path := "/api/export/reviews?profile=metadata&updated_since=2026-07-01&limit=2"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		rr := serveHuma(t, srv, http.MethodGet, path, nil)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var body struct {
+			Truncated  bool                   `json:"truncated"`
+			NextCursor *string                `json:"next_cursor"`
+			Reviews    []storage.ExportReview `json:"reviews"`
+		}
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+		for _, review := range body.Reviews {
+			assert.Equal(t, "2026-08-01T00:00:00Z", review.UpdatedAt)
+			reviewIDs = append(reviewIDs, review.ReviewID)
+		}
+		if !body.Truncated {
+			break
+		}
+		require.NotNil(t, body.NextCursor)
+		cursor = *body.NextCursor
+	}
+	assert.Len(t, reviewIDs, want)
+	seen := map[uuid.UUID]struct{}{}
+	for _, id := range reviewIDs {
+		seen[id] = struct{}{}
+	}
+	assert.Len(t, seen, want, "every matching review is returned exactly once")
 }
 
 func TestHumaExportReviewsRejectsDifferentDatabaseCursorWithConflict(t *testing.T) {
@@ -442,6 +546,7 @@ func TestHumaExportReviewsValidation(t *testing.T) {
 		"/api/export/reviews?format=yaml",
 		"/api/export/reviews?profile=full",
 		"/api/export/reviews?since=not-a-time",
+		"/api/export/reviews?updated_since=not-a-time",
 		"/api/export/reviews?cursor=not-base64",
 	}
 	for _, path := range tests {

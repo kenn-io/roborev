@@ -9,6 +9,8 @@ export interface ExportReview {
   agent: string;
   /** @nullable */
   branch: string | null;
+  /** True when the review is marked closed. */
+  closed: boolean;
   /** @nullable */
   commit_sha: string | null;
   completed_at: string;
@@ -32,5 +34,7 @@ export interface ExportReview {
   review_id: string;
   status: string;
   subagents: ExportSubagent[];
+  /** RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time. */
+  updated_at: string;
   verdict: string;
 }

@@ -278,6 +278,7 @@ roborev export reviews --since 2026-06-01 --until 2026-06-30
 roborev export reviews --closed-only --repo github.com/org/repo
 roborev export reviews --project my-workspace --limit 1000
 roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
+roborev export reviews --updated-since 2026-07-01T00:00:00Z
 ```
 
 | Flag | Description |
@@ -288,6 +289,7 @@ roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
 | `--until <time>` | Exclusive `completed_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
 | `--closed-only` | Include only reviews you have marked resolved |
+| `--updated-since <time>` | Inclusive `updated_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD`. Combines with every other flag, including `--cursor` |
 | `--repo <id>` | Exact exported repo identifier, usually `github.com/org/repo` |
 | `--project <name>` | Exact local project/workspace label |
 | `--limit <n>` | Maximum top-level reviews to emit |
@@ -302,6 +304,15 @@ when an experiment applies and `null` otherwise. Every assignment contains the
 experiment `id`, `arm`, `subject_hash`, `definition_hash`, and
 `effective_config_hash`.
 
+Each top-level review reports its closed state in both profiles:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `closed` | boolean, never `null` | `true` when the review is marked closed |
+| `updated_at` | RFC3339 UTC string, never `null` | When the review last changed. Closing or reopening a review advances it. It equals `completed_at` for a review that has no recorded update time |
+
+Reviews nested under `subagents` do not have these fields.
+
 Only finished review jobs with a verdict are exported. Task, fix, insights,
 compact, queued, running, failed, and canceled jobs are excluded. Panel reviews
 export as one top-level synthesis review with completed member reviews nested
@@ -314,10 +325,11 @@ CLI follows daemon cursors until all matching rows are included in the one JSON
 document. With `--limit`, the CLI still pages through bounded daemon responses
 until the requested top-level count is reached or no more rows match.
 
-Export documents use `schema_version: 1` and include a stable `database_id` for
-the local review database. Adding `database_id` does not bump `schema_version`
-because it is an additive header field and existing consumers must continue to
-ignore unknown header keys.
+Review export documents use `schema_version: 2`. Version 2 added `closed` and
+`updated_at` to every top-level review; no version 1 field changed meaning.
+Documents also include a stable `database_id` for the local review database.
+`database_id` did not bump `schema_version` because it is an additive header
+field, and consumers must ignore unknown header keys.
 
 Review exports preserve complete content and metadata strings. Pagination limits
 control the number of rows returned; they do not truncate individual fields.
@@ -330,18 +342,38 @@ resolvable or reject them clearly. Every non-empty export includes a
 `next_cursor`, even when `truncated` is `false`; `truncated` only means more
 matching rows are available immediately. `--cursor <opaque>` resumes strictly
 after the cursor position, cannot be combined with `--since`, and still honors
-`--until`, `--limit`, `--profile`, `--closed-only`, `--repo`, and `--project`. A
-malformed, corrupt, stale, or no-longer-resolvable cursor fails instead of
-silently producing a full or empty export. Consumers should treat any cursor
-rejection as a signal to discard the cursor and retry with a completed-at window
-backfill. A cursor from a different `database_id` is rejected distinctly as a
-database reset, and the CLI exits with code `3` for that case so shell callers
-can branch without parsing stderr.
+`--until`, `--limit`, `--profile`, `--closed-only`, `--updated-since`, `--repo`,
+and `--project`. A malformed, corrupt, stale, or no-longer-resolvable cursor
+fails instead of silently producing a full or empty export. Consumers should
+treat any cursor rejection as a signal to discard the cursor and retry with a
+completed-at window backfill. A cursor from a different `database_id` is
+rejected distinctly as a database reset, and the CLI exits with code `3` for
+that case so shell callers can branch without parsing stderr.
 
 Cursor resume is not an overlap scan. A review that completes later with
 `completed_at` earlier than an already consumed cursor position will not be
 returned by cursor resume. Consumers that need convergence for late-completing
 reviews should run their own overlapping completed-at window separately.
+
+Cursor resume also misses later close and reopen changes. Closing or reopening a
+review advances `updated_at` but leaves `completed_at` alone, so a review that
+was already consumed stays behind the cursor. `--updated-since` filters on
+`updated_at` instead: it returns every matching review whose `updated_at` is at
+or after the bound, however long ago the review completed. It is a filter, not a
+second ordering. Rows stay ordered by `(completed_at, review_id)`, and
+`next_cursor` pagination works the same with the filter applied.
+
+Consumers that track closed state should combine two pulls:
+
+1. A `--cursor` pull on `completed_at` to collect new reviews.
+1. An `--updated-since` pull to pick up later close and reopen changes. Use a
+    bound at or before the start of the previous pull. The bound is inclusive,
+    so expect reviews you have already seen, and replace the stored `closed`
+    and `updated_at` for each returned `review_id`.
+
+With [PostgreSQL sync](/docs/advanced/postgres-sync/), a change pulled from
+another machine keeps the `updated_at` that machine recorded. Overlap the bound
+by more than your sync delay so those changes are not missed.
 
 !!! warning "Review content may be sensitive"
 

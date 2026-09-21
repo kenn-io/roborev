@@ -147,15 +147,16 @@ type GetReviewOutput struct {
 
 // ExportReviewsInput holds query parameters for exporting completed reviews.
 type ExportReviewsInput struct {
-	Format     string `query:"format" default:"json" doc:"Output format; only json is supported"`
-	Profile    string `query:"profile" default:"content" doc:"Export profile: content or metadata"`
-	Since      string `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
-	Until      string `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
-	ClosedOnly bool   `query:"closed_only" doc:"Only include reviews marked closed"`
-	Repo       string `query:"repo" doc:"Exact exported repo identifier filter"`
-	Project    string `query:"project" doc:"Exact project display-name filter"`
-	Limit      int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
-	Cursor     string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
+	Format       string `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Profile      string `query:"profile" default:"content" doc:"Export profile: content or metadata"`
+	Since        string `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until        string `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	ClosedOnly   bool   `query:"closed_only" doc:"Only include reviews marked closed"`
+	UpdatedSince string `query:"updated_since" doc:"Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at."`
+	Repo         string `query:"repo" doc:"Exact exported repo identifier filter"`
+	Project      string `query:"project" doc:"Exact project display-name filter"`
+	Limit        int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
+	Cursor       string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
 }
 
 type ExportReviewsWindow struct {

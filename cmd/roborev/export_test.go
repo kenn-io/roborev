@@ -75,6 +75,53 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert.Equal(testUUIDText("review-2"), got.Reviews[1]["review_id"])
 }
 
+func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
+	assert := assert.New(t)
+	var calls int
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			calls++
+			// --since is replaced by the cursor after the first page, but
+			// --updated-since is a filter and must keep applying.
+			assert.Equal("2026-07-01T00:00:00Z", r.URL.Query().Get("updated_since"))
+			switch calls {
+			case 1:
+				assert.Equal("2026-01-01", r.URL.Query().Get("since"))
+				writeExportTestPage(t, w, "", true, new("cursor-1"), []map[string]any{
+					{"review_id": testUUID("review-1"), "closed": true, "updated_at": "2026-07-02T00:00:00Z"},
+				})
+			case 2:
+				assert.Empty(r.URL.Query().Get("since"))
+				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
+				writeExportTestPage(t, w, "", false, new("cursor-2"), []map[string]any{
+					{"review_id": testUUID("review-2"), "closed": false, "updated_at": "2026-07-03T00:00:00Z"},
+				})
+			default:
+				http.Error(w, "too many calls", http.StatusInternalServerError)
+			}
+			return true
+		},
+	})
+
+	output := runExportCmd(t, "reviews", "--since", "2026-01-01", "--updated-since", "2026-07-01T00:00:00Z")
+
+	assert.Equal(2, calls)
+	var got struct {
+		SchemaVersion int              `json:"schema_version"`
+		Reviews       []map[string]any `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &got))
+	assert.Equal(2, got.SchemaVersion)
+	require.Len(t, got.Reviews, 2)
+	assert.Equal(true, got.Reviews[0]["closed"])
+	assert.Equal("2026-07-02T00:00:00Z", got.Reviews[0]["updated_at"])
+	assert.Equal(false, got.Reviews[1]["closed"])
+	assert.Equal("2026-07-03T00:00:00Z", got.Reviews[1]["updated_at"])
+}
+
 func TestExportReviewsCmdLimitStopsAtCursor(t *testing.T) {
 	assert := assert.New(t)
 	var calls []string
@@ -294,7 +341,7 @@ func writeExportTestPage(t *testing.T, w http.ResponseWriter, profile string, tr
 		profile = "content"
 	}
 	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-		"schema_version": 1,
+		"schema_version": 2,
 		"tool":           "roborev",
 		"tool_version":   "dev",
 		"generated_at":   "2026-06-29T00:00:00Z",

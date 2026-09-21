@@ -1112,15 +1112,16 @@ func (c *Client) ExportReviews(ctx context.Context, options *ExportReviewsReques
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"closed_only": {Style: "form", Explode: &[]bool{false}[0]},
-		"cursor":      {Style: "form", Explode: &[]bool{false}[0]},
-		"format":      {Style: "form", Explode: &[]bool{false}[0]},
-		"limit":       {Style: "form", Explode: &[]bool{false}[0]},
-		"profile":     {Style: "form", Explode: &[]bool{false}[0]},
-		"project":     {Style: "form", Explode: &[]bool{false}[0]},
-		"repo":        {Style: "form", Explode: &[]bool{false}[0]},
-		"since":       {Style: "form", Explode: &[]bool{false}[0]},
-		"until":       {Style: "form", Explode: &[]bool{false}[0]},
+		"closed_only":   {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":        {Style: "form", Explode: &[]bool{false}[0]},
+		"format":        {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":         {Style: "form", Explode: &[]bool{false}[0]},
+		"profile":       {Style: "form", Explode: &[]bool{false}[0]},
+		"project":       {Style: "form", Explode: &[]bool{false}[0]},
+		"repo":          {Style: "form", Explode: &[]bool{false}[0]},
+		"since":         {Style: "form", Explode: &[]bool{false}[0]},
+		"until":         {Style: "form", Explode: &[]bool{false}[0]},
+		"updated_since": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/export/reviews",

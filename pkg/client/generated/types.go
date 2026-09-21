@@ -1278,8 +1278,11 @@ func (e ExportCIPanelJob) Validate() error {
 }
 
 type ExportReview struct {
-	Agent               string                 `json:"agent" validate:"required"`
-	Branch              *string                `json:"branch,omitempty" validate:"required"`
+	Agent  string  `json:"agent" validate:"required"`
+	Branch *string `json:"branch,omitempty" validate:"required"`
+
+	// Closed True when the review is marked closed.
+	Closed              bool                   `json:"closed"`
 	CommitSha           *string                `json:"commit_sha,omitempty" validate:"required"`
 	CompletedAt         string                 `json:"completed_at" validate:"required"`
 	Content             *string                `json:"content,omitempty" validate:"required"`
@@ -1296,7 +1299,10 @@ type ExportReview struct {
 	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
-	Verdict             string                 `json:"verdict" validate:"required"`
+
+	// UpdatedAt RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
+	UpdatedAt string `json:"updated_at" validate:"required"`
+	Verdict   string `json:"verdict" validate:"required"`
 }
 
 func (e ExportReview) Validate() error {
@@ -1374,6 +1380,9 @@ func (e ExportReview) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Subagents[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(e.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
 	}
 	if err := typesValidator.Var(e.Verdict, "required"); err != nil {
 		errors = errors.Append("Verdict", err)

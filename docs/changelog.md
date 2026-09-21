@@ -17,6 +17,12 @@ All notable changes to roborev, grouped by minor release.
     guess: a review stays archived when a finding lacks a severity, problem, or
     fix, or when any text falls outside the recognized structure. See
     [Automatic conversion](/docs/guides/reviewing-code/#automatic-conversion).
+- `roborev export reviews` reports whether each review is closed. Every
+    top-level review has a `closed` boolean and an `updated_at` timestamp, and
+    review export documents now use `schema_version: 2`. The new
+    `--updated-since` flag returns reviews that changed after a given time, so
+    consumers can pick up reviews closed or reopened after they were first
+    exported. See [Exporting Reviews](/docs/commands/#exporting-reviews).
 
 ## 0.68.0
 

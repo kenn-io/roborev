@@ -1710,6 +1710,9 @@ func (s *Server) humaGetReview(
 const (
 	exportReviewsDefaultLimit = 500
 	exportReviewsMaxLimit     = 5000
+	// exportReviewsSchemaVersion is 2 since reviews gained closed and
+	// updated_at. The CI metrics and CI cost documents version separately.
+	exportReviewsSchemaVersion = 2
 )
 
 func (s *Server) humaExportReviews(
@@ -1744,6 +1747,11 @@ func (s *Server) humaExportReviews(
 		return nil, huma.Error400BadRequest("invalid until")
 	}
 
+	updatedSince, _, err := parseExportTimeBound(input.UpdatedSince, false)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid updated_since")
+	}
+
 	limit := input.Limit
 	if limit <= 0 {
 		limit = exportReviewsDefaultLimit
@@ -1753,14 +1761,15 @@ func (s *Server) humaExportReviews(
 	}
 
 	page, err := s.db.ExportReviews(storage.ExportReviewsOptions{
-		Profile:    storage.ExportProfile(profile),
-		Since:      since,
-		Until:      until,
-		Cursor:     input.Cursor,
-		ClosedOnly: input.ClosedOnly,
-		Repo:       input.Repo,
-		Project:    input.Project,
-		Limit:      limit,
+		Profile:      storage.ExportProfile(profile),
+		Since:        since,
+		Until:        until,
+		Cursor:       input.Cursor,
+		ClosedOnly:   input.ClosedOnly,
+		UpdatedSince: updatedSince,
+		Repo:         input.Repo,
+		Project:      input.Project,
+		Limit:        limit,
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {
@@ -1779,7 +1788,7 @@ func (s *Server) humaExportReviews(
 	}
 	resp := &ExportReviewsOutput{}
 	resp.Body = ExportReviewsDocument{
-		SchemaVersion: 1,
+		SchemaVersion: exportReviewsSchemaVersion,
 		Tool:          "roborev",
 		ToolVersion:   version.Version,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),

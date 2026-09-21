@@ -1535,6 +1535,9 @@ components:
           type:
             - string
             - "null"
+        closed:
+          description: True when the review is marked closed.
+          type: boolean
         commit_sha:
           type:
             - string
@@ -1589,6 +1592,9 @@ components:
           items:
             $ref: "#/components/schemas/ExportSubagent"
           type: array
+        updated_at:
+          description: RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
+          type: string
         verdict:
           type: string
       required:
@@ -1608,6 +1614,8 @@ components:
         - model
         - cost
         - content
+        - closed
+        - updated_at
         - subagents
         - experiments
         - resume_source_job_uuid
@@ -4362,6 +4370,13 @@ paths:
           schema:
             description: Only include reviews marked closed
             type: boolean
+        - description: Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at.
+          explode: false
+          in: query
+          name: updated_since
+          schema:
+            description: Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at.
+            type: string
         - description: Exact exported repo identifier filter
           explode: false
           in: query

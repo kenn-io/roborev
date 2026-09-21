@@ -173,6 +173,190 @@ func TestExportReviewsFiltersAndOrdering(t *testing.T) {
 	assert.Equal(*includedB.UUID, closedOnly.Reviews[0].ReviewID)
 }
 
+func TestExportReviewsReportsClosedStateAndUpdatedAt(t *testing.T) {
+	for _, profile := range []ExportProfile{ExportProfileContent, ExportProfileMetadata} {
+		t.Run(string(profile), func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+			assert := assert.New(t)
+
+			repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+			review := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-01-05 00:00:00", false)
+			setExportReviewUpdatedAt(t, db, review.JobID, "2026-01-05T00:00:07-05:00")
+			exportOne := func() ExportReview {
+				page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile, Limit: 10})
+				require.NoError(t, err)
+				require.Len(t, page.Reviews, 1)
+				return page.Reviews[0]
+			}
+
+			open := exportOne()
+			assert.False(open.Closed)
+			assert.Equal("2026-01-05T05:00:07Z", open.UpdatedAt)
+
+			require.NoError(t, db.MarkReviewClosedByJobID(review.JobID, true))
+			closed := exportOne()
+			assert.True(closed.Closed)
+			assert.Equal(open.CompletedAt, closed.CompletedAt)
+			openUpdated, err := time.Parse(time.RFC3339, open.UpdatedAt)
+			require.NoError(t, err)
+			closedUpdated, err := time.Parse(time.RFC3339, closed.UpdatedAt)
+			require.NoError(t, err)
+			assert.Greater(closedUpdated, openUpdated, "closing must advance updated_at")
+			assert.Equal(time.UTC, closedUpdated.Location())
+
+			require.NoError(t, db.MarkReviewClosedByJobID(review.JobID, false))
+			assert.False(exportOne().Closed)
+		})
+	}
+}
+
+func TestExportReviewsUpdatedAtFallsBackToCompletedAt(t *testing.T) {
+	for name, updatedAt := range map[string]any{"null": nil, "empty": "", "blank": "  "} {
+		t.Run(name, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+
+			repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+			review := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-01-05 00:00:00", false)
+			setExportReviewUpdatedAt(t, db, review.JobID, updatedAt)
+
+			matching, err := db.ExportReviews(ExportReviewsOptions{
+				Profile:      ExportProfileMetadata,
+				UpdatedSince: time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC),
+				Limit:        10,
+			})
+			require.NoError(t, err)
+			require.Len(t, matching.Reviews, 1)
+			assert.Equal(t, "2026-01-05T00:00:00Z", matching.Reviews[0].CompletedAt)
+			assert.Equal(t, "2026-01-05T00:00:00Z", matching.Reviews[0].UpdatedAt)
+
+			later, err := db.ExportReviews(ExportReviewsOptions{
+				Profile:      ExportProfileMetadata,
+				UpdatedSince: time.Date(2026, 1, 5, 0, 0, 1, 0, time.UTC),
+				Limit:        10,
+			})
+			require.NoError(t, err)
+			assert.Empty(t, later.Reviews)
+		})
+	}
+}
+
+func TestExportReviewsUpdatedSinceReturnsReviewClosedAfterBound(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	untouched := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-01-05 00:00:00", false)
+	setExportReviewUpdatedAt(t, db, untouched.JobID, "2026-01-05T00:00:00Z")
+	closedLater := seedCompletedExportReview(t, db, repo.ID, "2222222222222222222222222222222222222222", "2026-01-06 00:00:00", false)
+	setExportReviewUpdatedAt(t, db, closedLater.JobID, "2026-01-06T00:00:00Z")
+
+	// Both reviews completed long before the bound. Only the close happens
+	// after it.
+	bound := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, db.MarkReviewClosed(closedLater.ID, true))
+
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, UpdatedSince: bound, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	assert.Equal(t, *closedLater.UUID, page.Reviews[0].ReviewID)
+	assert.True(t, page.Reviews[0].Closed)
+	assert.Equal(t, "2026-01-06T00:00:00Z", page.Reviews[0].CompletedAt)
+}
+
+func TestExportReviewsUpdatedSinceIsInclusiveAndCombinesWithOtherFilters(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	assert := assert.New(t)
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	bound := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	seed := func(sha, completedAt, updatedAt string, closed bool) uuid.UUID {
+		review := seedCompletedExportReview(t, db, repo.ID, sha, completedAt, closed)
+		setExportReviewUpdatedAt(t, db, review.JobID, updatedAt)
+		return *review.UUID
+	}
+	seed("1111111111111111111111111111111111111111", "2026-01-05 00:00:00", "2026-03-01T11:59:59Z", true)
+	atBound := seed("2222222222222222222222222222222222222222", "2026-01-06 00:00:00", "2026-03-01 12:00:00", true)
+	// A local-offset timestamp that is before the bound only as text.
+	offsetAfter := seed("3333333333333333333333333333333333333333", "2026-01-07 00:00:00", "2026-03-01T08:00:00-05:00", false)
+	lateCompletion := seed("4444444444444444444444444444444444444444", "2026-02-10 00:00:00", "2026-03-02T00:00:00Z", true)
+
+	exportIDs := func(opts ExportReviewsOptions) []uuid.UUID {
+		opts.Profile = ExportProfileMetadata
+		opts.UpdatedSince = bound
+		opts.Limit = 10
+		page, err := db.ExportReviews(opts)
+		require.NoError(t, err)
+		ids := make([]uuid.UUID, 0, len(page.Reviews))
+		for _, review := range page.Reviews {
+			ids = append(ids, review.ReviewID)
+		}
+		return ids
+	}
+
+	assert.Equal([]uuid.UUID{atBound, offsetAfter, lateCompletion}, exportIDs(ExportReviewsOptions{}),
+		"filtered rows stay ordered by completed_at")
+	assert.Equal([]uuid.UUID{atBound, lateCompletion}, exportIDs(ExportReviewsOptions{ClosedOnly: true}))
+	assert.Equal([]uuid.UUID{offsetAfter, lateCompletion}, exportIDs(ExportReviewsOptions{
+		Since: time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC),
+	}))
+	assert.Equal([]uuid.UUID{atBound, offsetAfter}, exportIDs(ExportReviewsOptions{
+		Until: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+	}))
+}
+
+func TestExportReviewsCursorPaginationWithUpdatedSinceReturnsEachMatchOnce(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	bound := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	var want []uuid.UUID
+	for i := range 9 {
+		// Pairs share a completed_at second so the cursor tie-break on
+		// review_id is exercised with the filter applied.
+		completedAt := fmt.Sprintf("2026-01-05 00:00:%02d", i/2)
+		review := seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", i+1), completedAt, false)
+		updatedAt := "2026-01-05T00:00:00Z"
+		if i%3 != 1 {
+			updatedAt = fmt.Sprintf("2026-03-%02dT00:00:00Z", 28-i)
+			want = append(want, *review.UUID)
+		}
+		setExportReviewUpdatedAt(t, db, review.JobID, updatedAt)
+	}
+
+	full, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, UpdatedSince: bound, Limit: 100})
+	require.NoError(t, err)
+	fullIDs := make([]uuid.UUID, 0, len(full.Reviews))
+	for _, review := range full.Reviews {
+		fullIDs = append(fullIDs, review.ReviewID)
+	}
+	assert.ElementsMatch(t, want, fullIDs)
+
+	var cursor string
+	var pagedIDs []uuid.UUID
+	for {
+		page, err := db.ExportReviews(ExportReviewsOptions{
+			Profile:      ExportProfileMetadata,
+			UpdatedSince: bound,
+			Cursor:       cursor,
+			Limit:        2,
+		})
+		require.NoError(t, err)
+		for _, review := range page.Reviews {
+			pagedIDs = append(pagedIDs, review.ReviewID)
+		}
+		if page.NextCursor == nil || len(page.Reviews) == 0 {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	assert.Equal(t, fullIDs, pagedIDs)
+	assert.Len(t, uniqueValues(pagedIDs), len(want), "paged export must return every match exactly once")
+}
+
 func TestExportReviewsPagination(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -606,6 +790,14 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	return review
+}
+
+// setExportReviewUpdatedAt overwrites a review's updated_at. A nil value
+// stores NULL, matching rows written before the column existed.
+func setExportReviewUpdatedAt(t *testing.T, db *DB, jobID int64, updatedAt any) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE reviews SET updated_at = ? WHERE job_id = ?`, updatedAt, jobID)
+	require.NoError(t, err)
 }
 
 func seedPanelMemberWithoutExportableReview(t *testing.T, db *DB, repoID int64, panelRun uuid.UUID, memberName string, memberIndex int, status JobStatus) {

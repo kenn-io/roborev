@@ -112,6 +112,9 @@ type ExportReviewsQuery struct {
 	// ClosedOnly Only include reviews marked closed
 	ClosedOnly *bool `json:"closed_only,omitempty"`
 
+	// UpdatedSince Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at.
+	UpdatedSince *string `json:"updated_since,omitempty"`
+
 	// Repo Exact exported repo identifier filter
 	Repo *string `json:"repo,omitempty"`
 
