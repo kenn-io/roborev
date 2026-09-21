@@ -126,6 +126,37 @@ func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
 	assert.Empty(t, pulled.AnalysisCommitSHA)
 }
 
+func TestAnalysisMetadataSurvivesClaimAndRetry(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "analysis-metadata-lifecycle")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:            repo.ID,
+		Prompt:            "analyze this",
+		Agent:             "test",
+		AnalysisType:      "refactor",
+		AnalysisFiles:     []string{"pkg/a.go"},
+		AnalysisCommitSHA: "abc123",
+	})
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, job.ID, claimed.ID)
+	assert.Equal(t, "refactor", claimed.AnalysisType)
+	assert.Equal(t, []string{"pkg/a.go"}, claimed.AnalysisFiles)
+	assert.Equal(t, "abc123", claimed.AnalysisCommitSHA)
+
+	retried, err := db.RetryJob(job.ID, "worker-1", 2, 0)
+	require.NoError(t, err)
+	assert.True(t, retried)
+	afterRetry, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "refactor", afterRetry.AnalysisType)
+	assert.Equal(t, []string{"pkg/a.go"}, afterRetry.AnalysisFiles)
+	assert.Equal(t, "abc123", afterRetry.AnalysisCommitSHA)
+}
+
 func jobIDs(jobs []ReviewJob) []int64 {
 	ids := make([]int64, 0, len(jobs))
 	for _, job := range jobs {

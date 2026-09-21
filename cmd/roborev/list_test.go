@@ -30,7 +30,8 @@ func TestNormalizeListFile(t *testing.T) {
 		file string
 		want string
 	}{
-		{name: "portable separator", file: `pkg\a.go`, want: "pkg/a.go"},
+		{name: "native separator", file: filepath.Join("pkg", "a.go"), want: "pkg/a.go"},
+		{name: "literal backslash", file: `pkg\a.go`, want: filepath.ToSlash(`pkg\a.go`)},
 		{name: "repo relative from subdirectory", file: "pkg/a.go", want: "pkg/a.go"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,7 +163,7 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name:      "analysis filters normalize and pass through",
-			args:      []string{"--analysis-type", "refactor", "--file", `pkg\a.go`},
+			args:      []string{"--analysis-type", "refactor", "--file", filepath.Join("pkg", "a.go")},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
 			wantQuery: []string{"analysis_type=refactor", "analysis_file=pkg%2Fa.go"},
 		},

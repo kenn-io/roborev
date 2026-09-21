@@ -507,7 +507,7 @@ func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
 
 	_, err := enqueueAnalysisJob(
 		t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "prompt", "", "refactor",
-		[]string{`pkg\b.go`, "pkg/a.go"},
+		[]string{filepath.Join("pkg", "b.go"), filepath.Join("pkg", "a.go")},
 		analyzeOptions{analysisCommitSHA: "head-sha"},
 	)
 	require.NoError(t, err)
@@ -527,6 +527,93 @@ func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
 	assert.Empty(t, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
 		"untracked.go": "package untracked\n",
 	}))
+}
+
+func TestAnalysisProducerCaptureModes(t *testing.T) {
+	capture := func(t *testing.T, run func(daemon.DaemonEndpoint) error) []daemon.EnqueueRequest {
+		t.Helper()
+		requests := make([]daemon.EnqueueRequest, 0, 2)
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req daemon.EnqueueRequest
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+					http.Error(w, "invalid request", http.StatusBadRequest)
+					return
+				}
+				requests = append(requests, req)
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: int64(len(requests)), Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		require.NoError(t, run(mustParseEndpoint(t, ts.URL)))
+		return requests
+	}
+
+	t.Run("single embedded", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		sha := repo.CommitFile("a.go", "package a\n", "add a")
+		requests := capture(t, func(ep daemon.DaemonEndpoint) error {
+			cmd, _ := newTestCmd(t)
+			return runSingleAnalysis(t.Context(), cmd, ep, repo.Dir, analyze.GetType("refactor"), map[string]string{"a.go": "package a\n"}, analyzeOptions{quiet: true}, config.DefaultMaxPromptSize)
+		})
+		require.Len(t, requests, 1)
+		assert.Equal(t, []string{"a.go"}, requests[0].AnalysisFiles)
+		assert.Equal(t, sha, requests[0].AnalysisCommitSHA)
+	})
+
+	t.Run("per-file embedded", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("a.go", "package a\n", "add a")
+		repo.CommitFile("b.go", "package b\n", "add b")
+		sha := repo.HeadSHA()
+		requests := capture(t, func(ep daemon.DaemonEndpoint) error {
+			cmd, _ := newTestCmd(t)
+			return runPerFileAnalysis(t.Context(), cmd, ep, repo.Dir, analyze.GetType("refactor"), map[string]string{
+				"a.go": "package a\n",
+				"b.go": "package b\n",
+			}, analyzeOptions{quiet: true}, config.DefaultMaxPromptSize)
+		})
+		require.Len(t, requests, 2)
+		for _, req := range requests {
+			assert.Equal(t, sha, req.AnalysisCommitSHA)
+		}
+	})
+
+	t.Run("branch embedded", func(t *testing.T) {
+		repo := setupBranchTestRepo(t)
+		cmd, _ := newTestCmd(t)
+		files, sha, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD", baseBranch: "main", quiet: true})
+		require.NoError(t, err)
+		requests := capture(t, func(ep daemon.DaemonEndpoint) error {
+			cmd, _ := newTestCmd(t)
+			return runSingleAnalysis(t.Context(), cmd, ep, repo.Dir, analyze.GetType("refactor"), files, analyzeOptions{branch: "HEAD", analysisCommitSHA: sha, quiet: true}, config.DefaultMaxPromptSize)
+		})
+		require.Len(t, requests, 1)
+		assert.Equal(t, sha, requests[0].AnalysisCommitSHA)
+	})
+
+	t.Run("dirty and path-only inputs leave SHA empty", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		sha := repo.CommitFile("a.go", "package a\n", "add a")
+		require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "a.go"), []byte("dirty\n"), 0o644))
+		for _, tc := range []struct {
+			name  string
+			files map[string]string
+			max   int
+		}{
+			{name: "dirty", files: map[string]string{"a.go": "dirty\n"}, max: config.DefaultMaxPromptSize},
+			{name: "path-only", files: map[string]string{"a.go": strings.Repeat("x", 1024)}, max: 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				requests := capture(t, func(ep daemon.DaemonEndpoint) error {
+					cmd, _ := newTestCmd(t)
+					return runSingleAnalysis(t.Context(), cmd, ep, repo.Dir, analyze.GetType("refactor"), tc.files, analyzeOptions{analysisCommitSHA: sha, quiet: true}, tc.max)
+				})
+				require.Len(t, requests, 1)
+				assert.Empty(t, requests[0].AnalysisCommitSHA)
+			})
+		}
+	})
 }
 
 func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {

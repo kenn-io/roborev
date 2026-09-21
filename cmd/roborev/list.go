@@ -216,10 +216,9 @@ Examples:
 }
 
 func normalizeListFile(repoRoot, file string) string {
-	portable := strings.ReplaceAll(file, "\\", "/")
-	clean := filepath.Clean(filepath.FromSlash(portable))
+	clean := filepath.Clean(file)
 	if repoRoot != "" {
-		path := filepath.FromSlash(portable)
+		path := file
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(repoRoot, path)
 		}
@@ -229,5 +228,5 @@ func normalizeListFile(repoRoot, file string) string {
 			}
 		}
 	}
-	return strings.ReplaceAll(filepath.ToSlash(clean), "\\", "/")
+	return filepath.ToSlash(clean)
 }

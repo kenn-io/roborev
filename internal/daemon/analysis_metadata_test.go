@@ -86,6 +86,21 @@ func TestEnqueueAnalysisMetadataThroughPrompt(t *testing.T) {
 	assert.Equal(t, "refactor", stored.AnalysisType)
 	assert.Equal(t, []string{"pkg/a.go"}, stored.AnalysisFiles)
 	assert.Equal(t, "head-sha", stored.AnalysisCommitSHA)
+
+	reviewJob := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath:          repo.Path(),
+		GitRef:            repo.HeadSHA(),
+		Agent:             "test",
+		JobType:           storage.JobTypeReview,
+		AnalysisType:      "refactor",
+		AnalysisFiles:     []string{"pkg/a.go"},
+		AnalysisCommitSHA: "must-not-copy",
+	})
+	storedReview, err := db.GetJobByID(reviewJob.ID)
+	require.NoError(t, err)
+	assert.Empty(t, storedReview.AnalysisType)
+	assert.Nil(t, storedReview.AnalysisFiles)
+	assert.Empty(t, storedReview.AnalysisCommitSHA)
 }
 
 func daemonJobIDs(jobs []storage.ReviewJob) []int64 {

@@ -1057,7 +1057,7 @@ func normalizeAnalysisFileList(paths []string) []string {
 }
 
 func normalizeAnalysisPath(path string) string {
-	return strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+	return filepath.ToSlash(path)
 }
 
 type analysisCommitContext struct {
