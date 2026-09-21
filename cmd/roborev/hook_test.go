@@ -307,7 +307,7 @@ func TestInstallHookRepairCmdDoesNotNormalizeUnmanagedHooksPath(t *testing.T) {
 	assert.Equal(t, customPostCommit, string(postCommit))
 }
 
-func TestInstallHookRepairCmdWithRegisteredRepairsRegisteredRepos(t *testing.T) {
+func TestInstallHookRepairCmdWithRegisteredWhileDatabaseWriterActive(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -324,6 +324,14 @@ func TestInstallHookRepairCmdWithRegisteredRepairsRegisteredRepos(t *testing.T) 
 
 	repo := testutil.NewTestRepo(t)
 	_, err = db.GetOrCreateRepo(repo.Root)
+	require.NoError(t, err)
+
+	// Daemon startup can hold a write lock while migrating. Reading the
+	// registered repositories must not compete for that lock.
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`UPDATE repos SET name = 'pending'`)
 	require.NoError(t, err)
 
 	require.NoError(t, os.MkdirAll(repo.HooksDir, 0o755))

@@ -401,11 +401,10 @@ func wrapLine(line string, width int) []string {
 // Stored as a pointer in model so that View() (value receiver) can update
 // the cache and have it persist across bubbletea's model copies.
 //
-// glamourStyle is detected once at creation time (before bubbletea takes over
-// the terminal) to avoid calling termenv.HasDarkBackground() on every render,
-// which blocks for seconds inside bubbletea's raw-mode input loop.
+// glamourStyle is cached to avoid terminal queries during rendering. A
+// BackgroundColorMsg updates it and invalidates rendered lines.
 type markdownCache struct {
-	glamourStyle gansi.StyleConfig // custom style derived from dark/light, detected once at init
+	glamourStyle gansi.StyleConfig // custom style derived from dark/light
 	colorProfile termenv.Profile   // color profile for glamour rendering (Ascii when NO_COLOR)
 	tabWidth     int               // tab expansion width (default 2)
 
@@ -426,12 +425,10 @@ type markdownCache struct {
 	lastPromptMaxScroll int
 }
 
-// newMarkdownCache creates a markdownCache, detecting terminal background
-// color now (before bubbletea enters raw mode and takes over stdin).
-// Delegates style and color profile resolution to the streamfmt package,
-// which respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
+// newMarkdownCache creates an initial palette without reading stdin. Bubble Tea
+// detects the terminal background after its input loop starts.
 func newMarkdownCache(tabWidth int) *markdownCache {
-	style := streamfmt.GlamourStyle()
+	style := streamfmt.InitialGlamourStyle()
 	profile := streamfmt.ResolveColorProfile()
 	if tabWidth <= 0 {
 		tabWidth = 2

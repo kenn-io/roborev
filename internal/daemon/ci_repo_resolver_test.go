@@ -495,7 +495,6 @@ func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 0)
 	defer cancel()
-	time.Sleep(time.Millisecond)
 
 	_, err := r.Resolve(ctx, ci, nil)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)

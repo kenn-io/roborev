@@ -269,7 +269,7 @@ branch filtering continues to group the review under `(none)`.
 The default-visible "Cost" column shows the model-pricing estimate from
 [agentsview](/docs/commands/#token-usage) for jobs that have reported usage. The
 cell stays blank for unpriced models, for jobs whose usage has not been fetched
-yet, and on agentsview versions older than 0.30.0.
+yet, or on AgentsView versions without cost support.
 
 For panel parent rows, the cost column shows known member costs as soon as they
 are available, including while other members are still running or unpriced.
@@ -441,6 +441,9 @@ content from interfering with your terminal.
 
 The TUI automatically adapts to light and dark terminals. Colors are selected
 based on your terminal's background to ensure readability in both environments.
+In Windows Terminal, the TUI requests the background color after its input loop
+starts and applies the palette when the terminal replies. It stays responsive
+while waiting; if no reply arrives, it keeps the default dark palette.
 
 To override auto-detection, set the `ROBOREV_COLOR_MODE` environment variable:
 

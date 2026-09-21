@@ -49,6 +49,7 @@ func (h roborevAgentHookHandler) request(
 		}
 	}
 	return agenthook.Request{
+		MCP:                   h.opts.MCP,
 		Agent:                 h.agent,
 		Event:                 input,
 		Threshold:             h.opts.TurnThreshold,
@@ -100,7 +101,7 @@ func (h roborevAgentHookHandler) PostToolUse(
 	}
 	return kitagenthook.PostToolUseOutput{
 		AdditionalContext: prependAgentHookFixSkillWarning(
-			h.agent,
+			h.agent, h.opts.MCP,
 			agenthook.PostToolUseAdditionalContextWithFixGuidelines(
 				resp.Reason, h.opts.FixGuidelines,
 			),
@@ -131,7 +132,7 @@ func (h roborevAgentHookHandler) Stop(
 	return kitagenthook.StopOutput{
 		Decision: kitagenthook.DecisionBlock,
 		Reason: prependAgentHookFixSkillWarning(
-			h.agent,
+			h.agent, h.opts.MCP,
 			agenthook.StopReasonWithFixGuidelines(
 				resp.Reason, h.opts.FixGuidelines,
 			),
@@ -139,7 +140,7 @@ func (h roborevAgentHookHandler) Stop(
 	}, nil
 }
 
-func prependAgentHookFixSkillWarning(agent kitagenthook.Agent, instruction string) string {
+func prependAgentHookFixSkillWarning(agent kitagenthook.Agent, mcp bool, instruction string) string {
 	skillAgent, supported := mapAgentHookSkillAgent(agent)
 	if !supported {
 		return instruction
@@ -149,20 +150,29 @@ func prependAgentHookFixSkillWarning(agent kitagenthook.Agent, instruction strin
 	if !found {
 		return instruction
 	}
+	installCommand := agentHookSkillInstallCommand
+	if mcp {
+		installCommand += " --mcp"
+	} else if status.MCP {
+		installCommand += " --mcp=false"
+	}
 	state, installed := status.Skills["roborev-fix"]
 	if !installed {
 		state = skills.SkillMissing
+	}
+	if state == skills.SkillCurrent && status.MCP != mcp {
+		state = skills.SkillOutdated
 	}
 	switch state {
 	case skills.SkillMissing:
 		return fmt.Sprintf(
 			"Warning: the roborev-fix skill is missing. Run '%s' before following this reminder.\n\n%s",
-			agentHookSkillInstallCommand, instruction,
+			installCommand, instruction,
 		)
 	case skills.SkillOutdated:
 		return fmt.Sprintf(
 			"Warning: the installed roborev-fix skill is outdated. Run '%s' before following this reminder.\n\n%s",
-			agentHookSkillInstallCommand, instruction,
+			installCommand, instruction,
 		)
 	default:
 		return instruction
@@ -170,16 +180,10 @@ func prependAgentHookFixSkillWarning(agent kitagenthook.Agent, instruction strin
 }
 
 func mapAgentHookSkillAgent(agent kitagenthook.Agent) (skills.Agent, bool) {
-	switch agent {
-	case kitagenthook.AgentClaude:
-		return skills.AgentClaude, true
-	case kitagenthook.AgentCodex:
-		return skills.AgentCodex, true
-	case kitagenthook.AgentDroid:
-		return skills.AgentDroid, true
-	case kitagenthook.Agent("grok"):
-		return skills.AgentGrok, true
-	default:
-		return "", false
+	for _, supported := range skills.Agents() {
+		if string(supported) == string(agent) {
+			return supported, true
+		}
 	}
+	return "", false
 }

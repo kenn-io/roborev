@@ -1,10 +1,10 @@
 //go:build windows
 
-package agenthook
+package agentconfig
 
 import "golang.org/x/sys/windows"
 
-func replaceAgentHookConfigFile(staging, target string) error {
+func replaceFile(staging, target string) error {
 	stagingPath, err := windows.UTF16PtrFromString(staging)
 	if err != nil {
 		return err

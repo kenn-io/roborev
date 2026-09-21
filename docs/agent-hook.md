@@ -92,12 +92,11 @@ This coordination applies only to Agent Hook reminders. Direct human invocations
 of `roborev fix` or the `roborev-fix` skill do not create or check a fix
 session.
 
-When a reminder triggers for Claude Code, Codex, Factory Droid, or Grok Build,
-the hook compares that agent's installed `roborev-fix` skill with the version
-embedded in the running roborev binary. If the skill is missing or outdated, the
-reminder begins with a warning to run `roborev skills install`. The original
-instruction and its exact review job IDs are still delivered. The hook never
-updates skills automatically.
+When a reminder triggers for a supported agent, the hook compares that agent's
+installed `roborev-fix` skill with the version embedded in the running roborev
+binary. If the skill is missing or outdated, the reminder begins with a warning
+to run `roborev skills install`. The original instruction and its exact review
+job IDs are still delivered. The hook never updates skills automatically.
 
 ## Install
 
@@ -129,10 +128,11 @@ Automatic and `all` installs attempt every selected profile and report all
 errors after preserving successful installs. `--dry-run` plans the same changes
 without writing.
 
-For Claude Code, Codex, Factory Droid, and Grok Build, installation also creates
-or updates that profile's bundled roborev skills before activating the hook.
-Other hook profiles do not currently have bundled skill variants and receive no
-CLI fallback.
+For every supported agent, installation also creates or updates that profile's
+bundled roborev skills before activating the hook. Pass `--mcp` to install MCP
+configuration and MCP skill instructions together. The default transport is
+stdio; use `--mcp-transport http --mcp-url <daemon URL>/mcp` for an existing
+daemon endpoint. See [MCP setup](integrations/mcp.md).
 
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.

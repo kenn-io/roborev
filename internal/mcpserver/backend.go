@@ -1,4 +1,4 @@
-// Package mcpserver exposes read-only roborev review data to Model Context
+// Package mcpserver exposes roborev review data to Model Context
 // Protocol clients over stdio or streamable HTTP.
 package mcpserver
 
@@ -7,14 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// Backend is the read-only roborev data boundary used by MCP tools. The
+// Backend is the roborev data boundary used by MCP tools. The
 // daemon implements it in-process; the CLI implements it over the daemon
 // HTTP API.
 type Backend interface {
+	AddComment(context.Context, AddCommentInput) (*storage.Response, error)
+	CloseReview(context.Context, int64) error
+	Snooze(context.Context, SnoozeInput) (SnoozeOutput, error)
+	CompleteFix(context.Context, uuid.UUID) error
 	Status(context.Context) (*storage.DaemonStatus, error)
 	ListRepos(context.Context, ReposQuery) ([]storage.RepoWithCount, error)
 	ListBranches(ctx context.Context, repoPath string) ([]storage.BranchWithCount, error)

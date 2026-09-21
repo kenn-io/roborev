@@ -1,4 +1,4 @@
-package agenthook
+package agentconfig
 
 import (
 	"bytes"
@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 )
 
-// commitAgentHookConfig commits the complete planned configuration in one
+// Write commits the complete planned configuration in one
 // atomic replacement, preserving the mode and target of an existing symlink.
-func commitAgentHookConfig(path string, data []byte) error {
+func Write(path string, data []byte) error {
 	writePath := path
 	info, err := os.Lstat(path)
 	mode := os.FileMode(0o600)
@@ -18,7 +18,7 @@ func commitAgentHookConfig(path string, data []byte) error {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
 		writePath, err = filepath.EvalSymlinks(path)
 		if err != nil {
-			return fmt.Errorf("resolve agent hook config symlink %s: %w", path, err)
+			return fmt.Errorf("resolve agent config symlink %s: %w", path, err)
 		}
 		if targetInfo, statErr := os.Stat(writePath); statErr == nil {
 			mode = targetInfo.Mode().Perm()
@@ -26,15 +26,15 @@ func commitAgentHookConfig(path string, data []byte) error {
 	case err == nil:
 		mode = info.Mode().Perm()
 	case !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("inspect agent hook config %s: %w", path, err)
+		return fmt.Errorf("inspect agent config %s: %w", path, err)
 	}
 	dir := filepath.Dir(writePath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create agent hook config directory %s: %w", dir, err)
+		return fmt.Errorf("create agent config directory %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(writePath)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temporary agent hook config: %w", err)
+		return fmt.Errorf("create temporary agent config: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -43,16 +43,16 @@ func commitAgentHookConfig(path string, data []byte) error {
 		return writeErr
 	}
 	if err := tmp.Chmod(mode); err != nil {
-		return closeWithError(fmt.Errorf("set temporary agent hook config mode: %w", err))
+		return closeWithError(fmt.Errorf("set temporary agent config mode: %w", err))
 	}
 	if _, err := bytes.NewReader(data).WriteTo(tmp); err != nil {
-		return closeWithError(fmt.Errorf("write temporary agent hook config: %w", err))
+		return closeWithError(fmt.Errorf("write temporary agent config: %w", err))
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary agent hook config: %w", err)
+		return fmt.Errorf("close temporary agent config: %w", err)
 	}
-	if err := replaceAgentHookConfigFile(tmpPath, writePath); err != nil {
-		return fmt.Errorf("replace agent hook config %s: %w", path, err)
+	if err := replaceFile(tmpPath, writePath); err != nil {
+		return fmt.Errorf("replace agent config %s: %w", path, err)
 	}
 	return nil
 }

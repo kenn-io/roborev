@@ -31,6 +31,7 @@ const (
 )
 
 type Options struct {
+	MCP                   bool
 	ConfigPath            string
 	TurnThreshold         int
 	CommitThreshold       int
@@ -67,6 +68,7 @@ func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) 
 		}
 	}
 	opts, err := resolver(cli, changed)
+	opts.MCP = cli.MCP
 	if err != nil {
 		return Options{}, err
 	}

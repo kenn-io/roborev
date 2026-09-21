@@ -156,10 +156,10 @@ type WebConfig struct {
 	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }
 
-// MCPConfig controls the read-only Model Context Protocol endpoint served by
+// MCPConfig controls the Model Context Protocol endpoint served by
 // the daemon.
 type MCPConfig struct {
-	Enabled bool `toml:"enabled" comment:"Serve the read-only MCP endpoint at /mcp on the daemon API listener. Requires a daemon restart."`
+	Enabled bool `toml:"enabled" comment:"Serve the MCP endpoint at /mcp on the daemon API listener. Requires a daemon restart."`
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.

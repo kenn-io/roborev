@@ -74,7 +74,7 @@ func repairHooks(ctx context.Context, opts repairHookOptions) error {
 	var warnings []error
 	for _, root := range roots {
 		if opts.gitDirOnly {
-			insideGitDir, err := githook.HooksDirInsideGitDir(ctx, root)
+			insideGitDir, err := githook.HooksInsideGitDir(ctx, root)
 			if err != nil || !insideGitDir {
 				continue
 			}
@@ -146,7 +146,7 @@ func registeredHookRepos() ([]string, error) {
 		return nil, fmt.Errorf("stat repo database: %w", err)
 	}
 
-	db, err := storage.Open(dbPath)
+	db, err := storage.OpenReadOnly(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open repo database: %w", err)
 	}

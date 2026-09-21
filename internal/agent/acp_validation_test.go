@@ -351,3 +351,82 @@ func TestSessionUpdateRejectsBeforeSessionEstablished(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "real-content", client.result.String(), "Valid SessionUpdate after NewSession must be accepted")
 }
+
+func TestSessionUpdateStreamsToolCallsToLiveLog(t *testing.T) {
+	t.Parallel()
+
+	var liveLog bytes.Buffer
+	client := &acpClient{
+		agent:     &ACPAgent{SessionID: "sess-1"},
+		sessionID: "sess-1",
+		output:    &liveLog,
+		result:    &bytes.Buffer{},
+	}
+
+	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.StartReadToolCall(
+			acp.ToolCallId("call-1"),
+			"Read main.go",
+			"internal/example/main.go",
+		),
+	})
+	require.NoError(t, err)
+
+	got := liveLog.String()
+	assert.Contains(t, got, "Read main.go")
+	assert.Contains(t, got, "internal/example/main.go")
+	assert.True(t, strings.HasSuffix(got, "\n"), "live log tool lines must end with a newline so a running job can tail them")
+	assert.Empty(t, client.result.String(), "tool calls belong in the live log, not the final review")
+
+	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content:       acp.TextBlock("findings"),
+				SessionUpdate: "agent_message_chunk",
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "findings", client.result.String())
+}
+
+func TestSessionUpdateSeparatesToolLineFromPriorText(t *testing.T) {
+	t.Parallel()
+
+	var liveLog bytes.Buffer
+	client := &acpClient{
+		agent:     &ACPAgent{SessionID: "sess-1"},
+		sessionID: "sess-1",
+		output:    &liveLog,
+		result:    &bytes.Buffer{},
+	}
+
+	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content:       acp.TextBlock("commentary"),
+				SessionUpdate: "agent_message_chunk",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "sess-1",
+		Update: acp.StartReadToolCall(
+			acp.ToolCallId("call-1"),
+			"Read main.go",
+			"internal/example/main.go",
+		),
+	})
+	require.NoError(t, err)
+
+	got := liveLog.String()
+	assert.Contains(t, got, "commentary\n")
+	assert.Contains(t, got, "[tool] Read main.go")
+	assert.NotContains(t, got, "commentary[tool]")
+	assert.Equal(t, "commentary", client.result.String())
+}

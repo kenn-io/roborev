@@ -105,15 +105,17 @@ type columnOption struct {
 
 // logOutputMsg delivers output lines from the daemon
 type logOutputMsg struct {
-	lines     []logLine
-	hasMore   bool // true if job is still running
-	err       error
-	newOffset int64                // byte offset for next fetch
-	append    bool                 // true = append lines, false = replace
-	agent     string               // response identity used by fmtr
-	source    string               // response source used by fmtr
-	seq       uint64               // fetch sequence number for stale detection
-	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	lines       []logLine
+	hasMore     bool // true if job is still running
+	err         error
+	newOffset   int64                // byte offset for next fetch
+	append      bool                 // true = append lines, false = replace
+	agent       string               // response identity used by fmtr
+	source      string               // response source used by fmtr
+	seq         uint64               // fetch sequence number for stale detection
+	fmtr        *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	pending     string               // unterminated raw suffix for the next poll
+	pendingRows int                  // rendered rows belonging to pending
 }
 
 // logTickMsg triggers a refresh of the log output
@@ -124,16 +126,18 @@ type logTickMsg struct{}
 // paneLog* model fields so it never collides with the full-screen log
 // view's independent offset/formatter/seq state.
 type paneLogOutputMsg struct {
-	jobID     int64 // job this fetch was issued for -- checked alongside seq (see handlePaneLogOutputMsg)
-	lines     []logLine
-	hasMore   bool // true if job is still running
-	err       error
-	newOffset int64                // byte offset for next fetch
-	append    bool                 // true = append lines, false = replace (server-side offset reset)
-	agent     string               // response identity used by fmtr
-	source    string               // response source used by fmtr
-	seq       uint64               // fetch sequence number for stale detection
-	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	jobID       int64 // job this fetch was issued for -- checked alongside seq (see handlePaneLogOutputMsg)
+	lines       []logLine
+	hasMore     bool // true if job is still running
+	err         error
+	newOffset   int64                // byte offset for next fetch
+	append      bool                 // true = append lines, false = replace (server-side offset reset)
+	agent       string               // response identity used by fmtr
+	source      string               // response source used by fmtr
+	seq         uint64               // fetch sequence number for stale detection
+	fmtr        *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+	pending     string               // unterminated raw suffix for the next poll
+	pendingRows int                  // rendered rows belonging to pending
 }
 
 // paneLogTickMsg triggers a poll of the split detail pane's live log tail.

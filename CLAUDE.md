@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+@AGENTS.md
+
+Use the shared project instructions in `AGENTS.md`, including its documentation
+style and release documentation workflow. The notes below provide additional
+Claude Code context.
+
 ## Project Overview
 
 roborev is an automatic code review daemon for git commits. It runs locally, triggered by post-commit hooks, and uses AI agents (Codex, Claude Code, Gemini, Copilot, etc.) to review commits in parallel. It also supports background fix jobs, CI integration via GitHub PRs, and PostgreSQL sync for multi-machine setups.

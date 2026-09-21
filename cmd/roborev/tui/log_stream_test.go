@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,145 @@ func TestTUILogFetchWrapsChunkedGrokTextAtPaneWidth(t *testing.T) {
 			assert.Len(lines, tt.wantLines)
 		})
 	}
+}
+
+func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		if offset != "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(bodies["0"])+len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	const wrapWidth = 12
+	m.width, m.height = wrapWidth, 24
+	first := strings.Repeat("x", wrapWidth+3)
+	second := strings.Repeat("x", wrapWidth)
+	bodies["0"] = first
+	bodies[fmt.Sprintf("%d", len(first))] = second
+	full := first + second
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	firstMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	m, _ = updateModel(t, m, firstMsg)
+	firstRows := plainLogLines(m.logLines)
+	require.Greater(t, len(firstRows), 1, "unterminated suffix must wrap")
+	assert.Equal(t, first, strings.Join(firstRows, ""))
+
+	secondMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	m, _ = updateModel(t, m, secondMsg)
+	rows := plainLogLines(m.logLines)
+	assert.Greater(t, len(rows), len(firstRows))
+	assert.Equal(t, full, strings.Join(rows, ""))
+}
+
+func TestTUILogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
+	bodies := map[string]string{}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		off, err := strconv.Atoi(offset)
+		if err != nil {
+			http.Error(w, "bad offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", strconv.Itoa(off+len(body)))
+		_, _ = fmt.Fprint(w, body)
+	})
+	const wrapWidth = 12
+	m.width, m.height = wrapWidth, 24
+	complete := "done\n"
+	firstPending := strings.Repeat("x", wrapWidth+3)
+	secondPending := strings.Repeat("x", wrapWidth)
+	bodies["0"] = complete
+	bodies[strconv.Itoa(len(complete))] = firstPending
+	bodies[strconv.Itoa(len(complete)+len(firstPending))] = secondPending
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "test",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	firstMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, firstMsg.err)
+	m, _ = updateModel(t, m, firstMsg)
+	assert.Equal(t, []string{"done"}, plainLogLines(m.logLines))
+
+	secondMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, secondMsg.err)
+	m, _ = updateModel(t, m, secondMsg)
+	afterFirstPending := plainLogLines(m.logLines)
+	require.Greater(t, len(afterFirstPending), 2, "unterminated suffix must wrap")
+	assert.Equal(t, "done"+firstPending, strings.Join(afterFirstPending, ""))
+
+	thirdMsg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, thirdMsg.err)
+	m, _ = updateModel(t, m, thirdMsg)
+	rows := plainLogLines(m.logLines)
+	assert.Equal(t, "done"+firstPending+secondPending, strings.Join(rows, ""))
+}
+
+func TestTUILogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
+	const incomplete = `{"type":"end"`
+	bodies := map[string]string{
+		"0":                                incomplete,
+		fmt.Sprintf("%d", len(incomplete)): "}\n",
+	}
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		body, ok := bodies[offset]
+		if !ok {
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Job-Status", "running")
+		w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(incomplete)+len(body)))
+		if offset == "0" {
+			w.Header().Set("X-Log-Offset", fmt.Sprintf("%d", len(body)))
+		}
+		_, _ = fmt.Fprint(w, body)
+	})
+	m.width, m.height = 80, 24
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning, Agent: "grok",
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	first, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	m, _ = updateModel(t, m, first)
+	require.Equal(t, []string{incomplete}, plainLogLines(m.logLines))
+
+	second, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	m, _ = updateModel(t, m, second)
+	assert.Empty(t, plainLogLines(m.logLines))
+	assert.Empty(t, m.logPending)
+	assert.Zero(t, m.logPendingRows)
 }
 
 // If the full-screen log opener drops the selected agent, provider-shaped

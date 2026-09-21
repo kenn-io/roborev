@@ -10,6 +10,17 @@ directly:
 roborev skills install
 ```
 
+Bundled skills support Claude Code, Codex, Factory Droid, Grok Build, Copilot,
+Cursor, Gemini, Hermes, and Qwen. Each agent uses its user configuration
+`skills/` directory, such as `~/.gemini/skills/`. Hermes honors `HERMES_HOME`.
+
+To use MCP for review data, comments, closing reviews, snoozing, and hook fix
+completion, install with `roborev skills install --mcp` and configure the
+connection with `roborev mcp install`. Updates preserve the selected mode;
+`--mcp=false` selects CLI instructions again. Review creation still uses the
+CLI. See [MCP setup](../integrations/mcp.md) for both transports and combined
+hook installation.
+
 To install into a custom final skills directory, use `--path`. This is useful
 for agents such as Pi that load skills from a directory roborev does not
 auto-detect:
@@ -338,6 +349,12 @@ Skills are installed as agent-specific configuration:
 - **Codex**: Custom agent skills under `$CODEX_HOME/skills/` when `CODEX_HOME`
     is set, otherwise `~/.codex/skills/`
 - **Factory Droid**: Custom skills under `~/.factory/skills/`
+- **Grok Build**: `$GROK_HOME/skills/` or `~/.grok/skills/`
+- **Copilot**: `$COPILOT_HOME/skills/` or `~/.copilot/skills/`
+- **Cursor**: `~/.cursor/skills/`
+- **Gemini**: `$GEMINI_CLI_HOME/.gemini/skills/` or `~/.gemini/skills/`
+- **Hermes**: `$HERMES_HOME/skills/` or `~/.hermes/skills/`
+- **Qwen**: `$QWEN_HOME/skills/` or `~/.qwen/skills/`
 
 The same resolved directories are used when installing, updating, and checking
 skill status. Agent-hook config discovery is supplied by kit and honors each

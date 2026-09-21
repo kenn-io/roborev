@@ -17,7 +17,7 @@ func (s *Server) registerGuidance() {
 		URI:         guidanceResourceURI,
 		Name:        "roborev-mcp-guidance",
 		Title:       "Roborev MCP Guidance",
-		Description: "How to navigate roborev review data with the read-only tools.",
+		Description: "How to navigate roborev review data with MCP tools.",
 		MIMEType:    "text/markdown",
 	}, readGuidanceResource)
 }

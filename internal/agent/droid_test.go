@@ -22,7 +22,7 @@ func TestDroidBuildArgs(t *testing.T) {
 		{
 			name:     "Non-agentic default",
 			agentic:  false,
-			wantArgs: []string{"--auto", "low"},
+			wantArgs: []string{"exec", "--tag", "roborev", "--auto", "low"},
 			dontWant: []string{"medium"},
 		},
 		{

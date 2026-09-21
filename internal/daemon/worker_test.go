@@ -215,14 +215,17 @@ func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
 
 func requireOutputChannelClosed(t *testing.T, ch <-chan OutputLine) {
 	t.Helper()
-	require.Eventually(t, func() bool {
+	closed := false
+	for draining := true; draining; {
 		select {
 		case _, ok := <-ch:
-			return !ok
+			closed = !ok
+			draining = !closed
 		default:
-			return false
+			draining = false
 		}
-	}, time.Second, time.Millisecond, "job output channel remained open")
+	}
+	require.True(t, closed, "job output channel remained open")
 }
 
 func TestSubscribeJobOutputClosesLateTerminalSubscription(t *testing.T) {
@@ -4175,19 +4178,23 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 }
 
 func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	require.NoError(t, tc.DB.SetQueuePaused(true))
-	job := tc.createJob(t, "pausedsha")
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		require.NoError(t, tc.DB.SetQueuePaused(true))
+		job := tc.createJob(t, "pausedsha")
 
-	tc.Pool.Start()
-	t.Cleanup(tc.Pool.Stop)
-	time.Sleep(150 * time.Millisecond)
+		tc.Pool.Start()
+		t.Cleanup(tc.Pool.Stop)
+		// Cover the first pause check and two 2s pause backoffs.
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
 
-	after, err := tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusQueued, after.Status)
-	assert.Empty(t, after.WorkerID)
-	assert.Equal(t, 0, tc.Pool.ActiveWorkers())
+		after, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusQueued, after.Status)
+		assert.Empty(t, after.WorkerID)
+		assert.Equal(t, 0, tc.Pool.ActiveWorkers())
+	})
 }
 
 func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {

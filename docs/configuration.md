@@ -1196,9 +1196,10 @@ definitions.
 
 ### MCP Server
 
-The daemon can serve a read-only
-[Model Context Protocol](/docs/integrations/mcp/) endpoint at `/mcp` on its API
-listener. It is off by default:
+The daemon can serve a [Model Context Protocol](/docs/integrations/mcp/)
+endpoint at `/mcp` on its API listener. It supports review reads, comments,
+closure, snoozing, and hook fix completion. It cannot start reviews. It is off
+by default:
 
 ```toml
 [mcp]
@@ -1426,6 +1427,15 @@ ROBOREV_COLOR_MODE=dark roborev tui
 `NO_COLOR` is set, all ANSI color sequences are stripped regardless of
 `ROBOREV_COLOR_MODE`.
 
+In Windows Terminal, standalone commands such as `log`, `fix`, and `refine`
+attempt background detection once, provided standard input and output are
+console handles and no input is queued. They wait up to five seconds, matching
+termenv's Unix query timeout, then keep the dark palette if detection fails. The
+query leaves unrelated input untouched. A terminal reply arriving after
+detection stops can remain queued for the next reader; forcing `dark` or `light`
+avoids the query. The TUI instead receives background replies through its active
+input loop and does not wait for detection during startup.
+
 ### Model Selection
 
 The `default_model` setting specifies which model agents should use. The format
@@ -1445,7 +1455,14 @@ default_model = "anthropic/claude-opus-4-8"
 ### Cost Usage Endpoint
 
 By default, roborev looks up token usage and cost estimates through the local
-`agentsview` CLI. You can route lookup through an HTTP endpoint instead:
+`agentsview` CLI. It prefers `session usage --no-sync` to include archived
+subagent usage without synchronizing source transcripts. Run AgentsView's
+watcher or synchronize separately to keep the archive current. Older CLIs remain
+supported: roborev retries without `--no-sync` if the flag is unknown, or falls
+back to `token-use` if `session usage` is unavailable. These fallback commands
+may synchronize sources.
+
+You can route lookup through an HTTP endpoint instead:
 
 ```toml
 [cost]

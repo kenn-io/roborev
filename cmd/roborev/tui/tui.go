@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/termenv"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
@@ -129,7 +131,7 @@ type model struct {
 	daemonVersion        string
 	client               *http.Client
 	api                  *roborevclient.Client
-	glamourStyle         gansi.StyleConfig // detected once at init
+	glamourStyle         gansi.StyleConfig // updated when the terminal reports its background
 	jobs                 []storage.ReviewJob
 	jobStats             storage.JobStats       // aggregate done/closed/open from server
 	cost                 *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
@@ -275,6 +277,8 @@ type model struct {
 	logReviewAnchored bool                 // Opened from a review-rooted context
 	logFollow         bool                 // True if auto-scrolling to bottom (follow mode)
 	logOffset         int64                // Byte offset for next incremental fetch
+	logPending        string               // Unterminated raw suffix shown as the last live row
+	logPendingRows    int                  // Rendered rows currently occupied by logPending
 	logFmtr           *streamfmt.Formatter // Persistent formatter across polls
 	logAgent          string               // Agent protocol identity retained across formatter rebuilds
 	logSource         string               // Job source retained for legacy mixed-log compatibility
@@ -483,15 +487,17 @@ type model struct {
 	// Live log tail for a running job in the split detail pane.
 	// Independent of the full-screen log view's log* fields above so the
 	// two can't stomp on each other's offset/formatter/seq state.
-	paneLogJobID     int64                // job whose log is being tailed
-	paneLogLines     []logLine            // buffered rendered lines (capped, see paneLogMaxLines)
-	paneLogOffset    int64                // byte offset for next incremental fetch
-	paneLogFmtr      *streamfmt.Formatter // persistent formatter across polls
-	paneLogAgent     string               // agent protocol identity retained across formatter rebuilds
-	paneLogSource    string               // job source retained for legacy mixed-log compatibility
-	paneLogSeq       uint64               // monotonic seq; drops stale responses
-	paneLogStreaming bool                 // true while the tailed job is still running
-	paneLogPaused    bool                 // tail invalidated while a transient view hid the pane; resume on return
+	paneLogJobID       int64                // job whose log is being tailed
+	paneLogLines       []logLine            // buffered rendered lines (capped, see paneLogMaxLines)
+	paneLogOffset      int64                // byte offset for next incremental fetch
+	paneLogPending     string               // unterminated raw suffix shown as the last live row
+	paneLogPendingRows int                  // rendered rows currently occupied by paneLogPending
+	paneLogFmtr        *streamfmt.Formatter // persistent formatter across polls
+	paneLogAgent       string               // agent protocol identity retained across formatter rebuilds
+	paneLogSource      string               // job source retained for legacy mixed-log compatibility
+	paneLogSeq         uint64               // monotonic seq; drops stale responses
+	paneLogStreaming   bool                 // true while the tailed job is still running
+	paneLogPaused      bool                 // tail invalidated while a transient view hid the pane; resume on return
 
 	// splitDetailErr records a failure that struck the split detail pane
 	// while it awaited content in the background (a follow fetchReview
@@ -876,7 +882,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		daemonVersion:       daemonVersion,
 		client:              httpClient,
 		api:                 newDaemonAPI(ep, httpClient),
-		glamourStyle:        streamfmt.GlamourStyle(),
+		glamourStyle:        streamfmt.InitialGlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		width:               80, // sensible defaults until we get WindowSizeMsg
@@ -935,10 +941,23 @@ func (m model) Init() tea.Cmd {
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
 	}
+	if autoColorMode() && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
+		// Bubble Tea owns stdin and recognizes late replies alongside user input.
+		cmds = append(cmds, tea.RequestBackgroundColor)
+	}
 	if m.sseCh != nil {
 		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
 	}
 	return tea.Batch(cmds...)
+}
+
+func autoColorMode() bool {
+	switch strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE")) {
+	case "dark", "light", "none":
+		return false
+	default:
+		return !termenv.EnvNoColor()
+	}
 }
 
 func (m model) tasksWorkflowEnabled() bool {
@@ -1117,6 +1136,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		if !autoColorMode() {
+			return m, nil
+		}
+		m.glamourStyle = streamfmt.GlamourStyleForBackground(msg.IsDark())
+		m.mdCache.glamourStyle = m.glamourStyle
+		m.mdCache.reviewWidth = -1
+		m.mdCache.promptWidth = -1
+		if m.currentView == viewHelp && m.helpFromView == viewLog {
+			// Hidden log responses are discarded. Rebuild after closing help.
+			m.logFmtr = nil
+		}
+		if m.currentView == viewLog || m.paneLogStreaming {
+			// Rebuild logs just as on resize; an in-flight fetch may still
+			// own the old formatter, so do not change it in place.
+			result, cmd = m.handleWindowSizeMsg(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		} else {
+			result = m
+		}
 	case tea.KeyMsg:
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
@@ -1252,6 +1290,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if resumeCmd != nil {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
+		}
+		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
+			refreshed, refreshCmd := rm.handleWindowSizeMsg(tea.WindowSizeMsg{Width: rm.width, Height: rm.height})
+			return refreshed, tea.Batch(cmd, refreshCmd)
 		}
 		result = rm
 	}

@@ -218,7 +218,7 @@ func TestStatusCmdJSONReportsAccessDeniedAsRunning(t *testing.T) {
 func TestStatusCmdDoesNotReportNotRunningWhenStatusRequestTimesOut(t *testing.T) {
 	md := NewMockDaemon(t, MockRefineHooks{
 		OnStatus: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-			time.Sleep(3 * time.Second)
+			<-r.Context().Done()
 			return true
 		},
 	})

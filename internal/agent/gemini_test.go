@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -231,24 +232,13 @@ exit 0
 	commandPath := filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, commandPath))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := NewGeminiAgent(commandPath).Review(ctx, t.TempDir(), "sha", "prompt", &bytes.Buffer{})
-		done <- err
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 
-	var reviewErr error
-	require.Eventually(t, func() bool {
-		select {
-		case reviewErr = <-done:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, 10*time.Millisecond)
-	require.ErrorIs(t, reviewErr, context.DeadlineExceeded)
+		_, reviewErr := NewGeminiAgent(commandPath).Review(ctx, t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+		require.ErrorIs(t, reviewErr, context.DeadlineExceeded)
+	})
 
 	_, err := os.Stat(invokedPath)
 	assert.ErrorIs(t, err, os.ErrNotExist)

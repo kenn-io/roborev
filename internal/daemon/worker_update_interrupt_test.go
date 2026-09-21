@@ -298,14 +298,8 @@ func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
 	require.True(t, waitForUpdateSignal(done, 5*time.Second))
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.Never(t, func() bool {
-		select {
-		case <-backupInvoked:
-			return true
-		default:
-			return false
-		}
-	}, 50*time.Millisecond, 5*time.Millisecond)
+	// processJob has returned, so any backup attempt has already sent.
+	assert.Empty(t, backupInvoked)
 }
 
 func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {

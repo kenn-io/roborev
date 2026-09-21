@@ -284,15 +284,18 @@ Unlike `--branch`, this works on any branch including main.
 
 ## Large Diffs
 
-Dirty and committed diffs that exceed the configured prompt budget are written
-in full to ignored, repo-local snapshot files. The prompt points the agent at
-those files. Large dirty diffs do not require committing changes in smaller
-chunks.
+Roborev assembles the complete prompt before comparing it with
+`max_prompt_size`. When it exceeds that inline budget, Roborev writes the full
+prompt to an ignored file under the repository's configured `snapshot_dir` and
+tells the agent to read it. This preserves the instructions, diff, findings, and
+discussion.
 
-Panel synthesis also preserves complete input reviews. When their aggregate
-prompt exceeds the same budget, roborev writes each review to a separate
-snapshot file and invokes the synthesis agent with read tools enabled. Files
-remain available for the invocation and are cleaned up afterward.
+Ordinary reviews, dirty reviews, and panel synthesis use the same file handoff.
+Synthesis is the step that combines panel members' reviews into one result.
+Files remain available while the agent runs and are cleaned up afterward on a
+best-effort basis. Large dirty diffs do not require smaller commits just to fit
+the inline budget. Model context limits, configured policies, and provider
+comment limits still apply.
 
 ## Session Reuse
 

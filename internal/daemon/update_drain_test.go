@@ -120,6 +120,7 @@ func TestInterruptPreparationLinearizesWithRetryTransition(t *testing.T) {
 		)
 		prepared <- prepareResult{status: status, err: prepareErr}
 	}()
+	// Wall-clock wait: attemptTransitionsMu contention.
 	assert.Never(t, func() bool {
 		return len(prepared) != 0
 	}, 20*time.Millisecond, time.Millisecond)
@@ -218,6 +219,7 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 		_, releaseErr := server.updateCoordinator.release(lease.LeaseToken)
 		releaseDone <- releaseErr
 	}()
+	// Wall-clock wait: SQLite write lock contention.
 	cleared := assert.Eventually(t, func() bool {
 		server.workerPool.runningJobsMu.Lock()
 		defer server.workerPool.runningJobsMu.Unlock()

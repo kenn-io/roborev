@@ -39,14 +39,14 @@ func TestCodex_buildArgs(t *testing.T) {
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
 			autoApprove:      true,
-			wantFlags:        []string{"--sandbox", "read-only", "--json"},
+			wantFlags:        []string{"--sandbox", "read-only", "--json", "--thread-source", "roborev"},
 			wantMissingFlags: []string{codexDangerousFlag, codexAutoApproveFlag},
 		},
 		{
 			name:             "AgenticNoAutoApprove",
 			agentic:          true,
 			autoApprove:      false,
-			wantFlags:        []string{codexDangerousFlag, "--json"},
+			wantFlags:        []string{codexDangerousFlag, "--json", "--thread-source", "roborev"},
 			wantMissingFlags: []string{codexAutoApproveFlag},
 		},
 		{
@@ -54,7 +54,7 @@ func TestCodex_buildArgs(t *testing.T) {
 			agentic:          false,
 			autoApprove:      true,
 			sandboxBroken:    true,
-			wantFlags:        []string{codexDangerousFlag, "--json"},
+			wantFlags:        []string{codexDangerousFlag, "--json", "--thread-source", "roborev"},
 			wantMissingFlags: []string{"--sandbox", codexAutoApproveFlag},
 		},
 	}
@@ -88,6 +88,7 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 		"exec",
 		"resume",
 		"--json",
+		"--thread-source", "roborev",
 		"-c", codexReadOnlySandboxConfig,
 		"-m", "o4-mini",
 		"-c", `model_reasoning_effort="high"`,
@@ -98,6 +99,41 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 	assert.NotContains(t, args, "-C")
 	assert.NotContains(t, args, "--add-dir")
 	assert.Contains(t, args, codexReadOnlySandboxConfig)
+}
+
+func TestCodexBuildArgsOmitsThreadSourceWhenUnsupported(t *testing.T) {
+	a := NewCodexAgent("codex")
+	a.omitThreadSource = true
+
+	args := a.buildArgs("/repo", false, true, false)
+
+	assert.NotContains(t, args, "--thread-source")
+	assert.NotContains(t, args, "roborev")
+}
+
+func TestCodexSupportsThreadSourceDetectsSupport(t *testing.T) {
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$*" in
+  "exec --thread-source roborev --help") echo "usage --thread-source"; exit 0;;
+esac
+echo "unexpected args: $*" >&2
+exit 1
+`)
+
+	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	require.NoError(t, err)
+	assert.True(t, supported, "expected thread-source support")
+}
+
+func TestCodexSupportsThreadSourceTreatsProbeErrorsAsUnsupported(t *testing.T) {
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+echo "unknown flag --thread-source" >&2
+exit 2
+`)
+
+	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	require.NoError(t, err)
+	assert.False(t, supported)
 }
 
 func TestCodexBuildArgsCanDisableSkills(t *testing.T) {
@@ -291,6 +327,23 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'
 
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
+}
+
+func TestCodexReviewPassesThreadSourceWhenSupported(t *testing.T) {
+	a, mock := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage --sandbox --thread-source",
+		CaptureArgs: true,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	args := readMockArgs(t, mock.ArgsFile)
+	assertContainsArg(t, args, "--thread-source")
+	assertContainsArg(t, args, "roborev")
 }
 
 func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {

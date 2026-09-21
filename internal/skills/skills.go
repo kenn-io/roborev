@@ -34,10 +34,15 @@ var grokSkills embed.FS
 type Agent string
 
 const (
-	AgentClaude Agent = "claude"
-	AgentCodex  Agent = "codex"
-	AgentDroid  Agent = "droid"
-	AgentGrok   Agent = "grok"
+	AgentClaude  Agent = "claude"
+	AgentCodex   Agent = "codex"
+	AgentDroid   Agent = "droid"
+	AgentGrok    Agent = "grok"
+	AgentCopilot Agent = "copilot"
+	AgentCursor  Agent = "cursor"
+	AgentGemini  Agent = "gemini"
+	AgentHermes  Agent = "hermes"
+	AgentQwen    Agent = "qwen"
 )
 
 type agentSpec struct {
@@ -61,6 +66,11 @@ var supportedAgents = []agentSpec{
 	{agent: AgentCodex, configDirName: ".codex", configDirEnv: "CODEX_HOME", embedFS: codexSkills, embedDir: "codex"},
 	{agent: AgentDroid, configDirName: ".factory", embedFS: droidSkills, embedDir: "droid"},
 	{agent: AgentGrok, configDirName: ".grok", configDirEnv: "GROK_HOME", embedFS: grokSkills, embedDir: "grok"},
+	{agent: AgentCopilot, configDirName: ".copilot", configDirEnv: "COPILOT_HOME", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentCursor, configDirName: ".cursor", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentGemini, configDirName: ".gemini", configDirEnv: "GEMINI_CLI_HOME", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentHermes, configDirName: ".hermes", configDirEnv: "HERMES_HOME", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentQwen, configDirName: ".qwen", configDirEnv: "QWEN_HOME", embedFS: codexSkills, embedDir: "codex"},
 }
 
 var userHomeDir = os.UserHomeDir
@@ -76,10 +86,10 @@ type InstallResult struct {
 
 // Install installs skills for all supported agents whose config directories exist.
 // It is idempotent - running multiple times will update existing skills.
-func Install() ([]InstallResult, error) {
+func Install(mcp *bool) ([]InstallResult, error) {
 	results := make([]InstallResult, 0, len(supportedAgents))
 	for _, spec := range supportedAgents {
-		result, err := installAgent(spec)
+		result, err := installAgent(spec, mcp)
 		if err != nil {
 			return nil, fmt.Errorf("%s skills: %w", spec.agent, err)
 		}
@@ -132,6 +142,9 @@ func lookupAgent(agent Agent) (agentSpec, bool) {
 func agentConfigDir(home string, spec agentSpec) string {
 	if spec.configDirEnv != "" {
 		if dir := os.Getenv(spec.configDirEnv); dir != "" {
+			if spec.agent == AgentGemini {
+				return filepath.Join(dir, ".gemini")
+			}
 			return dir
 		}
 	}
@@ -173,6 +186,7 @@ func embeddedSkillsForAgent(spec agentSpec) ([]embeddedSkill, error) {
 			return nil, fmt.Errorf("read %s/SKILL.md: %w", dirName, err)
 		}
 
+		content = renderAgentSkill(spec, content)
 		name, desc := parseFrontmatter(content)
 		if name == "" {
 			name = dirName
@@ -180,6 +194,9 @@ func embeddedSkillsForAgent(spec agentSpec) ([]embeddedSkill, error) {
 		openAIYAML, err := fs.ReadFile(spec.embedFS, path.Join(spec.embedDir, dirName, "agents", "openai.yaml"))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("read %s/agents/openai.yaml: %w", dirName, err)
+		}
+		if spec.agent != AgentCodex {
+			openAIYAML = nil
 		}
 		skills = append(skills, embeddedSkill{
 			DirName:     dirName,
@@ -243,7 +260,7 @@ func installedSkillFilePaths(home string, spec agentSpec) ([]string, error) {
 
 // Update updates skills for agents that already have them installed
 // and removes legacy skills that are no longer shipped.
-func Update() ([]InstallResult, error) {
+func Update(mcp *bool) ([]InstallResult, error) {
 	var results []InstallResult
 	for _, spec := range supportedAgents {
 		home, err := homeDirForAgent(spec)
@@ -258,7 +275,7 @@ func Update() ([]InstallResult, error) {
 			continue
 		}
 
-		result, err := installAgent(spec)
+		result, err := installAgent(spec, mcp)
 		if err != nil {
 			return nil, fmt.Errorf("update %s skills: %w", spec.agent, err)
 		}
@@ -270,12 +287,12 @@ func Update() ([]InstallResult, error) {
 
 // InstallToPath installs one agent's skill variant directly into skillsDir.
 // skillsDir is the final directory containing the individual skill directories.
-func InstallToPath(agent Agent, skillsDir string) (InstallResult, error) {
+func InstallToPath(agent Agent, skillsDir string, mcp *bool) (InstallResult, error) {
 	spec, ok := lookupAgent(agent)
 	if !ok {
-		return InstallResult{}, fmt.Errorf("unsupported agent %q (expected claude, codex, droid, or grok)", agent)
+		return InstallResult{}, fmt.Errorf("unsupported agent %q (expected a supported hook agent)", agent)
 	}
-	return installSkills(spec, skillsDir)
+	return installSkills(spec, skillsDir, mcp)
 }
 
 // removeLegacySkills deletes skill directories that are no longer
@@ -290,7 +307,7 @@ func removeLegacySkills(skillsDir string) error {
 	return nil
 }
 
-func installAgent(spec agentSpec) (InstallResult, error) {
+func installAgent(spec agentSpec, mcp *bool) (InstallResult, error) {
 	result := InstallResult{Agent: spec.agent}
 
 	home, err := homeDirForAgent(spec)
@@ -305,12 +322,12 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 		return result, nil
 	}
 
-	result, err = installSkills(spec, agentSkillsDir(home, spec))
+	result, err = installSkills(spec, agentSkillsDir(home, spec), mcp)
 	result.ConfigDir = configDir
 	return result, err
 }
 
-func installSkills(spec agentSpec, skillsDir string) (InstallResult, error) {
+func installSkills(spec agentSpec, skillsDir string, mcp *bool) (InstallResult, error) {
 	result := InstallResult{Agent: spec.agent, ConfigDir: skillsDir}
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		return result, fmt.Errorf("create skills dir: %w", err)
@@ -321,7 +338,14 @@ func installSkills(spec agentSpec, skillsDir string) (InstallResult, error) {
 		return result, err
 	}
 
+	useMCP := installedMCPMode(skillsDir)
+	if mcp != nil {
+		useMCP = *mcp
+	}
 	for _, skill := range skills {
+		if useMCP {
+			skill.Content = renderMCPSkill(skill.Content)
+		}
 		skillName := skill.DirName
 		skillDir := filepath.Join(skillsDir, skillName)
 
@@ -377,6 +401,7 @@ const (
 
 // AgentStatus describes the installation state for a single agent.
 type AgentStatus struct {
+	MCP       bool // Whether the installed fix skill uses MCP.
 	Agent     Agent
 	Available bool                  // Whether the agent config dir exists
 	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-fix")
@@ -456,6 +481,7 @@ func statusForAgent(spec agentSpec, home string) AgentStatus {
 	}
 
 	skillsDir := agentSkillsDir(home, spec)
+	status.MCP = installedMCPMode(skillsDir)
 	for _, skill := range embedded {
 		installedPath := skillInstallPath(skillsDir, skill.DirName)
 
@@ -465,6 +491,9 @@ func statusForAgent(spec agentSpec, home string) AgentStatus {
 			continue
 		}
 
+		if bytes.Contains(installedContent, []byte(mcpModeMarker)) {
+			skill.Content = renderMCPSkill(skill.Content)
+		}
 		if !bytes.Equal(installedContent, skill.Content) {
 			status.Skills[skill.DirName] = SkillOutdated
 			continue
@@ -511,4 +540,38 @@ func fileExists(path string) bool {
 
 func anyFileExists(paths []string) bool {
 	return slices.ContainsFunc(paths, fileExists)
+}
+
+// Agents returns the agents supported by bundled skills and MCP installation.
+func Agents() []Agent {
+	out := make([]Agent, 0, len(supportedAgents))
+	for _, spec := range supportedAgents {
+		out = append(out, spec.agent)
+	}
+	return out
+}
+
+// ConfigDir returns the agent's user configuration directory.
+func ConfigDir(agent Agent) (string, error) {
+	spec, ok := lookupAgent(agent)
+	if !ok {
+		return "", fmt.Errorf("unsupported agent %q", agent)
+	}
+	home, err := homeDirForAgent(spec)
+	if err != nil {
+		return "", err
+	}
+	return agentConfigDir(home, spec), nil
+}
+
+func renderAgentSkill(spec agentSpec, content []byte) []byte {
+	if spec.embedDir != "codex" || spec.agent == AgentCodex {
+		return content
+	}
+	text := string(content)
+	name, _ := parseFrontmatter(content)
+	text = strings.ReplaceAll(text, ", plugin\n`$roborev:"+name+"`, or structured Codex skill selection", ", or explicit skill selection")
+	text = strings.ReplaceAll(text, "$roborev", "/roborev")
+	text = strings.ReplaceAll(text, "`sandbox_permissions: \"require_escalated\"`", "the agent's supported sandbox escalation mechanism")
+	return []byte(text)
 }

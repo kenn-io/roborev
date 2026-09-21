@@ -22,7 +22,7 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
 
@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
@@ -1164,7 +1165,7 @@ func (s *Server) getMachineID() *uuid.UUID {
 	return &s.machineID
 }
 
-func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
+func jobLogSafeEnd(f *os.File, fileSize int64, jsonl bool) int64 {
 	if fileSize == 0 {
 		return 0
 	}
@@ -1177,8 +1178,40 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 	if last[0] == '\n' {
 		return fileSize
 	}
+	if !jsonl {
+		return fileSize
+	}
+	if jobLogTailStartsWithJSON(f, fileSize) {
+		return jobLogLastNewlineEnd(f, fileSize)
+	}
+	return fileSize
+}
 
-	// Scan backwards in 64KB chunks to find last newline.
+func jobLogTailStartsWithJSON(f *os.File, fileSize int64) bool {
+	start := jobLogLastNewlineEnd(f, fileSize)
+	if start >= fileSize {
+		return false
+	}
+	n := min(fileSize-start, 64)
+	buf := make([]byte, n)
+	got, err := f.ReadAt(buf, start)
+	if err != nil && err != io.EOF {
+		return true
+	}
+	for _, b := range buf[:got] {
+		switch b {
+		case ' ', '\t':
+			continue
+		case '{':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func jobLogLastNewlineEnd(f *os.File, fileSize int64) int64 {
 	const chunkSize = 64 * 1024
 	buf := make([]byte, chunkSize)
 	pos := fileSize
@@ -1196,9 +1229,6 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 		}
 		pos = readStart
 	}
-
-	// Entire file has no newline — serve nothing to avoid
-	// a partial line.
 	return 0
 }
 
@@ -3975,7 +4005,7 @@ func (s *Server) humaJobLog(
 
 		endPos := fileSize
 		if job.Status == storage.JobStatusRunning {
-			endPos = jobLogSafeEnd(f, fileSize)
+			endPos = jobLogSafeEnd(f, fileSize, streamfmt.AgentUsesJSONL(logAgent))
 		}
 		if offset > endPos {
 			offset = endPos

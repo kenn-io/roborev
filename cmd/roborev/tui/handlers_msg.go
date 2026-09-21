@@ -1487,17 +1487,22 @@ func (m model) handleLogOutputMsg(
 		m.logAgent = msg.agent
 		m.logSource = msg.source
 
-		if msg.append {
-			if len(msg.lines) > 0 {
-				m.logLines = append(
-					m.logLines, msg.lines...,
-				)
-			}
-		} else {
-			m.logLines = msg.lines
-			if m.logLines == nil && !msg.hasMore {
-				m.logLines = []logLine{}
-			}
+		oldPending := m.logPending
+		replaceCount := 0
+		pendingChanged := msg.append &&
+			(msg.pending != oldPending || (oldPending != "" && len(msg.lines) > 0))
+		if pendingChanged {
+			replaceCount = m.logPendingRows
+		}
+		m.logLines = applyIncrementalLogLines(
+			m.logLines, msg.lines, msg.append, replaceCount,
+		)
+		if !msg.append && m.logLines == nil && !msg.hasMore {
+			m.logLines = []logLine{}
+		}
+		m.logPending = msg.pending
+		if !msg.append || pendingChanged {
+			m.logPendingRows = msg.pendingRows
 		}
 		m.logOffset = msg.newOffset
 		m.logStreaming = msg.hasMore
@@ -1598,16 +1603,19 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	}
 	m.paneLogAgent = msg.agent
 	m.paneLogSource = msg.source
-	if msg.append {
-		if len(msg.lines) > 0 {
-			m.paneLogLines = append(m.paneLogLines, msg.lines...)
-		}
-	} else {
-		// Non-incremental fetch: either the initial full fetch or a
-		// server-side offset reset (log truncated/rotated). Replace
-		// rather than append so stale pre-reset lines don't linger
-		// mixed in with the replacement log.
-		m.paneLogLines = msg.lines
+	oldPending := m.paneLogPending
+	replaceCount := 0
+	pendingChanged := msg.append &&
+		(msg.pending != oldPending || (oldPending != "" && len(msg.lines) > 0))
+	if pendingChanged {
+		replaceCount = m.paneLogPendingRows
+	}
+	m.paneLogLines = applyIncrementalLogLines(
+		m.paneLogLines, msg.lines, msg.append, replaceCount,
+	)
+	m.paneLogPending = msg.pending
+	if !msg.append || pendingChanged {
+		m.paneLogPendingRows = msg.pendingRows
 	}
 	if over := len(m.paneLogLines) - paneLogMaxLines; over > 0 {
 		m.paneLogLines = m.paneLogLines[over:]
@@ -2320,6 +2328,8 @@ func (m model) handleWindowSizeMsg(
 				m.paneLogSeq++
 				m.paneLogOffset = 0
 				m.paneLogLines = nil
+				m.paneLogPending = ""
+				m.paneLogPendingRows = 0
 				m.paneLogFmtr = streamfmt.NewWithWidth(
 					io.Discard, m.paneLogWidth(), m.glamourStyle,
 					decoderForJobLog(m.paneLogAgent, m.paneLogSource),
@@ -2350,6 +2360,8 @@ func (m model) handleWindowSizeMsg(
 	if m.currentView == viewLog {
 		m.logOffset = 0
 		m.logLines = nil
+		m.logPending = ""
+		m.logPendingRows = 0
 		m.logFmtr = streamfmt.NewWithWidth(
 			io.Discard, msg.Width, m.glamourStyle,
 			decoderForJobLog(m.logAgent, m.logSource),

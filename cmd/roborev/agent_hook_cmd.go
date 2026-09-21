@@ -116,6 +116,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		return fmt.Errorf("decode Grok Build input: missing session_id")
 	}
 	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
+		MCP:                   opts.MCP,
 		Agent:                 agenthook.AgentGrok,
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
@@ -132,7 +133,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
 		}
 		resp.Reason = prependAgentHookFixSkillWarning(
-			agenthook.AgentGrok,
+			agenthook.AgentGrok, opts.MCP,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
 		)
 		return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
@@ -168,6 +169,10 @@ func agentHookInstallCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to update; empty detects installed agents, all updates every profile")
+	cmd.Flags().BoolVar(&opts.MCP, "mcp", false, "install hooks and skills using MCP tools")
+	cmd.Flags().StringVar(&opts.MCPTransport, "mcp-transport", "stdio", "MCP transport to install: stdio or http")
+	cmd.Flags().StringVar(&opts.MCPURL, "mcp-url", "", "existing daemon /mcp URL for HTTP transport")
+	cmd.Flags().StringVar(&opts.RoborevServerAddr, "roborev-server", "", "daemon address for the installed hook and MCP connection")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into agent hooks (for version-manager shims)")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "hook config path for a single selected agent")
@@ -177,7 +182,7 @@ func agentHookInstallCmd() *cobra.Command {
 }
 
 func agentHookDumpCmd() *cobra.Command {
-	opts := agenthook.DumpOptions{Timeout: 10 * time.Second}
+	opts := agenthook.InstallOptions{Timeout: 10 * time.Second}
 	cmd := &cobra.Command{
 		Use:                   "dump",
 		Short:                 "Print an agent's hook config as JSON",
@@ -198,6 +203,10 @@ func agentHookDumpCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to dump")
+	cmd.Flags().BoolVar(&opts.MCP, "mcp", false, "install hooks and skills using MCP tools")
+	cmd.Flags().StringVar(&opts.MCPTransport, "mcp-transport", "stdio", "MCP transport to install: stdio or http")
+	cmd.Flags().StringVar(&opts.MCPURL, "mcp-url", "", "existing daemon /mcp URL for HTTP transport")
+	cmd.Flags().StringVar(&opts.RoborevServerAddr, "roborev-server", "", "daemon address for the installed hook and MCP connection")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path to read and merge into; defaults to the agent's standard path")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
@@ -260,6 +269,7 @@ func runHook(
 }
 
 func addAgentHookRunFlags(cmd *cobra.Command, opts *agenthook.Options) {
+	cmd.Flags().BoolVar(&opts.MCP, "mcp", false, "instruct the agent to use roborev MCP tools")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "roborev config path")
 	cmd.Flags().IntVar(&opts.TurnThreshold, "turn-threshold", opts.TurnThreshold, "Stop hook threshold; 0 disables Stop triggering")
 	cmd.Flags().IntVar(&opts.CommitThreshold, "commit-threshold", opts.CommitThreshold, "PostToolUse commit threshold; 0 disables commit triggering")

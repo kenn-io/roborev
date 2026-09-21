@@ -307,11 +307,9 @@ func TestTUIFetchJobsError(t *testing.T) {
 
 func TestTUIHTTPTimeout(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		// Delay much longer than client timeout to avoid flaky timing on fast machines
-		time.Sleep(500 * time.Millisecond)
-		json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
+		// Hold the response until the client timeout cancels the request.
+		<-r.Context().Done()
 	})
-	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
 
 	msg := fetchJobsMessage(t, m)

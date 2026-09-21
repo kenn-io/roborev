@@ -22,6 +22,13 @@ func TestExplicitDecoderDoesNotInterpretAnotherProvider(t *testing.T) {
 
 // If unknown agents inherit schema detection, future protocol data can be
 // silently reinterpreted instead of remaining visible for diagnosis.
+func TestAgentUsesJSONL(t *testing.T) {
+	assert.False(t, AgentUsesJSONL("test"))
+	assert.False(t, AgentUsesJSONL("acp.opencode"))
+	assert.True(t, AgentUsesJSONL("codex"))
+	assert.True(t, AgentUsesJSONL("grok"))
+}
+
 func TestUnknownAgentRendersJSONLiterally(t *testing.T) {
 	var out bytes.Buffer
 	line := `{"type":"text","data":"unknown protocol"}`

@@ -1409,14 +1409,16 @@ func (db *DB) migrate() error {
 		// enqueue. Repeated IDs prove that at least one legacy attempt resumed
 		// cumulative provider usage, so conservatively exclude every matching
 		// attempt from delayed reconciliation rather than assigning the total to
-		// an arbitrary job.
-		if _, err = db.Exec(`UPDATE review_jobs AS job
+		// an arbitrary job. Group once: a correlated lookup would scan the
+		// full history for every job because unstarted sessions are not in
+		// idx_review_jobs_started_session.
+		if _, err = db.Exec(`UPDATE review_jobs
 			SET session_resumed = 1
-			WHERE session_id IS NOT NULL AND session_id != ''
-			  AND EXISTS (
-				SELECT 1 FROM review_jobs AS other
-				WHERE other.id != job.id AND other.session_id = job.session_id
-			  )`); err != nil {
+			WHERE session_id IN (
+				SELECT session_id FROM review_jobs
+				WHERE session_id IS NOT NULL AND session_id != ''
+				GROUP BY session_id HAVING COUNT(*) > 1
+			)`); err != nil {
 			return fmt.Errorf("mark legacy reused sessions: %w", err)
 		}
 	}

@@ -296,6 +296,10 @@ func (m model) appendPaneLogTail(lines []string, innerW, innerH int) []string {
 	if avail <= 0 {
 		return lines
 	}
+	if len(m.paneLogLines) == 0 {
+		lines = append(lines, xansi.Truncate(statusStyle.Render("Waiting for output..."), innerW, ""))
+		return lines
+	}
 	total := len(m.paneLogLines)
 	start := max(total-avail, 0)
 	for i := start; i < total; i++ {

@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -828,6 +831,178 @@ func TestCommitWithHookRetryUsesCommitOptions(t *testing.T) {
 	show := repo.Run("show", "-s", "--format=%an <%ae>%n%B", "HEAD")
 	assert.Contains(t, show, "Fix Author <fix@example.com>")
 	assert.Contains(t, show, "Co-authored-by: Pair Reviewer <pair@example.com>")
+}
+
+// useIsolatedGlobalGitConfig points git's ~/.gitconfig at dir for this test.
+// testenv's GIT_CONFIG_GLOBAL cannot be used: refine's runner strips every
+// GIT_* variable before running git.
+func useIsolatedGlobalGitConfig(t *testing.T, dir string) string {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	configPath := filepath.Join(dir, ".gitconfig")
+	config := "[user]\n\tname = Synthetic Test User\n\temail = synthetic@example.invalid\n[init]\n\tdefaultBranch = main\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o644))
+	return configPath
+}
+
+func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	submoduleSource := NewGitTestRepo(t)
+	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
+	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
+	hookPath := filepath.Join(submoduleSource.Dir, ".githooks", "post-checkout")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hookPath), 0o755))
+	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
+	require.NoError(t, os.WriteFile(hookPath, []byte(hookScript), 0o755))
+	submoduleSource.Run("add", "--chmod=+x", ".githooks/post-checkout")
+	submoduleSHA := submoduleSource.CommitFile("sub.txt", "submodule content\n", "submodule base")
+	barePath := filepath.Join(t.TempDir(), "sub.git")
+	clone := exec.Command("git", "clone", "--bare", submoduleSource.Dir, barePath)
+	require.NoError(t, clone.Run())
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "parent\n", "parent base")
+	gitmodules := "[submodule \"vendor/sub\"]\n\tpath = vendor/sub\n\turl = file:///roborev-test-placeholder/sub.git\n"
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".gitmodules"), []byte(gitmodules), 0o644))
+	parent.Run("add", ".gitmodules")
+	parent.Run("update-index", "--add", "--cacheinfo", "160000,"+submoduleSHA+",vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+
+	rewriteKey := "url.file://" + filepath.ToSlash(barePath) + ".insteadOf"
+	config := exec.Command("git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
+	require.NoError(t, config.Run())
+	config = exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
+	require.NoError(t, config.Run())
+
+	wt, err := createRefineWorktree(t.Context(), parent.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, wt)
+	defer func() { assert.NoError(t, wt.Close(t.Context())) }()
+
+	content, readErr := os.ReadFile(filepath.Join(wt.Dir, "vendor", "sub", "sub.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "submodule content\n", strings.ReplaceAll(string(content), "\r\n", "\n"))
+	assert.NoFileExists(t, markerPath, "submodule checkout must not run tracked hooks")
+	t.Log("global url.insteadOf resolved file:///roborev-test-placeholder/sub.git; vendor/sub/sub.txt was initialized")
+}
+
+func TestCreateRefineWorktreeIgnoresInheritedGitEnvironment(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	useIsolatedGlobalGitConfig(t, t.TempDir())
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "parent\n", "parent base")
+	parentHead := parent.Run("rev-parse", "HEAD")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "not-a-repo"))
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+
+	wt, err := createRefineWorktree(t.Context(), parent.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, wt)
+	defer func() { assert.NoError(t, wt.Close(t.Context())) }()
+
+	assert.Equal(t, parentHead, wt.BaseSHA)
+	t.Log("StripEnv removed inherited GIT_DIR and GIT_WORK_TREE; worktree HEAD matched the parent")
+}
+
+func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "parent\n", "parent base")
+	hookDir := t.TempDir()
+	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
+	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
+	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "post-checkout"), []byte(hookScript), 0o755))
+	config := exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
+	require.NoError(t, config.Run())
+
+	wt, err := createRefineWorktree(t.Context(), parent.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, wt)
+	require.NoError(t, wt.Close(t.Context()))
+
+	assert.NoFileExists(t, markerPath)
+	t.Log("core.hooksPath=os.DevNull suppressed post-checkout; marker file is absent")
+}
+
+func TestRefineGitRunnerCredentialHelper(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	storePath := filepath.Join(t.TempDir(), "credentials")
+	store := "https://synthetic-user:synthetic-password@credential-test.invalid/private/repo.git\n"
+	require.NoError(t, os.WriteFile(storePath, []byte(store), 0o600))
+	helper := "store --file=\"" + filepath.ToSlash(storePath) + "\""
+	config := exec.Command("git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
+	require.NoError(t, config.Run())
+
+	request := strings.NewReader("protocol=https\nhost=credential-test.invalid\npath=private/repo.git\n\n")
+	stdout, _, err := refineGitRunner().Run(t.Context(), t.TempDir(), request, "credential", "fill")
+	require.NoError(t, err)
+	assert.Contains(t, string(stdout), "username=synthetic-user")
+	assert.Contains(t, string(stdout), "password=synthetic-password")
+	t.Log("Git credential protocol returned username=synthetic-user and password=synthetic-password from the URL-scoped helper")
+}
+
+func TestCreateRefineWorktreeDoesNotRunConfiguredAskPass(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="synthetic"`)
+		w.Header().Set("Connection", "close")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSHA := submoduleSource.CommitFile("sub.txt", "submodule content\n", "submodule base")
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "parent\n", "parent base")
+	gitmodules := fmt.Sprintf("[submodule \"vendor/sub\"]\n\tpath = vendor/sub\n\turl = %s/sub.git\n", server.URL)
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".gitmodules"), []byte(gitmodules), 0o644))
+	parent.Run("add", ".gitmodules")
+	parent.Run("update-index", "--add", "--cacheinfo", "160000,"+submoduleSHA+",vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+
+	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	markerPath := filepath.Join(t.TempDir(), "askpass.marker")
+	t.Setenv("ROBOREV_ASKPASS_MARKER", filepath.ToSlash(markerPath))
+	askPassPath := filepath.Join(t.TempDir(), "askpass")
+	askPassScript := "#!/bin/sh\nprintf 'askpass ran\\n' > \"$ROBOREV_ASKPASS_MARKER\"\nprintf 'synthetic-user\\n'\n"
+	if runtime.GOOS == "windows" {
+		askPassPath += ".cmd"
+		askPassScript = "@echo off\r\n>\"%ROBOREV_ASKPASS_MARKER%\" echo askpass ran\r\necho synthetic-user\r\n"
+	}
+	require.NoError(t, os.WriteFile(askPassPath, []byte(askPassScript), 0o755))
+	config := exec.Command("git", "config", "--file", globalConfig, "core.askPass", filepath.ToSlash(askPassPath))
+	require.NoError(t, config.Run())
+	config = exec.Command("git", "config", "--file", globalConfig, "credential.helper", "")
+	require.NoError(t, config.Run())
+
+	wt, err := createRefineWorktree(t.Context(), parent.Dir)
+	require.Error(t, err)
+	assert.Nil(t, wt)
+	assert.Contains(t, err.Error(), "git submodule update")
+	assert.Contains(t, err.Error(), "terminal prompts disabled")
+	assert.NoFileExists(t, markerPath)
+	t.Log("core.askPass=empty suppressed the configured askpass; git submodule update returned terminal prompts disabled")
 }
 
 func TestChangedRefineSubmodulesDetectsDirtySubmoduleIgnoredByParentStatus(t *testing.T) {

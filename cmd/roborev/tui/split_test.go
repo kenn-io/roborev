@@ -142,7 +142,8 @@ func TestDetailPaneStates(t *testing.T) {
 	lines := strings.Join(m.renderDetailPane(88, 25), "\n")
 	assert.Contains(lines, "boom")
 
-	// Running job: status card.
+	// Running job: status card plus live-log chrome. An empty tail must
+	// still show a waiting line so the pane is not a dead blank region.
 	m = splitModel(withSelection(0, 3))
 	m.currentReview = nil
 	m.jobs[0].ReviewType = "security"
@@ -150,6 +151,13 @@ func TestDetailPaneStates(t *testing.T) {
 	assert.Contains(lines, "running")
 	assert.Contains(lines, "codex")
 	assert.Contains(lines, "Review type: security")
+	assert.Contains(lines, "live log")
+	assert.Contains(lines, "Waiting for output...")
+
+	m.paneLogLines = []logLine{{text: "Read internal/example/main.go"}}
+	lines = stripANSI(strings.Join(m.renderDetailPane(88, 25), "\n"))
+	assert.Contains(lines, "Read internal/example/main.go")
+	assert.NotContains(lines, "Waiting for output...")
 
 	// Done job, review not yet fetched: loading placeholder.
 	m = splitModel(withSelection(1, 2))

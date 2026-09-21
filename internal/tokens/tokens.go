@@ -219,13 +219,19 @@ func fetchForSessionCLI(
 	}
 	out, err := runAgentsviewCommand(
 		ctx, timeout, binPath,
-		"session", "usage", sessionID, "--format", "json",
+		"session", "usage", sessionID, "--format", "json", "--no-sync",
 	)
+	// Older CLIs can still report costs, but their usage queries may sync sources.
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 &&
+		strings.Contains(string(exitErr.Stderr), "unknown flag: --no-sync") {
+		out, err = runAgentsviewCommand(
+			ctx, timeout, binPath,
+			"session", "usage", sessionID, "--format", "json",
+		)
+	}
 	if err != nil {
 		if shouldFallbackToTokenUse(err) {
-			out, err = runAgentsviewCommand(
-				ctx, timeout, binPath, "token-use", sessionID,
-			)
+			out, err = runAgentsviewCommand(ctx, timeout, binPath, "token-use", sessionID)
 			if err != nil {
 				return nil, handleTokenUseError(out, err)
 			}
@@ -273,11 +279,8 @@ func runAgentsviewCommand(
 }
 
 func shouldFallbackToTokenUse(err error) bool {
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return false
-	}
-	if exitErr.ExitCode() != 1 {
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exitErr.ExitCode() != 1 {
 		return false
 	}
 	stderr := strings.ToLower(string(exitErr.Stderr))
@@ -305,17 +308,13 @@ func handleSessionUsageError(err error) error {
 
 func handleTokenUseError(out []byte, err error) error {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		// Legacy token-use signalled not-found with exit 1 and empty
-		// stdout+stderr.
-		if exitErr.ExitCode() == 1 &&
-			len(out) == 0 &&
-			len(exitErr.Stderr) == 0 {
+		// Earlier token-use versions signalled not-found with exit 1 and
+		// empty output; later versions use the same 2/3 codes as session usage.
+		if exitErr.ExitCode() == 2 || exitErr.ExitCode() == 3 ||
+			(exitErr.ExitCode() == 1 && len(out) == 0 && len(exitErr.Stderr) == 0) {
 			return nil
 		}
-		return fmt.Errorf(
-			"agentsview token-use: exit %d: %s",
-			exitErr.ExitCode(), exitErr.Stderr,
-		)
+		return fmt.Errorf("agentsview token-use: exit %d: %s", exitErr.ExitCode(), exitErr.Stderr)
 	}
 	return fmt.Errorf("agentsview token-use: %w", err)
 }

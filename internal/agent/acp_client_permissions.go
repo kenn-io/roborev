@@ -100,22 +100,97 @@ func (c *acpClient) SessionUpdate(ctx context.Context, params acp.SessionNotific
 		return nil
 	}
 
-	// Handle streaming updates from the agent
-	if params.Update.AgentMessageChunk != nil {
+	c.resultMutex.Lock()
+	defer c.resultMutex.Unlock()
+
+	switch {
+	case params.Update.AgentMessageChunk != nil:
 		if params.Update.AgentMessageChunk.Content.Text != nil {
 			text := params.Update.AgentMessageChunk.Content.Text.Text
-			c.resultMutex.Lock()
 			if c.output != nil {
 				if _, err := c.output.Write([]byte(text)); err != nil {
-					c.resultMutex.Unlock()
 					return err
 				}
+				c.liveLogNeedNL = text != "" && !strings.HasSuffix(text, "\n")
 			}
 			c.result.WriteString(text)
-			c.resultMutex.Unlock()
 		}
+	case params.Update.ToolCall != nil:
+		return c.writeLiveLogLocked(formatACPToolCall(params.Update.ToolCall))
+	case params.Update.ToolCallUpdate != nil:
+		return c.writeLiveLogLocked(formatACPToolCallUpdate(params.Update.ToolCallUpdate))
 	}
 	return nil
+}
+
+func (c *acpClient) writeLiveLogLocked(line string) error {
+	if c.output == nil || line == "" {
+		return nil
+	}
+	if c.liveLogNeedNL {
+		if _, err := c.output.Write([]byte("\n")); err != nil {
+			return err
+		}
+		c.liveLogNeedNL = false
+	}
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+	_, err := c.output.Write([]byte(line))
+	return err
+}
+
+func formatACPToolCall(tc *acp.SessionUpdateToolCall) string {
+	if tc == nil {
+		return ""
+	}
+	title := strings.TrimSpace(tc.Title)
+	if title == "" {
+		title = string(tc.ToolCallId)
+	}
+	path := ""
+	if len(tc.Locations) > 0 {
+		path = strings.TrimSpace(tc.Locations[0].Path)
+	}
+	return formatACPToolLine(title, string(tc.Status), path)
+}
+
+func formatACPToolCallUpdate(tu *acp.SessionToolCallUpdate) string {
+	if tu == nil {
+		return ""
+	}
+	title := ""
+	if tu.Title != nil {
+		title = strings.TrimSpace(*tu.Title)
+	}
+	if title == "" {
+		title = string(tu.ToolCallId)
+	}
+	status := ""
+	if tu.Status != nil {
+		status = string(*tu.Status)
+	}
+	path := ""
+	if len(tu.Locations) > 0 {
+		path = strings.TrimSpace(tu.Locations[0].Path)
+	}
+	return formatACPToolLine(title, status, path)
+}
+
+func formatACPToolLine(title, status, path string) string {
+	var b strings.Builder
+	b.WriteString("[tool] ")
+	b.WriteString(title)
+	if status != "" {
+		b.WriteString(" (")
+		b.WriteString(status)
+		b.WriteString(")")
+	}
+	if path != "" {
+		b.WriteString(" ")
+		b.WriteString(path)
+	}
+	return b.String()
 }
 
 // validateAndResolvePath validates that a file path is within the repository root

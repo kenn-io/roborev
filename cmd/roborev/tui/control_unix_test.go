@@ -3,15 +3,11 @@
 package tui
 
 import (
-	"encoding/json"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -95,19 +91,11 @@ func TestCleanupDoesNotUnlinkSuccessorSocket(t *testing.T) {
 		"successor socket should survive predecessor close")
 }
 
-// newTestProgramUnix creates a tea.Program for Unix-only tests.
+// newTestProgramUnix creates a tea.Program for Unix-only listener tests.
 func newTestProgramUnix(t *testing.T) *tea.Program {
 	t.Helper()
-	ts := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]any{})
-		},
-	))
-	t.Cleanup(ts.Close)
-	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	p := tea.NewProgram(m, tea.WithoutRenderer())
-	go func() { _, _ = p.Run() }()
-	t.Cleanup(func() { p.Kill() })
-	time.Sleep(100 * time.Millisecond)
-	return p
+	return tea.NewProgram(
+		newModel(testEndpoint, withExternalIODisabled()),
+		tea.WithoutRenderer(),
+	)
 }

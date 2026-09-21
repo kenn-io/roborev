@@ -166,6 +166,8 @@ Without this, you'd get duplicate repository entries, scattered reviews, and
 confusion about which reviews belong to which code. With worktree support,
 everything is consolidated under the main repository.
 
+### Git Hook Maintenance
+
 If your repository uses `core.hooksPath` (common with Husky and other hook
 managers), roborev resolves relative paths against the main repository root so
 the post-commit hook fires correctly from linked worktrees.
@@ -175,6 +177,12 @@ modifies hooks inside the repository's Git metadata directory (including the
 shared Git directory for linked worktrees). If `core.hooksPath` points into a
 working tree, such as a tracked `.githooks` directory, or an external shared
 directory, automatic maintenance leaves those files unchanged.
+
+Automatic maintenance also skips the repository if an individual hook symlinks
+outside Git metadata or its symlink target cannot be resolved. This includes
+dangling symlinks, which could otherwise create files in the working tree. When
+a hook symlink resolves inside Git metadata, upgrades preserve the symlink and
+update its target.
 
 To install or upgrade hooks in those locations, explicitly run `roborev init` or
 `roborev install-hook`. To refresh only existing roborev-managed hooks, run

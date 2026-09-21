@@ -125,7 +125,23 @@ Update to the latest version:
 roborev update
 ```
 
-This downloads and replaces the current binary with the latest release.
+This downloads and replaces the current binary with the latest release. Read the
+[changelog](/docs/changelog/) before updating, or press `u` in the terminal
+interface to read recent release notes. The browser application also has a
+release-notes viewer in its header.
+
+### Upgrading to 0.68.0
+
+Check the rows that apply to your installation:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| Existing review history | Reviews that cannot be converted faithfully to JSON move to an archive and leave normal views. Follow [legacy review migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration) to export, convert, and restore them. |
+| Pi reviews | Install the JSON schema extension described in [Pi Structured Output](/docs/agents/#pi-structured-output). It is required for reviews as well as classification. |
+| Generated CI workflows | Regenerate them to adopt the credential changes. Copilot needs a separate `COPILOT_GITHUB_TOKEN`. See [the generated workflow](/docs/integrations/github/#how-the-generated-workflow-works). |
+| An obsolete Agent Hook registration | Remove the command named by the error from your agent configuration, then reinstall. See [Agent Hook runtime](/docs/agent-hook/#runtime-model). |
+| Git hooks in a working tree or external directory | Update them explicitly; automatic maintenance leaves them unchanged, including through symlinks. See [hook maintenance](/docs/guides/repository-management/#git-hook-maintenance). |
+| The Nix flake | Roborev no longer ships it. Choose one of the installation methods above. |
 
 ## Agent Requirements
 

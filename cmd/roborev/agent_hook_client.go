@@ -53,6 +53,19 @@ func postAgentHookRequest(
 	if err := json.Unmarshal(body, &out); err != nil {
 		return agenthook.Response{}, err
 	}
+	if req.MCP {
+		out.Reason = strings.TrimSpace(out.Reason)
+		if out.Triggered {
+			out.Reason += "\n\nUse the roborev MCP tools to read reviews, comment, and close them. Use the MCP version of the roborev-fix skill."
+			if addr != "" {
+				out.Reason += " Connect to the same daemon at " + addr + "."
+			}
+		}
+		if out.FixSessionID != nil {
+			out.Reason += fmt.Sprintf("\n\nAfter auditing the original reviews, call roborev_complete_fix with fix_session_id %q.", out.FixSessionID.String())
+		}
+		return out, nil
+	}
 	if out.FixSessionID != nil {
 		executable, err := os.Executable()
 		if err != nil {

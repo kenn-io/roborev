@@ -972,7 +972,7 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 
 	spec, ok := lookupAgent(AgentCodex)
 	require.True(t, ok)
-	result, err := installAgent(spec)
+	result, err := installAgent(spec, nil)
 	require.NoError(t, prerequisiteError(err, "cannot install isolated Codex skills"), "live Codex skill eval prerequisite")
 	require.False(t, result.Skipped)
 
