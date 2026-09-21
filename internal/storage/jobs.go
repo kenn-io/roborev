@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -2916,9 +2918,15 @@ func decodeFileList(data string) []string {
 	if data == "" {
 		return nil
 	}
-	var files []string
-	if err := json.Unmarshal([]byte(data), &files); err != nil {
+	var values []stdjson.RawMessage
+	if err := stdjson.Unmarshal([]byte(data), &values); err != nil || values == nil {
 		return nil
+	}
+	files := make([]string, len(values))
+	for i, value := range values {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || stdjson.Unmarshal(value, &files[i]) != nil {
+			return nil
+		}
 	}
 	return files
 }

@@ -66,6 +66,8 @@ func TestAnalysisMetadata(t *testing.T) {
 		`"pkg/a.go"`,
 		`{"file":"pkg/a.go"}`,
 		`["pkg/a.go", 1]`,
+		`[null]`,
+		`["pkg/a.go", null]`,
 	} {
 		job, enqueueErr := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, Prompt: "invalid files", Agent: "test"})
 		require.NoError(t, enqueueErr)

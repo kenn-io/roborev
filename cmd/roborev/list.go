@@ -216,13 +216,18 @@ Examples:
 }
 
 func normalizeListFile(repoRoot, file string) string {
-	clean := filepath.Clean(file)
+	portable := strings.ReplaceAll(file, "\\", "/")
+	clean := filepath.Clean(filepath.FromSlash(portable))
 	if repoRoot != "" {
-		if abs, err := filepath.Abs(file); err == nil {
+		path := filepath.FromSlash(portable)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repoRoot, path)
+		}
+		if abs, err := filepath.Abs(path); err == nil {
 			if rel, err := filepath.Rel(repoRoot, abs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				clean = rel
 			}
 		}
 	}
-	return filepath.ToSlash(clean)
+	return strings.ReplaceAll(filepath.ToSlash(clean), "\\", "/")
 }

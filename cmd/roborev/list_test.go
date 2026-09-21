@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,6 +21,22 @@ type repoSetupResult struct {
 	workingDir string
 	repo       *TestGitRepo
 	extraArgs  []string
+}
+
+func TestNormalizeListFile(t *testing.T) {
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	for _, tc := range []struct {
+		name string
+		file string
+		want string
+	}{
+		{name: "portable separator", file: `pkg\a.go`, want: "pkg/a.go"},
+		{name: "repo relative from subdirectory", file: "pkg/a.go", want: "pkg/a.go"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, normalizeListFile(repoRoot, tc.file))
+		})
+	}
 }
 
 type listTestCase struct {

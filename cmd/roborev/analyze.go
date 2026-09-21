@@ -290,9 +290,6 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		if err != nil {
 			return err
 		}
-		if !opts.perFile {
-			opts.analysisCommitSHA = analysisCommitSHAForFiles(ctx, repoRoot, files)
-		}
 	}
 
 	if len(files) == 0 {
@@ -352,6 +349,8 @@ func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemon
 			return fmt.Errorf("build prompt with paths: %w", err)
 		}
 		opts.analysisCommitSHA = ""
+	} else if opts.branch == "" {
+		opts.analysisCommitSHA = analysisCommitSHAForFiles(ctx, repoRoot, files)
 	}
 
 	// Enqueue the job
@@ -403,6 +402,9 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 	}
 
 	var jobInfos []AnalyzeJobInfo
+	var commitContext analysisCommitContext
+	commitContextReady := false
+
 	for i, fileName := range fileNames {
 		singleFile := map[string]string{fileName: files[fileName]}
 
@@ -429,13 +431,17 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 		}
 
 		jobOpts := opts
-		if opts.branch == "" {
-			jobOpts.analysisCommitSHA = analysisCommitSHAForFiles(ctx, repoRoot, singleFile)
+		if opts.branch == "" && !pathOnly {
+			if !commitContextReady {
+				commitContext = analysisCommitContextForFiles(ctx, repoRoot)
+				commitContextReady = true
+			}
+			jobOpts.analysisCommitSHA = commitContext.shaForFiles(repoRoot, singleFile)
 		}
 		if pathOnly {
 			jobOpts.analysisCommitSHA = ""
 		}
-		job, err := enqueueAnalysisJob(ctx, ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, []string{filepath.ToSlash(fileName)}, jobOpts)
+		job, err := enqueueAnalysisJob(ctx, ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, []string{normalizeAnalysisPath(fileName)}, jobOpts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -1044,39 +1050,56 @@ func normalizeAnalysisFiles(files map[string]string) []string {
 func normalizeAnalysisFileList(paths []string) []string {
 	paths = append([]string(nil), paths...)
 	for i := range paths {
-		paths[i] = filepath.ToSlash(paths[i])
+		paths[i] = normalizeAnalysisPath(paths[i])
 	}
 	sort.Strings(paths)
 	return paths
 }
 
-func analysisCommitSHAForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
-	if len(files) == 0 {
-		return ""
-	}
+func normalizeAnalysisPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+}
+
+type analysisCommitContext struct {
+	head  string
+	dirty map[string]struct{}
+}
+
+func analysisCommitContextForFiles(ctx context.Context, repoRoot string) analysisCommitContext {
 	head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 	if err != nil {
-		return ""
+		return analysisCommitContext{}
 	}
 	dirtyFiles, err := git.GetDirtyFilesChanged(repoRoot)
 	if err != nil {
-		return ""
+		return analysisCommitContext{}
 	}
 	dirty := make(map[string]struct{}, len(dirtyFiles))
 	for _, name := range dirtyFiles {
-		dirty[filepath.ToSlash(name)] = struct{}{}
+		dirty[normalizeAnalysisPath(name)] = struct{}{}
+	}
+	return analysisCommitContext{head: head, dirty: dirty}
+}
+
+func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]string) string {
+	if c.head == "" || len(files) == 0 {
+		return ""
 	}
 	for name, content := range files {
-		path := filepath.ToSlash(name)
-		if _, ok := dirty[path]; ok {
+		path := normalizeAnalysisPath(name)
+		if _, ok := c.dirty[path]; ok {
 			return ""
 		}
-		headContent, err := git.ReadFile(repoRoot, head, path)
+		headContent, err := git.ReadFile(repoRoot, c.head, path)
 		if err != nil || string(headContent) != content {
 			return ""
 		}
 	}
-	return head
+	return c.head
+}
+
+func analysisCommitSHAForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
+	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(repoRoot, files)
 }
 
 // getBranchFiles discovers files changed on a branch and reads their contents.
@@ -1139,13 +1162,13 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	}
 
 	// Get merge-base
-	mergeBase, err := git.GetMergeBase(repoRoot, base, targetRef)
+	mergeBase, err := git.GetMergeBase(repoRoot, base, targetSHA)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot find merge-base with %s: %w", base, err)
 	}
 
 	// Validate has commits
-	rangeRef := mergeBase + ".." + targetRef
+	rangeRef := mergeBase + ".." + targetSHA
 	commits, err := git.GetRangeCommits(repoRoot, rangeRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot get commits: %w", err)
@@ -1180,7 +1203,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	// Read file contents from git (not working tree) for consistency with the commit range
 	files := make(map[string]string, len(codeFiles))
 	for _, f := range codeFiles {
-		content, readErr := git.ReadFile(repoRoot, targetRef, f)
+		content, readErr := git.ReadFile(repoRoot, targetSHA, f)
 		if readErr != nil {
 			// Files deleted in the target ref will fail to read — skip them
 			if strings.Contains(readErr.Error(), "does not exist") || strings.Contains(readErr.Error(), "bad object") {
