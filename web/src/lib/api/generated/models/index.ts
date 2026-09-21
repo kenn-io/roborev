@@ -154,6 +154,8 @@ export * from "./sessionStateWorktreeLineageKeys";
 export * from "./sessionUsagePayload";
 export * from "./shutdownOutputBody";
 export * from "./streamEventsParams";
+export * from "./structuredReviewDocument";
+export * from "./structuredReviewFinding";
 export * from "./summary";
 export * from "./syncNowParams";
 export * from "./syncStatusOutputBody";

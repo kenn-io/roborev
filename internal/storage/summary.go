@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // querier abstracts *sql.DB and *sql.Tx for summary queries.

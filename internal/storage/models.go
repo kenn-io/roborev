@@ -8,7 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type Repo struct {

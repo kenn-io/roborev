@@ -1552,6 +1552,11 @@ components:
           $ref: "#/components/schemas/ExportReviewCost"
         created_at:
           type: string
+        document:
+          description: The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+          oneOf:
+            - $ref: "#/components/schemas/StructuredReviewDocument"
+            - type: "null"
         duration_ms:
           format: int64
           type:
@@ -1614,6 +1619,7 @@ components:
         - model
         - cost
         - content
+        - document
         - closed
         - updated_at
         - subagents
@@ -1725,6 +1731,11 @@ components:
             - "null"
         cost:
           $ref: "#/components/schemas/ExportReviewCost"
+        document:
+          description: The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+          oneOf:
+            - $ref: "#/components/schemas/StructuredReviewDocument"
+            - type: "null"
         duration_ms:
           format: int64
           type:
@@ -1761,6 +1772,7 @@ components:
         - duration_ms
         - cost
         - content
+        - document
         - resume_source_job_uuid
       type: object
     FailureStats:
@@ -3464,6 +3476,61 @@ components:
           type: string
       required:
         - status
+      type: object
+    StructuredReviewDocument:
+      additionalProperties: false
+      description: The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/StructuredReviewFinding"
+          type: array
+        schema_version:
+          description: Version of the document format, separate from the export schema_version.
+          format: int64
+          type: integer
+        source_labels:
+          description: Names of the input reviews that findings cite in sources, indexed by review number minus one.
+          items:
+            type: string
+          type: array
+        summary:
+          type: string
+        verdict:
+          description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents."
+          type: string
+      required:
+        - schema_version
+        - summary
+        - findings
+      type: object
+    StructuredReviewFinding:
+      additionalProperties: false
+      description: One finding in a structured review document.
+      properties:
+        fix:
+          type: string
+        location:
+          description: Where the problem is, or null when the finding has no location.
+          type:
+            - string
+            - "null"
+        problem:
+          type: string
+        severity:
+          description: One of critical, high, medium, or low.
+          type: string
+        sources:
+          description: 1-based numbers of the input reviews that reported this finding. Present on synthesized documents.
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - severity
+        - problem
+        - fix
+        - location
       type: object
     Summary:
       additionalProperties: false

@@ -10,7 +10,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // Sync state keys

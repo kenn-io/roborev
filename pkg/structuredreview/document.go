@@ -1,3 +1,30 @@
+// Package structuredreview defines the canonical JSON document that roborev
+// stores for a review, and the code that reads and renders it.
+//
+// This package is a supported import for other Go modules:
+//
+//	import "go.kenn.io/roborev/pkg/structuredreview"
+//
+// It imports only the standard library. A consumer that receives a document,
+// for example the "document" field of `roborev export reviews`, can decode and
+// render it with the same code roborev uses instead of copying it.
+//
+//   - [Document] is one review: a summary, the agent's verdict, and a list of
+//     [Finding] values. Encode it with the standard JSON encoder to get the
+//     canonical form. An empty finding location encodes as JSON null.
+//   - [Decode] parses and validates a JSON document. It rejects unknown
+//     fields, trailing data, unsupported versions, and findings with an
+//     invalid severity or without a problem, fix, or location field. It trims
+//     text and lowercases the severity and verdict, so a decoded Document is
+//     normalized.
+//   - [Document.Markdown] renders a Document as the Markdown that roborev
+//     shows and exports as review content.
+//
+// [SchemaVersion] versions the document, not this Go API. It is the version
+// agents must return and the value of "schema_version" in new documents.
+// Decode still accepts version 1 documents, which carry no verdict, so stored
+// reviews keep working. [Schema] and [SourcedSchema] are the JSON Schemas that
+// constrain agent output to the current version.
 package structuredreview
 
 import (

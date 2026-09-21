@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestExportReviewsContentProfile(t *testing.T) {
@@ -99,6 +101,133 @@ func TestExportReviewsMetadataProfileOmitsContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "SECRET_OUTPUT")
 	assert.NotContains(t, string(encoded), filepath.Dir(repo.RootPath))
+}
+
+// exportTestStoredDocument is deliberately not in canonical form: keys are out
+// of order, text is padded, and severity and verdict are upper case.
+const exportTestStoredDocument = `{
+  "findings": [
+    {"location": "auth/login.go:42", "fix": " Redact the token. ", "problem": " The token is logged. ", "severity": "HIGH"},
+    {"severity": "low", "problem": "Typo in a comment.", "fix": "Fix the spelling.", "location": null}
+  ],
+  "verdict": "FAIL",
+  "summary": "  Two problems.  ",
+  "schema_version": 2
+}`
+
+const exportTestCanonicalDocument = `{"schema_version":2,"summary":"Two problems.","verdict":"fail","findings":[` +
+	`{"severity":"high","problem":"The token is logged.","fix":"Redact the token.","location":"auth/login.go:42"},` +
+	`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}]}`
+
+func TestExportReviewsContentProfileExportsCanonicalDocument(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	assert := assert.New(t)
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+	setExportReviewStructuredOutput(t, db, review.JobID, exportTestStoredDocument)
+
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	got := page.Reviews[0]
+
+	require.NotNil(t, got.Document)
+	assert.Equal("Two problems.", got.Document.Summary)
+	assert.Equal("fail", got.Document.Verdict)
+	require.Len(t, got.Document.Findings, 2)
+	assert.Equal(structuredreview.Finding{
+		Severity: "high",
+		Problem:  "The token is logged.",
+		Fix:      "Redact the token.",
+		Location: "auth/login.go:42",
+	}, got.Document.Findings[0])
+
+	encoded, err := json.Marshal(got.Document)
+	require.NoError(t, err)
+	assert.JSONEq(exportTestCanonicalDocument, string(encoded),
+		"document is the normalized document, not the stored bytes, and an empty location stays null")
+
+	wantDoc, err := structuredreview.Decode([]byte(exportTestStoredDocument))
+	require.NoError(t, err)
+	assert.Equal(wantDoc.Markdown(""), derefString(got.Content), "content stays the Markdown rendering of the same document")
+}
+
+func TestExportReviewsDocumentIsNullWithoutStoredDocumentOrInMetadataProfile(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	withDocument := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+	setExportReviewStructuredOutput(t, db, withDocument.JobID, exportTestStoredDocument)
+	withoutDocument := seedCompletedExportReview(t, db, repo.ID, "2222222222222222222222222222222222222222", "2026-06-29 00:00:01", false)
+	setExportReviewStructuredOutput(t, db, withoutDocument.JobID, nil)
+
+	exportedDocuments := func(profile ExportProfile) []any {
+		page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile, Limit: 10})
+		require.NoError(t, err)
+		encoded, err := json.Marshal(page)
+		require.NoError(t, err)
+		var wire struct {
+			Reviews []map[string]any `json:"reviews"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &wire))
+		require.Len(t, wire.Reviews, 2)
+		documents := make([]any, 0, len(wire.Reviews))
+		for _, review := range wire.Reviews {
+			require.Contains(t, review, "document", "the key is always present")
+			documents = append(documents, review["document"])
+		}
+		return documents
+	}
+
+	content := exportedDocuments(ExportProfileContent)
+	assert.IsType(t, map[string]any{}, content[0], "a stored document exports as a JSON object")
+	assert.Nil(t, content[1], "a review without structured_output exports document: null")
+
+	assert.Equal(t, []any{nil, nil}, exportedDocuments(ExportProfileMetadata),
+		"the metadata profile never exports the document")
+}
+
+func TestExportReviewsExportsSubagentDocuments(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	assert := assert.New(t)
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	panelRun := testUUID("panel-run-documents")
+	member := seedPanelExportJob(t, db, repo.ID, panelRun, "member", "security", 0, "codex", "security", "2026-06-29 00:00:01", "- High — issue")
+	setExportReviewStructuredOutput(t, db, member.JobID, exportTestStoredDocument)
+	seedPanelExportJob(t, db, repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "- Medium — synthesized")
+
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	synthesis := page.Reviews[0]
+	require.Len(t, synthesis.Subagents, 1)
+
+	subagent := synthesis.Subagents[0]
+	require.NotNil(t, subagent.Document)
+	encoded, err := json.Marshal(subagent.Document)
+	require.NoError(t, err)
+	assert.JSONEq(exportTestCanonicalDocument, string(encoded))
+	assert.Equal(subagent.Document.Markdown(""), derefString(subagent.Content))
+
+	// The synthesis review carries its own document, with the provenance the
+	// member documents do not have.
+	require.NotNil(t, synthesis.Document)
+	assert.NotEqual(subagent.Document.Summary, synthesis.Document.Summary)
+	assert.Equal([]string{"codex"}, synthesis.Document.SourceLabels)
+	require.Len(t, synthesis.Document.Findings, 1)
+	assert.Equal([]int{1}, synthesis.Document.Findings[0].Sources)
+
+	metadata, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, metadata.Reviews, 1)
+	require.Len(t, metadata.Reviews[0].Subagents, 1)
+	assert.Nil(metadata.Reviews[0].Document)
+	assert.Nil(metadata.Reviews[0].Subagents[0].Document)
 }
 
 func TestExportReviewsRepoFilterUsesExportedRepoIdentifier(t *testing.T) {
@@ -790,6 +919,14 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	return review
+}
+
+// setExportReviewStructuredOutput overwrites the stored document bytes so a
+// test controls exactly what is in the column. A nil value stores NULL.
+func setExportReviewStructuredOutput(t *testing.T, db *DB, jobID int64, document any) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, document, jobID)
+	require.NoError(t, err)
 }
 
 // setExportReviewUpdatedAt overwrites a review's updated_at. A nil value

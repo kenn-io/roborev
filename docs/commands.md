@@ -295,9 +295,40 @@ roborev export reviews --updated-since 2026-07-01T00:00:00Z
 | `--limit <n>` | Maximum top-level reviews to emit |
 
 `roborev export reviews` emits one JSON document containing completed reviews.
-The default `content` profile includes the raw review output text exactly as
-stored. The `metadata` profile keeps the same review metadata but sets `content`
-fields to `null`.
+roborev stores each review as a JSON review document. The default `content`
+profile exports that document in two fields, on every top-level review and on
+every review nested under `subagents`:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `document` | JSON object or `null` | The stored review document in its canonical form. `null` when the review has no stored document |
+| `content` | string or `null` | The Markdown rendering of `document`. `null` when the review has no stored document |
+
+`document` is the canonical form, and `content` is a rendering of it. Use
+`document` when you need the summary, verdict, or findings as data.
+
+The `metadata` profile keeps the same review metadata. Both keys stay present,
+and `document` and `content` are always `null`.
+
+A `document` has these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Current documents use `2`. Version `1` documents have no `verdict` |
+| `summary` | string | The reviewer's summary |
+| `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. The exported top-level `verdict` comes from the findings, not from this value |
+| `findings` | array | Zero or more findings |
+| `source_labels` | array of strings | Only on combined panel reviews. Names the member reviews that findings cite |
+
+Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
+`fix`, and `location`. `location` is always present and is `null` when the
+finding has no location. Findings in a combined panel review also have
+`sources`, the 1-based positions in `source_labels` of the reviews that reported
+the finding.
+
+Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
+`document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
+produces the same Markdown as `content`.
 
 Each top-level review has an `experiments` field. It is an array of assignments
 when an experiment applies and `null` otherwise. Every assignment contains the
@@ -326,10 +357,11 @@ document. With `--limit`, the CLI still pages through bounded daemon responses
 until the requested top-level count is reached or no more rows match.
 
 Review export documents use `schema_version: 2`. Version 2 added `closed` and
-`updated_at` to every top-level review; no version 1 field changed meaning.
-Documents also include a stable `database_id` for the local review database.
-`database_id` did not bump `schema_version` because it is an additive header
-field, and consumers must ignore unknown header keys.
+`updated_at` to every top-level review, and `document` to every top-level review
+and subagent. No version 1 field changed meaning. Documents also include a
+stable `database_id` for the local review database. `database_id` did not bump
+`schema_version` because it is an additive header field, and consumers must
+ignore unknown header keys.
 
 Review exports preserve complete content and metadata strings. Pagination limits
 control the number of rows returned; they do not truncate individual fields.
@@ -377,9 +409,9 @@ by more than your sync delay so those changes are not missed.
 
 !!! warning "Review content may be sensitive"
 
-    The `content` profile exports raw review output as stored. Review text can
-    include repository-specific details or other sensitive context. Use
-    `--profile metadata` when you do not need review prose, and handle content
+    The `content` profile exports the review text in `document` and `content`.
+    Review text can include repository-specific details or other sensitive context.
+    Use `--profile metadata` when you do not need review prose, and handle content
     exports with the same care as local review data.
 
 ## Exporting CI Metrics

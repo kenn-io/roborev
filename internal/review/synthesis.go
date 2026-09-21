@@ -9,7 +9,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // SynthesisSchema is the structured review schema with one addition: every

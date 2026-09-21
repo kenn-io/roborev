@@ -74,6 +74,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 | `internal/config/` | Global config, repo config, validation, key metadata, resolve helpers | `config.go`, `keyval.go` |
 | `internal/prompt/` | Review prompt builder and template loading | `prompt.go`, `templates.go`, `prompt/analyze/` |
 | `internal/review/` | Daemon-free batch review, synthesis, comment sizing/formatting | `batch.go`, `synthesis.go`, `result.go` |
+| `pkg/structuredreview/` | Canonical JSON review document: schema, decoding, verdict rules, and the Markdown writer. Public API that other Go modules import; keep it free of `internal/` and third-party imports | `document.go` |
 | `internal/git/` | Shared git helpers for refs, diffs, branch logic, repo discovery | `git.go` |
 | `internal/worktree/` | Temporary worktree creation, patch capture/apply/check | `worktree.go` |
 | `internal/skills/` | Embedded Codex/Claude skill files and installer logic | `skills.go`, `internal/skills/claude/`, `internal/skills/codex/` |

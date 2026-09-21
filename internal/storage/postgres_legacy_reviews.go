@@ -5,7 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"uuid"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {

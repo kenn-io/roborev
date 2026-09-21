@@ -11,7 +11,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const (

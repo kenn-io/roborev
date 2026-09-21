@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"uuid"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type sqlScanner interface {

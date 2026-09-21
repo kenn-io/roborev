@@ -1282,23 +1282,26 @@ type ExportReview struct {
 	Branch *string `json:"branch,omitempty" validate:"required"`
 
 	// Closed True when the review is marked closed.
-	Closed              bool                   `json:"closed"`
-	CommitSha           *string                `json:"commit_sha,omitempty" validate:"required"`
-	CompletedAt         string                 `json:"completed_at" validate:"required"`
-	Content             *string                `json:"content,omitempty" validate:"required"`
-	Cost                ExportReviewCost       `json:"cost"`
-	CreatedAt           string                 `json:"created_at" validate:"required"`
-	DurationMs          *int64                 `json:"duration_ms,omitempty"`
-	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
-	Model               *string                `json:"model,omitempty" validate:"required"`
-	PrNumber            *int64                 `json:"pr_number,omitempty"`
-	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
-	Project             string                 `json:"project" validate:"required"`
-	Repo                string                 `json:"repo" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
-	Status              string                 `json:"status" validate:"required"`
-	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
+	Closed      bool             `json:"closed"`
+	CommitSha   *string          `json:"commit_sha,omitempty" validate:"required"`
+	CompletedAt string           `json:"completed_at" validate:"required"`
+	Content     *string          `json:"content,omitempty" validate:"required"`
+	Cost        ExportReviewCost `json:"cost"`
+	CreatedAt   string           `json:"created_at" validate:"required"`
+
+	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+	Document            StructuredReviewDocument `json:"document"`
+	DurationMs          *int64                   `json:"duration_ms,omitempty"`
+	Experiments         []ExperimentAssignment   `json:"experiments" validate:"required"`
+	Model               *string                  `json:"model,omitempty" validate:"required"`
+	PrNumber            *int64                   `json:"pr_number,omitempty"`
+	PrURL               *string                  `json:"pr_url,omitempty" validate:"required"`
+	Project             string                   `json:"project" validate:"required"`
+	Repo                string                   `json:"repo" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID               `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ReviewID            uuid.UUID                `json:"review_id" validate:"required"`
+	Status              string                   `json:"status" validate:"required"`
+	Subagents           []ExportSubagent         `json:"subagents" validate:"required"`
 
 	// UpdatedAt RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
 	UpdatedAt string `json:"updated_at" validate:"required"`
@@ -1335,6 +1338,11 @@ func (e ExportReview) Validate() error {
 	}
 	if err := typesValidator.Var(e.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
+	}
+	if v, ok := any(e.Document).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Document", err)
+		}
 	}
 	for i, item := range e.Experiments {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1473,17 +1481,20 @@ func (e ExportReviewsWindow) Validate() error {
 }
 
 type ExportSubagent struct {
-	Agent               string           `json:"agent" validate:"required"`
-	CompletedAt         string           `json:"completed_at" validate:"required"`
-	Content             *string          `json:"content,omitempty" validate:"required"`
-	Cost                ExportReviewCost `json:"cost"`
-	DurationMs          *int64           `json:"duration_ms,omitempty"`
-	Model               *string          `json:"model,omitempty" validate:"required"`
-	Name                string           `json:"name" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            uuid.UUID        `json:"review_id" validate:"required"`
-	ReviewType          *string          `json:"review_type,omitempty" validate:"required"`
-	Verdict             string           `json:"verdict" validate:"required"`
+	Agent       string           `json:"agent" validate:"required"`
+	CompletedAt string           `json:"completed_at" validate:"required"`
+	Content     *string          `json:"content,omitempty" validate:"required"`
+	Cost        ExportReviewCost `json:"cost"`
+
+	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+	Document            StructuredReviewDocument `json:"document"`
+	DurationMs          *int64                   `json:"duration_ms,omitempty"`
+	Model               *string                  `json:"model,omitempty" validate:"required"`
+	Name                string                   `json:"name" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID               `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ReviewID            uuid.UUID                `json:"review_id" validate:"required"`
+	ReviewType          *string                  `json:"review_type,omitempty" validate:"required"`
+	Verdict             string                   `json:"verdict" validate:"required"`
 }
 
 func (e ExportSubagent) Validate() error {
@@ -1502,6 +1513,11 @@ func (e ExportSubagent) Validate() error {
 	if v, ok := any(e.Cost).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Cost", err)
+		}
+	}
+	if v, ok := any(e.Document).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Document", err)
 		}
 	}
 	if e.Model != nil {
@@ -2849,6 +2865,58 @@ type ShutdownOutputBody struct {
 }
 
 func (s ShutdownOutputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+// StructuredReviewDocument The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
+type StructuredReviewDocument struct {
+	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
+
+	// SchemaVersion Version of the document format, separate from the export schema_version.
+	SchemaVersion int64 `json:"schema_version"`
+
+	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.
+	SourceLabels []string `json:"source_labels,omitempty"`
+	Summary      string   `json:"summary" validate:"required"`
+
+	// Verdict The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.
+	Verdict *string `json:"verdict,omitempty"`
+}
+
+func (s StructuredReviewDocument) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range s.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.Summary, "required"); err != nil {
+		errors = errors.Append("Summary", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+// StructuredReviewFinding One finding in a structured review document.
+type StructuredReviewFinding struct {
+	Fix string `json:"fix" validate:"required"`
+
+	// Location Where the problem is, or null when the finding has no location.
+	Location *string `json:"location,omitempty" validate:"required"`
+	Problem  string  `json:"problem" validate:"required"`
+
+	// Severity One of critical, high, medium, or low.
+	Severity string `json:"severity" validate:"required"`
+
+	// Sources 1-based numbers of the input reviews that reported this finding. Present on synthesized documents.
+	Sources []int64 `json:"sources,omitempty"`
+}
+
+func (s StructuredReviewFinding) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 

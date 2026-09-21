@@ -4,7 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 var CustomReviewSchema = structuredreview.Schema

@@ -23,6 +23,13 @@ All notable changes to roborev, grouped by minor release.
     `--updated-since` flag returns reviews that changed after a given time, so
     consumers can pick up reviews closed or reopened after they were first
     exported. See [Exporting Reviews](/docs/commands/#exporting-reviews).
+- `roborev export reviews` exports each review as data. In the `content`
+    profile, every review and subagent has a `document` field with the stored
+    JSON review document: the summary, verdict, and findings. `document` is the
+    canonical form, and `content` is still the Markdown rendering of it. Other
+    Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to decode
+    and render a document. See
+    [Exporting Reviews](/docs/commands/#exporting-reviews).
 
 ## 0.68.0
 

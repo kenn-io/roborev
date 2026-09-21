@@ -12,7 +12,9 @@ import (
 	"time"
 	"uuid"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type ExportProfile string
@@ -75,6 +77,7 @@ type ExportReview struct {
 	Model               *string                `json:"model"`
 	Cost                ExportReviewCost       `json:"cost"`
 	Content             *string                `json:"content"`
+	Document            *ExportDocument        `json:"document"`
 	Closed              bool                   `json:"closed" doc:"True when the review is marked closed."`
 	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time."`
 	Subagents           []ExportSubagent       `json:"subagents"`
@@ -93,7 +96,83 @@ type ExportSubagent struct {
 	DurationMS          *int64           `json:"duration_ms"`
 	Cost                ExportReviewCost `json:"cost"`
 	Content             *string          `json:"content"`
+	Document            *ExportDocument  `json:"document"`
 	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
+}
+
+// ExportDocument is a stored structured review document as the export emits
+// it. It always holds a document that passed structuredreview.Decode, and it
+// encodes as that document's canonical JSON rather than the stored bytes.
+type ExportDocument struct {
+	structuredreview.Document
+}
+
+func (d ExportDocument) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Document)
+}
+
+const (
+	exportDocumentSchemaName = "StructuredReviewDocument"
+	exportFindingSchemaName  = "StructuredReviewFinding"
+)
+
+// Schema describes the document as it appears on the wire. Reflection cannot
+// derive it: a finding's location is always present and null when empty, and
+// the export field itself is null when a review has no stored document.
+//
+// Severity and verdict are described in prose rather than as enums. The Go
+// client generator names enum constants by value alone, so a second "pass"
+// or "fail" enum renames the constants of the existing one and breaks callers.
+func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
+	const refPrefix = "#/components/schemas/"
+	schemas := r.Map()
+	schemas[exportFindingSchemaName] = &huma.Schema{
+		Type:                 huma.TypeObject,
+		Description:          "One finding in a structured review document.",
+		AdditionalProperties: false,
+		Properties: map[string]*huma.Schema{
+			"severity": {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
+			"problem":  {Type: huma.TypeString},
+			"fix":      {Type: huma.TypeString},
+			"location": {Type: huma.TypeString, Nullable: true, Description: "Where the problem is, or null when the finding has no location."},
+			"sources": {
+				Type:        huma.TypeArray,
+				Items:       &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+				Description: "1-based numbers of the input reviews that reported this finding. Present on synthesized documents.",
+			},
+		},
+		Required: []string{"severity", "problem", "fix", "location"},
+	}
+	schemas[exportDocumentSchemaName] = &huma.Schema{
+		Type:                 huma.TypeObject,
+		Description:          "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
+		AdditionalProperties: false,
+		Properties: map[string]*huma.Schema{
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Description: "Version of the document format, separate from the export schema_version."},
+			"summary":        {Type: huma.TypeString},
+			"verdict": {
+				Type:        huma.TypeString,
+				Description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.",
+			},
+			"findings": {
+				Type:  huma.TypeArray,
+				Items: &huma.Schema{Ref: refPrefix + exportFindingSchemaName},
+			},
+			"source_labels": {
+				Type:        huma.TypeArray,
+				Items:       &huma.Schema{Type: huma.TypeString},
+				Description: "Names of the input reviews that findings cite in sources, indexed by review number minus one.",
+			},
+		},
+		Required: []string{"schema_version", "summary", "findings"},
+	}
+	return &huma.Schema{
+		Description: "The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.",
+		OneOf: []*huma.Schema{
+			{Ref: refPrefix + exportDocumentSchemaName},
+			{Type: "null"},
+		},
+	}
 }
 
 type ExportReviewCost struct {
@@ -116,6 +195,7 @@ type exportReviewRow struct {
 	reviewCreated       string
 	closed              bool
 	reviewUpdated       sql.NullString
+	document            *ExportDocument
 	output              sql.NullString
 	status              string
 	enqueuedAt          string
@@ -309,6 +389,7 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 			return row, decodeErr
 		}
 		row.output.String = doc.Markdown("")
+		row.document = &ExportDocument{Document: doc}
 	}
 
 	return row, err
@@ -349,6 +430,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 	}
 	if profile == ExportProfileContent && row.output.Valid {
 		review.Content = new(row.output.String)
+		review.Document = row.document
 	}
 	return review
 }
@@ -449,6 +531,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 				return nil, err
 			}
 			sub.Content = new(doc.Markdown(""))
+			sub.Document = &ExportDocument{Document: doc}
 		}
 		out = append(out, sub)
 	}

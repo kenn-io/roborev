@@ -11,7 +11,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // LegacyReviewMigrationNotice is shown when archived reviews need conversion.

@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // serveHuma sends a request through the server's mux (which
@@ -345,6 +346,71 @@ func TestHumaExportReviews(t *testing.T) {
 	require.Len(t, page2.Reviews, 1)
 	assert.Equal(t, "fail", page2.Reviews[0].Verdict)
 	assert.Contains(t, *page2.Reviews[0].Content, "- Medium — issue")
+}
+
+func TestHumaExportReviewsExportsDocumentInContentProfileOnly(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	assert := assert.New(t)
+	repo := testutil.CreateTestRepo(t, db)
+	withDocument := testutil.CreateCompletedReview(t, db, repo.ID, "export-document", "test-agent", "- Medium — issue")
+	withoutDocument := testutil.CreateCompletedReview(t, db, repo.ID, "export-no-document", "test-agent", "No issues found.")
+	// Stored bytes are not canonical: padded text, upper-case severity, and
+	// keys out of order.
+	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00', structured_output = ? WHERE job_id = ?`,
+		`{"findings":[`+
+			`{"location":"auth/login.go:42","fix":"Redact the token.","problem":" The token is logged. ","severity":"HIGH"},`+
+			`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}],`+
+			`"verdict":"fail","summary":" Two problems. ","schema_version":2}`,
+		withDocument.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:01', structured_output = NULL WHERE job_id = ?`, withoutDocument.ID)
+	require.NoError(t, err)
+
+	export := func(profile string) []map[string]jsontext.Value {
+		rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?profile="+profile, nil)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var body struct {
+			SchemaVersion int                         `json:"schema_version"`
+			Reviews       []map[string]jsontext.Value `json:"reviews"`
+		}
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+		assert.Equal(2, body.SchemaVersion)
+		require.Len(t, body.Reviews, 2)
+		return body.Reviews
+	}
+
+	content := export("content")
+	assert.JSONEq(`{
+		"schema_version": 2,
+		"summary": "Two problems.",
+		"verdict": "fail",
+		"findings": [
+			{"severity": "high", "problem": "The token is logged.", "fix": "Redact the token.", "location": "auth/login.go:42"},
+			{"severity": "low", "problem": "Typo in a comment.", "fix": "Fix the spelling.", "location": null}
+		]
+	}`, string(content[0]["document"]))
+	var findings struct {
+		Findings []map[string]jsontext.Value `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(content[0]["document"], &findings))
+	require.Len(t, findings.Findings, 2)
+	assert.Equal("null", string(findings.Findings[1]["location"]), "an empty location is exported as null, not dropped")
+
+	// A consumer can decode the exported document with the public package
+	// and get the same Markdown the export sends as content.
+	doc, err := structuredreview.Decode(content[0]["document"])
+	require.NoError(t, err)
+	var markdown string
+	require.NoError(t, json.Unmarshal(content[0]["content"], &markdown))
+	assert.Equal(doc.Markdown(""), markdown)
+
+	assert.Equal("null", string(content[1]["document"]), "no structured_output exports document: null")
+	assert.Equal("null", string(content[1]["content"]))
+
+	for _, review := range export("metadata") {
+		assert.Equal("null", string(review["document"]), "metadata profile never exports the document")
+		assert.Equal("null", string(review["content"]))
+	}
 }
 
 func TestHumaExportReviewsUpdatedSincePicksUpLaterClose(t *testing.T) {

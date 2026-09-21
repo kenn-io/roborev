@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func legacyReviewsCmd() *cobra.Command {

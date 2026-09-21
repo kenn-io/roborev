@@ -60,6 +60,11 @@ func exportReviewsCmd() *cobra.Command {
 		Long: strings.TrimSpace(`
 Export completed reviews as a JSON document.
 
+The content profile exports each review and subagent in two fields. document is
+the stored JSON review document, the canonical form. content is the Markdown
+rendering of it. Both are null in the metadata profile and for a review that
+has no stored document.
+
 Rows are ordered by completed_at, review_id ascending. Use --cursor with the
 next_cursor value from a previous export to resume strictly after that position.
 --cursor cannot be used with --since; --until, --limit, --profile, and filters

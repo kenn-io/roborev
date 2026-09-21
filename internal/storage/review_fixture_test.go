@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // completeReviewFixture creates a JSON review for tests whose subject is job

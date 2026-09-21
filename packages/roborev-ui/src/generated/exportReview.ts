@@ -4,6 +4,7 @@
 import type { ExperimentAssignment } from "./experimentAssignment";
 import type { ExportReviewCost } from "./exportReviewCost";
 import type { ExportSubagent } from "./exportSubagent";
+import type { StructuredReviewDocument } from "./structuredReviewDocument";
 
 export interface ExportReview {
   agent: string;
@@ -18,6 +19,8 @@ export interface ExportReview {
   content: string | null;
   cost: ExportReviewCost;
   created_at: string;
+  /** The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document. */
+  document: StructuredReviewDocument | null;
   /** @nullable */
   duration_ms: number | null;
   experiments: ExperimentAssignment[];

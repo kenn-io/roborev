@@ -5,7 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"strings"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // FindingCounts records every finding in a review, including findings below

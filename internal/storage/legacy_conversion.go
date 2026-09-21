@@ -8,7 +8,7 @@ import (
 	"slices"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // Refusal reasons the storage layer adds to the Markdown parser's own. Together

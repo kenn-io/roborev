@@ -251,8 +251,10 @@ roborev export reviews --closed-only --repo github.com/org/repo --limit 1000
 roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
 ```
 
-The default `content` profile includes raw review output as stored. That output
-may contain sensitive repository details, so handle exported files carefully.
+The default `content` profile includes each review twice: `document` is the
+stored JSON review document with the summary, verdict, and findings, and
+`content` is the Markdown rendering of it. Review text may contain sensitive
+repository details, so handle exported files carefully.
 Use `--profile metadata` when you only need identifiers, timestamps, verdicts,
 cost metadata, and related review metadata.
 

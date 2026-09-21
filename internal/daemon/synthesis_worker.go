@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // errSynthesisCanceled signals that the synthesis agent run was canceled, so the

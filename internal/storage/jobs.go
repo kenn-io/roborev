@@ -15,7 +15,7 @@ import (
 	"unicode"
 	"uuid"
 
-	"go.kenn.io/roborev/internal/structuredreview"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
