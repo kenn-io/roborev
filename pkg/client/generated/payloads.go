@@ -34,6 +34,8 @@ type RegisterRepoBody = RegisterRepoRequest
 
 type CloseReviewBody = CloseReviewRequest
 
+type MigrateReviewBody = MigrateReviewInputBody
+
 type BackfillTokensBody = BackfillTokensRequest
 
 type BootstrapWebSessionBody = WebBootstrapInputBody

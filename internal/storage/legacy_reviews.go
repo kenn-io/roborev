@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"uuid"
 
@@ -15,7 +14,7 @@ import (
 )
 
 // LegacyReviewMigrationNotice is shown when archived reviews need conversion.
-const LegacyReviewMigrationNotice = "Some reviews could not be converted to JSON. Their original records and migration errors are preserved in legacy_reviews and are excluded from normal review reads. Stop the daemon and run roborev legacy-reviews --db <database> convert to restore the reviews roborev wrote in a format it can read back exactly. For the rest, ask an AI agent to convert the unresolved records using the review JSON schema, then import the validated results with roborev legacy-reviews --db <database> import <id>. Run roborev legacy-reviews --db <database> export to prepare the migration input."
+const LegacyReviewMigrationNotice = "Some reviews could not be converted to JSON. Their original records and migration errors are preserved in legacy_reviews. Stop the daemon and run roborev legacy-reviews --db <database> convert to restore the reviews roborev wrote in a format it can read back exactly. For the rest, ask an AI agent to convert the unresolved records using the review JSON schema, then import the validated results with roborev legacy-reviews --db <database> import <id>. Run roborev legacy-reviews --db <database> export to prepare the migration input."
 
 var ErrLegacyReviewMigration = errors.New("review requires legacy JSON migration")
 
@@ -160,13 +159,7 @@ func (db *DB) migrateLegacyReviews() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE resolved_at IS NULL`).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		log.Print(LegacyReviewMigrationNotice)
-	}
+
 	return nil
 }
 
@@ -181,6 +174,9 @@ func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 	if err != nil {
 		return err
 	}
+	if doc.Legacy != nil {
+		return fmt.Errorf("import requires a structured review document")
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -190,7 +186,22 @@ func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 	var jobID int64
 	if err := tx.QueryRow(`SELECT l.job_id, COALESCE(j.min_severity, ''), j.job_type
  FROM legacy_reviews l JOIN review_jobs j ON j.id = l.job_id
- WHERE l.archive_id = ? AND l.resolved_at IS NULL`, id).Scan(&jobID, &threshold, &jobType); err != nil {
+ WHERE l.archive_id = ? AND (l.resolved_at IS NULL OR EXISTS(SELECT 1 FROM reviews r WHERE r.uuid = l.uuid))`, id).Scan(&jobID, &threshold, &jobType); err != nil {
+		return err
+	}
+	var activeID int64
+	var same bool
+	err = tx.QueryRow(`SELECT r.id, r.uuid = l.uuid FROM reviews r JOIN legacy_reviews l ON l.job_id = r.job_id WHERE l.archive_id = ?`, id).Scan(&activeID, &same)
+	if err == nil {
+		if !same {
+			return ErrReviewNotLegacy
+		}
+		if err := migrateReview(tx, activeID, raw, machineID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if jobType == JobTypeSynthesis {
@@ -215,11 +226,11 @@ func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 	if !doc.UnableToReview() {
 		verdict = verdictToBool(VerdictFromPassed(doc.Passed(threshold)))
 	}
-	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, created_at, closed,
+	_, err = tx.Exec(`INSERT INTO reviews (id, job_id, agent, prompt, output, created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
  uuid, updated_by_machine_id, updated_at, synced_at)
- SELECT job_id, agent, prompt, '', created_at, closed, reviewed_file_count, excluded_file_count,
- ?, ?, uuid, ?, datetime('now'), NULL FROM legacy_reviews WHERE archive_id = ?`, verdict, string(raw), machineID, id)
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM reviews WHERE id = l.id) THEN NULL ELSE l.id END, job_id, agent, prompt, '', created_at, closed, reviewed_file_count, excluded_file_count,
+ ?, ?, uuid, ?, datetime('now'), NULL FROM legacy_reviews l WHERE archive_id = ?`, verdict, string(raw), machineID, id)
 	if err != nil {
 		return fmt.Errorf("restore converted review: %w", err)
 	}
@@ -233,6 +244,7 @@ func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 // explicit migration command rather than ordinary review APIs.
 type LegacyReview struct {
 	ID               int64                `json:"id"`
+	ReviewID         *int64               `json:"review_id,omitempty"`
 	JobID            int64                `json:"job_id"`
 	JobType          string               `json:"job_type"`
 	Output           string               `json:"markdown"`
@@ -249,8 +261,10 @@ type LegacyReview struct {
 
 func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 	rows, err := db.Query(`SELECT l.archive_id, l.job_id, COALESCE(j.job_type, ''), l.output,
- COALESCE(l.structured_output, ''), l.migration_error, l.uuid, COALESCE(j.min_severity, ''), l.verdict_bool FROM legacy_reviews l
- LEFT JOIN review_jobs j ON j.id = l.job_id WHERE l.resolved_at IS NULL ORDER BY l.archive_id`)
+ COALESCE(l.structured_output, ''), l.migration_error, l.uuid, COALESCE(j.min_severity, ''), l.verdict_bool, r.id FROM legacy_reviews l
+ LEFT JOIN review_jobs j ON j.id = l.job_id
+ LEFT JOIN reviews r ON r.uuid = l.uuid
+ WHERE l.resolved_at IS NULL OR json_extract(r.structured_output, '$.legacy') IS NOT NULL ORDER BY l.archive_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +274,7 @@ func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
 		var r LegacyReview
 		var verdict sql.NullInt64
 		if err := rows.Scan(&r.ID, &r.JobID, &r.JobType, &r.Output, &r.StructuredOutput, &r.Reason,
-			&r.uuid, &r.minSeverity, &verdict); err != nil {
+			&r.uuid, &r.minSeverity, &verdict, &r.ReviewID); err != nil {
 			return nil, err
 		}
 		if verdict.Valid {
@@ -325,7 +339,7 @@ func legacySynthesisSources(q querier, jobID int64) ([]LegacyReviewSource, error
 func legacySource(agent, reviewType string, raw jsontext.Value, markdown string) (LegacyReviewSource, bool) {
 	doc, err := structuredreview.Decode(raw)
 	if err == nil {
-		if doc.UnableToReview() {
+		if doc.UnableToReview() || (doc.Legacy != nil && ClassifyOutput(doc.Legacy.Markdown) != OutputReviewed) {
 			return LegacyReviewSource{}, false
 		}
 	} else {

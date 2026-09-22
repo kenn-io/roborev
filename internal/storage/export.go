@@ -150,6 +150,10 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Properties: map[string]*huma.Schema{
 			"schema_version": {Type: huma.TypeInteger, Format: "int64", Description: "Version of the document format, separate from the export schema_version."},
 			"summary":        {Type: huma.TypeString},
+			"legacy": {Type: huma.TypeObject, AdditionalProperties: false, Description: "Historical Markdown without extracted findings. Only present in storage-only schema version 0.", Properties: map[string]*huma.Schema{
+				"markdown":         {Type: huma.TypeString},
+				"recorded_verdict": {Type: huma.TypeBoolean, Nullable: true},
+			}, Required: []string{"markdown", "recorded_verdict"}},
 			"verdict": {
 				Type:        huma.TypeString,
 				Description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.",

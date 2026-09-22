@@ -17,7 +17,7 @@ import (
 
 func legacyReviewsCmd() *cobra.Command {
 	var dbPath, postgresURL string
-	cmd := &cobra.Command{Use: "legacy-reviews", Short: "Convert, export, and resolve archived Markdown reviews"}
+	cmd := &cobra.Command{Use: "legacy-reviews", Short: "Convert, export, and resolve historical Markdown reviews"}
 	cmd.PersistentFlags().StringVar(&dbPath, "db", "", "Path to an offline reviews database (stop its daemon before convert or import; convert --dry-run and export only read)")
 	cmd.PersistentFlags().StringVar(&postgresURL, "postgres-url", "", "PostgreSQL connection URL for archived mirror reviews")
 	cmd.MarkFlagsMutuallyExclusive("db", "postgres-url")
@@ -33,14 +33,15 @@ convert reads only formats that roborev itself wrote: the Markdown roborev
 renders from a review document, the "## Review Findings" list with Severity,
 Location, Problem, and Fix bullets, reviews that state "No issues found.", and
 the SEVERITY_THRESHOLD_MET marker. It copies stated fields and never guesses. A
-review stays archived when a finding lacks a severity, problem, or fix, when
+review stays unstructured when a finding lacks a severity, problem, or fix, when
 text falls outside the recognized structure, when the sources of a combined
 panel review cannot be recovered, or when the converted findings would change
 the recorded verdict. Use export and import for those.
 
 Each conversion goes through the same validation as import, and the original
 stays archived. Running convert again is safe: it only sees reviews that are
-still unresolved.
+still unresolved. Opening the writable database also restores archived reviews
+automatically; the report describes the conversions remaining after that upgrade.
 
 --dry-run changes nothing and only opens the database for reading. It reports
 how many reviews would convert and counts the rest by refusal reason. Without
@@ -109,7 +110,7 @@ how many reviews would convert and counts the rest by refusal reason. Without
 				SynthesisSchema jsontext.Value `json:"synthesis_schema"`
 				Records         any            `json:"records"`
 			}{
-				"Convert each archived review into the supplied JSON model. Preserve every finding and its severity, problem, fix, location, and synthesis source numbers when present. Do not invent missing information or re-review the code. Leave ambiguous records unresolved and report why. Return one JSON file per resolved record for import with roborev legacy-reviews and the same --db or --postgres-url option, followed by import <id> < converted.json.",
+				"Convert each historical review into the supplied JSON model. Never replace an already structured review. Preserve every finding and its severity, problem, fix, location, and synthesis source numbers when present. Do not invent missing information or re-review the code. Leave ambiguous records unresolved and report why. Return one JSON file per resolved record for import with roborev legacy-reviews and the same --db or --postgres-url option, followed by import <id> < converted.json. The id is the archive ID. When review_id is present, you may instead POST {review_id, document} to the running daemon at /api/review/migrate.",
 				structuredreview.Schema, structuredreview.SourcedSchema, records,
 			})
 		},
@@ -160,12 +161,12 @@ how many reviews would convert and counts the rest by refusal reason. Without
 }
 
 func writeLegacyConversionReport(w io.Writer, report storage.LegacyConversionReport) error {
-	converted, left := "Converted and restored", "Left archived for export and import"
+	converted, left := "Converted and restored", "Left unstructured for export and import"
 	if report.DryRun {
-		converted, left = "Would convert", "Would stay archived"
+		converted, left = "Would convert", "Would remain unstructured"
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, "Archived reviews needing conversion: %d\n", report.Unresolved)
+	fmt.Fprintf(&out, "Historical reviews needing conversion: %d\n", report.Unresolved)
 	fmt.Fprintf(&out, "%s: %d\n", converted, report.Converted)
 	fmt.Fprintf(&out, "%s: %d\n", left, report.Unresolved-report.Converted)
 	for _, reason := range report.RefusalReasons() {

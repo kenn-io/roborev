@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestReviewDetailsRenderStoredFileCoverage(t *testing.T) {
@@ -30,4 +32,19 @@ func TestReviewDetailsRenderStoredFileCoverage(t *testing.T) {
 	without := stripANSI(m.renderReviewView())
 	assert.Equal(t, strings.Count(without, "\n"), withCoverageLines)
 	assert.NotContains(t, without, "files reviewed")
+}
+
+func TestReviewDetailsRenderLegacyDocument(t *testing.T) {
+	doc, err := structuredreview.Decode(jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"## Historical finding\n\nThe write loses data.","recorded_verdict":false}}`))
+	require.NoError(t, err)
+	job := makeJob(42)
+	review := makeReview(1, &job, withReviewOutput(doc.Markdown("")))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.currentReview = review
+	full := stripANSI(m.renderReviewView())
+	assert.Contains(t, full, "Unstructured historical review")
+	assert.Contains(t, full, "The write loses data.")
+	assert.NotContains(t, full, "No issues found")
+	assert.Equal(t, "-", findingCountsCell(job.FindingCounts))
 }

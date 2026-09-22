@@ -11,6 +11,8 @@ import type {
   ExportReviewsDocument,
   ExportReviewsParams,
   GetReviewParams,
+  MigrateReviewInputBody,
+  MigrateReviewOutputBody,
   Review,
   SearchResponse,
   SearchReviewsParams,
@@ -189,6 +191,36 @@ export const closeReview = async (
       ...getHeaders(options?.headers),
     },
     body: JSON.stringify(closeReviewRequest),
+  });
+};
+
+export const getMigrateReviewUrl = () => {
+  return `/api/review/migrate`;
+};
+
+/**
+ * @summary Replace a legacy review with a validated structured document
+ */
+export const migrateReview = async (
+  migrateReviewInputBody: NonReadonly<MigrateReviewInputBody>,
+  options?: RequestInit,
+): Promise<MigrateReviewOutputBody> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+  return roborevFetch<MigrateReviewOutputBody>(getMigrateReviewUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(migrateReviewInputBody),
   });
 };
 

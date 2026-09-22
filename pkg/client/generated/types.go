@@ -1816,6 +1816,23 @@ func (l ListReposOutputBody) Validate() error {
 	return errors
 }
 
+type MigrateReviewInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string  `json:"$schema,omitempty"`
+	Document struct{} `json:"document"`
+	ReviewID int64    `json:"review_id" validate:"gte=1"`
+}
+
+func (m MigrateReviewInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MigrateReviewOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Success bool    `json:"success"`
+}
+
 type OverviewStats struct {
 	Applied  int64 `json:"applied"`
 	Canceled int64 `json:"canceled"`
@@ -2872,6 +2889,9 @@ func (s ShutdownOutputBody) Validate() error {
 type StructuredReviewDocument struct {
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
+	// Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
+	Legacy *StructuredReviewDocument_Legacy `json:"legacy,omitempty"`
+
 	// SchemaVersion Version of the document format, separate from the export schema_version.
 	SchemaVersion int64 `json:"schema_version"`
 
@@ -2892,6 +2912,13 @@ func (s StructuredReviewDocument) Validate() error {
 			}
 		}
 	}
+	if s.Legacy != nil {
+		if v, ok := any(s.Legacy).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Legacy", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Summary, "required"); err != nil {
 		errors = errors.Append("Summary", err)
 	}
@@ -2899,6 +2926,16 @@ func (s StructuredReviewDocument) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+// StructuredReviewDocument_Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
+type StructuredReviewDocument_Legacy struct {
+	Markdown        string `json:"markdown" validate:"required"`
+	RecordedVerdict *bool  `json:"recorded_verdict,omitempty"`
+}
+
+func (s StructuredReviewDocument_Legacy) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 // StructuredReviewFinding One finding in a structured review document.

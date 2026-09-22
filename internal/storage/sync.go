@@ -950,6 +950,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		return false, fmt.Errorf("find job for review: %w", err)
 	}
 
+	legacyDocument := false
 	if requiresReviewDocument(jobType) {
 		doc, err := structuredreview.Decode(r.StructuredOutput)
 		if err == nil && jobType == JobTypeSynthesis {
@@ -963,7 +964,10 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			return false, fmt.Errorf("review JSON: %w", err)
 		}
 		r.Output = ""
-		if r.VerdictBool == nil && !doc.UnableToReview() {
+		if doc.Legacy != nil {
+			r.VerdictBool = doc.Legacy.RecordedVerdict
+			legacyDocument = true
+		} else if r.VerdictBool == nil && !doc.UnableToReview() {
 			r.VerdictBool = new(doc.Passed(threshold))
 		}
 	}
@@ -988,6 +992,9 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		verdictBool = verdictBoolFromOutput(r.Output)
 	}
 	verdictOnConflict := "COALESCE(excluded.verdict_bool, reviews.verdict_bool)"
+	if legacyDocument {
+		verdictOnConflict = "excluded.verdict_bool"
+	}
 	if noVerdict {
 		verdictOnConflict = "NULL"
 	}
@@ -1013,6 +1020,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
+ AND (json_extract(excluded.structured_output, '$.legacy') IS NULL OR reviews.structured_output IS NULL OR json_extract(reviews.structured_output, '$.legacy') IS NOT NULL)
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool, nullStr(string(r.StructuredOutput)), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
@@ -1023,7 +1031,16 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read pulled review rows affected: %w", err)
 	}
-	if requiresReviewDocument(jobType) {
+	if legacyDocument {
+		if _, err := tx.Exec(`INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
+ SELECT id, job_id, agent, prompt, json_extract(structured_output, '$.legacy.markdown'), created_at, closed,
+ reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at, synced_at,
+ 'Unstructured historical review' FROM reviews WHERE uuid = ? AND json_extract(structured_output, '$.legacy') IS NOT NULL
+ ON CONFLICT(uuid) DO NOTHING`, r.UUID); err != nil {
+			return false, err
+		}
+	}
+	if requiresReviewDocument(jobType) && !legacyDocument {
 		if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
 			return false, err
 		}

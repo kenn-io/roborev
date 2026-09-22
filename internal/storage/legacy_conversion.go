@@ -152,8 +152,8 @@ func (db *DB) ConvertLegacyReviews(dryRun bool) (LegacyConversionReport, error) 
 			continue
 		}
 		var active bool
-		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM reviews WHERE job_id = ? OR uuid = ?)`,
-			record.JobID, record.uuid).Scan(&active); err != nil {
+		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM reviews WHERE (job_id = ? OR uuid = ?) AND (uuid IS NOT ? OR json_extract(structured_output, '$.legacy') IS NULL))`,
+			record.JobID, record.uuid, record.uuid).Scan(&active); err != nil {
 			return report, err
 		}
 		if active {

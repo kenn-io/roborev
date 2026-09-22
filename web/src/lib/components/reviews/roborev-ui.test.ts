@@ -69,6 +69,33 @@ describe("@kenn-io/roborev-ui", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("renders legacy review text with its historical verdict", async () => {
+    const output =
+      "**Unstructured historical review.** Finding counts are unavailable.\n\n## Historical finding\n\nThe write loses data.";
+    render(ReviewProjectionView, {
+      projection: {
+        ...projection,
+        job: { ...projection.job, verdict: "F" },
+        panel_members: [],
+        review: {
+          id: 9,
+          output,
+          created_at: "2026-08-13T12:01:00Z",
+          closed: false,
+        },
+      },
+    });
+    expect(screen.getByText("Fail")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Historical finding" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Unstructured historical review."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("The write loses data.")).toBeInTheDocument();
+    expect(screen.queryByText("No issues found.")).not.toBeInTheDocument();
+  });
+
   it("rejects an unsupported projection schema", () => {
     render(ReviewProjectionView, {
       projection: { ...projection, schema_version: 2 } as ReviewProjection,

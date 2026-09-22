@@ -24,7 +24,8 @@
 // agents must return and the value of "schema_version" in new documents.
 // Decode still accepts version 1 documents, which carry no verdict, so stored
 // reviews keep working. [Schema] and [SourcedSchema] are the JSON Schemas that
-// constrain agent output to the current version.
+// constrain agent output to the current version. Storage-only version 0 carries
+// original historical Markdown in Legacy, without extracted findings.
 package structuredreview
 
 import (
@@ -101,9 +102,20 @@ func schema(withSources bool) jsontext.Value {
 }`, SchemaVersion, VerdictPass, VerdictFail, VerdictUnableToReview, required, sources))
 }
 
+// LegacyDocument preserves historical output without claiming extracted findings.
+// RecordedVerdict is nil when the historical outcome is unknown.
+type LegacyDocument struct {
+	Markdown        string `json:"markdown"`
+	RecordedVerdict *bool  `json:"recorded_verdict"`
+}
+
+// LegacySchemaVersion is storage-only; agents must return SchemaVersion.
+const LegacySchemaVersion = 0
+
 type Document struct {
-	SchemaVersion int    `json:"schema_version"`
-	Summary       string `json:"summary"`
+	Legacy        *LegacyDocument `json:"legacy,omitempty"`
+	SchemaVersion int             `json:"schema_version"`
+	Summary       string          `json:"summary"`
 	// Verdict is the agent's own judgment. Empty for version 1 documents.
 	Verdict  string    `json:"verdict,omitempty"`
 	Findings []Finding `json:"findings"`
@@ -140,11 +152,12 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 }
 
 type documentWire struct {
-	SchemaVersion int           `json:"schema_version"`
-	Summary       string        `json:"summary"`
-	Verdict       string        `json:"verdict"`
-	Findings      []findingWire `json:"findings"`
-	SourceLabels  []string      `json:"source_labels,omitempty"`
+	Legacy        *LegacyDocument `json:"legacy,omitempty"`
+	SchemaVersion int             `json:"schema_version"`
+	Summary       string          `json:"summary"`
+	Verdict       string          `json:"verdict"`
+	Findings      []findingWire   `json:"findings"`
+	SourceLabels  []string        `json:"source_labels,omitempty"`
 }
 
 type findingWire struct {
@@ -163,6 +176,12 @@ func Decode(raw jsontext.Value) (Document, error) {
 	}
 	if err := ensureEOF(dec); err != nil {
 		return Document{}, err
+	}
+	if wire.Legacy != nil {
+		if wire.SchemaVersion != LegacySchemaVersion || wire.Summary != "" || wire.Verdict != "" || len(wire.Findings) != 0 || len(wire.SourceLabels) != 0 {
+			return Document{}, fmt.Errorf("legacy document cannot contain structured review fields")
+		}
+		return Document{SchemaVersion: LegacySchemaVersion, Legacy: wire.Legacy}, nil
 	}
 	if wire.Findings == nil {
 		return Document{}, fmt.Errorf("structured review findings is required")
@@ -299,8 +318,12 @@ func (r Document) UnableToReview() bool {
 // Passed reports whether no finding reaches minSeverity. Findings below the
 // threshold are kept in the document and rendered, but do not fail the review.
 // The agent's own verdict is recorded and rendered but does not change the
-// outcome; the findings are the source of truth.
+// outcome; the findings are the source of truth. Legacy documents return their
+// recorded outcome; an unknown historical outcome returns false.
 func (r Document) Passed(minSeverity string) bool {
+	if r.Legacy != nil {
+		return r.Legacy.RecordedVerdict != nil && *r.Legacy.RecordedVerdict
+	}
 	threshold := thresholdRank(minSeverity)
 	for _, finding := range r.Findings {
 		if severityRank(finding.Severity) >= threshold {
@@ -314,6 +337,9 @@ func (r Document) Passed(minSeverity string) bool {
 // no finding reaches it, the rendering says so before listing the findings so
 // a reader can see why the review passed without losing the content.
 func (r Document) Markdown(minSeverity string) string {
+	if r.Legacy != nil {
+		return "**Unstructured historical review.** Finding counts are unavailable.\n\n" + r.Legacy.Markdown
+	}
 	var out strings.Builder
 	out.WriteString("## Summary\n\n")
 	out.WriteString(strings.TrimSpace(r.Summary))

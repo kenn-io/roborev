@@ -523,7 +523,10 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		}
 	}
 
-	return p.migrateLegacyReviews(ctx)
+	if err := p.migrateLegacyReviews(ctx); err != nil {
+		return err
+	}
+	return p.restoreLegacyReviews(ctx)
 }
 
 // GetDatabaseID returns the unique ID for this Postgres database.
@@ -840,9 +843,18 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 // unrated even if a legacy verdict was stored before: output that is not a
 // review ($13), and free-form task or insights jobs, looked up by job type.
 const pgUpsertReviewSQL = `
- WITH resolved AS (
+ WITH archived AS (
+ INSERT INTO legacy_reviews (uuid, record, migration_error)
+ SELECT $1, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
+ 'prompt', $4::text, 'output', $8::jsonb->'legacy'->>'markdown', 'closed', $6::boolean,
+ 'verdict_bool', $7::boolean, 'structured_output', $8::jsonb,
+ 'reviewed_file_count', $9::integer, 'excluded_file_count', $10::integer,
+ 'updated_by_machine_id', $11::uuid, 'created_at', $12::timestamptz), 'Unstructured historical review'
+ WHERE $8::jsonb->'legacy' IS NOT NULL
+ ON CONFLICT DO NOTHING
+ ), resolved AS (
  UPDATE legacy_reviews SET resolved_at = clock_timestamp()
- WHERE uuid = $1 AND $8::jsonb IS NOT NULL AND resolved_at IS NULL
+ WHERE uuid = $1 AND $8::jsonb IS NOT NULL AND $8::jsonb->'legacy' IS NULL AND resolved_at IS NULL
  )
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
@@ -859,6 +871,7 @@ const pgUpsertReviewSQL = `
  output = EXCLUDED.output,
 			verdict_bool = CASE
 				WHEN $13::boolean THEN NULL
+ WHEN EXCLUDED.structured_output->'legacy' IS NOT NULL THEN EXCLUDED.verdict_bool
 				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
 				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
 			structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
@@ -866,6 +879,7 @@ const pgUpsertReviewSQL = `
 			excluded_file_count = COALESCE(EXCLUDED.excluded_file_count, reviews.excluded_file_count),
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
+ WHERE EXCLUDED.structured_output->'legacy' IS NULL OR reviews.structured_output IS NULL OR reviews.structured_output->'legacy' IS NOT NULL
 `
 
 // syncedReviewVerdict returns the verdict to store for a pushed review and

@@ -1221,6 +1221,9 @@ func (db *DB) completeJob(
 		if err != nil {
 			return fmt.Errorf("review JSON document is required; Markdown records are no longer accepted: %w", err)
 		}
+		if doc.Legacy != nil {
+			return fmt.Errorf("new reviews cannot use the legacy document format")
+		}
 		if jobType == JobTypeSynthesis {
 			if err := doc.RequireSources(len(doc.SourceLabels)); err != nil {
 				return fmt.Errorf("synthesis JSON sources are required: %w", err)

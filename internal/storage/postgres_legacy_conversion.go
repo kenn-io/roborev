@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"uuid"
 
@@ -32,7 +33,8 @@ func (p *PgPool) UnresolvedLegacyReviews(ctx context.Context) ([]PostgresLegacyR
  COALESCE(l.record->>'output', ''), COALESCE(l.record->>'structured_output', ''), l.migration_error,
  COALESCE(j.min_severity, ''), (l.record->>'verdict_bool')::boolean
  FROM legacy_reviews l JOIN review_jobs j ON j.uuid = (l.record->>'job_uuid')::uuid
- WHERE l.resolved_at IS NULL ORDER BY l.uuid`)
+ LEFT JOIN reviews r ON r.uuid = l.uuid
+ WHERE l.resolved_at IS NULL OR r.structured_output->'legacy' IS NOT NULL ORDER BY l.uuid`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +68,9 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 	if err != nil {
 		return err
 	}
+	if doc.Legacy != nil {
+		return fmt.Errorf("import requires a structured review document")
+	}
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -76,9 +81,25 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 	var jobType, threshold string
 	err = tx.QueryRow(ctx, `SELECT l.record, j.uuid, j.job_type, COALESCE(j.min_severity, '')
  FROM legacy_reviews l JOIN review_jobs j ON j.uuid = (l.record->>'job_uuid')::uuid
- WHERE l.uuid = $1 AND l.resolved_at IS NULL FOR UPDATE OF l`, id).Scan(&record, &jobUUID, &jobType, &threshold)
+ WHERE l.uuid = $1 AND (l.resolved_at IS NULL OR EXISTS(SELECT 1 FROM reviews r WHERE r.uuid = l.uuid)) FOR UPDATE OF l`, id).Scan(&record, &jobUUID, &jobType, &threshold)
 	if err != nil {
 		return err
+	}
+	var current jsontext.Value
+	var activeID uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT uuid, structured_output FROM reviews WHERE uuid = $1 OR job_uuid = $2 FOR UPDATE`, id, jobUUID).Scan(&activeID, &current)
+	active := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if active {
+		previous, err := structuredreview.Decode(current)
+		if err != nil {
+			return err
+		}
+		if activeID != id || previous.Legacy == nil {
+			return ErrReviewNotLegacy
+		}
 	}
 	if jobType == JobTypeSynthesis {
 		sources, err := postgresLegacySources(ctx, tx, jobUUID)
@@ -101,11 +122,15 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 	if !doc.UnableToReview() {
 		verdict = new(doc.Passed(threshold))
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
+	if active {
+		_, err = tx.Exec(ctx, `UPDATE reviews SET structured_output = $2, output = '', verdict_bool = $3, updated_at = clock_timestamp(), updated_by_machine_id = $4 WHERE uuid = $1`, id, raw, verdict, uuid.New())
+	} else {
+		_, err = tx.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
  structured_output, reviewed_file_count, excluded_file_count, updated_by_machine_id, created_at, updated_at)
  SELECT r.uuid, r.job_uuid, r.agent, r.prompt, '', r.closed, $3, $2,
  r.reviewed_file_count, r.excluded_file_count, $4, r.created_at, clock_timestamp()
  FROM jsonb_populate_record(NULL::reviews, $1::jsonb) r`, record, raw, verdict, uuid.New())
+	}
 	if err != nil {
 		return fmt.Errorf("restore converted review: %w", err)
 	}
@@ -127,7 +152,7 @@ func (p *PgPool) ConvertLegacyReviews(ctx context.Context, dryRun bool) (LegacyC
 	report.Unresolved = len(records)
 	for _, record := range records {
 		var active bool
-		if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1 OR job_uuid = $2)`,
+		if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE (uuid = $1 OR job_uuid = $2) AND (uuid != $1 OR structured_output->'legacy' IS NULL))`,
 			record.ID, record.JobUUID).Scan(&active); err != nil {
 			return report, err
 		}

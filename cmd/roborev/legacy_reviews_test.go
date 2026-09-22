@@ -81,7 +81,7 @@ func TestLegacyReviewsConvertCommand(t *testing.T) {
 		return out.String()
 	}
 
-	assert.Equal(t, "Archived reviews needing conversion: 2\nWould convert: 1\nWould stay archived: 1\n  unrecognized_format: 1\n",
+	assert.Equal(t, "Historical reviews needing conversion: 2\nWould convert: 1\nWould remain unstructured: 1\n  unrecognized_format: 1\n",
 		run("convert", "--dry-run"))
 	check, err := storage.OpenReadOnly(dbPath)
 	require.NoError(t, err)
@@ -89,9 +89,9 @@ func TestLegacyReviewsConvertCommand(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration, "a dry run restores nothing")
 	require.NoError(t, check.Close())
 
-	assert.Equal(t, "Archived reviews needing conversion: 2\nConverted and restored: 1\nLeft archived for export and import: 1\n  unrecognized_format: 1\n",
+	assert.Equal(t, "Historical reviews needing conversion: 1\nConverted and restored: 0\nLeft unstructured for export and import: 1\n  unrecognized_format: 1\n",
 		run("convert"))
-	assert.Equal(t, "Archived reviews needing conversion: 1\nConverted and restored: 0\nLeft archived for export and import: 1\n  unrecognized_format: 1\n",
+	assert.Equal(t, "Historical reviews needing conversion: 1\nConverted and restored: 0\nLeft unstructured for export and import: 1\n  unrecognized_format: 1\n",
 		run("convert"), "a second run only sees what is still unresolved")
 
 	check, err = storage.OpenReadOnly(dbPath)
@@ -101,6 +101,7 @@ func TestLegacyReviewsConvertCommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "The change adds a save routine.", review.StructuredOutput["summary"])
 	assert.Equal(t, storage.VerdictFail, review.Verdict())
-	_, err = check.GetReviewByJobID(prose.ID)
-	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)
+	legacy, err := check.GetReviewByJobID(prose.ID)
+	require.NoError(t, err)
+	assert.Contains(t, legacy.Output, "Unstructured historical review")
 }

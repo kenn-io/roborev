@@ -555,6 +555,9 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		if doc.Legacy != nil {
+			continue
+		}
 		if doc.UnableToReview() {
 			updates = append(updates, pending{id: id})
 			continue

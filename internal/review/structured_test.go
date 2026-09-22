@@ -113,3 +113,9 @@ func TestStructuredReviewUnableToReview(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, decoded.UnableToReview())
 }
+
+func TestLiveReviewRejectsHistoricalDocument(t *testing.T) {
+	doc, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"Historical text","recorded_verdict":false}}`))
+	require.NoError(t, err)
+	require.ErrorContains(t, validateLiveDocument("test", doc), "schema_version")
+}

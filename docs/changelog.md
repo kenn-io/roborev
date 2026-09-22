@@ -9,20 +9,22 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
-- Older Markdown reviews come back without an AI agent. During upgrade, roborev
-    now converts Markdown-only reviews that it wrote in a format it can read
-    back exactly, instead of archiving them. For reviews that an earlier release
-    already archived, run `roborev legacy-reviews convert`, with `--dry-run` to
-    see what would convert and why the rest would not. Roborev still does not
-    guess: a review stays archived when a finding lacks a severity, problem, or
-    fix, or when any text falls outside the recognized structure. See
-    [Automatic conversion](/docs/guides/reviewing-code/#automatic-conversion).
+- Historical reviews return automatically on upgrade, including reviews archived
+    by 0.68.0. Recognized Markdown becomes structured findings; other text stays
+    readable as a labeled legacy JSON document with its recorded verdict and
+    open/closed state. No AI calls are needed. Agents can optionally convert the
+    remaining text through the existing `legacy-reviews export/import` workflow
+    or the new local `POST /api/review/migrate` endpoint. Imports reject invalid
+    documents and never replace an already structured review. See
+    [legacy migration](guides/reviewing-code.md#review-storage-and-legacy-migration).
+
 - `roborev export reviews` reports whether each review is closed. Every
     top-level review has a `closed` boolean and an `updated_at` timestamp, and
     review export documents now use `schema_version: 2`. The new
     `--updated-since` flag returns reviews that changed after a given time, so
     consumers can pick up reviews closed or reopened after they were first
     exported. See [Exporting Reviews](/docs/commands/#exporting-reviews).
+
 - `roborev export reviews` exports each review as data. In the `content`
     profile, every review and subagent has a `document` field with the stored
     JSON review document: the summary, verdict, and findings. `document` is the

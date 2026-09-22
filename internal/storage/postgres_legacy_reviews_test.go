@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestIntegrationLegacyReviewMigration(t *testing.T) {
@@ -193,4 +195,39 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, again.Converted, "a second run has nothing new to convert")
 	assert.Equal(t, 1, active(archived))
+}
+
+func TestIntegrationRestoreLegacyAndImport(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	jobID, reviewID := uuid.New(), uuid.New()
+	createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool, updated_by_machine_id)
+ VALUES ($1, $2, 'test', 'prompt', 'The write loses data. Keep the old file until rename.', true, NULL, $3)`, reviewID, jobID, defaultTestMachineID)
+	require.NoError(t, err)
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	require.NoError(t, pool.restoreLegacyReviews(ctx))
+	require.NoError(t, pool.restoreLegacyReviews(ctx))
+	var raw jsontext.Value
+	var closed bool
+	var verdict *bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT structured_output, closed, verdict_bool FROM reviews WHERE uuid = $1`, reviewID).Scan(&raw, &closed, &verdict))
+	doc, err := structuredreview.Decode(raw)
+	require.NoError(t, err)
+	require.NotNil(t, doc.Legacy)
+	assert.Equal(t, "The write loses data. Keep the old file until rename.", doc.Legacy.Markdown)
+	assert.True(t, closed)
+	assert.Nil(t, verdict)
+	converted := jsontext.Value(`{"schema_version":1,"summary":"Converted.","findings":[]}`)
+	require.NoError(t, pool.ResolveLegacyReview(ctx, reviewID, converted))
+	require.ErrorIs(t, pool.ResolveLegacyReview(ctx, reviewID, converted), ErrReviewNotLegacy)
+	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", StructuredOutput: raw, CreatedAt: time.Now(), UpdatedByMachineID: defaultTestMachineID}))
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT structured_output, closed FROM reviews WHERE uuid = $1`, reviewID).Scan(&raw, &closed))
+	doc, err = structuredreview.Decode(raw)
+	require.NoError(t, err)
+	assert.Nil(t, doc.Legacy)
+	assert.Equal(t, "Converted.", doc.Summary)
+	assert.True(t, closed)
 }

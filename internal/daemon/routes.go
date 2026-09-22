@@ -409,6 +409,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"jobs"}
 		})
 
+	huma.Post(api, "/api/review/migrate", s.humaMigrateReview,
+		func(o *huma.Operation) {
+			o.OperationID = "migrate-review"
+			o.Summary = "Replace a legacy review with a validated structured document"
+			o.Tags = []string{"reviews"}
+		})
+
 	huma.Post(api, "/api/review/close", s.humaCloseReview,
 		func(o *huma.Operation) {
 			o.OperationID = "close-review"

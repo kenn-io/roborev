@@ -472,9 +472,15 @@ On database upgrade, roborev handles each older review in one of three ways:
 - A Markdown-only review that roborev wrote in a format it can read back exactly
     is converted to a JSON document. See
     [Automatic conversion](#automatic-conversion).
-- Any other review moves to `legacy_reviews` with a `migration_error` that says
-    why it was not converted. It is excluded from normal review reads and from
-    `roborev export reviews`.
+- Any other review becomes a storage-only legacy JSON document containing the
+    complete original Markdown and recorded verdict. It stays readable in the
+    CLI, TUI, web app, and exports, and remains usable by `roborev fix`. It is
+    labeled unstructured; finding counts are unavailable rather than zero.
+
+Reviews archived by an earlier release return automatically on upgrade. Their
+open/closed state, job association, UUID, and historical verdict are preserved.
+An unknown verdict stays unknown. Existing structured reviews are never replaced
+by this recovery. Startup reports how many archived reviews were restored.
 
 In every case the original record stays archived in `legacy_reviews`. Sync
 ignores Markdown-only review updates from older clients. It does not create new
@@ -496,7 +502,7 @@ Roborev reads back these formats, which it defined itself:
 | No issues | A review whose first or last line is `No issues found.`. The rest of the text becomes the summary |
 | Threshold marker | A review that is only `SEVERITY_THRESHOLD_MET`. The reviewer reported that every finding was below the minimum severity and recorded none, and the summary says so |
 
-A review stays archived, with the reason in `migration_error`, when:
+A review stays unstructured, with the reason in `migration_error`, when:
 
 - a finding has no severity, problem, or fix, or its severity is not critical,
     high, medium, or low
@@ -513,30 +519,22 @@ and it syncs to the PostgreSQL mirror again. Older formats never stated the
 agent's own verdict, so their documents use review schema version 1, which has
 no `verdict` member. The review's pass or fail verdict is unchanged either way.
 
-Reviews archived by an earlier release are converted with one command. Check
-first with `--dry-run`, which only reads the database and can run while the
-daemon is running. It reports how many reviews would convert and counts the rest
-by reason:
+The deterministic converter is also available explicitly. `--dry-run` only reads
+the database and reports which remaining legacy documents it can convert:
 
 ```bash
 roborev legacy-reviews --db /path/to/reviews.db convert --dry-run
 ```
 
-Then stop the daemon, convert, and restart the daemon:
-
-```bash
-roborev legacy-reviews --db /path/to/reviews.db convert
-```
-
-`convert` validates each document the same way `import` does, keeps every
-original archived, and is safe to run again. It only looks at reviews that are
-still unresolved.
+Stop the daemon before running `convert` without `--dry-run`. Opening the
+writable database first performs automatic history recovery; the command reports
+conversions remaining after that upgrade. Originals remain archived.
 
 ### Converting the remaining reviews with an AI agent
 
-Reviews that stay archived need an AI agent, because reading them takes
-judgment. When unresolved records remain, roborev tells you at startup. Stop the
-daemon before importing results, and use the database path for the intended
+Converting free-form text into findings is optional. Roborev never launches an
+agent for this task. Your agent can read the exported input and submit a
+complete structured document. Use the database path for the intended
 installation:
 
 ```bash
@@ -552,13 +550,44 @@ each completed JSON document using the archive ID from the export:
 roborev legacy-reviews --db /path/to/reviews.db import 1 < converted-review.json
 ```
 
-An import validates the document before restoring the active review. The
-original record remains archived with a resolution timestamp. Restart the daemon
-after importing. Migration input contains private review data; keep it with the
-local database rather than adding it to a repository.
+Stop the daemon before using the offline import command. Import accepts the
+existing structured document versions and replaces the whole legacy body, rather
+than merging individual findings. It preserves the active review's identity,
+metadata, and open/closed state, and derives its verdict from the supplied
+findings. It rejects invalid documents and refuses to replace an already
+structured review. Synthesis findings must cite valid source reviews. Originals
+remain archived. Restart the daemon after importing.
 
-The PostgreSQL mirror also archives legacy records and excludes them from active
-reviews. Its archive retains the original row as JSON in
+An agent working with the running daemon can instead submit the same document to
+`POST /api/review/migrate` on its local API:
+
+```json
+{
+  "review_id": 42,
+  "document": {
+    "schema_version": 2,
+    "summary": "The write can lose data.",
+    "verdict": "fail",
+    "findings": [{
+      "severity": "high",
+      "problem": "The old file is removed before the replacement is ready.",
+      "fix": "Rename the replacement over the old file.",
+      "location": null
+    }]
+  }
+}
+```
+
+Here `review_id` is the active review ID returned by `GET /api/review`, not the
+archive ID used by CLI import. The endpoint returns 200 on success, 400 for an
+invalid document, 404 for a missing review, and 409 when the review already has
+structured findings. Validation and replacement happen in one transaction;
+rejected imports leave the legacy review intact. Migration input contains
+private review data; keep it with the local database rather than adding it to a
+repository.
+
+The PostgreSQL mirror restores legacy records through the same conversion and
+preservation rules. Its archive retains the original row as JSON in
 `legacy_reviews.record`. The mirror upgrade converts the same formats
 automatically. Use `--postgres-url` instead of `--db` to convert, export, and
 import these records. PostgreSQL archive IDs are UUIDs:
