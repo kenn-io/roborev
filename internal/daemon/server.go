@@ -361,14 +361,14 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
-		s.workerPool.Stop()
+		s.stopSchedulerAndWorkers()
 		s.stopSearch()
 		return err
 	}
 	if !ready {
 		if err := awaitServeExitOnUnreadyStartup(serveExited, serveErrCh); err != nil {
 			s.configWatcher.Stop()
-			s.workerPool.Stop()
+			s.stopSchedulerAndWorkers()
 			s.stopSearch()
 			return err
 		}
@@ -420,7 +420,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
-		s.workerPool.Stop()
+		s.stopSchedulerAndWorkers()
 		s.stopSearch()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -432,7 +432,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.browserMu.Unlock()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
-		s.workerPool.Stop()
+		s.stopSchedulerAndWorkers()
 		s.stopSearch()
 		return nil
 	}
@@ -479,11 +479,18 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopPanelSweep()
-		s.workerPool.Stop()
+		s.stopSchedulerAndWorkers()
 		s.stopSearch()
 		return err
 	}
 	return nil
+}
+
+func (s *Server) stopSchedulerAndWorkers() {
+	if s.scheduler != nil {
+		s.scheduler.Stop()
+	}
+	s.workerPool.Stop()
 }
 
 func (s *Server) startPanelSweep(ctx context.Context) {
@@ -655,7 +662,8 @@ func (s *Server) stopOnce0() error {
 
 	// Stop config watcher
 	s.configWatcher.Stop()
-	// Stop scheduling before workers drain, so no new jobs can be enqueued.
+	// Admission closed in beginShutdownDrain; join the scheduler before workers
+	// drain so no scheduled pass remains in flight.
 	if s.scheduler != nil {
 		s.scheduler.Stop()
 	}
@@ -3755,6 +3763,9 @@ func (s *Server) beginShutdownDrain() error {
 	defer s.shutdownDrainMu.Unlock()
 	if s.shutdownDraining {
 		return nil
+	}
+	if s.scheduler != nil {
+		s.scheduler.BeginStop()
 	}
 	if s.updateDrain == nil {
 		if err := s.db.SetShutdownDraining(true); err != nil {

@@ -428,8 +428,97 @@ func TestSchedulerStopWaitsForActivePass(t *testing.T) {
 	}()
 	// The scheduler goroutine is external work for this test.
 	require.Never(t, func() bool { return channelClosed(stopped) }, 20*time.Millisecond, time.Millisecond)
+	assert.False(t, s.stopping.Load(), "stop must not race an in-flight enqueue admission")
 	close(release)
 	require.Eventually(t, func() bool { return channelClosed(stopped) }, time.Second, time.Millisecond)
+}
+
+func TestSchedulerBeginShutdownDrainWaitsForAdmission(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "repo")
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFile("main.go", "package main\n", "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"complexity"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	server.scheduler.cfg = NewConfigWatcher("", cfg, nil, nil)
+	_, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server.scheduler.enqueueFunc = func(context.Context, storage.Repo, storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		close(entered)
+		<-release
+		return nil, nil
+	}
+	server.scheduler.Start(context.Background())
+	<-entered
+
+	drainDone := make(chan struct{})
+	var drainErr error
+	go func() {
+		drainErr = server.beginShutdownDrain()
+		close(drainDone)
+	}()
+	require.Never(t, func() bool { return channelClosed(drainDone) }, 20*time.Millisecond, time.Millisecond)
+	draining, err := db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining, "shutdown drain must wait for scheduler admission")
+
+	close(release)
+	require.Eventually(t, func() bool { return channelClosed(drainDone) }, time.Second, time.Millisecond)
+	require.NoError(t, drainErr)
+	draining, err = db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.True(t, draining)
+}
+
+func TestSchedulerStartupCleanupWaitsForAdmission(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "repo")
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFile("main.go", "package main\n", "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"complexity"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	server.scheduler.cfg = NewConfigWatcher("", cfg, nil, nil)
+	_, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server.scheduler.enqueueFunc = func(context.Context, storage.Repo, storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		close(entered)
+		<-release
+		return nil, nil
+	}
+	server.scheduler.Start(context.Background())
+	<-entered
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		server.stopSchedulerAndWorkers()
+		close(cleanupDone)
+	}()
+	require.Never(t, func() bool { return channelClosed(cleanupDone) }, 20*time.Millisecond, time.Millisecond)
+
+	close(release)
+	require.Eventually(t, func() bool { return channelClosed(cleanupDone) }, time.Second, time.Millisecond)
 }
 
 func channelClosed(ch <-chan struct{}) bool {

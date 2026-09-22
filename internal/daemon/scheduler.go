@@ -30,6 +30,7 @@ type SchedulerService struct {
 	stop        context.CancelFunc
 	stopped     chan struct{}
 	mu          sync.Mutex
+	admissionMu sync.Mutex
 	running     bool
 	started     bool
 	due         map[int64]time.Time
@@ -69,7 +70,9 @@ func (s *SchedulerService) Start(ctx context.Context) {
 	go s.loop(ctx)
 }
 
-func (s *SchedulerService) Stop() {
+// BeginStop closes scheduled enqueue admission and cancels the scheduler loop.
+// It returns after any enqueue already admitted has completed.
+func (s *SchedulerService) BeginStop() {
 	s.mu.Lock()
 	if !s.started {
 		s.stopping.Store(true)
@@ -77,9 +80,21 @@ func (s *SchedulerService) Stop() {
 		return
 	}
 	stop := s.stop
-	s.stopping.Store(true)
 	s.mu.Unlock()
+	s.admissionMu.Lock()
+	s.stopping.Store(true)
+	s.admissionMu.Unlock()
 	stop()
+}
+
+func (s *SchedulerService) Stop() {
+	s.BeginStop()
+	s.mu.Lock()
+	started := s.started
+	s.mu.Unlock()
+	if !started {
+		return
+	}
 	<-s.stopped
 }
 
@@ -383,6 +398,8 @@ func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoC
 		Label:             candidate.typ,
 	}
 
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	if s.stopping.Load() || ctx.Err() != nil {
 		return context.Canceled
 	}
