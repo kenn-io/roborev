@@ -1308,7 +1308,9 @@ type ExportReview struct {
 
 	// UpdatedAt RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
 	UpdatedAt string `json:"updated_at" validate:"required"`
-	Verdict   string `json:"verdict" validate:"required"`
+
+	// Verdict pass, fail, or unknown when a legacy review has no recorded verdict.
+	Verdict string `json:"verdict" validate:"required"`
 }
 
 func (e ExportReview) Validate() error {
@@ -1551,7 +1553,9 @@ type ExportSubagent struct {
 	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid,omitempty" validate:"required"`
 	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
 	ReviewType          *string                 `json:"review_type,omitempty" validate:"required"`
-	Verdict             string                  `json:"verdict" validate:"required"`
+
+	// Verdict pass, fail, or unknown when a legacy review has no recorded verdict.
+	Verdict string `json:"verdict" validate:"required"`
 }
 
 func (e ExportSubagent) Validate() error {

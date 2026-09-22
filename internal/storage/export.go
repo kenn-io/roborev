@@ -23,13 +23,18 @@ const (
 	ExportProfileContent  ExportProfile = "content"
 	ExportProfileMetadata ExportProfile = "metadata"
 
-	exportCursorVersion     = 1
-	exportDefaultPageLimit  = 500
-	exportMaxPageLimit      = 5000
-	exportReviewStatusDone  = "done"
-	exportReviewVerdictPass = "pass"
-	exportReviewVerdictFail = "fail"
+	exportCursorVersion        = 1
+	exportDefaultPageLimit     = 500
+	exportMaxPageLimit         = 5000
+	exportReviewStatusDone     = "done"
+	exportReviewVerdictPass    = "pass"
+	exportReviewVerdictFail    = "fail"
+	exportReviewVerdictUnknown = "unknown"
 )
+
+// Legacy documents preserve historical reviews even without a recorded verdict.
+// Other results without a verdict keep their existing export exclusion.
+const exportReviewHasVerdictExpr = "(rv.verdict_bool IS NOT NULL OR json_extract(rv.structured_output, '$.schema_version') = 0)"
 
 // exportReviewUpdatedAtExpr is the review's update time with the created_at
 // fallback for rows that predate updated_at or carry an empty value.
@@ -63,7 +68,7 @@ type ExportReviewsPage struct {
 type ExportReview struct {
 	ReviewID            uuid.UUID              `json:"review_id" format:"uuid"`
 	Status              string                 `json:"status"`
-	Verdict             string                 `json:"verdict"`
+	Verdict             string                 `json:"verdict" doc:"pass, fail, or unknown when a legacy review has no recorded verdict."`
 	CreatedAt           string                 `json:"created_at"`
 	CompletedAt         string                 `json:"completed_at"`
 	DurationMS          *int64                 `json:"duration_ms"`
@@ -91,7 +96,7 @@ type ExportSubagent struct {
 	Agent               string           `json:"agent"`
 	Model               *string          `json:"model"`
 	ReviewType          *string          `json:"review_type"`
-	Verdict             string           `json:"verdict"`
+	Verdict             string           `json:"verdict" doc:"pass, fail, or unknown when a legacy review has no recorded verdict."`
 	CompletedAt         string           `json:"completed_at"`
 	DurationMS          *int64           `json:"duration_ms"`
 	Cost                ExportReviewCost `json:"cost"`
@@ -208,7 +213,7 @@ type exportCursor struct {
 type exportReviewRow struct {
 	reviewID            uuid.UUID
 	jobUUID             uuid.UUID
-	verdictBool         int64
+	verdictBool         sql.NullInt64
 	reviewCreated       string
 	closed              bool
 	reviewUpdated       sql.NullString
@@ -315,7 +320,7 @@ func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCur
 		"j.status = 'done'",
 		"COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')",
 		"COALESCE(j.panel_role, '') != 'member'",
-		"rv.verdict_bool IS NOT NULL",
+		exportReviewHasVerdictExpr,
 	)
 	if !opts.Since.IsZero() {
 		conditions = append(conditions, completedExpr+" >= datetime(?)")
@@ -497,7 +502,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		WHERE j.panel_run_uuid = ?
 		  AND j.panel_role = 'member'
 		  AND j.status = 'done'
-		  AND rv.verdict_bool IS NOT NULL
+		  AND `+exportReviewHasVerdictExpr+`
 		ORDER BY j.panel_member_index ASC, j.id ASC
 	`, panelRunUUID)
 	if err != nil {
@@ -508,7 +513,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 	out := []ExportSubagent{}
 	for rows.Next() {
 		var reviewID uuid.UUID
-		var verdictBool int64
+		var verdictBool sql.NullInt64
 		var completedAt string
 		var output sql.NullString
 		var agentName string
@@ -636,8 +641,11 @@ func formatExportTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func exportVerdict(verdictBool int64) string {
-	if verdictBool == 1 {
+func exportVerdict(verdictBool sql.NullInt64) string {
+	if !verdictBool.Valid {
+		return exportReviewVerdictUnknown
+	}
+	if verdictBool.Int64 == 1 {
 		return exportReviewVerdictPass
 	}
 	return exportReviewVerdictFail
@@ -768,7 +776,7 @@ func (db *DB) exportCursorReviewExists(cursor *exportCursor) (bool, error) {
 		  AND j.status = 'done'
 		  AND COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')
 		  AND COALESCE(j.panel_role, '') != 'member'
-		  AND rv.verdict_bool IS NOT NULL
+		  AND `+exportReviewHasVerdictExpr+`
 	`, cursor.ReviewID, cursor.CompletedAt).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("validate export cursor: %w", err)

@@ -23,5 +23,6 @@ export interface ExportSubagent {
   review_id: string;
   /** @nullable */
   review_type: string | null;
+  /** pass, fail, or unknown when a legacy review has no recorded verdict. */
   verdict: string;
 }

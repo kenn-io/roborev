@@ -1,2 +1,6 @@
 # The rerun idempotency key is a UUID in the server and generated clients.
 POST /api/job/rerun the `request_id` request property `format` changed from `none` to `uuid`
+
+# Restored historical reviews retain their Markdown as a legacy document.
+GET /api/export/reviews added `#/components/schemas/LegacyReviewDocument` to the `reviews/items/document` response property `oneOf` list for the response status `200`
+GET /api/export/reviews added `#/components/schemas/LegacyReviewDocument` to the `reviews/items/subagents/items/document` response property `oneOf` list for the response status `200`

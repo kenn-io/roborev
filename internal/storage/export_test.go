@@ -1094,3 +1094,47 @@ func TestExportLegacyDocumentSchema(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"schema_version":0,"summary":"Invented structured summary","findings":[],"legacy":{"markdown":"Original text.","recorded_verdict":null}}`), &mixed))
 	assert.Error(t, validator.Validate(mixed))
 }
+
+func TestExportReviewsUnknownLegacyVerdict(t *testing.T) {
+	env := setupJobEnv(t, t.TempDir(), "unknown-legacy-export")
+	fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "unknown-review", "Historical prose without a verdict.", nil, false)
+	panelRun := testUUID("legacy-export-panel")
+	member := seedPanelExportJob(t, env.db, env.repo.ID, panelRun, "member", "historical", 0, "codex", "", "2026-06-29 00:00:01", "No issues found.")
+	synthesis := seedPanelExportJob(t, env.db, env.repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "No issues found.")
+	_, err := env.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Historical panel prose.', verdict_bool = NULL WHERE job_id = ?`, member.JobID)
+	require.NoError(t, err)
+	require.NoError(t, env.db.migrateLegacyReviews())
+	require.NoError(t, env.db.restoreLegacyReviews())
+	_, err = env.db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, fixture.jobID)
+	require.NoError(t, err)
+
+	for _, profile := range []ExportProfile{ExportProfileContent, ExportProfileMetadata} {
+		t.Run(string(profile), func(t *testing.T) {
+			assert := assert.New(t)
+			page, err := env.db.ExportReviews(ExportReviewsOptions{Profile: profile, Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, page.Reviews, 1)
+			assert.Equal("unknown", page.Reviews[0].Verdict)
+			if profile == ExportProfileContent {
+				assert.Equal("**Unstructured historical review.** Finding counts are unavailable.\n\nHistorical prose without a verdict.", derefString(page.Reviews[0].Content))
+				require.NotNil(t, page.Reviews[0].Document)
+				assert.Nil(page.Reviews[0].Document.Legacy.RecordedVerdict)
+			} else {
+				assert.Nil(page.Reviews[0].Content)
+				assert.Nil(page.Reviews[0].Document)
+			}
+			require.NotNil(t, page.NextCursor)
+			next, err := env.db.ExportReviews(ExportReviewsOptions{Profile: profile, Limit: 1, Cursor: *page.NextCursor})
+			require.NoError(t, err)
+			require.Len(t, next.Reviews, 1)
+			assert.Equal(*synthesis.UUID, next.Reviews[0].ReviewID)
+			require.Len(t, next.Reviews[0].Subagents, 1)
+			sub := next.Reviews[0].Subagents[0]
+			assert.Equal(*member.UUID, sub.ReviewID)
+			assert.Equal("unknown", sub.Verdict)
+			if profile == ExportProfileContent {
+				assert.Equal("**Unstructured historical review.** Finding counts are unavailable.\n\nHistorical panel prose.", derefString(sub.Content))
+			}
+		})
+	}
+}

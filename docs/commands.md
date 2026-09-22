@@ -344,10 +344,13 @@ Each top-level review reports its closed state in both profiles:
 
 Reviews nested under `subagents` do not have these fields.
 
-Only finished review jobs with a verdict are exported. Task, fix, insights,
-compact, queued, running, failed, and canceled jobs are excluded. Panel reviews
-export as one top-level synthesis review with completed member reviews nested
-under `subagents`; member reviews do not appear as separate top-level rows.
+Finished review jobs with a verdict and historical legacy reviews are exported.
+Legacy reviews without a recorded verdict use `"unknown"`, including panel
+members. Their original Markdown remains available in the content profile. Task,
+fix, insights, compact, queued, running, failed, and canceled jobs are excluded.
+Panel reviews export as one top-level synthesis review with completed member
+reviews nested under `subagents`; member reviews do not appear as separate
+top-level rows.
 
 The export window filters on `completed_at`. Date-only bounds are interpreted as
 UTC days, so `--since 2026-06-01 --until 2026-06-30` includes reviews from the

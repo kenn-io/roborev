@@ -40,5 +40,6 @@ export interface ExportReview {
   subagents: ExportSubagent[];
   /** RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time. */
   updated_at: string;
+  /** pass, fail, or unknown when a legacy review has no recorded verdict. */
   verdict: string;
 }
