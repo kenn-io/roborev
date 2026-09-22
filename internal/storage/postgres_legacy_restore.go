@@ -22,7 +22,7 @@ func (p *PgPool) restoreLegacyReviews(ctx context.Context) error {
 		if active {
 			continue
 		}
-		raw, refusal := convertLegacyMarkdown(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)})
+		raw, refusal := convertLegacyRecord(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)}, record.StructuredOutput)
 		if refusal == nil {
 			if err := p.ResolveLegacyReview(ctx, record.ID, raw); err != nil {
 				return err

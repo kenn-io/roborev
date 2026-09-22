@@ -38,7 +38,7 @@ func (db *DB) restoreLegacyReviews() error {
 		if active {
 			continue
 		}
-		raw, refusal := convertLegacyMarkdown(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)})
+		raw, refusal := convertLegacyRecord(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)}, record.StructuredOutput)
 		if refusal == nil {
 			if err := db.ResolveLegacyReview(record.ID, raw); err != nil {
 				return err

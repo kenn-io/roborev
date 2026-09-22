@@ -160,10 +160,10 @@ func (p *PgPool) ConvertLegacyReviews(ctx context.Context, dryRun bool) (LegacyC
 			report.Refused[LegacyRefusalActiveReviewExists]++
 			continue
 		}
-		raw, refusal := convertLegacyMarkdown(legacyMarkdown{
+		raw, refusal := convertLegacyRecord(legacyMarkdown{
 			Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity,
 			StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources),
-		})
+		}, record.StructuredOutput)
 		if refusal != nil {
 			report.Refused[refusal.Reason]++
 			continue

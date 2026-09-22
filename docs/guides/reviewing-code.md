@@ -468,7 +468,9 @@ retain their source references and reviewer labels.
 
 On database upgrade, roborev handles each older review in one of three ways:
 
-- A review with valid JSON keeps that JSON as the authoritative review.
+- A review with valid JSON keeps that JSON as the authoritative review. Older
+    synthesis documents with source numbers but no labels recover those labels
+    from recorded panel members, preserving their existing findings.
 - A Markdown-only review that roborev wrote in a format it can read back exactly
     is converted to a JSON document. See
     [Automatic conversion](#automatic-conversion).

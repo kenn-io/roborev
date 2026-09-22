@@ -111,3 +111,23 @@ func TestMigrateLegacySynthesisValidatesSources(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, converted.Output, "Reported by:** test (design)")
 }
+
+func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
+	env := setupJobEnv(t, t.TempDir(), "synthesis-existing-json")
+	jobID := seedLegacyPanel(t, env, "existing-json")
+	raw := `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}]}`
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', 'Older rendered text without machine-readable attribution.', ?, 0, ?)`, jobID, raw, testUUID("existing-json-review"))
+	require.NoError(t, err)
+	require.NoError(t, env.db.migrateLegacyReviews())
+	require.NoError(t, env.db.restoreLegacyReviews())
+	review, err := env.db.GetReviewByJobID(jobID)
+	require.NoError(t, err)
+	assert.NotContains(t, review.Output, "Unstructured historical review")
+	assert.Contains(t, review.Output, "The write loses data.")
+	assert.Contains(t, review.Output, "Reported by:** test (design)")
+	var stored string
+	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, jobID).Scan(&stored))
+	assert.JSONEq(t, `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}],"source_labels":["test (security)","test (design)"]}`, stored)
+	assert.Equal(t, "Existing assessment.", review.StructuredOutput["summary"])
+	assert.Equal(t, VerdictFail, review.Verdict())
+}

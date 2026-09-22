@@ -105,6 +105,31 @@ func convertLegacyMarkdown(in legacyMarkdown) (jsontext.Value, *legacyRefusal) {
 	return raw, nil
 }
 
+// convertLegacyRecord prefers an existing document over reparsing its rendered
+// Markdown. Older synthesis documents stored source numbers without labels;
+// reconstruct labels from their recorded panel members before validating them.
+func convertLegacyRecord(in legacyMarkdown, previousJSON string) (jsontext.Value, *legacyRefusal) {
+	raw := jsontext.Value(previousJSON)
+	if len(raw) == 0 {
+		raw = jsontext.Value(in.Markdown)
+	}
+	if doc, err := structuredreview.Decode(raw); err == nil && doc.Legacy == nil {
+		if in.JobType != JobTypeSynthesis || doc.RequireSources(len(doc.SourceLabels)) == nil {
+			return raw, nil
+		}
+		if len(doc.SourceLabels) == 0 {
+			doc.SourceLabels = in.SourceLabels
+			if doc.RequireSources(len(doc.SourceLabels)) == nil {
+				converted, err := json.Marshal(doc)
+				if err == nil {
+					return converted, nil
+				}
+			}
+		}
+	}
+	return convertLegacyMarkdown(in)
+}
+
 func legacySourceLabels(sources []LegacyReviewSource) []string {
 	labels := make([]string, 0, len(sources))
 	for _, source := range sources {
@@ -160,10 +185,10 @@ func (db *DB) ConvertLegacyReviews(dryRun bool) (LegacyConversionReport, error) 
 			report.Refused[LegacyRefusalActiveReviewExists]++
 			continue
 		}
-		raw, refusal := convertLegacyMarkdown(legacyMarkdown{
+		raw, refusal := convertLegacyRecord(legacyMarkdown{
 			Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity,
 			StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources),
-		})
+		}, record.StructuredOutput)
 		if refusal != nil {
 			report.Refused[refusal.Reason]++
 			continue
