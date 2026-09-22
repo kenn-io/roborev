@@ -1322,7 +1322,7 @@ func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefi
 					errs <- fmt.Errorf("%s sync at job %d: %w", author, i, err)
 				}
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond) //nolint:kennlint // spaces writes so both machines' PostgreSQL syncs interleave
 		}
 	}()
 }
