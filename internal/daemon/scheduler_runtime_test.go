@@ -113,7 +113,7 @@ func TestSchedulerRetriesCanceledAndSkippedAfterChangedBaseline(t *testing.T) {
 		Interval: "1h",
 		Types:    []string{"complexity", "refactor"},
 		Paths:    []string{"a.go", "b.go"},
-		MaxFiles: 1,
+		MaxFiles: 2,
 		Agent:    "test",
 	}}
 	db := testutil.OpenTestDB(t)
