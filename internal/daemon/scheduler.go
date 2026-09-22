@@ -360,6 +360,10 @@ func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoC
 	if err != nil {
 		return err
 	}
+	reviewType := ""
+	if candidate.typ == config.ReviewTypeSecurity {
+		reviewType = config.ReviewTypeSecurity
+	}
 	opts := storage.EnqueueOpts{
 		RepoID:            repo.ID,
 		GitRef:            candidate.typ,
@@ -368,6 +372,7 @@ func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoC
 		Reasoning:         resolved.Reasoning,
 		Prompt:            promptText,
 		Agentic:           false,
+		ReviewType:        reviewType,
 		OutputPrefix:      analyze.BuildOutputPrefix(candidate.typ, []string{candidate.path}),
 		AnalysisType:      candidate.typ,
 		AnalysisFiles:     []string{candidate.path},

@@ -103,4 +103,6 @@ func TestScheduleValidationRejectsIncompleteGlobalPolicy(t *testing.T) {
 	require.NoError(t, cfg.Validate(true))
 	cfg.Paths = []string{"../outside"}
 	require.Error(t, cfg.Validate(true))
+	cfg.Paths = []string{"C:/repo/internal"}
+	require.Error(t, cfg.Validate(true))
 }

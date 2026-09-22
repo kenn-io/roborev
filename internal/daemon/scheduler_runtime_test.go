@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,144 @@ func TestSchedulerGlobalGateAndEnqueueMetadata(t *testing.T) {
 	assert.Equal(t, storage.JobSourceScheduled, job.Source)
 	assert.Equal(t, storage.JobTypeTask, job.JobType)
 	assert.False(t, job.PromptPrebuilt)
+}
+
+func TestSchedulerSecurityReviewTypeSurvivesTheJobsAPI(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "repo")
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFile("main.go", "package main\n", "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"security"},
+		Paths:    []string{"main.go"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	server.scheduler.cfg = NewConfigWatcher("", cfg, nil, nil)
+	_, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+
+	server.scheduler.reconcile(context.Background())
+	jobs := fetchJobs(t, server, "analysis_type=security&analysis_file=main.go&limit=0")
+	require.Len(t, jobs.Jobs, 1)
+	assert.Equal(t, config.ReviewTypeSecurity, jobs.Jobs[0].ReviewType)
+	assert.Equal(t, storage.JobSourceScheduled, jobs.Jobs[0].Source)
+}
+
+func TestSchedulerRetriesCanceledAndSkippedAfterChangedBaseline(t *testing.T) {
+	repoDir := t.TempDir()
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFiles(map[string]string{
+		"a.go": "package main\nconst a = 1\n",
+		"b.go": "package main\nconst b = 1\n",
+	}, "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+	oldSHA := repo.HeadSHA()
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"complexity", "refactor"},
+		Paths:    []string{"a.go", "b.go"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	db := testutil.OpenTestDB(t)
+	storedRepo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+	for _, typ := range []string{"complexity", "refactor"} {
+		for _, path := range []string{"a.go", "b.go"} {
+			job, enqueueErr := db.EnqueueJob(storage.EnqueueOpts{
+				RepoID:            storedRepo.ID,
+				Agent:             "test",
+				Prompt:            "baseline",
+				Source:            storage.JobSourceScheduled,
+				JobType:           storage.JobTypeTask,
+				AnalysisType:      typ,
+				AnalysisFiles:     []string{path},
+				AnalysisCommitSHA: oldSHA,
+			})
+			require.NoError(t, enqueueErr)
+			stamp := time.Now().Format(time.RFC3339Nano)
+			_, updateErr := db.Exec("UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ?", stamp, stamp, job.ID)
+			require.NoError(t, updateErr)
+		}
+	}
+	repo.CommitFile("a.go", "package main\nconst a = 2\n", "change a")
+	currentSHA := repo.HeadSHA()
+	for _, item := range []struct {
+		typ    string
+		status storage.JobStatus
+	}{
+		{typ: "complexity", status: storage.JobStatusCanceled},
+		{typ: "refactor", status: storage.JobStatusSkipped},
+	} {
+		job, enqueueErr := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:            storedRepo.ID,
+			Agent:             "test",
+			Prompt:            "terminal",
+			Source:            storage.JobSourceScheduled,
+			JobType:           storage.JobTypeTask,
+			AnalysisType:      item.typ,
+			AnalysisFiles:     []string{"a.go"},
+			AnalysisCommitSHA: currentSHA,
+		})
+		require.NoError(t, enqueueErr)
+		stamp := time.Now().Format(time.RFC3339Nano)
+		_, updateErr := db.Exec("UPDATE review_jobs SET status = ?, finished_at = ?, updated_at = ? WHERE id = ?", item.status, stamp, stamp, job.ID)
+		require.NoError(t, updateErr)
+	}
+
+	var captured []storage.EnqueueOpts
+	s := NewSchedulerService(db, NewConfigWatcher("", cfg, nil, nil), func(_ context.Context, _ storage.Repo, opts storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		captured = append(captured, opts)
+		return db.EnqueueJob(opts)
+	})
+	s.reconcile(context.Background())
+
+	require.Len(t, captured, 2)
+	assert.Equal(t, []string{"complexity", "refactor"}, []string{captured[0].AnalysisType, captured[1].AnalysisType})
+	assert.Equal(t, []string{"a.go", "a.go"}, []string{captured[0].AnalysisFiles[0], captured[1].AnalysisFiles[0]})
+}
+
+func TestSchedulerEnqueueUsesCapturedCommitContentForLargePrompts(t *testing.T) {
+	repoDir := t.TempDir()
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	oldContent := "package main\nconst captured = \"old\"\n" + strings.Repeat("x", 70*1024)
+	repo.CommitFile("main.go", oldContent, "old source")
+	oldSHA := repo.HeadSHA()
+	repo.CommitFile("main.go", "package main\nconst captured = \"new\"\n", "new source")
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"complexity"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	db := testutil.OpenTestDB(t)
+	storedRepo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+	var captured []storage.EnqueueOpts
+	s := NewSchedulerService(db, NewConfigWatcher("", cfg, nil, nil), func(_ context.Context, _ storage.Repo, opts storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		captured = append(captured, opts)
+		return db.EnqueueJob(opts)
+	})
+
+	err = s.enqueue(context.Background(), *storedRepo, nil, cfg, scheduledCandidate{path: "main.go", typ: "complexity"}, oldSHA)
+	require.NoError(t, err)
+	require.Len(t, captured, 1)
+	assert.Contains(t, captured[0].Prompt, `captured = "old"`)
+	assert.NotContains(t, captured[0].Prompt, `captured = "new"`)
+	assert.Greater(t, len(captured[0].Prompt), 64*1024)
+	assert.Equal(t, oldSHA, captured[0].AnalysisCommitSHA)
 }
 
 func TestSchedulerStalenessAndCrossTypeBudget(t *testing.T) {

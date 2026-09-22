@@ -83,7 +83,7 @@ func (c ScheduleConfig) Validate(global bool) error {
 	for _, path := range c.Paths {
 		normalized := strings.TrimSuffix(filepath.ToSlash(path), "/")
 		clean := filepath.ToSlash(filepath.Clean(normalized))
-		if normalized == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") || clean != normalized {
+		if normalized == "" || clean == "." || clean == ".." || filepath.IsAbs(normalized) || filepath.VolumeName(normalized) != "" || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") || clean != normalized {
 			return fmt.Errorf("schedule.paths contains invalid repository path %q", path)
 		}
 	}
