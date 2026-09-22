@@ -86,8 +86,8 @@ work, and use read-only agent permissions. `roborev fix` remains a separate
 foreground action.
 
 The scheduler currently admits only the built-in test adapter while external
-read-only verification for other adapters is pending. The configuration
-shape is ready for those adapters after admission.
+read-only verification for other adapters is pending. The configuration shape is
+ready for those adapters after admission.
 
 ## Branch Mode
 
