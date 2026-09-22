@@ -74,7 +74,7 @@ func writeTempCommand(t *testing.T, script string) string {
 		if i == maxRetries-1 {
 			t.Fatalf("write temp command: ETXTBSY persisted after %d retries", maxRetries)
 		}
-		time.Sleep(time.Duration(1<<i) * time.Millisecond)
+		time.Sleep(time.Duration(1<<i) * time.Millisecond) //nolint:kennlint // backs off until the kernel stops reporting ETXTBSY
 	}
 	return path
 }

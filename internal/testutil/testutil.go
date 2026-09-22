@@ -312,7 +312,7 @@ func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Du
 		if slices.Contains(statuses, job.Status) {
 			return job
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) //nolint:kennlint // polls jobs that daemon workers finish through git subprocesses
 	}
 	t.Fatalf("Job %d did not reach any of %v within %v", jobID, statuses, timeout)
 	return nil

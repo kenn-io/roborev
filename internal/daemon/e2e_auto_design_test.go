@@ -144,7 +144,7 @@ func (e *autoDesignE2E) waitForAutoDesign(sha string, pred func(*storage.ReviewJ
 		if time.Now().After(deadline) {
 			return nil
 		}
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond) //nolint:kennlint // polls rows the worker writes after git subprocesses
 	}
 }
 

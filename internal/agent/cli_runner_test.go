@@ -11,6 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// waitForStreamClose holds the parser until the runner closes stdout, which
+// happens only after cmd.Wait returns and any WaitDelay has run.
+func waitForStreamClose(t *testing.T, r io.Reader) {
+	t.Helper()
+	stream, ok := r.(*streamingBuffer)
+	require.True(t, ok, "parser reader is %T, want *streamingBuffer", r)
+	stream.mu.Lock()
+	for !stream.closed {
+		stream.ready.Wait()
+	}
+	stream.mu.Unlock()
+}
+
 func TestRunStreamingCLIPreservesOutputWhenParentExitsFirst(t *testing.T) {
 	skipIfWindows(t)
 
@@ -25,7 +38,7 @@ exit 0
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			time.Sleep(50 * time.Millisecond)
+			waitForStreamClose(t, r)
 			data, readErr := io.ReadAll(r)
 			return string(data), readErr
 		},
@@ -50,7 +63,7 @@ dd if=/dev/zero bs=65536 count=1 2>/dev/null
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			time.Sleep(2 * streamingCLIWaitDelay)
+			waitForStreamClose(t, r)
 			data, readErr := io.ReadAll(r)
 			return string(data), readErr
 		},
@@ -74,7 +87,7 @@ dd if=/dev/zero bs=2097152 count=1 2>/dev/null
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			time.Sleep(2 * streamingCLIWaitDelay)
+			waitForStreamClose(t, r)
 			data, readErr := io.ReadAll(r)
 			return string(data), readErr
 		},

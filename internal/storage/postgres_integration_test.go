@@ -274,7 +274,7 @@ func waitForSyncWorkerConnection(worker *SyncWorker, timeout time.Duration) erro
 		if err.Error() != "not connected to PostgreSQL" {
 			return err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) //nolint:kennlint // waits for the sync worker to reach PostgreSQL
 	}
 	return fmt.Errorf("timeout waiting for sync worker connection")
 }
@@ -322,7 +322,7 @@ func startSyncWorkerNoSync(
 		if healthy {
 			return worker
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // waits for the sync worker to reach PostgreSQL
 	}
 	require.Condition(t, func() bool {
 		return false
@@ -359,7 +359,7 @@ func waitCondition(t *testing.T, timeout time.Duration, msg string, condition fu
 		if ok {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // polls state that syncs through PostgreSQL
 	}
 	if lastErr != nil {
 		require.Condition(t, func() bool {

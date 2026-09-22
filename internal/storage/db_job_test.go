@@ -281,7 +281,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 		}{job: job, err: err}
 	}()
 
-	time.Sleep(claimJobBusyAttemptTimeout + 100*time.Millisecond)
+	time.Sleep(claimJobBusyAttemptTimeout + 100*time.Millisecond) //nolint:kennlint // holds a SQLite file lock while the claim sleeps in the busy handler
 	var status string
 	require.NoError(t, env.db.QueryRow(
 		`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID,

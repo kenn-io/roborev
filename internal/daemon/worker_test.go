@@ -242,35 +242,39 @@ func TestSubscribeJobOutputClosesLateTerminalSubscription(t *testing.T) {
 
 func TestWorkerPoolConcurrency(t *testing.T) {
 	t.Parallel()
-	tc := newWorkerTestContext(t, 4)
+	const workers = 4
+	tc := newWorkerTestContext(t, workers)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
-	for range 5 {
-		tc.createJob(t, sha)
+	const agentName = "worker-concurrency-blocking"
+	started := make(chan struct{}, workers+1)
+	release := make(chan struct{})
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			started <- struct{}{}
+			select {
+			case <-release:
+				return "No issues found.", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	for range workers + 1 {
+		tc.createJobWithAgent(t, sha, agentName)
 	}
 
 	tc.startPool()
+	defer tc.Pool.Stop()
+	defer close(release)
 
-	// Poll until workers are active or timeout
-	var activeWorkers int
-	deadline := time.Now().Add(1 * time.Second)
-	for time.Now().Before(deadline) {
-		activeWorkers = tc.Pool.ActiveWorkers()
-		if activeWorkers > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	for range workers {
+		testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 	}
-
-	if activeWorkers == 0 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected active worker within timeout")
-	}
-
-	tc.Pool.Stop()
-
-	t.Logf("Peak active workers: %d", activeWorkers)
+	assert.Equal(t, workers, tc.Pool.ActiveWorkers())
 }
 
 func TestWorkerPoolPendingCancellation(t *testing.T) {

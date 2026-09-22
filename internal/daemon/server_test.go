@@ -407,59 +407,11 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 	cfg.ServerAddr = "[::1]:0"
 	server := NewServer(db, cfg, "")
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Start(context.Background())
-	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-errCh:
-			require.Condition(t, func() bool {
-				return false
-			}, "server exited before becoming ready: %v", err)
-		default:
-		}
-
-		info, err := ReadRuntime()
-		if err == nil {
-			host, _, splitErr := net.SplitHostPort(info.Address)
-			if splitErr != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "runtime addr %q is invalid: %v", info.Address, splitErr)
-			}
-			if host != "::1" {
-				require.Condition(t, func() bool {
-					return false
-				}, "expected IPv6 loopback host, got %q", host)
-			}
-			if stopErr := server.Stop(); stopErr != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "server.Stop() error: %v", stopErr)
-			}
-			select {
-			case err := <-errCh:
-				if err != nil {
-					require.Condition(t, func() bool {
-						return false
-					}, "server.Start() returned error after stop: %v", err)
-				}
-			case <-time.After(5 * time.Second):
-				require.Condition(t, func() bool {
-					return false
-				}, "timed out waiting for server to stop")
-			}
-			return
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-	require.Condition(t, func() bool {
-		return false
-	}, "timed out waiting for IPv6 daemon runtime")
+	errCh, info := startServerAndWaitForRuntime(t, server)
+	host, _, err := net.SplitHostPort(info.Address)
+	require.NoError(t, err, "runtime addr %q is invalid", info.Address)
+	assert.Equal(t, "::1", host)
+	stopTestServer(t, server, errCh)
 }
 
 func TestServerServesPrimaryAndAuxiliaryEndpoints(t *testing.T) {

@@ -463,7 +463,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		if err == nil || attempt >= gitTransientRetries || !isTransientGitError(out) {
 			break
 		}
-		time.Sleep(gitTransientRetryWait)
+		time.Sleep(gitTransientRetryWait) //nolint:kennlint // retries a git subprocess after a transient Windows fork failure
 	}
 	require.NoError(t, err, "git %v failed: %v\n%s", args, err, out)
 	return strings.TrimSpace(string(out))

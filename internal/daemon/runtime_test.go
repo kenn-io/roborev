@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -935,18 +936,37 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 
 func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *testing.T) {
 	var dead atomic.Bool
+	received := make(chan struct{}, 1)
+	accept := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case received <- struct{}{}:
+		default:
+		}
+		<-accept
 		dead.Store(true)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
+	acceptShutdown := sync.OnceFunc(func() { close(accept) })
+	defer acceptShutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	assert.True(t, requestGracefulDaemonShutdown(ctx, ep, dead.Load))
+	done := make(chan bool, 1)
+	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
+	select {
+	case <-received:
+	case result := <-done:
+		require.Condition(t, func() bool {
+			return false
+		}, "shutdown request returned %v before reaching the daemon", result)
+	}
+	// The daemon accepts only after the request is already waiting on it.
+	acceptShutdown()
+	assert.True(t, <-done)
 }
 
 func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {

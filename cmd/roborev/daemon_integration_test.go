@@ -151,7 +151,7 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
 		if check() {
 			return true
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // polls daemon startup through files, subprocesses, and real listeners
 	}
 	return false
 }
