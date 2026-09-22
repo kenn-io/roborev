@@ -957,13 +957,14 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 
 	done := make(chan bool, 1)
 	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
+	returnedEarly := false
+	var earlyResult bool
 	select {
 	case <-received:
-	case result := <-done:
-		require.Condition(t, func() bool {
-			return false
-		}, "shutdown request returned %v before reaching the daemon", result)
+	case earlyResult = <-done:
+		returnedEarly = true
 	}
+	require.False(t, returnedEarly, "shutdown request returned %v before reaching the daemon", earlyResult)
 	// The daemon accepts only after the request is already waiting on it.
 	acceptShutdown()
 	assert.True(t, <-done)

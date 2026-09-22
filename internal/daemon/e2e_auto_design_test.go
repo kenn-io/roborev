@@ -62,10 +62,14 @@ enabled = true
 	return &autoDesignE2E{t: t, repo: repo, db: db, srv: srv, row: row}
 }
 
-func (e *autoDesignE2E) startWorkers() {
+// processQueuedJob claims the next queued row and runs it through the worker
+// path synchronously, so the outcome is in the db when it returns.
+func (e *autoDesignE2E) processQueuedJob() {
 	e.t.Helper()
-	e.srv.workerPool.Start()
-	e.t.Cleanup(func() { e.srv.workerPool.Stop() })
+	job, err := e.db.ClaimJob(testWorkerID)
+	require.NoError(e.t, err)
+	require.NotNil(e.t, job, "no queued job to process")
+	e.srv.workerPool.processJob(testWorkerID, job)
 }
 
 func (e *autoDesignE2E) completeParentReview(job *storage.ReviewJob) {
@@ -97,55 +101,43 @@ func (e *autoDesignE2E) enqueueReviewFor(sha, subject string) *storage.ReviewJob
 	return job
 }
 
-// eventuallyFindAutoDesign polls for the auto-design outcome row
+// requireAutoDesign returns the auto-design outcome row
 // (source='auto_design', review_type='design', matching git_ref).
-// Returns the first matching row found; caller is responsible for
-// waiting for further state transitions via eventuallyAutoDesignMatches.
-func (e *autoDesignE2E) eventuallyFindAutoDesign(sha string) *storage.ReviewJob {
+func (e *autoDesignE2E) requireAutoDesign(sha string) *storage.ReviewJob {
 	e.t.Helper()
-	row := e.waitForAutoDesign(sha, func(*storage.ReviewJob) bool { return true })
-	if row == nil {
-		e.t.Fatalf("no auto_design row for %s within deadline", sha)
-	}
+	row := e.findAutoDesign(sha, func(*storage.ReviewJob) bool { return true })
+	require.NotNil(e.t, row, "no auto_design row for %s", sha)
 	return row
 }
 
-// eventuallyAutoDesignMatches polls until the auto_design row for sha
-// satisfies pred, or the deadline fires.
-func (e *autoDesignE2E) eventuallyAutoDesignMatches(sha, desc string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
+// requireAutoDesignMatches returns the auto_design row for sha that
+// satisfies pred.
+func (e *autoDesignE2E) requireAutoDesignMatches(sha, desc string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
 	e.t.Helper()
-	row := e.waitForAutoDesign(sha, pred)
-	if row == nil {
-		e.t.Fatalf("auto_design row for %s never matched %s within deadline", sha, desc)
-	}
+	row := e.findAutoDesign(sha, pred)
+	require.NotNil(e.t, row, "auto_design row for %s never matched %s", sha, desc)
 	return row
 }
 
-func (e *autoDesignE2E) waitForAutoDesign(sha string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
+func (e *autoDesignE2E) findAutoDesign(sha string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
 	e.t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
-	for {
-		for _, st := range []storage.JobStatus{
-			storage.JobStatusQueued,
-			storage.JobStatusRunning,
-			storage.JobStatusDone,
-			storage.JobStatusFailed,
-			storage.JobStatusSkipped,
-		} {
-			jobs, err := e.db.ListJobsByStatus(e.row.ID, st)
-			require.NoError(e.t, err)
-			for i := range jobs {
-				j := jobs[i]
-				if j.GitRef == sha && j.ReviewType == "design" && j.Source == "auto_design" && pred(&j) {
-					return &j
-				}
+	for _, st := range []storage.JobStatus{
+		storage.JobStatusQueued,
+		storage.JobStatusRunning,
+		storage.JobStatusDone,
+		storage.JobStatusFailed,
+		storage.JobStatusSkipped,
+	} {
+		jobs, err := e.db.ListJobsByStatus(e.row.ID, st)
+		require.NoError(e.t, err)
+		for i := range jobs {
+			j := jobs[i]
+			if j.GitRef == sha && j.ReviewType == "design" && j.Source == "auto_design" && pred(&j) {
+				return &j
 			}
 		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		time.Sleep(25 * time.Millisecond) //nolint:kennlint // polls rows the worker writes after git subprocesses
 	}
+	return nil
 }
 
 func TestE2EAutoDesign_HeuristicTrigger_Migration(t *testing.T) {
@@ -157,7 +149,7 @@ func TestE2EAutoDesign_HeuristicTrigger_Migration(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "feat: add users table")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal("review", got.JobType, "heuristic trigger produces a design review, not a classify row")
 	assert.NotEqual(storage.JobStatusSkipped, got.Status, "migration path must not skip")
@@ -183,7 +175,7 @@ func TestE2EAutoDesign_HeuristicTrigger_MessageRegex(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "refactor: rework auth layer")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal("review", got.JobType)
 	assert.NotEqual(storage.JobStatusSkipped, got.Status)
@@ -208,7 +200,7 @@ func TestE2EAutoDesign_HeuristicSkip_DocsOnly(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "update readme and changelog")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal(storage.JobStatusSkipped, got.Status)
 	assert.Equal("review", got.JobType, "status=skipped rows still have job_type='review'")
@@ -234,7 +226,7 @@ func TestE2EAutoDesign_HeuristicSkip_ConventionalPrefix(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "chore: bump go.mod")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal(storage.JobStatusSkipped, got.Status)
 	assert.Contains(got.SkipReason, "conventional marker")
@@ -247,7 +239,7 @@ func TestE2EAutoDesign_HeuristicSkip_TrivialDiff(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "fix: oneliner")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal(storage.JobStatusSkipped, got.Status)
 	assert.Contains(got.SkipReason, "trivial")
@@ -271,12 +263,11 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 
 	parent := e.enqueueReviewFor(sha, "feat: small helper")
 	e.completeParentReview(parent)
-	e.startWorkers()
+	e.processQueuedJob()
 
-	// Wait for the worker to promote the classify row in place to a
-	// real review row. The initial row appears immediately with
-	// job_type='classify'; the promotion happens in a worker goroutine.
-	got := e.eventuallyAutoDesignMatches(sha, "job_type='review' (promoted)",
+	// The worker promotes the classify row in place to a real review
+	// row. The initial row appears with job_type='classify'.
+	got := e.requireAutoDesignMatches(sha, "job_type='review' (promoted)",
 		func(j *storage.ReviewJob) bool { return j.JobType == storage.JobTypeReview })
 	assert := assert.New(t)
 	assert.NotEqual(storage.JobStatusSkipped, got.Status,
@@ -293,7 +284,7 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 	`, e.row.ID, sha).Scan(&rowCount))
 	assert.Equal(1, rowCount)
 
-	// RecordClassifier runs before the promotion awaited above.
+	// RecordClassifier runs before the promotion checked above.
 	assert.EqualValues(1, AutoDesignMetricsSnapshot().TriggeredClassifier)
 }
 
@@ -312,17 +303,17 @@ func TestE2EAutoDesign_ClassifierPath_SkipsAmbiguous(t *testing.T) {
 
 	parent := e.enqueueReviewFor(sha, "feat: rename var")
 	e.completeParentReview(parent)
-	e.startWorkers()
+	e.processQueuedJob()
 
-	// Wait for the worker to transition the classify row to skipped.
-	got := e.eventuallyAutoDesignMatches(sha, "status=skipped",
+	// The worker transitions the classify row to skipped.
+	got := e.requireAutoDesignMatches(sha, "status=skipped",
 		func(j *storage.ReviewJob) bool { return j.Status == storage.JobStatusSkipped })
 	assert := assert.New(t)
 	assert.Equal(storage.JobStatusSkipped, got.Status)
 	assert.Equal("review", got.JobType)
 	assert.Contains(got.SkipReason, "local rename")
 
-	// RecordClassifier runs before the skip awaited above.
+	// RecordClassifier runs before the skip checked above.
 	snap := AutoDesignMetricsSnapshot()
 	assert.EqualValues(1, snap.SkippedClassifier)
 	assert.EqualValues(0, snap.ClassifierFailed)
@@ -344,7 +335,7 @@ func TestE2EAutoDesign_LargeDiff_Trigger(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "feat: expand helper")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal("review", got.JobType)
 	assert.NotEqual(storage.JobStatusSkipped, got.Status)
@@ -367,7 +358,7 @@ func TestE2EAutoDesign_LargeFileCount_Trigger(t *testing.T) {
 
 	e.enqueueReviewFor(sha, "feat: spread across packages")
 
-	got := e.eventuallyFindAutoDesign(sha)
+	got := e.requireAutoDesign(sha)
 	assert := assert.New(t)
 	assert.Equal("review", got.JobType)
 	assert.NotEqual(storage.JobStatusSkipped, got.Status)
@@ -383,7 +374,7 @@ func TestE2EAutoDesign_Dedup_SecondDispatchNoOp(t *testing.T) {
 
 	// First dispatch — produces the auto_design row.
 	e.enqueueReviewFor(sha, "feat: add foo table")
-	_ = e.eventuallyFindAutoDesign(sha)
+	_ = e.requireAutoDesign(sha)
 
 	// Second dispatch for the same commit — the HasAutoDesignSlotForCommit
 	// early-return short-circuits, and the partial unique index would
@@ -435,15 +426,15 @@ classifier_timeout_seconds = 1
 	// config.ResolveClassifyAgent's validator and fail.
 	parent := e.enqueueReviewFor(sha, "feat: tweak")
 	e.completeParentReview(parent)
-	e.startWorkers()
+	e.processQueuedJob()
 
-	got := e.eventuallyAutoDesignMatches(sha, "status=skipped (classifier failed)",
+	got := e.requireAutoDesignMatches(sha, "status=skipped (classifier failed)",
 		func(j *storage.ReviewJob) bool { return j.Status == storage.JobStatusSkipped })
 	assert := assert.New(t)
 	assert.Equal("review", got.JobType)
 	assert.NotEmpty(got.SkipReason)
 
-	// RecordClassifier runs before the skip awaited above.
+	// RecordClassifier runs before the skip checked above.
 	assert.EqualValues(1, AutoDesignMetricsSnapshot().ClassifierFailed)
 }
 

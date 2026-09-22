@@ -255,7 +255,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 			started <- struct{}{}
 			select {
 			case <-release:
-				return "No issues found.", nil
+				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			case <-ctx.Done():
 				return "", ctx.Err()
 			}

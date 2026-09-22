@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -297,25 +296,6 @@ func ReceiveWithTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration)
 		var zero T
 		return zero
 	}
-}
-
-// WaitForJobStatus polls until the job reaches one of the expected statuses or
-// the timeout expires. Returns the final job state.
-func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Duration, statuses ...storage.JobStatus) *storage.ReviewJob {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		job, err := db.GetJobByID(jobID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if slices.Contains(statuses, job.Status) {
-			return job
-		}
-		time.Sleep(100 * time.Millisecond) //nolint:kennlint // polls jobs that daemon workers finish through git subprocesses
-	}
-	t.Fatalf("Job %d did not reach any of %v within %v", jobID, statuses, timeout)
-	return nil
 }
 
 // CreateCompletedReview creates a commit (if needed) and a completed review job.

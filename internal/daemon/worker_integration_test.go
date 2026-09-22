@@ -16,48 +16,30 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// waitForJobStatus polls until the job reaches one of the given statuses.
-func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses ...storage.JobStatus) *storage.ReviewJob {
+// waitForTerminalEvent returns the completion or failure event the pool
+// broadcasts for jobID after writing the job's final state.
+func waitForTerminalEvent(t *testing.T, events <-chan Event, jobID int64) Event {
 	t.Helper()
-
-	waitingForFailure := false
-	for _, status := range statuses {
-		if status == storage.JobStatusFailed {
-			waitingForFailure = true
-			break
+	for {
+		event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+		if event.JobID == jobID && (event.Type == "review.completed" || event.Type == "review.failed") {
+			return event
 		}
 	}
-
-	waitStatuses := statuses
-	if !waitingForFailure {
-		waitStatuses = append(statuses, storage.JobStatusFailed)
-	}
-
-	job := testutil.WaitForJobStatus(t, c.DB, jobID, 10*time.Second, waitStatuses...)
-
-	if !waitingForFailure && job.Status == storage.JobStatusFailed {
-		require.Condition(t, func() bool {
-			return false
-		}, "job failed unexpectedly: %s", job.Error)
-	}
-
-	return job
 }
 
 func TestWorkerPoolE2E(t *testing.T) {
 	tc := newWorkerTestContext(t, 2)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJob(t, sha)
+	subID, events := tc.Broadcaster.Subscribe("")
+	defer tc.Broadcaster.Unsubscribe(subID)
 
 	tc.Pool.Start()
 	defer tc.Pool.Stop()
-	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
-
-	if finalJob.Status != storage.JobStatusDone {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected job to complete successfully, got status: %s", finalJob.Status)
-	}
+	event := waitForTerminalEvent(t, events, job.ID)
+	require.Equal(t, "review.completed", event.Type, "job failed: %s", event.Error)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 
 	review, err := tc.DB.GetReviewByCommitSHA(sha)
 	if err != nil {
@@ -80,9 +62,11 @@ func TestWorkerPoolE2E(t *testing.T) {
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	originalTestAgent, err := agent.Get("test")
 	require.NoError(t, err)
+	started := make(chan struct{}, 1)
 	agent.Register(&agent.FakeAgent{
 		NameStr: "test",
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			started <- struct{}{}
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
@@ -96,8 +80,9 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	tc.Pool.Start()
 	defer tc.Pool.Stop()
 
-	// Wait for job to be claimed
-	tc.waitForJobStatus(t, job.ID, storage.JobStatusRunning)
+	// The agent runs only after the worker claims the job.
+	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusRunning)
 
 	// Cancel the job
 	if err := tc.DB.CancelJob(job.ID); err != nil {
@@ -107,13 +92,9 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	}
 	tc.Pool.CancelJob(job.ID)
 
-	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusCanceled)
-
-	if finalJob.Status != storage.JobStatusCanceled {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 'canceled', got '%s'", finalJob.Status)
-	}
+	// Stop waits for the worker to finish handling the canceled job.
+	tc.Pool.Stop()
+	tc.assertJobStatus(t, job.ID, storage.JobStatusCanceled)
 
 	_, err = tc.DB.GetReviewByJobID(job.ID)
 	if err == nil {
