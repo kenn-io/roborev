@@ -20,3 +20,15 @@ func TestTrackedFilesAtReturnsOnlyBlobsFromCommit(t *testing.T) {
 	assert.True(t, IsSourceFile("internal/code.go"))
 	assert.False(t, IsSourceFile("image.png"))
 }
+
+func TestTrackedFilesAtExcludesSymlinks(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("symlink-target", "internal/code.go")
+	blob := repo.Run("hash-object", "-w", "symlink-target")
+	repo.Run("update-index", "--add", "--cacheinfo", "120000,"+blob+",alias.go")
+	repo.Run("commit", "-m", "add symlink")
+
+	files, err := TrackedFilesAt(context.Background(), repo.Dir, repo.HeadSHA())
+	require.NoError(t, err)
+	assert.NotContains(t, files, "alias.go")
+}

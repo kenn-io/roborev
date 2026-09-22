@@ -10,35 +10,103 @@ import (
 	"sync/atomic"
 )
 
-var scheduledExecutionMu sync.RWMutex
+type scheduledPermissionLock struct {
+	mu             sync.Mutex
+	notify         chan struct{}
+	readers        int
+	waitingWriters int
+	writer         bool
+}
+
+var scheduledExecutionMu = scheduledPermissionLock{notify: make(chan struct{})}
+
+func (l *scheduledPermissionLock) signalLocked() {
+	close(l.notify)
+	l.notify = make(chan struct{})
+}
+
+func (l *scheduledPermissionLock) acquireRead(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		l.mu.Lock()
+		if !l.writer && l.waitingWriters == 0 {
+			l.readers++
+			l.mu.Unlock()
+			if err := ctx.Err(); err != nil {
+				l.releaseRead()
+				return nil, err
+			}
+			return func() { l.releaseRead() }, nil
+		}
+		wait := l.notify
+		l.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-wait:
+		}
+	}
+}
+
+func (l *scheduledPermissionLock) releaseRead() {
+	l.mu.Lock()
+	l.readers--
+	if l.readers == 0 {
+		l.signalLocked()
+	}
+	l.mu.Unlock()
+}
+
+func (l *scheduledPermissionLock) acquireWrite() func() {
+	l.mu.Lock()
+	l.waitingWriters++
+	for l.writer || l.readers > 0 {
+		wait := l.notify
+		l.mu.Unlock()
+		<-wait
+		l.mu.Lock()
+	}
+	l.waitingWriters--
+	l.writer = true
+	l.mu.Unlock()
+	return func() { l.releaseWrite() }
+}
+
+func (l *scheduledPermissionLock) releaseWrite() {
+	l.mu.Lock()
+	l.writer = false
+	l.signalLocked()
+	l.mu.Unlock()
+}
 
 // ScheduledExecutionLock freezes permission settings while a scheduled agent runs.
 func ScheduledExecutionLock() func() {
-	scheduledExecutionMu.RLock()
-	return scheduledExecutionMu.RUnlock
+	unlock, err := ScheduledExecutionLockContext(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	return unlock
+}
+
+// ScheduledExecutionLockContext acquires the scheduled-agent permission lock
+// until the context is canceled or the caller releases the returned function.
+func ScheduledExecutionLockContext(ctx context.Context) (func(), error) {
+	return scheduledExecutionMu.acquireRead(ctx)
 }
 
 func WithScheduledPermissionWriteLock(fn func()) {
-	scheduledExecutionMu.Lock()
-	defer scheduledExecutionMu.Unlock()
+	unlock := scheduledExecutionMu.acquireWrite()
+	defer unlock()
 	fn()
 }
 
 func SupportsScheduledReadOnly(a Agent) bool {
-	if a == nil {
-		return false
-	}
-	switch v := a.(type) {
-	case *OpenCodeAgent:
-		return false
-	case *ACPAgent:
-		return strings.TrimSpace(v.effectivePermissionMode()) == strings.TrimSpace(v.ReadOnlyMode) && !v.mutatingOperationsAllowed()
-	}
-	readOnlyAdapters := map[string]bool{
-		"claude-code": true, "codex": true, "cursor": true,
-		"gemini": true, "grok": true, "pi": true, "test": true,
-	}
-	return readOnlyAdapters[CanonicalName(a.Name())]
+	return a != nil && CanonicalName(a.Name()) == "test"
 }
 
 // ReasoningLevel controls how much reasoning/thinking an agent uses

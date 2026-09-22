@@ -32,7 +32,8 @@ func TrackedFilesAt(ctx context.Context, repoPath, sha string) ([]string, error)
 	for entry := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
 		meta, path, ok := strings.Cut(entry, "\t")
 		fields := strings.Fields(meta)
-		if !ok || len(fields) < 2 || fields[1] != "blob" {
+		if !ok || len(fields) < 2 || fields[1] != "blob" ||
+			(fields[0] != "100644" && fields[0] != "100755") {
 			continue
 		}
 		files = append(files, filepath.ToSlash(path))

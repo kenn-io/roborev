@@ -1013,7 +1013,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
 	var scheduledUnlock func()
 	if job.Source == storage.JobSourceScheduled {
-		scheduledUnlock = agent.ScheduledExecutionLock()
+		scheduledUnlock, err = agent.ScheduledExecutionLockContext(ctx)
+		if err != nil {
+			if ctx.Err() == context.Canceled {
+				if wp.handleUpdateInterruption(ctx, workerID, job) {
+					return
+				}
+				log.Printf("[%s] Job %d was canceled while waiting for scheduled permission lock", workerID, job.ID)
+				return
+			}
+			wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent,
+				fmt.Sprintf("scheduled permission lock: %v", err))
+			return
+		}
 		defer scheduledUnlock()
 		cfg = wp.cfgGetter.Config()
 	}

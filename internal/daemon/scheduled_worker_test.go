@@ -34,6 +34,13 @@ func TestScheduledAgentGuardPreservesPermissionChecks(t *testing.T) {
 	agent.SetCodexSandboxDisabled(false)
 
 	assert.False(t, scheduledAgentAllowed(job, agent.NewOpenCodeAgent("opencode")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewClaudeAgent("claude")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewCodexAgent("codex")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewCursorAgent("cursor-agent")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewGeminiAgent("gemini")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewGrokAgent("grok")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewPiAgent("pi")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewACPAgent("acp-agent")))
 	assert.False(t, scheduledAgentAllowed(job, agent.NewCopilotAgent("copilot")))
 	assert.False(t, scheduledAgentAllowed(job, agent.NewDroidAgent("droid")))
 	assert.False(t, scheduledAgentAllowed(job, agent.NewKiloAgent("kilo")))

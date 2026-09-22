@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,6 +11,13 @@ import (
 
 func TestScheduledReadOnlyCapabilityAdmitsOnlyKnownAdapters(t *testing.T) {
 	assert.True(t, SupportsScheduledReadOnly(NewTestAgent()))
+	assert.False(t, SupportsScheduledReadOnly(NewClaudeAgent("claude")))
+	assert.False(t, SupportsScheduledReadOnly(NewCodexAgent("codex")))
+	assert.False(t, SupportsScheduledReadOnly(NewCursorAgent("cursor-agent")))
+	assert.False(t, SupportsScheduledReadOnly(NewGeminiAgent("gemini")))
+	assert.False(t, SupportsScheduledReadOnly(NewGrokAgent("grok")))
+	assert.False(t, SupportsScheduledReadOnly(NewPiAgent("pi")))
+	assert.False(t, SupportsScheduledReadOnly(NewACPAgent("acp-agent")))
 	assert.False(t, SupportsScheduledReadOnly(NewOpenCodeAgent("opencode")))
 	assert.False(t, SupportsScheduledReadOnly(nil))
 	assert.False(t, SupportsScheduledReadOnly(&unknownScheduledAgent{}))
@@ -50,6 +58,17 @@ func TestScheduledPermissionWriteWaitsForInvocationLock(t *testing.T) {
 			return false
 		}
 	}, time.Second, time.Millisecond)
+}
+
+func TestScheduledExecutionLockContextHonorsCancellation(t *testing.T) {
+	unlock := ScheduledExecutionLock()
+	defer unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	locked, err := ScheduledExecutionLockContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, locked)
 }
 
 type unknownScheduledAgent struct{ TestAgent }
