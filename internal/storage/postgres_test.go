@@ -50,6 +50,14 @@ func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	}
 }
 
+func TestPgSchemaStatementsContainsAnalysisMetadata(t *testing.T) {
+	allStatements := strings.Join(pgSchemaStatements(), "\n")
+
+	for _, column := range []string{"analysis_type TEXT", "analysis_files TEXT", "analysis_commit_sha TEXT"} {
+		assert.Contains(t, allStatements, column)
+	}
+}
+
 func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 	requiredIndexes := []string{
 		"idx_review_jobs_source",
@@ -1104,6 +1112,160 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
+}
+
+func TestIntegration_AnalysisMetadataSyncRoundTrip(t *testing.T) {
+	sourceDB, sourceRepo := setupDBAndRepo(t, "analysis-metadata-postgres-source")
+	sourceMachineID, err := sourceDB.GetMachineID()
+	require.NoError(t, err)
+	now := time.Now().UTC()
+
+	exportedByType := make(map[string]SyncableJob)
+	for _, spec := range []struct {
+		analysisType string
+		file         string
+		commitSHA    string
+	}{
+		{analysisType: "complexity", file: "pkg/individual.go", commitSHA: "analysis-metadata-individual-sha"},
+		{analysisType: "security", file: "pkg/batch.go", commitSHA: "analysis-metadata-batch-sha"},
+	} {
+		commit := createCommit(t, sourceDB, sourceRepo.ID, spec.commitSHA)
+		job, enqueueErr := sourceDB.EnqueueJob(EnqueueOpts{
+			RepoID:            sourceRepo.ID,
+			CommitID:          commit.ID,
+			GitRef:            spec.commitSHA,
+			Prompt:            "scheduled analysis",
+			Agent:             "test",
+			Source:            JobSourceScheduled,
+			AnalysisType:      spec.analysisType,
+			AnalysisFiles:     []string{spec.file},
+			AnalysisCommitSHA: spec.commitSHA,
+		})
+		require.NoError(t, enqueueErr)
+		finishedAt := now.Add(time.Duration(len(exportedByType)) * time.Second)
+		finishedAtText := finishedAt.Format(time.RFC3339)
+		_, enqueueErr = sourceDB.Exec(`
+			UPDATE review_jobs
+			SET status = ?, source_machine_id = ?, finished_at = ?, updated_at = ?
+			WHERE id = ?`, JobStatusDone, sourceMachineID, finishedAtText, finishedAtText, job.ID)
+		require.NoError(t, enqueueErr)
+	}
+	running, err := sourceDB.EnqueueJob(EnqueueOpts{
+		RepoID:            sourceRepo.ID,
+		GitRef:            "running-analysis",
+		Prompt:            "still running",
+		Agent:             "test",
+		Source:            JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"pkg/running.go"},
+		AnalysisCommitSHA: "analysis-metadata-running-sha",
+	})
+	require.NoError(t, err)
+	_, err = sourceDB.Exec(`
+		UPDATE review_jobs
+		SET status = ?, source_machine_id = ?, updated_at = ?
+		WHERE id = ?`, JobStatusRunning, sourceMachineID, now.Format(time.RFC3339), running.ID)
+	require.NoError(t, err)
+	queued, err := sourceDB.EnqueueJob(EnqueueOpts{
+		RepoID:            sourceRepo.ID,
+		GitRef:            "queued-analysis",
+		Prompt:            "still queued",
+		Agent:             "test",
+		Source:            JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"pkg/queued.go"},
+		AnalysisCommitSHA: "analysis-metadata-queued-sha",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, queued.Status)
+
+	exported, err := sourceDB.GetJobsToSync(sourceMachineID, 1000)
+	require.NoError(t, err)
+	require.Len(t, exported, 2)
+	for _, job := range exported {
+		exportedByType[job.AnalysisType] = job
+	}
+
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: sourceRepo.Identity})
+	individual := exportedByType["complexity"]
+	individualCommitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: individual.CommitSHA})
+	require.NoError(t, pool.UpsertJob(ctx, individual, repoID, &individualCommitID))
+	legacyIndividual := individual
+	legacyIndividual.AnalysisType = ""
+	legacyIndividual.AnalysisFiles = nil
+	legacyIndividual.AnalysisCommitSHA = ""
+	require.NoError(t, pool.UpsertJob(ctx, legacyIndividual, repoID, &individualCommitID))
+
+	batch := exportedByType["security"]
+	batchCommitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: batch.CommitSHA})
+	success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{
+		Job:        batch,
+		PgRepoID:   repoID,
+		PgCommitID: &batchCommitID,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, success)
+	legacyBatch := batch
+	legacyBatch.AnalysisType = ""
+	legacyBatch.AnalysisFiles = nil
+	legacyBatch.AnalysisCommitSHA = ""
+	success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{
+		Job:        legacyBatch,
+		PgRepoID:   repoID,
+		PgCommitID: &batchCommitID,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, success)
+
+	pulled, _, err := pool.PullJobs(ctx, uuid.New(), "", 1000)
+	require.NoError(t, err)
+	byUUID := make(map[uuid.UUID]PulledJob, len(pulled))
+	for _, job := range pulled {
+		byUUID[job.UUID] = job
+	}
+	for _, want := range []SyncableJob{individual, batch} {
+		got, ok := byUUID[want.UUID]
+		require.True(t, ok, "job %s was not pulled", want.UUID)
+		assert.Equal(t, want.Status, got.Status)
+		assert.Equal(t, want.Source, got.Source)
+		assert.Equal(t, want.AnalysisType, got.AnalysisType)
+		assert.Equal(t, want.AnalysisFiles, got.AnalysisFiles)
+		assert.Equal(t, want.AnalysisCommitSHA, got.AnalysisCommitSHA)
+		require.NotNil(t, got.FinishedAt)
+		require.NotNil(t, want.FinishedAt)
+		assert.Equal(t, want.FinishedAt.UTC().Format(time.RFC3339), got.FinishedAt.UTC().Format(time.RFC3339))
+	}
+
+	db, repo := setupDBAndRepo(t, "analysis-metadata-postgres-target")
+	for _, remote := range []PulledJob{byUUID[individual.UUID], byUUID[batch.UUID]} {
+		require.NoError(t, db.UpsertPulledJob(remote, repo.ID, nil))
+		var id int64
+		require.NoError(t, db.QueryRow("SELECT id FROM review_jobs WHERE uuid = ?", remote.UUID).Scan(&id))
+		local, getErr := db.GetJobByID(id)
+		require.NoError(t, getErr)
+		assert.Equal(t, JobStatus(remote.Status), local.Status)
+		assert.Equal(t, remote.AnalysisType, local.AnalysisType)
+		assert.Equal(t, remote.AnalysisFiles, local.AnalysisFiles)
+		assert.Equal(t, remote.AnalysisCommitSHA, local.AnalysisCommitSHA)
+		require.NotNil(t, local.FinishedAt)
+	}
+	history, err := db.ScheduledAnalysisHistoryForRepo(repo.ID)
+	require.NoError(t, err)
+	for _, want := range []struct {
+		key    ScheduledAnalysisKey
+		commit string
+	}{
+		{ScheduledAnalysisKey{Path: "pkg/individual.go", Type: "complexity"}, "analysis-metadata-individual-sha"},
+		{ScheduledAnalysisKey{Path: "pkg/batch.go", Type: "security"}, "analysis-metadata-batch-sha"},
+	} {
+		records := history[want.key]
+		require.Len(t, records, 1)
+		assert.Equal(t, JobStatusDone, records[0].Status)
+		assert.Equal(t, want.commit, records[0].Commit)
+		require.NotNil(t, records[0].FinishedAt)
+	}
 }
 
 func TestIntegration_BatchUpsertReviews(t *testing.T) {

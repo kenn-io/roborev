@@ -99,7 +99,7 @@ func TestMigrateAddsAnalysisColumns(t *testing.T) {
 	require.NoError(t, db.migrate())
 }
 
-func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
+func TestAnalysisMetadataSyncWithoutFieldsRemainsEmpty(t *testing.T) {
 	db, repo := setupDBAndRepo(t, "analysis-metadata-sync")
 
 	pulledUUID := uuid.New()
@@ -124,6 +124,151 @@ func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
 	assert.Empty(t, pulled.AnalysisType)
 	assert.Nil(t, pulled.AnalysisFiles)
 	assert.Empty(t, pulled.AnalysisCommitSHA)
+}
+
+func TestAnalysisMetadataSyncInvalidFilesRemainEmpty(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "analysis-metadata-invalid-sync")
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:       repo.ID,
+		Prompt:       "invalid analysis files",
+		Agent:        "test",
+		Source:       JobSourceScheduled,
+		AnalysisType: "complexity",
+	})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET status = ?, source_machine_id = ?, analysis_files = ?, updated_at = ?
+		WHERE id = ?`, JobStatusDone, machineID, `["pkg/a.go", null]`, now, job.ID)
+	require.NoError(t, err)
+
+	exported, err := db.GetJobsToSync(machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, exported, 1)
+	assert.Nil(t, exported[0].AnalysisFiles)
+
+	require.NoError(t, db.UpsertPulledJob(PulledJob{
+		UUID:              exported[0].UUID,
+		Agent:             exported[0].Agent,
+		Status:            exported[0].Status,
+		EnqueuedAt:        exported[0].EnqueuedAt,
+		FinishedAt:        exported[0].FinishedAt,
+		UpdatedAt:         exported[0].UpdatedAt,
+		SourceMachineID:   exported[0].SourceMachineID,
+		AnalysisType:      exported[0].AnalysisType,
+		AnalysisFiles:     exported[0].AnalysisFiles,
+		AnalysisCommitSHA: exported[0].AnalysisCommitSHA,
+	}, repo.ID, nil))
+	history, err := db.ScheduledAnalysisHistoryForRepo(repo.ID)
+	require.NoError(t, err)
+	assert.Empty(t, history)
+}
+
+func TestAnalysisMetadataSyncRoundTrip(t *testing.T) {
+	sourceDB, sourceRepo := setupDBAndRepo(t, "analysis-metadata-sync-source")
+	targetDB, targetRepo := setupDBAndRepo(t, "analysis-metadata-sync-target")
+
+	job, err := sourceDB.EnqueueJob(EnqueueOpts{
+		RepoID:            sourceRepo.ID,
+		Prompt:            "scheduled analysis",
+		Agent:             "test",
+		Source:            JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"pkg/a.go"},
+		AnalysisCommitSHA: "abc123",
+	})
+	require.NoError(t, err)
+	machineID, err := sourceDB.GetMachineID()
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	nowText := now.Format(time.RFC3339)
+	_, err = sourceDB.Exec(`
+		UPDATE review_jobs
+		SET status = ?, source_machine_id = ?, finished_at = ?, updated_at = ?
+		WHERE id = ?`, JobStatusDone, machineID, nowText, nowText, job.ID)
+	require.NoError(t, err)
+	running, err := sourceDB.EnqueueJob(EnqueueOpts{
+		RepoID:            sourceRepo.ID,
+		Prompt:            "still running",
+		Agent:             "test",
+		Source:            JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"pkg/running.go"},
+		AnalysisCommitSHA: "def456",
+	})
+	require.NoError(t, err)
+	_, err = sourceDB.Exec(`
+		UPDATE review_jobs
+		SET status = ?, source_machine_id = ?, updated_at = ?
+		WHERE id = ?`, JobStatusRunning, machineID, nowText, running.ID)
+	require.NoError(t, err)
+	queued, err := sourceDB.EnqueueJob(EnqueueOpts{
+		RepoID:            sourceRepo.ID,
+		Prompt:            "still queued",
+		Agent:             "test",
+		Source:            JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"pkg/queued.go"},
+		AnalysisCommitSHA: "ghi789",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, queued.Status)
+
+	exported, err := sourceDB.GetJobsToSync(machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, exported, 1)
+	syncJob := exported[0]
+	assert.Equal(t, string(JobStatusDone), syncJob.Status)
+	require.NotNil(t, syncJob.FinishedAt)
+	assert.Equal(t, now.UTC().Format(time.RFC3339), syncJob.FinishedAt.UTC().Format(time.RFC3339))
+	assert.Equal(t, "complexity", syncJob.AnalysisType)
+	assert.Equal(t, []string{"pkg/a.go"}, syncJob.AnalysisFiles)
+	assert.Equal(t, "abc123", syncJob.AnalysisCommitSHA)
+
+	require.NoError(t, targetDB.UpsertPulledJob(PulledJob{
+		UUID:              syncJob.UUID,
+		Agent:             syncJob.Agent,
+		Status:            syncJob.Status,
+		EnqueuedAt:        syncJob.EnqueuedAt,
+		FinishedAt:        syncJob.FinishedAt,
+		UpdatedAt:         syncJob.UpdatedAt,
+		SourceMachineID:   syncJob.SourceMachineID,
+		Source:            syncJob.Source,
+		AnalysisType:      syncJob.AnalysisType,
+		AnalysisFiles:     syncJob.AnalysisFiles,
+		AnalysisCommitSHA: syncJob.AnalysisCommitSHA,
+	}, targetRepo.ID, nil))
+
+	history, err := targetDB.ScheduledAnalysisHistoryForRepo(targetRepo.ID)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Len(t, history[ScheduledAnalysisKey{Path: "pkg/a.go", Type: "complexity"}], 1)
+	record := history[ScheduledAnalysisKey{Path: "pkg/a.go", Type: "complexity"}][0]
+	assert.Equal(t, JobStatusDone, record.Status)
+	assert.Equal(t, "abc123", record.Commit)
+	require.NotNil(t, record.FinishedAt)
+	assert.Equal(t, now.UTC().Format(time.RFC3339), record.FinishedAt.UTC().Format(time.RFC3339))
+
+	var targetID int64
+	require.NoError(t, targetDB.QueryRow("SELECT id FROM review_jobs WHERE uuid = ?", syncJob.UUID).Scan(&targetID))
+	later := now.Add(time.Minute)
+	require.NoError(t, targetDB.UpsertPulledJob(PulledJob{
+		UUID:            syncJob.UUID,
+		Agent:           syncJob.Agent,
+		Status:          syncJob.Status,
+		EnqueuedAt:      syncJob.EnqueuedAt,
+		FinishedAt:      &later,
+		UpdatedAt:       later,
+		SourceMachineID: syncJob.SourceMachineID,
+	}, targetRepo.ID, nil))
+	updated, err := targetDB.GetJobByID(targetID)
+	require.NoError(t, err)
+	assert.Equal(t, "complexity", updated.AnalysisType)
+	assert.Equal(t, []string{"pkg/a.go"}, updated.AnalysisFiles)
+	assert.Equal(t, "abc123", updated.AnalysisCommitSHA)
 }
 
 func TestAnalysisMetadataSurvivesClaimAndRetry(t *testing.T) {

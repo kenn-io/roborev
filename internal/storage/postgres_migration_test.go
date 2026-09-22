@@ -29,6 +29,9 @@ var postgresV17Schema string
 //go:embed schemas/postgres_v18.sql
 var postgresV18Schema string
 
+//go:embed schemas/postgres_v23.sql
+var postgresV23Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -53,6 +56,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		14: postgresV14Schema,
 		17: postgresV17Schema,
 		18: postgresV18Schema,
+		23: postgresV23Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -82,6 +86,43 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	require.NoError(t, err, "seed schema_version")
 
 	return pool
+}
+
+func TestPostgresMigration_AnalysisMetadata(t *testing.T) {
+	oldPool := openTestPgPoolRawAtVersion(t, 23)
+	ctx := t.Context()
+
+	var repoID int
+	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
+		`INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id`,
+		"git@example.com:owner/analysis-metadata.git").Scan(&repoID))
+	legacyUUID := uuid.New()
+	_, err := pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.review_jobs
+		  (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id)
+		VALUES ($1, $2, 'pre-analysis-metadata', 'test', 'done', NOW(), $3)
+	`, legacyUUID, repoID, uuid.New())
+	require.NoError(t, err)
+
+	pg := openTestPgPool(t)
+	defer pg.Close()
+
+	for _, column := range []string{"analysis_type", "analysis_files", "analysis_commit_sha"} {
+		var count int
+		require.NoError(t, pgxPool(pg).QueryRow(ctx, `
+			SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = $1
+		`, column).Scan(&count))
+		assert.Equal(t, 1, count, "column %s should exist after v24 upgrade", column)
+	}
+	var analysisType, analysisFiles, analysisCommitSHA *string
+	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
+		SELECT analysis_type, analysis_files, analysis_commit_sha
+		FROM roborev.review_jobs WHERE uuid = $1
+	`, legacyUUID).Scan(&analysisType, &analysisFiles, &analysisCommitSHA))
+	assert.Nil(t, analysisType)
+	assert.Nil(t, analysisFiles)
+	assert.Nil(t, analysisCommitSHA)
 }
 
 func TestPostgresMigration_CanonicalReview(t *testing.T) {

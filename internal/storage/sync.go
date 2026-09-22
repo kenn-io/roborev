@@ -419,6 +419,9 @@ type SyncableJob struct {
 	TokenUsage            string
 	WorktreePath          string
 	Source                string
+	AnalysisType          string
+	AnalysisFiles         []string
+	AnalysisCommitSHA     string
 	MinSeverity           string
 	BackupAgent           string
 	BackupModel           string
@@ -446,7 +449,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.analysis_type, ''), j.analysis_files, COALESCE(j.analysis_commit_sha, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
 		FROM review_jobs j
@@ -471,6 +474,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 		var commitID sql.NullInt64
 		var diffContent sql.NullString
 		var dirtyFiles sql.NullString
+		var analysisFiles sql.NullString
 
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
@@ -478,7 +482,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
-			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
+			&j.WorktreePath, &j.Source, &j.AnalysisType, &analysisFiles, &j.AnalysisCommitSHA, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON, &j.NonVoting,
 			&j.SourceMachineID, &updatedAt,
 		)
@@ -494,6 +498,9 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 		}
 		if dirtyFiles.Valid {
 			j.DirtyFiles = decodeDirtyFiles(dirtyFiles.String)
+		}
+		if analysisFiles.Valid {
+			j.AnalysisFiles = decodeFileList(analysisFiles.String)
 		}
 		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 		if startedAt != "" {
@@ -840,14 +847,18 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err != nil {
 		return false, err
 	}
+	analysisFilesJSON, err := encodeFileList(j.AnalysisFiles)
+	if err != nil {
+		return false, err
+	}
 	result, err := db.Exec(`
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
-			worktree_path, source, min_severity, backup_agent, backup_model,
+			worktree_path, source, analysis_type, analysis_files, analysis_commit_sha, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -867,6 +878,9 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			agent_invoked = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.agent_invoked ELSE (review_jobs.agent_invoked OR excluded.agent_invoked) END,
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			source = COALESCE(excluded.source, review_jobs.source),
+			analysis_type = COALESCE(excluded.analysis_type, review_jobs.analysis_type),
+			analysis_files = COALESCE(excluded.analysis_files, review_jobs.analysis_files),
+			analysis_commit_sha = COALESCE(excluded.analysis_commit_sha, review_jobs.analysis_commit_sha),
 			min_severity = excluded.min_severity,
 			backup_agent = excluded.backup_agent,
 			backup_model = excluded.backup_model,
@@ -900,6 +914,9 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 				AND review_jobs.agent_invoked IS CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.agent_invoked ELSE (review_jobs.agent_invoked OR excluded.agent_invoked) END
 				AND review_jobs.worktree_path IS COALESCE(excluded.worktree_path, review_jobs.worktree_path)
 				AND review_jobs.source IS COALESCE(excluded.source, review_jobs.source)
+				AND review_jobs.analysis_type IS COALESCE(excluded.analysis_type, review_jobs.analysis_type)
+				AND review_jobs.analysis_files IS COALESCE(excluded.analysis_files, review_jobs.analysis_files)
+				AND review_jobs.analysis_commit_sha IS COALESCE(excluded.analysis_commit_sha, review_jobs.analysis_commit_sha)
 				AND review_jobs.min_severity IS excluded.min_severity
 				AND review_jobs.backup_agent IS excluded.backup_agent
 				AND review_jobs.backup_model IS excluded.backup_model
@@ -916,7 +933,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
-		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
+		nullStr(j.WorktreePath), nullStr(j.Source), nullStr(j.AnalysisType), nullStr(analysisFilesJSON), nullStr(j.AnalysisCommitSHA), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
 	if err != nil {
