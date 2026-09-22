@@ -83,7 +83,6 @@ func TestSearchDocumentRendersStructuredReviewDeterministically(t *testing.T) {
 	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(wantContent)))
 
 	doc := searchdoc.Render(source)
-	assert.Equal(t, 1, searchdoc.RecipeVersion)
 	assert.Equal(t, source.ReviewUUID, doc.DocKey)
 	assert.Equal(t, source.PanelRunUUID, doc.GroupKey)
 	assert.Equal(t, wantContent, doc.Content)
@@ -143,4 +142,18 @@ func TestSearchDocumentResponseOrderingStableAcrossLocalIDs(t *testing.T) {
 	assert.Equal(t, first.ContentHash, second.ContentHash)
 	assert.Less(t, strings.Index(first.Content, "Stable A."), strings.Index(first.Content, "Stable B."))
 	assert.Less(t, strings.Index(first.Content, "Stable B."), strings.Index(first.Content, "Legacy response."))
+}
+
+func TestSearchDocumentRendersRestoredLegacyMarkdown(t *testing.T) {
+	source := storage.SearchReviewSource{
+		StructuredOutput: storage.StructuredOutput{
+			"schema_version": 0,
+			"legacy": map[string]any{
+				"markdown":         "### High\nA pending update is lost.",
+				"recorded_verdict": false,
+			},
+		},
+	}
+
+	assert.Equal(t, "Review: ### High\nA pending update is lost.", searchdoc.Render(source).Content)
 }

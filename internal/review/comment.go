@@ -46,6 +46,10 @@ func PrepareComment(cfg CommentConfig, r ReviewResult, sourceLabels []string) Pr
 			doc = &decoded
 		}
 	}
+	if doc != nil && doc.Legacy != nil {
+		r.Output = doc.Legacy.Markdown
+		doc = nil
+	}
 	var findings []commentFinding
 	if doc != nil {
 		if sourceLabels == nil {

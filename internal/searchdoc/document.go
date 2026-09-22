@@ -11,10 +11,11 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // RecipeVersion changes whenever semantic content rendering changes.
-const RecipeVersion = 1
+const RecipeVersion = 2
 
 // Document is the deterministic projection stored in the search sidecar.
 type Document struct {
@@ -27,8 +28,9 @@ type Document struct {
 }
 
 type structuredDocument struct {
-	Summary  string              `json:"summary"`
-	Findings []structuredFinding `json:"findings"`
+	Legacy   *structuredreview.LegacyDocument `json:"legacy"`
+	Summary  string                           `json:"summary"`
+	Findings []structuredFinding              `json:"findings"`
 }
 
 type structuredFinding struct {
@@ -81,6 +83,9 @@ func renderContent(source storage.SearchReviewSource) string {
 	appendField("Verdict", source.Verdict)
 
 	if structured, ok := decodeStructured(source.StructuredOutput); ok {
+		if structured.Legacy != nil {
+			appendField("Review", structured.Legacy.Markdown)
+		}
 		appendField("Summary", structured.Summary)
 		for _, finding := range structured.Findings {
 			findingLine := strings.TrimSpace(finding.Severity)
@@ -122,7 +127,7 @@ func decodeStructured(output storage.StructuredOutput) (structuredDocument, bool
 		return structuredDocument{}, false
 	}
 	var document structuredDocument
-	if err := json.Unmarshal(raw, &document); err != nil || strings.TrimSpace(document.Summary) == "" {
+	if err := json.Unmarshal(raw, &document); err != nil || (document.Legacy == nil && strings.TrimSpace(document.Summary) == "") {
 		return structuredDocument{}, false
 	}
 	return document, true

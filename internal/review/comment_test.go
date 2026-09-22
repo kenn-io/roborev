@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 
@@ -62,4 +63,18 @@ func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
 	comment := FormatComment(PrepareComment(CommentConfig{MinSeverity: result.MinSeverity}, result, nil))
 	assert.Contains(t, comment, "An unlabelled concern.")
 	assert.NotContains(t, comment, "Minor naming issue.")
+}
+
+func TestLegacyCommentPreservesMarkdownAndDisplayFilter(t *testing.T) {
+	prose := "### Low\nMinor naming issue.\n\n### High\nState is lost. Persist it."
+	stored := jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### Low\nMinor naming issue.\n\n### High\nState is lost. Persist it.","recorded_verdict":false}}`)
+	doc, err := DecodeStructuredReview(stored)
+	require.NoError(t, err)
+	for _, result := range []ReviewResult{
+		{StructuredOutput: stored},
+		{Structured: &doc},
+	} {
+		assert.Equal(t, prose, FormatComment(PrepareComment(CommentConfig{}, result, nil)))
+		assert.Equal(t, "### High\nState is lost. Persist it.", FormatComment(PrepareComment(CommentConfig{MinSeverity: "high"}, result, nil)))
+	}
 }
