@@ -1,7 +1,7 @@
 {
   "plugins": [
     {
-      "version": "0.68.0",
+      "version": "0.68.1",
       "name": "roborev",
       "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
       "source": "./",
