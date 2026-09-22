@@ -27,11 +27,29 @@ func (r ScheduledAnalysisRecord) FinishedAtOrEnqueued() time.Time {
 
 func (db *DB) ScheduledAnalysisHistoryForRepo(repoID int64) (map[ScheduledAnalysisKey][]ScheduledAnalysisRecord, error) {
 	rows, err := db.Query(`
-		SELECT j.id, j.status, j.analysis_type, json_each.value,
+		SELECT j.id, j.status, j.analysis_type, analysis_file.value,
 		       j.analysis_commit_sha, j.finished_at, j.enqueued_at
-		FROM review_jobs j, json_each(j.analysis_files)
+		FROM review_jobs j, json_each(
+			CASE
+				WHEN json_valid(j.analysis_files) AND json_type(j.analysis_files) = 'array'
+				THEN j.analysis_files
+				ELSE '[]'
+			END
+		) AS analysis_file
 		WHERE j.repo_id = ?
 		  AND j.analysis_type IS NOT NULL AND j.analysis_type != ''
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM json_each(
+				CASE
+					WHEN json_valid(j.analysis_files) AND json_type(j.analysis_files) = 'array'
+					THEN j.analysis_files
+					ELSE '[]'
+				END
+			) AS metadata_file
+			WHERE metadata_file.type <> 'text'
+		  )
+		  AND analysis_file.type = 'text'
 		ORDER BY j.id`, repoID)
 	if err != nil {
 		return nil, err
