@@ -18,6 +18,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -1647,7 +1648,7 @@ func canonicalRefinePath(path string) string {
 	if err == nil {
 		path = absPath
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathresolve.EvalSymlinks(path)
 	if err == nil {
 		path = resolved
 	}

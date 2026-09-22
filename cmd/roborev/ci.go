@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -485,13 +486,13 @@ func insideRepo(root, path string) bool {
 	if strings.TrimSpace(root) == "" {
 		return false
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	resolvedRoot, err := pathresolve.EvalSymlinks(root)
 	if err != nil {
 		return false
 	}
 	// The config file itself need not exist, so resolve the directory holding
 	// it; that is the part an attacker would point at the checkout.
-	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	resolvedDir, err := pathresolve.EvalSymlinks(filepath.Dir(path))
 	if err != nil {
 		// A data directory that does not exist cannot hold a committed
 		// config either, so there is nothing to distrust.

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"go.kenn.io/kit/pathresolve"
 	gitpkg "go.kenn.io/roborev/internal/git"
 )
 
@@ -197,7 +198,7 @@ func evalExistingParentPath(path string) (string, bool) {
 	if existing == "." || existing == string(filepath.Separator) {
 		return cleanAbsPath(clean)
 	}
-	resolved, err := filepath.EvalSymlinks(existing)
+	resolved, err := pathresolve.EvalSymlinks(existing)
 	if err != nil {
 		return cleanAbsPath(clean)
 	}

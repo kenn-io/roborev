@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // Official agy settings path. There is no documented --settings flag or env
@@ -259,7 +261,7 @@ func settingsWriteTarget(path string) (string, os.FileMode, error) {
 	}
 	target := path
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, err = filepath.EvalSymlinks(path)
+		target, err = pathresolve.EvalSymlinks(path)
 		if err != nil {
 			return "", 0, fmt.Errorf("resolve %s: %w", path, err)
 		}

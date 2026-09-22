@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // ErrNonShellHook is returned when a hook uses a non-shell
@@ -576,7 +578,7 @@ func InstallWithOptions(hooksDir, hookName string, opts InstallOptions) error {
 	if err == nil && !opts.Force {
 		// Upgrade cleanup can remove a standalone hook. Resolve the target
 		// first so cleanup and replacement preserve the user's symlink.
-		hookPath, err = filepath.EvalSymlinks(hookPath)
+		hookPath, err = pathresolve.EvalSymlinks(hookPath)
 		if err != nil {
 			return fmt.Errorf("resolve %s hook: %w", hookName, err)
 		}

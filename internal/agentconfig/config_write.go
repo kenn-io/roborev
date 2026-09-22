@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // Write commits the complete planned configuration in one
@@ -16,7 +18,7 @@ func Write(path string, data []byte) error {
 	mode := os.FileMode(0o600)
 	switch {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		writePath, err = filepath.EvalSymlinks(path)
+		writePath, err = pathresolve.EvalSymlinks(path)
 		if err != nil {
 			return fmt.Errorf("resolve agent config symlink %s: %w", path, err)
 		}

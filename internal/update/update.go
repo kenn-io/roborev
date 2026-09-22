@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/kit/selfupdate"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -367,7 +368,7 @@ func (u *Updater) installDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("find current executable: %w", err)
 	}
-	currentExe, err = filepath.EvalSymlinks(currentExe)
+	currentExe, err = pathresolve.EvalSymlinks(currentExe)
 	if err != nil {
 		return "", fmt.Errorf("resolve symlinks: %w", err)
 	}

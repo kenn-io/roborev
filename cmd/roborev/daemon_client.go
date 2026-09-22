@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -134,7 +135,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 
 	// Normalize repo path to handle symlinks/relative paths consistently
 	normalizedRepo := repoPath
-	if resolved, err := filepath.EvalSymlinks(repoPath); err == nil {
+	if resolved, err := pathresolve.EvalSymlinks(repoPath); err == nil {
 		normalizedRepo = resolved
 	}
 	if abs, err := filepath.Abs(normalizedRepo); err == nil {
@@ -193,7 +194,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 		if jobRepo == "" || !filepath.IsAbs(jobRepo) {
 			continue
 		}
-		if resolved, err := filepath.EvalSymlinks(jobRepo); err == nil {
+		if resolved, err := pathresolve.EvalSymlinks(jobRepo); err == nil {
 			jobRepo = resolved
 		}
 		if jobRepo == normalizedRepo {

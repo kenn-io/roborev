@@ -10,6 +10,8 @@ import (
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // runner shells out through kit's defensive git runner so inherited git
@@ -117,7 +119,7 @@ func HooksInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
 		if info.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
-		resolved, err := filepath.EvalSymlinks(path)
+		resolved, err := pathresolve.EvalSymlinks(path)
 		// A dangling link can create an outside file during companion install.
 		// Leave unresolved links to explicit maintenance as well.
 		if err != nil || !inside(resolved) {
@@ -133,7 +135,7 @@ func HooksInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
 func canonicalizePath(path string) string {
 	remainder := ""
 	for current := path; ; {
-		resolved, err := filepath.EvalSymlinks(current)
+		resolved, err := pathresolve.EvalSymlinks(current)
 		if err == nil {
 			return filepath.Join(resolved, remainder)
 		}

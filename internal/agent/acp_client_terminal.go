@@ -15,6 +15,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/procutil"
 )
 
@@ -312,7 +313,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 			return acp.CreateTerminalResponse{}, fmt.Errorf("failed to resolve repository root path: %w", err)
 		}
 
-		resolvedRepoRoot, err := filepath.EvalSymlinks(repoRootAbs)
+		resolvedRepoRoot, err := pathresolve.EvalSymlinks(repoRootAbs)
 		if err != nil {
 			return acp.CreateTerminalResponse{}, fmt.Errorf("failed to resolve repository root symlinks: %w", err)
 		}
@@ -326,7 +327,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 			}
 		}
 
-		resolvedCwd, err := filepath.EvalSymlinks(cwdAbs)
+		resolvedCwd, err := pathresolve.EvalSymlinks(cwdAbs)
 		if err != nil {
 			return acp.CreateTerminalResponse{}, fmt.Errorf("failed to resolve terminal cwd symlinks for path %q: %w", cwd, err)
 		}

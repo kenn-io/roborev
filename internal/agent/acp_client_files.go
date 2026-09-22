@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 func readTextFileWindow(path string, startLine int, limit *int) (string, error) {
@@ -263,13 +265,13 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 	if forWrite {
 		// For writes, validate parent directory only since file may not exist yet
 		parentDir := filepath.Dir(absPath)
-		resolvedParent, err := filepath.EvalSymlinks(parentDir)
+		resolvedParent, err := pathresolve.EvalSymlinks(parentDir)
 		if err != nil {
 			return "", fmt.Errorf("%w: failed to resolve parent directory symlinks for path %s: %w", ErrPathTraversal, requestedPath, err)
 		}
 
 		// Check if parent directory is within repository root
-		resolvedRepoRoot, err := filepath.EvalSymlinks(repoRootAbs)
+		resolvedRepoRoot, err := pathresolve.EvalSymlinks(repoRootAbs)
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve repository root symlinks: %w", err)
 		}
@@ -297,7 +299,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 			return validatedPath, nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			resolvedTarget, err := filepath.EvalSymlinks(validatedPath)
+			resolvedTarget, err := pathresolve.EvalSymlinks(validatedPath)
 			if err != nil {
 				return "", fmt.Errorf("%w: failed to resolve write target symlink for path %s: %w", ErrPathTraversal, requestedPath, err)
 			}
@@ -312,7 +314,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 	}
 
 	// For reads, keep strict validation requiring full path to exist
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	resolvedPath, err := pathresolve.EvalSymlinks(absPath)
 	if err != nil {
 		// If we can't resolve symlinks (e.g., broken symlink or permission issue),
 		// we treat this as an invalid path for security
@@ -322,7 +324,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 	// Check if the resolved path is within the repository root
 	// This prevents directory traversal attacks like ../../../etc/passwd
 	// We need to ensure the path is within the repo root, accounting for symlinks
-	resolvedRepoRoot, err := filepath.EvalSymlinks(repoRootAbs)
+	resolvedRepoRoot, err := pathresolve.EvalSymlinks(repoRootAbs)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve repository root symlinks: %w", err)
 	}

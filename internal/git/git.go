@@ -20,6 +20,7 @@ import (
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/procutil"
 )
 
@@ -630,7 +631,7 @@ func ValidateRepoLocalPathNoSymlinks(repoPath, path string) error {
 	if rel == "." || !filepath.IsLocal(rel) {
 		return fmt.Errorf("path must be under the repo root: %s", path)
 	}
-	resolvedRepo, err := filepath.EvalSymlinks(absRepo)
+	resolvedRepo, err := pathresolve.EvalSymlinks(absRepo)
 	if err != nil {
 		return fmt.Errorf("resolve repo root: %w", err)
 	}
@@ -647,7 +648,7 @@ func ValidateRepoLocalPathNoSymlinks(repoPath, path string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("snapshot_dir must not contain symlinks: %s", current)
 		}
-		resolvedCurrent, err := filepath.EvalSymlinks(current)
+		resolvedCurrent, err := pathresolve.EvalSymlinks(current)
 		if err != nil {
 			return err
 		}
@@ -1181,7 +1182,7 @@ func ValidateWorktreeForRepo(worktreePath, repoRoot string) bool {
 // cleanEvalPath resolves symlinks and cleans the path for comparison.
 // Falls back to filepath.Clean if symlink resolution fails.
 func cleanEvalPath(p string) string {
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+	if resolved, err := pathresolve.EvalSymlinks(p); err == nil {
 		return resolved
 	}
 	return filepath.Clean(p)

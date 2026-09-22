@@ -6,10 +6,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // identityProbeTimeout is the context deadline for version probes used to
@@ -124,8 +125,8 @@ func resolveExecutable(command string) (string, error) {
 
 func sameFile(a, b string) bool {
 	// Resolve symlinks when possible so agent → grok links match.
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
+	ra, errA := pathresolve.EvalSymlinks(a)
+	rb, errB := pathresolve.EvalSymlinks(b)
 	if errA == nil {
 		a = ra
 	}
