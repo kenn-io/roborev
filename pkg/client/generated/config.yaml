@@ -10,6 +10,7 @@ generate:
 overlay:
   sources:
     - native_uuid_overlay.yaml
+    - raw_json_overlay.yaml
 user-templates:
   header.tmpl: native_uuid_header.tmpl
   client-with-response-types.tmpl: raw_responses.tmpl

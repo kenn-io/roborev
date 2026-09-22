@@ -11,9 +11,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/pkg/client/generated"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -1048,4 +1051,46 @@ func uniqueValues[T comparable](values []T) map[T]struct{} {
 		out[value] = struct{}{}
 	}
 	return out
+}
+
+func TestExportLegacyDocumentSchema(t *testing.T) {
+	env := setupJobEnv(t, t.TempDir(), "legacy-export")
+	fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "prose-export", "Keep the original historical text.", 0, false)
+	require.NoError(t, env.db.migrateLegacyReviews())
+	require.NoError(t, env.db.restoreLegacyReviews())
+	page, err := env.db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	require.NotNil(t, page.Reviews[0].Document)
+	assert.Equal(t, "Keep the original historical text.", page.Reviews[0].Document.Legacy.Markdown)
+	review, err := env.db.GetReviewByJobID(fixture.jobID)
+	require.NoError(t, err)
+	assert.Equal(t, *review.UUID, page.Reviews[0].ReviewID)
+	raw, err := json.Marshal(page.Reviews[0].Document)
+	require.NoError(t, err)
+	registry := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	schema := (ExportDocument{}).Schema(registry)
+	schemaJSON, err := json.Marshal(schema)
+	require.NoError(t, err)
+	var spec jsonschema.Schema
+	require.NoError(t, json.Unmarshal([]byte(strings.ReplaceAll(string(schemaJSON), "#/components/schemas/", "#/$defs/")), &spec))
+	definitions, err := json.Marshal(registry.Map())
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(strings.ReplaceAll(string(definitions), "#/components/schemas/", "#/$defs/")), &spec.Defs))
+	validator, err := spec.Resolve(nil)
+	require.NoError(t, err)
+
+	for _, wire := range []string{string(raw), `{"schema_version":0,"legacy":{"markdown":"Original text.","recorded_verdict":null}}`} {
+		var value any
+		require.NoError(t, json.Unmarshal([]byte(wire), &value))
+		assert.NoError(t, validator.Validate(value))
+		var decoded generated.ExportReview_Document
+		require.NoError(t, json.Unmarshal([]byte(wire), &decoded))
+		require.NotNil(t, decoded.ExportReview_Document_OneOf)
+		assert.True(t, decoded.ExportReview_Document_OneOf.IsB())
+		require.NoError(t, decoded.Validate())
+	}
+	var mixed any
+	require.NoError(t, json.Unmarshal([]byte(`{"schema_version":0,"summary":"Invented structured summary","findings":[],"legacy":{"markdown":"Original text.","recorded_verdict":null}}`), &mixed))
+	assert.Error(t, validator.Validate(mixed))
 }

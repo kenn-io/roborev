@@ -8,6 +8,42 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type ExportReview_Document_OneOf struct {
+	runtime.Either[StructuredReviewDocument, LegacyReviewDocument]
+}
+
+func (e *ExportReview_Document_OneOf) Validate() error {
+	if e.IsA() {
+		if v, ok := any(e.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if e.IsB() {
+		if v, ok := any(e.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type ExportSubagent_Document_OneOf struct {
+	runtime.Either[StructuredReviewDocument, LegacyReviewDocument]
+}
+
+func (e *ExportSubagent_Document_OneOf) Validate() error {
+	if e.IsA() {
+		if v, ok := any(e.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if e.IsB() {
+		if v, ok := any(e.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
 type EnqueueJob_Response_OneOf struct {
 	union json.RawMessage
 }

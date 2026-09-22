@@ -1,0 +1,10 @@
+overlay: 1.0.0
+info:
+  title: Preserve raw review JSON
+  version: 1.0.0
+actions:
+  - target: '$.components.schemas.MigrateReviewInputBody.properties.document'
+    update:
+      x-go-type: jsontext.Value
+      x-go-type-import:
+        path: encoding/json/jsontext

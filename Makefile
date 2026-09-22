@@ -123,6 +123,7 @@ api-check:
 		mkdir -p "$$tmp/pkg/client/generated"; \
 		cp pkg/client/generated/config.yaml "$$tmp/pkg/client/generated/config.yaml"; \
 		cp pkg/client/generated/native_uuid_overlay.yaml "$$tmp/pkg/client/generated/native_uuid_overlay.yaml"; \
+		cp pkg/client/generated/raw_json_overlay.yaml "$$tmp/pkg/client/generated/raw_json_overlay.yaml"; \
 		cp pkg/client/generated/native_uuid_header.tmpl "$$tmp/pkg/client/generated/native_uuid_header.tmpl"; \
 		cp pkg/client/generated/raw_responses.tmpl "$$tmp/pkg/client/generated/raw_responses.tmpl"; \
 		go run ./internal/daemon_client/openapi_generate -format yaml -o "$$tmp/pkg/client/openapi.yaml"; \
@@ -131,7 +132,7 @@ api-check:
 				-config config.yaml ../openapi.yaml); \
 		diff -u pkg/client/openapi.yaml "$$tmp/pkg/client/openapi.yaml"; \
 		diff -ru --exclude=config.yaml --exclude=generate.go --exclude=native_uuid_overlay.yaml \
-			--exclude=native_uuid_header.tmpl --exclude=raw_responses.tmpl \
+			--exclude=native_uuid_header.tmpl --exclude=raw_json_overlay.yaml --exclude=raw_responses.tmpl \
 			pkg/client/generated "$$tmp/pkg/client/generated"
 	cd web && bun run generate:check
 

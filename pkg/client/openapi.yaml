@@ -1556,6 +1556,7 @@ components:
           description: The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
           oneOf:
             - $ref: "#/components/schemas/StructuredReviewDocument"
+            - $ref: "#/components/schemas/LegacyReviewDocument"
             - type: "null"
         duration_ms:
           format: int64
@@ -1735,6 +1736,7 @@ components:
           description: The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
           oneOf:
             - $ref: "#/components/schemas/StructuredReviewDocument"
+            - $ref: "#/components/schemas/LegacyReviewDocument"
             - type: "null"
         duration_ms:
           format: int64
@@ -1998,6 +2000,43 @@ components:
           $ref: "#/components/schemas/Review"
       required:
         - job
+      type: object
+    LegacyReviewDocument:
+      additionalProperties: false
+      description: Historical Markdown without extracted findings.
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/StructuredReviewFinding"
+          maxItems: 0
+          type:
+            - array
+            - "null"
+        legacy:
+          additionalProperties: false
+          description: Historical Markdown without extracted findings. Only present in storage-only schema version 0.
+          properties:
+            markdown:
+              type: string
+            recorded_verdict:
+              type:
+                - boolean
+                - "null"
+          required:
+            - markdown
+            - recorded_verdict
+          type: object
+        schema_version:
+          format: int64
+          maximum: 0
+          minimum: 0
+          type: integer
+        summary:
+          maxLength: 0
+          type: string
+      required:
+        - schema_version
+        - legacy
       type: object
     ListBranchesOutputBody:
       additionalProperties: false
@@ -3519,23 +3558,11 @@ components:
           items:
             $ref: "#/components/schemas/StructuredReviewFinding"
           type: array
-        legacy:
-          additionalProperties: false
-          description: Historical Markdown without extracted findings. Only present in storage-only schema version 0.
-          properties:
-            markdown:
-              type: string
-            recorded_verdict:
-              type:
-                - boolean
-                - "null"
-          required:
-            - markdown
-            - recorded_verdict
-          type: object
         schema_version:
           description: Version of the document format, separate from the export schema_version.
           format: int64
+          maximum: 2
+          minimum: 1
           type: integer
         source_labels:
           description: Names of the input reviews that findings cite in sources, indexed by review number minus one.

@@ -3,9 +3,12 @@
 package generated
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"encoding/json/jsontext"
 	"uuid"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -1290,18 +1293,18 @@ type ExportReview struct {
 	CreatedAt   string           `json:"created_at" validate:"required"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            StructuredReviewDocument `json:"document"`
-	DurationMs          *int64                   `json:"duration_ms,omitempty"`
-	Experiments         []ExperimentAssignment   `json:"experiments" validate:"required"`
-	Model               *string                  `json:"model,omitempty" validate:"required"`
-	PrNumber            *int64                   `json:"pr_number,omitempty"`
-	PrURL               *string                  `json:"pr_url,omitempty" validate:"required"`
-	Project             string                   `json:"project" validate:"required"`
-	Repo                string                   `json:"repo" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID               `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            uuid.UUID                `json:"review_id" validate:"required"`
-	Status              string                   `json:"status" validate:"required"`
-	Subagents           []ExportSubagent         `json:"subagents" validate:"required"`
+	Document            ExportReview_Document  `json:"document"`
+	DurationMs          *int64                 `json:"duration_ms,omitempty"`
+	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
+	Model               *string                `json:"model,omitempty" validate:"required"`
+	PrNumber            *int64                 `json:"pr_number,omitempty"`
+	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
+	Project             string                 `json:"project" validate:"required"`
+	Repo                string                 `json:"repo" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
+	Status              string                 `json:"status" validate:"required"`
+	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
 
 	// UpdatedAt RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
 	UpdatedAt string `json:"updated_at" validate:"required"`
@@ -1401,6 +1404,60 @@ func (e ExportReview) Validate() error {
 	return errors
 }
 
+// ExportReview_Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+type ExportReview_Document struct {
+	ExportReview_Document_OneOf *ExportReview_Document_OneOf `json:"-"`
+}
+
+func (e ExportReview_Document) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.ExportReview_Document_OneOf != nil {
+		if v, ok := any(e.ExportReview_Document_OneOf).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExportReview_Document_OneOf", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (e ExportReview_Document) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(e.ExportReview_Document_OneOf)
+		if err != nil {
+			return nil, fmt.Errorf("ExportReview_Document_OneOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (e *ExportReview_Document) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if e.ExportReview_Document_OneOf == nil {
+		e.ExportReview_Document_OneOf = &ExportReview_Document_OneOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, e.ExportReview_Document_OneOf); err != nil {
+		return fmt.Errorf("ExportReview_Document_OneOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
 type ExportReviewCost struct {
 	TokensIn  *int64   `json:"tokens_in,omitempty"`
 	TokensOut *int64   `json:"tokens_out,omitempty"`
@@ -1487,14 +1544,14 @@ type ExportSubagent struct {
 	Cost        ExportReviewCost `json:"cost"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            StructuredReviewDocument `json:"document"`
-	DurationMs          *int64                   `json:"duration_ms,omitempty"`
-	Model               *string                  `json:"model,omitempty" validate:"required"`
-	Name                string                   `json:"name" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID               `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            uuid.UUID                `json:"review_id" validate:"required"`
-	ReviewType          *string                  `json:"review_type,omitempty" validate:"required"`
-	Verdict             string                   `json:"verdict" validate:"required"`
+	Document            ExportSubagent_Document `json:"document"`
+	DurationMs          *int64                  `json:"duration_ms,omitempty"`
+	Model               *string                 `json:"model,omitempty" validate:"required"`
+	Name                string                  `json:"name" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
+	ReviewType          *string                 `json:"review_type,omitempty" validate:"required"`
+	Verdict             string                  `json:"verdict" validate:"required"`
 }
 
 func (e ExportSubagent) Validate() error {
@@ -1552,6 +1609,60 @@ func (e ExportSubagent) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+// ExportSubagent_Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
+type ExportSubagent_Document struct {
+	ExportSubagent_Document_OneOf *ExportSubagent_Document_OneOf `json:"-"`
+}
+
+func (e ExportSubagent_Document) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.ExportSubagent_Document_OneOf != nil {
+		if v, ok := any(e.ExportSubagent_Document_OneOf).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExportSubagent_Document_OneOf", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (e ExportSubagent_Document) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(e.ExportSubagent_Document_OneOf)
+		if err != nil {
+			return nil, fmt.Errorf("ExportSubagent_Document_OneOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (e *ExportSubagent_Document) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if e.ExportSubagent_Document_OneOf == nil {
+		e.ExportSubagent_Document_OneOf = &ExportSubagent_Document_OneOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, e.ExportSubagent_Document_OneOf); err != nil {
+		return fmt.Errorf("ExportSubagent_Document_OneOf unmarshal: %w", err)
+	}
+
+	return nil
 }
 
 type FailureStats struct {
@@ -1704,6 +1815,54 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
+// LegacyReviewDocument Historical Markdown without extracted findings.
+type LegacyReviewDocument struct {
+	Findings []StructuredReviewFinding `json:"findings,omitempty"`
+
+	// Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
+	Legacy        LegacyReviewDocument_Legacy `json:"legacy"`
+	SchemaVersion int64                       `json:"schema_version" validate:"gte=0,lte=0"`
+	Summary       *string                     `json:"summary,omitempty" validate:"omitempty,max=0"`
+}
+
+func (l LegacyReviewDocument) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range l.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(l.Legacy).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Legacy", err)
+		}
+	}
+	if err := typesValidator.Var(l.SchemaVersion, "gte=0,lte=0"); err != nil {
+		errors = errors.Append("SchemaVersion", err)
+	}
+	if l.Summary != nil {
+		if err := typesValidator.Var(l.Summary, "omitempty,max=0"); err != nil {
+			errors = errors.Append("Summary", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+// LegacyReviewDocument_Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
+type LegacyReviewDocument_Legacy struct {
+	Markdown        string `json:"markdown" validate:"required"`
+	RecordedVerdict *bool  `json:"recorded_verdict,omitempty"`
+}
+
+func (l LegacyReviewDocument_Legacy) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListBranchesOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema         *string           `json:"$schema,omitempty"`
@@ -1818,13 +1977,25 @@ func (l ListReposOutputBody) Validate() error {
 
 type MigrateReviewInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema   *string  `json:"$schema,omitempty"`
-	Document struct{} `json:"document"`
-	ReviewID int64    `json:"review_id" validate:"gte=1"`
+	Schema   *string        `json:"$schema,omitempty"`
+	Document jsontext.Value `json:"document"`
+	ReviewID int64          `json:"review_id" validate:"gte=1"`
 }
 
 func (m MigrateReviewInputBody) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Document).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Document", err)
+		}
+	}
+	if err := typesValidator.Var(m.ReviewID, "gte=1"); err != nil {
+		errors = errors.Append("ReviewID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MigrateReviewOutputBody struct {
@@ -2889,11 +3060,8 @@ func (s ShutdownOutputBody) Validate() error {
 type StructuredReviewDocument struct {
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
-	// Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
-	Legacy *StructuredReviewDocument_Legacy `json:"legacy,omitempty"`
-
 	// SchemaVersion Version of the document format, separate from the export schema_version.
-	SchemaVersion int64 `json:"schema_version"`
+	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=2"`
 
 	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.
 	SourceLabels []string `json:"source_labels,omitempty"`
@@ -2912,12 +3080,8 @@ func (s StructuredReviewDocument) Validate() error {
 			}
 		}
 	}
-	if s.Legacy != nil {
-		if v, ok := any(s.Legacy).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Legacy", err)
-			}
-		}
+	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=2"); err != nil {
+		errors = errors.Append("SchemaVersion", err)
 	}
 	if err := typesValidator.Var(s.Summary, "required"); err != nil {
 		errors = errors.Append("Summary", err)
@@ -2926,16 +3090,6 @@ func (s StructuredReviewDocument) Validate() error {
 		return nil
 	}
 	return errors
-}
-
-// StructuredReviewDocument_Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
-type StructuredReviewDocument_Legacy struct {
-	Markdown        string `json:"markdown" validate:"required"`
-	RecordedVerdict *bool  `json:"recorded_verdict,omitempty"`
-}
-
-func (s StructuredReviewDocument_Legacy) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 // StructuredReviewFinding One finding in a structured review document.

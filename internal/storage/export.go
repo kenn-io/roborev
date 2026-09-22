@@ -148,12 +148,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description:          "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
-			"schema_version": {Type: huma.TypeInteger, Format: "int64", Description: "Version of the document format, separate from the export schema_version."},
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(2)), Description: "Version of the document format, separate from the export schema_version."},
 			"summary":        {Type: huma.TypeString},
-			"legacy": {Type: huma.TypeObject, AdditionalProperties: false, Description: "Historical Markdown without extracted findings. Only present in storage-only schema version 0.", Properties: map[string]*huma.Schema{
-				"markdown":         {Type: huma.TypeString},
-				"recorded_verdict": {Type: huma.TypeBoolean, Nullable: true},
-			}, Required: []string{"markdown", "recorded_verdict"}},
 			"verdict": {
 				Type:        huma.TypeString,
 				Description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.",
@@ -170,10 +166,27 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		},
 		Required: []string{"schema_version", "summary", "findings"},
 	}
+	schemas["LegacyReviewDocument"] = &huma.Schema{
+		Type:                 huma.TypeObject,
+		Description:          "Historical Markdown without extracted findings.",
+		AdditionalProperties: false,
+		Properties: map[string]*huma.Schema{
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(0)), Maximum: new(float64(0))},
+			"summary":        {Type: huma.TypeString, MaxLength: new(0)},
+			"findings":       {Type: huma.TypeArray, Nullable: true, MaxItems: new(0), Items: &huma.Schema{Ref: refPrefix + exportFindingSchemaName}},
+			"legacy": {Type: huma.TypeObject, AdditionalProperties: false, Description: "Historical Markdown without extracted findings. Only present in storage-only schema version 0.", Properties: map[string]*huma.Schema{
+				"markdown":         {Type: huma.TypeString},
+				"recorded_verdict": {Type: huma.TypeBoolean, Nullable: true},
+			}, Required: []string{"markdown", "recorded_verdict"}},
+		},
+		Required: []string{"schema_version", "legacy"},
+	}
+
 	return &huma.Schema{
 		Description: "The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.",
 		OneOf: []*huma.Schema{
 			{Ref: refPrefix + exportDocumentSchemaName},
+			{Ref: refPrefix + "LegacyReviewDocument"},
 			{Type: "null"},
 		},
 	}

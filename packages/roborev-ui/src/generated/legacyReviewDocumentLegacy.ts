@@ -5,7 +5,7 @@
 /**
  * Historical Markdown without extracted findings. Only present in storage-only schema version 0.
  */
-export type StructuredReviewDocumentLegacy = {
+export type LegacyReviewDocumentLegacy = {
   markdown: string;
   /** @nullable */
   recorded_verdict: boolean | null;
