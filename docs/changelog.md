@@ -5,6 +5,32 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.68.2
+
+<small>2026-09-22</small>
+
+Migration runs automatically when you start this version. You can upgrade
+directly from 0.67.0 or 0.68.0 to 0.68.2 without installing intermediate
+versions. If the 0.68.1 migration already completed, there are no reviews left
+to migrate. No manual conversion is required to use historical reviews.
+
+**Bug fixes**
+
+- Historical review migration now processes 100 reviews per batch, reducing
+    startup memory use when upgrading from 0.68.0. Completed review updates
+    survive an interrupted upgrade, and startup logs show migration progress.
+    This fixes the migration memory problem in 0.68.1 while preserving review
+    content, IDs, and open/closed state. See
+    [migration troubleshooting](/docs/guides/troubleshooting/#high-memory-use-during-historical-review-migration).
+- An index speeds up archived panel-source lookup during migration. SQLite job
+    table copying also uses batches; the table replacement remains atomic.
+
+To optionally convert remaining legacy text into structured findings, follow the
+[canonical agent migration guide](https://github.com/kenn-io/roborev/pull/1219#agent-migration-guide).
+
+Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for the
+migration batching fix in [#1224](https://github.com/kenn-io/roborev/pull/1224).
+
 ## 0.68.1
 
 <small>2026-09-22</small>

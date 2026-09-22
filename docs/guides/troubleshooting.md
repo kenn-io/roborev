@@ -32,6 +32,9 @@ for the storage behavior and deterministic conversion formats.
 
 ## High memory use during historical review migration
 
+Version 0.68.2 runs this migration automatically, including when upgrading
+directly from 0.67.0 or 0.68.0 without installing intermediate versions. If
+migration already completed in 0.68.1, there are no reviews left to migrate.
 Historical review archival, restoration, and verdict backfill process at most
 100 reviews per batch. Archival and verdict updates commit each batch;
 restoration saves each recovered review. Restarting after an interruption
