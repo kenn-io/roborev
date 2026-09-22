@@ -483,6 +483,8 @@ Reviews archived by an earlier release return automatically on upgrade. Their
 open/closed state, job association, UUID, and historical verdict are preserved.
 An unknown verdict stays unknown. Existing structured reviews are never replaced
 by this recovery. Startup reports how many archived reviews were restored.
+SQLite job IDs remain unchanged during upgrade and are never reused for new
+jobs. Deleting a repository with its jobs also deletes their archived reviews.
 
 In every case the original record stays archived in `legacy_reviews`. Sync
 ignores Markdown-only review updates from older clients. It does not create new
