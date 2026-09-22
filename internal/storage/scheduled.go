@@ -31,8 +31,11 @@ func (db *DB) ScheduledAnalysisHistoryForRepo(repoID int64) (map[ScheduledAnalys
 		       j.analysis_commit_sha, j.finished_at, j.enqueued_at
 		FROM review_jobs j, json_each(
 			CASE
-				WHEN json_valid(j.analysis_files) AND json_type(j.analysis_files) = 'array'
-				THEN j.analysis_files
+				WHEN json_valid(j.analysis_files) THEN
+					CASE
+						WHEN json_type(j.analysis_files) = 'array' THEN j.analysis_files
+						ELSE '[]'
+					END
 				ELSE '[]'
 			END
 		) AS analysis_file
@@ -42,8 +45,11 @@ func (db *DB) ScheduledAnalysisHistoryForRepo(repoID int64) (map[ScheduledAnalys
 			SELECT 1
 			FROM json_each(
 				CASE
-					WHEN json_valid(j.analysis_files) AND json_type(j.analysis_files) = 'array'
-					THEN j.analysis_files
+					WHEN json_valid(j.analysis_files) THEN
+						CASE
+							WHEN json_type(j.analysis_files) = 'array' THEN j.analysis_files
+							ELSE '[]'
+						END
 					ELSE '[]'
 				END
 			) AS metadata_file
