@@ -8,3 +8,7 @@ actions:
       x-go-type: jsontext.Value
       x-go-type-import:
         path: encoding/json/jsontext
+  # Unknown is a required null value, not an omitted historical verdict.
+  - target: '$.components.schemas.LegacyReviewDocument.properties.legacy.properties.recorded_verdict'
+    update:
+      x-omitempty: false

@@ -1860,7 +1860,7 @@ func (l LegacyReviewDocument) Validate() error {
 // LegacyReviewDocument_Legacy Historical Markdown without extracted findings. Only present in storage-only schema version 0.
 type LegacyReviewDocument_Legacy struct {
 	Markdown        string `json:"markdown" validate:"required"`
-	RecordedVerdict *bool  `json:"recorded_verdict,omitempty"`
+	RecordedVerdict *bool  `json:"recorded_verdict"`
 }
 
 func (l LegacyReviewDocument_Legacy) Validate() error {

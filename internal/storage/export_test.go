@@ -1089,6 +1089,11 @@ func TestExportLegacyDocumentSchema(t *testing.T) {
 		require.NotNil(t, decoded.ExportReview_Document_OneOf)
 		assert.True(t, decoded.ExportReview_Document_OneOf.IsB())
 		require.NoError(t, decoded.Validate())
+		remarshaled, err := json.Marshal(decoded)
+		require.NoError(t, err)
+		var roundTrip any
+		require.NoError(t, json.Unmarshal(remarshaled, &roundTrip))
+		assert.NoError(t, validator.Validate(roundTrip))
 	}
 	var mixed any
 	require.NoError(t, json.Unmarshal([]byte(`{"schema_version":0,"summary":"Invented structured summary","findings":[],"legacy":{"markdown":"Original text.","recorded_verdict":null}}`), &mixed))
