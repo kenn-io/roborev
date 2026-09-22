@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -60,8 +61,27 @@ func (db *DB) migrateJobIDs() error {
 	if _, err := tx.Exec(create); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO review_jobs_new SELECT * FROM review_jobs`); err != nil {
-		return err
+	// Keep the schema replacement atomic, but copy bounded sets of rows per
+	// statement to bound the work performed by each copy statement.
+	var after int64
+	copied := int64(0)
+	for {
+		result, err := tx.Exec(`INSERT INTO review_jobs_new SELECT * FROM review_jobs WHERE id > ? ORDER BY id LIMIT ?`, after, legacyReviewBatchSize)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			break
+		}
+		if err := tx.QueryRow(`SELECT max(id) FROM review_jobs_new`).Scan(&after); err != nil {
+			return err
+		}
+		copied += count
+		log.Printf("Job ID migration: copied %d jobs (through job %d)", copied, after)
 	}
 	if _, err := tx.Exec(`DROP TABLE review_jobs`); err != nil {
 		return err
@@ -69,7 +89,8 @@ func (db *DB) migrateJobIDs() error {
 	if _, err := tx.Exec(`ALTER TABLE review_jobs_new RENAME TO review_jobs`); err != nil {
 		return err
 	}
-	for _, definition := range definitions {
+	for i, definition := range definitions {
+		log.Printf("Job ID migration: recreating index/trigger %d of %d", i+1, len(definitions))
 		if _, err := tx.Exec(definition); err != nil {
 			return err
 		}

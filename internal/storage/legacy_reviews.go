@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"uuid"
 
@@ -31,6 +32,10 @@ const legacyReviewColumns = `id, job_id, agent, prompt, output, created_at, clos
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
  uuid, updated_by_machine_id, updated_at, synced_at`
 
+// legacyReviewBatchSize is the requested 100-review work unit for upgrades.
+// It bounds retained review bodies and transaction size, not document size.
+const legacyReviewBatchSize = 100
+
 // migrateLegacyReviews retires prose records without inventing findings. A
 // Markdown review that roborev wrote in a format it can read back exactly is
 // converted in place. The original row is retained even when conversion is
@@ -40,12 +45,7 @@ func (db *DB) migrateLegacyReviews() error {
 	if err != nil {
 		return err
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS legacy_reviews (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS legacy_reviews (
  archive_id INTEGER PRIMARY KEY,
  id INTEGER, job_id INTEGER NOT NULL, agent TEXT NOT NULL, prompt TEXT NOT NULL,
  output TEXT NOT NULL, created_at TEXT NOT NULL, closed INTEGER NOT NULL,
@@ -55,12 +55,36 @@ func (db *DB) migrateLegacyReviews() error {
  )`); err != nil {
 		return err
 	}
+	var after int64
+	total := 0
+	for {
+		next, scanned, err := db.migrateLegacyReviewsBatch(after, machineID)
+		if err != nil {
+			return fmt.Errorf("archive legacy reviews after review %d: %w", after, err)
+		}
+		if scanned == 0 {
+			return nil
+		}
+		after = next
+		total += scanned
+		log.Printf("Legacy review migration: scanned %d reviews (through review %d)", total, after)
+	}
+}
+
+func (db *DB) migrateLegacyReviewsBatch(after int64, machineID uuid.UUID) (int64, int, error) {
+	scanned := 0
+	tx, err := db.Begin()
+	if err != nil {
+		return after, scanned, err
+	}
+	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.Query(`SELECT rv.id, rv.job_id, rv.output, rv.structured_output, COALESCE(j.min_severity, ''), j.job_type, rv.verdict_bool
  FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
- WHERE j.job_type IN ('review','range','dirty','synthesis','compact')`)
+ WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
+ AND rv.id > ? ORDER BY rv.id LIMIT ?`, after, legacyReviewBatchSize)
 	if err != nil {
-		return err
+		return after, scanned, err
 	}
 	type pending struct {
 		id      int64
@@ -80,8 +104,10 @@ func (db *DB) migrateLegacyReviews() error {
 		var oldVerdict sql.NullInt64
 		if err := rows.Scan(&id, &jobID, &output, &raw, &threshold, &jobType, &oldVerdict); err != nil {
 			rows.Close()
-			return err
+			return after, scanned, err
 		}
+		after = id
+		scanned++
 		candidate := jsontext.Value(raw.String)
 		if len(candidate) == 0 {
 			candidate = jsontext.Value(output)
@@ -111,10 +137,10 @@ func (db *DB) migrateLegacyReviews() error {
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return after, scanned, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return after, scanned, err
 	}
 	for i := range updates {
 		item := &updates[i]
@@ -124,7 +150,7 @@ func (db *DB) migrateLegacyReviews() error {
 		if item.markdown.JobType == JobTypeSynthesis {
 			sources, err := legacySynthesisSources(tx, item.jobID)
 			if err != nil {
-				return err
+				return after, scanned, err
 			}
 			item.markdown.SourceLabels = legacySourceLabels(sources)
 		}
@@ -143,24 +169,24 @@ func (db *DB) migrateLegacyReviews() error {
 		if _, err := tx.Exec(`INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error, resolved_at)
    SELECT `+legacyReviewColumns+`, ?, CASE WHEN ? = '' THEN datetime('now') ELSE NULL END
    FROM reviews WHERE id = ? ON CONFLICT(uuid) DO NOTHING`, item.reason, item.reason, item.id); err != nil {
-			return err
+			return after, scanned, err
 		}
 		if item.reason != "" {
 			if _, err := tx.Exec(`DELETE FROM reviews WHERE id = ?`, item.id); err != nil {
-				return err
+				return after, scanned, err
 			}
 		} else {
 			if _, err := tx.Exec(`UPDATE reviews SET output = '', structured_output = ?, verdict_bool = ?, synced_at = NULL,
     updated_at = datetime('now'), updated_by_machine_id = ? WHERE id = ?`, string(item.raw), item.verdict, machineID, item.id); err != nil {
-				return err
+				return after, scanned, err
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return after, scanned, err
 	}
 
-	return nil
+	return after, scanned, nil
 }
 
 // ResolveLegacyReview imports an explicitly converted document. It preserves
@@ -260,11 +286,21 @@ type LegacyReview struct {
 }
 
 func (db *DB) UnresolvedLegacyReviews() ([]LegacyReview, error) {
+	return db.unresolvedLegacyReviews(0, -1, false)
+}
+
+// Restoration pages only missing active reviews. Explicit export still includes
+// active legacy documents and returns the complete conversion input.
+func (db *DB) unresolvedLegacyReviews(after int64, limit int, missingOnly bool) ([]LegacyReview, error) {
 	rows, err := db.Query(`SELECT l.archive_id, l.job_id, COALESCE(j.job_type, ''), l.output,
  COALESCE(l.structured_output, ''), l.migration_error, l.uuid, COALESCE(j.min_severity, ''), l.verdict_bool, r.id FROM legacy_reviews l
  LEFT JOIN review_jobs j ON j.id = l.job_id
  LEFT JOIN reviews r ON r.uuid = l.uuid
- WHERE l.resolved_at IS NULL OR json_extract(r.structured_output, '$.legacy') IS NOT NULL ORDER BY l.archive_id`)
+ WHERE (l.resolved_at IS NULL OR json_extract(r.structured_output, '$.legacy') IS NOT NULL)
+ AND l.archive_id > ?
+ AND (NOT ? OR (j.id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM reviews active WHERE active.job_id = l.job_id OR active.uuid = l.uuid)))
+ ORDER BY l.archive_id LIMIT ?`, after, missingOnly, limit)
 	if err != nil {
 		return nil, err
 	}

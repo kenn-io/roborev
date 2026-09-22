@@ -273,21 +273,25 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
 	}
+	log.Printf("Database migration: converting historical reviews")
 	if err := wrapped.migrateLegacyReviews(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate legacy reviews: %w", err)
 	}
 
+	log.Printf("Database migration: preserving job IDs")
 	if err := wrapped.migrateJobIDs(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("preserve job IDs: %w", err)
 	}
 
+	log.Printf("Database migration: restoring archived reviews")
 	if err := wrapped.restoreLegacyReviews(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("restore legacy reviews: %w", err)
 	}
 
+	log.Printf("Database migration: backfilling review verdicts")
 	if _, err := wrapped.BackfillVerdictBool(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("backfill JSON verdicts: %w", err)

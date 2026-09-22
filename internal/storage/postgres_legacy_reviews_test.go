@@ -231,3 +231,40 @@ func TestIntegrationRestoreLegacyAndImport(t *testing.T) {
 	assert.Equal(t, "Converted.", doc.Summary)
 	assert.True(t, closed)
 }
+
+func TestIntegrationLegacyMigrationBatches(t *testing.T) {
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	for range 205 {
+		jobID := uuid.New()
+		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, updated_by_machine_id)
+ VALUES ($1, $2, 'test', 'prompt', 'Preserve this historical text.', true, $3)`, uuid.New(), jobID, defaultTestMachineID)
+		require.NoError(t, err)
+	}
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	first, err := pool.unresolvedLegacyReviews(ctx, nil, 100, true)
+	require.NoError(t, err)
+	require.Len(t, first, 100)
+	second, err := pool.unresolvedLegacyReviews(ctx, &first[99].ID, 100, true)
+	require.NoError(t, err)
+	require.Len(t, second, 100)
+	last, err := pool.unresolvedLegacyReviews(ctx, &second[99].ID, 100, true)
+	require.NoError(t, err)
+	require.Len(t, last, 5)
+	require.NoError(t, pool.restoreLegacyReviews(ctx))
+	require.NoError(t, pool.restoreLegacyReviews(ctx))
+	var preserved int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews r JOIN legacy_reviews l ON r.uuid = l.uuid
+ WHERE r.job_uuid = (l.record->>'job_uuid')::uuid AND r.closed
+ AND r.structured_output->'legacy'->>'markdown' = l.record->>'output'`).Scan(&preserved))
+	assert.Equal(t, 205, preserved)
+	missing, err := pool.unresolvedLegacyReviews(ctx, nil, 100, true)
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+	exported, err := pool.UnresolvedLegacyReviews(ctx)
+	require.NoError(t, err)
+	assert.Len(t, exported, 205)
+}

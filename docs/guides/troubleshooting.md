@@ -30,6 +30,21 @@ invent missing findings during upgrade. See
 [Review storage and legacy migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration)
 for the storage behavior and deterministic conversion formats.
 
+## High memory use during historical review migration
+
+Historical review archival, restoration, and verdict backfill process at most
+100 reviews per batch. Archival and verdict updates commit each batch;
+restoration saves each recovered review. Restarting after an interruption
+preserves completed work and continues with the remaining records. Startup
+restoration skips active reviews before loading their archived text and panel
+sources. The explicit legacy export still returns the complete conversion input.
+
+Startup logs identify each migration stage and report batch progress. The SQLite
+job-ID migration also copies 100 jobs per statement, but keeps the table
+replacement in one transaction. An interrupted table replacement rolls back and
+restarts on the next launch. SQLite rebuilds each index as a single operation;
+logs identify which index or trigger is being recreated.
+
 ## Reviews Not Triggering
 
 The most common issue is commits going unreviewed. Walk through these checks in

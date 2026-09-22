@@ -502,41 +502,59 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 // retain their explicit blocking outcome even though no review was produced.
 // Returns the number of rows updated.
 func (db *DB) BackfillVerdictBool() (int, error) {
-	cleared, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE verdict_bool IS NOT NULL AND output = '' AND structured_output IS NULL`)
-	if err != nil {
-		return 0, err
-	}
-	clearedCount, err := cleared.RowsAffected()
-	if err != nil {
-		return 0, err
+	// Clear obsolete verdicts in the same bounded work units as the JSON
+	// backfill. Each update commits before the next batch begins.
+	clearedCount := int64(0)
+	for _, query := range []string{
+		`UPDATE reviews SET verdict_bool = NULL WHERE id IN (
+ SELECT id FROM reviews WHERE verdict_bool IS NOT NULL AND output = '' AND structured_output IS NULL ORDER BY id LIMIT ?)`,
+		`UPDATE reviews SET verdict_bool = NULL WHERE id IN (
+ SELECT r.id FROM reviews r JOIN review_jobs j ON j.id = r.job_id
+ WHERE r.verdict_bool IS NOT NULL AND j.job_type IN ('task', 'insights') ORDER BY r.id LIMIT ?)`,
+	} {
+		for {
+			result, err := db.Exec(query, legacyReviewBatchSize)
+			if err != nil {
+				return int(clearedCount), err
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return int(clearedCount), err
+			}
+			clearedCount += count
+			if count == 0 {
+				break
+			}
+		}
 	}
 
-	// Task and insights output is free-form prose and never carries a
-	// verdict. Clear any verdict an older release parsed out of it, and keep
-	// those rows out of the re-parse below so a restart cannot add one back.
-	freeForm, err := db.Exec(`
-		UPDATE reviews SET verdict_bool = NULL
-		WHERE verdict_bool IS NOT NULL
-		  AND job_id IN (SELECT id FROM review_jobs WHERE job_type IN (?, ?))
-	`, JobTypeTask, JobTypeInsights)
-	if err != nil {
-		return 0, err
+	var after int64
+	total := int(clearedCount)
+	for {
+		next, scanned, updated, err := db.backfillVerdictBatch(after)
+		if err != nil {
+			return total, err
+		}
+		total += updated
+		if scanned == 0 {
+			return total, nil
+		}
+		after = next
 	}
-	freeFormCount, err := freeForm.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	clearedCount += freeFormCount
+}
 
+func (db *DB) backfillVerdictBatch(after int64) (int64, int, int, error) {
+	scanned := 0
 	rows, err := db.Query(`
 		SELECT rv.id, rv.structured_output, COALESCE(j.min_severity, '')
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE rv.structured_output IS NOT NULL AND ((rv.verdict_bool IS NULL AND json_extract(rv.structured_output, '$.verdict') IS NOT 'unable_to_review') OR (rv.verdict_bool IS NOT NULL AND j.job_type != 'synthesis' AND json_extract(rv.structured_output, '$.verdict') = 'unable_to_review'))
 		  AND j.job_type NOT IN (?, ?)
-	`, JobTypeTask, JobTypeInsights)
+ AND rv.id > ? ORDER BY rv.id LIMIT ?
+	`, JobTypeTask, JobTypeInsights, after, legacyReviewBatchSize)
 	if err != nil {
-		return 0, err
+		return after, scanned, 0, err
 	}
 	defer rows.Close()
 
@@ -549,11 +567,13 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		var id int64
 		var output, threshold string
 		if err := rows.Scan(&id, &output, &threshold); err != nil {
-			return 0, err
+			return after, scanned, 0, err
 		}
+		after = id
+		scanned++
 		doc, err := structuredreview.Decode(jsontext.Value(output))
 		if err != nil {
-			return 0, err
+			return after, scanned, 0, err
 		}
 		if doc.Legacy != nil {
 			continue
@@ -569,35 +589,38 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return after, scanned, 0, err
 	}
 
+	if err := rows.Close(); err != nil {
+		return after, scanned, 0, err
+	}
 	if len(updates) == 0 {
-		return int(clearedCount), nil
+		return after, scanned, 0, nil
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, err
+		return after, scanned, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`UPDATE reviews SET verdict_bool = ? WHERE id = ?`)
 	if err != nil {
-		return 0, err
+		return after, scanned, 0, err
 	}
 	defer stmt.Close()
 
 	for _, u := range updates {
 		if _, err := stmt.Exec(u.verdict, u.id); err != nil {
-			return 0, err
+			return after, scanned, 0, err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return after, scanned, 0, err
 	}
-	return len(updates) + int(clearedCount), nil
+	return after, scanned, len(updates), nil
 }
 
 // categorizeError maps error messages to categories.

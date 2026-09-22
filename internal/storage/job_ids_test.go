@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -43,6 +44,11 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)
 	original := seedLegacyMarkdownReview(t, db, repo.ID, "retained", "Original text stays attached to this job.", 0, true)
+	// Exercise a copy spanning multiple batches and a partial final batch.
+	for i := range 205 {
+		_, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: fmt.Sprintf("copy-%d", i), Agent: "test"})
+		require.NoError(t, err)
+	}
 	orphan := seedLegacyMarkdownReview(t, db, repo.ID, "orphan", "An orphan archive reserves its old ID.", 0, false)
 	require.NoError(t, db.migrateLegacyReviews())
 	_, err = db.Exec(`DELETE FROM review_jobs WHERE id = ?`, orphan.jobID)
@@ -57,6 +63,9 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	assert.Equal(t, original.jobID, review.JobID)
 	assert.Contains(t, review.Output, original.markdown)
 	assert.True(t, review.Closed)
+	var copied int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs WHERE git_ref LIKE 'copy-%'`).Scan(&copied))
+	assert.Equal(t, 205, copied)
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "after-upgrade", Agent: "test"})
 	require.NoError(t, err)
 	assert.Greater(t, job.ID, orphan.jobID)

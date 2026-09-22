@@ -29,12 +29,19 @@ type PostgresLegacyReview struct {
 }
 
 func (p *PgPool) UnresolvedLegacyReviews(ctx context.Context) ([]PostgresLegacyReview, error) {
+	return p.unresolvedLegacyReviews(ctx, nil, 0, false)
+}
+
+func (p *PgPool) unresolvedLegacyReviews(ctx context.Context, after *uuid.UUID, limit int, missingOnly bool) ([]PostgresLegacyReview, error) {
 	rows, err := p.pool.Query(ctx, `SELECT l.uuid, j.uuid, j.job_type,
  COALESCE(l.record->>'output', ''), COALESCE(l.record->>'structured_output', ''), l.migration_error,
  COALESCE(j.min_severity, ''), (l.record->>'verdict_bool')::boolean
  FROM legacy_reviews l JOIN review_jobs j ON j.uuid = (l.record->>'job_uuid')::uuid
  LEFT JOIN reviews r ON r.uuid = l.uuid
- WHERE l.resolved_at IS NULL OR r.structured_output->'legacy' IS NOT NULL ORDER BY l.uuid`)
+ WHERE (l.resolved_at IS NULL OR r.structured_output->'legacy' IS NOT NULL)
+ AND ($1::uuid IS NULL OR l.uuid > $1)
+ AND (NOT $2 OR NOT EXISTS (SELECT 1 FROM reviews active WHERE active.uuid = l.uuid OR active.job_uuid = j.uuid))
+ ORDER BY l.uuid LIMIT NULLIF($3, 0)`, after, missingOnly, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -22,54 +22,62 @@ var ErrInvalidReviewDocument = errors.New("invalid review document")
 // Unresolved archive records remain optional conversion inputs. Repeated opens
 // never replace active reviews.
 func (db *DB) restoreLegacyReviews() error {
-	records, err := db.UnresolvedLegacyReviews()
-	if err != nil {
-		return err
-	}
 	restored, unstructured := 0, 0
-	for _, record := range records {
-		if record.JobType == "" {
-			continue
-		}
-		var active bool
-		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM reviews WHERE job_id = ? OR uuid = ?)`, record.JobID, record.uuid).Scan(&active); err != nil {
+	var after int64
+	for {
+		records, err := db.unresolvedLegacyReviews(after, legacyReviewBatchSize, true)
+		if err != nil {
 			return err
 		}
-		if active {
-			continue
+		if len(records) == 0 {
+			break
 		}
-		raw, refusal := convertLegacyRecord(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)}, record.StructuredOutput)
-		if refusal == nil {
-			if err := db.ResolveLegacyReview(record.ID, raw); err != nil {
+		for _, record := range records {
+			after = record.ID
+			if record.JobType == "" {
+				continue
+			}
+			var active bool
+			if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM reviews WHERE job_id = ? OR uuid = ?)`, record.JobID, record.uuid).Scan(&active); err != nil {
 				return err
 			}
-		} else {
-			markdown := record.Output
-			if markdown == "" {
-				markdown = record.StructuredOutput
+			if active {
+				continue
 			}
-			raw, err = json.Marshal(structuredreview.Document{SchemaVersion: structuredreview.LegacySchemaVersion, Legacy: &structuredreview.LegacyDocument{Markdown: markdown, RecordedVerdict: record.storedVerdict}})
-			if err != nil {
-				return err
-			}
-			machineID, err := db.GetMachineID()
-			if err != nil {
-				return err
-			}
-			// Review IDs may have been reused after archival. Keep them when
-			// available; the archived numeric job ID stays unchanged.
-			_, err = db.Exec(`INSERT INTO reviews (id, job_id, agent, prompt, output, created_at, closed,
+			raw, refusal := convertLegacyRecord(legacyMarkdown{Markdown: record.Output, JobType: record.JobType, MinSeverity: record.minSeverity, StoredVerdict: record.storedVerdict, SourceLabels: legacySourceLabels(record.Sources)}, record.StructuredOutput)
+			if refusal == nil {
+				if err := db.ResolveLegacyReview(record.ID, raw); err != nil {
+					return err
+				}
+			} else {
+				markdown := record.Output
+				if markdown == "" {
+					markdown = record.StructuredOutput
+				}
+				raw, err = json.Marshal(structuredreview.Document{SchemaVersion: structuredreview.LegacySchemaVersion, Legacy: &structuredreview.LegacyDocument{Markdown: markdown, RecordedVerdict: record.storedVerdict}})
+				if err != nil {
+					return err
+				}
+				machineID, err := db.GetMachineID()
+				if err != nil {
+					return err
+				}
+				// Review IDs may have been reused after archival. Keep them when
+				// available; the archived numeric job ID stays unchanged.
+				_, err = db.Exec(`INSERT INTO reviews (id, job_id, agent, prompt, output, created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at)
  SELECT CASE WHEN EXISTS(SELECT 1 FROM reviews WHERE id = l.id) THEN NULL ELSE l.id END,
  job_id, agent, prompt, '', created_at, closed, reviewed_file_count, excluded_file_count,
  verdict_bool, ?, uuid, ?, datetime('now') FROM legacy_reviews l WHERE archive_id = ?
  AND NOT EXISTS(SELECT 1 FROM reviews WHERE job_id = l.job_id OR uuid = l.uuid)`, string(raw), machineID, record.ID)
-			if err != nil {
-				return err
+				if err != nil {
+					return err
+				}
+				unstructured++
 			}
-			unstructured++
+			restored++
 		}
-		restored++
+		log.Printf("Legacy review restoration: processed %d reviews (through archive %d)", restored, after)
 	}
 	if restored > 0 {
 		log.Printf("Restored %d historical reviews (%d unstructured). Use legacy-reviews export/import for optional agent-driven conversion.", restored, unstructured)
