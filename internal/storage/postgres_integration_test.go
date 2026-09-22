@@ -1307,9 +1307,10 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
 }
 
-func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- uuid.UUID, errs chan<- error, done chan<- bool) {
+func runConcurrentReviewsAndSync(start <-chan struct{}, db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- uuid.UUID, errs chan<- error, done chan<- bool) {
 	go func() {
 		defer func() { done <- true }()
+		<-start
 		for i := range count {
 			job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
 			if err != nil {
@@ -1414,10 +1415,13 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		syncErrsB := make(chan error, 4)
 		syncErrsC := make(chan error, 4)
 		done := make(chan bool, 3)
+		start := make(chan struct{})
 
-		runConcurrentReviewsAndSync(dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
-		runConcurrentReviewsAndSync(dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
-		runConcurrentReviewsAndSync(dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
+		runConcurrentReviewsAndSync(start, dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
+		runConcurrentReviewsAndSync(start, dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
+		runConcurrentReviewsAndSync(start, dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
+		// Release all machines together so their writes and syncs overlap.
+		close(start)
 
 		<-done
 		<-done

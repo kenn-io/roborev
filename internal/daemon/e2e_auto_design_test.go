@@ -62,14 +62,22 @@ enabled = true
 	return &autoDesignE2E{t: t, repo: repo, db: db, srv: srv, row: row}
 }
 
-// processQueuedJob claims the next queued row and runs it through the worker
-// path synchronously, so the outcome is in the db when it returns.
-func (e *autoDesignE2E) processQueuedJob() {
+// runWorkersUntilEvent starts the worker pool and waits for its first event
+// about the auto_design row for sha: the classifier's terminal event, or the
+// promoted design review starting.
+func (e *autoDesignE2E) runWorkersUntilEvent(sha string) Event {
 	e.t.Helper()
-	job, err := e.db.ClaimJob(testWorkerID)
-	require.NoError(e.t, err)
-	require.NotNil(e.t, job, "no queued job to process")
-	e.srv.workerPool.processJob(testWorkerID, job)
+	jobID := e.requireAutoDesign(sha).ID
+	subID, events := e.srv.broadcaster.Subscribe("")
+	e.t.Cleanup(func() { e.srv.broadcaster.Unsubscribe(subID) })
+	e.srv.workerPool.Start()
+	e.t.Cleanup(func() { e.srv.workerPool.Stop() })
+	for {
+		event := testutil.ReceiveWithTimeout(e.t, events, 10*time.Second)
+		if event.JobID == jobID {
+			return event
+		}
+	}
 }
 
 func (e *autoDesignE2E) completeParentReview(job *storage.ReviewJob) {
@@ -263,7 +271,7 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 
 	parent := e.enqueueReviewFor(sha, "feat: small helper")
 	e.completeParentReview(parent)
-	e.processQueuedJob()
+	require.Equal(t, "review.started", e.runWorkersUntilEvent(sha).Type)
 
 	// The worker promotes the classify row in place to a real review
 	// row. The initial row appears with job_type='classify'.
@@ -303,7 +311,7 @@ func TestE2EAutoDesign_ClassifierPath_SkipsAmbiguous(t *testing.T) {
 
 	parent := e.enqueueReviewFor(sha, "feat: rename var")
 	e.completeParentReview(parent)
-	e.processQueuedJob()
+	require.Equal(t, "review.completed", e.runWorkersUntilEvent(sha).Type)
 
 	// The worker transitions the classify row to skipped.
 	got := e.requireAutoDesignMatches(sha, "status=skipped",
@@ -426,7 +434,7 @@ classifier_timeout_seconds = 1
 	// config.ResolveClassifyAgent's validator and fail.
 	parent := e.enqueueReviewFor(sha, "feat: tweak")
 	e.completeParentReview(parent)
-	e.processQueuedJob()
+	require.Equal(t, "review.completed", e.runWorkersUntilEvent(sha).Type)
 
 	got := e.requireAutoDesignMatches(sha, "status=skipped (classifier failed)",
 		func(j *storage.ReviewJob) bool { return j.Status == storage.JobStatusSkipped })
