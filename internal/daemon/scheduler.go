@@ -225,7 +225,16 @@ func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoC
 		return err
 	}
 	changed := make(map[string]map[string]struct{})
-	types := append([]string(nil), policy.Types...)
+	types := make([]string, 0, len(policy.Types))
+	seenTypes := make(map[string]struct{}, len(policy.Types))
+	for _, rawType := range policy.Types {
+		typ := strings.TrimSpace(rawType)
+		if _, seen := seenTypes[typ]; seen {
+			continue
+		}
+		seenTypes[typ] = struct{}{}
+		types = append(types, typ)
+	}
 	var candidates []scheduledCandidate
 	for _, path := range files {
 		if !git.IsSourceFile(path) || !scheduledPathMatch(path, policy.Paths) {
@@ -256,6 +265,14 @@ func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoC
 			when := time.Time{}
 			if baseline != nil {
 				when = baseline.FinishedAtOrEnqueued()
+				commitExists, existsErr := git.CommitExists(ctx, repo.RootPath, baseline.Commit)
+				if existsErr != nil {
+					return existsErr
+				}
+				if !commitExists {
+					candidates = append(candidates, scheduledCandidate{path: path, typ: typ})
+					continue
+				}
 				filesForBaseline, ok := changed[baseline.Commit]
 				if !ok {
 					filesForBaseline, err = git.ChangedFilesBetween(ctx, repo.RootPath, baseline.Commit, sha)
@@ -355,6 +372,7 @@ func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoC
 		AnalysisType:      candidate.typ,
 		AnalysisFiles:     []string{candidate.path},
 		AnalysisCommitSHA: sha,
+		RequestedModel:    resolved.Model,
 		JobType:           storage.JobTypeTask,
 		Source:            storage.JobSourceScheduled,
 		Label:             candidate.typ,

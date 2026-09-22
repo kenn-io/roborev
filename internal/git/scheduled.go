@@ -2,7 +2,9 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -47,6 +49,20 @@ func ReadBlobAt(ctx context.Context, repoPath, sha, path string) (string, error)
 		return "", fmt.Errorf("git show %s:%s: %w", sha, path, err)
 	}
 	return string(out), nil
+}
+
+func CommitExists(ctx context.Context, repoPath, sha string) (bool, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "-e", sha+"^{commit}")
+	cmd.Dir = repoPath
+	if err := cmd.Run(); err == nil {
+		return true, nil
+	} else if ctx.Err() != nil {
+		return false, ctx.Err()
+	} else if _, ok := errors.AsType[*exec.ExitError](err); ok {
+		return false, nil
+	} else {
+		return false, fmt.Errorf("git cat-file %s: %w", sha, err)
+	}
 }
 
 func ChangedFilesBetween(ctx context.Context, repoPath, old, current string) (map[string]struct{}, error) {

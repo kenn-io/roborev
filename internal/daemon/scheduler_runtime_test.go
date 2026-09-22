@@ -25,9 +25,10 @@ func TestSchedulerGlobalGateAndEnqueueMetadata(t *testing.T) {
 	cfg := &config.Config{Schedule: config.ScheduleConfig{
 		Enabled:  &enabled,
 		Interval: "1h",
-		Types:    []string{"complexity"},
+		Types:    []string{"complexity", "complexity"},
 		MaxFiles: 1,
 		Agent:    "test",
+		Model:    "scheduled-model",
 	}}
 	db := testutil.OpenTestDB(t)
 	storedRepo, err := db.GetOrCreateRepo(repoDir)
@@ -52,8 +53,10 @@ func TestSchedulerGlobalGateAndEnqueueMetadata(t *testing.T) {
 	assert.Equal(t, storage.JobTypeTask, captured[0].JobType)
 	assert.Equal(t, storage.JobSourceScheduled, captured[0].Source)
 	assert.Equal(t, "complexity", captured[0].AnalysisType)
+	assert.Len(t, captured, 1)
 	assert.Equal(t, []string{"main.go"}, captured[0].AnalysisFiles)
 	assert.Equal(t, repo.HeadSHA(), captured[0].AnalysisCommitSHA)
+	assert.Equal(t, "scheduled-model", captured[0].RequestedModel)
 	assert.False(t, captured[0].PromptPrebuilt)
 	assert.Contains(t, captured[0].Prompt, "const captured")
 	assert.Contains(t, captured[0].OutputPrefix, "main.go")
@@ -164,6 +167,81 @@ func TestSchedulerPolicyReloadAndFailureIsolation(t *testing.T) {
 	s.reconcile(context.Background())
 	assert.Equal(t, now.Add(2*time.Hour), s.due[goodRepo.ID])
 	assert.Len(t, captured, 1, "the pending job still suppresses a duplicate")
+}
+
+func TestSchedulerMissingBaselineIsFresh(t *testing.T) {
+	repoDir := t.TempDir()
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFile("main.go", "package main\n", "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{
+		Enabled:  &enabled,
+		Interval: "1h",
+		Types:    []string{"complexity"},
+		Paths:    []string{"main.go"},
+		MaxFiles: 1,
+		Agent:    "test",
+	}}
+	db := testutil.OpenTestDB(t)
+	storedRepo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+	old, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:            storedRepo.ID,
+		Agent:             "test",
+		Prompt:            "old prompt",
+		Source:            storage.JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"main.go"},
+		AnalysisCommitSHA: "0000000000000000000000000000000000000000",
+	})
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ?", time.Now().Format(time.RFC3339Nano), time.Now().Format(time.RFC3339Nano), old.ID)
+	require.NoError(t, err)
+
+	var captured []storage.EnqueueOpts
+	s := NewSchedulerService(db, NewConfigWatcher("", cfg, nil, nil), func(_ context.Context, _ storage.Repo, opts storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		captured = append(captured, opts)
+		return db.EnqueueJob(opts)
+	})
+	s.reconcile(context.Background())
+	require.Len(t, captured, 1)
+	assert.Equal(t, []string{"main.go"}, captured[0].AnalysisFiles)
+	assert.Equal(t, repo.HeadSHA(), captured[0].AnalysisCommitSHA)
+}
+
+func TestSchedulerRunningCurrentHeadSuppressesDuplicate(t *testing.T) {
+	repoDir := t.TempDir()
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	repo.CommitFile("main.go", "package main\n", "source")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[schedule]\nenabled = true\n"), 0o600))
+
+	enabled := true
+	cfg := &config.Config{Schedule: config.ScheduleConfig{Enabled: &enabled, Interval: "1h", Types: []string{"complexity"}, Paths: []string{"main.go"}, MaxFiles: 1, Agent: "test"}}
+	db := testutil.OpenTestDB(t)
+	storedRepo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+	running, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:            storedRepo.ID,
+		Agent:             "test",
+		Prompt:            "current prompt",
+		Source:            storage.JobSourceScheduled,
+		AnalysisType:      "complexity",
+		AnalysisFiles:     []string{"main.go"},
+		AnalysisCommitSHA: repo.HeadSHA(),
+	})
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE review_jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?", time.Now().Format(time.RFC3339Nano), time.Now().Format(time.RFC3339Nano), running.ID)
+	require.NoError(t, err)
+
+	var captured []storage.EnqueueOpts
+	s := NewSchedulerService(db, NewConfigWatcher("", cfg, nil, nil), func(_ context.Context, _ storage.Repo, opts storage.EnqueueOpts) (*storage.ReviewJob, error) {
+		captured = append(captured, opts)
+		return db.EnqueueJob(opts)
+	})
+	s.reconcile(context.Background())
+	assert.Empty(t, captured)
 }
 
 func TestSchedulerStartStop(t *testing.T) {

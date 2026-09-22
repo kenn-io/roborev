@@ -35,9 +35,8 @@ func SupportsScheduledReadOnly(a Agent) bool {
 		return strings.TrimSpace(v.effectivePermissionMode()) == strings.TrimSpace(v.ReadOnlyMode) && !v.mutatingOperationsAllowed()
 	}
 	readOnlyAdapters := map[string]bool{
-		"claude-code": true, "codex": true, "copilot": true, "cursor": true,
-		"droid": true, "gemini": true, "grok": true, "kilo": true,
-		"kiro": true, "pi": true, "test": true,
+		"claude-code": true, "codex": true, "cursor": true,
+		"gemini": true, "grok": true, "pi": true, "test": true,
 	}
 	return readOnlyAdapters[CanonicalName(a.Name())]
 }

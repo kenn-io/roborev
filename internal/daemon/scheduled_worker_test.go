@@ -34,6 +34,10 @@ func TestScheduledAgentGuardPreservesPermissionChecks(t *testing.T) {
 	agent.SetCodexSandboxDisabled(false)
 
 	assert.False(t, scheduledAgentAllowed(job, agent.NewOpenCodeAgent("opencode")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewCopilotAgent("copilot")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewDroidAgent("droid")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewKiloAgent("kilo")))
+	assert.False(t, scheduledAgentAllowed(job, agent.NewKiroAgent("kiro-cli")))
 	writableACP := agent.NewACPAgent("acp-agent").WithAgentic(true)
 	assert.False(t, scheduledAgentAllowed(job, writableACP))
 }
