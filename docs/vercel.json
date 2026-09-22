@@ -142,6 +142,16 @@
       "permanent": true
     },
     {
+      "source": "/search/",
+      "destination": "/docs/search/",
+      "permanent": true
+    },
+    {
+      "source": "/search.md",
+      "destination": "/docs/search.md",
+      "permanent": true
+    },
+    {
       "source": "/integrations/tui/",
       "destination": "/docs/integrations/tui/",
       "permanent": true

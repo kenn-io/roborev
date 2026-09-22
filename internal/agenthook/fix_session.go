@@ -15,6 +15,7 @@ type FixSession struct {
 	Agent     kitagenthook.Agent `json:"agent"`
 	SessionID string             `json:"session_id"`
 	ExpiresAt time.Time          `json:"expires_at"`
+	ReviewIDs reviewIDSet        `json:"review_ids,omitempty"`
 }
 
 func (f FixSession) Active(now time.Time) bool {
@@ -29,6 +30,7 @@ func (s *StateStore) prepareFixSessionGrantLocked(
 	req Request,
 	key string,
 	now time.Time,
+	reviewIDs reviewIDSet,
 ) (map[string]FixSession, *FixSession, bool) {
 	if req.Agent == "" || req.Agent == kitagenthook.AgentCursor {
 		return s.fixSessions, nil, true
@@ -47,7 +49,7 @@ func (s *StateStore) prepareFixSessionGrantLocked(
 	}
 	fixSession := FixSession{
 		ID: uuid.New(), Agent: req.Agent, SessionID: req.Event.SessionID,
-		ExpiresAt: now.Add(FixSessionLifetime),
+		ExpiresAt: now.Add(FixSessionLifetime), ReviewIDs: maps.Clone(reviewIDs),
 	}
 	fixSessions[key] = fixSession
 	return fixSessions, new(fixSession), true

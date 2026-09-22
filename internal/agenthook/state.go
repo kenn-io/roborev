@@ -267,7 +267,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 				Triggered:    true,
 				TriggeredBy:  "fix_session",
 				FixSessionID: new(fixSession.ID),
-				Reason:       "Finish the current Agent Hook fix.",
+				Reason:       "Finish the current Agent Hook fix." + formatReviewJobIDs(fixSession.ReviewIDs),
 			}, nil
 		}
 	}
@@ -339,7 +339,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	if promptTriggered {
 		var deliveryAllowed bool
 		fixSessions, fixSession, deliveryAllowed = s.prepareFixSessionGrantLocked(
-			req, scope.WorktreeKey, now,
+			req, scope.WorktreeKey, now, actionableReviewIDs,
 		)
 		if !deliveryAllowed {
 			promptTriggered = false
@@ -602,7 +602,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	if promptTriggered && !req.DeferPostToolReminder {
 		var deliveryAllowed bool
 		fixSessions, fixSession, deliveryAllowed = s.prepareFixSessionGrantLocked(
-			req, scope.WorktreeKey, now,
+			req, scope.WorktreeKey, now, actionableReviewIDs,
 		)
 		if !deliveryAllowed {
 			promptTriggered = false
@@ -918,7 +918,7 @@ func (s *StateStore) deliverPendingReminder(
 		fixSessions, fixSession, deliveryAllowed := s.prepareFixSessionGrantLocked(
 			req,
 			worktreeSequenceKey(pending.TrackedRepoRoot, pending.WorktreeRoot),
-			s.currentTime(),
+			s.currentTime(), actionableReviewIDs,
 		)
 		if !deliveryAllowed {
 			s.mu.Unlock()

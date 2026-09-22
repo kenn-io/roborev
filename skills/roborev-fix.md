@@ -11,8 +11,11 @@ Validate and address failing review findings without exceeding the current task.
 ## Behavior
 
 A direct user invocation may discover open failing reviews when no job IDs are
-provided. An Agent Hook invocation must provide exact job IDs; it never runs
-`roborev fix --open`, `roborev fix --list`, or another discovery command.
+provided. An Agent Hook invocation uses the exact job IDs supplied for its fix
+session. Continuation reminders may reuse the original IDs from conversation
+context or a handoff. Ask for IDs only when that original set is unavailable.
+It never runs `roborev fix --open`, `roborev fix --list`, or another discovery
+command.
 
 For every selected review, the agent:
 

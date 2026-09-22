@@ -3,6 +3,33 @@ title: Troubleshooting
 description: Diagnose and fix common roborev issues
 ---
 
+## Missing or unstructured reviews after upgrade
+
+Version 0.68.0 archived historical reviews that it could not convert to JSON,
+which removed them from normal views. Upgrade to 0.68.1 or later to restore
+those reviews automatically. This is a forward migration; do not downgrade or
+edit database rows to recover the history.
+
+Existing valid JSON remains authoritative. Recognized Markdown becomes
+structured findings. Other text returns as an **unstructured historical
+review**, with its original Markdown, recorded verdict, and open/closed state.
+These records remain readable in the CLI, TUI, and web app, searchable and
+exportable, and usable by `roborev fix`. Unavailable finding counts do not mean
+there were no findings.
+
+To convert an unstructured record, give an agent the
+[canonical agent migration guide in PR #1219](https://github.com/kenn-io/roborev/pull/1219#agent-migration-guide).
+It covers SQLite backup and rehearsal, exporting unresolved records, preserving
+findings and synthesis attribution, validated import or the live migration
+endpoint, and read-back verification. The archive ID, active review ID, and job
+ID are different numeric IDs; the guide identifies which each command needs.
+
+Conversion is optional. Leave a record unstructured when the original text
+cannot support a complete finding document. Roborev does not launch an agent or
+invent missing findings during upgrade. See
+[Review storage and legacy migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration)
+for the storage behavior and deterministic conversion formats.
+
 ## Reviews Not Triggering
 
 The most common issue is commits going unreviewed. Walk through these checks in

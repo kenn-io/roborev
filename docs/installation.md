@@ -130,6 +130,15 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.68.1
+
+Version 0.68.1 restores historical reviews archived by 0.68.0. Reviews that
+cannot be converted faithfully remain usable as labeled legacy documents. For
+recovery details and optional agent-driven conversion, see
+[troubleshooting missing or unstructured reviews](/docs/guides/troubleshooting/#missing-or-unstructured-reviews-after-upgrade)
+and the
+[canonical migration guide](https://github.com/kenn-io/roborev/pull/1219#agent-migration-guide).
+
 ### Upgrading to 0.68.0
 
 Check the rows that apply to your installation:

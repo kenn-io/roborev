@@ -5,7 +5,22 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.68.1
+
+<small>2026-09-22</small>
+
+This release restores review history affected by the 0.68.0 JSON migration. For
+records that still need conversion, follow the
+[canonical agent migration guide](https://github.com/kenn-io/roborev/pull/1219#agent-migration-guide).
+Start with
+[troubleshooting missing or unstructured reviews](/docs/guides/troubleshooting/#missing-or-unstructured-reviews-after-upgrade).
+
+**New features**
+
+- Search completed review history by keyword, repository, branch, time, verdict,
+    and open/closed state with `roborev search`. Optional semantic and hybrid
+    search use an OpenAI-compatible embedding provider; lexical search works
+    without one. See [Review History Search](/docs/search/).
 
 **Improvements**
 
@@ -16,7 +31,9 @@ All notable changes to roborev, grouped by minor release.
     remaining text through the existing `legacy-reviews export/import` workflow
     or the new local `POST /api/review/migrate` endpoint. Imports reject invalid
     documents and never replace an already structured review. See
-    [legacy migration](guides/reviewing-code.md#review-storage-and-legacy-migration).
+    [legacy migration](guides/reviewing-code.md#review-storage-and-legacy-migration)
+    and the
+    [agent conversion procedure](https://github.com/kenn-io/roborev/pull/1219#agent-migration-guide).
 
 - `roborev export reviews` reports whether each review is closed. Every
     top-level review has a `closed` boolean and an `updated_at` timestamp, and
@@ -32,6 +49,30 @@ All notable changes to roborev, grouped by minor release.
     Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to decode
     and render a document. See
     [Exporting Reviews](/docs/commands/#exporting-reviews).
+
+- Filter recorded analyses by type and file with `roborev list --analysis-type`
+    and `--file`. See [Viewing Reviews](/docs/commands/#viewing-reviews).
+
+**Bug fixes**
+
+- Legacy review text remains available in search and comments instead of
+    appearing empty or as "No issues found." Exports include legacy reviews with
+    an unknown verdict, and generated Go clients preserve the required JSON null
+    value when serializing those documents.
+- SQLite job IDs are no longer reused after deletion. Removing a repository with
+    its jobs also removes their archived reviews.
+- Agent Hook continuation reminders retain the original review IDs, including
+    across daemon restarts. Newly queued reviews do not expand an active fix
+    session. Bundled skills explain how to update the selected binary, daemon,
+    hook registration, and installed skills. See
+    [Agent Hook](/docs/agent-hook/).
+
+**Acknowledgements**
+
+- Thanks to [salmonumbrella](https://github.com/salmonumbrella) for review
+    history search, [Rod Boev](https://github.com/rodboev) for analysis metadata
+    and filters, and [Wes McKinney](https://github.com/wesm) for release checks
+    and documentation improvements.
 
 ## 0.68.0
 
