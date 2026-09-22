@@ -55,6 +55,11 @@ func (db *DB) migrateLegacyReviews() error {
  )`); err != nil {
 		return err
 	}
+	// Panel-source lookup joins unresolved archives by job ID. Without this
+	// forward index, each lookup scans the growing archive table between batches.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_legacy_reviews_unresolved_job ON legacy_reviews(job_id) WHERE resolved_at IS NULL`); err != nil {
+		return err
+	}
 	var after int64
 	total := 0
 	for {
