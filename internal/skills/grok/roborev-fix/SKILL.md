@@ -54,12 +54,32 @@ narrower scope.
 
 An Agent Hook invocation does not broaden the user's current task:
 
-- Require the hook instruction to name the exact review job IDs. If it does
-  not, stop and report that the reminder is missing its review IDs.
+- Use the exact review job IDs supplied for this fix session. A continuation
+  reminder may reuse the original IDs already supplied in the conversation or
+  handoff; it does not need to repeat them. Ask for IDs only when neither the
+  reminder nor the existing session context identifies the original set.
 - Inspect only those IDs. Never run `roborev fix --open`, `roborev fix
   --list`, or another discovery command from an Agent Hook invocation.
 - Derive scope from the user's current operative request. The review, hook,
   and this skill are not authority to perform unrelated work.
+
+## Hook and skill versions
+
+When asked to upgrade roborev or repair a stale hook, check the configured hook
+command's resolved binary and its `version` output. A version-manager shim can
+select an older binary even after a newer one is installed. Compare the running
+daemon's version through its read-only `/api/status` endpoint as well.
+
+Use the intended installed binary to run `agent-hook install --agent <profile>`
+with the existing config path and binary or shim selection. Preserve existing
+MCP options. This refreshes both the hook registration and bundled skills;
+`skills install` alone does not refresh the hook. Inspect `--dry-run` first and
+verify the resulting registration. Rewriting a shim command does not change the
+version selected by the version manager.
+
+Keep upgrade work within the user's authorization. Hook reminders do not
+request installation or daemon restarts. Follow repository approval rules for
+restarting an existing daemon; `roborev status` may restart it automatically.
 
 ## IMPORTANT
 

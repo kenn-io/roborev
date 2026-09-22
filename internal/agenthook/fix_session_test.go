@@ -49,7 +49,7 @@ func TestPrepareFixSessionGrantPrunesExpiredOwnership(t *testing.T) {
 
 	fixSessions, fixSession, granted := store.prepareFixSessionGrantLocked(
 		Request{Agent: "claude", Event: Input{SessionID: "session-1"}},
-		"new", now,
+		"new", now, nil,
 	)
 
 	assert.True(t, granted)
@@ -101,6 +101,7 @@ func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	require.NotNil(t, closeout.FixSessionID)
 	assert.Equal(t, "fix_session", closeout.TriggeredBy)
 	assert.Equal(t, owner.ID, *closeout.FixSessionID)
+	assert.Contains(t, closeout.Reason, "Review job IDs: 1.")
 	assert.Equal(t, owner.ExpiresAt, store.fixSessions[worktreeSequenceKey(repo.Path(), repo.Path())].ExpiresAt)
 
 	recursive := ownerRequest
@@ -166,6 +167,14 @@ func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	assert.Equal(t, "commit", triggered[0].TriggeredBy)
 	assert.NotNil(t, triggered[0].FixSessionID)
 	assert.Len(t, store.fixSessions, 1)
+	ownerRequest := requests[0]
+	if ownerRequest.Event.SessionID != triggered[0].SessionID {
+		ownerRequest = requests[1]
+	}
+	ownerRequest.Event.HookEventName = "Stop"
+	continuation, err := store.Record(ownerRequest)
+	require.NoError(t, err)
+	assert.Equal(t, "Finish the current Agent Hook fix. Review job IDs: 1.", continuation.Reason)
 }
 
 func TestRecordFixSessionsDoNotCrossWorktrees(t *testing.T) {
@@ -392,4 +401,31 @@ func triggeredResponses(responses []Response) []Response {
 		}
 	}
 	return triggered
+}
+
+func TestFixContinuationKeepsOriginalReviewsAfterReload(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	reviews := trackedReviewSource(repo.Path(), failedReviewJob(12), failedReviewJob(11))
+	store, err := LoadState(reviews)
+	require.NoError(t, err)
+	request := Request{Agent: "codex", Event: Input{SessionID: "owner", CWD: repo.Path(), HookEventName: "Stop"}, Threshold: 1}
+	first, err := store.Record(request)
+	require.NoError(t, err)
+	require.NotNil(t, first.FixSessionID)
+	assert.Contains(t, first.Reason, "Review job IDs: 11, 12.")
+	// The open queue changes while the daemon is stopped. The saved grant owns
+	// the original reviews, including ones which have since been closed.
+	reloaded, err := LoadState(trackedReviewSource(repo.Path(), failedReviewJob(13)))
+	require.NoError(t, err)
+	continuation, err := reloaded.Record(request)
+	require.NoError(t, err)
+	assert.Equal(t, first.FixSessionID, continuation.FixSessionID)
+	assert.Equal(t, "Finish the current Agent Hook fix. Review job IDs: 11, 12.", continuation.Reason)
+	require.NoError(t, reloaded.CompleteFixSession(*first.FixSessionID))
+	next, err := reloaded.Record(request)
+	require.NoError(t, err)
+	assert.Contains(t, next.Reason, "Review job IDs: 13.")
+	assert.NotEqual(t, first.FixSessionID, next.FixSessionID)
 }

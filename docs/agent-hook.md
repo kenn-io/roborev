@@ -84,9 +84,12 @@ command releases ownership immediately. Repeating it for the same current fix
 session is safe, while an old ID cannot release a newer owner.
 
 If the owner reaches a normal `Stop` event before completion, Agent Hook blocks
-with a reminder to finish the workflow and run the same command. Recursive Stop
-events remain skipped. Ownership also expires 12 hours after delivery. Hook
-activity does not extend that fixed period.
+with a reminder naming the original review job IDs and the same completion
+command. The IDs are saved with the fix session and survive daemon restarts; new
+reviews do not expand an active session. For sessions created before this state
+included review IDs, the skill uses the original IDs from conversation context.
+Recursive Stop events remain skipped. Ownership also expires 12 hours after
+delivery. Hook activity does not extend that fixed period.
 
 This coordination applies only to Agent Hook reminders. Direct human invocations
 of `roborev fix` or the `roborev-fix` skill do not create or check a fix
@@ -152,6 +155,22 @@ directly invoke `agent-hook run` and select exactly one matching `--agent`;
 shell pipelines, chaining, command substitutions, and wrappers are rejected.
 Roborev adds its ownership marker before installation. `--command` cannot be
 combined with `--binary`.
+
+### After upgrading
+
+Check the version selected by the configured hook command, not just the version
+of a newly downloaded binary. Version-manager shims may still select an older
+installation. Check the running daemon's version through `/api/status` too.
+
+Run `roborev agent-hook install --agent <profile> --dry-run` using the intended
+installed binary and the existing `--config`, `--binary`, and MCP options. Then
+repeat without `--dry-run` to refresh the registration and bundled skills.
+`roborev skills install` updates only skills. Reinstalling a hook that uses a
+shim does not change the version selected by that shim.
+
+A daemon restart is a separate operation. Agents must follow local approval
+rules before restarting an existing daemon. `roborev status` can automatically
+restart a daemon whose version differs from the CLI.
 
 ## Declarative Config
 
