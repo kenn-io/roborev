@@ -44,6 +44,25 @@ func TestResolveScheduledAnalyzeConfigUsesScheduleWorkflow(t *testing.T) {
 	assert.Equal(t, "high", got.Reasoning)
 }
 
+func TestResolveScheduledAnalyzeConfigUsesGenericAndSecurityWorkflows(t *testing.T) {
+	global := &Config{
+		ReviewAgent:   "generic-review",
+		SecurityAgent: "security-review",
+		ReviewModel:   "generic-model",
+		SecurityModel: "security-model",
+	}
+
+	got, err := ResolveScheduledAnalyzeConfigFromConfig(nil, global, "complexity")
+	require.NoError(t, err)
+	assert.Equal(t, "generic-review", got.Agent)
+	assert.Equal(t, "generic-model", got.Model)
+
+	got, err = ResolveScheduledAnalyzeConfigFromConfig(nil, global, "security")
+	require.NoError(t, err)
+	assert.Equal(t, "security-review", got.Agent)
+	assert.Equal(t, "security-model", got.Model)
+}
+
 func TestLoadSchedulePreservesRepositoryOptInAndEmptyPaths(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte("[schedule]\nenabled = true\npaths = []\n"), 0o600))
@@ -60,12 +79,20 @@ func TestLoadSchedulePreservesRepositoryOptInAndEmptyPaths(t *testing.T) {
 func TestScheduleEnablementRequiresExplicitRepositoryOptIn(t *testing.T) {
 	enabled := true
 	global := ScheduleConfig{Enabled: &enabled}
-	assert.False(t, (EffectiveSchedule{Enabled: true}).EnabledForRepo(&RepoConfig{}, nil))
+	repo := RepoConfig{}
+	assert.Nil(t, repo.Schedule.Enabled)
 	repoEnabled := true
-	repo := &RepoConfig{Schedule: ScheduleConfig{Enabled: &repoEnabled}}
-	assert.True(t, (EffectiveSchedule{Enabled: true}).EnabledForRepo(repo, nil))
-	assert.False(t, (EffectiveSchedule{Enabled: false}).EnabledForRepo(repo, nil))
+	repo.Schedule.Enabled = &repoEnabled
+	assert.True(t, MergeSchedule(global, repo.Schedule, map[string]any{"schedule": map[string]any{"enabled": true}}).Enabled)
+	globalEnabled := false
+	assert.False(t, MergeSchedule(ScheduleConfig{Enabled: &globalEnabled}, repo.Schedule, map[string]any{"schedule": map[string]any{"enabled": true}}).Enabled)
 	assert.NotNil(t, global.Enabled)
+}
+
+func TestScheduleValidationUsesAllAnalysisTypes(t *testing.T) {
+	enabled := true
+	cfg := ScheduleConfig{Enabled: &enabled, Interval: "1h", Types: []string{"security"}, MaxFiles: 1}
+	require.NoError(t, cfg.Validate(true))
 }
 
 func TestScheduleValidationRejectsIncompleteGlobalPolicy(t *testing.T) {

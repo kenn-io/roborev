@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.kenn.io/roborev/internal/prompt/analyze"
 )
 
 // ScheduleConfig controls daemon analysis scheduling. A nil Enabled value in
@@ -29,6 +31,24 @@ type EffectiveSchedule struct {
 	Agent     string
 	Model     string
 	Reasoning string
+}
+
+func (s EffectiveSchedule) Validate() error {
+	if s.Interval <= 0 {
+		return fmt.Errorf("schedule.interval must be a positive duration")
+	}
+	if len(s.Types) == 0 {
+		return fmt.Errorf("schedule.types must not be empty")
+	}
+	for _, typ := range s.Types {
+		if analyze.GetType(strings.TrimSpace(typ)) == nil {
+			return fmt.Errorf("schedule.types contains unknown analysis type %q", typ)
+		}
+	}
+	if s.MaxFiles <= 0 {
+		return fmt.Errorf("schedule.max_files must be positive")
+	}
+	return nil
 }
 
 func (c ScheduleConfig) Validate(global bool) error {
@@ -56,9 +76,7 @@ func (c ScheduleConfig) Validate(global bool) error {
 		}
 	}
 	for _, typ := range c.Types {
-		switch strings.TrimSpace(typ) {
-		case "duplication", "refactor", "complexity", "test-fixtures", "api-design", "dead-code", "architecture":
-		default:
+		if analyze.GetType(strings.TrimSpace(typ)) == nil {
 			return fmt.Errorf("schedule.types contains unknown analysis type %q", typ)
 		}
 	}
@@ -82,13 +100,14 @@ func scheduleKey(raw map[string]any, key string) (any, bool) {
 }
 
 func MergeSchedule(global ScheduleConfig, repo ScheduleConfig, raw map[string]any) EffectiveSchedule {
-	result := EffectiveSchedule{Enabled: global.Enabled != nil && *global.Enabled, MaxFiles: global.MaxFiles, Paths: append([]string(nil), global.Paths...), Types: append([]string(nil), global.Types...), Agent: global.Agent, Model: global.Model, Reasoning: global.Reasoning}
+	globalEnabled := global.Enabled != nil && *global.Enabled
+	result := EffectiveSchedule{Enabled: globalEnabled, MaxFiles: global.MaxFiles, Paths: append([]string(nil), global.Paths...), Types: append([]string(nil), global.Types...), Agent: global.Agent, Model: global.Model, Reasoning: global.Reasoning}
 	if global.Interval != "" {
 		result.Interval, _ = time.ParseDuration(global.Interval)
 	}
 	if v, ok := scheduleKey(raw, "enabled"); ok {
 		if enabled, ok := v.(bool); ok {
-			result.Enabled = enabled
+			result.Enabled = globalEnabled && enabled
 		}
 	}
 	if _, ok := scheduleKey(raw, "interval"); ok {
@@ -113,12 +132,4 @@ func MergeSchedule(global ScheduleConfig, repo ScheduleConfig, raw map[string]an
 		result.Reasoning = repo.Reasoning
 	}
 	return result
-}
-
-func (c Config) ValidateSchedule() error { return c.Schedule.Validate(true) }
-
-func (c RepoConfig) ValidateSchedule() error { return c.Schedule.Validate(false) }
-
-func (s EffectiveSchedule) EnabledForRepo(repo *RepoConfig, raw map[string]any) bool {
-	return s.Enabled && repo != nil && repo.Schedule.Enabled != nil && *repo.Schedule.Enabled
 }

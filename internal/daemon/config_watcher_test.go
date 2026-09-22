@@ -471,3 +471,16 @@ func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
 		}, "After atomic save, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "gemini")
 	}
 }
+
+func TestConfigWatcherRejectsInvalidScheduleReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeTestFile(t, path, "[schedule]\nenabled = true\ninterval = \"1h\"\nmax_files = 0\n")
+	initial := config.DefaultConfig()
+	cw := NewConfigWatcher(path, initial, NewBroadcaster(), nil)
+
+	cw.reloadConfig()
+
+	assert.Same(t, initial, cw.Config())
+	assert.Equal(t, uint64(0), cw.ReloadCounter())
+}

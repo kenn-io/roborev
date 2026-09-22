@@ -55,6 +55,7 @@ type ConfigWatcher struct {
 	configPath     string
 	cfg            *config.Config
 	cfgMu          sync.RWMutex
+	reloadMu       sync.Mutex
 	broadcaster    Broadcaster
 	activityLog    *ActivityLog
 	watcher        *fsnotify.Watcher
@@ -199,8 +200,15 @@ func (cw *ConfigWatcher) watchLoop(ctx context.Context, configFile string) {
 }
 
 func (cw *ConfigWatcher) reloadConfig() {
+	cw.reloadMu.Lock()
+	defer cw.reloadMu.Unlock()
+
 	newCfg, err := config.LoadGlobalFrom(cw.configPath)
 	if err != nil {
+		log.Printf("Failed to reload config: %v", err)
+		return
+	}
+	if err := newCfg.Validate(); err != nil {
 		log.Printf("Failed to reload config: %v", err)
 		return
 	}
@@ -209,9 +217,14 @@ func (cw *ConfigWatcher) reloadConfig() {
 	var requestedWeb config.WebConfig
 	var requestedMCP config.MCPConfig
 	var requestedSearch config.SearchConfig
-	// Config and agent permission settings change under one lock. A worker that
-	// holds the read lock sees one complete policy for the whole invocation.
-	agent.WithScheduledPermissionWriteLock(func() {
+	cw.cfgMu.RLock()
+	oldCfg = cw.cfg
+	allowUnsafe := func(v *bool) bool { return v != nil && *v }
+	permissionChanged := oldCfg == nil || allowUnsafe(oldCfg.AllowUnsafeAgents) != allowUnsafe(newCfg.AllowUnsafeAgents) ||
+		oldCfg.DisableCodexSandbox != newCfg.DisableCodexSandbox ||
+		!reflect.DeepEqual(oldCfg.ACP, newCfg.ACP)
+	cw.cfgMu.RUnlock()
+	applyConfig := func() {
 		cw.cfgMu.Lock()
 		oldCfg = cw.cfg
 		requestedWeb = newCfg.Web
@@ -224,9 +237,22 @@ func (cw *ConfigWatcher) reloadConfig() {
 		cw.lastReloadedAt = time.Now()
 		cw.reloadCounter++
 		cw.cfgMu.Unlock()
+	}
+	if permissionChanged {
+		// Only permission changes wait for scheduled agent attempts. Unrelated
+		// config swaps stay independent of long-running agent calls.
+		agent.WithScheduledPermissionWriteLock(func() {
+			applyConfig()
+			agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
+			agent.SetCodexSandboxDisabled(newCfg.DisableCodexSandbox)
+		})
+	} else {
+		applyConfig()
+	}
+	if !permissionChanged {
 		agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
 		agent.SetCodexSandboxDisabled(newCfg.DisableCodexSandbox)
-	})
+	}
 	agent.SetAnthropicAPIKey(newCfg.AnthropicAPIKey)
 
 	// Log what changed (for debugging)

@@ -45,8 +45,24 @@ func ResolveAnalyzeConfigFromConfig(
 	fallbackWorkflow string,
 	fallbackLevel string,
 ) (AnalyzeConfig, error) {
+	return resolveAnalyzeConfigFromConfig(
+		cliAgent, cliModel, cliReasoning, repoCfg, globalCfg, analysisType,
+		fallbackWorkflow, fallbackLevel, false,
+	)
+}
+
+func resolveAnalyzeConfigFromConfig(
+	cliAgent, cliModel, cliReasoning string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+	analysisType string,
+	fallbackWorkflow string,
+	fallbackLevel string,
+	includeSchedule bool,
+) (AnalyzeConfig, error) {
 	reasoning, err := resolveAnalyzeReasoning(
 		cliReasoning, repoCfg, globalCfg, analysisType, fallbackLevel,
+		includeSchedule,
 	)
 	if err != nil {
 		return AnalyzeConfig{}, err
@@ -55,11 +71,11 @@ func ResolveAnalyzeConfigFromConfig(
 	return AnalyzeConfig{
 		Agent: resolveAnalyzeAgent(
 			cliAgent, repoCfg, globalCfg, analysisType,
-			fallbackWorkflow, reasoning,
+			fallbackWorkflow, reasoning, includeSchedule,
 		),
 		Model: resolveAnalyzeModel(
 			cliModel, repoCfg, globalCfg, analysisType,
-			fallbackWorkflow, reasoning,
+			fallbackWorkflow, reasoning, includeSchedule,
 		),
 		Reasoning: reasoning,
 	}, nil
@@ -68,96 +84,13 @@ func ResolveAnalyzeConfigFromConfig(
 // ResolveScheduledAnalyzeConfigFromConfig applies the schedule workflow
 // between per-type analyze settings and the generic analyze workflow.
 func ResolveScheduledAnalyzeConfigFromConfig(repoCfg *RepoConfig, globalCfg *Config, analysisType string) (AnalyzeConfig, error) {
-	level := ""
-	if repoCfg != nil {
-		level = strings.TrimSpace(repoCfg.Schedule.Reasoning)
+	workflow := "review"
+	if strings.TrimSpace(analysisType) == ReviewTypeSecurity {
+		workflow = ReviewTypeSecurity
 	}
-	if level == "" && globalCfg != nil {
-		level = strings.TrimSpace(globalCfg.Schedule.Reasoning)
-	}
-	reasoning := ""
-	if repoCfg != nil {
-		reasoning = repoAnalyzeReasoning(repoCfg, analysisType)
-		if reasoning == "" {
-			reasoning = strings.TrimSpace(repoCfg.Schedule.Reasoning)
-		}
-		if reasoning == "" {
-			reasoning = strings.TrimSpace(repoCfg.ReviewReasoning)
-		}
-	}
-	if reasoning == "" && globalCfg != nil {
-		reasoning = globalAnalyzeReasoning(globalCfg, analysisType)
-		if reasoning == "" {
-			reasoning = strings.TrimSpace(globalCfg.Schedule.Reasoning)
-		}
-		if reasoning == "" {
-			reasoning = strings.TrimSpace(globalCfg.ReviewReasoning)
-		}
-	}
-	if reasoning == "" {
-		reasoning = level
-	}
-	if reasoning == "" {
-		reasoning = "thorough"
-	}
-	reasoning, err := NormalizeReasoning(reasoning)
-	if err != nil {
-		return AnalyzeConfig{}, err
-	}
-	agentName := ""
-	model := ""
-	if repoCfg != nil {
-		agentName = repoAnalyzeField(repoCfg, analysisType, true)
-		model = repoAnalyzeField(repoCfg, analysisType, false)
-		if agentName == "" {
-			agentName = strings.TrimSpace(repoCfg.Schedule.Agent)
-		}
-		if model == "" {
-			model = strings.TrimSpace(repoCfg.Schedule.Model)
-		}
-		if agentName == "" {
-			agentName = repoWorkflowField(repoCfg, "review", reasoning, true)
-		}
-		if model == "" {
-			model = repoWorkflowField(repoCfg, "review", reasoning, false)
-		}
-		if agentName == "" {
-			agentName = strings.TrimSpace(repoCfg.Agent)
-		}
-		if model == "" {
-			model = strings.TrimSpace(repoCfg.Model)
-		}
-	}
-	if globalCfg != nil {
-		if agentName == "" {
-			agentName = globalAnalyzeField(globalCfg, analysisType, true)
-		}
-		if model == "" {
-			model = globalAnalyzeField(globalCfg, analysisType, false)
-		}
-		if agentName == "" {
-			agentName = strings.TrimSpace(globalCfg.Schedule.Agent)
-		}
-		if model == "" {
-			model = strings.TrimSpace(globalCfg.Schedule.Model)
-		}
-		if agentName == "" {
-			agentName = globalWorkflowField(globalCfg, "review", reasoning, true)
-		}
-		if model == "" {
-			model = globalWorkflowField(globalCfg, "review", reasoning, false)
-		}
-		if agentName == "" {
-			agentName = strings.TrimSpace(globalCfg.DefaultAgent)
-		}
-		if model == "" {
-			model = strings.TrimSpace(globalCfg.DefaultModel)
-		}
-	}
-	if agentName == "" {
-		agentName = "codex"
-	}
-	return AnalyzeConfig{Agent: agentName, Model: model, Reasoning: reasoning}, nil
+	return resolveAnalyzeConfigFromConfig(
+		"", "", "", repoCfg, globalCfg, analysisType, workflow, "", true,
+	)
 }
 
 func resolveAnalyzeAgent(
@@ -167,12 +100,18 @@ func resolveAnalyzeAgent(
 	analysisType string,
 	fallbackWorkflow string,
 	level string,
+	includeSchedule bool,
 ) string {
 	if s := strings.TrimSpace(cli); s != "" {
 		return s
 	}
 	if s := repoAnalyzeField(repoCfg, analysisType, true); s != "" {
 		return s
+	}
+	if includeSchedule && repoCfg != nil {
+		if s := strings.TrimSpace(repoCfg.Schedule.Agent); s != "" {
+			return s
+		}
 	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, level, true); s != "" {
 		return s
@@ -185,6 +124,11 @@ func resolveAnalyzeAgent(
 	}
 	if s := globalAnalyzeField(globalCfg, analysisType, true); s != "" {
 		return s
+	}
+	if includeSchedule && globalCfg != nil {
+		if s := strings.TrimSpace(globalCfg.Schedule.Agent); s != "" {
+			return s
+		}
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, level, true); s != "" {
 		return s
@@ -205,12 +149,18 @@ func resolveAnalyzeModel(
 	analysisType string,
 	fallbackWorkflow string,
 	level string,
+	includeSchedule bool,
 ) string {
 	if s := strings.TrimSpace(cli); s != "" {
 		return s
 	}
 	if s := repoAnalyzeField(repoCfg, analysisType, false); s != "" {
 		return s
+	}
+	if includeSchedule && repoCfg != nil {
+		if s := strings.TrimSpace(repoCfg.Schedule.Model); s != "" {
+			return s
+		}
 	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, level, false); s != "" {
 		return s
@@ -223,6 +173,11 @@ func resolveAnalyzeModel(
 	}
 	if s := globalAnalyzeField(globalCfg, analysisType, false); s != "" {
 		return s
+	}
+	if includeSchedule && globalCfg != nil {
+		if s := strings.TrimSpace(globalCfg.Schedule.Model); s != "" {
+			return s
+		}
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, level, false); s != "" {
 		return s
@@ -242,6 +197,7 @@ func resolveAnalyzeReasoning(
 	globalCfg *Config,
 	analysisType string,
 	fallbackLevel string,
+	includeSchedule bool,
 ) (string, error) {
 	if s := strings.TrimSpace(cli); s != "" {
 		return NormalizeReasoning(s)
@@ -249,11 +205,17 @@ func resolveAnalyzeReasoning(
 	if s := repoAnalyzeReasoning(repoCfg, analysisType); s != "" {
 		return NormalizeReasoning(s)
 	}
+	if includeSchedule && repoCfg != nil && strings.TrimSpace(repoCfg.Schedule.Reasoning) != "" {
+		return NormalizeReasoning(repoCfg.Schedule.Reasoning)
+	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 	if s := globalAnalyzeReasoning(globalCfg, analysisType); s != "" {
 		return NormalizeReasoning(s)
+	}
+	if includeSchedule && globalCfg != nil && strings.TrimSpace(globalCfg.Schedule.Reasoning) != "" {
+		return NormalizeReasoning(globalCfg.Schedule.Reasoning)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(globalCfg.ReviewReasoning)

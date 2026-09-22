@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/roborev/internal/config"
@@ -19,20 +20,22 @@ import (
 
 const schedulerControlInterval = time.Second
 
+type ScheduledEnqueueFunc func(context.Context, storage.Repo, storage.EnqueueOpts) (*storage.ReviewJob, error)
+
 type SchedulerService struct {
-	db         *storage.DB
-	cfg        *ConfigWatcher
-	now        func() time.Time
-	stop       context.CancelFunc
-	stopped    chan struct{}
-	mu         sync.Mutex
-	running    bool
-	started    bool
-	due        map[int64]time.Time
-	lastRun    map[int64]time.Time
-	lastReload uint64
-	validRepo  map[int64]repoScheduleState
-	stopping   bool
+	db          *storage.DB
+	cfg         *ConfigWatcher
+	now         func() time.Time
+	enqueueFunc ScheduledEnqueueFunc
+	stop        context.CancelFunc
+	stopped     chan struct{}
+	mu          sync.Mutex
+	running     bool
+	started     bool
+	due         map[int64]time.Time
+	validRepo   map[int64]repoScheduleState
+	rejected    map[int64]string
+	stopping    atomic.Bool
 }
 
 type repoScheduleState struct {
@@ -41,34 +44,42 @@ type repoScheduleState struct {
 	policy config.EffectiveSchedule
 }
 
-func NewSchedulerService(db *storage.DB, cfg *ConfigWatcher) *SchedulerService {
-	return &SchedulerService{db: db, cfg: cfg, now: time.Now, stopped: make(chan struct{}), due: make(map[int64]time.Time), lastRun: make(map[int64]time.Time), validRepo: make(map[int64]repoScheduleState)}
+func NewSchedulerService(db *storage.DB, cfg *ConfigWatcher, enqueue ScheduledEnqueueFunc) *SchedulerService {
+	return &SchedulerService{
+		db:          db,
+		cfg:         cfg,
+		now:         time.Now,
+		enqueueFunc: enqueue,
+		stopped:     make(chan struct{}),
+		due:         make(map[int64]time.Time),
+		validRepo:   make(map[int64]repoScheduleState),
+		rejected:    make(map[int64]string),
+	}
 }
 
 func (s *SchedulerService) Start(ctx context.Context) {
 	s.mu.Lock()
-	if s.started {
+	if s.started || s.stopping.Load() {
 		s.mu.Unlock()
 		return
 	}
+	ctx, s.stop = context.WithCancel(ctx)
 	s.started = true
 	s.mu.Unlock()
-	ctx, s.stop = context.WithCancel(ctx)
 	go s.loop(ctx)
 }
 
 func (s *SchedulerService) Stop() {
 	s.mu.Lock()
-	started := s.started
-	stop := s.stop
-	s.stopping = true
-	s.mu.Unlock()
-	if !started {
+	if !s.started {
+		s.stopping.Store(true)
+		s.mu.Unlock()
 		return
 	}
-	if stop != nil {
-		stop()
-	}
+	stop := s.stop
+	s.stopping.Store(true)
+	s.mu.Unlock()
+	stop()
 	<-s.stopped
 }
 
@@ -95,62 +106,84 @@ func (s *SchedulerService) reconcile(ctx context.Context) {
 	}
 	s.running = true
 	s.mu.Unlock()
-	defer func() { s.mu.Lock(); s.running = false; s.mu.Unlock() }()
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
+
 	repos, err := s.db.ListRepos()
 	if err != nil {
 		log.Printf("scheduled analysis: list repositories: %v", err)
 		return
 	}
 	global := s.cfg.Config()
-	reloaded := s.cfg.ReloadCounter() != s.lastReload
-	s.lastReload = s.cfg.ReloadCounter()
-	seen := make(map[int64]bool)
+	if global == nil {
+		return
+	}
+	now := s.now()
+	seen := make(map[int64]bool, len(repos))
 	for _, repo := range repos {
 		if ctx.Err() != nil {
 			return
 		}
+
 		repoCfg, raw, err := config.LoadRepoConfigWithRaw(repo.RootPath)
 		if err != nil {
-			if cached, ok := s.validRepo[repo.ID]; ok {
-				repoCfg, raw = cached.cfg, cached.raw
-			} else {
-				log.Printf("scheduled analysis: load %s: %v", repo.RootPath, err)
+			cached, ok := s.validRepo[repo.ID]
+			if !ok {
+				s.reject(repo.ID, err)
 				continue
 			}
-		} else if repoCfg == nil {
+			repoCfg, raw = cached.cfg, cached.raw
+		}
+		if repoCfg == nil {
 			delete(s.validRepo, repo.ID)
-		} else {
-			previous := s.validRepo[repo.ID]
-			policy := config.MergeSchedule(global.Schedule, scheduleOrEmpty(repoCfg), raw)
-			s.validRepo[repo.ID] = repoScheduleState{cfg: repoCfg, raw: raw, policy: policy}
-			if previous.cfg == nil || !reflect.DeepEqual(previous.policy, policy) || reloaded {
-				s.due[repo.ID] = s.now()
+			delete(s.due, repo.ID)
+			delete(s.rejected, repo.ID)
+			continue
+		}
+
+		scopedGlobal := global.ForRepo(repo.RootPath)
+		policy := config.MergeSchedule(scopedGlobal.Schedule, repoCfg.Schedule, raw)
+		if scheduleOptedIn(scopedGlobal, repoCfg) {
+			if err := policy.Validate(); err != nil {
+				cached, ok := s.validRepo[repo.ID]
+				if ok {
+					fallback := config.MergeSchedule(scopedGlobal.Schedule, cached.cfg.Schedule, cached.raw)
+					if fallback.Validate() == nil {
+						repoCfg, raw, policy = cached.cfg, cached.raw, fallback
+					} else {
+						s.reject(repo.ID, err)
+						continue
+					}
+				} else {
+					s.reject(repo.ID, err)
+					continue
+				}
 			}
 		}
-		policy := config.MergeSchedule(global.Schedule, scheduleOrEmpty(repoCfg), raw)
-		if !policy.Enabled || repoCfg == nil || repoCfg.Schedule.Enabled == nil || !*repoCfg.Schedule.Enabled {
+		delete(s.rejected, repo.ID)
+
+		previous, hadPrevious := s.validRepo[repo.ID]
+		s.validRepo[repo.ID] = repoScheduleState{cfg: repoCfg, raw: raw, policy: policy}
+		if !policy.Enabled || !scheduleOptedIn(scopedGlobal, repoCfg) {
 			delete(s.due, repo.ID)
 			continue
 		}
-		if policy.MaxFiles <= 0 {
-			log.Printf("scheduled analysis: %s: schedule.max_files must be positive", repo.RootPath)
-			continue
-		}
 		seen[repo.ID] = true
-		if policy.Interval <= 0 {
-			policy.Interval = time.Hour
+		if !hadPrevious || !reflect.DeepEqual(previous.policy, policy) {
+			s.due[repo.ID] = now
 		}
-		if _, ok := s.due[repo.ID]; !ok {
-			s.due[repo.ID] = s.now()
-		}
-		if s.now().Before(s.due[repo.ID]) {
+		if due, ok := s.due[repo.ID]; !ok {
+			s.due[repo.ID] = now
+		} else if now.Before(due) {
 			continue
 		}
-		if err := s.runRepo(ctx, repo, repoCfg, raw, global, policy); err != nil {
+		if err := s.runRepo(ctx, repo, repoCfg, scopedGlobal, policy); err != nil {
 			log.Printf("scheduled analysis: %s: %v", repo.RootPath, err)
 		}
-		s.due[repo.ID] = s.now().Add(policy.Interval)
-		s.lastRun[repo.ID] = s.now()
+		s.due[repo.ID] = now.Add(policy.Interval)
 	}
 	for id := range s.due {
 		if !seen[id] {
@@ -159,20 +192,26 @@ func (s *SchedulerService) reconcile(ctx context.Context) {
 	}
 }
 
-func scheduleOrEmpty(c *config.RepoConfig) config.ScheduleConfig {
-	if c == nil {
-		return config.ScheduleConfig{}
+func (s *SchedulerService) reject(repoID int64, err error) {
+	message := err.Error()
+	if s.rejected[repoID] == message {
+		return
 	}
-	return c.Schedule
+	s.rejected[repoID] = message
+	log.Printf("scheduled analysis: repository %d: %s", repoID, message)
+}
+
+func scheduleOptedIn(global *config.Config, repo *config.RepoConfig) bool {
+	return global != nil && global.Schedule.Enabled != nil && *global.Schedule.Enabled &&
+		repo != nil && repo.Schedule.Enabled != nil && *repo.Schedule.Enabled
 }
 
 type scheduledCandidate struct {
 	path, typ string
 	when      time.Time
-	id        int64
 }
 
-func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, raw map[string]any, global *config.Config, policy config.EffectiveSchedule) error {
+func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, policy config.EffectiveSchedule) error {
 	sha, err := git.CurrentHeadSHA(ctx, repo.RootPath)
 	if err != nil {
 		return err
@@ -181,34 +220,34 @@ func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoC
 	if err != nil {
 		return err
 	}
-	types := append([]string(nil), policy.Types...)
-	if len(types) == 0 {
-		for _, typ := range analyze.AllTypes {
-			types = append(types, typ.Name)
-		}
+	history, err := s.db.ScheduledAnalysisHistoryForRepo(repo.ID)
+	if err != nil {
+		return err
 	}
+	changed := make(map[string]map[string]struct{})
+	types := append([]string(nil), policy.Types...)
 	var candidates []scheduledCandidate
 	for _, path := range files {
 		if !git.IsSourceFile(path) || !scheduledPathMatch(path, policy.Paths) {
 			continue
 		}
 		for _, typ := range types {
-			history, err := s.db.ScheduledAnalysisHistory(repo.ID, path, typ)
-			if err != nil {
-				return err
-			}
+			typ = strings.TrimSpace(typ)
+			records := history[storage.ScheduledAnalysisKey{Path: path, Type: typ}]
 			var baseline *storage.ScheduledAnalysisRecord
 			pending := false
-			for i := range history {
-				r := history[i]
-				if (r.Status == storage.JobStatusQueued || r.Status == storage.JobStatusRunning) && r.Commit == sha {
+			for i := range records {
+				record := records[i]
+				if (record.Status == storage.JobStatusQueued || record.Status == storage.JobStatusRunning) && record.Commit == sha {
 					pending = true
 				}
-				if r.Status == storage.JobStatusDone && r.Commit != "" {
-					if baseline == nil || r.FinishedAtOrEnqueued().After(baseline.FinishedAtOrEnqueued()) {
-						x := r
-						baseline = &x
-					}
+				if record.Status != storage.JobStatusDone || record.Commit == "" {
+					continue
+				}
+				if baseline == nil || record.FinishedAtOrEnqueued().After(baseline.FinishedAtOrEnqueued()) ||
+					(record.FinishedAtOrEnqueued().Equal(baseline.FinishedAtOrEnqueued()) && record.ID > baseline.ID) {
+					copy := record
+					baseline = &copy
 				}
 			}
 			if pending || (baseline != nil && baseline.Commit == sha) {
@@ -217,17 +256,25 @@ func (s *SchedulerService) runRepo(ctx context.Context, repo storage.Repo, repoC
 			when := time.Time{}
 			if baseline != nil {
 				when = baseline.FinishedAtOrEnqueued()
-				if git.FilesUnchangedBetween(ctx, repo.RootPath, baseline.Commit, sha, path) {
+				filesForBaseline, ok := changed[baseline.Commit]
+				if !ok {
+					filesForBaseline, err = git.ChangedFilesBetween(ctx, repo.RootPath, baseline.Commit, sha)
+					if err != nil {
+						return err
+					}
+					changed[baseline.Commit] = filesForBaseline
+				}
+				if _, ok := filesForBaseline[path]; !ok {
 					continue
 				}
 			}
-			candidates = append(candidates, scheduledCandidate{path: path, typ: typ, when: when, id: recordID(baseline)})
+			candidates = append(candidates, scheduledCandidate{path: path, typ: typ, when: when})
 		}
 	}
 	sortScheduledCandidates(candidates)
-	for _, c := range selectScheduledCandidates(candidates, policy.MaxFiles) {
-		if err := s.enqueue(ctx, repo, repoCfg, raw, global, policy, c, sha); err != nil {
-			log.Printf("scheduled analysis: enqueue %s: %v", c.path, err)
+	for _, candidate := range selectScheduledCandidates(candidates, policy.MaxFiles) {
+		if err := s.enqueue(ctx, repo, repoCfg, global, candidate, sha); err != nil {
+			log.Printf("scheduled analysis: enqueue %s: %v", candidate.path, err)
 		}
 	}
 	return nil
@@ -246,28 +293,23 @@ func sortScheduledCandidates(candidates []scheduledCandidate) {
 }
 
 func selectScheduledCandidates(candidates []scheduledCandidate, maxFiles int) []scheduledCandidate {
-	seen := map[string]bool{}
-	selected := make([]scheduledCandidate, 0, maxFiles)
-	count := 0
-	for _, c := range candidates {
-		if seen[c.path] {
+	if maxFiles <= 0 {
+		return nil
+	}
+	paths := make(map[string]struct{}, maxFiles)
+	for _, candidate := range candidates {
+		if _, ok := paths[candidate.path]; ok || len(paths) >= maxFiles {
 			continue
 		}
-		if count >= maxFiles {
-			break
+		paths[candidate.path] = struct{}{}
+	}
+	selected := make([]scheduledCandidate, 0, len(paths))
+	for _, candidate := range candidates {
+		if _, ok := paths[candidate.path]; ok {
+			selected = append(selected, candidate)
 		}
-		seen[c.path] = true
-		count++
-		selected = append(selected, c)
 	}
 	return selected
-}
-
-func recordID(r *storage.ScheduledAnalysisRecord) int64 {
-	if r == nil {
-		return 0
-	}
-	return r.ID
 }
 
 func scheduledPathMatch(path string, filters []string) bool {
@@ -275,38 +317,52 @@ func scheduledPathMatch(path string, filters []string) bool {
 		return true
 	}
 	path = filepath.ToSlash(path)
-	for _, f := range filters {
-		f = strings.Trim(filepath.ToSlash(f), "/")
-		if f == "" || path == f || strings.HasPrefix(path, f+"/") {
+	for _, filter := range filters {
+		filter = strings.Trim(filepath.ToSlash(filter), "/")
+		if filter == "" || path == filter || strings.HasPrefix(path, filter+"/") {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, raw map[string]any, global *config.Config, policy config.EffectiveSchedule, c scheduledCandidate, sha string) error {
-	s.mu.Lock()
-	if s.stopping || ctx.Err() != nil {
-		s.mu.Unlock()
+func (s *SchedulerService) enqueue(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, candidate scheduledCandidate, sha string) error {
+	typ := analyze.GetType(candidate.typ)
+	if typ == nil {
+		return fmt.Errorf("unknown analysis type %q", candidate.typ)
+	}
+	content, err := git.ReadBlobAt(ctx, repo.RootPath, sha, candidate.path)
+	if err != nil {
+		return err
+	}
+	promptText, err := typ.BuildPrompt(map[string]string{candidate.path: content})
+	if err != nil {
+		return err
+	}
+	resolved, err := config.ResolveScheduledAnalyzeConfigFromConfig(repoCfg, global, candidate.typ)
+	if err != nil {
+		return err
+	}
+	opts := storage.EnqueueOpts{
+		RepoID:            repo.ID,
+		GitRef:            candidate.typ,
+		Agent:             resolved.Agent,
+		Model:             resolved.Model,
+		Reasoning:         resolved.Reasoning,
+		Prompt:            promptText,
+		Agentic:           false,
+		OutputPrefix:      analyze.BuildOutputPrefix(candidate.typ, []string{candidate.path}),
+		AnalysisType:      candidate.typ,
+		AnalysisFiles:     []string{candidate.path},
+		AnalysisCommitSHA: sha,
+		JobType:           storage.JobTypeTask,
+		Source:            storage.JobSourceScheduled,
+		Label:             candidate.typ,
+	}
+
+	if s.stopping.Load() || ctx.Err() != nil {
 		return context.Canceled
 	}
-	defer s.mu.Unlock()
-	t := analyze.GetType(c.typ)
-	if t == nil {
-		return fmt.Errorf("unknown analysis type %q", c.typ)
-	}
-	content, err := git.ReadBlobAt(ctx, repo.RootPath, sha, c.path)
-	if err != nil {
-		return err
-	}
-	promptText, err := t.BuildPrompt(map[string]string{c.path: content})
-	if err != nil {
-		return err
-	}
-	resolved, err := config.ResolveScheduledAnalyzeConfigFromConfig(repoCfg, global.ForRepo(repo.RootPath), c.typ)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: c.typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, Prompt: promptText, PromptPrebuilt: true, Agentic: false, OutputPrefix: analyze.BuildOutputPrefix(c.typ, []string{c.path}), AnalysisType: c.typ, AnalysisFiles: []string{c.path}, AnalysisCommitSHA: sha, JobType: storage.JobTypeTask, Source: storage.JobSourceScheduled, Label: c.typ})
+	_, err = s.enqueueFunc(ctx, repo, opts)
 	return err
 }

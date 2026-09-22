@@ -16,5 +16,6 @@ func TestScheduledSelectionUsesOldestBaselineAndDistinctFileBudget(t *testing.T)
 	}
 	sortScheduledCandidates(candidates)
 	got := selectScheduledCandidates(candidates, 2)
-	assert.Equal(t, []string{"a.go", "b.go"}, []string{got[0].path, got[1].path})
+	assert.Equal(t, []string{"a.go", "a.go", "b.go"}, []string{got[0].path, got[1].path, got[2].path})
+	assert.Equal(t, []string{"complexity", "refactor", "complexity"}, []string{got[0].typ, got[1].typ, got[2].typ})
 }

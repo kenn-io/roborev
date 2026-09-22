@@ -32,7 +32,7 @@ func SupportsScheduledReadOnly(a Agent) bool {
 	case *OpenCodeAgent:
 		return false
 	case *ACPAgent:
-		return !v.mutatingOperationsAllowed()
+		return strings.TrimSpace(v.effectivePermissionMode()) == strings.TrimSpace(v.ReadOnlyMode) && !v.mutatingOperationsAllowed()
 	}
 	readOnlyAdapters := map[string]bool{
 		"claude-code": true, "codex": true, "copilot": true, "cursor": true,

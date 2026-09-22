@@ -193,7 +193,21 @@ func newServerWithLogs(
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
-	s.scheduler = NewSchedulerService(db, configWatcher)
+	s.scheduler = NewSchedulerService(db, configWatcher, func(
+		ctx context.Context, repo storage.Repo, opts storage.EnqueueOpts,
+	) (*storage.ReviewJob, error) {
+		job, err := db.EnqueueJob(opts)
+		if err != nil {
+			return nil, err
+		}
+		s.logEnqueueSideEffects(job, enqueueSideEffectInputs{
+			repo:       &repo,
+			gitRef:     opts.GitRef,
+			agentName:  job.Agent,
+			reviewType: opts.AnalysisType,
+		})
+		return job, nil
+	})
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db},

@@ -49,14 +49,20 @@ func ReadBlobAt(ctx context.Context, repoPath, sha, path string) (string, error)
 	return string(out), nil
 }
 
-func FilesUnchangedBetween(ctx context.Context, repoPath, old, current, path string) bool {
-	args := []string{"diff", "--quiet", old, current, "--"}
-	if path != "" {
-		args = append(args, filepath.ToSlash(path))
-	}
-	cmd := newGitCmdContext(ctx, args...)
+func ChangedFilesBetween(ctx context.Context, repoPath, old, current string) (map[string]struct{}, error) {
+	cmd := newGitCmdContext(ctx, "diff", "--name-only", "-z", old, current, "--")
 	cmd.Dir = repoPath
-	return cmd.Run() == nil
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff %s..%s: %w", old, current, err)
+	}
+	changed := make(map[string]struct{})
+	for path := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		if path != "" {
+			changed[filepath.ToSlash(path)] = struct{}{}
+		}
+	}
+	return changed, nil
 }
 
 // IsSourceFile is the shared analysis source-file policy.
