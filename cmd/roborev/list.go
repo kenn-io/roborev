@@ -167,9 +167,9 @@ Examples:
 				}
 			}
 			if showFiles {
-				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\tFiles\n")
+				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tVerdict\tTime\tFiles\n")
 			} else {
-				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+				fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tVerdict\tTime\n")
 			}
 			for _, j := range jobsResp.Jobs {
 				elapsed := ""
@@ -181,11 +181,13 @@ Examples:
 					}
 				}
 				if showFiles {
-					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed, strings.Join(j.AnalysisFiles, ", "))
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status,
+						pointerText(j.Verdict, "-"), elapsed, strings.Join(j.AnalysisFiles, ", "))
 				} else {
-					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
-						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed)
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status,
+						pointerText(j.Verdict, "-"), elapsed)
 				}
 			}
 			w.Flush()

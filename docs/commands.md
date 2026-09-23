@@ -167,8 +167,10 @@ Jobs created by `roborev analyze` record the analysis type and the files that
 were supplied to the prompt. File paths use slash separators and are relative to
 the repository root. The file filter checks exact array membership, so
 `pkg/a.go` does not match `pkg` or `pkg/a.go.bak`. The table adds a `Files`
-column when a returned job has recorded files. Older jobs and pulled jobs have
-no analysis metadata.
+column when a returned job has recorded files. The human-readable table also
+includes a `Verdict` column with `P` for pass, `F` for fail, and `-` when no
+verdict is recorded. `Files` remains the last column. Older jobs and pulled jobs
+have no analysis metadata.
 
 Analysis jobs also record `analysis_commit_sha` when the prompt contains the
 exact contents of tracked files at one commit. Dirty or untracked input and a
