@@ -808,7 +808,7 @@ exit 1
 			err := run(a)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "Not signed in")
-			assert.NotErrorIs(t, err, errGrokSandboxRefused)
+			require.NotErrorIs(t, err, errGrokSandboxRefused)
 			assert.NotContains(t, logs.String(), "retrying")
 		})
 	}
