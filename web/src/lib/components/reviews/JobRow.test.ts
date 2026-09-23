@@ -75,6 +75,57 @@ describe("JobRow", () => {
     );
   });
 
+  it.each<[string, Partial<ReviewJob>, string, boolean]>([
+    ["an empty panel role", { closed: true, panel_role: "" }, "yes", false],
+    ["an omitted panel role", { closed: false }, "no", false],
+    ["an omitted closed value", {}, "--", false],
+    [
+      "a member row with a closed value",
+      { closed: false, panel_role: "member" },
+      "--",
+      true,
+    ],
+    [
+      "a top-level row marked as a member",
+      { closed: false, panel_role: "member" },
+      "--",
+      false,
+    ],
+    [
+      "a synthesis row with a closed value",
+      { closed: true, panel_role: "synthesis" },
+      "yes",
+      false,
+    ],
+    [
+      "an open synthesis row",
+      { closed: false, panel_role: "synthesis" },
+      "no",
+      false,
+    ],
+    [
+      "a synthesis row without a closed value",
+      { panel_role: "synthesis" },
+      "--",
+      false,
+    ],
+  ])("maps closed state for %s", (_caseName, fields, expected, member) => {
+    const view = render(JobRow, {
+      props: {
+        job: { ...makeJob(), ...fields },
+        selected: false,
+        highlighted: false,
+        onclick: () => {},
+        member,
+      },
+    });
+
+    expect(view.container.querySelector(".col-closed")).toHaveTextContent(
+      expected,
+    );
+    view.unmount();
+  });
+
   describe("panel rows", () => {
     it("renders a chevron, outcome split, and aggregate cost on a panel parent", () => {
       const parent: ReviewJob = {

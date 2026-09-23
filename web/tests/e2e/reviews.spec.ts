@@ -66,6 +66,16 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".job-row")).toHaveCount(54);
   });
 
+  test("renders closed state for seeded review rows", async ({ page }) => {
+    await openReviews(page);
+    await page.locator(".load-more-btn").click();
+    await expect(page.locator(".load-more-btn")).toBeHidden();
+
+    await expect(jobRow(page, 42).locator(".col-closed")).toHaveText("yes");
+    await expect(jobRow(page, 51).locator(".col-closed")).toHaveText("no");
+    await expect(jobRow(page, 50).locator(".col-closed")).toHaveText("--");
+  });
+
   test("opens a review without downloading the full job history", async ({
     page,
   }) => {
@@ -111,6 +121,21 @@ test.describe.serial("native review workspace", () => {
     await expect(idHeader).toHaveAttribute("aria-disabled", "true");
     await page.locator(".load-more-btn").click();
     await expect(page.locator(".load-more-btn")).toBeHidden();
+    const closedHeader = page.getByRole("columnheader", {
+      name: "Closed",
+      exact: true,
+    });
+    const firstBeforeClosedClick = await page
+      .locator(".col-id .mono")
+      .first()
+      .textContent();
+    await closedHeader.click();
+    await closedHeader.click();
+    await expect(closedHeader).not.toHaveClass(/sortable/);
+    await expect(closedHeader).not.toContainText(/↑|↓/);
+    await expect(page.locator(".col-id .mono").first()).toHaveText(
+      firstBeforeClosedClick?.trim() ?? "",
+    );
     await expect(idHeader).not.toHaveAttribute("aria-disabled", "true");
     const firstBefore = Number(
       (await page.locator(".col-id .mono").first().textContent())?.trim(),
@@ -139,6 +164,7 @@ test.describe.serial("native review workspace", () => {
     await search.fill("0000000000000000000000000000000000000034");
     await expect(page.locator(".job-row")).toHaveCount(1);
     await expect(jobRow(page, 52)).toBeVisible();
+    await expect(jobRow(page, 52).locator(".col-closed")).toHaveText("no");
 
     await search.fill("");
     await expect(jobRow(page, 42)).toBeVisible();
@@ -358,6 +384,13 @@ test.describe.serial("native review workspace", () => {
       }));
     expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
     expect(overflow.overflowX).toBe("auto");
+    await page.locator(".table-wrapper").evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+    });
+    await expect(
+      page.getByRole("columnheader", { name: "Closed", exact: true }),
+    ).toBeVisible();
+    await expect(jobRow(page, 50).locator(".col-closed")).toHaveText("--");
   });
 
   test("posts a comment through the daemon mutation contract", async ({
@@ -391,10 +424,12 @@ test.describe.serial("native review workspace", () => {
 
     await actions.getByRole("button", { name: "Close Review" }).click();
     await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
+    await expect(jobRow(page, 51).locator(".col-closed")).toHaveText("yes");
     await actions.getByRole("button", { name: "Reopen" }).click();
     await expect(
       actions.getByRole("button", { name: "Close Review" }),
     ).toBeVisible();
+    await expect(jobRow(page, 51).locator(".col-closed")).toHaveText("no");
   });
 
   test("shows only actions supported by a token session", async ({ page }) => {
@@ -439,6 +474,7 @@ test.describe.serial("native review workspace", () => {
     await expect(
       page.locator(".member-name", { hasText: "security" }),
     ).toBeVisible();
+    await expect(jobRow(page, 54).locator(".col-closed")).toHaveText("--");
   });
 
   test("preserves transplanted keyboard navigation and help", async ({

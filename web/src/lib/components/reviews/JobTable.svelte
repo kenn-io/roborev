@@ -35,6 +35,7 @@
     { key: "review_type", label: "Review Type", sortable: true },
     { key: "status", label: "Status", sortable: true },
     { key: "verdict", label: "Verdict", sortable: true },
+    { key: "id", label: "Closed", sortable: false },
     {
       key: "elapsed",
       label: "Elapsed",

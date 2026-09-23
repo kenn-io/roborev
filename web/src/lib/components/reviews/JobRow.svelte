@@ -62,6 +62,13 @@
     if (ref.length > 10) return ref.slice(0, 8);
     return ref;
   }
+
+  function closedLabel(j: ReviewJob): string {
+    if (member || j.panel_role === "member" || j.closed === undefined) {
+      return "--";
+    }
+    return j.closed ? "yes" : "no";
+  }
 </script>
 
 <tr
@@ -137,6 +144,7 @@
   <td class="col-verdict">
     <VerdictBadge verdict={job.verdict} />
   </td>
+  <td class="col-closed">{closedLabel(job)}</td>
   <td class="col-elapsed mono">
     {formatElapsed(job)}
   </td>
