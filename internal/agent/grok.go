@@ -11,22 +11,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
 const (
 	defaultGrokName    = "grok"
 	defaultGrokCommand = "grok"
-
-	// grokReviewTools is the positive built-in allowlist for non-agentic
-	// review (Claude Read/Glob/Grep analogue). Tool IDs are model-facing
-	// names from the default Grok Build toolset (xai-org/grok-build).
-	//
-	// This allowlist alone is not sufficient: Grok retains always-on MCP
-	// meta-tools (search_tool/use_tool) even when --tools is set. Pair it
-	// with grokMutatingDisallowedTools, --sandbox read-only, --no-subagents,
-	// and --disable-web-search (see appendGrokReviewSafetyArgs).
-	grokReviewTools = "read_file,grep,list_dir"
 
 	grokOutputFormatStreamingJSON = "streaming-json"
 	grokSandboxReadOnly           = "read-only"
@@ -153,19 +144,38 @@ var grokDefaultToolNames = []string{
 var grokClassifyDisallowedTools = strings.Join(grokDefaultToolNames, ",")
 
 // grokMutatingDisallowedTools denies every default tool that is not in the
-// non-agentic review allowlist, plus MCP meta-tools that survive --tools.
+// non-agentic review allowlist (grokReviewToolNames), plus MCP meta-tools
+// that survive --tools.
 // Computed once from grokDefaultToolNames so names stay centralized.
 var grokMutatingDisallowedTools = strings.Join(grokMutatingToolNames(), ",")
 
+// grokReviewToolNames is the positive built-in allowlist for non-agentic
+// review: file reads and search, plus the shell so reviews can run
+// read-only commands (git log, rg, build metadata) for better context.
+// Tool IDs are model-facing names from the default Grok Build toolset
+// (xai-org/grok-build).
+//
+// This allowlist alone is not sufficient: Grok retains always-on MCP
+// meta-tools (search_tool/use_tool) even when --tools is set. Pair it
+// with grokMutatingDisallowedTools, --sandbox, --deny Edit,
+// --no-subagents, and --disable-web-search (see appendGrokReviewSafetyArgs).
+var grokReviewToolNames = []string{
+	"read_file",
+	"grep",
+	"list_dir",
+	"run_terminal_cmd",
+	"run_terminal_command",
+	"bash",
+	"get_terminal_command_output",
+	"kill_terminal_command",
+}
+
+var grokReviewTools = strings.Join(grokReviewToolNames, ",")
+
 func grokMutatingToolNames() []string {
-	allowed := map[string]struct{}{
-		"read_file": {},
-		"grep":      {},
-		"list_dir":  {},
-	}
 	out := make([]string, 0, len(grokDefaultToolNames))
 	for _, name := range grokDefaultToolNames {
-		if _, ok := allowed[name]; ok {
+		if slices.Contains(grokReviewToolNames, name) {
 			continue
 		}
 		out = append(out, name)
@@ -182,7 +192,8 @@ var errNoGrokJSON = errors.New("no valid grok streaming-json events parsed from 
 // Non-agentic review safety layers (not absolute "all tools disabled"):
 //
 //	--sandbox read-only
-//	--tools read_file,grep,list_dir          (positive allowlist)
+//	--deny Edit                              (permission-layer edit denial)
+//	--tools read_file,grep,list_dir,<shell>  (positive allowlist)
 //	--disallowed-tools <mutating+MCP meta>   (closes MCP residual)
 //	--no-subagents
 //	--disable-web-search

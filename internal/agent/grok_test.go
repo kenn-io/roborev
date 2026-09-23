@@ -185,18 +185,20 @@ func TestGrokCommandLineNonAgentic(t *testing.T) {
 }
 
 func TestGrokReviewDeniesMCPAndMutatingTools(t *testing.T) {
-	// Contract: non-agentic review must deny MCP meta and shell even when
-	// the positive allowlist is present (Grok keeps SearchTool/UseTool on
-	// allowlist alone — see xai-grok-agent builder retain logic).
+	// Contract: non-agentic review must deny MCP meta and file-mutating
+	// tools even when the positive allowlist is present (Grok keeps
+	// SearchTool/UseTool on allowlist alone — see xai-grok-agent builder
+	// retain logic). Shell stays available for review context.
 	denied := strings.Split(grokMutatingDisallowedTools, ",")
-	assert.Contains(t, denied, "search_tool")
-	assert.Contains(t, denied, "use_tool")
-	assert.Contains(t, denied, "run_terminal_cmd")
-	assert.Contains(t, denied, "task")
-	assert.Contains(t, denied, "scheduler_create")
-	assert.NotContains(t, denied, "read_file")
-	assert.NotContains(t, denied, "grep")
-	assert.NotContains(t, denied, "list_dir")
+	allowed := strings.Split(grokReviewTools, ",")
+	for _, name := range []string{"search_tool", "use_tool", "write", "edit", "search_replace", "apply_patch", "task", "scheduler_create"} {
+		assert.Contains(t, denied, name)
+		assert.NotContains(t, allowed, name)
+	}
+	for _, name := range []string{"read_file", "grep", "list_dir", "run_terminal_cmd", "bash"} {
+		assert.NotContains(t, denied, name)
+		assert.Contains(t, allowed, name)
+	}
 }
 
 func TestGrokWithAgenticPreservesCloneSemantics(t *testing.T) {

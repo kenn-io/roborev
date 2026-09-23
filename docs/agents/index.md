@@ -352,7 +352,10 @@ Non-agentic review is **layered**, not absolute "all tools disabled":
     [Sandbox profile](#sandbox-profile) to choose another profile)
 1. `--deny Edit` — Grok permission rule that blocks file edits and writes, even
     under a sandbox profile that permits writes
-1. `--tools read_file,grep,list_dir` — positive built-in allowlist
+1. `--tools <reads and shell>` — positive built-in allowlist: `read_file`,
+    `grep`, `list_dir`, and the shell tools (`run_terminal_cmd`,
+    `run_terminal_command`, `bash`, and their background-output and kill
+    tools). The shell lets reviews run commands such as `git log` for context
 1. `--disallowed-tools <mutating + MCP meta>` — closes residual MCP
     `search_tool`/`use_tool` and other mutating defaults that can outlive the
     allowlist alone
@@ -360,7 +363,7 @@ Non-agentic review is **layered**, not absolute "all tools disabled":
 
 ```bash
 grok --no-auto-update --output-format streaming-json \
-  --sandbox read-only --deny Edit --tools read_file,grep,list_dir \
+  --sandbox read-only --deny Edit --tools <reads and shell> \
   --disallowed-tools <mutating defaults including search_tool,use_tool,...> \
   --no-subagents --disable-web-search \
   [--model <id>] [--reasoning-effort <level>] [--resume <id>] \
@@ -404,15 +407,15 @@ sandbox = "workspace"
 | Profile | What changes compared with `read-only` |
 |---------|----------------------------------------|
 | `read-only` (default) | Nothing. Grok refuses to start when a masked container runtime socket is a symlink |
-| `workspace` | The repository becomes writable, and child processes may use the network. Writes elsewhere stay blocked |
+| `workspace` | The repository becomes writable at the OS level, and shell commands may use the network. Writes elsewhere stay blocked. `--deny Edit` still blocks edit tools, and Grok applies it to shell commands that write to a file, such as `echo x > file` |
 | Custom profile | Whatever `~/.grok/sandbox.toml` defines. For example, `extends = "read-only"` with `restrict_network = false` keeps the filesystem read-only and skips the socket check |
 | `off` | No OS sandbox |
 
 The profile applies only to non-agentic reviews and classification. The other
 review restrictions stay in place under every profile: the `--deny Edit`
-permission rule, the `read_file`, `grep`, and `list_dir` tool allowlist, the
-denylist, `--no-subagents`, and `--disable-web-search`. Agentic runs pass
-neither `--sandbox` nor `--deny Edit`.
+permission rule, the read and shell tool allowlist, the denylist,
+`--no-subagents`, and `--disable-web-search`. Agentic runs pass neither
+`--sandbox` nor `--deny Edit`.
 
 `[agent.grok]` is global-only, so a repository's `.roborev.toml` cannot loosen
 the sandbox.
