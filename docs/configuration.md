@@ -1617,6 +1617,22 @@ numbers and booleans stay bare, and arrays stay arrays. roborev's own review
 controls (skill suppression, sandbox mode, reasoning effort) are applied after
 your overrides, so they take precedence if a key collides.
 
+### Grok Sandbox Profile
+
+The `[agent.grok]` section sets the Grok sandbox profile for non-agentic reviews
+and classification:
+
+```toml
+[agent.grok]
+sandbox = "workspace"
+```
+
+Accepted values are `read-only`, `workspace`, `off`, or the name of a custom
+profile in `~/.grok/sandbox.toml`. When `sandbox` is unset, roborev uses
+`read-only`. If Grok refuses to start that profile, roborev logs a warning and
+retries once under `workspace`. See
+[Grok sandbox profile](/docs/agents/#sandbox-profile).
+
 ### Pi Classifier Options
 
 Pi can be used as the auto design-review classifier because roborev runs Pi with

@@ -134,8 +134,13 @@ type PiConfig struct {
 	LaunchArgs          []string `toml:"launch_args" comment:"Additional arguments prepended to every Pi invocation."`
 }
 
+type GrokConfig struct {
+	Sandbox string `toml:"sandbox" comment:"Grok sandbox profile for non-agentic reviews: read-only, workspace, off, or a custom ~/.grok/sandbox.toml profile. Unset uses read-only and retries under workspace if Grok refuses to start it."`
+}
+
 type AgentConfig struct {
 	Codex CodexConfig `toml:"codex"`
+	Grok  GrokConfig  `toml:"grok"`
 	Pi    PiConfig    `toml:"pi"`
 }
 

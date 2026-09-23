@@ -127,6 +127,22 @@ func TestApplyAgentConfigOverridesCodexConfig(t *testing.T) {
 	assert.Empty(t, base.ConfigOverrides, "original agent must not be mutated")
 }
 
+func TestApplyAgentConfigOverridesGrokSandbox(t *testing.T) {
+	t.Parallel()
+
+	base := NewGrokAgent("grok")
+	overridden := applyAgentConfigOverrides(base, &config.Config{
+		Agent: config.AgentConfig{
+			Grok: config.GrokConfig{Sandbox: " workspace "},
+		},
+	})
+
+	grok, ok := overridden.(*GrokAgent)
+	require.True(t, ok)
+	assert.Equal(t, "workspace", grok.Sandbox)
+	assert.Empty(t, base.Sandbox, "original agent must not be mutated")
+}
+
 func TestApplyAgentConfigOverridesCodexNoConfigLeavesAgentUnchanged(t *testing.T) {
 	t.Parallel()
 

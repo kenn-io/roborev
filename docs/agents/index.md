@@ -348,7 +348,10 @@ in config when `grok` is not on `PATH`.
 
 Non-agentic review is **layered**, not absolute "all tools disabled":
 
-1. `--sandbox read-only` — OS-level filesystem/network sandbox
+1. `--sandbox read-only` — OS-level filesystem/network sandbox (see
+    [Sandbox profile](#sandbox-profile) to choose another profile)
+1. `--deny Edit` — Grok permission rule that blocks file edits and writes, even
+    under a sandbox profile that permits writes
 1. `--tools read_file,grep,list_dir` — positive built-in allowlist
 1. `--disallowed-tools <mutating + MCP meta>` — closes residual MCP
     `search_tool`/`use_tool` and other mutating defaults that can outlive the
@@ -357,7 +360,7 @@ Non-agentic review is **layered**, not absolute "all tools disabled":
 
 ```bash
 grok --no-auto-update --output-format streaming-json \
-  --sandbox read-only --tools read_file,grep,list_dir \
+  --sandbox read-only --deny Edit --tools read_file,grep,list_dir \
   --disallowed-tools <mutating defaults including search_tool,use_tool,...> \
   --no-subagents --disable-web-search \
   [--model <id>] [--reasoning-effort <level>] [--resume <id>] \
@@ -371,6 +374,48 @@ grok --no-auto-update --output-format streaming-json --always-approve \
   [--model <id>] [--reasoning-effort <level>] [--resume <id>] \
   --prompt-file <path>
 ```
+
+### Sandbox profile
+
+Grok's `read-only` and `strict` sandbox profiles hide container runtime sockets
+such as `/var/run/docker.sock` from the agent. If one of those sockets is a
+symlink, Grok refuses to start instead of hiding the link's target. OrbStack
+sets up `/var/run/docker.sock` this way, so non-agentic Grok reviews fail with
+an error like:
+
+```text
+could not resolve runtime-socket deny path /var/run/docker.sock: endpoint is a symlink
+... Refusing to start with its protections missing.
+```
+
+Grok has no flag to skip that socket check. When no profile is configured,
+roborev detects the refusal, logs a warning, and retries the run once under the
+`workspace` profile.
+
+To choose the profile yourself, set it under `[agent.grok]` in
+`~/.roborev/config.toml`. roborev uses an explicit profile as-is: if Grok
+refuses it, the job fails with a hint instead of retrying.
+
+```toml
+[agent.grok]
+sandbox = "workspace"
+```
+
+| Profile | What changes compared with `read-only` |
+|---------|----------------------------------------|
+| `read-only` (default) | Nothing. Grok refuses to start when a masked container runtime socket is a symlink |
+| `workspace` | The repository becomes writable, and child processes may use the network. Writes elsewhere stay blocked |
+| Custom profile | Whatever `~/.grok/sandbox.toml` defines. For example, `extends = "read-only"` with `restrict_network = false` keeps the filesystem read-only and skips the socket check |
+| `off` | No OS sandbox |
+
+The profile applies only to non-agentic reviews and classification. The other
+review restrictions stay in place under every profile: the `--deny Edit`
+permission rule, the `read_file`, `grep`, and `list_dir` tool allowlist, the
+denylist, `--no-subagents`, and `--disable-web-search`. Agentic runs pass
+neither `--sandbox` nor `--deny Edit`.
+
+`[agent.grok]` is global-only, so a repository's `.roborev.toml` cannot loosen
+the sandbox.
 
 Legacy reasoning mapping: `maximum` → `max`, `thorough` → `high`, `fast` →
 `low`. Standard leaves Grok's default effort. Exact `low`, `medium`, `high`,
@@ -390,7 +435,7 @@ absolute Claude-style deny-all equivalence):
 - `--disallowed-tools` lists the seed plus every known default Grok Build tool
     and MCP meta (`search_tool`/`use_tool`); when both flags are set, the
     denylist wins on overlap
-- `--sandbox read-only`, `--no-subagents`, `--disable-web-search`
+- `--sandbox read-only`, `--deny Edit`, `--no-subagents`, `--disable-web-search`
 - `--max-turns 1`, `--no-memory`, `--no-plan`
 - never `--always-approve`
 - only Grok-validated `structuredOutput` is accepted; free-form `text` and

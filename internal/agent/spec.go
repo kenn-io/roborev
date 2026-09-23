@@ -275,6 +275,14 @@ func applyAgentConfigOverrides(a Agent, cfg *config.Config) Agent {
 		clone.JSONSchemaExtension = ext
 		clone.LaunchArgs = launchArgs
 		return &clone
+	case *GrokAgent:
+		sandbox := strings.TrimSpace(cfg.Agent.Grok.Sandbox)
+		if sandbox == agent.Sandbox {
+			return a
+		}
+		clone := *agent
+		clone.Sandbox = sandbox
+		return &clone
 	case *CodexAgent:
 		overrides := cfg.Agent.Codex.ConfigOverrideArgs()
 		if len(overrides) == 0 {

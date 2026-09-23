@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,7 @@ func TestGrokBuildArgs(t *testing.T) {
 				"--no-auto-update",
 				"--output-format", "streaming-json",
 				"--sandbox", "read-only",
+				"--deny", "Edit",
 				"--tools", grokReviewTools,
 				"--disallowed-tools", grokMutatingDisallowedTools,
 				"--no-subagents",
@@ -667,4 +669,145 @@ func TestGrokClassifyCLISmoke_SchemaAndSideEffect(t *testing.T) {
 	_, hasReason := obj["reason"]
 	assert.True(t, hasDR, "structuredOutput must include design_review")
 	assert.True(t, hasReason, "structuredOutput must include reason")
+}
+
+func TestGrokSandboxProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		sandbox string
+		want    string
+	}{
+		{name: "default is read-only", sandbox: "", want: "read-only"},
+		{name: "workspace", sandbox: "workspace", want: "workspace"},
+		{name: "custom profile", sandbox: "roborev-review", want: "roborev-review"},
+		{name: "off", sandbox: "off", want: "off"},
+	}
+	schema := jsontext.Value(`{"type":"object"}`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewGrokAgent("grok")
+			a.Sandbox = tt.sandbox
+
+			review := a.buildArgs(false, "/tmp/p.md")
+			classify := a.classifyArgs(schema, "/tmp/p.md")
+			assertArgsContainContiguous(t, review, []string{"--sandbox", tt.want})
+			assertArgsContainContiguous(t, classify, []string{"--sandbox", tt.want})
+			// Edit denial and tool restrictions stay in place under every profile.
+			assertArgsContainContiguous(t, review, []string{"--deny", "Edit"})
+			assertArgsContainContiguous(t, classify, []string{"--deny", "Edit"})
+			assertArgsContainContiguous(t, review, []string{"--tools", grokReviewTools})
+			// Agentic runs pass neither a sandbox profile nor the edit denial.
+			agentic := a.buildArgs(true, "/tmp/p.md")
+			assert.NotContains(t, agentic, "--sandbox")
+			assert.NotContains(t, agentic, "--deny")
+		})
+	}
+}
+
+func TestGrokSandboxSurvivesClone(t *testing.T) {
+	a := NewGrokAgent("grok")
+	a.Sandbox = "workspace"
+	cloned := a.WithModel("grok-4.5").WithReasoning(ReasoningFast).(*GrokAgent)
+	assert.Equal(t, "workspace", cloned.Sandbox)
+}
+
+// grokSandboxRefusalScript mimics grok refusing to start its read-only
+// sandbox because a masked runtime socket is a symlink, while running
+// normally under any other profile.
+const grokSandboxRefusalScript = `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+prev=""
+json=0
+for arg in "$@"; do
+  if [ "$prev" = "--sandbox" ] && [ "$arg" = "read-only" ]; then
+    echo "warning: sandbox could not be applied: socket deny resolution failed: could not resolve runtime-socket deny path /var/run/docker.sock: endpoint is a symlink" >&2
+    echo "error: could not apply the 'read-only' sandbox profile; see the warning above for the cause. Refusing to start with its protections missing." >&2
+    exit 1
+  fi
+  [ "$prev" = "--output-format" ] && [ "$arg" = "json" ] && json=1
+  prev="$arg"
+done
+if [ "$json" = 1 ]; then
+  printf '%s\n' '{"structuredOutput":{"ok":true}}'
+else
+  printf '%s\n' '{"type":"text","data":"ok"}'
+  printf '%s\n' '{"type":"end","stopReason":"end_turn"}'
+fi
+`
+
+// grokEntryPoints runs each non-agentic Grok entry point and returns its error.
+func grokEntryPoints(t *testing.T) map[string]func(a *GrokAgent) error {
+	schema := jsontext.Value(`{"type":"object"}`)
+	return map[string]func(a *GrokAgent) error{
+		"review": func(a *GrokAgent) error {
+			_, err := a.Review(context.Background(), t.TempDir(), "sha", "review", nil)
+			return err
+		},
+		"structured review": func(a *GrokAgent) error {
+			_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "sha", "review", schema, nil)
+			return err
+		},
+		"classify": func(a *GrokAgent) error {
+			_, err := a.ClassifyWithSchema(context.Background(), t.TempDir(), "sha", "classify", schema, nil)
+			return err
+		},
+	}
+}
+
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+	return &buf
+}
+
+func TestGrokSandboxRefusalFallsBackToWorkspace(t *testing.T) {
+	a := NewGrokAgent(writeTempCommand(t, grokSandboxRefusalScript))
+	for name, run := range grokEntryPoints(t) {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLog(t)
+			require.NoError(t, run(a))
+			assert.Contains(t, logs.String(), `grok could not start its "read-only" sandbox profile; retrying under "workspace"`)
+			assert.Contains(t, logs.String(), "endpoint is a symlink")
+		})
+	}
+}
+
+func TestGrokSandboxRefusalWithExplicitProfileFails(t *testing.T) {
+	a := NewGrokAgent(writeTempCommand(t, grokSandboxRefusalScript))
+	a.Sandbox = "read-only"
+	for name, run := range grokEntryPoints(t) {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLog(t)
+			err := run(a)
+			require.ErrorIs(t, err, errGrokSandboxRefused)
+			assert.Contains(t, err.Error(), "endpoint is a symlink")
+			assert.Contains(t, err.Error(), `could not apply the "read-only" profile; set sandbox under [agent.grok]`)
+			assert.NotContains(t, logs.String(), "retrying")
+		})
+	}
+}
+
+func TestGrokOtherFailureDoesNotFallBack(t *testing.T) {
+	a := NewGrokAgent(writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+echo "error: Not signed in" >&2
+exit 1
+`))
+	for name, run := range grokEntryPoints(t) {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLog(t)
+			err := run(a)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "Not signed in")
+			assert.NotErrorIs(t, err, errGrokSandboxRefused)
+			assert.NotContains(t, logs.String(), "retrying")
+		})
+	}
 }
