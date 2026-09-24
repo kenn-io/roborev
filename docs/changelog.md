@@ -1,9 +1,30 @@
 ---
+last_edited: 2026-09-24
 title: Changelog
 description: Release history for roborev
 ---
 
 All notable changes to roborev, grouped by minor release.
+
+## Unreleased
+
+**Breaking behavior change**
+
+- Syncing daemons with embeddings configured now share review-search vectors
+    through PostgreSQL. A review is embedded by one daemon and imported by the
+    others, so each machine no longer sends every synced review to its provider.
+    There is no setting; daemons without sync or without embeddings behave as
+    before. See
+    [Shared vectors across synced machines](/docs/search/#shared-vectors-across-synced-machines).
+- The embedding generation fingerprint now includes chunk size and overlap.
+    Upgrading re-embeds (or imports) every review once, and the search sidecar
+    is rebuilt once. Upgrade one daemon first and let it finish.
+
+**Features**
+
+- `roborev daemon status` shows a `Sharing:` line, and `GET /api/health` reports
+    `source_status`, `imported`, `published`, `awaiting_peer`, `claims_held`,
+    and `rejected` in the `search` object.
 
 ## 0.68.2
 
