@@ -44,6 +44,23 @@ func (w *SyncWorker) notifyAfterPullWrite() {
 	}
 }
 
+// VectorExchange returns the shared search-vector cache bound to this
+// worker's current PostgreSQL connection. Its queries report
+// ErrVectorExchangeUnreachable while the worker is disconnected.
+func (w *SyncWorker) VectorExchange() (*VectorExchange, error) {
+	machineID, err := w.db.GetMachineID()
+	if err != nil {
+		return nil, fmt.Errorf("get machine ID: %w", err)
+	}
+	return NewVectorExchange(w.currentPool, machineID.String()), nil //nolint:forbidigo // machine ID is stored as TEXT in the exchange.
+}
+
+func (w *SyncWorker) currentPool() *PgPool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.pgPool
+}
+
 // NewSyncWorker creates a new sync worker
 func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 	return &SyncWorker{
