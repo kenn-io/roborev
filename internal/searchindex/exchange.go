@@ -293,7 +293,7 @@ func (r *Reconciler) importShared(
 			if err != nil {
 				return false, err
 			}
-			vectors, invalid := validateExchangeRecord(record, content, dims)
+			vectors, invalid := validateExchangeRecord(record, keys[i], content, dims)
 			if invalid == nil {
 				err := r.index.SaveGenerationVectors(ctx, key,
 					vector.Pending[string]{Doc: candidate.DocKey, Revision: candidate.ContentHash}, vectors)
@@ -305,6 +305,13 @@ func (r *Reconciler) importShared(
 				}
 				if err := r.index.recordExchanged(ctx, key, candidate.DocKey, candidate.ContentHash,
 					exchangeOriginPeer, target, now); err != nil {
+					return false, err
+				}
+				continue
+			}
+			if errors.Is(invalid, errCandidateContentHashMismatch) {
+				next := now.Add(r.lookupBackoff(candidate.Attempts + 1))
+				if err := r.index.recordLookup(ctx, key, candidate, next); err != nil {
 					return false, err
 				}
 				continue

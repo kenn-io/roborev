@@ -2,6 +2,8 @@ package searchindex
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -46,12 +48,26 @@ func TestValidateExchangeRecord(t *testing.T) {
 		name    string
 		content string
 		record  storage.VectorRecord
+		key     storage.VectorKey
 		want    []vector.ChunkVector
 		err     string
 	}{
 		{
 			name: "ok", record: storage.VectorRecord{Status: "ok", Dims: 2, Chunks: chunks(unit)},
 			want: []vector.ChunkVector{{ChunkIndex: 0, Vector: unit}},
+		},
+		{
+			name: "content hash mismatch", record: storage.VectorRecord{
+				Key:    storage.VectorKey{ContentSHA256: "different-text"},
+				Status: storage.VectorStatusOK, Dims: 2, Chunks: chunks(unit),
+			}, key: storage.VectorKey{ReviewUUID: "review", ContentSHA256: "different-text"},
+			err: "candidate content hash does not match local text",
+		},
+		{
+			name: "record key mismatch", record: storage.VectorRecord{
+				Key:    storage.VectorKey{ReviewUUID: "review", ContentSHA256: "different-text"},
+				Status: storage.VectorStatusOK, Dims: 2, Chunks: chunks(unit),
+			}, err: "record key does not match candidate",
 		},
 		{name: "skipped", record: storage.VectorRecord{Status: "skipped", Dims: 2}},
 		{
@@ -113,7 +129,13 @@ func TestValidateExchangeRecord(t *testing.T) {
 			if content == "" {
 				content = "shared text"
 			}
-			got, err := validateExchangeRecord(tc.record, content, 2)
+			if tc.key.ContentSHA256 == "" {
+				tc.key = storage.VectorKey{ReviewUUID: "review", ContentSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(content)))}
+			}
+			if tc.record.Key == (storage.VectorKey{}) {
+				tc.record.Key = tc.key
+			}
+			got, err := validateExchangeRecord(tc.record, tc.key, content, 2)
 			if tc.err != "" {
 				require.EqualError(t, err, tc.err)
 				return
@@ -131,8 +153,9 @@ func TestValidateExchangeRecordAcceptsMoreThan64LocalChunks(t *testing.T) {
 		chunks[i] = storage.VectorChunk{Index: i, Vector: []float32{1, 0}}
 	}
 	vectors, err := validateExchangeRecord(storage.VectorRecord{
+		Key:    storage.VectorKey{ReviewUUID: "review", ContentSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(content)))},
 		Status: storage.VectorStatusOK, Dims: 2, Chunks: chunks,
-	}, content, 2)
+	}, storage.VectorKey{ReviewUUID: "review", ContentSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(content)))}, content, 2)
 	require.NoError(t, err)
 	require.Len(t, vectors, 65)
 	assert.Equal(t, 64, vectors[64].ChunkIndex)

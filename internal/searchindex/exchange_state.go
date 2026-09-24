@@ -2,6 +2,7 @@ package searchindex
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -44,6 +45,8 @@ const (
 	exchangeOriginPeer  = "peer"
 	exchangeOriginLocal = "local"
 )
+
+var errCandidateContentHashMismatch = errors.New("candidate content hash does not match local text")
 
 // notCoveredSQL must stay identical to NOT kit sqlitevec coveredPredicate for
 // review_mirror alias m and review_vectors_stamps alias s, so a document is
@@ -476,7 +479,14 @@ func (index *Index) ActivateSharedGeneration(ctx context.Context, key string, no
 
 // validateExchangeRecord converts a peer record into vectors for the local
 // text and dimensions, or explains why it must be rejected.
-func validateExchangeRecord(record storage.VectorRecord, content string, dims int) ([]vector.ChunkVector, error) {
+func validateExchangeRecord(record storage.VectorRecord, expectedKey storage.VectorKey, content string, dims int) ([]vector.ChunkVector, error) {
+	contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	if contentHash != expectedKey.ContentSHA256 {
+		return nil, errCandidateContentHashMismatch
+	}
+	if record.Key != expectedKey {
+		return nil, errors.New("record key does not match candidate")
+	}
 	if record.Malformed {
 		return nil, errors.New("record arrays are malformed")
 	}

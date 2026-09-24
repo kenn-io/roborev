@@ -351,6 +351,36 @@ func TestSharedReconcilerImportsPeerVectorsWithoutProviderCalls(t *testing.T) {
 	assert.Equal(t, []storage.VectorChunk{{Index: 0, Vector: []float32{0.6, 0.8}}}, chunks)
 }
 
+func TestSharedReconcilerDoesNotDiscardPeerRecordWhenLocalContentHashIsStale(t *testing.T) {
+	ctx := context.Background()
+	clock := newTestClock()
+	model := vector.Generation{Model: "model", Dimensions: 2}
+	source := sharedSources(storage.SearchSharePeer, 1)[0]
+	doc := searchdoc.Render(source)
+	index := openGenerationTestIndex(t)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	key, err := index.EnsureGeneration(ctx, model)
+	require.NoError(t, err)
+	require.NoError(t, index.observeSharedPending(ctx, key, clock.Now()))
+	_, err = index.db.ExecContext(ctx,
+		`UPDATE review_mirror SET content = ? WHERE doc_key = ?`, "stale mirror text", doc.DocKey)
+	require.NoError(t, err)
+
+	db := newFakeExchangeDB(clock.Now)
+	db.put(key, okRecord(source, 0.6, 0.8))
+	exchange := newFakeExchange(db, "machine-b")
+	r := NewReconciler(nil, index, nil, ReconcilerConfig{Now: clock.Now})
+
+	more, err := r.importShared(ctx, exchange, key, "target", model.Dimensions,
+		clock.Now(), clock.Now().Add(-defaultLocalFallbackAfter))
+	require.NoError(t, err)
+	assert.False(t, more)
+	assert.Zero(t, exchange.discards, "a local mirror hash inconsistency does not discard shared data")
+	_, exists := db.record(key, vectorKeyFor(source))
+	assert.True(t, exists, "the peer record remains available for other daemons")
+}
+
 func TestSharedReconcilerClaimsOwnDocumentsAndPublishes(t *testing.T) {
 	clock := newTestClock()
 	model := vector.Generation{Model: "model", Dimensions: 2}
