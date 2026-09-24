@@ -146,7 +146,10 @@ endpoints. The check uses `git cat-file -e <sha>^{commit}`.
 1. If any commit is missing, run `git fetch --all --quiet` once in the clone.
    A fetch error is logged and treated as "still missing".
 2. If commits are still missing, return `409` with
-   `{"error": "...", "code": "missing_commits", "missing": ["<sha>", ...]}`.
+   `{"error": "...", "code": "missing_commits", "missing": ["<sha>", ...], "have": ["<sha>", ...]}`.
+   `have` lists the distinct commit SHAs at the tips of all refs in the
+   daemon clone (`git for-each-ref`). The client uses it to leave out only
+   history the daemon really has.
 
 ### Pack upload
 
@@ -232,8 +235,10 @@ share one remote enqueue helper.
 1. Send the enqueue with `repo_identity`, the git ref, and the branch.
 2. On `409 missing_commits`, build a pack:
    `git pack-objects --revs --stdout`, with stdin listing each missing SHA and
-   `^<tip>` for every local `refs/remotes/*` ref. Upload it to
-   `/api/remote/pack` with `tip` set to each missing SHA.
+   `^<sha>` for every `have` SHA that also exists in the local repo. A
+   client-only remote (a fork the daemon never fetches) therefore cannot cause
+   missing objects. Upload the pack to `/api/remote/pack` with `tip` set to
+   each missing SHA.
 3. Retry the enqueue once. A second failure is returned as-is.
 
 The post-commit hook keeps its current batching and quiet-failure behavior.
@@ -250,7 +255,7 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
 | Symbolic ref in remote enqueue     | 400    | `remote enqueue needs full commit SHAs`                                     |
 | Unknown identity                   | 404    | `repo <identity> is not registered on the daemon host; ...`                 |
 | Identity matches several repos     | 409    | `repo <identity> matches several daemon checkouts: <paths>`                 |
-| Commits missing after fetch        | 409    | `missing_commits` with the SHA list                                        |
+| Commits missing after fetch        | 409    | `missing_commits` with the `missing` and `have` SHA lists                  |
 | Pack lacks base commits            | 409    | `daemon clone lacks base commits for <tip>; fetch on the daemon host`      |
 
 ## Testing
@@ -271,6 +276,9 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
 - Client: `--server` and `[remote]` parsing; remote mode never starts a
   daemon; local-only commands fail with the documented message; the enqueue
   helper uploads and retries on `409`.
+- End-to-end upload: the requested commit sits on a client remote-tracking ref
+  for a remote the daemon clone doesn't have; the pack built from `have` still
+  imports and the retried enqueue succeeds.
 
 ## Documentation
 
