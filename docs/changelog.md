@@ -5,6 +5,23 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Behavior change: the TUI now opens filtered to the current repository and
+    branch when you start it inside a git checkout, including linked worktrees.
+    Before, it showed every repository unless you opted in. Press `Esc` to clear
+    the filters. Outside a git checkout, the TUI still shows every repository.
+    See [TUI filtering](/docs/integrations/tui/#filtering).
+- Behavior change: the startup filter settings moved to a `[tui]` section as
+    `filter_repo` and `filter_branch`. roborev now ignores the old top-level
+    `auto_filter_repo` and `auto_filter_branch` keys and removes them the next
+    time it saves the config. Older versions wrote `auto_filter_repo = false`
+    and `auto_filter_branch = false` into most configs, so keeping those keys
+    would have left the filters off. To keep the old unfiltered view, set
+    `filter_repo = false` and `filter_branch = false` under `[tui]`.
+
 ## 0.68.2
 
 <small>2026-09-22</small>
