@@ -163,13 +163,13 @@ func (db *DB) EnqueuePostCommitJob(opts EnqueueOpts) (*ReviewJob, bool, error) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return nil, false, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs EnqueuePostCommitJob: rollback failed: %v", err)
 			}
 		}
@@ -435,13 +435,13 @@ func (db *DB) enqueuePanelRun(
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return nil, nil, false, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs EnqueuePanelRun: rollback failed: %v", err)
 			}
 		}
@@ -610,13 +610,13 @@ func (db *DB) claimJobAttempt(
 		return nil, err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return nil, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs ClaimJob: rollback failed: %v", err)
 			}
 		}
@@ -715,13 +715,13 @@ func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs MarkJobAgentInvoked: rollback failed: %v", err)
 			}
 		}
@@ -880,13 +880,13 @@ func (db *DB) SaveJobSessionID(
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs SaveJobSessionID: rollback failed: %v", err)
 			}
 		}
@@ -983,13 +983,13 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(w TokenUsageWrite) (bool, error) {
 		return false, err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return false, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs BackfillJobTokenUsageIfCurrent: rollback failed: %v", err)
 			}
 		}
@@ -1078,13 +1078,13 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs CompleteFixJob: rollback failed: %v", err)
 			}
 		}
@@ -1187,13 +1187,13 @@ func (db *DB) completeJob(
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs CompleteJob: rollback failed: %v", err)
 			}
 		}
@@ -1426,13 +1426,13 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return 0, false, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("jobs ReenqueueJob: rollback failed: %v", err)
 			}
 		}

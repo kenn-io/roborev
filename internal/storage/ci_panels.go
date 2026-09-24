@@ -181,13 +181,13 @@ func (db *DB) CreateCIPanelRun(githubRepo string, prNumber int, headSHA string,
 		return false, nil, nil, err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return false, nil, nil, err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("CreateCIPanelRun: rollback failed: %v", err)
 			}
 		}

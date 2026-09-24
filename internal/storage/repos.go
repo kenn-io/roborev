@@ -587,7 +587,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	defer conn.Close()
 
 	// BEGIN IMMEDIATE acquires a write lock immediately, preventing races
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
 
@@ -595,7 +595,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("repos DeleteRepo: rollback failed: %v", err)
 			}
 		}
@@ -702,14 +702,14 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return 0, err
 	}
 
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if err := rollbackConn(conn); err != nil {
 				log.Printf("repos MergeRepos: rollback failed: %v", err)
 			}
 		}
