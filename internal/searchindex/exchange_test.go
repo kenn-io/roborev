@@ -71,13 +71,14 @@ type fakeExchange struct {
 	db        *fakeExchangeDB
 	machineID string
 
-	mu        sync.Mutex
-	targetErr error
-	lookupErr error
-	lookups   int
-	publishes int
-	discards  int
-	recreated bool
+	mu         sync.Mutex
+	targetErr  error
+	lookupErr  error
+	lookups    int
+	claimCalls int
+	publishes  int
+	discards   int
+	recreated  bool
 }
 
 func newFakeExchange(db *fakeExchangeDB, machineID string) *fakeExchange {
@@ -130,6 +131,9 @@ func (e *fakeExchange) Lookup(_ context.Context, fingerprint string, keys []stor
 }
 
 func (e *fakeExchange) Claim(_ context.Context, fingerprint string, key storage.VectorKey, ttl time.Duration) (bool, error) {
+	e.mu.Lock()
+	e.claimCalls++
+	e.mu.Unlock()
 	e.db.mu.Lock()
 	defer e.db.mu.Unlock()
 	recordKey := fakeRecordKey{fingerprint, key}
@@ -142,6 +146,12 @@ func (e *fakeExchange) Claim(_ context.Context, fingerprint string, key storage.
 	}
 	e.db.claims[recordKey] = fakeClaim{machine: e.machineID, expires: now.Add(ttl)}
 	return true, nil
+}
+
+func (e *fakeExchange) claimCallCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.claimCalls
 }
 
 type dropAfterClaimExchange struct {
@@ -421,6 +431,33 @@ func TestSharedReconcilerLosingClaimWaitsThenImportsWinner(t *testing.T) {
 	assert.Zero(t, embedder.callCount())
 }
 
+func TestSharedReconcilerDefersClaimsAfterBudgetExhaustion(t *testing.T) {
+	clock := newTestClock()
+	model := vector.Generation{Model: "model", Dimensions: 2}
+	sources := sharedSources(storage.SearchSharePeer, 1, 2, 3)
+	store := &reconcilerStore{sources: sources}
+	db := newFakeExchangeDB(clock.Now)
+	exchange := newFakeExchange(db, "machine-a")
+	for _, source := range sources {
+		db.setClaim(model.Fingerprint(), vectorKeyFor(source), "machine-other", clock.Now().Add(time.Hour))
+	}
+	embedder := &reconcilerEmbedder{model: model, batchSize: 8}
+	r := NewReconciler(store, openGenerationTestIndex(t), embedder, ReconcilerConfig{
+		Now: clock.Now, MaxFillBatches: 1, PeerClaimDelay: time.Nanosecond,
+		LookupMinBackoff: defaultLookupMinBackoff,
+	})
+	r.SetVectorExchange(exchange)
+	runUntilIdle(t, r)
+	assert.Zero(t, exchange.claimCallCount(), "peer claims wait until the claim delay")
+
+	clock.Advance(time.Nanosecond)
+	runUntilIdle(t, r)
+
+	assert.Equal(t, 1, exchange.claimCallCount(), "one claim attempt uses the per-turn budget")
+	assert.Equal(t, defaultLookupMinBackoff, r.idleDelay(),
+		"deferred candidates respect lookup backoff instead of spinning immediately")
+}
+
 func TestSharedReconcilerUnreachableHoldsSharedDocumentsUntilFallback(t *testing.T) {
 	clock := newTestClock()
 	model := vector.Generation{Model: "model", Dimensions: 2}
@@ -529,6 +566,8 @@ func TestSharedReconcilerRejectsMalformedRecordsAndReembeds(t *testing.T) {
 	r := NewReconciler(store, openGenerationTestIndex(t), embedder, ReconcilerConfig{Now: clock.Now})
 	r.SetVectorExchange(exchange)
 
+	runUntilIdle(t, r)
+	clock.Advance(defaultLookupMinBackoff)
 	runUntilIdle(t, r)
 
 	assert.Equal(t, int64(len(bad)), r.Health().Rejected)

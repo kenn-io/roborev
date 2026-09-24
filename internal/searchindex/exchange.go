@@ -332,7 +332,7 @@ func (r *Reconciler) importShared(
 		next := now.Add(r.lookupBackoff(candidate.Attempts + 1))
 		switch {
 		case eligible && claimBudget == 0:
-			next = now
+			next = now.Add(r.config.LookupMinBackoff)
 			deferred = true
 		case !eligible && claimAt.Before(next):
 			next = claimAt
