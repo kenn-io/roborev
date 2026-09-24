@@ -22,7 +22,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.4
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
-	github.com/google/go-github/v91 v91.0.0
+	github.com/google/go-github/v92 v92.0.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattn/go-isatty v0.0.24
