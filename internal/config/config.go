@@ -151,6 +151,12 @@ type CostConfig struct {
 
 const WebAuthModeProxy = "proxy"
 
+// TUIConfig holds terminal UI preferences. Unset filters default to on.
+type TUIConfig struct {
+	FilterRepo   *bool `toml:"filter_repo" comment:"Filter the TUI queue to the current repo on startup (default: true)."`
+	FilterBranch *bool `toml:"filter_branch" comment:"Filter the TUI queue to the current branch on startup (default: true)."`
+}
+
 type WebConfig struct {
 	Enabled       bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
 	Listen        string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
@@ -370,6 +376,9 @@ type Config struct {
 	// Browser application configuration
 	Web WebConfig `toml:"web"`
 
+	// Terminal UI configuration
+	TUI TUIConfig `toml:"tui"`
+
 	// Read-only MCP endpoint served on the daemon API listener
 	MCP MCPConfig `toml:"mcp"`
 
@@ -405,8 +414,6 @@ type Config struct {
 	// UI preferences
 	HideClosedByDefault    bool     `toml:"hide_closed_by_default" comment:"Hide closed reviews by default in the TUI queue."`
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
-	TUIFilterRepo          *bool    `toml:"tui_filter_repo" comment:"Automatically filter the TUI queue to the current repo (default: true)."`
-	TUIFilterBranch        *bool    `toml:"tui_filter_branch" comment:"Automatically filter the TUI queue to the current branch (default: true)."`
 	ShowClassifyJobs       bool     `toml:"show_classify_jobs" comment:"Show auto-design-review classifier rows (and skipped design rows) in the TUI queue. Off by default to reduce noise."`
 	MouseEnabled           bool     `toml:"mouse_enabled" comment:"Enable mouse support in the TUI."`          // Enable mouse capture and mouse-driven TUI interactions
 	TabWidth               int      `toml:"tab_width"`                                                         // Tab expansion width for TUI rendering (default: 2)

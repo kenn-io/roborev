@@ -981,11 +981,13 @@ hook_timeout_seconds = 30         # Post-commit hook request timeout (0 = platfo
 agent_quota_cooldown = "30m"      # Maximum quota cooldown after agent limits
 review_guidelines = "Global review instructions for every repo."
 hide_closed_by_default = true     # Start TUI with closed/failed/canceled hidden
-tui_filter_repo = false           # Show all repos in the TUI on startup (default: current repo)
-tui_filter_branch = false         # Show all branches in the TUI on startup (default: current branch)
 mouse_enabled = true              # Enable mouse interactions in the TUI
 tab_width = 4                     # Tab expansion width for code blocks in TUI (default: 2)
 column_borders = true             # Show separators between TUI columns
+
+[tui]
+filter_repo = false               # Show all repos on startup (default: current repo)
+filter_branch = false             # Show all branches on startup (default: current branch)
 ```
 
 ### Global Options
@@ -1022,8 +1024,8 @@ column_borders = true             # Show separators between TUI columns
 | `refine_min_severity` | string | - | Default minimum severity for `refine`: `critical`, `high`, `medium`, or `low` | Yes |
 | `disable_codex_sandbox` | bool | false | Disable Codex `bwrap` sandboxing for systems where it is unavailable | Yes |
 | `hide_closed_by_default` | bool | false | Start TUI with closed/failed/canceled reviews hidden | N/A |
-| `tui_filter_repo` | bool | true | Auto-filter TUI to the current repo on startup | N/A |
-| `tui_filter_branch` | bool | true | Auto-filter TUI to the current branch/worktree on startup | N/A |
+| `tui.filter_repo` | bool | true | Auto-filter TUI to the current repo on startup | N/A |
+| `tui.filter_branch` | bool | true | Auto-filter TUI to the current branch/worktree on startup | N/A |
 | `mouse_enabled` | bool | true | Enable mouse interactions in the TUI (also togglable from the TUI options menu) | N/A |
 | `tab_width` | int | 2 | Tab expansion width for code blocks in TUI (1-16) | N/A |
 | `column_borders` | bool | false | Show `▕` separators between TUI columns | N/A |

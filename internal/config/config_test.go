@@ -199,7 +199,7 @@ func TestSaveAndLoadGlobalTUIFilterBranch(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfg := DefaultConfig()
-	cfg.TUIFilterBranch = new(true)
+	cfg.TUI.FilterBranch = new(true)
 	{
 
 		err := SaveGlobal(cfg)
@@ -212,14 +212,14 @@ func TestSaveAndLoadGlobalTUIFilterBranch(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobal failed: %v", err)
-	assert.Equal(t, new(true), loaded.TUIFilterBranch)
+	assert.Equal(t, new(true), loaded.TUI.FilterBranch)
 }
 
 func TestLoadGlobalTUIFilterBranchFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	{
-		err := os.WriteFile(path, []byte("tui_filter_branch = true\n"), 0o644)
+		err := os.WriteFile(path, []byte("[tui]\nfilter_branch = true\n"), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "write config: %v", err)
@@ -229,7 +229,7 @@ func TestLoadGlobalTUIFilterBranchFromTOML(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobalFrom failed: %v", err)
-	assert.Equal(t, new(true), cfg.TUIFilterBranch)
+	assert.Equal(t, new(true), cfg.TUI.FilterBranch)
 }
 
 func TestLoadGlobalIgnoresLegacyAutoFilterKeys(t *testing.T) {
@@ -240,14 +240,15 @@ func TestLoadGlobalIgnoresLegacyAutoFilterKeys(t *testing.T) {
 
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
-	assert.Nil(cfg.TUIFilterRepo)
-	assert.Nil(cfg.TUIFilterBranch)
+	assert.Nil(cfg.TUI.FilterRepo)
+	assert.Nil(cfg.TUI.FilterBranch)
 
 	require.NoError(t, SaveGlobalTo(path, cfg))
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.NotContains(string(data), "auto_filter_")
-	assert.NotContains(string(data), "tui_filter_")
+	assert.NotContains(string(data), "filter_repo")
+	assert.NotContains(string(data), "filter_branch")
 }
 
 func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
