@@ -174,6 +174,18 @@ func (index *Index) recordLookup(ctx context.Context, key string, candidate exch
 	return nil
 }
 
+// markFallbackHandled records that this daemon completed its local fallback
+// pass for shared documents whose exchange has not answered.
+func (index *Index) markFallbackHandled(ctx context.Context, key string, fallbackCutoff time.Time) error {
+	_, err := index.db.ExecContext(ctx, `
+		UPDATE review_exchange SET attempts = MAX(attempts, 1)
+		 WHERE gen_key = ? AND first_pending_at <= ?`, key, fallbackCutoff.Unix())
+	if err != nil {
+		return fmt.Errorf("mark shared fallback handled: %w", err)
+	}
+	return nil
+}
+
 // recordClaim counts one attempt and remembers that this daemon holds the
 // PostgreSQL claim until expires.
 func (index *Index) recordClaim(ctx context.Context, key string, candidate exchangeCandidate, expires time.Time) error {
@@ -418,7 +430,7 @@ func (index *Index) ExchangeCounts(ctx context.Context, key string, now, fallbac
 // sharing daemon activates key: pending local documents, shared documents
 // never looked up, claimed documents, and shared documents due for fallback.
 func (index *Index) sharedActivationBlockers(
-	ctx context.Context, queryer generationQueryer, key string, now, fallbackCutoff time.Time,
+	ctx context.Context, queryer generationQueryer, key string, now time.Time,
 ) (int64, error) {
 	var ordinal int64
 	if err := queryer.QueryRowContext(ctx,
@@ -429,8 +441,8 @@ func (index *Index) sharedActivationBlockers(
 	err := queryer.QueryRowContext(ctx, `SELECT count(*)`+sharedPendingFrom+`
 		 WHERE `+notCoveredSQL+`
 		   AND (m.share_state = 0 OR x.doc_key IS NULL OR x.attempts = 0
-		        OR x.claim_expires_at > ? OR x.first_pending_at <= ?)`,
-		ordinal, key, now.Unix(), fallbackCutoff.Unix()).Scan(&blockers)
+		        OR x.claim_expires_at > ?)`,
+		ordinal, key, now.Unix()).Scan(&blockers)
 	if err != nil {
 		return 0, fmt.Errorf("count shared activation blockers: %w", err)
 	}
@@ -440,13 +452,13 @@ func (index *Index) sharedActivationBlockers(
 // ActivateSharedGeneration activates key once every document that this
 // daemon must handle itself is covered and every shared document has had at
 // least one exchange attempt. Pending shared documents keep search partial.
-func (index *Index) ActivateSharedGeneration(ctx context.Context, key string, now, fallbackCutoff time.Time) error {
+func (index *Index) ActivateSharedGeneration(ctx context.Context, key string, now, _ time.Time) error {
 	tx, err := index.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin search vector cutover: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	blockers, err := index.sharedActivationBlockers(ctx, tx, key, now, fallbackCutoff)
+	blockers, err := index.sharedActivationBlockers(ctx, tx, key, now)
 	if err != nil {
 		return err
 	}

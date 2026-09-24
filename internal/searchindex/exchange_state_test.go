@@ -307,6 +307,33 @@ func TestSharedActivationWaitsForLocalDocumentsAndFirstAttempts(t *testing.T) {
 	assert.Equal(t, int64(1), counts.Backlog, "the shared document is still pending: search reports partial")
 }
 
+func TestSharedActivationAllowsUnreachableFallbackAfterLocalHandling(t *testing.T) {
+	ctx := context.Background()
+	index := openGenerationTestIndex(t)
+	shared := sharedTestDocument(1, "fallback handled while the exchange is down", storage.SearchSharePeer)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{shared}, nil)
+	require.NoError(t, err)
+	key, err := index.EnsureGeneration(ctx, vector.Generation{Model: "model", Dimensions: 2})
+	require.NoError(t, err)
+	now := time.Unix(1_800_000_000, 0)
+	cutoff := now.Add(-defaultLocalFallbackAfter)
+	require.NoError(t, index.observeSharedPending(ctx, key, cutoff))
+
+	require.ErrorContains(t, index.ActivateSharedGeneration(ctx, key, now, cutoff), "1 documents remain",
+		"a shared document with no exchange attempt blocks cutover before fallback")
+	require.NoError(t, index.markFallbackHandled(ctx, key, cutoff))
+	require.NoError(t, index.ActivateSharedGeneration(ctx, key, now, cutoff),
+		"local fallback handling permits activation even while the exchange remains unreachable")
+
+	active, ok, err := index.ActiveGeneration(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, key, active.Key)
+	counts, err := index.GenerationCounts(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), counts.Backlog, "unavailable shared vectors leave search partial")
+}
+
 func TestSharedClaimLifecycleBookkeeping(t *testing.T) {
 	ctx := context.Background()
 	index := openGenerationTestIndex(t)

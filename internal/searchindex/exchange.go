@@ -133,6 +133,17 @@ func (r *Reconciler) fillSharedGeneration(ctx context.Context, exchange VectorEx
 			nil,
 		)
 		cancel()
+		if fillErr == nil {
+			remainingAfterFill, err := r.index.localFillBacklog(ctx, key, now, cutoff, allowClaimed)
+			if err != nil {
+				return false, err
+			}
+			if remainingAfterFill == 0 {
+				if err := r.index.markFallbackHandled(ctx, key, cutoff); err != nil {
+					return false, err
+				}
+			}
+		}
 	}
 
 	if status == SourceOK {
@@ -191,7 +202,7 @@ func (r *Reconciler) activeFingerprint(ctx context.Context) (string, error) {
 }
 
 func (r *Reconciler) tryActivateShared(ctx context.Context, key string, now, cutoff time.Time) (bool, error) {
-	blockers, err := r.index.sharedActivationBlockers(ctx, r.index.db, key, now, cutoff)
+	blockers, err := r.index.sharedActivationBlockers(ctx, r.index.db, key, now)
 	if err != nil || blockers != 0 {
 		return false, err
 	}

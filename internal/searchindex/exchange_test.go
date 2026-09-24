@@ -448,6 +448,27 @@ func TestSharedReconcilerUnreachableHoldsSharedDocumentsUntilFallback(t *testing
 	runUntilIdle(t, r)
 	assert.Len(t, documentTexts(embedder), 3, "the 24h fallback embeds held documents locally")
 	assert.Equal(t, model.Fingerprint(), r.Health().ActiveGeneration)
+	assert.Equal(t, SourceUnreachable, r.Health().SourceStatus,
+		"the generation activates before the shared PostgreSQL exchange recovers")
+	for _, source := range []storage.SearchReviewSource{sources[0], sources[2]} {
+		_, _, attempts := exchangeRow(t, r.index, searchdoc.Render(source).DocKey)
+		assert.Equal(t, 1, attempts, "local fallback handling counts as an attempt")
+	}
+	docs := make([]searchdoc.Document, len(sources))
+	for i, source := range sources {
+		docs[i] = searchdoc.Render(source)
+	}
+	partialHealth := r.Health()
+	partialHealth.MirrorComplete = false
+	service := NewService(newServiceStore(docs...), r.index,
+		&serviceEmbedder{model: model, query: vector.Vector{1, 0}}, &serviceRuntime{health: partialHealth})
+	result, err := service.Search(context.Background(), SearchParams{
+		Query: "semantic while exchange is unavailable", Mode: ModeSemantic, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, VectorActive, result.Coverage.VectorState)
+	assert.True(t, result.Partial, "semantic search remains available with partial mirror coverage")
+	assert.NotEmpty(t, result.Hits)
 
 	exchange.setTargetErr(nil)
 	runUntilIdle(t, r)
