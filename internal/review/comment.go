@@ -32,13 +32,12 @@ type commentFinding struct {
 	problem  string
 	fix      string
 	location string
-	sources  []string
 	markdown string
 }
 
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
-func PrepareComment(cfg CommentConfig, r ReviewResult, sourceLabels []string) PreparedComment {
+func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity))}
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
@@ -52,23 +51,11 @@ func PrepareComment(cfg CommentConfig, r ReviewResult, sourceLabels []string) Pr
 	}
 	var findings []commentFinding
 	if doc != nil {
-		if sourceLabels == nil {
-			sourceLabels = doc.SourceLabels
-		}
 		comment.structured = true
 		for _, finding := range doc.Findings {
-			var sources []string
-			for _, n := range finding.Sources {
-				if n > 0 && n <= len(sourceLabels) {
-					label := sourceLabels[n-1]
-					if label != "" && !slices.Contains(sources, label) {
-						sources = append(sources, label)
-					}
-				}
-			}
 			findings = append(findings, commentFinding{
 				severity: finding.Severity, problem: finding.Problem,
-				fix: finding.Fix, location: finding.Location, sources: sources,
+				fix: finding.Fix, location: finding.Location,
 			})
 		}
 	} else {
@@ -137,13 +124,15 @@ func FormatComment(comment PreparedComment) string {
 				fmt.Fprintf(&out, "\n\n### %s\n", strings.ToUpper(severity[:1])+severity[1:])
 				heading = true
 			}
+			// Reviewer attribution belongs in the comment footer, not on
+			// each finding.
 			out.WriteString("\n- ")
 			if finding.location != "" {
-				fmt.Fprintf(&out, "%s: ", finding.location)
+				fmt.Fprintf(&out, "`%s`: ", finding.location)
 			}
-			fmt.Fprintf(&out, "%s %s", finding.problem, finding.fix)
-			if len(finding.sources) > 0 {
-				fmt.Fprintf(&out, "\n\n  *Reported by: %s*", strings.Join(finding.sources, ", "))
+			out.WriteString(finding.problem)
+			if finding.fix != "" {
+				fmt.Fprintf(&out, "\n\n  **Fix:** %s", finding.fix)
 			}
 			out.WriteString("\n")
 		}

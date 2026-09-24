@@ -39,8 +39,9 @@ func TestPanelPRCommentFiltersStructuredFindingsWithoutChangingReview(t *testing
 	}
 	comment := formatPanelPRCommentWithHead(reviewpkg.CommentConfig{MinSeverity: "medium"}, rev, "F", members, false, "abc1234")
 	assert := assert.New(t)
-	assert.Contains(comment, "### High\n\n- worker.go:10: State is lost. Persist it.")
-	assert.Contains(comment, "Reported by: codex")
+	assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
+	assert.NotContains(comment, "Reported by")
+	assert.Contains(comment, "Reviewers: codex; 1 failed")
 	assert.NotContains(comment, "Minor naming issue.")
 	assert.Equal("Original complete review.", rev.Output)
 	stored, err := json.Marshal(rev.StructuredOutput)
@@ -699,7 +700,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
 		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
-		assert.Contains(t, body, "Reviewers: 2 done")
+		assert.Contains(t, body, "Reviewers: codex, codex (security)")
 		assert.Contains(t, body, "Synthesis: test")
 		assert.NotContains(t, body, "Total: unknown")
 		assert.NotContains(t, body, "Panel:")
@@ -728,7 +729,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
 		assert.Contains(t, body, "No issues found.")
 		assert.NotContains(t, body, "Synthesized from", "persisted synthesis output is body-only")
-		assert.Contains(t, body, "Reviewers: 2 done")
+		assert.Contains(t, body, "Reviewers: codex, codex (security)")
 		assert.NotContains(t, body, "Panel:")
 		assert.NotContains(t, body, "Members:")
 		assert.Equal(t, 1, strings.Count(body, "\n\n---\n*"), "only the panel footer should remain")
@@ -756,7 +757,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
 		assert.Contains(t, body, "No issues found.")
-		assert.Contains(t, body, "Reviewers: 2 done")
+		assert.Contains(t, body, "Reviewers: codex, codex (security)")
 		assert.NotContains(t, body, "ci_default_security")
 		assert.NotContains(t, body, "codex_security")
 		assert.NotContains(t, body, "codex/security")
@@ -802,7 +803,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
-		assert.Contains(t, body, "Reviewers: 2 done")
+		assert.Contains(t, body, "Reviewers: codex, codex (security)")
 		assert.Contains(t, body, "Synthesis: test, 18s")
 		assert.Contains(t, body, "Total: 6m58s")
 		assert.NotContains(t, body, "~$")
@@ -831,7 +832,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
-		assert.Contains(t, body, "Reviewers: 2 done")
+		assert.Contains(t, body, "Reviewers: codex, codex (security)")
 		assert.Contains(t, body, "Synthesis: test, 18s, ~$0.03")
 		assert.Contains(t, body, "Total: 6m58s, ~$0.20")
 		assert.NotContains(t, body, "codex/default")
@@ -855,7 +856,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
-		assert.Contains(t, body, "Reviewers: 2 total (1 done, 1 canceled)")
+		assert.Contains(t, body, "Reviewers: codex; 1 canceled")
 		assert.Contains(t, body, "Total: 5m46s, cost partial ~$0.11")
 		assert.NotContains(t, body, "codex/default")
 		assert.NotContains(t, body, "gemini/security")
@@ -876,7 +877,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
-		assert.Contains(t, body, "Reviewers: 3 total (1 done, 1 failed, 1 canceled)")
+		assert.Contains(t, body, "Reviewers: codex; 1 failed, 1 canceled")
 		assert.NotContains(t, body, "codex/default")
 		assert.NotContains(t, body, "claude/security")
 		assert.NotContains(t, body, "gemini/design")
@@ -898,7 +899,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
-		assert.Contains(t, body, "Reviewers: 4 total (1 done, 3 skipped)")
+		assert.Contains(t, body, "Reviewers: codex; 3 skipped")
 		assert.NotContains(t, body, "1 failed")
 		assert.NotContains(t, body, "1 canceled")
 		assert.NotContains(t, body, "gemini/security")

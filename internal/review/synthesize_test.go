@@ -507,7 +507,7 @@ func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
 	})
 	comment := synthesis.GitHubComment
 	require.NoError(t, err)
-	assertContains(t, comment, "file.go:1: combined fix")
+	assertContains(t, comment, "`file.go:1`: combined\n\n  **Fix:** fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 	assertContains(t, synth.synthPrompt, "Found issue A")
 	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
@@ -617,10 +617,9 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
-			assert.Contains(comment, "### High\n\n- worker.go:10")
-			assert.Contains(comment, "### Medium\n\n- worker.go:20")
-			assert.Contains(comment, "Missing cleanup. Close the resource.")
-			assert.Contains(comment, "- Errors are ignored. Return the error.")
+			assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
+			assert.Contains(comment, "### Medium\n\n- `worker.go:20`: Missing cleanup.\n\n  **Fix:** Close the resource.")
+			assert.Contains(comment, "- Errors are ignored.\n\n  **Fix:** Return the error.")
 			assert.NotContains(comment, "Minor naming issue.")
 			assert.Contains(synthesis.Output, "Minor naming issue.", "complete output retains low findings in every path")
 			assert.NotContains(comment, "Agent assessment")
@@ -658,7 +657,7 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 	})
 	comment := synthesis.GitHubComment
 	require.NoError(t, err)
-	assertContains(t, comment, "file.go:1: combined fix")
+	assertContains(t, comment, "`file.go:1`: combined\n\n  **Fix:** fix")
 	assert.True(t, synth.reviewCalled, "synthesis uses the ordinary review entrypoint")
 }
 
@@ -705,7 +704,7 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "custom-acp", seenAgent, "resolver agent")
 	require.Same(t, cfg, seenCfg, "resolver cfg pointer mismatch")
-	assertContains(t, comment, "file.go:1: combined fix")
+	assertContains(t, comment, "`file.go:1`: combined\n\n  **Fix:** fix")
 }
 
 func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
