@@ -120,16 +120,21 @@ the loopback API uses. `routeKey` and the allowlist pattern follow
 
 ### Repo identity
 
-Remote clients name repos by identity (the `.roborev-id` value, or the origin
-URL with credentials stripped), never by path.
+Remote clients name their own checkouts by identity (the `.roborev-id` value,
+or the origin URL with credentials stripped), never by a client-local path.
 
 - `EnqueueRequest` gains `repo_identity`. On the remote listener it is required
   and `repo_path` is rejected. The remote handler resolves the identity and
   sets `repo_path` to the matching repo's `RootPath` before calling the normal
   enqueue handler.
 - The existing `repo` query filters on jobs, branches, summary, cost, search,
-  and stream/events carry identities on the remote listener. The remote handler
-  rewrites each value to the matching `RootPath` before the core handler runs.
+  and stream/events accept two kinds of value on the remote listener:
+  - The exact `root_path` of a registered repo, as `/api/repos` returned it.
+    That path came from the daemon, so it passes through unchanged.
+  - A repo identity. The remote handler rewrites it to the matching `RootPath`
+    before the core handler runs.
+
+  A value that is neither returns the unknown-identity `404` below.
   Path-prefix filters (`repo_prefix` on jobs, `prefix` on repos) are rejected
   remotely.
 - Resolution matches registered repos with a real checkout: sync placeholder
@@ -225,15 +230,15 @@ mode. `--server` overrides `[remote] server`.
   endpoint lookup must not go through the remote-aware resolver.
 - Requests that took a client-local checkout path send that checkout's
   identity instead, computed with `config.ResolveRepoIdentity`.
-- Repo selections that come from the daemon use the `identity` field returned
-  by `/api/repos` as the filter value, never `root_path`, which exists only on
-  the daemon host. Filtering therefore works for repos the client has never
-  cloned.
-  - The TUI filters by the selected repo's `identity`.
-  - MCP tools keep their `repo_path` argument (the `root_path` from
-    `roborev_list_repos`). In remote mode, the stdio MCP backend maps that
-    `root_path` to its `identity` using the `/api/repos` list before calling
-    the remote API.
+- Repo selections that come from the daemon send the `root_path` that
+  `/api/repos` returned, unchanged. The client never resolves that path on
+  its own filesystem, so filtering works for repos the client has never
+  cloned. The TUI repo picker and the MCP `repo_path` arguments (taken from
+  `roborev_list_repos`) need no mapping.
+- The TUI's automatic repo filter for the current directory uses that
+  checkout's identity in remote mode, not its local path.
+- In remote mode the TUI never falls back to local runtime-file discovery
+  when it reconnects. It keeps the remote endpoint.
 - The client resolves every ref to a full SHA locally before a remote enqueue.
 - Commands that need a local daemon fail before sending anything. The message
   names the command and says it needs a local daemon. These include dirty
@@ -293,8 +298,9 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
   detached-HEAD enqueue whose commit matches no daemon branch is accepted with
   an empty branch.
 - Root range: a remote `<root>^..<sha>` review succeeds.
-- TUI and MCP in remote mode: selecting a repo absent from the client
-  filesystem filters jobs and branches by its identity.
+- Remote `repo` filters: a registered `root_path` passes through, an identity
+  is rewritten, and an unknown value returns `404`. In remote mode, the TUI's
+  current-directory filter sends the identity.
 - Missing commits: present, fetched, and still missing (`409` with SHAs).
 - Pack upload: a real pack from a test repo imports and pins; a pack without
   base commits returns `409`; upload refs are pruned once reachable from a
