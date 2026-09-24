@@ -35,6 +35,7 @@ const searchFeedSelect = `
 	       CASE
 	         WHEN COALESCE(CAST(rv.uuid AS TEXT), '') = '' OR COALESCE(CAST(j.uuid AS TEXT), '') = '' THEN 0
 	         WHEN j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	              AND COALESCE(r.identity, '') != ''
 	              AND (rv.synced_at IS NOT NULL OR rv.structured_output IS NOT NULL) THEN 1
 	         WHEN rv.synced_at IS NOT NULL THEN 2
 	         ELSE 0

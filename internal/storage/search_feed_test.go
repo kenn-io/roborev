@@ -271,6 +271,27 @@ func TestSearchFeedClassifiesShareState(t *testing.T) {
 	assert.Equal(t, SearchSharePeer, single.ShareState)
 }
 
+func TestSearchFeedKeepsReviewsWithoutRepoIdentityLocal(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	repoID, commitID := seedSearchFeedBase(t, db)
+	_, err = db.Exec(`UPDATE repos SET identity = '' WHERE id = ?`, repoID)
+	require.NoError(t, err)
+	reviewID := seedSearchFeedReview(t, db, repoID, commitID, 8, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, structured: `{"verdict":"pass"}`,
+	})
+	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = ?
+		WHERE id = (SELECT job_id FROM reviews WHERE id = ?)`, machineID.String(), reviewID)
+	require.NoError(t, err)
+
+	sources, err := db.ListSearchDocuments(context.Background(), 0, 10)
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Equal(t, SearchShareLocal, sources[0].ShareState)
+}
+
 func seedSearchFeedBase(t *testing.T, db *DB) (int64, int64) {
 	t.Helper()
 	repoResult, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/synthetic/widgets', 'widgets', 'https://example.invalid/widgets.git')`)
