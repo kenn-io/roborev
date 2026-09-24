@@ -14,7 +14,8 @@ All notable changes to roborev, grouped by minor release.
     through PostgreSQL. A review is embedded by one daemon and imported by the
     others, so each machine no longer sends every synced review to its provider.
     There is no setting; daemons without sync or without embeddings behave as
-    before. See
+    before. Superseded text hashes remain available for 30 days so lagging peers
+    can still import them. See
     [Shared vectors across synced machines](/docs/search/#shared-vectors-across-synced-machines).
 - The embedding generation fingerprint now includes chunk size and overlap.
     Upgrading re-embeds (or imports) every review once, and the search sidecar

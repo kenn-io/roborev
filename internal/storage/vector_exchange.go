@@ -222,7 +222,8 @@ func (e *VectorExchange) Claim(ctx context.Context, fingerprint string, key Vect
 	return holder == e.machineID, nil
 }
 
-// Publish upserts records under fingerprint.
+// Publish upserts records under fingerprint and marks different text hashes
+// for the same review as superseded.
 func (e *VectorExchange) Publish(ctx context.Context, fingerprint string, records []VectorRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -231,7 +232,11 @@ func (e *VectorExchange) Publish(ctx context.Context, fingerprint string, record
 	if err != nil {
 		return err
 	}
-	batch := &pgx.Batch{}
+	tx, err := pool.pool.Begin(ctx)
+	if err != nil {
+		return vectorExchangeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, record := range records {
 		indexes := make([]int32, len(record.Chunks))
 		chunks := make([][]byte, len(record.Chunks))
@@ -239,29 +244,33 @@ func (e *VectorExchange) Publish(ctx context.Context, fingerprint string, record
 			indexes[i] = int32(chunk.Index)
 			chunks[i] = EncodeVectorChunk(chunk.Vector)
 		}
-		batch.Queue(`
+		_, err = tx.Exec(ctx, `
+			UPDATE review_embeddings SET superseded_at = NOW()
+			 WHERE review_uuid = $1 AND generation_fingerprint = $2 AND content_sha256 <> $3`,
+			record.Key.ReviewUUID, fingerprint, record.Key.ContentSHA256)
+		if err != nil {
+			return vectorExchangeError(err)
+		}
+		_, err = tx.Exec(ctx, `
 			INSERT INTO review_embeddings
 				(review_uuid, generation_fingerprint, content_sha256, status, dims,
-				 chunk_indexes, chunks, publisher_machine_id, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+				 chunk_indexes, chunks, publisher_machine_id, updated_at, superseded_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NULL)
 			ON CONFLICT (review_uuid, generation_fingerprint, content_sha256) DO UPDATE SET
 				status = EXCLUDED.status,
 				dims = EXCLUDED.dims,
 				chunk_indexes = EXCLUDED.chunk_indexes,
 				chunks = EXCLUDED.chunks,
 				publisher_machine_id = EXCLUDED.publisher_machine_id,
-				updated_at = NOW()`,
+				updated_at = NOW(),
+				superseded_at = NULL`,
 			record.Key.ReviewUUID, fingerprint, record.Key.ContentSHA256, record.Status, record.Dims,
 			indexes, chunks, e.machineID)
-	}
-	results := pool.pool.SendBatch(ctx, batch)
-	for range records {
-		if _, err := results.Exec(); err != nil {
-			_ = results.Close()
+		if err != nil {
 			return vectorExchangeError(err)
 		}
 	}
-	return vectorExchangeError(results.Close())
+	return vectorExchangeError(tx.Commit(ctx))
 }
 
 // Release deletes this machine's claims on keys.
@@ -297,7 +306,8 @@ func (e *VectorExchange) Discard(ctx context.Context, fingerprint string, key Ve
 }
 
 // CollectGarbage removes generations no daemon has touched for unusedFor,
-// with their records and claims, plus claims expired for more than a day.
+// their records and claims, superseded text hashes older than unusedFor, and
+// claims expired for more than a day.
 // It returns the number of generations removed.
 func (e *VectorExchange) CollectGarbage(ctx context.Context, unusedFor time.Duration) (int64, error) {
 	pool, err := e.current()
@@ -313,6 +323,7 @@ func (e *VectorExchange) CollectGarbage(ctx context.Context, unusedFor time.Dura
 		), dropped_records AS (
 			DELETE FROM review_embeddings
 			 WHERE generation_fingerprint IN (SELECT fingerprint FROM stale)
+			    OR superseded_at < NOW() - make_interval(secs => $1)
 			RETURNING 1
 		), dropped_claims AS (
 			DELETE FROM review_embedding_claims

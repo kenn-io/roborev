@@ -229,6 +229,10 @@ database:
 - Reviews that never reach PostgreSQL (legacy reviews without a UUID, and
     reviews the sync push rules do not send) are embedded locally as before and
     are never published.
+- When a review's exact text changes, older hashes stay available for 30 days
+    after they are superseded so lagging peers can still import them. Periodic
+    exchange cleanup then removes them; a peer returning later may need to embed
+    that older text again.
 - Only daemons with identical `base_url`, `model`, `dims`, `input_type_mode`,
     and `fingerprint_salt` share vectors. A daemon with different settings uses
     its own generation and embeds for itself.
@@ -266,8 +270,8 @@ generations. The sidecar file itself is never synchronized and is never the
 source of truth for review content or liveness. Syncing daemons exchange raw
 chunk vectors through three PostgreSQL tables (`embedding_generations`,
 `review_embeddings`, `review_embedding_claims`) and build their own local index
-from them. Generations no daemon has used for 30 days are removed from
-PostgreSQL.
+from them. Superseded review text hashes are retained for 30 days, and
+generations no daemon has used for 30 days are removed from PostgreSQL.
 
 On a schema mismatch or structural corruption, the daemon removes and rebuilds
 the search sidecar and its SQLite journal files. The canonical `reviews.db` is
