@@ -832,7 +832,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
 	_, err := p.pool.Exec(ctx, pgUpsertReviewSQL,
-		r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
+		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(r.StructuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt, noReview)
 	return err
@@ -1398,7 +1398,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	for _, r := range reviews {
 		verdictBool, noReview := syncedReviewVerdict(r)
 		batch.Queue(pgUpsertReviewSQL,
-			r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
+			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(r.StructuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 			r.UpdatedByMachineID, r.CreatedAt, noReview)
 	}
