@@ -22,6 +22,45 @@ All notable changes to roborev, grouped by minor release.
     would have left the filters off. To keep the old unfiltered view, set
     `filter_repo = false` and `filter_branch = false` under `[tui]`.
 
+## 0.69.0
+
+<small>2026-09-24</small>
+
+**New features**
+
+- `roborev list` shows each review's verdict in a `Verdict` column: `P` for
+    pass, `F` for fail, and `-` when no verdict is recorded. See
+    [Viewing Reviews](/docs/commands/#viewing-reviews).
+- The browser reviews table has a Closed column that shows whether each review
+    is open or closed, with `--` when no closed state is available. See
+    [Reviews Workspace](/docs/web-ui/#reviews-workspace).
+
+**Bug fixes**
+
+- The review, design-review, lookahead-review, and refine skills accept valid
+    Git refs instead of stopping with `fatal: Needed a single revision`. The fix
+    covers the branch variants and the Claude, Codex, Droid, and Grok skills.
+- Claude Code reviews and design classification work through
+    Anthropic-compatible proxies configured with `model@base_url` that omit
+    optional tool-call metadata.
+- Grok reviews no longer fail on machines where Grok's default sandbox cannot
+    start, such as with OrbStack. roborev retries once with Grok's `workspace`
+    sandbox, and `[agent.grok] sandbox` lets you choose the profile. See
+    [Grok sandbox profile](/docs/agents/#sandbox-profile).
+- The daemon keeps processing jobs after an interrupted SQLite transaction
+    instead of stalling until restart. This also prevents related
+    `roborev status` hangs and post-commit enqueue timeouts.
+
+Thanks to [Rod Boev](https://github.com/rodboev) for list verdicts in
+[#1228](https://github.com/kenn-io/roborev/pull/1228) and the browser Closed
+column in [#1227](https://github.com/kenn-io/roborev/pull/1227), and to
+[Shun Kakinoki](https://github.com/shunkakinoki) for the SQLite transaction fix
+in [#1237](https://github.com/kenn-io/roborev/pull/1237). Thanks to
+[Marius van Niekerk](https://github.com/mariusvniekerk) for the Grok sandbox fix
+in [#1231](https://github.com/kenn-io/roborev/pull/1231), the proxy
+compatibility fix in [#1239](https://github.com/kenn-io/roborev/pull/1239), and
+the skill ref fix in [#1240](https://github.com/kenn-io/roborev/pull/1240).
+
 ## 0.68.2
 
 <small>2026-09-22</small>

@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   go-changes:
-    runs-on: ${{ github.repository == 'kenn-io/roborev' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-4cpu
     permissions:
       contents: read
       pull-requests: read
@@ -47,7 +47,7 @@ jobs:
   windows-migration-202608:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
-    runs-on: windows-latest
+    runs-on: namespace-profile-windows-4cpu
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -55,7 +55,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
-          cache: 'true'
+          cache: false
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547  # v1
+        with:
+          cache: go
 
       - name: Download v0.56 Windows release binary
         id: old

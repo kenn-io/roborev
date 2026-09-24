@@ -932,13 +932,31 @@ func TestClaudeClassify_ParseResult_OldResultEvent(t *testing.T) {
 }
 
 func TestClaudeClassify_ParseResult_StructuredOutputToolUse(t *testing.T) {
-	stream := `{"type":"system","subtype":"init","tools":["StructuredOutput"]}
-{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":{"design_review":true,"reason":"new public endpoint"},"caller":{"type":"direct"}}]}}
+	tests := []struct {
+		name   string
+		caller string
+	}{
+		{name: "direct caller", caller: `,"caller":{"type":"direct"}`},
+		// Anthropic-compatible proxies omit the optional caller field.
+		{name: "caller omitted by proxy", caller: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := `{"type":"system","subtype":"init","tools":["StructuredOutput"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":{"design_review":true,"reason":"new public endpoint"}` + tt.caller + `}]}}
 {"type":"result","subtype":"success","stop_reason":"tool_use"}
 `
-	out, err := parseClaudeClassifyStream(strings.NewReader(stream))
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"design_review":true,"reason":"new public endpoint"}`, string(out))
+			out, err := parseClaudeClassifyStream(strings.NewReader(stream))
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"design_review":true,"reason":"new public endpoint"}`, string(out))
+		})
+	}
+}
+
+func TestClaudeClassify_ParseResult_NonDirectCallerFails(t *testing.T) {
+	stream := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":{"design_review":true,"reason":"x"},"caller":{"type":"code_execution_20250825"}}]}}` + "\n"
+	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	assert.ErrorContains(t, err, `non-direct caller "code_execution_20250825"`)
 }
 
 func TestClaudeClassify_ParseResult_AssistantProseFails(t *testing.T) {

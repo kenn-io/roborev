@@ -71,7 +71,7 @@ If a commit is specified:
 read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
-git rev-parse --verify -- "$commit^{commit}" || exit 1
+git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
@@ -95,7 +95,7 @@ If a commit is specified:
 read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
-git rev-parse --verify -- "$commit^{commit}" || exit 1
+git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 

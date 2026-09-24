@@ -85,7 +85,7 @@ Choose the review command that matches the requested scope:
 read -r since <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
-resolved_since=$(git rev-parse --verify -- "$since^{commit}") || exit 1
+resolved_since=$(git rev-parse --verify --end-of-options "$since^{commit}") || exit 1
 git merge-base --is-ancestor "$resolved_since" HEAD || exit 1
 roborev review --since "$since" --wait
 ```
@@ -201,7 +201,7 @@ Now run the explicit full-scope review. If refining with `--since`:
 read -r since <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
-resolved_since=$(git rev-parse --verify -- "$since^{commit}") || exit 1
+resolved_since=$(git rev-parse --verify --end-of-options "$since^{commit}") || exit 1
 git merge-base --is-ancestor "$resolved_since" HEAD || exit 1
 roborev review --since "$since" --wait
 ```

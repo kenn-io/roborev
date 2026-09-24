@@ -1,0 +1,5 @@
+self-hosted-runner:
+  labels:
+    - namespace-profile-linux-4cpu
+    - namespace-profile-linux-8cpu
+    - namespace-profile-windows-4cpu

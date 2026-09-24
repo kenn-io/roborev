@@ -71,7 +71,7 @@ If a base branch is specified, run:
 read -r branch <<'ROBOREV_REF'
 <branch>
 ROBOREV_REF
-git rev-parse --verify -- "$branch" || exit 1
+git rev-parse --verify --end-of-options "$branch" || exit 1
 roborev review --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
 ```
 
