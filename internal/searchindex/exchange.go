@@ -111,7 +111,8 @@ func (r *Reconciler) fillSharedGeneration(ctx context.Context, exchange VectorEx
 	}
 
 	var fillErr error
-	fillable, err := r.index.localFillBacklog(ctx, key, now, cutoff)
+	allowClaimed := status == SourceOK
+	fillable, err := r.index.localFillBacklog(ctx, key, now, cutoff, allowClaimed)
 	if err != nil {
 		return false, err
 	}
@@ -120,7 +121,7 @@ func (r *Reconciler) fillSharedGeneration(ctx context.Context, exchange VectorEx
 		_, fillErr = r.index.Fill(
 			fillCtx,
 			&turnLimitedStore{
-				Store:     &localFillStore{Store: r.index.vectors, index: r.index, now: now, cutoff: cutoff},
+				Store:     &localFillStore{Store: r.index.vectors, index: r.index, now: now, cutoff: cutoff, allowClaimed: allowClaimed},
 				remaining: r.config.MaxFillBatches,
 			},
 			key,
@@ -164,7 +165,7 @@ func (r *Reconciler) fillSharedGeneration(ctx context.Context, exchange VectorEx
 		return false, err
 	}
 
-	remaining, err := r.index.localFillBacklog(ctx, key, now, cutoff)
+	remaining, err := r.index.localFillBacklog(ctx, key, now, cutoff, status == SourceOK)
 	if err != nil {
 		return false, err
 	}
@@ -443,9 +444,10 @@ func (r *Reconciler) idleDelay() time.Duration {
 // localFillStore narrows kit Fill to documents this daemon may embed itself.
 type localFillStore struct {
 	vector.Store[string, string]
-	index  *Index
-	now    time.Time
-	cutoff time.Time
+	index        *Index
+	now          time.Time
+	cutoff       time.Time
+	allowClaimed bool
 }
 
 func (s *localFillStore) PendingForGeneration(ctx context.Context, key string, limit int) ([]vector.Pending[string], error) {
@@ -458,7 +460,7 @@ func (s *localFillStore) PendingForGeneration(ctx context.Context, key string, l
 		 WHERE `+notCoveredSQL+` AND `+localFillSQL+`
 		 ORDER BY CASE WHEN COALESCE(x.claim_expires_at, 0) > ? THEN 0 ELSE 1 END, m.doc_key
 		 LIMIT ?`,
-		ordinal, key, s.now.Unix(), s.cutoff.Unix(), s.now.Unix(), limit)
+		ordinal, key, s.cutoff.Unix(), s.allowClaimed, s.now.Unix(), s.now.Unix(), limit)
 	if err != nil {
 		return nil, err
 	}

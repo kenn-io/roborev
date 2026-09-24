@@ -59,12 +59,12 @@ const sharedPendingFrom = `
     ON x.doc_key = m.doc_key AND x.gen_key = ? AND x.content_hash = m.content_hash`
 
 // localFillSQL selects pending documents this daemon may embed with its own
-// provider while the exchange is in use: local-only documents, documents whose
-// claim it holds, and shared documents past the local fallback deadline.
-// Parameters: now, fallback cutoff.
+// provider: local-only documents, shared documents past fallback, and claimed
+// documents only while the exchange is reachable.
+// Parameters: fallback cutoff, allow claims, now.
 const localFillSQL = `(m.share_state = 0
-    OR COALESCE(x.claim_expires_at, 0) > ?
-    OR COALESCE(x.first_pending_at, 9223372036854775807) <= ?)`
+    OR COALESCE(x.first_pending_at, 9223372036854775807) <= ?
+    OR (? AND COALESCE(x.claim_expires_at, 0) > ?))`
 
 type exchangeCandidate struct {
 	DocKey         string
@@ -340,7 +340,7 @@ func (index *Index) clearClaim(ctx context.Context, key, doc, contentHash string
 }
 
 // localFillBacklog counts pending documents the daemon may embed itself now.
-func (index *Index) localFillBacklog(ctx context.Context, key string, now, fallbackCutoff time.Time) (int64, error) {
+func (index *Index) localFillBacklog(ctx context.Context, key string, now, fallbackCutoff time.Time, allowClaimed bool) (int64, error) {
 	ordinal, err := index.generationOrdinal(ctx, key)
 	if err != nil {
 		return 0, err
@@ -348,7 +348,7 @@ func (index *Index) localFillBacklog(ctx context.Context, key string, now, fallb
 	var count int64
 	err = index.db.QueryRowContext(ctx, `SELECT count(*)`+sharedPendingFrom+`
 		 WHERE `+notCoveredSQL+` AND `+localFillSQL,
-		ordinal, key, now.Unix(), fallbackCutoff.Unix()).Scan(&count)
+		ordinal, key, fallbackCutoff.Unix(), allowClaimed, now.Unix()).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count locally embeddable search documents: %w", err)
 	}

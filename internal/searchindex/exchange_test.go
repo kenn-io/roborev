@@ -139,6 +139,20 @@ func (e *fakeExchange) Claim(_ context.Context, fingerprint string, key storage.
 	return true, nil
 }
 
+type dropAfterClaimExchange struct {
+	*fakeExchange
+	claimCalls int
+}
+
+func (e *dropAfterClaimExchange) Claim(ctx context.Context, fingerprint string, key storage.VectorKey, ttl time.Duration) (bool, error) {
+	e.claimCalls++
+	if e.claimCalls == 2 {
+		e.setTargetErr(storage.ErrVectorExchangeUnreachable)
+		return false, storage.ErrVectorExchangeUnreachable
+	}
+	return e.fakeExchange.Claim(ctx, fingerprint, key, ttl)
+}
+
 func (e *fakeExchange) Publish(_ context.Context, fingerprint string, records []storage.VectorRecord) error {
 	e.mu.Lock()
 	e.publishes += len(records)
@@ -569,6 +583,58 @@ func TestSharedReconcilerExchangeFailureMidTurnHoldsSharedDocuments(t *testing.T
 		"a failed lookup never turns into a provider call for a shared document")
 	assert.Equal(t, SourceUnreachable, r.Health().SourceStatus)
 	assert.Empty(t, r.Health().LastError, "exchange trouble is not a reconciler error")
+}
+
+func TestSharedReconcilerExchangeFailureAfterClaimHoldsSharedDocuments(t *testing.T) {
+	clock := newTestClock()
+	model := vector.Generation{Model: "model", Dimensions: 2}
+	sources := append(sharedSources(storage.SearchShareOwn, 1, 2), sharedSources(storage.SearchShareLocal, 3)...)
+	store := &reconcilerStore{sources: sources}
+	base := newFakeExchange(newFakeExchangeDB(clock.Now), "machine-a")
+	exchange := &dropAfterClaimExchange{fakeExchange: base}
+	embedder := &reconcilerEmbedder{model: model, batchSize: 8}
+	r := NewReconciler(store, openGenerationTestIndex(t), embedder, ReconcilerConfig{Now: clock.Now})
+	r.SetVectorExchange(exchange)
+
+	runUntilIdle(t, r)
+
+	assert.Equal(t, []string{searchdoc.Render(sources[2]).Content}, documentTexts(embedder))
+	assert.Equal(t, SourceUnreachable, r.Health().SourceStatus)
+	assert.Equal(t, int64(1), r.Health().ClaimsHeld)
+	assert.Equal(t, 1, exchange.db.claimCount())
+}
+
+func TestSharedReconcilerOutageDoesNotEmbedPreviouslyClaimedDocument(t *testing.T) {
+	clock := newTestClock()
+	model := vector.Generation{Model: "model", Dimensions: 2}
+	store := &reconcilerStore{sources: sharedSources(storage.SearchShareOwn, 1)}
+	exchange := newFakeExchange(newFakeExchangeDB(clock.Now), "machine-a")
+	providerUnavailable := true
+	embedder := &reconcilerEmbedder{model: model, batchSize: 8}
+	embedder.embed = func(_ context.Context, texts []string) ([][]float32, error) {
+		if providerUnavailable {
+			return nil, &embedding.APIError{StatusCode: 503}
+		}
+		out := make([][]float32, len(texts))
+		for i := range out {
+			out[i] = []float32{1, 0}
+		}
+		return out, nil
+	}
+	r := NewReconciler(store, openGenerationTestIndex(t), embedder, ReconcilerConfig{Now: clock.Now})
+	r.SetVectorExchange(exchange)
+	_, err := r.reconcileTurn(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 1, exchange.db.claimCount())
+	providerUnavailable = false
+	exchange.setTargetErr(storage.ErrVectorExchangeUnreachable)
+	before := embedder.callCount()
+
+	runUntilIdle(t, r)
+
+	assert.Equal(t, before, embedder.callCount())
+	assert.Equal(t, SourceUnreachable, r.Health().SourceStatus)
+	assert.Equal(t, int64(1), r.Health().ClaimsHeld)
 }
 
 func TestSharedReconcilerProviderFailureKeepsClaimUntilExpiry(t *testing.T) {

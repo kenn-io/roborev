@@ -303,7 +303,7 @@ func TestSharedClaimLifecycleBookkeeping(t *testing.T) {
 		DocKey: shared.DocKey, ContentHash: shared.ContentHash,
 		ShareState: storage.SearchShareOwn, FirstPendingAt: now,
 	}, due[0])
-	backlog, err := index.localFillBacklog(ctx, key, now, cutoff)
+	backlog, err := index.localFillBacklog(ctx, key, now, cutoff, true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), backlog, "only the local document may be embedded before a claim")
 
@@ -312,7 +312,7 @@ func TestSharedClaimLifecycleBookkeeping(t *testing.T) {
 	due, err = index.dueSharedCandidates(ctx, key, now, cutoff, 10)
 	require.NoError(t, err)
 	assert.Empty(t, due, "a held claim is not looked up again")
-	backlog, err = index.localFillBacklog(ctx, key, now, cutoff)
+	backlog, err = index.localFillBacklog(ctx, key, now, cutoff, true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), backlog, "the claimed document joins the local fill")
 	next, err := index.nextExchangeDue(ctx, key, defaultLocalFallbackAfter)
@@ -331,7 +331,7 @@ func TestSharedClaimLifecycleBookkeeping(t *testing.T) {
 	assert.Empty(t, finished)
 
 	later := now.Add(defaultLocalFallbackAfter)
-	backlog, err = index.localFillBacklog(ctx, key, later, later.Add(-defaultLocalFallbackAfter))
+	backlog, err = index.localFillBacklog(ctx, key, later, later.Add(-defaultLocalFallbackAfter), true)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), backlog, "at the fallback deadline only the uncovered local document remains")
 }
