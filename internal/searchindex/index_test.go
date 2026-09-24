@@ -95,6 +95,35 @@ func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 	assert.Equal(t, updated.ContentHash, pending[0].Revision)
 }
 
+func TestVersionOneSidecarIsRebuiltWithShareState(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "reviews.search.db")
+	index, err := Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, index.Close())
+
+	db, err := sql.Open(sidecarDriver, path)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		DROP TABLE review_exchange;
+		ALTER TABLE review_mirror DROP COLUMN share_state;
+		UPDATE search_meta SET value = '1' WHERE key = 'schema_version';`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	index, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	var version string
+	require.NoError(t, index.db.QueryRowContext(ctx,
+		`SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version))
+	assert.Equal(t, "2", version)
+	var tables int
+	require.NoError(t, index.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_exchange'`).Scan(&tables))
+	assert.Equal(t, 1, tables)
+}
+
 func TestRecoveryRecreatesSchemaMismatchAndCleansJournalFiles(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const sidecarSchemaVersion = "1"
+const sidecarSchemaVersion = "2"
 
 const sidecarSchema = `
 CREATE TABLE search_meta (
@@ -35,7 +35,20 @@ CREATE TABLE review_mirror (
   panel_role TEXT,
   content TEXT NOT NULL,
   content_hash TEXT NOT NULL,
-  embed_gen TEXT
+  embed_gen TEXT,
+  share_state INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE review_exchange (
+  doc_key TEXT PRIMARY KEY,
+  gen_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  first_pending_at INTEGER NOT NULL,
+  next_attempt_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL,
+  claim_expires_at INTEGER NOT NULL,
+  origin TEXT NOT NULL,
+  published_target TEXT NOT NULL
 );
 
 CREATE VIRTUAL TABLE review_fts USING fts5(
@@ -45,7 +58,7 @@ CREATE VIRTUAL TABLE review_fts USING fts5(
   tokenize = 'unicode61'
 );
 
-INSERT INTO search_meta(key, value) VALUES ('schema_version', '1');
+INSERT INTO search_meta(key, value) VALUES ('schema_version', '2');
 `
 
 type columnDefinition struct {
@@ -89,6 +102,21 @@ var expectedSchema = []tableDefinition{
 			{name: "content", columnType: "TEXT", notNull: 1},
 			{name: "content_hash", columnType: "TEXT", notNull: 1},
 			{name: "embed_gen", columnType: "TEXT"},
+			{name: "share_state", columnType: "INTEGER", notNull: 1},
+		},
+	},
+	{
+		name: "review_exchange",
+		columns: []columnDefinition{
+			{name: "doc_key", columnType: "TEXT", primaryKey: 1},
+			{name: "gen_key", columnType: "TEXT", notNull: 1},
+			{name: "content_hash", columnType: "TEXT", notNull: 1},
+			{name: "first_pending_at", columnType: "INTEGER", notNull: 1},
+			{name: "next_attempt_at", columnType: "INTEGER", notNull: 1},
+			{name: "attempts", columnType: "INTEGER", notNull: 1},
+			{name: "claim_expires_at", columnType: "INTEGER", notNull: 1},
+			{name: "origin", columnType: "TEXT", notNull: 1},
+			{name: "published_target", columnType: "TEXT", notNull: 1},
 		},
 	},
 	{
