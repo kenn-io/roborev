@@ -405,8 +405,8 @@ type Config struct {
 	// UI preferences
 	HideClosedByDefault    bool     `toml:"hide_closed_by_default" comment:"Hide closed reviews by default in the TUI queue."`
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
-	AutoFilterRepo         *bool    `toml:"auto_filter_repo" comment:"Automatically filter the TUI queue to the current repo. Omit to filter only when launched from a linked worktree."`
-	AutoFilterBranch       *bool    `toml:"auto_filter_branch" comment:"Automatically filter the TUI queue to the current branch. Omit to filter only when launched from a linked worktree."`
+	AutoFilterRepo         *bool    `toml:"auto_filter_repo" comment:"Automatically filter the TUI queue to the current repo (default: true)."`
+	AutoFilterBranch       *bool    `toml:"auto_filter_branch" comment:"Automatically filter the TUI queue to the current branch (default: true)."`
 	ShowClassifyJobs       bool     `toml:"show_classify_jobs" comment:"Show auto-design-review classifier rows (and skipped design rows) in the TUI queue. Off by default to reduce noise."`
 	MouseEnabled           bool     `toml:"mouse_enabled" comment:"Enable mouse support in the TUI."`          // Enable mouse capture and mouse-driven TUI interactions
 	TabWidth               int      `toml:"tab_width"`                                                         // Tab expansion width for TUI rendering (default: 2)

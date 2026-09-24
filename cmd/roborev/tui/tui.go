@@ -772,16 +772,6 @@ func detectCwdRepoContext(
 		gitrepo.CurrentBranch(ctx, worktreeRoot)
 }
 
-// resolveAutoFilter reports whether an auto_filter_* setting applies.
-// An unset setting filters only in a linked worktree, which usually
-// exists to work on one branch.
-func resolveAutoFilter(setting *bool, inLinkedWorktree bool) bool {
-	if setting != nil {
-		return *setting
-	}
-	return inLinkedWorktree
-}
-
 func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var opt options
 	for _, o := range opts {
@@ -852,9 +842,9 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		cwdWorktreePath = opt.cwdWorktreePath
 		cwdBranch = opt.cwdBranch
 	}
-	inLinkedWorktree := cwdWorktreePath != "" && cwdWorktreePath != cwdRepoRoot
-	autoFilterRepo := resolveAutoFilter(autoFilterRepoCfg, inLinkedWorktree)
-	autoFilterBranch := resolveAutoFilter(autoFilterBranchCfg, inLinkedWorktree)
+	// Unset auto_filter_* settings default to on.
+	autoFilterRepo := autoFilterRepoCfg == nil || *autoFilterRepoCfg
+	autoFilterBranch := autoFilterBranchCfg == nil || *autoFilterBranchCfg
 
 	// Test overrides for auto-filter simulation
 	if opt.autoFilterRepo {

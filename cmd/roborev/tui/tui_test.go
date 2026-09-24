@@ -2247,11 +2247,11 @@ func TestNewTuiModelOptions(t *testing.T) {
 			expectedDaemonVer:    "?",
 		},
 		{
-			name:                 "Main checkout does not filter by default",
+			name:                 "Main checkout filters repo and branch by default",
 			opts:                 []option{withExternalIODisabled(), withCwdCheckout("/path/to/repo", "/path/to/repo", "main")},
-			expectedRepoFilter:   nil,
-			expectedBranchFilter: "",
-			expectedFilterStack:  nil,
+			expectedRepoFilter:   []string{"/path/to/repo"},
+			expectedBranchFilter: "main",
+			expectedFilterStack:  []string{filterTypeRepo, filterTypeBranch},
 			expectedLockedRepo:   false,
 			expectedLockedBranch: false,
 			expectedDaemonVer:    "?",
@@ -2374,23 +2374,4 @@ func TestSSEPendingRefreshStateMachine(t *testing.T) {
 		m, _ = updateModel(t, m, sseEventMsg{})
 		assert.False(m.ssePendingRefresh, "should not set flag when not loading")
 	})
-}
-
-func TestResolveAutoFilter(t *testing.T) {
-	tests := []struct {
-		name             string
-		setting          *bool
-		inLinkedWorktree bool
-		want             bool
-	}{
-		{"unset in main checkout", nil, false, false},
-		{"unset in linked worktree", nil, true, true},
-		{"true in main checkout", new(true), false, true},
-		{"false in linked worktree", new(false), true, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, resolveAutoFilter(tc.setting, tc.inLinkedWorktree))
-		})
-	}
 }
