@@ -5,6 +5,56 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.69.0
+
+<small>2026-09-24</small>
+
+**New features**
+
+- `roborev list` shows each review's verdict in a `Verdict` column: `P` for
+    pass, `F` for fail, and `-` when no verdict is recorded. See
+    [Viewing Reviews](/docs/commands/#viewing-reviews).
+- The browser reviews table has a Closed column that shows whether each review
+    is open or closed, with `--` when no closed state is available. See
+    [Reviews Workspace](/docs/web-ui/#reviews-workspace).
+- Choose the Grok sandbox profile with `sandbox` under `[agent.grok]` in
+    `~/.roborev/config.toml`. Supported values are `read-only`, `workspace`,
+    `off`, and custom profiles from `~/.grok/sandbox.toml`. See
+    [Grok Sandbox Profile](/docs/configuration/#grok-sandbox-profile).
+
+**Improvements**
+
+- Grok reviews can run shell commands such as `git log` to gather context. File
+    edits stay blocked. See
+    [Grok sandbox profile](/docs/agents/#sandbox-profile).
+
+**Bug fixes**
+
+- The review, design-review, lookahead-review, and refine skills accept valid
+    Git refs instead of stopping with `fatal: Needed a single revision`. The fix
+    covers the branch variants and the Claude, Codex, Droid, and Grok skills.
+- Claude Code reviews and design classification work through
+    Anthropic-compatible proxies configured with `model@base_url` that omit
+    optional tool-call metadata.
+- Grok reviews no longer fail when the default `read-only` sandbox refuses to
+    start because a container runtime socket is a symlink, as with OrbStack.
+    roborev logs a warning and retries once under the `workspace` profile, where
+    Grok's permission rules block repository writes. An explicitly configured
+    profile is used as-is and never falls back.
+- The daemon keeps processing jobs after an interrupted SQLite transaction
+    instead of stalling until restart. This also prevents related
+    `roborev status` hangs and post-commit enqueue timeouts.
+
+Thanks to [Rod Boev](https://github.com/rodboev) for list verdicts in
+[#1228](https://github.com/kenn-io/roborev/pull/1228) and the browser Closed
+column in [#1227](https://github.com/kenn-io/roborev/pull/1227), and to
+[Shun Kakinoki](https://github.com/shunkakinoki) for the SQLite transaction fix
+in [#1237](https://github.com/kenn-io/roborev/pull/1237). Thanks to
+[Marius van Niekerk](https://github.com/mariusvniekerk) for the Grok sandbox
+fallback in [#1231](https://github.com/kenn-io/roborev/pull/1231), the proxy
+compatibility fix in [#1239](https://github.com/kenn-io/roborev/pull/1239), and
+the skill ref fix in [#1240](https://github.com/kenn-io/roborev/pull/1240).
+
 ## 0.68.2
 
 <small>2026-09-22</small>
