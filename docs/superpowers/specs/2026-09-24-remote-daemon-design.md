@@ -44,9 +44,11 @@ and says it needs a local daemon. The check covers every request field that
 selects a job kind, not only `job_type`. The enqueue handler makes any request
 with `custom_prompt` a task job, so remote enqueue rejects a non-empty
 `custom_prompt`, `agentic`, the `dirty` ref, `diff_content`, and the insights
-and analysis fields. Remote rerun has the same limit: it reruns
-only non-agentic `review` and `range` jobs, because rerunning a task or fix job
-would run an agent that can edit the daemon host's checkout.
+and analysis fields. Remote rerun has the same limit, because rerunning a task
+or fix job would run an agent that can edit the daemon host's checkout. It
+reruns a non-agentic `review` or `range` job, or a panel run through its
+`synthesis` parent when every member is a non-agentic `review` or `range` job.
+Any other job, or a panel with an ineligible member, returns `403`.
 
 A remote enqueue must name commits by full SHA: one SHA, or `<sha>..<sha>` for
 a range. Symbolic refs such as `HEAD` or a branch name are rejected with `400`,
@@ -185,7 +187,10 @@ Today the enqueue handler uses that checkout branch in two places: the
 exclusion check for non-post-commit reviews, and the default when `branch` is
 empty. For remote requests, both use the request's `branch` instead.
 
-- The client sends its current branch, or an empty branch on a detached HEAD.
+- The client sends the branch the review targets, chosen the same way local
+  clients choose it today: `--branch=<name>`, or the batch's branch on a
+  post-commit or pre-push flush. It falls back to the current branch when no
+  target branch was given, and sends empty on a detached HEAD.
 - An empty branch goes through the existing detached-HEAD inference against
   the daemon clone's refs, and stays empty if nothing matches.
 - The daemon rejects a branch that is not a valid branch name
@@ -268,7 +273,10 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
 - Identity mapping: known, unknown, sync placeholder ignored, duplicate
   identities, `repo_path` rejected remotely, and `repo` filter rewriting.
 - Remote enqueue and rerun: symbolic refs rejected; agentic, task, and dirty
-  jobs rejected for both enqueue and rerun.
+  jobs rejected for both enqueue and rerun; an eligible panel reruns, and a
+  panel with an ineligible member is rejected.
+- Branch: a remote review of a branch other than the client's checkout branch
+  is attributed, excluded, and hook-matched by the target branch.
 - Missing commits: present, fetched, and still missing (`409` with SHAs).
 - Pack upload: a real pack from a test repo imports and pins; a pack without
   base commits returns `409`; upload refs are pruned once reachable from a
