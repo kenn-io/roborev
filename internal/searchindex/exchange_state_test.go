@@ -386,3 +386,41 @@ func TestSharedClaimLifecycleBookkeeping(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), backlog, "at the fallback deadline only the uncovered local document remains")
 }
+
+func TestPublishSharedReleasesClaimWithoutPublishingReviewThatBecameLocalOnly(t *testing.T) {
+	ctx := context.Background()
+	index := openGenerationTestIndex(t)
+	doc := sharedTestDocument(1, "claimed text", storage.SearchShareOwn)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	key, err := index.EnsureGeneration(ctx, vector.Generation{Model: "model", Dimensions: 2})
+	require.NoError(t, err)
+	now := time.Unix(1_800_000_000, 0)
+	require.NoError(t, index.observeSharedPending(ctx, key, now))
+	due, err := index.dueSharedCandidates(ctx, key, now, now.Add(-defaultLocalFallbackAfter), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.NoError(t, index.recordClaim(ctx, key, due[0], now.Add(defaultClaimTTL)))
+	exchangeDB := newFakeExchangeDB(func() time.Time { return now })
+	exchange := newFakeExchange(exchangeDB, "machine-a")
+	vectorKey := storage.VectorKey{ReviewUUID: doc.DocKey, ContentSHA256: doc.ContentHash}
+	held, err := exchange.Claim(ctx, key, vectorKey, defaultClaimTTL)
+	require.NoError(t, err)
+	require.True(t, held)
+	require.NoError(t, index.SaveGenerationVectors(ctx, key,
+		vector.Pending[string]{Doc: doc.DocKey, Revision: doc.ContentHash},
+		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
+
+	doc.Source.ShareState = storage.SearchShareLocal
+	doc = searchdoc.Render(doc.Source)
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+
+	r := &Reconciler{index: index}
+	more, err := r.publishShared(ctx, exchange, key, "target", 2, now)
+	require.NoError(t, err)
+	assert.False(t, more)
+	_, published := exchangeDB.record(key, vectorKey)
+	assert.False(t, published, "a review that became local-only must not be published")
+	assert.Zero(t, exchangeDB.claimCount(), "the finished claim is still released")
+}
