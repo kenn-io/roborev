@@ -1390,6 +1390,69 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 	}
 }
 
+// Every shipped block that validates a user-supplied ref must accept a real
+// ref and reject a missing one. `git rev-parse --verify -- <ref>` treats the
+// ref as a pathspec and rejects both, so the block could never succeed.
+func TestSkillRefValidationBlocksAcceptValidRefs(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash unavailable: %v", err)
+	}
+
+	work := testutil.InitTestRepo(t)
+	work.CheckoutNewBranch("feat")
+	work.CommitFile("feature.txt", "feature", "feature commit")
+
+	fenceRE := regexp.MustCompile("(?s)```[a-z]*\n(.*?)\n```")
+	refLineRE := regexp.MustCompile(`<<'ROBOREV_REF'\n[^\n]*\n`)
+	roborevLineRE := regexp.MustCompile(`(?m)^roborev .*$`)
+
+	run := func(t *testing.T, block, ref string) (bool, string) {
+		script := refLineRE.ReplaceAllLiteralString(block, "<<'ROBOREV_REF'\n"+ref+"\n")
+		script = roborevLineRE.ReplaceAllLiteralString(script, `printf 'ROBOREV_WOULD_RUN\n'`)
+		cmd := exec.Command(bash, "-c", script)
+		cmd.Dir = work.Path()
+		out, err := cmd.CombinedOutput()
+		return err == nil && strings.Contains(string(out), "ROBOREV_WOULD_RUN"), string(out)
+	}
+
+	exercised := map[string]bool{}
+	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
+		spec, ok := lookupAgent(agent)
+		require.True(t, ok)
+		skills, err := embeddedSkillsForAgent(spec)
+		require.NoError(t, err)
+		for _, skill := range skills {
+			content := strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
+			for i, match := range fenceRE.FindAllStringSubmatch(content, -1) {
+				block := match[1]
+				if !strings.Contains(block, "ROBOREV_REF") {
+					continue
+				}
+				exercised[skill.DirName] = true
+				t.Run(fmt.Sprintf("%s/%s/%d", agent, skill.DirName, i), func(t *testing.T) {
+					ran, out := run(t, block, "main")
+					assert.True(t, ran, "valid ref must pass validation: %s", out)
+					ran, out = run(t, block, "no-such-ref")
+					assert.False(t, ran, "missing ref must fail validation: %s", out)
+				})
+			}
+		}
+	}
+
+	for _, name := range []string{
+		"roborev-review",
+		"roborev-design-review",
+		"roborev-design-review-branch",
+		"roborev-lookahead-review",
+		"roborev-lookahead-review-branch",
+		"roborev-refine",
+		"roborev-review-branch",
+	} {
+		assert.True(t, exercised[name], "%s ref validation was not exercised", name)
+	}
+}
+
 func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 	// Droid skills install under ~/.factory/skills (Factory's personal skills
 	// location), not ~/.droid, and are skipped when ~/.factory is absent so the
