@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-09-24
 title: PostgreSQL Sync
 description: Sync reviews across multiple machines using PostgreSQL
 ---
@@ -56,6 +57,12 @@ roborev sync now       # Trigger immediate sync
 - Completed jobs (done, failed, canceled)
 - Reviews with closed/open state
 - Responses/notes
+- Review-search vectors, when embeddings are configured. Daemons with the same
+    embedding settings look vectors up and publish them in the
+    `embedding_generations`, `review_embeddings`, and `review_embedding_claims`
+    tables. These tables are created without a schema-version bump, so older
+    daemons keep syncing and ignore them. See
+    [Shared vectors across synced machines](/docs/search/#shared-vectors-across-synced-machines).
 
 Jobs in `queued` or `running` states remain local-only until they complete.
 

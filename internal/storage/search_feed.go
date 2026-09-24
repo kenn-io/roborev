@@ -8,7 +8,7 @@ import (
 	"slices"
 )
 
-const searchFeedSelect = `
+var searchFeedSelect = `
 	SELECT rv.id,
 	       COALESCE(CAST(rv.uuid AS TEXT), ''),
 	       j.id,
@@ -31,7 +31,40 @@ const searchFeedSelect = `
 	       j.status,
 	       COALESCE(j.job_type, ''),
 	       j.commit_id,
-	       j.diff_content IS NOT NULL
+	       j.diff_content IS NOT NULL,
+	       CASE
+	         WHEN COALESCE(CAST(rv.uuid AS TEXT), '') = '' OR COALESCE(CAST(j.uuid AS TEXT), '') = '' THEN 0
+	         WHEN COALESCE(r.identity, '') = '' THEN 0
+	         WHEN (
+	              (
+	                j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                AND rv.synced_at IS NOT NULL
+	                AND ` + sqliteNormalizedTimestampExpr("rv.updated_at") + ` <= ` + sqliteNormalizedTimestampExpr("rv.synced_at") + `
+	              )
+	              OR (
+	                rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                AND (rv.structured_output IS NOT NULL OR COALESCE(j.job_type, '') NOT IN ('review', 'range', 'dirty', 'synthesis', 'compact'))
+	                AND (
+	                  j.synced_at IS NOT NULL
+	                  OR (
+	                    j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                    AND j.status IN ('done', 'failed', 'canceled', 'skipped')
+	                    AND (j.synced_at IS NULL OR ` + sqliteNormalizedTimestampExpr("j.updated_at") + ` > ` + sqliteNormalizedTimestampExpr("j.synced_at") + `)
+	                  )
+	                )
+	              )
+	         ) THEN 1
+	         WHEN rv.synced_at IS NOT NULL
+	              AND (
+	                ` + sqliteNormalizedTimestampExpr("rv.updated_at") + ` <= ` + sqliteNormalizedTimestampExpr("rv.synced_at") + `
+	                OR (
+	                  rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                  AND j.synced_at IS NOT NULL
+	                  AND (rv.structured_output IS NOT NULL OR COALESCE(j.job_type, '') NOT IN ('review', 'range', 'dirty', 'synthesis', 'compact'))
+	                )
+	              ) THEN 2
+	         ELSE 0
+	       END
 	FROM reviews rv
 	JOIN review_jobs j ON j.id = rv.job_id
 	JOIN repos r ON r.id = j.repo_id
@@ -136,6 +169,7 @@ func scanSearchReviewSource(scanner sqlScanner) (SearchReviewSource, ReviewJob, 
 	var verdictBool sql.NullInt64
 	var commitID sql.NullInt64
 	var hasDiff bool
+	var shareState int
 	err := scanner.Scan(
 		&source.ReviewID,
 		&source.ReviewUUID,
@@ -160,11 +194,13 @@ func scanSearchReviewSource(scanner sqlScanner) (SearchReviewSource, ReviewJob, 
 		&job.JobType,
 		&commitID,
 		&hasDiff,
+		&shareState,
 	)
 	if err != nil {
 		return SearchReviewSource{}, ReviewJob{}, sql.NullInt64{}, err
 	}
 	source.Closed = closed != 0
+	source.ShareState = SearchShareState(shareState)
 	if finishedAt.Valid {
 		source.FinishedAt = parseSQLiteTime(finishedAt.String)
 	}

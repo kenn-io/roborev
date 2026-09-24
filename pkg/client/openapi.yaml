@@ -3270,6 +3270,12 @@ components:
       properties:
         active_generation:
           type: string
+        awaiting_peer:
+          format: int64
+          type: integer
+        claims_held:
+          format: int64
+          type: integer
         embedded:
           format: int64
           type: integer
@@ -3279,6 +3285,9 @@ components:
         embeddings_configured:
           type: boolean
         eta_seconds:
+          format: int64
+          type: integer
+        imported:
           format: int64
           type: integer
         indexed:
@@ -3300,12 +3309,20 @@ components:
           type: integer
         mirror_complete:
           type: boolean
+        published:
+          format: int64
+          type: integer
         rate_per_second:
           format: double
           type: number
+        rejected:
+          format: int64
+          type: integer
         skipped:
           format: int64
           type: integer
+        source_status:
+          type: string
         vector_state:
           type: string
       required:
@@ -3316,6 +3333,11 @@ components:
         - skipped
         - embedding_backlog
         - vector_state
+        - imported
+        - published
+        - awaiting_peer
+        - claims_held
+        - rejected
       type: object
     SearchHit:
       additionalProperties: false

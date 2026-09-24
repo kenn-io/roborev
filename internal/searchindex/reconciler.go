@@ -26,6 +26,14 @@ const (
 	searchChunkOverlap    = 200
 )
 
+// ChunkMaxRunes and ChunkOverlapRunes are the document split parameters used
+// by Fill and query probes. They define the vector space, so the daemon passes
+// them to the embedding client, which records them in its generation.
+const (
+	ChunkMaxRunes     = searchChunkRunes
+	ChunkOverlapRunes = searchChunkOverlap
+)
+
 type searchDocumentStore interface {
 	ListSearchDocuments(context.Context, int64, int) ([]storage.SearchReviewSource, error)
 }
@@ -43,12 +51,16 @@ type ReconcilerConfig struct {
 	// MaxFillBatches is the maximum number of pending documents kit Fill may
 	// start in one turn. Kit completes every started document, including
 	// those that span multiple provider calls.
-	MaxFillBatches int
-	MaxFillTime    time.Duration
-	SweepInterval  time.Duration
-	MinBackoff     time.Duration
-	MaxBackoff     time.Duration
-	Now            func() time.Time
+	MaxFillBatches     int
+	MaxFillTime        time.Duration
+	SweepInterval      time.Duration
+	MinBackoff         time.Duration
+	MaxBackoff         time.Duration
+	Now                func() time.Time
+	PeerClaimDelay     time.Duration
+	ClaimTTL           time.Duration
+	LocalFallbackAfter time.Duration
+	LookupMinBackoff   time.Duration
 }
 
 // Reconciler keeps the disposable search sidecar current with canonical data.
@@ -66,6 +78,10 @@ type Reconciler struct {
 	generationStarted  time.Time
 	generationBaseline int64
 	failures           int
+	exchange           VectorExchange
+	lastExchangeTouch  time.Time
+	lastExchangeGC     time.Time
+	exchangeDue        time.Time
 }
 
 // NewReconciler constructs a bounded, wake-coalescing reconciler.
@@ -74,6 +90,7 @@ func NewReconciler(store searchDocumentStore, index *Index, embedder Embedder, c
 	state := HealthSnapshot{
 		EmbeddingsConfigured: embedder != nil,
 		VectorState:          "unconfigured",
+		SourceStatus:         SourceDisabled,
 	}
 	if embedder != nil {
 		state.VectorState = "building"
@@ -109,6 +126,18 @@ func normalizeReconcilerConfig(config ReconcilerConfig) ReconcilerConfig {
 	}
 	if config.Now == nil {
 		config.Now = time.Now
+	}
+	if config.PeerClaimDelay <= 0 {
+		config.PeerClaimDelay = defaultPeerClaimDelay
+	}
+	if config.ClaimTTL <= 0 {
+		config.ClaimTTL = defaultClaimTTL
+	}
+	if config.LocalFallbackAfter <= 0 {
+		config.LocalFallbackAfter = defaultLocalFallbackAfter
+	}
+	if config.LookupMinBackoff <= 0 {
+		config.LookupMinBackoff = defaultLookupMinBackoff
 	}
 	return config
 }
@@ -155,7 +184,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 		if more {
 			continue
 		}
-		timer := time.NewTimer(r.config.SweepInterval)
+		timer := time.NewTimer(r.idleDelay())
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -181,6 +210,9 @@ func (r *Reconciler) reconcileTurn(ctx context.Context) (bool, error) {
 	}
 	if mirrorMore || r.embedder == nil {
 		return mirrorMore, nil
+	}
+	if exchange := r.vectorExchange(); exchange != nil {
+		return r.fillSharedGeneration(ctx, exchange)
 	}
 	return r.fillGeneration(ctx)
 }

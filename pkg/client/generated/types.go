@@ -2885,10 +2885,13 @@ func (s SearchCoverage) Validate() error {
 
 type SearchHealth struct {
 	ActiveGeneration     *string    `json:"active_generation,omitempty"`
+	AwaitingPeer         int64      `json:"awaiting_peer"`
+	ClaimsHeld           int64      `json:"claims_held"`
 	Embedded             int64      `json:"embedded"`
 	EmbeddingBacklog     int64      `json:"embedding_backlog"`
 	EmbeddingsConfigured bool       `json:"embeddings_configured"`
 	EtaSeconds           *int64     `json:"eta_seconds,omitempty"`
+	Imported             int64      `json:"imported"`
 	Indexed              int64      `json:"indexed"`
 	LastError            *string    `json:"last_error,omitempty"`
 	LastErrorStatus      *int64     `json:"last_error_status,omitempty"`
@@ -2896,8 +2899,11 @@ type SearchHealth struct {
 	LastSuccessAt        *time.Time `json:"last_success_at,omitempty"`
 	MirrorBacklog        *int64     `json:"mirror_backlog,omitempty"`
 	MirrorComplete       bool       `json:"mirror_complete"`
+	Published            int64      `json:"published"`
 	RatePerSecond        *float64   `json:"rate_per_second,omitempty"`
+	Rejected             int64      `json:"rejected"`
 	Skipped              int64      `json:"skipped"`
+	SourceStatus         *string    `json:"source_status,omitempty"`
 	VectorState          string     `json:"vector_state" validate:"required"`
 }
 

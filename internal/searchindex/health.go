@@ -20,6 +20,12 @@ type HealthSnapshot struct {
 	ETASeconds           *int64
 	LastError            string
 	LastErrorStatus      int
+	SourceStatus         string
+	Imported             int64
+	Published            int64
+	AwaitingPeer         int64
+	ClaimsHeld           int64
+	Rejected             int64
 }
 
 func cloneHealth(value HealthSnapshot) HealthSnapshot {

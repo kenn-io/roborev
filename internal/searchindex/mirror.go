@@ -28,6 +28,7 @@ type mirrorRow struct {
 	Content     string
 	ContentHash string
 	Identifiers string
+	ShareState  int
 }
 
 // RefreshMirrorPage writes changed documents and their lexical rows together.
@@ -89,6 +90,7 @@ func rowForDocument(doc searchdoc.Document) mirrorRow {
 		GitRef: doc.Source.GitRef, CommitSHA: doc.Source.CommitSHA, FinishedAt: finishedAt,
 		Verdict: doc.Source.Verdict, Closed: closed, PanelRole: doc.Source.PanelRole,
 		Content: doc.Content, ContentHash: doc.ContentHash, Identifiers: doc.Identifiers,
+		ShareState: int(doc.Source.ShareState),
 	}
 }
 
@@ -101,12 +103,13 @@ func readMirrorRow(ctx context.Context, tx *sql.Tx, docKey string) (mirrorRow, b
 		       COALESCE(m.commit_sha, ''), COALESCE(m.finished_at, ''),
 		       COALESCE(m.verdict, ''), m.closed, COALESCE(m.panel_role, ''),
 		       m.content, m.content_hash,
-		       COALESCE((SELECT identifiers FROM review_fts f WHERE f.doc_key = m.doc_key LIMIT 1), '')
+		       COALESCE((SELECT identifiers FROM review_fts f WHERE f.doc_key = m.doc_key LIMIT 1), ''),
+		       m.share_state
 		  FROM review_mirror m WHERE m.doc_key = ?`, docKey).Scan(
 		&row.DocKey, &row.ReviewID, &row.ReviewUUID, &row.JobID, &row.JobUUID,
 		&row.GroupKey, &row.RepoID, &row.RepoName, &row.Branch, &row.GitRef,
 		&row.CommitSHA, &row.FinishedAt, &row.Verdict, &row.Closed, &row.PanelRole,
-		&row.Content, &row.ContentHash, &row.Identifiers)
+		&row.Content, &row.ContentHash, &row.Identifiers, &row.ShareState)
 	if err == sql.ErrNoRows {
 		return mirrorRow{}, false, nil
 	}
@@ -121,8 +124,8 @@ func upsertMirrorRow(ctx context.Context, tx *sql.Tx, row mirrorRow) error {
 		INSERT INTO review_mirror (
 			doc_key, review_id, review_uuid, job_id, job_uuid, group_key,
 			repo_id, repo_name, branch, git_ref, commit_sha, finished_at,
-			verdict, closed, panel_role, content, content_hash, embed_gen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+			verdict, closed, panel_role, content, content_hash, embed_gen, share_state
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
 		ON CONFLICT(doc_key) DO UPDATE SET
 			review_id = excluded.review_id,
 			review_uuid = excluded.review_uuid,
@@ -140,13 +143,14 @@ func upsertMirrorRow(ctx context.Context, tx *sql.Tx, row mirrorRow) error {
 			panel_role = excluded.panel_role,
 			content = excluded.content,
 			content_hash = excluded.content_hash,
+			share_state = excluded.share_state,
 			embed_gen = CASE
 				WHEN review_mirror.content_hash IS excluded.content_hash THEN review_mirror.embed_gen
 				ELSE NULL
 			END`,
 		row.DocKey, row.ReviewID, nullable(row.ReviewUUID), row.JobID, nullable(row.JobUUID), row.GroupKey,
 		row.RepoID, row.RepoName, nullable(row.Branch), row.GitRef, nullable(row.CommitSHA), nullable(row.FinishedAt),
-		nullable(row.Verdict), row.Closed, nullable(row.PanelRole), row.Content, row.ContentHash)
+		nullable(row.Verdict), row.Closed, nullable(row.PanelRole), row.Content, row.ContentHash, row.ShareState)
 	if err != nil {
 		return fmt.Errorf("upsert search mirror row: %w", err)
 	}
@@ -202,6 +206,9 @@ func (index *Index) DeleteMissing(ctx context.Context, seen map[string]struct{})
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM review_mirror WHERE doc_key = ?`, key); err != nil {
 			return 0, fmt.Errorf("delete missing mirror row: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM review_exchange WHERE doc_key = ?`, key); err != nil {
+			return 0, fmt.Errorf("delete missing exchange row: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

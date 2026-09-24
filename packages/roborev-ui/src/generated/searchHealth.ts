@@ -4,10 +4,13 @@
 
 export interface SearchHealth {
   active_generation?: string;
+  awaiting_peer: number;
+  claims_held: number;
   embedded: number;
   embedding_backlog: number;
   embeddings_configured: boolean;
   eta_seconds?: number;
+  imported: number;
   indexed: number;
   last_error?: string;
   last_error_status?: number;
@@ -15,7 +18,10 @@ export interface SearchHealth {
   last_success_at?: string;
   mirror_backlog?: number;
   mirror_complete: boolean;
+  published: number;
   rate_per_second?: number;
+  rejected: number;
   skipped: number;
+  source_status?: string;
   vector_state: string;
 }

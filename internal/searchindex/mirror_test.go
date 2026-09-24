@@ -148,6 +148,37 @@ func TestMirrorDeleteMissingRemovesFTSAndEveryVectorGeneration(t *testing.T) {
 	assert.Zero(t, changed)
 }
 
+func TestMirrorPersistsShareStateAndDeleteMissingDropsExchangeRows(t *testing.T) {
+	ctx := context.Background()
+	index := openGenerationTestIndex(t)
+	source := testDocument(1, "shared text").Source
+	source.ShareState = storage.SearchSharePeer
+	doc := searchdoc.Render(source)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+
+	var shareState int
+	require.NoError(t, index.db.QueryRowContext(ctx,
+		`SELECT share_state FROM review_mirror WHERE doc_key = ?`, doc.DocKey).Scan(&shareState))
+	assert.Equal(t, int(storage.SearchSharePeer), shareState)
+
+	source.ShareState = storage.SearchShareOwn
+	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{searchdoc.Render(source)}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed, "a share-state change rewrites the mirror row")
+
+	_, err = index.db.ExecContext(ctx, `
+		INSERT INTO review_exchange (doc_key, gen_key, content_hash, first_pending_at,
+			next_attempt_at, attempts, claim_expires_at, origin, published_target)
+		VALUES (?, 'generation', ?, 0, 0, 0, 0, '', '')`, doc.DocKey, doc.ContentHash)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_exchange", doc.DocKey))
+
+	_, err = index.DeleteMissing(ctx, map[string]struct{}{})
+	require.NoError(t, err)
+	assert.Zero(t, countRowsForDoc(t, index.db, "review_exchange", doc.DocKey))
+}
+
 func testDocument(id int64, output string) searchdoc.Document {
 	return searchdoc.Render(storage.SearchReviewSource{
 		ReviewID:   id,

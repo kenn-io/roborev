@@ -289,6 +289,9 @@ func searchHealthFromSnapshot(snapshot searchindex.HealthSnapshot) *storage.Sear
 		LastSuccessAt:    snapshot.LastSuccessAt, LastProgressAt: snapshot.LastProgressAt,
 		RatePerSecond: snapshot.RatePerSecond, ETASeconds: snapshot.ETASeconds,
 		LastError: snapshot.LastError, LastErrorStatus: snapshot.LastErrorStatus,
+		SourceStatus: snapshot.SourceStatus, Imported: snapshot.Imported,
+		Published: snapshot.Published, AwaitingPeer: snapshot.AwaitingPeer,
+		ClaimsHeld: snapshot.ClaimsHeld, Rejected: snapshot.Rejected,
 	}
 }
 

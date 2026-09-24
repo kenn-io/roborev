@@ -417,7 +417,25 @@ type SearchReviewSource struct {
 	Output           string
 	StructuredOutput StructuredOutput
 	Responses        []Response
+
+	// ShareState says whether the review's text reaches PostgreSQL sync and
+	// therefore whether its search vectors may be shared through it.
+	ShareState SearchShareState
 }
+
+// SearchShareState classifies a search document for the shared vector cache.
+type SearchShareState int
+
+const (
+	// SearchShareLocal documents never reach PostgreSQL (no review UUID, or
+	// a review the push rules never send); they are always embedded locally.
+	SearchShareLocal SearchShareState = 0
+	// SearchShareOwn documents are exportable by this machine; this machine
+	// claims them first.
+	SearchShareOwn SearchShareState = 1
+	// SearchSharePeer documents came from another machine through sync.
+	SearchSharePeer SearchShareState = 2
+)
 
 // AutoDesignStatus carries per-outcome counters for the automatic
 // design-review router. Only emitted when the feature is effectively
@@ -487,6 +505,12 @@ type SearchHealth struct {
 	ETASeconds           *int64     `json:"eta_seconds,omitempty"`
 	LastError            string     `json:"last_error,omitempty"`
 	LastErrorStatus      int        `json:"last_error_status,omitempty"`
+	SourceStatus         string     `json:"source_status,omitempty"`
+	Imported             int64      `json:"imported"`
+	Published            int64      `json:"published"`
+	AwaitingPeer         int64      `json:"awaiting_peer"`
+	ClaimsHeld           int64      `json:"claims_held"`
+	Rejected             int64      `json:"rejected"`
 }
 
 // ComponentHealth represents the health of a single component

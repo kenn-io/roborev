@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-09-24
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -1092,6 +1092,11 @@ patches, command lines, job logs, token data, repository paths, and remote
 identities are excluded from embedding input. See
 [Review History Search](/docs/search/) for the full privacy boundary, backfill
 behavior, health fields, and sidecar recovery.
+
+When `[sync]` is also enabled, daemons with identical `base_url`, `model`,
+`dims`, `input_type_mode`, and `fingerprint_salt` share review vectors through
+PostgreSQL automatically; there is no setting to turn this on or off. See
+[Shared vectors across synced machines](/docs/search/#shared-vectors-across-synced-machines).
 
 ### Hot-Reload
 

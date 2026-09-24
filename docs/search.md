@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-09-24
 title: Review History Search
 description: Search completed reviews by keyword, meaning, repository, branch, time, verdict, and state
 ---
@@ -117,12 +117,17 @@ The daemon reconciles search data in the background at startup, after review and
 response changes, after rows are pulled from PostgreSQL sync, and during a
 periodic safety sweep. Existing completed reviews are included in the first
 mirror scan. Reviews synchronized from PostgreSQL are indexed locally after
-normal sync convergence; PostgreSQL does not store search vectors.
+normal sync convergence. When sync and embeddings are both configured, their
+vectors are shared through PostgreSQL instead of being embedded again on every
+machine; see
+[Shared vectors across synced machines](#shared-vectors-across-synced-machines).
 
-Lexical rows become available as mirror pages commit. A first embedding
-generation is not activated until all current documents have been handled.
-During this initial backfill, `auto` uses lexical search and the health and
-coverage fields report progress.
+Lexical rows become available as mirror pages commit. Without sharing, a first
+embedding generation is activated after all current documents have been handled.
+With sharing, it can activate after every shared document has had a lookup;
+semantic results are marked partial while shared vectors remain pending. During
+the initial backfill, `auto` uses lexical search and the health and coverage
+fields report progress.
 
 Changing the model, dimensions, input type mode, content recipe, or
 `fingerprint_salt` starts a replacement generation. Roborev keeps the old
@@ -140,6 +145,12 @@ health. The Search section reports indexed lexical documents, mirror state and
 backlog, vector state, embedded and pending counts, skipped documents, rate,
 ETA, and the latest sanitized provider error when available. The same data is
 available in the `search` object from `GET /api/health`.
+
+When shared vectors are active, a `Sharing:` line reports the source status
+(`ok`, `unsupported`, or `unreachable`) and the imported, published, awaiting,
+claimed, and rejected counts. The same values are the `source_status`,
+`imported`, `published`, `awaiting_peer`, `claims_held`, and `rejected` fields
+of the `search` health object.
 
 ## Configure Voyage embeddings
 
@@ -200,12 +211,69 @@ retention and privacy terms before enabling hosted embeddings.
 
 Lexical-only operation keeps search local and makes no embedding network call.
 
+## Shared vectors across synced machines
+
+This is a breaking behavior change in this release, and it needs no setting.
+When a daemon has `[search.embeddings]` configured and `[sync]` enabled, it
+shares review-search vectors with the other daemons on the same PostgreSQL
+database:
+
+- Before calling its provider for a synced review, the daemon looks the review
+    up in PostgreSQL by review UUID, embedding generation, and a SHA-256 of the
+    exact text it would embed. On a match it imports the vectors and makes no
+    provider call.
+- On a miss, one daemon claims the review, embeds it, and publishes the vectors
+    for everyone. A daemon claims reviews from its own jobs immediately and
+    other machines' reviews after they have waited 2 minutes, so the machine
+    that wrote a review normally embeds it.
+- Reviews that never reach PostgreSQL (legacy reviews without a UUID, and
+    reviews the sync push rules do not send) are embedded locally as before and
+    are never published.
+- Different exact text hashes remain available while their generation is active.
+    Peers can publish out of order, and rendered reviews combine fields with
+    independent update histories, so publication order cannot prove which hash
+    is current. A generation unused by every daemon for 30 days is removed with
+    all its hashes. Repeated edits can therefore grow an active generation until
+    that generation becomes unused.
+- Only daemons with identical `base_url`, `model`, `dims`, `input_type_mode`,
+    and `fingerprint_salt` share vectors. A daemon with different settings uses
+    its own generation and embeds for itself.
+
+Search latency does not change. All sharing happens in the background indexer; a
+search only reads the local index and embeds the query text. A newly synced
+review is found lexically at once and semantically once some daemon has embedded
+it, normally within a minute or two.
+
+Fallbacks are automatic:
+
+| Condition | Behavior | `source_status` |
+|---|---|---|
+| No sync, or no embeddings | Exactly as before | `disabled` |
+| Shared tables missing and cannot be created (read-only role) | Embed everything locally, as before | `unsupported` |
+| PostgreSQL unreachable | Synced reviews wait; lexical search works; after 24 hours they are embedded locally and published later | `unreachable` |
+| A peer's record fails validation | Rejected, counted, deleted, and embedded again | `ok` |
+
+Upgrading changes the embedding generation fingerprint once, because chunk size
+and overlap are now part of it, and rebuilds the search sidecar once. Upgrade
+one machine first and let it finish; the others then import instead of
+re-embedding.
+
+Privacy: a daemon only sends text to its provider that it would have embedded
+before this change. Vectors are stored only in the PostgreSQL database that
+already holds the review text, and only for reviews that sync. A vector for a
+review written on this machine may be published up to one sync interval before
+the review text itself is pushed.
+
 ## Storage and recovery
 
 Search data is derived local state in `reviews.search.db`, next to the canonical
 `reviews.db`. It contains the text mirror, FTS index, and local vector
-generations. It is not synchronized to PostgreSQL and is never the source of
-truth for review content or liveness.
+generations. The sidecar file itself is never synchronized and is never the
+source of truth for review content or liveness. Syncing daemons exchange raw
+chunk vectors through three PostgreSQL tables (`embedding_generations`,
+`review_embeddings`, `review_embedding_claims`) and build their own local index
+from them. All review text hashes remain while a generation is active; a
+generation no daemon has used for 30 days is removed from PostgreSQL.
 
 On a schema mismatch or structural corruption, the daemon removes and rebuilds
 the search sidecar and its SQLite journal files. The canonical `reviews.db` is

@@ -38,6 +38,7 @@ var (
 type daemonSearch struct {
 	path       string
 	index      *searchindex.Index
+	embedder   searchindex.Embedder
 	service    *searchindex.Service
 	reconciler *searchindex.Reconciler
 	closeOnce  sync.Once
@@ -76,6 +77,8 @@ func newDaemonSearch(
 			Timeout:             time.Duration(embeddings.TimeoutSeconds) * time.Second,
 			InputTypeMode:       embeddings.InputTypeMode,
 			TrustPrivateNetwork: embeddings.TrustPrivateNetwork,
+			ChunkMaxRunes:       searchindex.ChunkMaxRunes,
+			ChunkOverlapRunes:   searchindex.ChunkOverlapRunes,
 		})
 		if err != nil {
 			return nil, err
@@ -86,8 +89,26 @@ func newDaemonSearch(
 	reconciler := searchindex.NewReconciler(db, index, embedder, searchindex.ReconcilerConfig{})
 	service := searchindex.NewService(db, index, embedder, reconciler)
 	return &daemonSearch{
-		path: path, index: index, service: service, reconciler: reconciler,
+		path: path, index: index, embedder: embedder, service: service, reconciler: reconciler,
 	}, nil
+}
+
+type vectorExchangeSource interface {
+	VectorExchange() (*storage.VectorExchange, error)
+}
+
+// enableSharedSearchVectors turns on the PostgreSQL cache for a syncing
+// daemon with embeddings configured.
+func enableSharedSearchVectors(search *daemonSearch, source vectorExchangeSource) error {
+	if search.embedder == nil {
+		return nil
+	}
+	exchange, err := source.VectorExchange()
+	if err != nil {
+		return err
+	}
+	search.reconciler.SetVectorExchange(exchange)
+	return nil
 }
 
 func (s *daemonSearch) Close() error {
@@ -330,6 +351,9 @@ func daemonRunCmd() *cobra.Command {
 					log.Printf("Warning: failed to start sync worker: %v", err)
 				} else {
 					log.Printf("Sync worker started (interval: %s)", cfg.Sync.Interval)
+					if err := enableSharedSearchVectors(search, syncWorker); err != nil {
+						log.Printf("Warning: shared search vectors disabled: %v", err)
+					}
 				}
 			}
 
