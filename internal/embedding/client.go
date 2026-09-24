@@ -42,6 +42,11 @@ type Config struct {
 	Timeout             time.Duration
 	InputTypeMode       string
 	TrustPrivateNetwork bool
+	// ChunkMaxRunes and ChunkOverlapRunes describe how documents are split
+	// before embedding. They change the vector space, so a positive
+	// ChunkMaxRunes adds both to the generation fingerprint.
+	ChunkMaxRunes     int
+	ChunkOverlapRunes int
 }
 
 // Client calls an OpenAI-compatible /embeddings endpoint.
@@ -55,6 +60,8 @@ type Client struct {
 	dims          int
 	batchSize     int
 	inputTypeMode string
+	chunkMax      int
+	chunkOverlap  int
 }
 
 // New validates cfg and constructs an origin-pinned embedding client.
@@ -82,6 +89,10 @@ func New(cfg Config) (*Client, error) {
 	}
 	if timeout < 0 {
 		return nil, fmt.Errorf("embedding: timeout must be positive")
+	}
+	if cfg.ChunkMaxRunes < 0 || cfg.ChunkOverlapRunes < 0 ||
+		(cfg.ChunkMaxRunes > 0 && cfg.ChunkOverlapRunes >= cfg.ChunkMaxRunes) {
+		return nil, fmt.Errorf("embedding: chunk overlap must be smaller than chunk size")
 	}
 
 	origin, err := safeEmbeddingOrigin(cfg.BaseURL, cfg.TrustPrivateNetwork)
@@ -123,6 +134,8 @@ func New(cfg Config) (*Client, error) {
 		dims:          cfg.Dims,
 		batchSize:     batchSize,
 		inputTypeMode: mode,
+		chunkMax:      cfg.ChunkMaxRunes,
+		chunkOverlap:  cfg.ChunkOverlapRunes,
 	}, nil
 }
 
@@ -232,6 +245,10 @@ func (c *Client) Generation() vector.Generation {
 	}
 	if c.salt != "" {
 		params["salt"] = c.salt
+	}
+	if c.chunkMax > 0 {
+		params["chunk_max_runes"] = strconv.Itoa(c.chunkMax)
+		params["chunk_overlap_runes"] = strconv.Itoa(c.chunkOverlap)
 	}
 	return vector.Generation{Model: c.model, Dimensions: c.dims, Params: params}
 }

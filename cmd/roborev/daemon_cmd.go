@@ -38,6 +38,7 @@ var (
 type daemonSearch struct {
 	path       string
 	index      *searchindex.Index
+	embedder   searchindex.Embedder
 	service    *searchindex.Service
 	reconciler *searchindex.Reconciler
 	closeOnce  sync.Once
@@ -76,6 +77,8 @@ func newDaemonSearch(
 			Timeout:             time.Duration(embeddings.TimeoutSeconds) * time.Second,
 			InputTypeMode:       embeddings.InputTypeMode,
 			TrustPrivateNetwork: embeddings.TrustPrivateNetwork,
+			ChunkMaxRunes:       searchindex.ChunkMaxRunes,
+			ChunkOverlapRunes:   searchindex.ChunkOverlapRunes,
 		})
 		if err != nil {
 			return nil, err
@@ -86,7 +89,7 @@ func newDaemonSearch(
 	reconciler := searchindex.NewReconciler(db, index, embedder, searchindex.ReconcilerConfig{})
 	service := searchindex.NewService(db, index, embedder, reconciler)
 	return &daemonSearch{
-		path: path, index: index, service: service, reconciler: reconciler,
+		path: path, index: index, embedder: embedder, service: service, reconciler: reconciler,
 	}, nil
 }
 

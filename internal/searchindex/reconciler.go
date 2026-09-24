@@ -26,6 +26,14 @@ const (
 	searchChunkOverlap    = 200
 )
 
+// ChunkMaxRunes and ChunkOverlapRunes are the document split parameters used
+// by Fill and query probes. They define the vector space, so the daemon passes
+// them to the embedding client, which records them in its generation.
+const (
+	ChunkMaxRunes     = searchChunkRunes
+	ChunkOverlapRunes = searchChunkOverlap
+)
+
 type searchDocumentStore interface {
 	ListSearchDocuments(context.Context, int64, int) ([]storage.SearchReviewSource, error)
 }

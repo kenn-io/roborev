@@ -332,3 +332,31 @@ func withEmbeddingConfig(base Config, mutate func(*Config)) Config {
 	mutate(&base)
 	return base
 }
+
+func TestEmbeddingGenerationIncludesChunkParameters(t *testing.T) {
+	base := Config{BaseURL: "http://127.0.0.1:9/v1", Model: "embed-large", Dims: 4, RecipeVersion: 2}
+	unchunked, err := New(base)
+	require.NoError(t, err)
+	chunkedConfig := withEmbeddingConfig(base, func(c *Config) {
+		c.ChunkMaxRunes = 2000
+		c.ChunkOverlapRunes = 200
+	})
+	chunked, err := New(chunkedConfig)
+	require.NoError(t, err)
+	otherOverlap, err := New(withEmbeddingConfig(chunkedConfig, func(c *Config) { c.ChunkOverlapRunes = 100 }))
+	require.NoError(t, err)
+
+	assert.Equal(t, "2000", chunked.Generation().Params["chunk_max_runes"])
+	assert.Equal(t, "200", chunked.Generation().Params["chunk_overlap_runes"])
+	assert.NotContains(t, unchunked.Generation().Params, "chunk_max_runes")
+	assert.NotEqual(t, unchunked.Generation().Fingerprint(), chunked.Generation().Fingerprint())
+	assert.NotEqual(t, chunked.Generation().Fingerprint(), otherOverlap.Generation().Fingerprint())
+}
+
+func TestEmbeddingRejectsChunkOverlapNotSmallerThanChunk(t *testing.T) {
+	_, err := New(Config{
+		BaseURL: "http://127.0.0.1:9", Model: "embed-large", Dims: 2,
+		ChunkMaxRunes: 200, ChunkOverlapRunes: 200,
+	})
+	require.EqualError(t, err, "embedding: chunk overlap must be smaller than chunk size")
+}
