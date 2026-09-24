@@ -25,7 +25,9 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) {
 	_, err := pool.Pool().Exec(ctx, `UPDATE review_jobs SET job_type = 'task' WHERE uuid = $1`, taskJobID)
 	require.NoError(t, err)
 
-	structured := jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`)
+	structuredBytes := append([]byte(`{"schema_version":2,"summary":"Summary\u0000 `), 0xff)
+	structuredBytes = append(structuredBytes, []byte(`","verdict":"fail","findings":[{"severity":"high","problem":"Problem\u0000","fix":"Keep the record.","location":null}]}`)...)
+	structured := jsontext.Value(structuredBytes)
 	batch := []SyncableReview{
 		{
 			UUID: uuid.New(), JobUUID: reviewJobID,
@@ -66,6 +68,11 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) {
 			assert.Equal(want.prompt, prompt)
 			assert.Equal(want.output, output)
 		}
+		var structuredOutput string
+		require.NoError(t, pool.Pool().QueryRow(ctx,
+			`SELECT structured_output::text FROM reviews WHERE uuid = $1`, batch[0].UUID,
+		).Scan(&structuredOutput))
+		assert.JSONEq(`{"schema_version":2,"summary":"Summary\uFFFD \uFFFD","verdict":"fail","findings":[{"severity":"high","problem":"Problem\uFFFD","fix":"Keep the record.","location":null}]}`, structuredOutput)
 	})
 
 	t.Run("single", func(t *testing.T) {
@@ -86,6 +93,18 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) {
 		assert.Equal("é\xff", review.Agent)
 		assert.Equal("\x00界", review.Prompt)
 		assert.Equal("\xe9 café", review.Output)
+
+		structuredReview := SyncableReview{
+			UUID: uuid.New(), JobUUID: taskJobID,
+			StructuredOutput:   jsontext.Value(`{"schema_version":2,"summary":"Single\u0000","verdict":"pass","findings":[]}`),
+			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
+		}
+		require.NoError(t, pool.UpsertReview(ctx, structuredReview))
+		var structuredOutput string
+		require.NoError(t, pool.Pool().QueryRow(ctx,
+			`SELECT structured_output::text FROM reviews WHERE uuid = $1`, structuredReview.UUID,
+		).Scan(&structuredOutput))
+		assert.JSONEq(`{"schema_version":2,"summary":"Single\uFFFD","verdict":"pass","findings":[]}`, structuredOutput)
 	})
 }
 

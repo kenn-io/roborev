@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -827,13 +830,17 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 
 // UpsertReview inserts or updates a review in PostgreSQL
 func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
-	if err := validateStructuredOutputForWrite(r.StructuredOutput); err != nil {
+	structuredOutput, err := sanitizePostgresStructuredOutput(r.StructuredOutput)
+	if err != nil {
+		return fmt.Errorf("sanitize structured review output for PostgreSQL: %w", err)
+	}
+	if err := validateStructuredOutputForWrite(structuredOutput); err != nil {
 		return err
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
-	_, err := p.pool.Exec(ctx, pgUpsertReviewSQL,
+	_, err = p.pool.Exec(ctx, pgUpsertReviewSQL,
 		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
-		verdictBool, nullJSON(r.StructuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
+		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt, noReview)
 	return err
 }
@@ -1361,6 +1368,53 @@ func nullJSON(raw jsontext.Value) any {
 	return raw
 }
 
+// sanitizePostgresStructuredOutput returns a PostgreSQL-safe copy without
+// changing the structured review bytes held by SQLite.
+func sanitizePostgresStructuredOutput(raw jsontext.Value) (jsontext.Value, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, errors.New("multiple JSON values")
+		}
+		return nil, err
+	}
+	cleaned := sanitizePostgresJSONStrings(value)
+	encoded, err := json.Marshal(cleaned)
+	if err != nil {
+		return nil, err
+	}
+	return jsontext.Value(encoded), nil
+}
+
+func sanitizePostgresJSONStrings(value any) any {
+	switch value := value.(type) {
+	case string:
+		return sanitizePostgresText(value)
+	case []any:
+		for i := range value {
+			value[i] = sanitizePostgresJSONStrings(value[i])
+		}
+		return value
+	case map[string]any:
+		cleaned := make(map[string]any, len(value))
+		for key, member := range value {
+			cleaned[sanitizePostgresText(key)] = sanitizePostgresJSONStrings(member)
+		}
+		return cleaned
+	default:
+		return value
+	}
+}
+
 func sanitizePostgresText(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
@@ -1389,17 +1443,23 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		return nil, nil
 	}
 
-	for _, r := range reviews {
-		if err := validateStructuredOutputForWrite(r.StructuredOutput); err != nil {
+	structuredOutputs := make([]jsontext.Value, len(reviews))
+	for i, r := range reviews {
+		structuredOutput, err := sanitizePostgresStructuredOutput(r.StructuredOutput)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize structured review output for PostgreSQL: %w", err)
+		}
+		if err := validateStructuredOutputForWrite(structuredOutput); err != nil {
 			return nil, err
 		}
+		structuredOutputs[i] = structuredOutput
 	}
 	batch := &pgx.Batch{}
-	for _, r := range reviews {
+	for i, r := range reviews {
 		verdictBool, noReview := syncedReviewVerdict(r)
 		batch.Queue(pgUpsertReviewSQL,
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
-			verdictBool, nullJSON(r.StructuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
+			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
 			r.UpdatedByMachineID, r.CreatedAt, noReview)
 	}
 

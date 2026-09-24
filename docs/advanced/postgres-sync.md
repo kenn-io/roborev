@@ -38,9 +38,9 @@ machine_name = "laptop"   # Friendly name for this machine
     ensure PostgreSQL stores only one copy of each item.
 - **Local-first**: SQLite remains the source of truth. CLI commands query SQLite
     only.
-- **Review text compatibility**: Invalid UTF-8 and NUL bytes in review text are
-    replaced in the PostgreSQL copy. Pushing a review leaves its local SQLite
-    text unchanged.
+- **Review text compatibility**: Invalid UTF-8 and NUL bytes in review text,
+    including strings nested in structured review JSON, are replaced in the
+    PostgreSQL copy. Pushing a review leaves its local SQLite data unchanged.
 - **Graceful degradation**: If PostgreSQL is unreachable, everything continues
     to work. Sync resumes when connectivity returns.
 - **Schema isolation**: Tables are created in a dedicated `roborev` schema,
