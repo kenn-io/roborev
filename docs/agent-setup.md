@@ -111,8 +111,6 @@ Skills let the user drive roborev from inside an agent session. The most useful
 ones are:
 
 - `roborev-fix`: fix all open failing reviews in one pass.
-- `roborev-refine`: review the branch, fix findings, and re-review until every
-    review passes.
 - `roborev-review` and `roborev-review-branch`: request a review on demand.
 
 Claude Code invokes them as `/roborev-fix`; Codex uses `$roborev-fix`. Skills
@@ -293,5 +291,4 @@ Finish with a short summary:
 - Whether the Agent Hook is installed, and how to snooze or remove it if so.
 - How to see reviews: `roborev tui` in the terminal, or `roborev show HEAD` for
     the latest commit.
-- How to act on them: `/roborev-fix` (Codex: `$roborev-fix`) for open findings,
-    and `/roborev-refine` to clean up a branch before opening a pull request.
+- How to act on them: `/roborev-fix` (Codex: `$roborev-fix`) for open findings.
