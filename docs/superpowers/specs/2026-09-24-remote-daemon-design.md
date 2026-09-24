@@ -50,10 +50,13 @@ reruns a non-agentic `review` or `range` job, or a panel run through its
 `synthesis` parent when every member is a non-agentic `review` or `range` job.
 Any other job, or a panel with an ineligible member, returns `403`.
 
-A remote enqueue must name commits by full SHA: one SHA, or `<sha>..<sha>` for
-a range. Symbolic refs such as `HEAD` or a branch name are rejected with `400`,
-because the daemon would resolve them in its own clone rather than the
-client's.
+A remote enqueue must name commits by full SHA: one SHA, `<sha>..<sha>` for a
+range, or `<sha>^..<sha>` for the inclusive range that `roborev review START
+END` sends. Symbolic refs such as `HEAD` or a branch name are rejected with
+`400`, because the daemon would resolve them in its own clone rather than the
+client's. For `<sha>^..<sha>`, the presence check and upload cover the two
+named SHAs, not `<sha>^`. The enqueue handler's existing empty-tree fallback
+then handles a range that starts at the root commit.
 
 ## Daemon side
 
@@ -193,8 +196,9 @@ empty. For remote requests, both use the request's `branch` instead.
   target branch was given, and sends empty on a detached HEAD.
 - An empty branch goes through the existing detached-HEAD inference against
   the daemon clone's refs, and stays empty if nothing matches.
-- The daemon rejects a branch that is not a valid branch name
-  (`git check-ref-format --branch`) with `400`.
+- The daemon rejects a non-empty branch that is not a valid branch name
+  (`git check-ref-format --branch`) with `400`. It checks before inference. An
+  empty branch skips this check.
 
 ## Client side
 
@@ -219,8 +223,17 @@ mode. `--server` overrides `[remote] server`.
 - Agent-hook commands track local agent sessions by path, so they ignore
   `[remote] server` and keep today's local endpoint discovery. Their
   endpoint lookup must not go through the remote-aware resolver.
-- Requests that took a local path send the repo identity instead, computed
-  locally with `config.ResolveRepoIdentity`.
+- Requests that took a client-local checkout path send that checkout's
+  identity instead, computed with `config.ResolveRepoIdentity`.
+- Repo selections that come from the daemon use the `identity` field returned
+  by `/api/repos` as the filter value, never `root_path`, which exists only on
+  the daemon host. Filtering therefore works for repos the client has never
+  cloned.
+  - The TUI filters by the selected repo's `identity`.
+  - MCP tools keep their `repo_path` argument (the `root_path` from
+    `roborev_list_repos`). In remote mode, the stdio MCP backend maps that
+    `root_path` to its `identity` using the `/api/repos` list before calling
+    the remote API.
 - The client resolves every ref to a full SHA locally before a remote enqueue.
 - Commands that need a local daemon fail before sending anything. The message
   names the command and says it needs a local daemon. These include dirty
@@ -276,7 +289,12 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
   jobs rejected for both enqueue and rerun; an eligible panel reruns, and a
   panel with an ineligible member is rejected.
 - Branch: a remote review of a branch other than the client's checkout branch
-  is attributed, excluded, and hook-matched by the target branch.
+  is attributed, excluded, and hook-matched by the target branch; a
+  detached-HEAD enqueue whose commit matches no daemon branch is accepted with
+  an empty branch.
+- Root range: a remote `<root>^..<sha>` review succeeds.
+- TUI and MCP in remote mode: selecting a repo absent from the client
+  filesystem filters jobs and branches by its identity.
 - Missing commits: present, fetched, and still missing (`409` with SHAs).
 - Pack upload: a real pack from a test repo imports and pins; a pack without
   base commits returns `409`; upload refs are pruned once reachable from a
