@@ -72,8 +72,9 @@ uploads packs when the daemon reports missing commits.
 **Interfaces:**
 - Produces: `config.RemoteAPIConfig{Enabled bool; Listen string; TailscalePath string}`,
   `config.RemoteConfig{Server string}`, fields `Config.RemoteAPI` (`toml:"remote_api"`)
-  and `Config.Remote` (`toml:"remote"`), and
-  `func IsTailscaleAddr(addr netip.Addr) bool`.
+  and `Config.Remote` (`toml:"remote"`),
+  `func IsTailscaleAddr(addr netip.Addr) bool`, and
+  `func LoadRemoteServer() (string, error)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -122,6 +123,22 @@ func TestRemoteClientConfigParses(t *testing.T) {
 	assert.Equal(t, "http://daemon-host.example:7474", cfg.Remote.Server)
 }
 
+func TestLoadRemoteServerIgnoresUnrelatedInvalidSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dir)
+	server, err := LoadRemoteServer()
+	require.NoError(t, err, "missing config file means no remote server")
+	assert.Empty(t, server)
+
+	// remote_api.listen is invalid, which full validation rejects, but
+	// reading [remote] server must still work.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"[remote_api]\nenabled = true\nlisten = \"0.0.0.0:1\"\n[remote]\nserver = \"http://daemon-host.example:7474\"\n"), 0o644))
+	server, err = LoadRemoteServer()
+	require.NoError(t, err)
+	assert.Equal(t, "http://daemon-host.example:7474", server)
+}
+
 func TestIsTailscaleAddr(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(IsTailscaleAddr(netip.MustParseAddr("100.64.0.1")))
@@ -167,6 +184,23 @@ func IsTailscaleAddr(addr netip.Addr) bool {
 	return tailscaleIPv4.Contains(addr) || tailscaleIPv6.Contains(addr)
 }
 
+// LoadRemoteServer reads only [remote] server from the global config. The
+// CLI checks it before every command, so it must not fail on unrelated
+// settings that full validation would reject. A missing file means no
+// remote server.
+func LoadRemoteServer() (string, error) {
+	var cfg struct {
+		Remote RemoteConfig `toml:"remote"`
+	}
+	if _, err := toml.DecodeFile(GlobalConfigPath(), &cfg); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read [remote] server from %s: %w", GlobalConfigPath(), err)
+	}
+	return strings.TrimSpace(cfg.Remote.Server), nil
+}
+
 func normalizeRemoteAPIConfig(remote *RemoteAPIConfig) error {
 	if !remote.Enabled {
 		return nil
@@ -205,7 +239,9 @@ Change the end of `normalizeGlobalConfig`:
 	return normalizeRemoteAPIConfig(&cfg.RemoteAPI)
 ```
 
-Add `"net/netip"` to the imports.
+Add `"net/netip"`, `"io/fs"`, and (if not already imported) `"errors"` and
+`"strings"` to the imports. `toml` is the package `LoadGlobalFrom` already
+uses. Add `"os"` and `"path/filepath"` to the test imports.
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
@@ -313,11 +349,6 @@ func (db *DB) FindReposByIdentity(identity string) ([]Repo, error) {
 	return repos, nil
 }
 ```
-
-Also add `func (db *DB) GetRepoByRootPath(rootPath string) (*Repo, error)`
-only if `GetRepoByPath` (repos.go:136) does not already return `(nil, nil)` or
-`sql.ErrNoRows` for a missing path. Read it first and reuse it if it fits.
-Task 5 needs an exact root-path lookup.
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
@@ -627,31 +658,45 @@ func TestParseRemoteGitRef(t *testing.T) {
 	}
 }
 
-// remoteGitFixture builds an upstream repo, a daemon clone of it, and a
-// laptop clone with one extra unpushed commit.
+// gitOut runs git in dir with a fixed test identity and returns trimmed
+// stdout. The fixtures use plain directories because testutil.InitTestGitRepo
+// copies a template into its directory and would overwrite a clone.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com", "-C", dir}, args...)
+	out, err := exec.Command("git", full...).CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+	return strings.TrimSpace(string(out))
+}
+
+// remoteGitFixture has a bare upstream, a daemon clone of it, and a laptop
+// clone with one extra unpushed commit.
 type remoteGitFixture struct {
-	upstream, daemon, laptop *testutil.TestRepo
-	unpushed                 string
+	daemonDir, laptopDir string
+	unpushed             string
 }
 
 func newRemoteGitFixture(t *testing.T) remoteGitFixture {
 	t.Helper()
 	root := t.TempDir()
-	upstream := testutil.InitTestGitRepo(t, filepath.Join(root, "upstream"))
-	upstream.CommitFile("base.txt", "base", "base")
-	daemonDir := filepath.Join(root, "daemon")
-	laptopDir := filepath.Join(root, "laptop")
-	for _, dir := range []string{daemonDir, laptopDir} {
-		out, err := exec.Command("git", "clone", "-q", upstream.Path(), dir).CombinedOutput()
-		require.NoError(t, err, string(out))
+	upstream := filepath.Join(root, "upstream.git")
+	gitOut(t, root, "init", "-q", "--bare", "-b", "main", upstream)
+	seed := testutil.NewGitRepo(t)
+	seed.CommitFile("base.txt", "base", "base")
+	gitOut(t, seed.Path(), "push", "-q", upstream, "HEAD:refs/heads/main")
+
+	f := remoteGitFixture{
+		daemonDir: filepath.Join(root, "daemon"),
+		laptopDir: filepath.Join(root, "laptop"),
 	}
-	daemonRepo := testutil.InitTestGitRepo(t, daemonDir)
-	laptop := testutil.InitTestGitRepo(t, laptopDir)
-	unpushed := laptop.CommitFile("new.txt", "new", "unpushed")
-	return remoteGitFixture{upstream: upstream, daemon: daemonRepo, laptop: laptop, unpushed: unpushed}
+	gitOut(t, root, "clone", "-q", upstream, f.daemonDir)
+	gitOut(t, root, "clone", "-q", upstream, f.laptopDir)
+	gitOut(t, f.laptopDir, "commit", "-q", "--allow-empty", "-m", "unpushed")
+	f.unpushed = gitOut(t, f.laptopDir, "rev-parse", "HEAD")
+	return f
 }
 
-func buildPack(t *testing.T, repo *testutil.TestRepo, tips, exclude []string) []byte {
+func buildPack(t *testing.T, dir string, tips, exclude []string) []byte {
 	t.Helper()
 	var revs strings.Builder
 	for _, sha := range tips {
@@ -660,8 +705,7 @@ func buildPack(t *testing.T, repo *testutil.TestRepo, tips, exclude []string) []
 	for _, sha := range exclude {
 		revs.WriteString("^" + sha + "\n")
 	}
-	cmd := exec.Command("git", "pack-objects", "--revs", "--stdout", "-q")
-	cmd.Dir = repo.Path()
+	cmd := exec.Command("git", "-C", dir, "pack-objects", "--revs", "--stdout", "-q")
 	cmd.Stdin = strings.NewReader(revs.String())
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -672,82 +716,80 @@ func TestEnsureRemoteCommitsFetchesOnce(t *testing.T) {
 	f := newRemoteGitFixture(t)
 	ctx := context.Background()
 
-	missing, err := ensureRemoteCommits(ctx, f.daemon.Path(), []string{f.unpushed})
+	missing, err := ensureRemoteCommits(ctx, f.daemonDir, []string{f.unpushed})
 	require.NoError(t, err)
 	assert.Equal(t, []string{f.unpushed}, missing, "unpushed commit stays missing")
 
-	f.laptop.RunGit("push", "-q", "origin", "HEAD:refs/heads/main")
-	missing, err = ensureRemoteCommits(ctx, f.daemon.Path(), []string{f.unpushed})
+	gitOut(t, f.laptopDir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	missing, err = ensureRemoteCommits(ctx, f.daemonDir, []string{f.unpushed})
 	require.NoError(t, err)
 	assert.Empty(t, missing, "fetch picks up the pushed commit")
 }
 
+func TestMissingCommitsReportsBrokenRepo(t *testing.T) {
+	_, err := missingCommits(context.Background(), t.TempDir(), []string{shaA})
+	require.Error(t, err, "a directory that is not a repo is an error, not a missing commit")
+}
+
 func TestDaemonHavesPeelsTags(t *testing.T) {
 	f := newRemoteGitFixture(t)
-	head := f.daemon.HeadSHA()
-	f.daemon.RunGit("tag", "-a", "v1", "-m", "annotated")
-	tree := strings.TrimSpace(f.daemon.RunGit("rev-parse", "HEAD^{tree}"))
-	f.daemon.RunGit("tag", "tree-tag", tree)
+	head := gitOut(t, f.daemonDir, "rev-parse", "HEAD")
+	gitOut(t, f.daemonDir, "tag", "-a", "v1", "-m", "annotated")
+	tree := gitOut(t, f.daemonDir, "rev-parse", "HEAD^{tree}")
+	gitOut(t, f.daemonDir, "tag", "tree-tag", tree)
 
-	haves, err := daemonHaves(context.Background(), f.daemon.Path())
+	haves, err := daemonHaves(context.Background(), f.daemonDir)
 	require.NoError(t, err)
 	assert.Contains(t, haves, head)
 	assert.NotContains(t, haves, tree)
 	for _, sha := range haves {
-		assert.Equal(t, "commit", strings.TrimSpace(f.daemon.RunGit("cat-file", "-t", sha)))
+		assert.Equal(t, "commit", gitOut(t, f.daemonDir, "cat-file", "-t", sha))
 	}
 }
 
 func TestImportPackPinsTips(t *testing.T) {
 	f := newRemoteGitFixture(t)
 	ctx := context.Background()
-	haves, err := daemonHaves(ctx, f.daemon.Path())
+	haves, err := daemonHaves(ctx, f.daemonDir)
 	require.NoError(t, err)
 
-	pack := buildPack(t, f.laptop, []string{f.unpushed}, haves)
-	require.NoError(t, importPack(ctx, f.daemon.Path(), bytes.NewReader(pack), []string{f.unpushed}))
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, haves)
+	require.NoError(t, importPack(ctx, f.daemonDir, bytes.NewReader(pack), []string{f.unpushed}))
 
-	assert.Equal(t, f.unpushed,
-		strings.TrimSpace(f.daemon.RunGit("rev-parse", uploadRefPrefix+f.unpushed)))
-	missing, err := ensureRemoteCommits(ctx, f.daemon.Path(), []string{f.unpushed})
+	assert.Equal(t, f.unpushed, gitOut(t, f.daemonDir, "rev-parse", uploadRefPrefix+f.unpushed))
+	missing, err := ensureRemoteCommits(ctx, f.daemonDir, []string{f.unpushed})
 	require.NoError(t, err)
 	assert.Empty(t, missing)
 }
 
 func TestImportPackMissingBase(t *testing.T) {
 	f := newRemoteGitFixture(t)
-	second := f.laptop.CommitFile("second.txt", "2", "second unpushed")
+	gitOut(t, f.laptopDir, "commit", "-q", "--allow-empty", "-m", "second unpushed")
+	second := gitOut(t, f.laptopDir, "rev-parse", "HEAD")
 	// Exclude the first unpushed commit, which the daemon does not have.
-	pack := buildPack(t, f.laptop, []string{second}, []string{f.unpushed})
+	pack := buildPack(t, f.laptopDir, []string{second}, []string{f.unpushed})
 
-	err := importPack(context.Background(), f.daemon.Path(), bytes.NewReader(pack), []string{second})
+	err := importPack(context.Background(), f.daemonDir, bytes.NewReader(pack), []string{second})
 	var baseErr *missingBaseError
 	require.ErrorAs(t, err, &baseErr)
 	assert.Contains(t, err.Error(), "daemon clone lacks base commits for "+second)
-	assert.Empty(t, strings.TrimSpace(f.daemon.RunGit("for-each-ref", uploadRefPrefix)))
+	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix))
 }
 
 func TestPruneUploadRefsAfterPush(t *testing.T) {
 	f := newRemoteGitFixture(t)
 	ctx := context.Background()
-	haves, err := daemonHaves(ctx, f.daemon.Path())
+	haves, err := daemonHaves(ctx, f.daemonDir)
 	require.NoError(t, err)
-	pack := buildPack(t, f.laptop, []string{f.unpushed}, haves)
-	require.NoError(t, importPack(ctx, f.daemon.Path(), bytes.NewReader(pack), []string{f.unpushed}))
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, haves)
+	require.NoError(t, importPack(ctx, f.daemonDir, bytes.NewReader(pack), []string{f.unpushed}))
 
-	f.laptop.RunGit("push", "-q", "origin", "HEAD:refs/heads/main")
-	f.daemon.RunGit("fetch", "-q", "--all")
-	pruneUploadRefs(ctx, f.daemon.Path())
-	assert.Empty(t, strings.TrimSpace(f.daemon.RunGit("for-each-ref", uploadRefPrefix)))
+	gitOut(t, f.laptopDir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	gitOut(t, f.daemonDir, "fetch", "-q", "--all")
+	pruneUploadRefs(ctx, f.daemonDir)
+	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix))
 }
 ```
-
-If `TestRepo.RunGit` returns nothing, replace it with a local helper that
-runs `git -C <path> <args>` and returns trimmed stdout. Check the helper's
-signature in `internal/testutil/git.go` before writing the test. The
-`upstream` checkout's branch must accept pushes: create it with
-`git init --bare`, or set `receive.denyCurrentBranch=updateInstead`, if the
-push step fails.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
 
@@ -765,6 +807,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -798,18 +841,22 @@ func parseRemoteGitRef(ref string) ([]string, error) {
 	return []string{start, end}, nil
 }
 
+// missingCommits returns the SHAs the clone lacks. rev-parse --verify
+// --quiet exits 1 for a missing object and 128 for a real failure, such as
+// a path that is not a repository, so only exit 1 counts as missing.
 func missingCommits(ctx context.Context, repoRoot string, shas []string) ([]string, error) {
 	var missing []string
 	for _, sha := range shas {
-		_, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "cat-file", "-e", sha+"^{commit}")
+		_, _, err := gitcmd.New().Run(ctx, repoRoot, nil,
+			"rev-parse", "--verify", "--quiet", sha+"^{commit}")
 		if err == nil {
 			continue
 		}
-		if _, ok := errors.AsType[*gitcmd.GitError](err); ok {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 {
 			missing = append(missing, sha)
 			continue
 		}
-		return nil, fmt.Errorf("check commit %s: %w", sha, err)
+		return nil, fmt.Errorf("check commit %s in %s: %w", sha, repoRoot, err)
 	}
 	return missing, nil
 }
@@ -909,9 +956,8 @@ func importPack(ctx context.Context, repoRoot string, pack io.Reader, tips []str
 }
 ```
 
-If `errors.AsType` is unavailable in the repo's Go version, use `errors.As`
-with a `*gitcmd.GitError` variable. `worktree_create.go:250` shows the
-existing pattern.
+`gitcmd.GitError` implements `Unwrap`, so `errors.AsType[*exec.ExitError]`
+reaches the process exit status. The module targets Go 1.27.
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
@@ -941,7 +987,8 @@ git commit -m "feat(daemon): fetch, negotiate, and import commits for remote cal
 
 **Interfaces:**
 - Consumes: Task 2 `FindReposByIdentity`, Task 3 `RemoteCaller`/`whoisFunc`,
-  Task 4 helpers.
+  Task 4 helpers, and Task 4 test helpers `gitOut`, `newRemoteGitFixture`,
+  `buildPack`, `shaA`.
 - Produces:
   - `EnqueueRequest.RepoIdentity string` (`json:"repo_identity,omitempty"`)
   - `const MissingCommitsCode = "missing_commits"`
@@ -1118,7 +1165,7 @@ func TestRemoteEnqueueMissingCommitsAndSuccess(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	f := newRemoteGitFixture(t)
 	const id = "https://example.com/org/project.git"
-	_, err := db.GetOrCreateRepo(f.daemon.Path(), id)
+	_, err := db.GetOrCreateRepo(f.daemonDir, id)
 	require.NoError(t, err)
 	queue := fakeWhois(RemoteAccessQueue, nil)
 	body, _ := json.Marshal(EnqueueRequest{RepoIdentity: id, GitRef: f.unpushed, Branch: "feature-x", Agent: "test"})
@@ -1129,9 +1176,9 @@ func TestRemoteEnqueueMissingCommitsAndSuccess(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &missing))
 	assert.Equal(t, MissingCommitsCode, missing.Code)
 	assert.Equal(t, []string{f.unpushed}, missing.Missing)
-	assert.Contains(t, missing.Have, f.daemon.HeadSHA())
+	assert.Contains(t, missing.Have, gitOut(t, f.daemonDir, "rev-parse", "HEAD"))
 
-	pack := buildPack(t, f.laptop, missing.Missing, missing.Have)
+	pack := buildPack(t, f.laptopDir, missing.Missing, missing.Have)
 	w = serveRemote(t, server, queue, http.MethodPost,
 		RemotePackPath+"?repo_identity="+id+"&tip="+f.unpushed, pack)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -1143,14 +1190,15 @@ func TestRemoteEnqueueMissingCommitsAndSuccess(t *testing.T) {
 	assert.Equal(t, "feature-x", job.Branch, "request branch wins over the daemon checkout branch")
 }
 
-func TestRemoteEnqueueDetachedHeadKeepsEmptyBranch(t *testing.T) {
+func TestRemoteEnqueueEmptyBranchIgnoresCheckoutBranch(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	f := newRemoteGitFixture(t)
+	gitOut(t, f.daemonDir, "checkout", "-q", "-b", "daemon-local")
 	const id = "https://example.com/org/project.git"
-	_, err := db.GetOrCreateRepo(f.daemon.Path(), id)
+	_, err := db.GetOrCreateRepo(f.daemonDir, id)
 	require.NoError(t, err)
 	queue := fakeWhois(RemoteAccessQueue, nil)
-	pack := buildPack(t, f.laptop, []string{f.unpushed}, []string{f.daemon.HeadSHA()})
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, []string{gitOut(t, f.daemonDir, "rev-parse", "HEAD")})
 	w := serveRemote(t, server, queue, http.MethodPost,
 		RemotePackPath+"?repo_identity="+id+"&tip="+f.unpushed, pack)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -1160,14 +1208,16 @@ func TestRemoteEnqueueDetachedHeadKeepsEmptyBranch(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	var job storage.ReviewJob
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &job))
-	assert.Empty(t, job.Branch, "no daemon branch contains the upload, and the checkout branch is not used")
+	// Inference against the clone's refs may name a branch or leave it
+	// empty; the daemon checkout's own branch must never be used.
+	assert.NotEqual(t, "daemon-local", job.Branch)
 }
 
 func TestRemoteEnqueueRootInclusiveRange(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	repoDir := filepath.Join(tmpDir, "project")
 	repo := testutil.InitTestGitRepo(t, repoDir)
-	root := repo.CommitFile("a.txt", "a", "root")
+	root := repo.HeadSHA() // InitTestGitRepo's initial commit has no parent
 	head := repo.CommitFile("b.txt", "b", "second")
 	const id = "https://example.com/org/project.git"
 	_, err := db.GetOrCreateRepo(repoDir, id)
@@ -1180,13 +1230,26 @@ func TestRemoteEnqueueRootInclusiveRange(t *testing.T) {
 
 func TestRemoteRerunEligibility(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
-	repoDir := filepath.Join(tmpDir, "project")
-	repo := testutil.InitTestGitRepo(t, repoDir)
-	head := repo.CommitFile("a.txt", "a", "a")
-	review := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repoDir, GitRef: head, Agent: "test"})
-	task := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repoDir, GitRef: head, Agent: "test", CustomPrompt: "hello"})
-	for _, id := range []int64{review.ID, task.ID} {
-		markJobTerminalForTest(t, db, id) // see Step 3 note
+	// Same setup as TestHumaRerunJob: tmpDir is a real directory for rerun
+	// validation, and failed jobs are rerunnable.
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "deadbeef", "A", "S", time.Now())
+	require.NoError(t, err)
+	review, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "deadbeef", Agent: "test",
+	})
+	require.NoError(t, err)
+	task, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "deadbeef", Agent: "test",
+		JobType: storage.JobTypeTask, Prompt: "hello",
+	})
+	require.NoError(t, err)
+	for range 2 {
+		claimed, err := db.ClaimJob("w")
+		require.NoError(t, err)
+		_, err = db.FailJob(claimed.ID, "", "some error")
+		require.NoError(t, err)
 	}
 	queue := fakeWhois(RemoteAccessQueue, nil)
 
@@ -1201,14 +1264,12 @@ func TestRemoteRerunEligibility(t *testing.T) {
 }
 ```
 
-Before writing `TestRemoteRerunEligibility`:
-- Find how `routes_test.go:813 TestHumaRerunJob` moves a job to a rerunnable
-  terminal state and reuse that helper in place of `markJobTerminalForTest`.
-- Add a panel case: enqueue with a panel through the local API
-  (`TestHumaRerunJob` or the panel rerun tests show how), rerun the synthesis
-  job remotely, and expect `200`. Also check that a panel with an agentic
-  member gets `403`. If no existing fixture builds an agentic panel member,
-  set `agentic` on one member row with a direct `UPDATE`.
+Add `"time"` to the test imports.
+
+Also add a panel case to `TestRemoteRerunEligibility`. Build a finished panel
+run the way the existing panel rerun tests in `rerun_panel_test.go` do. Rerun
+its synthesis job remotely and expect `200`. Then set `agentic = 1` on one
+member row with a direct `UPDATE review_jobs` and expect `403`.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
 
@@ -1275,6 +1336,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1282,6 +1344,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -1464,9 +1527,17 @@ func (s *Server) rewriteRemoteRepoFilters(r *http.Request) error {
 	}
 	rewritten := make([]string, 0, len(values))
 	for _, value := range values {
-		if repo, err := s.db.GetRepoByPath(value); err == nil && repo != nil && repo.RootPath != repo.Identity {
-			rewritten = append(rewritten, repo.RootPath)
-			continue
+		// Only absolute values can be daemon root paths. GetRepoByPath would
+		// resolve a relative identity against the daemon's working directory.
+		if filepath.IsAbs(value) {
+			repo, err := s.db.GetRepoByPath(value)
+			switch {
+			case err == nil && repo.RootPath != repo.Identity:
+				rewritten = append(rewritten, repo.RootPath)
+				continue
+			case err != nil && !errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("look up repo path %s: %w", value, err)
+			}
 		}
 		repo, err := s.resolveRemoteRepo(value)
 		if err != nil {
@@ -1656,10 +1727,9 @@ func (s *Server) serveRemotePack(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Check `GetRepoByPath`'s not-found behavior (repos.go:136) and adapt the
-root-path passthrough so that a lookup error other than "not found" is
-returned rather than swallowed. Check the name of the rerun request body type
-(`RerunJobRequest`, types.go ~339) and its `JobID` field.
+`GetRepoByPath` (repos.go:136) returns `sql.ErrNoRows` for an unknown path;
+the passthrough handles that case and returns every other error. The rerun body type is
+`RerunJobRequest` (types.go:294), with `JobID int64`.
 
 Then regenerate the API clients: `make api-generate`. If `bun` is missing,
 run `nix shell 'nixpkgs#bun' --command make api-generate`. Confirm with
@@ -1890,6 +1960,10 @@ git commit -m "feat(daemon): start the remote API listener when remote_api is en
   - `func requireLocalDaemon(command string) error`
   - `func ensureLocalDaemon(command string) error`
   - `var probeRemoteDaemon = daemon.ProbeDaemonPing`
+  - `func ensureRemoteDaemon() error`
+  - test helper `func withRemoteState(t *testing.T)` (saves and restores
+    `serverAddr`, `remoteEndpoint`, and the daemon start/probe hooks, and sets
+    `ROBOREV_DATA_DIR`), used by Tasks 8 and 9
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2069,14 +2143,14 @@ func resolveRemoteEndpoint() error {
 	remoteEndpoint = nil
 	raw := serverAddr
 	if raw == "" {
-		cfg, err := config.LoadGlobal()
+		configured, err := config.LoadRemoteServer()
 		if err != nil {
-			return fmt.Errorf("load config: %w", err)
+			return err
 		}
-		raw = cfg.Remote.Server
-		if raw == "" {
+		if configured == "" {
 			return nil
 		}
+		raw = configured
 	} else if !strings.HasPrefix(raw, "http://") {
 		return nil
 	}
@@ -2213,7 +2287,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2273,7 +2346,7 @@ func TestResolveRemoteGitRef(t *testing.T) {
 func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 	root := t.TempDir()
 	upstream := filepath.Join(root, "upstream.git")
-	gitIn(t, root, "init", "-q", "--bare", upstream)
+	gitIn(t, root, "init", "-q", "--bare", "-b", "main", upstream)
 	seed := newTestGitRepo(t)
 	seed.CommitFile("base.txt", "base", "base")
 	gitIn(t, seed.Dir, "push", "-q", upstream, "HEAD:refs/heads/main")
@@ -2283,7 +2356,7 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 	fork := filepath.Join(root, "fork.git")
 	gitIn(t, root, "clone", "-q", upstream, daemonClone)
 	gitIn(t, root, "clone", "-q", upstream, laptop)
-	gitIn(t, root, "init", "-q", "--bare", fork)
+	gitIn(t, root, "init", "-q", "--bare", "-b", "main", fork)
 	require.NoError(t, os.WriteFile(filepath.Join(laptop, ".roborev-id"), []byte("example/project\n"), 0o644))
 	gitIn(t, laptop, "add", ".roborev-id")
 	gitIn(t, laptop, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "on fork")
@@ -2340,13 +2413,7 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 func gitCatFileOK(dir, sha string) bool {
 	return exec.Command("git", "-C", dir, "cat-file", "-e", sha+"^{commit}").Run() == nil
 }
-
-var _ = io.Discard
 ```
-
-Check `newTestGitRepo`'s field name for the repo directory (`Dir` or
-`Path()`) in `helpers_test.go:38`, and adapt. Drop the `io` import if it is
-unused.
 
 Also add, following the patterns in `review_test.go` and `postcommit_test.go`:
 - `roborev review` in remote mode sends `repo_identity`, sends no
@@ -2357,6 +2424,11 @@ Also add, following the patterns in `review_test.go` and `postcommit_test.go`:
   name.
 - The post-commit hook in remote mode enqueues remotely and logs a failure
   (does not return an error) when the daemon returns `404`.
+
+The mock daemons listen on loopback, which `parseRemoteServer` treats as
+local. To put these tests in remote mode, call `withRemoteState(t)` (Task 7),
+then set `remoteEndpoint = &daemon.DaemonEndpoint{Network: "tcp", Address: <mock host:port>}`
+after the mock daemon is created.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
 
@@ -2661,6 +2733,11 @@ TUI:
 - `tui_cmd.go` passes `Remote: isRemoteMode()`.
 - For `--repo` in remote mode, `resolveRepoFlag` yields a local path. Convert
   it with `repoFilterValue` before passing it as `RepoFilter`.
+- `tui.go` (~858) runs `filepath.ToSlash(filepath.Clean(opt.repoFilter))`,
+  which would turn an identity such as `https://example.com/org/project.git`
+  into `https:/example.com/...`. When `opt.remote` is set, use
+  `opt.repoFilter` unchanged. Add a TUI test: in remote mode, a URL identity
+  passed as the repo filter reaches `activeRepoFilter` byte for byte.
 - In `tui.go`, the auto-filter branch becomes:
 
 ```go
@@ -2702,9 +2779,7 @@ git commit -m "feat(cli): filter by repo identity against a remote daemon"
 ### Task 10: Documentation and design-constraint updates
 
 **Files:**
-- Create: `docs/remote-daemon.md` (check `docs/` structure and the Zensical
-  nav config, such as `zensical.toml` or `mkdocs.yml`, for where pages are
-  listed, and add it next to `docs/web-ui.md`)
+- Create: `docs/remote-daemon.md` (add it to the nav in `docs/zensical.toml` next to `web-ui.md`)
 - Modify: `docs/configuration.md` (the `remote_api.*` and `remote.server`
   keys)
 - Modify: `AGENTS.md` and `CLAUDE.md` (the daemon design constraints)
@@ -2766,19 +2841,13 @@ git commit -m "docs: describe remote daemon access over a tailnet"
 go fmt ./...
 go vet ./...
 go test ./...
-PATH=/tmp/roborev-lint-bin:$PATH make lint-ci
+make lint-ci   # with golangci-lint 2.13.1 first on PATH
 make api-check
 ```
 
 Expected: all pass, and `go fmt` leaves no diff.
 
-- [ ] **Step 2: Remove planning artifacts before any PR**
-
-The spec and this plan are working documents. Delete
-`docs/superpowers/` from the branch before opening a PR, unless the user asks
-to keep them.
-
-- [ ] **Step 3: Commit any formatting or generated changes**
+- [ ] **Step 2: Commit any formatting or generated changes**
 
 ```bash
 git add -A
