@@ -72,6 +72,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
@@ -125,6 +128,9 @@ jobs:
     runs-on: namespace-profile-linux-8cpu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -180,6 +186,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install SQLite headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -278,6 +288,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
@@ -310,6 +323,9 @@ jobs:
     runs-on: namespace-profile-linux-8cpu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -365,6 +381,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
@@ -386,6 +405,10 @@ jobs:
     runs-on: namespace-profile-linux-4cpu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install SQLite headers
+        if: needs.go-changes.outputs.changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         if: needs.go-changes.outputs.changed == 'true'
