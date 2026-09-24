@@ -141,6 +141,8 @@ func TestHealthIncludesOptionalSearchWithoutDegradingDaemon(t *testing.T) {
 		Skipped: 2, EmbeddingBacklog: 6, ActiveGeneration: "generation-a",
 		LastSuccessAt: &lastSuccess, RatePerSecond: &rate, ETASeconds: &eta,
 		LastError: "embedding authentication rejected", LastErrorStatus: http.StatusUnauthorized,
+		SourceStatus: searchindex.SourceOK, Imported: 9, Published: 3,
+		AwaitingPeer: 2, ClaimsHeld: 1, Rejected: 1,
 	}
 	server.searchReconciler = reconciler
 
@@ -155,6 +157,12 @@ func TestHealthIncludesOptionalSearchWithoutDegradingDaemon(t *testing.T) {
 	assert.Equal(t, searchindex.VectorUnavailable, health.Search.VectorState)
 	assert.Equal(t, "embedding authentication rejected", health.Search.LastError)
 	assert.Equal(t, http.StatusUnauthorized, health.Search.LastErrorStatus)
+	assert.Equal(t, searchindex.SourceOK, health.Search.SourceStatus)
+	assert.Equal(t, int64(9), health.Search.Imported)
+	assert.Equal(t, int64(3), health.Search.Published)
+	assert.Equal(t, int64(2), health.Search.AwaitingPeer)
+	assert.Equal(t, int64(1), health.Search.ClaimsHeld)
+	assert.Equal(t, int64(1), health.Search.Rejected)
 
 	server.searchReconciler = nil
 	response = executeHealthCheck(server, http.MethodGet)

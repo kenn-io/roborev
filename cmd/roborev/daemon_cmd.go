@@ -93,6 +93,24 @@ func newDaemonSearch(
 	}, nil
 }
 
+type vectorExchangeSource interface {
+	VectorExchange() (*storage.VectorExchange, error)
+}
+
+// enableSharedSearchVectors turns on the PostgreSQL cache for a syncing
+// daemon with embeddings configured.
+func enableSharedSearchVectors(search *daemonSearch, source vectorExchangeSource) error {
+	if search.embedder == nil {
+		return nil
+	}
+	exchange, err := source.VectorExchange()
+	if err != nil {
+		return err
+	}
+	search.reconciler.SetVectorExchange(exchange)
+	return nil
+}
+
 func (s *daemonSearch) Close() error {
 	s.closeOnce.Do(func() {
 		s.closeErr = closeDaemonSearchIndex(s.index)
@@ -333,6 +351,9 @@ func daemonRunCmd() *cobra.Command {
 					log.Printf("Warning: failed to start sync worker: %v", err)
 				} else {
 					log.Printf("Sync worker started (interval: %s)", cfg.Sync.Interval)
+					if err := enableSharedSearchVectors(search, syncWorker); err != nil {
+						log.Printf("Warning: shared search vectors disabled: %v", err)
+					}
 				}
 			}
 

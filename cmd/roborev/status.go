@@ -212,6 +212,9 @@ func statusCmd() *cobra.Command {
 								(time.Duration(*health.Search.ETASeconds) * time.Second).String())
 						}
 						fmt.Println(vectorLine)
+						if line := searchSharingLine(health.Search); line != "" {
+							fmt.Println(line)
+						}
 					} else {
 						fmt.Println("  Vectors: disabled")
 					}
@@ -327,4 +330,13 @@ func formatUpdateDrainStatus(status storage.DaemonStatus, now time.Time) string 
 		return "update " + status.UpdateDrainPolicy
 	}
 	return "update drain"
+}
+
+func searchSharingLine(search *storage.SearchHealth) string {
+	if search == nil || search.SourceStatus == "" || search.SourceStatus == "disabled" {
+		return ""
+	}
+	return fmt.Sprintf("  Sharing: %s, %d imported, %d published, %d awaiting peers, %d claims held, %d rejected",
+		search.SourceStatus, search.Imported, search.Published, search.AwaitingPeer,
+		search.ClaimsHeld, search.Rejected)
 }

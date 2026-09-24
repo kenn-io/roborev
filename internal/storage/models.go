@@ -505,6 +505,12 @@ type SearchHealth struct {
 	ETASeconds           *int64     `json:"eta_seconds,omitempty"`
 	LastError            string     `json:"last_error,omitempty"`
 	LastErrorStatus      int        `json:"last_error_status,omitempty"`
+	SourceStatus         string     `json:"source_status,omitempty"`
+	Imported             int64      `json:"imported"`
+	Published            int64      `json:"published"`
+	AwaitingPeer         int64      `json:"awaiting_peer"`
+	ClaimsHeld           int64      `json:"claims_held"`
+	Rejected             int64      `json:"rejected"`
 }
 
 // ComponentHealth represents the health of a single component

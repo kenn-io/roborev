@@ -504,3 +504,13 @@ func TestStatusCmdOmitsActiveSnoozesWhenEmpty(t *testing.T) {
 
 	assert.NotContains(t, output, "Active Snoozes:")
 }
+
+func TestSearchSharingLine(t *testing.T) {
+	assert.Empty(t, searchSharingLine(nil))
+	assert.Empty(t, searchSharingLine(&storage.SearchHealth{SourceStatus: "disabled"}))
+	assert.Equal(t,
+		"  Sharing: ok, 9 imported, 3 published, 2 awaiting peers, 1 claims held, 0 rejected",
+		searchSharingLine(&storage.SearchHealth{
+			SourceStatus: "ok", Imported: 9, Published: 3, AwaitingPeer: 2, ClaimsHeld: 1,
+		}))
+}

@@ -447,6 +447,40 @@ func TestDaemonSearchGenerationRecordsChunkParameters(t *testing.T) {
 	assert.Equal(t, strconv.Itoa(searchindex.ChunkOverlapRunes), params["chunk_overlap_runes"])
 }
 
+type fakeVectorExchangeSource struct{ calls int }
+
+func (f *fakeVectorExchangeSource) VectorExchange() (*storage.VectorExchange, error) {
+	f.calls++
+	return storage.NewVectorExchange(func() *storage.PgPool { return nil }, "machine-a"), nil
+}
+
+func TestSharedSearchVectorsEnableOnlyWithEmbeddings(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	lexical, err := newDaemonSearch(t.Context(), db, dbPath, config.DefaultConfig())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lexical.Close()) })
+	source := &fakeVectorExchangeSource{}
+	require.NoError(t, enableSharedSearchVectors(lexical, source))
+	assert.Zero(t, source.calls)
+	assert.Equal(t, searchindex.SourceDisabled, lexical.reconciler.Health().SourceStatus)
+
+	semanticPath := filepath.Join(t.TempDir(), "semantic.db")
+	cfg := config.DefaultConfig()
+	cfg.Search.Embeddings = &config.EmbeddingConfig{
+		BaseURL: "https://embeddings.example/v1", Model: "model", Dims: 2,
+	}
+	semantic, err := newDaemonSearch(t.Context(), db, semanticPath, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, semantic.Close()) })
+	require.NoError(t, enableSharedSearchVectors(semantic, source))
+	assert.Equal(t, 1, source.calls)
+	assert.Equal(t, searchindex.SourceUnreachable, semantic.reconciler.Health().SourceStatus)
+}
+
 func TestDaemonSearchClosesSidecarOnConstructionFailures(t *testing.T) {
 	tests := []struct {
 		name       string
