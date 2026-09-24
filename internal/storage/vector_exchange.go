@@ -123,24 +123,30 @@ func (e *VectorExchange) Target(ctx context.Context) (string, error) {
 }
 
 // TouchGeneration records that this machine uses gen, for garbage collection.
-func (e *VectorExchange) TouchGeneration(ctx context.Context, gen VectorGeneration) error {
+// It reports whether the generation row was recreated after garbage collection.
+func (e *VectorExchange) TouchGeneration(ctx context.Context, gen VectorGeneration) (bool, error) {
 	pool, err := e.current()
 	if err != nil {
-		return err
+		return false, err
 	}
 	descriptor, err := json.Marshal(gen)
 	if err != nil {
-		return fmt.Errorf("encode vector generation: %w", err)
+		return false, fmt.Errorf("encode vector generation: %w", err)
 	}
-	_, err = pool.pool.Exec(ctx, `
+	var created bool
+	err = pool.pool.QueryRow(ctx, `
 		INSERT INTO embedding_generations (fingerprint, descriptor, last_machine_id, last_used_at)
 		VALUES ($1, $2::jsonb, $3, NOW())
 		ON CONFLICT (fingerprint) DO UPDATE SET
 			descriptor = EXCLUDED.descriptor,
 			last_machine_id = EXCLUDED.last_machine_id,
-			last_used_at = NOW()`,
-		gen.Fingerprint, string(descriptor), e.machineID)
-	return vectorExchangeError(err)
+			last_used_at = NOW()
+		RETURNING (xmax = 0)`,
+		gen.Fingerprint, string(descriptor), e.machineID).Scan(&created)
+	if err != nil {
+		return false, vectorExchangeError(err)
+	}
+	return created, nil
 }
 
 // Lookup returns the records that exactly match keys under fingerprint.

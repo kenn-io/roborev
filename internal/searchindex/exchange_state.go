@@ -217,6 +217,18 @@ func (index *Index) recordExchanged(ctx context.Context, key, doc, contentHash, 
 	return nil
 }
 
+// forgetPublishedTarget clears publication markers after the exchange reports
+// that it recreated a generation whose cached records were garbage-collected.
+func (index *Index) forgetPublishedTarget(ctx context.Context, key, target string) error {
+	_, err := index.db.ExecContext(ctx, `
+		UPDATE review_exchange SET published_target = ''
+		 WHERE gen_key = ? AND published_target = ?`, key, target)
+	if err != nil {
+		return fmt.Errorf("forget published shared search vectors: %w", err)
+	}
+	return nil
+}
+
 type publishCandidate struct {
 	DocKey      string
 	ContentHash string

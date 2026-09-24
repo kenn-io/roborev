@@ -88,6 +88,27 @@ func TestIntegration_VectorExchangePublishLookupRoundTrip(t *testing.T) {
 	assert.Empty(t, other, "a different generation fingerprint must not match")
 }
 
+func TestIntegration_VectorExchangeTouchReportsRecreatedGeneration(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	exchange := newTestVectorExchange(t, pool, "machine-a")
+	fingerprint := t.Name() + "-gen"
+	gen := VectorGeneration{Fingerprint: fingerprint, Model: "m", Dimensions: 2}
+
+	created, err := exchange.TouchGeneration(ctx, gen)
+	require.NoError(t, err)
+	assert.True(t, created)
+	created, err = exchange.TouchGeneration(ctx, gen)
+	require.NoError(t, err)
+	assert.False(t, created)
+
+	_, err = pool.pool.Exec(ctx, `DELETE FROM embedding_generations WHERE fingerprint = $1`, fingerprint)
+	require.NoError(t, err)
+	created, err = exchange.TouchGeneration(ctx, gen)
+	require.NoError(t, err)
+	assert.True(t, created)
+}
+
 func TestIntegration_VectorExchangeClaimIsExclusiveUntilExpiry(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
@@ -145,9 +166,10 @@ func TestIntegration_VectorExchangeGarbageCollectsUnusedGenerations(t *testing.T
 		Chunks: []VectorChunk{{Index: 0, Vector: []float32{1, 0}}},
 	}
 	for _, fingerprint := range []string{stale, live} {
-		require.NoError(t, exchange.TouchGeneration(ctx, VectorGeneration{
+		_, err := exchange.TouchGeneration(ctx, VectorGeneration{
 			Fingerprint: fingerprint, Model: "m", Dimensions: 2, Params: map[string]string{"recipe": "2"},
-		}))
+		})
+		require.NoError(t, err)
 		require.NoError(t, exchange.Publish(ctx, fingerprint, []VectorRecord{record}))
 	}
 	_, err := pool.pool.Exec(ctx, `UPDATE embedding_generations SET last_used_at = NOW() - INTERVAL '31 days'

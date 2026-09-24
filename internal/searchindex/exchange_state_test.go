@@ -179,6 +179,30 @@ func TestObserveSharedPendingTracksGenerationAndText(t *testing.T) {
 	assert.Zero(t, attempts)
 }
 
+func TestForgetPublishedTargetMakesCoveredDocumentsPublishable(t *testing.T) {
+	ctx := context.Background()
+	index := openGenerationTestIndex(t)
+	doc := sharedTestDocument(1, "shared text", storage.SearchShareOwn)
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	key, err := index.EnsureGeneration(ctx, vector.Generation{Model: "model", Dimensions: 2})
+	require.NoError(t, err)
+	require.NoError(t, index.SaveGenerationVectors(ctx, key,
+		vector.Pending[string]{Doc: doc.DocKey, Revision: doc.ContentHash},
+		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
+	now := time.Unix(1_800_000_000, 0)
+	require.NoError(t, index.recordExchanged(ctx, key, doc.DocKey, doc.ContentHash,
+		exchangeOriginLocal, "target-1", now))
+	candidates, err := index.publishCandidates(ctx, key, "target-1", 10)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+
+	require.NoError(t, index.forgetPublishedTarget(ctx, key, "target-1"))
+	candidates, err = index.publishCandidates(ctx, key, "target-1", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []publishCandidate{{DocKey: doc.DocKey, ContentHash: doc.ContentHash}}, candidates)
+}
+
 func TestPublishCandidatesReadChunkVectorsAndRecordExchanged(t *testing.T) {
 	ctx := context.Background()
 	index := openGenerationTestIndex(t)

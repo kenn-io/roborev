@@ -77,6 +77,7 @@ type fakeExchange struct {
 	lookups   int
 	publishes int
 	discards  int
+	recreated bool
 }
 
 func newFakeExchange(db *fakeExchangeDB, machineID string) *fakeExchange {
@@ -98,11 +99,15 @@ func (e *fakeExchange) Target(context.Context) (string, error) {
 	return "fake-target", nil
 }
 
-func (e *fakeExchange) TouchGeneration(_ context.Context, gen storage.VectorGeneration) error {
+func (e *fakeExchange) TouchGeneration(_ context.Context, gen storage.VectorGeneration) (bool, error) {
 	e.db.mu.Lock()
-	defer e.db.mu.Unlock()
 	e.db.touched[gen.Fingerprint]++
-	return nil
+	e.db.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	recreated := e.recreated
+	e.recreated = false
+	return recreated, nil
 }
 
 func (e *fakeExchange) Lookup(_ context.Context, fingerprint string, keys []storage.VectorKey) ([]storage.VectorRecord, error) {
@@ -274,6 +279,37 @@ func documentTexts(e *reconcilerEmbedder) []string {
 		texts = append(texts, call...)
 	}
 	return texts
+}
+
+func TestSharedReconcilerRepublishesAfterExchangeGenerationRecreated(t *testing.T) {
+	clock := newTestClock()
+	model := vector.Generation{Model: "model", Dimensions: 2}
+	source := sharedSources(storage.SearchShareOwn, 1)[0]
+	store := &reconcilerStore{sources: []storage.SearchReviewSource{source}}
+	db := newFakeExchangeDB(clock.Now)
+	exchange := newFakeExchange(db, "machine-a")
+	embedder := &reconcilerEmbedder{model: model, batchSize: 8}
+	r := NewReconciler(store, openGenerationTestIndex(t), embedder, ReconcilerConfig{Now: clock.Now})
+	r.SetVectorExchange(exchange)
+
+	runUntilIdle(t, r)
+	db.mu.Lock()
+	_, exists := db.records[fakeRecordKey{model.Fingerprint(), vectorKeyFor(source)}]
+	delete(db.records, fakeRecordKey{model.Fingerprint(), vectorKeyFor(source)})
+	db.mu.Unlock()
+	require.True(t, exists, "the first reconciliation publishes the local vectors")
+
+	r.mu.Lock()
+	r.lastExchangeTouch = time.Time{}
+	r.mu.Unlock()
+	exchange.mu.Lock()
+	exchange.recreated = true
+	exchange.mu.Unlock()
+
+	_, err := r.reconcileTurn(context.Background())
+	require.NoError(t, err)
+	_, exists = db.record(model.Fingerprint(), vectorKeyFor(source))
+	assert.True(t, exists, "recreated generation clears the local marker and republishes its vectors")
 }
 
 func TestSharedReconcilerImportsPeerVectorsWithoutProviderCalls(t *testing.T) {

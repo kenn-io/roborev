@@ -15,7 +15,7 @@ import (
 // *storage.VectorExchange implements it.
 type VectorExchange interface {
 	Target(context.Context) (string, error)
-	TouchGeneration(context.Context, storage.VectorGeneration) error
+	TouchGeneration(context.Context, storage.VectorGeneration) (bool, error)
 	Lookup(context.Context, string, []storage.VectorKey) ([]storage.VectorRecord, error)
 	Claim(context.Context, string, storage.VectorKey, time.Duration) (bool, error)
 	Publish(context.Context, string, []storage.VectorRecord) error
@@ -79,7 +79,10 @@ func (r *Reconciler) fillSharedGeneration(ctx context.Context, exchange VectorEx
 	exchangeMore := false
 	if status == SourceOK {
 		exchangeCtx, cancel := context.WithTimeout(ctx, exchangeTimeout)
-		r.maintainExchange(exchangeCtx, exchange, model, now)
+		if err := r.maintainExchange(exchangeCtx, exchange, model, target, now); err != nil {
+			cancel()
+			return false, err
+		}
 		exchangeMore, err = r.importShared(exchangeCtx, exchange, key, target, model.Dimensions, now, cutoff)
 		cancel()
 		if err != nil {
@@ -210,17 +213,24 @@ func isExchangeFailure(err error) bool {
 	return ok
 }
 
-func (r *Reconciler) maintainExchange(ctx context.Context, exchange VectorExchange, model vector.Generation, now time.Time) {
+func (r *Reconciler) maintainExchange(
+	ctx context.Context, exchange VectorExchange, model vector.Generation, target string, now time.Time,
+) error {
 	r.mu.Lock()
 	touchDue := r.lastExchangeTouch.IsZero() || now.Sub(r.lastExchangeTouch) >= exchangeTouchInterval
 	gcDue := r.lastExchangeGC.IsZero() || now.Sub(r.lastExchangeGC) >= exchangeGCInterval
 	r.mu.Unlock()
 	if touchDue {
-		err := exchange.TouchGeneration(ctx, storage.VectorGeneration{
+		created, err := exchange.TouchGeneration(ctx, storage.VectorGeneration{
 			Fingerprint: model.Fingerprint(), Model: model.Model,
 			Dimensions: model.Dimensions, Params: model.Params,
 		})
 		if err == nil {
+			if created {
+				if err := r.index.forgetPublishedTarget(ctx, model.Fingerprint(), target); err != nil {
+					return err
+				}
+			}
 			r.mu.Lock()
 			r.lastExchangeTouch = now
 			r.mu.Unlock()
@@ -233,6 +243,7 @@ func (r *Reconciler) maintainExchange(ctx context.Context, exchange VectorExchan
 			r.mu.Unlock()
 		}
 	}
+	return nil
 }
 
 // importShared looks up due shared documents, imports exact matches, and
