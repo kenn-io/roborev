@@ -4,8 +4,8 @@ description: A setup prompt you hand to your coding agent to configure roborev i
 ---
 
 This page is a prompt for your coding agent. It walks the agent through setting
-up roborev in one repository: git hooks, agent skills, and, only if you agree
-after hearing the risks, the Agent Hook.
+up roborev in one repository: git hooks, agent skills, review guidelines, and,
+only if you agree after hearing the risks, the Agent Hook.
 
 To use it, open your coding agent in the repository you want reviewed and send:
 
@@ -37,7 +37,7 @@ commit in the background with an AI agent. Work through the steps in order.
     without the user's approval.
 - If a step fails, show the error, explain it in plain language, and ask how to
     proceed. Do not work around failures silently.
-- Treat the user's answer on the Agent Hook (step 5) as final. Do not install it
+- Treat the user's answer on the Agent Hook (step 6) as final. Do not install it
     unless the user says yes after reading the risks.
 
 ### Step 1: Check the installation
@@ -65,7 +65,7 @@ roborev status
 is installed, the repository is registered, a review agent is configured, and
 skills are installed. Summarize what is already done and skip those steps below.
 `roborev quickstart` without `--json` also prints a configuration playbook you
-can use in step 6.
+can use in steps 5 and 7.
 
 ### Step 3: Install the git hooks
 
@@ -136,7 +136,40 @@ If the user prefers MCP tools over CLI calls inside skills, use
 <https://roborev.io/docs/integrations/mcp.md>. The CLI mode is the default and
 works without further setup.
 
-### Step 5: Ask about the Agent Hook
+### Step 5: Set review guidelines
+
+Without guidance, the reviewer flags generic concerns: missing validation, extra
+abstraction, speculative edge cases. Many of these do not matter for this
+project. Guidelines tell the reviewer what this team cares about and what to
+ignore. They also gate the Agent Hook: the hook never fires in a repository that
+has no review guidelines of its own.
+
+Ask the user what reviews should focus on and what they should leave alone.
+Useful prompts: which findings would they reject on sight, which conventions
+does the project rely on, and which kinds of bugs have hurt them before. Read
+the repository's `AGENTS.md`, `CLAUDE.md`, or contributing guide for existing
+rules, and propose a draft for the user to edit.
+
+Add the result to `.roborev.toml` at the repository root:
+
+```toml
+review_guidelines = """
+<the user's guidelines>
+"""
+```
+
+If the repository already has a `REVIEW.md` at its root and `review_guidelines`
+is not set, roborev uses that file instead.
+
+Reviews read guidelines from the repository's default branch, so an unrelated
+branch cannot change them. Tell the user to commit the file to the default
+branch (and push it when the repository has a remote) for it to take effect
+everywhere.
+
+Guidelines take a few rounds to get right. Suggest that the user read the first
+reviews, then add rules for any findings they would not act on.
+
+### Step 6: Ask about the Agent Hook
 
 Steps 3 and 4 produce reviews and let the user fix them on request. The Agent
 Hook closes the loop automatically: it watches coding-agent sessions and, when
@@ -159,9 +192,19 @@ user whether to install it. Do not install it by default.
     review IDs. On a stop event, the hook can block the stop so the agent keeps
     working until the fix is done.
 - It also installs or updates the bundled skills for each agent.
+- It stays silent in any repository without its own review guidelines (step 5).
+    Global guidelines in `~/.roborev/config.toml` do not count.
 
 **Risks to explain to the user:**
 
+- **It can lead to overengineering.** The agent fixes what the reviewer flags.
+    If the guidelines are thin or new, the reviewer asks for defensive checks,
+    extra abstraction, and edge cases the project does not need, and the agent
+    adds them. Each round of review then has more code to comment on. The hook
+    refuses to run without guidelines, but having guidelines does not mean they
+    are tuned. Recommend that the user run without the hook for a while, tune
+    the guidelines on real reviews, and install the hook once most findings are
+    worth fixing.
 - **It changes what the agent does mid-task.** The agent may pause its current
     work to fix review findings, then continue. Sessions run longer and use more
     tokens. The fix stays scoped to the current task, and valid findings outside
@@ -222,21 +265,9 @@ and the post-commit reviews and skills work without it.
 
 Full reference: <https://roborev.io/docs/agent-hook.md>.
 
-### Step 6: Optional tuning
+### Step 7: Optional tuning
 
 Offer these one at a time. Skip any the user declines.
-
-- **Review guidelines.** Ask what the team wants reviews to focus on or ignore,
-    and add it to `.roborev.toml`:
-
-    ```toml
-    review_guidelines = """
-    <the user's guidelines>
-    """
-    ```
-
-    If `review_guidelines` is not set, roborev uses a `REVIEW.md` file at the
-    repository root when one exists.
 
 - **Batch small commits.** If the user commits very often, set
     `post_commit_batch_size = 5` in `.roborev.toml` to review every five commits
@@ -249,13 +280,16 @@ Offer these one at a time. Skip any the user declines.
 
 For every other setting, see <https://roborev.io/docs/configuration.md>.
 
-### Step 7: Summarize
+### Step 8: Summarize
 
 Finish with a short summary:
 
 - What was installed or changed, including any files in the repository
     (`.gitignore`, `.roborev.toml`, `AGENTS.md`) that the user may want to
     commit.
+- Whether review guidelines are set and committed. If the Agent Hook is
+    installed but guidelines are missing, say plainly that the hook will not
+    fire in this repository.
 - Whether the Agent Hook is installed, and how to snooze or remove it if so.
 - How to see reviews: `roborev tui` in the terminal, or `roborev show HEAD` for
     the latest commit.

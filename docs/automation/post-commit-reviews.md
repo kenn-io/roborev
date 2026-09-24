@@ -75,7 +75,9 @@ the bundled skills automatically for supported profiles.
 
 The agent hook watches supported coding-agent sessions and, once review work
 piles up, supplies exact review IDs to the `roborev-fix` skill before the
-session ends. It never runs the separate `roborev fix --open` agent workflow.
+session ends. It never runs the separate `roborev fix --open` agent workflow. It
+stays silent in repositories without their own review guidelines, because an
+agent that fixes every generic finding tends to overengineer the code.
 
 ```bash
 roborev agent-hook install    # wire harnesses and update supported bundled skills

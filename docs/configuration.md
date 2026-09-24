@@ -403,6 +403,10 @@ guidelines are appended after them. Set
 `review_guidelines_supersede_global = true` in `.roborev.toml` when a repo needs
 to replace the global rules entirely.
 
+[Agent Hook](agent-hook.md#review-guidelines-are-required) sends reminders only
+in repos with their own guidance: repo `review_guidelines` or `REVIEW.md`.
+Global guidelines alone do not enable it.
+
 #### REVIEW.md
 
 When `.roborev.toml` leaves `review_guidelines` empty or unset, roborev falls

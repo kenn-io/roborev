@@ -42,6 +42,24 @@ Roborev scopes commit and failed-review accounting to repository lineage, so
 activity in one worktree does not consume another worktree's reminder. Outside a
 tracked git repository the hook returns an empty native response.
 
+### Review guidelines are required
+
+Agent Hook never sends a reminder in a repository that has no review guidance of
+its own. The daemon reads the same repository guidance that reviews use:
+`review_guidelines` in `.roborev.toml` on the default branch, or a root
+`REVIEW.md` when `review_guidelines` is unset. Global `review_guidelines` in
+`~/.roborev/config.toml` do not count, because they are not tuned to the
+repository. Without guidance, the hook behaves as if the checkout were
+[snoozed](#snoozing-reminders): baselines advance, reminders never build up, and
+adding guidance later does not cause a burst of catch-up reminders.
+
+The rule exists because the agent fixes what the reviewer flags. A reviewer
+without project guidance flags generic concerns, such as defensive checks, extra
+abstraction, and unlikely edge cases, and a hook-driven agent that fixes all of
+them overengineers the code. Guidance alone does not prevent this; tune it on
+real reviews before relying on the hook. See
+[Review Guidelines](configuration.md#review-guidelines) for the options.
+
 The default instruction names the exact review job IDs and invokes the
 `roborev-fix` skill for only those jobs. It never runs `roborev fix --open` or
 discovers additional reviews. The skill treats every finding as an unverified

@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -28,7 +29,18 @@ func (s daemonAgentHookSource) ResolveTrackedRepo(
 		return agenthook.TrackedRepoResolution{}, false
 	}
 	resolved, err := resolveTrackedRepo(ctx, s.db, path, branch)
-	return resolved, err == nil
+	if err != nil {
+		return agenthook.TrackedRepoResolution{}, false
+	}
+	if resolved.Tracked && !resolved.SnoozedUntil.After(time.Now()) {
+		// Read the same repo guidance reviews use: review_guidelines from
+		// .roborev.toml on the default branch, falling back to REVIEW.md.
+		// Global guidelines alone do not count; they are not tuned to
+		// this repo.
+		resolved.ReviewGuidelinesMissing =
+			strings.TrimSpace(prompt.LoadGuidelines(ctx, resolved.RootPath)) == ""
+	}
+	return resolved, true
 }
 
 func resolveTrackedRepo(
