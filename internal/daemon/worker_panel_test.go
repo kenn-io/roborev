@@ -85,26 +85,24 @@ func enqueuePanelRun(
 // handed into *captured and returns a clean "no issues" verdict.
 func registerCapturingAgent(t *testing.T, name string, captured *string) {
 	t.Helper()
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: name,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			*captured = reviewPrompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(name) })
 }
 
 // registerPassingAgent registers a FakeAgent that always returns a clean verdict.
 func registerPassingAgent(t *testing.T, name string) {
 	t.Helper()
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: name,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(name) })
 }
 
 // claimNext claims the next queued job, asserting one is available. ClaimJob
@@ -118,6 +116,7 @@ func claimNext(t *testing.T, tc *workerTestContext) *storage.ReviewJob {
 }
 
 func TestMemberInstructionsAppended(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -156,6 +155,7 @@ func TestPanelMemberInvalidTimeoutFallsBackToDefaultJobTimeout(t *testing.T) {
 }
 
 func TestMemberInstructionsNotAppendedForNonPanelJob(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
@@ -170,6 +170,7 @@ func TestMemberInstructionsNotAppendedForNonPanelJob(t *testing.T) {
 }
 
 func TestReleaseOnLastMemberDone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -199,15 +200,15 @@ func TestReleaseOnLastMemberDone(t *testing.T) {
 }
 
 func TestPanelMemberSavesTokenUsageBeforeRelease(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
 	const agentName = "panel-member-token"
-	agent.Register(&sessionStreamingTestAgent{
+	agent.RegisterForTest(t, &sessionStreamingTestAgent{
 		name:       agentName,
 		streamLine: `{"type":"thread.started","thread_id":"member-session-123"}`,
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	runUUID, _, _ := enqueuePanelRun(t, tc, "member-token-panel", []memberSpec{
 		{name: "m0", agent: agentName},
@@ -234,6 +235,7 @@ func TestPanelMemberSavesTokenUsageBeforeRelease(t *testing.T) {
 }
 
 func TestReleaseOnAllMembersFailed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 

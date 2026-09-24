@@ -48,8 +48,7 @@ hook_enabled = true
 
 func TestResolveDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "local-auto-design"})
-	t.Cleanup(func() { agent.Unregister("local-auto-design") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "local-auto-design"})
 
 	cfg := config.DefaultConfig()
 	cfg.DefaultAgent = "claude-code"
@@ -115,13 +114,11 @@ func TestMaybeDispatchAutoDesign_HeuristicUsesThoroughDesignAgentConfig(t *testi
 	srv, repo := newAutoDesignTestServer(t)
 
 	const primaryAgent = "local-design-thorough-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-missing-local-design-thorough-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-	agent.Register(&agent.FakeAgent{NameStr: "local-design-auto-detect"})
-	t.Cleanup(func() { agent.Unregister("local-design-auto-detect") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "local-design-auto-detect"})
 	t.Setenv("PATH", "")
 
 	require.NoError(t, os.WriteFile(filepath.Join(repo.RootPath, ".roborev.toml"), []byte(`

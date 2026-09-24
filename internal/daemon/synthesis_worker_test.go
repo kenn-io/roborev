@@ -98,7 +98,7 @@ func releaseAndClaimSynthesis(
 // the test if it is ever invoked. Used to prove the no-agent branches.
 func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 	t.Helper()
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: name,
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			*called = true
@@ -106,7 +106,6 @@ func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 			return "", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(name) })
 }
 
 func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
@@ -128,6 +127,7 @@ func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
 // one non-voting member that failed the review, the panel passes without ever
 // invoking the synthesis agent, while the non-voting review stays stored.
 func TestSynthesisExcludesNonVotingMember(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -197,6 +197,7 @@ func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 // must be. The marker moved out of configureSynthesisAgent (which precedes the
 // checkout gate) to immediately before each agent call.
 func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
+	t.Parallel()
 	t.Run("checkout failure is not counted as an agent run", func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
 		const synthAgent = "synth-checkout-fail"
@@ -231,13 +232,12 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 	t.Run("successful synthesis run is counted", func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
 		const synthAgent = "synth-runs-ok"
-		agent.Register(&agent.FakeAgent{
+		agent.RegisterForTest(t, &agent.FakeAgent{
 			NameStr: synthAgent,
 			ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			},
 		})
-		t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 		_, _, synth := enqueuePanelRun(t, tc, "runs-ok-panel", []memberSpec{
 			{name: "m0", agent: "test"},
@@ -329,16 +329,14 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 	tc := newWorkerTestContext(t, 1)
 
 	const primaryAgent = "synth-primary-unavailable"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-test-missing-synthesis-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
 
 	const backupAgent = "synth-explicit-backup"
 	backup := &synthesisEntrypointTestAgent{name: backupAgent}
-	agent.Register(backup)
-	t.Cleanup(func() { agent.Unregister(backupAgent) })
+	agent.RegisterForTest(t, backup)
 
 	_, _, synthJob := enqueuePanelRun(t, tc, "backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
@@ -372,13 +370,13 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 }
 
 func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
 	const synthAgent = "synth-primary-is-backup"
 	synth := &synthesisEntrypointTestAgent{name: synthAgent}
-	agent.Register(synth)
-	t.Cleanup(func() { agent.Unregister(synthAgent) })
+	agent.RegisterForTest(t, synth)
 
 	_, _, synthJob := enqueuePanelRun(t, tc, "same-agent-backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
@@ -521,6 +519,7 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 }
 
 func TestSynthesisAllFailed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -553,6 +552,7 @@ func TestSynthesisAllFailed(t *testing.T) {
 }
 
 func TestSynthesisAllQuotaSkippedDoesNotStoreFailReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -583,6 +583,7 @@ func TestSynthesisAllQuotaSkippedDoesNotStoreFailReview(t *testing.T) {
 }
 
 func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -615,6 +616,7 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 }
 
 func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -653,6 +655,7 @@ func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *tes
 }
 
 func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -712,6 +715,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 }
 
 func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -722,8 +726,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 		name:   "panel-retained-findings-synth",
 		result: `{"schema_version":2,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","problem":"shared nit","fix":"tidy","location":null,"sources":[1,2]}]}`,
 	}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	agent.RegisterForTest(t, synthAgent)
 
 	runUUID, members, synthJob := enqueuePanelRun(t, tc, "retained-findings-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -768,6 +771,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 }
 
 func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -798,6 +802,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 }
 
 func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -805,8 +810,7 @@ func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 	registerPassingAgent(t, memberAgent)
 
 	synthAgent := &synthesisEntrypointTestAgent{name: "panel-synthesis-entrypoint"}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	agent.RegisterForTest(t, synthAgent)
 
 	runUUID, members, synth := enqueuePanelRun(t, tc, "entrypoint-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -831,6 +835,7 @@ func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 }
 
 func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-invalid-json-member"
@@ -839,8 +844,7 @@ func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 		name:   "panel-invalid-json-synth",
 		result: "Markdown without structured synthesis JSON.",
 	}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	agent.RegisterForTest(t, synthAgent)
 
 	runUUID, members, synth := enqueuePanelRun(t, tc, "invalid-json-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -859,6 +863,7 @@ func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 }
 
 func TestSynthesisCapturesTokenUsage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -869,8 +874,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 		name:       "panel-synthesis-token",
 		streamLine: `{"type":"thread.started","thread_id":"synth-session-123"}`,
 	}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	agent.RegisterForTest(t, synthAgent)
 
 	var fetchedSession string
 	tc.Pool.tokenUsageFetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
@@ -909,6 +913,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 }
 
 func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-synthesis-reused-token-member"
@@ -918,8 +923,7 @@ func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
 		name:       "panel-synthesis-reused-token",
 		streamLine: `{"type":"thread.started","thread_id":"shared-synth-session"}`,
 	}
-	agent.Register(synthAgent)
-	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+	agent.RegisterForTest(t, synthAgent)
 
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
 		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
@@ -946,6 +950,7 @@ func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
 }
 
 func TestSynthesisAutoClosesPassingReview(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		enabled    bool
@@ -980,6 +985,7 @@ func TestSynthesisAutoClosesPassingReview(t *testing.T) {
 }
 
 func TestSynthesisMultiVerifyDedupe(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -988,14 +994,13 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 
 	var captured string
 	const synthAgent = "synth-multi"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
 			return `{"schema_version":2,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","problem":"Consolidated finding.","fix":"Fix it.","location":"alpha.go:1","sources":[1,2]}]}`, nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 	sub, ch := tc.Broadcaster.Subscribe("")
 	defer tc.Broadcaster.Unsubscribe(sub)
@@ -1045,6 +1050,7 @@ func assertCompletedBroadcast(t *testing.T, ch <-chan Event, jobID int64) {
 }
 
 func TestSynthesisPassthroughIgnoresAgentCooldown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -1075,6 +1081,7 @@ func TestSynthesisPassthroughIgnoresAgentCooldown(t *testing.T) {
 }
 
 func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-fetch-err"
@@ -1110,6 +1117,7 @@ func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
 // branch honors the quota cooldown gate (the no-agent branches intentionally do
 // not — see TestSynthesisPassthroughIgnoresAgentCooldown).
 func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-cd-member"
@@ -1142,6 +1150,7 @@ func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
 }
 
 func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-ci-cd-member"
@@ -1181,6 +1190,7 @@ func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 // reviewed checkout: a panel whose synthesis carries a worktree path must hand
 // that worktree, not the main repo, to the agent.
 func TestSynthesisRunsAgainstWorktree(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -1197,7 +1207,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 
 	var capturedPath string
 	const synthAgent = "synth-wt"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
@@ -1213,7 +1223,6 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 	runUUID, members, _ := enqueuePanelRun(t, tc, "wt-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -1238,6 +1247,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 }
 
 func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -1245,13 +1255,12 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	registerPassingAgent(t, memberAgent)
 
 	const synthAgent = "synth-null-location"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return `{"schema_version":2,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 	runUUID, members, _ := enqueuePanelRun(t, tc, "null-location-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -1274,6 +1283,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 }
 
 func TestSynthesisNoVerdictOutputFailsWithoutRetry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
 
@@ -1281,13 +1291,12 @@ func TestSynthesisNoVerdictOutputFailsWithoutRetry(t *testing.T) {
 	registerPassingAgent(t, memberAgent)
 
 	const synthAgent = "synth-noverdict"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 	runUUID, members, _ := enqueuePanelRun(t, tc, "noverdict-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},

@@ -431,13 +431,11 @@ func getAvailableFallbackWithConfig(preferred string, repoCfg *config.RepoConfig
 	}
 
 	var available []string
-	registryMu.RLock()
-	for name := range registry {
+	for _, name := range Available() {
 		if name != "test" && isAvailableWithConfigFromConfig(name, repoCfg, cfg) {
 			available = append(available, name)
 		}
 	}
-	registryMu.RUnlock()
 
 	if len(available) == 0 {
 		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))

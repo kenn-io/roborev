@@ -556,6 +556,7 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 }
 
 func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
+	t.Parallel()
 	t.Run("close", func(t *testing.T) {
 		server, db, tempDir := newTestServer(t)
 		markerFile := filepath.Join(tempDir, "remote-close-hook")
@@ -627,7 +628,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 		started := make(chan struct{})
 		finished := make(chan struct{})
 		const agentName = "remote-cancel-blocking"
-		agent.Register(&agent.FakeAgent{
+		agent.RegisterForTest(t, &agent.FakeAgent{
 			NameStr: agentName,
 			ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 				close(started)
@@ -635,7 +636,6 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 				return "", ctx.Err()
 			},
 		})
-		t.Cleanup(func() { agent.Unregister(agentName) })
 
 		job := createTestJob(
 			t, db, tempDir, testutil.GetHeadSHA(t, tempDir), agentName,

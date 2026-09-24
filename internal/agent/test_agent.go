@@ -183,6 +183,38 @@ func (a *FakeAgent) WithAgentic(agentic bool) Agent           { return a }
 func (a *FakeAgent) WithModel(model string) Agent             { return a }
 func (a *FakeAgent) CommandLine() string                      { return "" }
 
+// RegistryTB is the part of testing.TB that RegisterForTest uses.
+type RegistryTB interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Cleanup(func())
+}
+
+// RegisterForTest registers a for the life of tb and removes it on cleanup.
+//
+// Parallel tests may call it concurrently. Every registry reader takes
+// registryMu, and each test owns the name it registers, so it fails tb
+// when the name is already taken. Replacing a built-in agent such as
+// "test" or "codex" still needs a sequential test using Register.
+//
+// Other parallel tests can see the agent in registry-wide listings and
+// in the last-resort fallback of GetAvailable. A test that depends on
+// the whole registry's contents, such as agent auto-detection with an
+// empty PATH, stays sequential.
+func RegisterForTest(tb RegistryTB, a Agent) {
+	tb.Helper()
+	name := a.Name()
+	registryMu.Lock()
+	if _, taken := registry[name]; taken {
+		registryMu.Unlock()
+		tb.Fatalf("agent %q is already registered", name)
+		return
+	}
+	registry[name] = a
+	registryMu.Unlock()
+	tb.Cleanup(func() { Unregister(name) })
+}
+
 func init() {
 	Register(NewTestAgent())
 }

@@ -427,8 +427,7 @@ func TestRunBatch_BlankCIAgentAutoDetectsAvailableAgent(t *testing.T) {
 	require := require.New(t)
 
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-batch"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-batch") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-batch"})
 
 	cfg := BatchConfig{
 		RepoPath:     t.TempDir(),
@@ -479,8 +478,7 @@ func TestRunBatch_BlankCIAgentWithExplicitBackupStaysStrict(t *testing.T) {
 	require := require.New(t)
 
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-batch"})
-	t.Cleanup(func() { agent.Unregister("ci-unrelated-batch") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-unrelated-batch"})
 
 	globalCfg := config.DefaultConfig()
 	globalCfg.ReviewBackupAgent = "claude-code"

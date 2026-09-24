@@ -363,12 +363,12 @@ func TestSynthesize_Formatting(t *testing.T) {
 }
 
 func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
+	t.Parallel()
 	// Register an agent that always fails so the test is
 	// deterministic regardless of what other agents exist
 	// in the global registry.
 	ag := newFailingSynthAgent()
-	agent.Register(ag)
-	t.Cleanup(func() { agent.Unregister("failing-synth") })
+	agent.RegisterForTest(t, ag)
 
 	results := []ReviewResult{
 		{
@@ -403,9 +403,9 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 }
 
 func TestSynthesize_InvalidJSONFallsBackToRaw(t *testing.T) {
+	t.Parallel()
 	ag := newInvalidSynthesisAgent()
-	agent.Register(ag)
-	t.Cleanup(func() { agent.Unregister(ag.Name()) })
+	agent.RegisterForTest(t, ag)
 
 	results := []ReviewResult{
 		{Status: ResultDone, Output: "Finding A"},
@@ -451,9 +451,9 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 }
 
 func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
+	t.Parallel()
 	cap := newCapturingAgent()
-	agent.Register(cap)
-	t.Cleanup(func() { agent.Unregister("capture") })
+	agent.RegisterForTest(t, cap)
 
 	results := []ReviewResult{
 		{
@@ -481,9 +481,9 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 }
 
 func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
+	t.Parallel()
 	synth := newSynthesisEntrypointAgent()
-	agent.Register(synth)
-	t.Cleanup(func() { agent.Unregister("synthesis-entrypoint") })
+	agent.RegisterForTest(t, synth)
 
 	results := []ReviewResult{
 		{
@@ -583,6 +583,7 @@ func TestSynthesizeCommentsInheritReviewThreshold(t *testing.T) {
 }
 
 func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
+	t.Parallel()
 	doc := StructuredReview{
 		SchemaVersion: 2,
 		Summary:       "Review summary includes a minor naming issue.",
@@ -606,8 +607,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			if mode == "fallback" {
 				synth.err = errors.New("synthesis failed")
 			}
-			agent.Register(synth)
-			t.Cleanup(func() { agent.Unregister(synth.Name()) })
+			agent.RegisterForTest(t, synth)
 			result := ReviewResult{Agent: "codex", Status: ResultDone, Structured: &doc}.ApplyMinSeverity("low")
 			results := []ReviewResult{result}
 			if mode != "single" {
@@ -634,8 +634,7 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	synth := newSynthesisEntrypointAgent()
-	agent.Register(synth)
-	t.Cleanup(func() { agent.Unregister("synthesis-entrypoint") })
+	agent.RegisterForTest(t, synth)
 
 	results := []ReviewResult{
 		{
@@ -709,6 +708,7 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 }
 
 func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []struct {
 		name    string
 		members []string
@@ -723,8 +723,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)}
-			agent.Register(a)
-			t.Cleanup(func() { agent.Unregister(a.Name()) })
+			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))
 			for i, threshold := range policy.members {
@@ -743,6 +742,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 }
 
 func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []struct {
 		name    string
 		ci      string
@@ -767,8 +767,7 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				if outcome == "fallback" {
 					a.err = errors.New("synthesis unavailable")
 				}
-				agent.Register(a)
-				t.Cleanup(func() { agent.Unregister(a.Name()) })
+				agent.RegisterForTest(t, a)
 				// Only the high-threshold member reports findings. The second
 				// member contributes its policy and a substantive passing review.
 				results := []ReviewResult{

@@ -102,6 +102,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 }
 
 func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	for _, policy := range []struct {
 		name      string
@@ -120,8 +121,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			assert := assert.New(t)
 			document := jsontext.Value(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
-			agent.Register(a)
-			t.Cleanup(func() { agent.Unregister(a.name) })
+			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 			setSynthesisAgent(t, tc, runUUID, a.name)
 			_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
@@ -163,6 +163,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 }
 
 func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	for _, policy := range []struct {
 		name    string
@@ -186,8 +187,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
 				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: string(raw)}
-				agent.Register(a)
-				t.Cleanup(func() { agent.Unregister(a.Name()) })
+				agent.RegisterForTest(t, a)
 				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 				setSynthesisAgent(t, tc, runUUID, a.Name())
 				_, err = tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)

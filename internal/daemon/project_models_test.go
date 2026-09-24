@@ -48,8 +48,7 @@ func TestProjectPanelOverrideSurvivesAgentAutoDetection(t *testing.T) {
 	binDir := t.TempDir()
 	require.NoError(t, os.Symlink(gitPath, filepath.Join(binDir, "git")))
 	t.Setenv("PATH", binDir)
-	agent.Register(&agent.FakeAgent{NameStr: "project-panel-auto"})
-	t.Cleanup(func() { agent.Unregister("project-panel-auto") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "project-panel-auto"})
 
 	t.Run("local", func(t *testing.T) {
 		selected, model, _, _, err := resolvePanelMemberExecution(members[0], targetDescriptor{}, nil, cfg)

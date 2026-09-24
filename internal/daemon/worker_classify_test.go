@@ -50,8 +50,7 @@ func TestPublicClassifierSkipReason_WrappedDeadlineExceeded(t *testing.T) {
 
 func TestWorkerPoolResolveDesignFollowUpGenericDefaultAgentCanAutoDetect(t *testing.T) {
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "classify-auto-design"})
-	t.Cleanup(func() { agent.Unregister("classify-auto-design") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "classify-auto-design"})
 
 	cfg := config.DefaultConfig()
 	cfg.DefaultAgent = "claude-code"
@@ -67,13 +66,11 @@ func TestProcessClassifyJob_DesignPromotionUsesThoroughDesignAgentConfig(t *test
 	tc := newWorkerTestContext(t, 0)
 
 	const primaryAgent = "classify-design-thorough-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-missing-classify-design-thorough-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-	agent.Register(&agent.FakeAgent{NameStr: "classify-design-auto-detect"})
-	t.Cleanup(func() { agent.Unregister("classify-design-auto-detect") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "classify-design-auto-detect"})
 	t.Setenv("PATH", "")
 
 	require.NoError(t, os.WriteFile(filepath.Join(tc.Repo.RootPath, ".roborev.toml"), []byte(`
@@ -211,8 +208,7 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 		result:      []byte(`{"design_review": false, "reason": "local change"}`),
 		logOutput:   "classifier progress\n",
 	}
-	agent.Register(classifier)
-	t.Cleanup(func() { agent.Unregister("fake-schema") })
+	agent.RegisterForTest(t, classifier)
 
 	cfg := config.DefaultConfig()
 	cfg.ClassifyAgent = "fake-schema"
@@ -270,12 +266,8 @@ func TestProcessClassifyJobUsesStoredAgent(t *testing.T) {
 			return []byte(`{"design_review": false, "reason": "selected"}`), nil
 		},
 	}
-	agent.Register(configured)
-	agent.Register(selected)
-	t.Cleanup(func() {
-		agent.Unregister(configured.Name())
-		agent.Unregister(selected.Name())
-	})
+	agent.RegisterForTest(t, configured)
+	agent.RegisterForTest(t, selected)
 
 	cfg := config.DefaultConfig()
 	cfg.ClassifyAgent = configured.Name()

@@ -314,6 +314,7 @@ func TestHandleCancelJob(t *testing.T) {
 }
 
 func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
+	t.Parallel()
 	server, db, tempDir := newTestServer(t)
 	testutil.InitTestGitRepo(t, tempDir)
 	markerFile := filepath.Join(tempDir, "local-running-cancel-hook")
@@ -324,7 +325,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 	started := make(chan struct{})
 	finished := make(chan struct{})
 	const agentName = "local-cancel-blocking"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			close(started)
@@ -332,7 +333,6 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 			return "", ctx.Err()
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job := createTestJob(
 		t, db, tempDir, testutil.GetHeadSHA(t, tempDir), agentName,
@@ -384,6 +384,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 }
 
 func TestHandleRerunJob(t *testing.T) {
+	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
 
 	// Create a repo
@@ -551,10 +552,7 @@ func TestHandleRerunJob(t *testing.T) {
 		isolatedDB, isolatedDir := testutil.OpenTestDBWithDir(t)
 		server := NewServer(isolatedDB, config.DefaultConfig(), "")
 		agentName := "rerun-implicit-model"
-		agent.Register(&commandTestAgent{name: agentName, command: "go"})
-		t.Cleanup(func() {
-			agent.Unregister(agentName)
-		})
+		agent.RegisterForTest(t, &commandTestAgent{name: agentName, command: "go"})
 
 		repo, err := isolatedDB.GetOrCreateRepo(isolatedDir)
 		require.NoError(t, err)
@@ -589,8 +587,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun with exact agent replaces only effective execution identity", func(t *testing.T) {
 		const selectedAgent = "rerun-selected-agent"
-		agent.Register(&agent.FakeAgent{NameStr: selectedAgent})
-		t.Cleanup(func() { agent.Unregister(selectedAgent) })
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selectedAgent})
 
 		commit, err := db.GetOrCreateCommit(
 			repo.ID, "rerun-selected-agent", "Author", "Subject", time.Now(),
@@ -630,12 +627,8 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 
 	t.Run("rerun rejects invalid agent changes without mutating the job", func(t *testing.T) {
-		agent.Register(&agent.FakeAgent{NameStr: "rerun-unstructured"})
-		agent.Register(&commandTestAgent{name: "rerun-unavailable", command: "roborev-command-that-does-not-exist"})
-		t.Cleanup(func() {
-			agent.Unregister("rerun-unstructured")
-			agent.Unregister("rerun-unavailable")
-		})
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "rerun-unstructured"})
+		agent.RegisterForTest(t, &commandTestAgent{name: "rerun-unavailable", command: "roborev-command-that-does-not-exist"})
 		for _, tt := range []struct {
 			name, selected, reviewType, jobType, wantError string
 			experiment                                     *storage.ExperimentAssignmentInput
@@ -843,6 +836,7 @@ func TestRerunJobBroadcastsOnlyAcceptedRequest(t *testing.T) {
 }
 
 func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
+	t.Parallel()
 	repoPath := t.TempDir()
 	testutil.InitTestGitRepo(t, repoPath)
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(
@@ -850,8 +844,7 @@ func TestResolveRerunClassifierModelUsesClassifierConfig(t *testing.T) {
 	), 0o644))
 
 	const selectedAgent = "rerun-classifier-model"
-	agent.Register(&fakeSchemaAgent{name: selectedAgent})
-	t.Cleanup(func() { agent.Unregister(selectedAgent) })
+	agent.RegisterForTest(t, &fakeSchemaAgent{name: selectedAgent})
 
 	job := &storage.ReviewJob{
 		Agent: selectedAgent, JobType: storage.JobTypeClassify,

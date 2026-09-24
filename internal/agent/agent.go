@@ -306,14 +306,14 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 	}
 
 	// List what's actually available for error message (exclude test agent)
+	// Iterate a snapshot: IsAvailable takes registryMu itself, and a
+	// recursive RLock deadlocks once a Register call is waiting.
 	var available []string
-	registryMu.RLock()
-	for name := range registry {
+	for _, name := range Available() {
 		if name != "test" && IsAvailable(name) {
 			available = append(available, name)
 		}
 	}
-	registryMu.RUnlock()
 
 	if len(available) == 0 {
 		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))
