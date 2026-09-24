@@ -222,8 +222,9 @@ func (e *VectorExchange) Claim(ctx context.Context, fingerprint string, key Vect
 	return holder == e.machineID, nil
 }
 
-// Publish upserts records under fingerprint. Different text hashes remain
-// independent because peers can publish revisions out of order.
+// Publish inserts records under fingerprint without replacing an existing
+// exact-key result. A discarded record or collected generation can be
+// republished because its key is absent.
 func (e *VectorExchange) Publish(ctx context.Context, fingerprint string, records []VectorRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -249,13 +250,7 @@ func (e *VectorExchange) Publish(ctx context.Context, fingerprint string, record
 				(review_uuid, generation_fingerprint, content_sha256, status, dims,
 				 chunk_indexes, chunks, publisher_machine_id, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-			ON CONFLICT (review_uuid, generation_fingerprint, content_sha256) DO UPDATE SET
-				status = EXCLUDED.status,
-				dims = EXCLUDED.dims,
-				chunk_indexes = EXCLUDED.chunk_indexes,
-				chunks = EXCLUDED.chunks,
-				publisher_machine_id = EXCLUDED.publisher_machine_id,
-				updated_at = NOW()`,
+			ON CONFLICT (review_uuid, generation_fingerprint, content_sha256) DO NOTHING`,
 			record.Key.ReviewUUID, fingerprint, record.Key.ContentSHA256, record.Status, record.Dims,
 			indexes, chunks, e.machineID)
 		if err != nil {

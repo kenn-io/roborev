@@ -250,6 +250,46 @@ func TestIntegration_VectorExchangeOutOfOrderPublishKeepsCurrentHash(t *testing.
 	assert.Len(t, retained, 2, "ambiguous peer variants remain reusable until the generation is collected")
 }
 
+func TestIntegration_VectorExchangePublishKeepsExistingExactHash(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	stalePublisher := newTestVectorExchange(t, pool, "machine-stale")
+	winnerPublisher := NewVectorExchange(func() *PgPool { return pool }, "machine-winner")
+	fingerprint := t.Name() + "-gen"
+	key := VectorKey{ReviewUUID: "00000000-0000-4000-8000-000000000007", ContentSHA256: "same-hash"}
+	winner := VectorRecord{
+		Key: key, Status: VectorStatusOK, Dims: 2,
+		Chunks: []VectorChunk{{Index: 0, Vector: []float32{0, 1}}},
+	}
+	stale := VectorRecord{
+		Key: key, Status: VectorStatusOK, Dims: 2,
+		Chunks: []VectorChunk{{Index: 0, Vector: []float32{1, 0}}},
+	}
+	_, err := stalePublisher.TouchGeneration(ctx, VectorGeneration{Fingerprint: fingerprint, Model: "m", Dimensions: 2})
+	require.NoError(t, err)
+	held, err := stalePublisher.Claim(ctx, fingerprint, key, time.Minute)
+	require.NoError(t, err)
+	assert.True(t, held)
+	_, err = pool.pool.Exec(ctx, `UPDATE review_embedding_claims SET expires_at = NOW() - INTERVAL '1 second'
+		WHERE generation_fingerprint = $1 AND review_uuid = $2 AND content_sha256 = $3`,
+		fingerprint, key.ReviewUUID, key.ContentSHA256)
+	require.NoError(t, err)
+	held, err = winnerPublisher.Claim(ctx, fingerprint, key, time.Minute)
+	require.NoError(t, err)
+	assert.True(t, held)
+	require.NoError(t, winnerPublisher.Publish(ctx, fingerprint, []VectorRecord{winner}))
+	require.NoError(t, stalePublisher.Publish(ctx, fingerprint, []VectorRecord{stale}))
+
+	got, err := winnerPublisher.Lookup(ctx, fingerprint, []VectorKey{key})
+	require.NoError(t, err)
+	assert.Equal(t, []VectorRecord{winner}, got, "a stale claimant must not replace the current lease holder's published record")
+	require.NoError(t, winnerPublisher.Discard(ctx, fingerprint, key))
+	require.NoError(t, stalePublisher.Publish(ctx, fingerprint, []VectorRecord{stale}))
+	got, err = winnerPublisher.Lookup(ctx, fingerprint, []VectorKey{key})
+	require.NoError(t, err)
+	assert.Equal(t, []VectorRecord{stale}, got, "an absent exact key remains publishable after discard or generation recreation")
+}
+
 func TestIntegration_VectorExchangeReportsUnsupportedAndUnreachable(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
