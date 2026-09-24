@@ -2237,6 +2237,26 @@ func TestNewTuiModelOptions(t *testing.T) {
 			expectedDaemonVer:    "?",
 		},
 		{
+			name:                 "Linked worktree filters repo and branch by default",
+			opts:                 []option{withExternalIODisabled(), withCwdCheckout("/path/to/repo", "/path/to/wt", "feat/wt")},
+			expectedRepoFilter:   []string{"/path/to/repo"},
+			expectedBranchFilter: "feat/wt",
+			expectedFilterStack:  []string{filterTypeRepo, filterTypeBranch},
+			expectedLockedRepo:   false,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "Main checkout does not filter by default",
+			opts:                 []option{withExternalIODisabled(), withCwdCheckout("/path/to/repo", "/path/to/repo", "main")},
+			expectedRepoFilter:   nil,
+			expectedBranchFilter: "",
+			expectedFilterStack:  nil,
+			expectedLockedRepo:   false,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
 			name:                 "BranchFilter flag overrides AutoFilterBranch",
 			opts:                 []option{withExternalIODisabled(), withAutoFilterBranch("feat/auto"), withBranchFilter("feat/manual")},
 			expectedRepoFilter:   nil,
@@ -2354,4 +2374,23 @@ func TestSSEPendingRefreshStateMachine(t *testing.T) {
 		m, _ = updateModel(t, m, sseEventMsg{})
 		assert.False(m.ssePendingRefresh, "should not set flag when not loading")
 	})
+}
+
+func TestResolveAutoFilter(t *testing.T) {
+	tests := []struct {
+		name             string
+		setting          *bool
+		inLinkedWorktree bool
+		want             bool
+	}{
+		{"unset in main checkout", nil, false, false},
+		{"unset in linked worktree", nil, true, true},
+		{"true in main checkout", new(true), false, true},
+		{"false in linked worktree", new(false), true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveAutoFilter(tc.setting, tc.inLinkedWorktree))
+		})
+	}
 }

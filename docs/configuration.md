@@ -1022,8 +1022,8 @@ column_borders = true             # Show separators between TUI columns
 | `refine_min_severity` | string | - | Default minimum severity for `refine`: `critical`, `high`, `medium`, or `low` | Yes |
 | `disable_codex_sandbox` | bool | false | Disable Codex `bwrap` sandboxing for systems where it is unavailable | Yes |
 | `hide_closed_by_default` | bool | false | Start TUI with closed/failed/canceled reviews hidden | N/A |
-| `auto_filter_repo` | bool | false | Auto-filter TUI to the current repo on startup | N/A |
-| `auto_filter_branch` | bool | false | Auto-filter TUI to the current branch/worktree on startup | N/A |
+| `auto_filter_repo` | bool | unset | Auto-filter TUI to the current repo on startup. Unset filters only in a linked worktree; `false` never filters | N/A |
+| `auto_filter_branch` | bool | unset | Auto-filter TUI to the current branch on startup. Unset filters only in a linked worktree; `false` never filters | N/A |
 | `mouse_enabled` | bool | true | Enable mouse interactions in the TUI (also togglable from the TUI options menu) | N/A |
 | `tab_width` | int | 2 | Tab expansion width for code blocks in TUI (1-16) | N/A |
 | `column_borders` | bool | false | Show `▕` separators between TUI columns | N/A |

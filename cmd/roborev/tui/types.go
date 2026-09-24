@@ -545,6 +545,16 @@ func withAutoFilterRepo(repo string) option {
 	}
 }
 
+// withCwdCheckout simulates launching from a checkout with no
+// auto_filter_* config set.
+func withCwdCheckout(repoRoot, worktreePath, branch string) option {
+	return func(o *options) {
+		o.cwdRepoRoot = repoRoot
+		o.cwdWorktreePath = worktreePath
+		o.cwdBranch = branch
+	}
+}
+
 func withCwdRepoIdentity(identity string) option {
 	return func(o *options) { o.cwdRepoIdentity = identity }
 }
@@ -560,6 +570,7 @@ type options struct {
 	autoFilterBranch  bool   // tests: simulate auto_filter_branch config
 	cwdRepoRoot       string // tests: simulate detected repo root
 	cwdRepoIdentity   string // tests: simulate detected repo identity
+	cwdWorktreePath   string // tests: simulate detected worktree path
 	cwdBranch         string // tests: simulate detected branch
 }
 

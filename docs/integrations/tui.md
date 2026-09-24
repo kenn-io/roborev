@@ -192,12 +192,18 @@ The current working directory's repo sorts to the top of the tree, and its
 current branch sorts to the top of that repo's branch list.
 
 To start the TUI with closed items already hidden, set
-`hide_closed_by_default = true` in `~/.roborev/config.toml`. To auto-filter to
-the current repository on startup, set `auto_filter_repo = true`. To auto-filter
-to the current branch or worktree, set `auto_filter_branch = true`. Both
-auto-filters add clearable filters (press `Esc`), and CLI flags (`--repo`,
-`--branch`) take priority when set. See [Configuration](/docs/configuration/)
-for details.
+`hide_closed_by_default = true` in `~/.roborev/config.toml`.
+
+When you start the TUI from a linked git worktree, it filters the queue to that
+worktree's repository and branch by default. Elsewhere, it shows every repo.
+
+- `auto_filter_repo = true` filters to the current repository everywhere.
+- `auto_filter_branch = true` filters to the current branch everywhere.
+- Set either to `false` to turn that filter off, including in linked worktrees.
+- Auto-filters can be cleared with `Esc`.
+- CLI flags (`--repo`, `--branch`) take priority and lock the filter.
+
+See [Configuration](/docs/configuration/) for details.
 
 Pressing `h` toggles the hide-closed filter for the current session without
 changing the config.

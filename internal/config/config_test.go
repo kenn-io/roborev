@@ -199,7 +199,7 @@ func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfg := DefaultConfig()
-	cfg.AutoFilterBranch = true
+	cfg.AutoFilterBranch = new(true)
 	{
 
 		err := SaveGlobal(cfg)
@@ -212,9 +212,7 @@ func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobal failed: %v", err)
-	assert.Condition(t, func() bool {
-		return loaded.AutoFilterBranch
-	}, "AutoFilterBranch should be true after round-trip")
+	assert.Equal(t, new(true), loaded.AutoFilterBranch)
 }
 
 func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
@@ -231,9 +229,7 @@ func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobalFrom failed: %v", err)
-	assert.Condition(t, func() bool {
-		return cfg.AutoFilterBranch
-	}, "AutoFilterBranch should be true when loaded from TOML")
+	assert.Equal(t, new(true), cfg.AutoFilterBranch)
 }
 
 func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {

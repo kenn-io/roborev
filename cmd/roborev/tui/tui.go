@@ -772,6 +772,16 @@ func detectCwdRepoContext(
 		gitrepo.CurrentBranch(ctx, worktreeRoot)
 }
 
+// resolveAutoFilter reports whether an auto_filter_* setting applies.
+// An unset setting filters only in a linked worktree, which usually
+// exists to work on one branch.
+func resolveAutoFilter(setting *bool, inLinkedWorktree bool) bool {
+	if setting != nil {
+		return *setting
+	}
+	return inLinkedWorktree
+}
+
 func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var opt options
 	for _, o := range opts {
@@ -784,8 +794,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 
 	daemonVersion := "?"
 	hideClosed := false
-	autoFilterRepo := false
-	autoFilterBranch := false
+	var autoFilterRepoCfg, autoFilterBranchCfg *bool
 	mouseEnabled := true
 	tabWidth := 2
 	columnBorders := false
@@ -806,8 +815,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		if cfg, err := config.LoadGlobal(); err == nil {
 			globalCfg = cfg
 			hideClosed = cfg.HideClosedByDefault
-			autoFilterRepo = cfg.AutoFilterRepo
-			autoFilterBranch = cfg.AutoFilterBranch
+			autoFilterRepoCfg = cfg.AutoFilterRepo
+			autoFilterBranchCfg = cfg.AutoFilterBranch
 			mouseEnabled = cfg.MouseEnabled
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
@@ -836,6 +845,16 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		sseStop = make(chan struct{})
 		go startSSESubscription(ep, sseCh, sseStop)
 	}
+
+	// Test override for launching from a detected checkout
+	if opt.cwdWorktreePath != "" {
+		cwdRepoRoot = opt.cwdRepoRoot
+		cwdWorktreePath = opt.cwdWorktreePath
+		cwdBranch = opt.cwdBranch
+	}
+	inLinkedWorktree := cwdWorktreePath != "" && cwdWorktreePath != cwdRepoRoot
+	autoFilterRepo := resolveAutoFilter(autoFilterRepoCfg, inLinkedWorktree)
+	autoFilterBranch := resolveAutoFilter(autoFilterBranchCfg, inLinkedWorktree)
 
 	// Test overrides for auto-filter simulation
 	if opt.autoFilterRepo {
