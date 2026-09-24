@@ -92,6 +92,16 @@
       "permanent": true
     },
     {
+      "source": "/agent-setup/",
+      "destination": "/docs/agent-setup/",
+      "permanent": true
+    },
+    {
+      "source": "/agent-setup.md",
+      "destination": "/docs/agent-setup.md",
+      "permanent": true
+    },
+    {
       "source": "/changelog/",
       "destination": "/docs/changelog/",
       "permanent": true
