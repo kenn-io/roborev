@@ -620,7 +620,9 @@ func extractClaudeStructuredOutput(raw jsontext.Value) (jsontext.Value, bool, er
 		if block.Type != "tool_use" || block.Name != "StructuredOutput" {
 			continue
 		}
-		if block.Caller.Type != "direct" {
+		// caller is optional: Anthropic-compatible proxies omit it, so only
+		// an explicit non-direct caller is rejected.
+		if block.Caller.Type != "" && block.Caller.Type != "direct" {
 			return nil, true, fmt.Errorf("claude structured output tool use has non-direct caller %q", block.Caller.Type)
 		}
 		if len(bytes.TrimSpace(block.Input)) == 0 || bytes.Equal(bytes.TrimSpace(block.Input), []byte("null")) {
