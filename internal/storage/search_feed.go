@@ -8,7 +8,7 @@ import (
 	"slices"
 )
 
-const searchFeedSelect = `
+var searchFeedSelect = `
 	SELECT rv.id,
 	       COALESCE(CAST(rv.uuid AS TEXT), ''),
 	       j.id,
@@ -34,10 +34,35 @@ const searchFeedSelect = `
 	       j.diff_content IS NOT NULL,
 	       CASE
 	         WHEN COALESCE(CAST(rv.uuid AS TEXT), '') = '' OR COALESCE(CAST(j.uuid AS TEXT), '') = '' THEN 0
-	         WHEN j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
-	              AND COALESCE(r.identity, '') != ''
-	              AND (rv.synced_at IS NOT NULL OR rv.structured_output IS NOT NULL) THEN 1
-	         WHEN rv.synced_at IS NOT NULL THEN 2
+	         WHEN COALESCE(r.identity, '') = '' THEN 0
+	         WHEN (
+	              (
+	                j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                AND rv.synced_at IS NOT NULL
+	                AND ` + sqliteNormalizedTimestampExpr("rv.updated_at") + ` <= ` + sqliteNormalizedTimestampExpr("rv.synced_at") + `
+	              )
+	              OR (
+	                rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                AND (rv.structured_output IS NOT NULL OR COALESCE(j.job_type, '') NOT IN ('review', 'range', 'dirty', 'synthesis', 'compact'))
+	                AND (
+	                  j.synced_at IS NOT NULL
+	                  OR (
+	                    j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                    AND j.status IN ('done', 'failed', 'canceled', 'skipped')
+	                    AND (j.synced_at IS NULL OR ` + sqliteNormalizedTimestampExpr("j.updated_at") + ` > ` + sqliteNormalizedTimestampExpr("j.synced_at") + `)
+	                  )
+	                )
+	              )
+	         ) THEN 1
+	         WHEN rv.synced_at IS NOT NULL
+	              AND (
+	                ` + sqliteNormalizedTimestampExpr("rv.updated_at") + ` <= ` + sqliteNormalizedTimestampExpr("rv.synced_at") + `
+	                OR (
+	                  rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+	                  AND j.synced_at IS NOT NULL
+	                  AND (rv.structured_output IS NOT NULL OR COALESCE(j.job_type, '') NOT IN ('review', 'range', 'dirty', 'synthesis', 'compact'))
+	                )
+	              ) THEN 2
 	         ELSE 0
 	       END
 	FROM reviews rv

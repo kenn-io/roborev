@@ -430,8 +430,8 @@ const (
 	// SearchShareLocal documents never reach PostgreSQL (no review UUID, or
 	// a review the push rules never send); they are always embedded locally.
 	SearchShareLocal SearchShareState = 0
-	// SearchShareOwn documents were written by this machine's job and are
-	// synced or will be pushed; this machine claims them first.
+	// SearchShareOwn documents are exportable by this machine; this machine
+	// claims them first.
 	SearchShareOwn SearchShareState = 1
 	// SearchSharePeer documents came from another machine through sync.
 	SearchSharePeer SearchShareState = 2
