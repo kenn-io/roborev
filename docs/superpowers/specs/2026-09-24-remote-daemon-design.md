@@ -20,7 +20,7 @@ daemon's loopback API.
 | Missing commits      | The daemon fetches once from the clone's configured remotes. If commits are still missing, the client uploads them as a git pack.                                  |
 | Uploaded commits     | Pinned under `refs/roborev/uploads/<sha>`. The daemon deletes an upload ref once a remote-tracking branch contains the commit.                                     |
 | Dirty reviews        | Rejected for remote clients.                                                                                                                                     |
-| Hooks and branch     | Remote reviews fire daemon hooks like local ones. The client-reported branch is used for display and hook `branches` matching.                                    |
+| Hooks and branch     | Remote reviews fire daemon hooks like local ones. The client-reported branch is used for display, `excluded_branches`, and hook `branches` matching.               |
 | Client configuration | Global `[remote] server = "http://<host>:<port>"`. `--server` accepts the same URL. A remote client never starts or restarts a local daemon.                      |
 | kit                  | No change. `kitdaemon.RequireLoopback` still guards the loopback API.                                                                                              |
 
@@ -40,7 +40,18 @@ shutdown, update, agent-hook routes, exports, UI routes, and `/mcp`.
 Remote enqueue accepts only commit-based reviews: job type `review` or `range`,
 including panel fan-out. It rejects dirty, task, insights, compact, fix,
 analyze, and agentic requests with `403` and a message that names the job type
-and says it needs a local daemon.
+and says it needs a local daemon. The check covers every request field that
+selects a job kind, not only `job_type`. The enqueue handler makes any request
+with `custom_prompt` a task job, so remote enqueue rejects a non-empty
+`custom_prompt`, `agentic`, the `dirty` ref, `diff_content`, and the insights
+and analysis fields. Remote rerun has the same limit: it reruns
+only non-agentic `review` and `range` jobs, because rerunning a task or fix job
+would run an agent that can edit the daemon host's checkout.
+
+A remote enqueue must name commits by full SHA: one SHA, or `<sha>..<sha>` for
+a range. Symbolic refs such as `HEAD` or a branch name are rejected with `400`,
+because the daemon would resolve them in its own clone rather than the
+client's.
 
 ## Daemon side
 
@@ -57,6 +68,10 @@ tailscale_path = ""               # optional; default: "tailscale" from PATH
   in `fd7a:115c:a1e0::/48`. Startup fails with an actionable error otherwise.
   Only tailnet peers can be identified by whois, so no other address is useful.
 - The listener serves plain HTTP. WireGuard encrypts tailnet traffic.
+- It gets its own `http.Server` with the browser listener's header and idle
+  timeouts, but no whole-request read or write timeout. Pack uploads and the
+  streaming routes (`stream/events`, `job/log`) can run longer than the browser
+  listener's 30-second `ReadTimeout` allows.
 - A reverse proxy in front of this listener breaks authentication, because
   every request then comes from the proxy. The docs say so.
 - `remote_api` is global config only, like `server_addr`.
@@ -100,18 +115,27 @@ the loopback API uses. `routeKey` and the allowlist pattern follow
 
 ### Repo identity
 
-`EnqueueRequest` gains `repo_identity`. The `jobs` and `branches` queries gain
-a `repo_identity` parameter.
+Remote clients name repos by identity (the `.roborev-id` value, or the origin
+URL with credentials stripped), never by path.
 
-- On the remote listener, `repo_path` and `repo` (path filters) are rejected.
-  Clients must send `repo_identity`.
-- The daemon resolves the identity with `GetRepoByIdentity`. It then replaces
-  the request's `repo_path` with that repo's `RootPath` and calls the normal
-  handler.
-- An unknown identity returns `404`
-  `"repo <identity> is not registered on the daemon host; run roborev init there"`.
-- The loopback API accepts `repo_identity` too, but it is only required
+- `EnqueueRequest` gains `repo_identity`. On the remote listener it is required
+  and `repo_path` is rejected. The remote handler resolves the identity and
+  sets `repo_path` to the matching repo's `RootPath` before calling the normal
+  enqueue handler.
+- The existing `repo` query filters on jobs, branches, summary, cost, search,
+  and stream/events carry identities on the remote listener. The remote handler
+  rewrites each value to the matching `RootPath` before the core handler runs.
+  Path-prefix filters (`repo_prefix` on jobs, `prefix` on repos) are rejected
   remotely.
+- Resolution matches registered repos with a real checkout: sync placeholder
+  rows (where `root_path` equals the identity) never match. No match returns
+  `404`
+  `"repo <identity> is not registered on the daemon host; run roborev init there, or add a matching .roborev-id"`.
+  More than one match returns `409` naming the identity and the matching paths.
+- Identities must match exactly. A clone whose origin uses a different URL form
+  (SSH versus HTTPS) needs a `.roborev-id` file on both sides. The client
+  refuses to send a `local://` fallback identity, because it can never match
+  another host.
 
 ### Missing commits
 
@@ -128,7 +152,7 @@ endpoints. The check uses `git cat-file -e <sha>^{commit}`.
 
 `POST /api/remote/pack?repo_identity=<id>` (queue level) takes a git pack as
 the raw `application/octet-stream` body, plus `tip` query parameters naming the
-commits to pin.
+commits to pin. Each tip must be a full SHA.
 
 1. Stream the body into `git index-pack --stdin` run in the resolved clone.
    Git validates the pack, and objects land in the clone's object store.
@@ -149,11 +173,20 @@ After each remote fetch in the missing-commit path, the daemon deletes every
 
 ### Hooks and branch
 
-Remote enqueues follow the local path completely. Hooks fire on completion,
-and the request's `branch` feeds display and `HookBranch()`. The remote client
-always sends `branch` (it errors if one can't be determined for a branch
-review), so the daemon never substitutes its own checkout's branch. The daemon
-rejects a branch that is not a valid ref name (`git check-ref-format --branch`).
+Remote enqueues follow the local path. Hooks fire on completion, and the
+request's `branch` feeds display, `excluded_branches` checks, and
+`HookBranch()`.
+
+The daemon's own checkout branch has nothing to do with a remote caller's work.
+Today the enqueue handler uses that checkout branch in two places: the
+exclusion check for non-post-commit reviews, and the default when `branch` is
+empty. For remote requests, both use the request's `branch` instead.
+
+- The client sends its current branch, or an empty branch on a detached HEAD.
+- An empty branch goes through the existing detached-HEAD inference against
+  the daemon clone's refs, and stays empty if nothing matches.
+- The daemon rejects a branch that is not a valid branch name
+  (`git check-ref-format --branch`) with `400`.
 
 ## Client side
 
@@ -173,14 +206,22 @@ mode. `--server` overrides `[remote] server`.
 - `ensureDaemon` becomes a single `GET /api/ping` probe. It never starts,
   restarts, stops, or version-checks a daemon. When the probe fails, the
   message names the server and the underlying error.
-- The TUI (`--addr` follows the same rule), MCP stdio, and the agent-hook
-  client use the remote endpoint the same way.
-- Requests that took a local path send `repo_identity`, computed locally with
-  `config.ResolveRepoIdentity`.
+- The TUI (`--addr` follows the same rule) and MCP stdio use the remote
+  endpoint the same way.
+- Agent-hook commands track local agent sessions by path, so they ignore
+  `[remote] server` and keep today's local endpoint discovery. Their
+  endpoint lookup must not go through the remote-aware resolver.
+- Requests that took a local path send the repo identity instead, computed
+  locally with `config.ResolveRepoIdentity`.
+- The client resolves every ref to a full SHA locally before a remote enqueue.
 - Commands that need a local daemon fail before sending anything. The message
   names the command and says it needs a local daemon. These include dirty
-  reviews, `fix`, `refine`, `init`/repo registration, `remap`, daemon
-  lifecycle commands, `sync`, `run`, `analyze`, and `compact`.
+  reviews, `fix`, `refine`, `remap`, daemon lifecycle commands, `sync`, `run`,
+  `analyze`, and `compact`.
+- `roborev init` still installs the local git hooks, which remote post-commit
+  reviews depend on. It skips daemon registration and says the repo must be
+  registered on the daemon host.
+- The post-rewrite hook, which calls `remap`, exits quietly in remote mode.
 - A remote `403` or `404` body is shown to the user as returned.
 
 ### Queuing and uploads
@@ -206,7 +247,9 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
 | Read-level caller mutates          | 403    | `<route> requires queue access; this node has read access`                  |
 | Route not remote-capable           | 403    | `<route> is not available over the remote API; run it on the daemon host` |
 | Unsupported remote job type        | 403    | `<type> reviews need a local daemon`                                        |
-| Unknown identity                   | 404    | `repo <identity> is not registered on the daemon host; run roborev init there` |
+| Symbolic ref in remote enqueue     | 400    | `remote enqueue needs full commit SHAs`                                     |
+| Unknown identity                   | 404    | `repo <identity> is not registered on the daemon host; ...`                 |
+| Identity matches several repos     | 409    | `repo <identity> matches several daemon checkouts: <paths>`                 |
 | Commits missing after fetch        | 409    | `missing_commits` with the SHA list                                        |
 | Pack lacks base commits            | 409    | `daemon clone lacks base commits for <tip>; fetch on the daemon host`      |
 
@@ -217,7 +260,10 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
   `tailscale_path`.
 - Allowlist: each level against a read route, a queue route, and a denied
   route.
-- Identity mapping: known, unknown, and `repo_path` rejected remotely.
+- Identity mapping: known, unknown, sync placeholder ignored, duplicate
+  identities, `repo_path` rejected remotely, and `repo` filter rewriting.
+- Remote enqueue and rerun: symbolic refs rejected; agentic, task, and dirty
+  jobs rejected for both enqueue and rerun.
 - Missing commits: present, fetched, and still missing (`409` with SHAs).
 - Pack upload: a real pack from a test repo imports and pins; a pack without
   base commits returns `409`; upload refs are pruned once reachable from a
