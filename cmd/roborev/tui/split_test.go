@@ -43,11 +43,6 @@ func splitModel(opts ...testModelOption) model {
 func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
 	t.Setenv("CLICOLOR", "")
 	t.Setenv("CLICOLOR_FORCE", "")
-	previousLocation := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() {
-		time.Local = previousLocation
-	})
 
 	fixtures := []struct {
 		name   string
