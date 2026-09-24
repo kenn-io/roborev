@@ -169,7 +169,12 @@ func (index *Index) activateGenerationTx(ctx context.Context, tx *sql.Tx, key st
 	if counts.Backlog != 0 {
 		return fmt.Errorf("activate search vector generation %s: %d documents remain", key, counts.Backlog)
 	}
+	return index.cutoverGenerationTx(ctx, tx, key)
+}
 
+// cutoverGenerationTx marks key active, retires every other live generation,
+// and reclaims retired vector tables. Callers check coverage first.
+func (index *Index) cutoverGenerationTx(ctx context.Context, tx *sql.Tx, key string) error {
 	var wantedOrdinal int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT ordinal FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&wantedOrdinal); err != nil {
