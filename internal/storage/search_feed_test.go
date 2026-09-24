@@ -211,6 +211,66 @@ func TestSearchDocumentLookupSupportsUUIDAndLegacyLocalKey(t *testing.T) {
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
+func TestSearchFeedClassifiesShareState(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	repoID, commitID := seedSearchFeedBase(t, db)
+	structured := `{"schema_version":2,"summary":"shared summary","verdict":"pass","findings":[]}`
+
+	ownPending := seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, structured: structured,
+	})
+	ownApplied := seedSearchFeedReview(t, db, repoID, commitID, 6, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusApplied, structured: structured,
+	})
+	ownSynced := seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, output: "unstructured but synced",
+	})
+	peer := seedSearchFeedReview(t, db, repoID, commitID, 3, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, output: "pulled from a peer",
+	})
+	neverPushes := seedSearchFeedReview(t, db, repoID, commitID, 4, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, output: "legacy unstructured never pushes",
+	})
+	legacyKey := seedSearchFeedReview(t, db, repoID, commitID, 5, searchFeedFixture{
+		jobType: "", status: JobStatusDone, output: "no uuid", legacy: true,
+	})
+	foreignUnpushed := seedSearchFeedReview(t, db, repoID, commitID, 7, searchFeedFixture{
+		jobType: JobTypeReview, status: JobStatusDone, structured: structured,
+	})
+	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = ?
+		WHERE id IN (SELECT job_id FROM reviews WHERE id IN (?, ?, ?, ?))`,
+		machineID.String(), ownPending, ownApplied, ownSynced, neverPushes) //nolint:forbidigo // SQLite TEXT fixture.
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = 'peer-machine'
+		WHERE id IN (SELECT job_id FROM reviews WHERE id IN (?, ?))`, peer, foreignUnpushed)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE reviews SET synced_at = '2026-09-15T12:00:00Z' WHERE id IN (?, ?)`, ownSynced, peer)
+	require.NoError(t, err)
+
+	sources, err := db.ListSearchDocuments(context.Background(), 0, 10)
+	require.NoError(t, err)
+	states := map[int64]SearchShareState{}
+	for _, source := range sources {
+		states[source.ReviewID] = source.ShareState
+	}
+	assert.Equal(t, map[int64]SearchShareState{
+		ownPending:      SearchShareOwn,
+		ownApplied:      SearchShareOwn,
+		ownSynced:       SearchShareOwn,
+		peer:            SearchSharePeer,
+		neverPushes:     SearchShareLocal,
+		legacyKey:       SearchShareLocal,
+		foreignUnpushed: SearchShareLocal,
+	}, states)
+
+	single, err := db.GetSearchDocument(context.Background(), "00000000-0000-4000-8000-000000000103")
+	require.NoError(t, err)
+	assert.Equal(t, SearchSharePeer, single.ShareState)
+}
+
 func seedSearchFeedBase(t *testing.T, db *DB) (int64, int64) {
 	t.Helper()
 	repoResult, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/synthetic/widgets', 'widgets', 'https://example.invalid/widgets.git')`)

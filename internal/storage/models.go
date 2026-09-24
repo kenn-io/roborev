@@ -417,7 +417,25 @@ type SearchReviewSource struct {
 	Output           string
 	StructuredOutput StructuredOutput
 	Responses        []Response
+
+	// ShareState says whether the review's text reaches PostgreSQL sync and
+	// therefore whether its search vectors may be shared through it.
+	ShareState SearchShareState
 }
+
+// SearchShareState classifies a search document for the shared vector cache.
+type SearchShareState int
+
+const (
+	// SearchShareLocal documents never reach PostgreSQL (no review UUID, or
+	// a review the push rules never send); they are always embedded locally.
+	SearchShareLocal SearchShareState = 0
+	// SearchShareOwn documents were written by this machine's job and are
+	// synced or will be pushed; this machine claims them first.
+	SearchShareOwn SearchShareState = 1
+	// SearchSharePeer documents came from another machine through sync.
+	SearchSharePeer SearchShareState = 2
+)
 
 // AutoDesignStatus carries per-outcome counters for the automatic
 // design-review router. Only emitted when the feature is effectively
