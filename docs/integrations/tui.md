@@ -198,8 +198,8 @@ When you start the TUI inside a git checkout, it filters the queue to that
 checkout's repository and branch by default. Outside a checkout, it shows every
 repo.
 
-- `auto_filter_repo = false` turns off the repository filter.
-- `auto_filter_branch = false` turns off the branch filter.
+- `tui_filter_repo = false` turns off the repository filter.
+- `tui_filter_branch = false` turns off the branch filter.
 - Auto-filters can be cleared with `Esc`.
 - CLI flags (`--repo`, `--branch`) take priority and lock the filter.
 

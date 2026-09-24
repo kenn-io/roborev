@@ -197,7 +197,7 @@ type model struct {
 
 	// Active filter (applied to queue view)
 	activeRepoFilter   []string // Empty = show all, otherwise repo root_paths to filter by
-	autoRepoFilter     bool     // true when activeRepoFilter came from auto_filter_repo
+	autoRepoFilter     bool     // true when activeRepoFilter came from tui_filter_repo
 	activeBranchFilter string   // Empty = show all, otherwise branch name to filter by
 	filterStack        []string // Order of applied filters: "repo", "branch" - for escape to pop in order
 	hideClosed         bool     // When true, hide jobs with closed reviews
@@ -805,8 +805,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		if cfg, err := config.LoadGlobal(); err == nil {
 			globalCfg = cfg
 			hideClosed = cfg.HideClosedByDefault
-			autoFilterRepoCfg = cfg.AutoFilterRepo
-			autoFilterBranchCfg = cfg.AutoFilterBranch
+			autoFilterRepoCfg = cfg.TUIFilterRepo
+			autoFilterBranchCfg = cfg.TUIFilterBranch
 			mouseEnabled = cfg.MouseEnabled
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
@@ -842,7 +842,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		cwdWorktreePath = opt.cwdWorktreePath
 		cwdBranch = opt.cwdBranch
 	}
-	// Unset auto_filter_* settings default to on.
+	// Unset tui_filter_* settings default to on.
 	autoFilterRepo := autoFilterRepoCfg == nil || *autoFilterRepoCfg
 	autoFilterBranch := autoFilterBranchCfg == nil || *autoFilterBranchCfg
 

@@ -195,11 +195,11 @@ func TestCostConfigResolvedTimeoutFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
+func TestSaveAndLoadGlobalTUIFilterBranch(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfg := DefaultConfig()
-	cfg.AutoFilterBranch = new(true)
+	cfg.TUIFilterBranch = new(true)
 	{
 
 		err := SaveGlobal(cfg)
@@ -212,14 +212,14 @@ func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobal failed: %v", err)
-	assert.Equal(t, new(true), loaded.AutoFilterBranch)
+	assert.Equal(t, new(true), loaded.TUIFilterBranch)
 }
 
-func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
+func TestLoadGlobalTUIFilterBranchFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	{
-		err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0o644)
+		err := os.WriteFile(path, []byte("tui_filter_branch = true\n"), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "write config: %v", err)
@@ -229,7 +229,25 @@ func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "LoadGlobalFrom failed: %v", err)
-	assert.Equal(t, new(true), cfg.AutoFilterBranch)
+	assert.Equal(t, new(true), cfg.TUIFilterBranch)
+}
+
+func TestLoadGlobalIgnoresLegacyAutoFilterKeys(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	legacy := "auto_filter_repo = false\nauto_filter_branch = false\n"
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0o644))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Nil(cfg.TUIFilterRepo)
+	assert.Nil(cfg.TUIFilterBranch)
+
+	require.NoError(t, SaveGlobalTo(path, cfg))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(string(data), "auto_filter_")
+	assert.NotContains(string(data), "tui_filter_")
 }
 
 func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
