@@ -41,12 +41,6 @@ func TestIntegration_VectorExchangeSchemaIsUnversionedAndIdempotent(t *testing.T
 	present, err := pool.vectorExchangePresent(ctx)
 	require.NoError(t, err)
 	assert.True(t, present)
-	var supersededColumn bool
-	require.NoError(t, pool.pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.columns
-		 WHERE table_schema = current_schema()
-		   AND table_name = 'review_embeddings' AND column_name = 'superseded_at')`).Scan(&supersededColumn))
-	assert.True(t, supersededColumn)
 
 	var version int
 	require.NoError(t, pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
@@ -194,7 +188,7 @@ func TestIntegration_VectorExchangeGarbageCollectsUnusedGenerations(t *testing.T
 	assert.Len(t, liveRecords, 1)
 }
 
-func TestIntegration_VectorExchangeRetainsSupersededHashesForThirtyDays(t *testing.T) {
+func TestIntegration_VectorExchangeRetainsHashesWhileGenerationIsActive(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	exchange := newTestVectorExchange(t, pool, "machine-a")
@@ -215,25 +209,45 @@ func TestIntegration_VectorExchangeRetainsSupersededHashesForThirtyDays(t *testi
 	require.NoError(t, exchange.Publish(ctx, fingerprint, []VectorRecord{record(oldKey)}))
 	require.NoError(t, exchange.Publish(ctx, fingerprint, []VectorRecord{record(newKey)}))
 
-	var supersededAt time.Time
-	err = pool.pool.QueryRow(ctx, `SELECT superseded_at FROM review_embeddings
-		WHERE review_uuid = $1 AND generation_fingerprint = $2 AND content_sha256 = $3`,
-		reviewUUID, fingerprint, oldKey.ContentSHA256).Scan(&supersededAt)
-	require.NoError(t, err)
-	assert.WithinDuration(t, time.Now(), supersededAt, time.Minute)
 	retained, err := exchange.Lookup(ctx, fingerprint, []VectorKey{oldKey, newKey})
 	require.NoError(t, err)
 	assert.Len(t, retained, 2, "lagging peers can still import both exact text versions")
 
-	_, err = pool.pool.Exec(ctx, `UPDATE review_embeddings SET superseded_at = NOW() - INTERVAL '31 days'
-		WHERE review_uuid = $1 AND generation_fingerprint = $2 AND content_sha256 = $3`,
-		reviewUUID, fingerprint, oldKey.ContentSHA256)
+	_, err = pool.pool.Exec(ctx, `UPDATE review_embeddings SET updated_at = NOW() - INTERVAL '31 days'
+		WHERE review_uuid = $1 AND generation_fingerprint = $2`, reviewUUID, fingerprint)
 	require.NoError(t, err)
 	_, err = exchange.CollectGarbage(ctx, 30*24*time.Hour)
 	require.NoError(t, err)
 	retained, err = exchange.Lookup(ctx, fingerprint, []VectorKey{oldKey, newKey})
 	require.NoError(t, err)
-	assert.Equal(t, []VectorRecord{record(newKey)}, retained)
+	assert.Len(t, retained, 2, "active generations keep exact-hash cache entries regardless of publish age")
+}
+
+func TestIntegration_VectorExchangeOutOfOrderPublishKeepsCurrentHash(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	currentPublisher := newTestVectorExchange(t, pool, "machine-current")
+	laggingPeer := newTestVectorExchange(t, pool, "machine-lagging")
+	fingerprint := t.Name() + "-gen"
+	reviewUUID := "00000000-0000-4000-8000-000000000006"
+	oldKey := VectorKey{ReviewUUID: reviewUUID, ContentSHA256: "old-hash"}
+	newKey := VectorKey{ReviewUUID: reviewUUID, ContentSHA256: "new-hash"}
+	record := func(key VectorKey) VectorRecord {
+		return VectorRecord{
+			Key: key, Status: VectorStatusOK, Dims: 2,
+			Chunks: []VectorChunk{{Index: 0, Vector: []float32{1, 0}}},
+		}
+	}
+	_, err := currentPublisher.TouchGeneration(ctx, VectorGeneration{Fingerprint: fingerprint, Model: "m", Dimensions: 2})
+	require.NoError(t, err)
+	require.NoError(t, currentPublisher.Publish(ctx, fingerprint, []VectorRecord{record(newKey)}))
+	require.NoError(t, laggingPeer.Publish(ctx, fingerprint, []VectorRecord{record(oldKey)}))
+
+	_, err = currentPublisher.CollectGarbage(ctx, 30*24*time.Hour)
+	require.NoError(t, err)
+	retained, err := currentPublisher.Lookup(ctx, fingerprint, []VectorKey{oldKey, newKey})
+	require.NoError(t, err)
+	assert.Len(t, retained, 2, "ambiguous peer variants remain reusable until the generation is collected")
 }
 
 func TestIntegration_VectorExchangeReportsUnsupportedAndUnreachable(t *testing.T) {
