@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +29,45 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	return strings.TrimSpace(string(out))
+}
+
+// runGit runs git without failing the test, for HTTP handler goroutines
+// where require cannot stop the test.
+func runGit(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// handlerErrors records failures in HTTP handler goroutines. The test
+// goroutine asserts them at cleanup, after the servers have closed.
+type handlerErrors struct {
+	mu   sync.Mutex
+	errs []error
+}
+
+func newHandlerErrors(t *testing.T) *handlerErrors {
+	t.Helper()
+	h := &handlerErrors{}
+	t.Cleanup(func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		assert.Empty(t, h.errs, "HTTP handler errors")
+	})
+	return h
+}
+
+// add records err if it is not nil and reports whether it was nil.
+func (h *handlerErrors) add(err error) bool {
+	if err == nil {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.errs = append(h.errs, err)
+	return false
 }
 
 func TestRemoteRepoIdentityRejectsLocalFallback(t *testing.T) {
@@ -59,6 +101,37 @@ func TestResolveRemoteGitRef(t *testing.T) {
 	assert.Equal(first+".."+second, got)
 }
 
+func TestResolveRemoteGitRefRejectsSymmetricRange(t *testing.T) {
+	// A directory that is not a repo: any git call would fail with a
+	// different error, so this proves the check runs before git.
+	_, err := resolveRemoteGitRef(context.Background(), t.TempDir(), "main...feature")
+	require.ErrorContains(t, err, `"main...feature"`)
+	assert.ErrorContains(t, err, "symmetric ranges (A...B) are not supported with a remote daemon")
+}
+
+func TestResolveRemoteGitRefRejectsBadSides(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("a.txt", "a", "first")
+	tests := []struct {
+		ref     string
+		wantErr string
+	}{
+		{ref: "..HEAD", wantErr: "empty side"},
+		{ref: "HEAD..", wantErr: "empty side"},
+		{ref: "^..HEAD", wantErr: "empty side"},
+		{ref: "--all", wantErr: "resolve --all: not a commit"},
+		{ref: "HEAD..--all", wantErr: "resolve --all: not a commit"},
+		{ref: "--output=out.txt", wantErr: "not a commit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			_, err := resolveRemoteGitRef(context.Background(), repo.Dir, tt.ref)
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+	assert.NoFileExists(t, filepath.Join(repo.Dir, "out.txt"))
+}
+
 // TestRemoteEnqueueUploadsFromForkRemote covers the case where the commit
 // sits on a client remote-tracking ref for a remote the daemon lacks.
 func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
@@ -85,12 +158,25 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 	target := gitIn(t, laptop, "rev-parse", "HEAD")
 	onFork := gitIn(t, laptop, "rev-parse", "HEAD~1")
 
+	// A daemon-only branch: the daemon reports its tip as a have, and the
+	// laptop never fetched it, so the client must leave it out of the pack.
+	gitIn(t, daemonClone, "checkout", "-q", "-b", "daemon-only")
+	gitIn(t, daemonClone, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "daemon only")
+	daemonOnly := gitIn(t, daemonClone, "rev-parse", "HEAD")
+	gitIn(t, daemonClone, "checkout", "-q", "main")
+	require.False(t, gitCatFileOK(laptop, daemonOnly))
+
+	herrs := newHandlerErrors(t)
 	var mu sync.Mutex
 	var enqueues []daemon.EnqueueRequest
+	var packQueries []url.Values
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		var req daemon.EnqueueRequest
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if !herrs.add(json.NewDecoder(r.Body).Decode(&req)) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		enqueues = append(enqueues, req)
 		mu.Unlock()
@@ -98,19 +184,38 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 			respondJSON(w, http.StatusCreated, map[string]any{"id": 7})
 			return
 		}
-		haves := strings.Fields(gitIn(t, daemonClone, "for-each-ref", "--format=%(objectname)"))
+		refs, err := runGit(daemonClone, "for-each-ref", "--format=%(objectname)")
+		if !herrs.add(err) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		respondJSON(w, http.StatusConflict, daemon.MissingCommitsResponse{
-			Error: "missing", Code: daemon.MissingCommitsCode, Missing: []string{target}, Have: haves,
+			Error: "missing", Code: daemon.MissingCommitsCode, Missing: []string{target}, Have: strings.Fields(refs),
 		})
 	})
 	mux.HandleFunc(daemon.RemotePackPath, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "example/project", r.URL.Query().Get("repo_identity"))
-		assert.Equal(t, []string{target}, r.URL.Query()["tip"])
+		mu.Lock()
+		packQueries = append(packQueries, r.URL.Query())
+		mu.Unlock()
+		// Import the way the daemon does: index the pack, then require
+		// every object reachable from the tip, so an incomplete pack fails.
 		cmd := exec.Command("git", "-C", daemonClone, "index-pack", "--stdin")
 		cmd.Stdin = r.Body
 		out, err := cmd.CombinedOutput()
-		assert.NoError(t, err, string(out))
-		gitIn(t, daemonClone, "update-ref", "refs/roborev/uploads/"+target, target)
+		if err != nil {
+			herrs.add(fmt.Errorf("index-pack: %w: %s", err, out))
+			http.Error(w, "bad pack", http.StatusBadRequest)
+			return
+		}
+		if _, err := runGit(daemonClone, "rev-list", "--quiet", "--objects", target, "--not", "--all"); err != nil {
+			herrs.add(fmt.Errorf("pack is incomplete: %w", err))
+			http.Error(w, "incomplete pack", http.StatusConflict)
+			return
+		}
+		if _, err := runGit(daemonClone, "update-ref", "refs/roborev/uploads/"+target, target); !herrs.add(err) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		respondJSON(w, http.StatusOK, map[string]any{"pinned": []string{target}})
 	})
 	ts := httptest.NewServer(mux)
@@ -121,11 +226,15 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 		daemon.EnqueueRequest{GitRef: "HEAD", Branch: "main", Source: "post_commit"})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, status, string(body))
+	assert := assert.New(t)
 	require.Len(t, enqueues, 2)
-	assert.Equal(t, "example/project", enqueues[0].RepoIdentity)
-	assert.Empty(t, enqueues[0].RepoPath)
-	assert.Equal(t, target, enqueues[0].GitRef)
-	assert.True(t, gitCatFileOK(daemonClone, onFork), "fork-only ancestor was packed")
+	assert.Equal("example/project", enqueues[0].RepoIdentity)
+	assert.Empty(enqueues[0].RepoPath)
+	assert.Equal(target, enqueues[0].GitRef)
+	require.Len(t, packQueries, 1)
+	assert.Equal("example/project", packQueries[0].Get("repo_identity"))
+	assert.Equal([]string{target}, packQueries[0]["tip"])
+	assert.True(gitCatFileOK(daemonClone, onFork), "fork-only ancestor was packed")
 }
 
 func gitCatFileOK(dir, sha string) bool {
@@ -148,12 +257,26 @@ func withRemoteMock(t *testing.T, mux *http.ServeMux) {
 // captureRemoteEnqueues answers every enqueue with 201 and records it.
 func captureRemoteEnqueues(t *testing.T, mux *http.ServeMux) chan daemon.EnqueueRequest {
 	t.Helper()
+	return captureRemoteEnqueuesWith(t, mux, func(w http.ResponseWriter) {
+		respondJSON(w, http.StatusCreated, map[string]any{"id": 1})
+	})
+}
+
+// captureRemoteEnqueuesWith records every enqueue and answers with reply.
+func captureRemoteEnqueuesWith(
+	t *testing.T, mux *http.ServeMux, reply func(http.ResponseWriter),
+) chan daemon.EnqueueRequest {
+	t.Helper()
+	herrs := newHandlerErrors(t)
 	requests := make(chan daemon.EnqueueRequest, 10)
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		var req daemon.EnqueueRequest
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if !herrs.add(json.NewDecoder(r.Body).Decode(&req)) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		requests <- req
-		respondJSON(w, http.StatusCreated, map[string]any{"id": 1})
+		reply(w)
 	})
 	return requests
 }
@@ -236,9 +359,10 @@ func TestPostCommitRemoteEnqueues(t *testing.T) {
 }
 
 func TestPostCommitRemoteLogsDaemonError(t *testing.T) {
+	assert := assert.New(t)
 	logFile := withHookLog(t)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+	requests := captureRemoteEnqueuesWith(t, mux, func(w http.ResponseWriter) {
 		http.Error(w, "repo example/project is not registered", http.StatusNotFound)
 	})
 	withRemoteMock(t, mux)
@@ -249,10 +373,13 @@ func TestPostCommitRemoteLogsDaemonError(t *testing.T) {
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
 	require.NoError(t, err)
 
+	req := <-requests
+	assert.Equal("example/project", req.RepoIdentity)
+	assert.Empty(req.RepoPath)
 	data, err := os.ReadFile(logFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"outcome":"fail"`)
-	assert.Contains(t, string(data), "daemon returned 404")
+	assert.Contains(string(data), `"outcome":"fail"`)
+	assert.Contains(string(data), "daemon returned 404")
 }
 
 // TestPostCommitRemoteTimeoutKeepsBatch checks that a stalled remote daemon
@@ -261,13 +388,17 @@ func TestPostCommitRemoteLogsDaemonError(t *testing.T) {
 func TestPostCommitRemoteTimeoutKeepsBatch(t *testing.T) {
 	assert := assert.New(t)
 	logFile := withHookLog(t)
+	herrs := newHandlerErrors(t)
 	var stall atomic.Bool
 	stall.Store(true)
 	requests := make(chan daemon.EnqueueRequest, 10)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		var req daemon.EnqueueRequest
-		assert.NoError(json.NewDecoder(r.Body).Decode(&req))
+		if !herrs.add(json.NewDecoder(r.Body).Decode(&req)) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		requests <- req
 		if stall.Load() {
 			<-r.Context().Done()
@@ -303,4 +434,57 @@ func TestPostCommitRemoteTimeoutKeepsBatch(t *testing.T) {
 	require.NoError(t, err)
 	retried := <-requests
 	assert.Equal(base+".."+head, retried.GitRef)
+}
+
+// TestPostCommitRemoteSharesOneDeadline checks that the enqueue, the pack
+// upload, and the retry share one hook timeout. Each step alone fits in the
+// timeout, so the hook would succeed if each request had its own.
+func TestPostCommitRemoteSharesOneDeadline(t *testing.T) {
+	assert := assert.New(t)
+	logFile := withHookLog(t)
+	herrs := newHandlerErrors(t)
+	// Wall clock: the delays run in a real HTTP server around git
+	// subprocesses, which testing/synctest cannot observe. Each delay is
+	// 0.6 of the 1s hook timeout.
+	const step = 600 * time.Millisecond
+	wait := func(r *http.Request) {
+		select {
+		case <-time.After(step):
+		case <-r.Context().Done():
+		}
+	}
+	var enqueues, uploads atomic.Int32
+	repo := newTestGitRepo(t)
+	head := repo.CommitFile("file.txt", "content", "initial")
+	writeRoborevID(t, repo)
+	writeRoborevConfig(t, repo, "hook_timeout_seconds = 1\n")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		if enqueues.Add(1) > 1 {
+			respondJSON(w, http.StatusCreated, map[string]any{"id": 1})
+			return
+		}
+		wait(r)
+		respondJSON(w, http.StatusConflict, daemon.MissingCommitsResponse{
+			Error: "missing", Code: daemon.MissingCommitsCode, Missing: []string{head},
+		})
+	})
+	mux.HandleFunc(daemon.RemotePackPath, func(w http.ResponseWriter, r *http.Request) {
+		uploads.Add(1)
+		_, err := io.Copy(io.Discard, r.Body)
+		herrs.add(err)
+		wait(r)
+		respondJSON(w, http.StatusOK, map[string]any{"pinned": []string{head}})
+	})
+	withRemoteMock(t, mux)
+
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	assert.Equal(int32(1), uploads.Load(), "the upload must start")
+	assert.Equal(int32(1), enqueues.Load(), "the retry must not run past the shared deadline")
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.Contains(string(data), `"outcome":"fail"`)
+	assert.NotContains(string(data), `"outcome":"ok"`)
 }

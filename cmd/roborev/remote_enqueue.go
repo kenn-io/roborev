@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
-	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -34,12 +33,23 @@ func remoteRepoIdentity(root string) (string, error) {
 // would resolve names in its own clone. It keeps the inclusive START^..END
 // form so the daemon's empty-tree fallback still covers a root START.
 func resolveRemoteGitRef(ctx context.Context, root, ref string) (string, error) {
+	if strings.Contains(ref, "...") {
+		return "", fmt.Errorf(
+			"git ref %q is a symmetric range; symmetric ranges (A...B) are not supported with a remote daemon, use A..B",
+			ref)
+	}
 	resolve := func(r string) (string, error) {
-		sha, err := gitrepo.Resolve(ctx, root, r+"^{commit}")
-		if err != nil {
-			return "", fmt.Errorf("resolve %s: %w", r, err)
+		if r == "" {
+			return "", fmt.Errorf("git ref %q has an empty side; use A..B with both sides set", ref)
 		}
-		return sha, nil
+		// --end-of-options keeps an option-shaped ref from reaching git
+		// as an option; --verify requires exactly one valid object.
+		out, _, err := gitcmd.New().Run(ctx, root, nil,
+			"rev-parse", "--verify", "--quiet", "--end-of-options", r+"^{commit}")
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: not a commit in this repo: %w", r, err)
+		}
+		return strings.TrimSpace(string(out)), nil
 	}
 	start, end, isRange := strings.Cut(ref, "..")
 	if !isRange {

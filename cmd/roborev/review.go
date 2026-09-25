@@ -366,8 +366,6 @@ Examples:
 				Panel:       panel,
 			}
 
-			reqBody, _ := json.Marshal(reqFields)
-
 			remote, err := isRemoteMode()
 			if err != nil {
 				return err
@@ -384,6 +382,10 @@ Examples:
 					return err
 				}
 			} else {
+				reqBody, err := json.Marshal(reqFields)
+				if err != nil {
+					return fmt.Errorf("encode enqueue request: %w", err)
+				}
 				resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 				if err != nil {
 					return fmt.Errorf("failed to connect to daemon: %w", err)
