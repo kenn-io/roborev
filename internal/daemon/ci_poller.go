@@ -3530,9 +3530,7 @@ func formatPanelPRCommentWithHead(cfg reviewpkg.CommentConfig, review *storage.R
 	if len(review.StructuredOutput) > 0 {
 		result.StructuredOutput, _ = json.Marshal(review.StructuredOutput)
 	}
-	// Synthesis cites only successful members, in their original order.
-	labels := reviewpkg.SynthesisSourceLabels(filterSucceeded(toReviewResults(members)))
-	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(cfg, result, labels))
+	output := reviewpkg.FormatComment(reviewpkg.PrepareComment(cfg, result))
 	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
@@ -3580,7 +3578,7 @@ func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members 
 		return ""
 	}
 	footer := []string{
-		"Reviewers: " + formatPanelReviewerSummary(members),
+		"Reviewers: " + formatPanelReviewerNames(members),
 		"Synthesis: " + formatPanelSynthesis(job, synthesisAgent, includeCosts),
 	}
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
@@ -3622,10 +3620,55 @@ func formatPanelSynthesis(job *storage.ReviewJob, synthesisAgent string, include
 	return strings.Join(parts, ", ")
 }
 
+// formatPanelReviewerNames names the reviewers that finished, followed by
+// counts for any that did not, e.g. "codex, codex (security); 1 failed".
+// Repeated labels collapse to a count, e.g. "2x codex".
+func formatPanelReviewerNames(members []storage.BatchReviewResult) string {
+	var done []reviewpkg.ReviewResult
+	var rest []storage.BatchReviewResult
+	for _, m := range members {
+		if formatPanelReviewerStatus(m) == "done" {
+			done = append(done, toReviewResult(m))
+		} else {
+			rest = append(rest, m)
+		}
+	}
+	if len(done) == 0 {
+		return formatPanelReviewerSummary(members)
+	}
+	// Collapse repeated labels so large panels stay readable: "2x codex".
+	var labels []string
+	counts := make(map[string]int)
+	for _, label := range reviewpkg.SynthesisSourceLabels(done) {
+		if counts[label] == 0 {
+			labels = append(labels, label)
+		}
+		counts[label]++
+	}
+	for i, label := range labels {
+		if counts[label] > 1 {
+			labels[i] = fmt.Sprintf("%dx %s", counts[label], label)
+		}
+	}
+	names := strings.Join(labels, ", ")
+	if len(rest) == 0 {
+		return names
+	}
+	return names + "; " + strings.Join(formatPanelReviewerCounts(rest), ", ")
+}
+
 func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 	if len(members) == 0 {
 		return "none"
 	}
+	parts := formatPanelReviewerCounts(members)
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return fmt.Sprintf("%d total (%s)", len(members), strings.Join(parts, ", "))
+}
+
+func formatPanelReviewerCounts(members []storage.BatchReviewResult) []string {
 	counts := make(map[string]int)
 	for _, m := range members {
 		counts[formatPanelReviewerStatus(m)]++
@@ -3649,10 +3692,7 @@ func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 	for _, status := range extra {
 		parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
 	}
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	return fmt.Sprintf("%d total (%s)", len(members), strings.Join(parts, ", "))
+	return parts
 }
 
 func formatPanelReviewerStatus(member storage.BatchReviewResult) string {

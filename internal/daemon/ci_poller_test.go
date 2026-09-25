@@ -768,7 +768,7 @@ func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
 
 	assert.LessOrEqual(t, len(comment), review.MaxCommentLen)
 	assert.True(t, utf8.ValidString(comment), "bounded comment must be valid UTF-8")
-	assert.Contains(t, comment, "Reviewers: 250 done")
+	assert.Contains(t, comment, "Reviewers: 250x codex")
 	assert.NotContains(t, comment, "Panel:")
 	assert.NotContains(t, comment, "Members:")
 	assert.NotContains(t, comment, "Job:", "synthesis footer must not leak a job ID that confuses local fixing agents")
