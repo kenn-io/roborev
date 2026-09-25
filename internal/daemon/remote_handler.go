@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -172,6 +173,10 @@ func (s *Server) newRemoteHandler(core http.Handler, whois whoisFunc) http.Handl
 				r.Method, r.URL.Path, caller.Node, caller.Login, caller.Tags, caller.Access)
 		}
 		r = r.WithContext(context.WithValue(r.Context(), remoteCallerContextKey{}, caller))
+		if err := canonicalizeRemoteQuery(r); err != nil {
+			writeRemoteError(w, err)
+			return
+		}
 		switch r.URL.Path {
 		case "/api/enqueue":
 			s.serveRemoteEnqueue(w, r, core)
@@ -187,6 +192,20 @@ func (s *Server) newRemoteHandler(core http.Handler, whois whoisFunc) http.Handl
 			core.ServeHTTP(w, r)
 		}
 	})
+}
+
+// canonicalizeRemoteQuery refuses a query that url.ParseQuery cannot fully
+// parse and replaces the raw query with the encoding of the parsed values.
+// ParseQuery drops a pair that contains ";" while a handler's own parser may
+// keep it, so without this a value could skip the gate's checks. Every
+// remote route goes through here, so handlers only ever see checked bytes.
+func canonicalizeRemoteQuery(r *http.Request) error {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return newRemoteError(http.StatusBadRequest, "invalid query: %v", err)
+	}
+	r.URL.RawQuery = q.Encode()
+	return nil
 }
 
 // resolveRemoteRepo maps a repo identity to the single registered checkout

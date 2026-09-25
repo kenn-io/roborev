@@ -271,7 +271,9 @@ The post-commit hook keeps its current batching and quiet-failure behavior.
 
 | Condition                          | Status | Message                                                                     |
 | ---------------------------------- | ------ | --------------------------------------------------------------------------- |
-| Whois fails                        | 403    | `tailscale whois failed for <peer>: <cause>`                                |
+| Whois fails                        | 403    | `tailscale whois failed` (details go to the daemon log)                     |
+| Whois runs longer than 5 seconds   | 403    | `tailscale whois timed out`                                                 |
+| Query `url.ParseQuery` rejects     | 400    | `invalid query: <cause>`                                                    |
 | No grant                           | 403    | `tailnet policy grants this node no roborev access`                         |
 | Read-level caller mutates          | 403    | `<route> requires queue access; this node has read access`                  |
 | Route not remote-capable           | 403    | `<route> is not available over the remote API; run it on the daemon host` |

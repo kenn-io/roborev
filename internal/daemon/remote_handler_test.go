@@ -537,3 +537,31 @@ func TestRemotePackCanceledRequestIsServerError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 	assert.Contains(t, errorBody(t, w), context.Canceled.Error())
 }
+
+// TestRemoteHandlerRejectsUnparsableQuery checks that a query the gate
+// cannot parse never reaches a handler whose own parser might read it
+// differently. url.ParseQuery drops pairs that contain ";".
+func TestRemoteHandlerRejectsUnparsableQuery(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "project")
+	testutil.InitTestGitRepo(t, repoDir)
+	const id = "https://example.com/org/project.git"
+	_, err := db.GetOrCreateRepo(repoDir, id)
+	require.NoError(t, err)
+	read := fakeWhois(RemoteAccessRead, nil)
+
+	for _, target := range []string{
+		"/api/summary?repo=https://example.com/org/unknown.git;",
+		"/api/jobs?repo_prefix=/;",
+		"/api/repos?prefix=/;",
+	} {
+		t.Run(target, func(t *testing.T) {
+			w := serveRemote(t, server, read, http.MethodGet, target, nil)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, errorBody(t, w), "invalid query")
+		})
+	}
+
+	w := serveRemote(t, server, read, http.MethodGet, "/api/jobs?repo="+id+"&limit=5", nil)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
