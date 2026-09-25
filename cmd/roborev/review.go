@@ -368,17 +368,33 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqFields)
 
-			ep := getDaemonEndpoint()
-			resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+			remote, err := isRemoteMode()
 			if err != nil {
-				return fmt.Errorf("failed to connect to daemon: %w", err)
+				return err
 			}
-			defer resp.Body.Close()
-
-			body, _ := io.ReadAll(resp.Body)
+			ep := getDaemonEndpoint()
+			var status int
+			var body []byte
+			if remote {
+				// No whole-request timeout: the daemon may fetch before it
+				// answers, and a first upload can be large. Ctrl-C cancels
+				// through the command context.
+				status, body, err = remoteEnqueue(cmd.Context(), ep, ep.HTTPClient(0), root, reqFields)
+				if err != nil {
+					return err
+				}
+			} else {
+				resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+				if err != nil {
+					return fmt.Errorf("failed to connect to daemon: %w", err)
+				}
+				defer resp.Body.Close()
+				status = resp.StatusCode
+				body, _ = io.ReadAll(resp.Body)
+			}
 
 			// Handle skipped response (200 OK with skipped flag)
-			if resp.StatusCode == http.StatusOK {
+			if status == http.StatusOK {
 				var skipResp struct {
 					Skipped bool   `json:"skipped"`
 					Reason  string `json:"reason"`
@@ -391,7 +407,7 @@ Examples:
 				}
 			}
 
-			if resp.StatusCode != http.StatusCreated {
+			if status != http.StatusCreated {
 				return fmt.Errorf("review failed: %s", body)
 			}
 

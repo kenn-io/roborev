@@ -178,13 +178,6 @@ func postCommitCmd() *cobra.Command {
 				gitRef = ref
 			}
 
-			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
-				RepoPath: root,
-				GitRef:   gitRef,
-				Branch:   branchName,
-				Source:   "post_commit",
-			})
-
 			// Resolve the hook timeout from config (per-repo > global >
 			// platform default). ResolveHookTimeout is strictly filesystem-only
 			// (it reads .roborev.toml directly and never spawns git), so it adds
@@ -193,21 +186,31 @@ func postCommitCmd() *cobra.Command {
 			globalCfg, _ := config.LoadGlobal()
 			timeout := config.ResolveHookTimeout(root, globalCfg)
 
+			remote, err := isRemoteMode()
+			if err != nil {
+				hookLog(root, "fail", fmt.Sprintf(
+					"daemon unavailable: %v", err,
+				))
+				return nil
+			}
+			req := daemon.EnqueueRequest{
+				RepoPath: root,
+				GitRef:   gitRef,
+				Branch:   branchName,
+				Source:   "post_commit",
+			}
 			ep := getDaemonEndpoint()
-			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
+			status, body, err := postCommitEnqueue(cmd.Context(), ep, remote, timeout, root, req)
 			if err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
 					"enqueue request failed: %v", err,
 				))
 				return nil
 			}
-			defer resp.Body.Close()
-
-			body, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode >= 400 {
+			if status >= 400 {
 				hookLog(root, "fail", fmt.Sprintf(
 					"daemon returned %d: %s",
-					resp.StatusCode,
+					status,
 					truncateBytes(body, 200),
 				))
 				return nil
@@ -258,6 +261,31 @@ func postCommitCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("quiet")
 
 	return cmd
+}
+
+// postCommitEnqueue sends the hook's enqueue request. The hook runs inside
+// git commit, so in remote mode the whole sequence (enqueue, pack build,
+// upload, and retry) shares one deadline rather than one per request.
+func postCommitEnqueue(
+	ctx context.Context, ep daemon.DaemonEndpoint, remote bool,
+	timeout time.Duration, root string, req daemon.EnqueueRequest,
+) (int, []byte, error) {
+	if remote {
+		hookCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return remoteEnqueue(hookCtx, ep, hookHTTPClient(timeout), root, req)
+	}
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(timeout)).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, nil
 }
 
 func flushPushedPostCommitBatches(
