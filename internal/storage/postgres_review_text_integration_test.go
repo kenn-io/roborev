@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) {
+func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
@@ -108,7 +108,7 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) {
 	})
 }
 
-func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) {
+func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	assert := assert.New(t)
 	env := newIntegrationEnv(t)
 	db := env.openDB("source.db")
