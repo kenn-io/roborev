@@ -830,8 +830,7 @@ func TestEnqueuePanelOmittedMemberAgentAutoDetectDoesNotInheritRequestedModel(t 
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 
-	agent.Register(&agent.FakeAgent{NameStr: "panel-auto-detected"})
-	t.Cleanup(func() { agent.Unregister("panel-auto-detected") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "panel-auto-detected"})
 
 	gitPath, gitErr := exec.LookPath("git")
 	require.NoError(t, gitErr)

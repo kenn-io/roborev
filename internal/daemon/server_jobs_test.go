@@ -2831,9 +2831,9 @@ func TestHandleEnqueueRejectsCustomReviewWithUnsupportedAgent(t *testing.T) {
 }
 
 func TestHandleEnqueueRejectsCustomReviewWithUnsupportedBackupAgent(t *testing.T) {
+	t.Parallel()
 	const primaryName = "structured-enqueue-primary"
-	agent.Register(&structuredWorkerTestAgent{name: primaryName})
-	t.Cleanup(func() { agent.Unregister(primaryName) })
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{name: primaryName})
 
 	repoDir := t.TempDir()
 	testutil.InitTestGitRepo(t, repoDir)

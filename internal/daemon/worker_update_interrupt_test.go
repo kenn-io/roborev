@@ -88,10 +88,11 @@ func TestRegisterRunningJobCancelsUpdateTarget(t *testing.T) {
 }
 
 func TestUpdateInterruptionSuppressesCancellationSideEffects(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})
 	agentName := "update-interrupt-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			close(started)
@@ -99,7 +100,6 @@ func TestUpdateInterruptionSuppressesCancellationSideEffects(t *testing.T) {
 			return "", ctx.Err()
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	sha := tc.GitRepo.CommitFile("update.txt", "update\n", "update side effects")
 	job := tc.createAndClaimJobWithAgent(t, sha, "worker-update", agentName)
@@ -127,10 +127,11 @@ func TestUpdateInterruptionSuppressesCancellationSideEffects(t *testing.T) {
 }
 
 func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})
 	agentName := "update-panel-interrupt-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			close(started)
@@ -138,7 +139,6 @@ func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
 			return "", ctx.Err()
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	runUUID, _, _ := enqueuePanelRun(t, tc, "update-panel", []memberSpec{
 		{name: "member", agent: agentName},
@@ -161,12 +161,13 @@ func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
 }
 
 func TestUserCancelWinsUpdateInterruptionRace(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})
 	cancelObserved := make(chan struct{})
 	releaseAgent := make(chan struct{})
 	agentName := "update-user-cancel-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			close(started)
@@ -176,7 +177,6 @@ func TestUserCancelWinsUpdateInterruptionRace(t *testing.T) {
 			return "", ctx.Err()
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	runUUID, _, _ := enqueuePanelRun(t, tc, "update-user-cancel-panel", []memberSpec{
 		{name: "member", agent: agentName},
@@ -245,12 +245,13 @@ func TestUpdateInterruptionPreemptsClassifierTerminalPath(t *testing.T) {
 }
 
 func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})
 	backupInvoked := make(chan struct{}, 1)
 	primaryName := "update-classifier-primary"
 	backupName := "update-classifier-backup"
-	agent.Register(&fakeSchemaAgent{
+	agent.RegisterForTest(t, &fakeSchemaAgent{
 		name: primaryName,
 		classifyFn: func(ctx context.Context) (jsontext.Value, error) {
 			close(started)
@@ -258,16 +259,12 @@ func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	})
-	agent.Register(&fakeSchemaAgent{
+	agent.RegisterForTest(t, &fakeSchemaAgent{
 		name: backupName,
 		classifyFn: func(context.Context) (jsontext.Value, error) {
 			backupInvoked <- struct{}{}
 			return []byte(`{"design_review":false,"reason":"backup"}`), nil
 		},
-	})
-	t.Cleanup(func() {
-		agent.Unregister(primaryName)
-		agent.Unregister(backupName)
 	})
 	cfg := config.DefaultConfig()
 	cfg.ClassifyAgent = primaryName

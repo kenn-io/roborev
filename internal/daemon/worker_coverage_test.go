@@ -51,6 +51,7 @@ func TestReviewFileCoverageForCommittedInputs(t *testing.T) {
 }
 
 func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	// Empty output is not a review and fails the job, so the fixture must
 	// return a real (clean) review for a row to be stored.
@@ -60,8 +61,7 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	}
-	agent.Register(baseline)
-	t.Cleanup(func() { agent.Unregister(baseline.NameStr) })
+	agent.RegisterForTest(t, baseline)
 
 	sha := tc.GitRepo.CommitFile("coverage.go", "package coverage\n", "coverage review")
 	job := tc.createJobWithAgent(t, sha, baseline.NameStr)

@@ -249,7 +249,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	const agentName = "worker-concurrency-blocking"
 	started := make(chan struct{}, workers+1)
 	release := make(chan struct{})
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			started <- struct{}{}
@@ -261,7 +261,6 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 			}
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	for range workers + 1 {
 		tc.createJobWithAgent(t, sha, agentName)
@@ -339,9 +338,10 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 }
 
 func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	agentName := "structured-review-test"
-	agent.Register(&structuredWorkerTestAgent{
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
   "schema_version":2,
@@ -353,7 +353,6 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
   ]
 }`),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 	require.NoError(t, os.WriteFile(
 		filepath.Join(tc.TmpDir, "custom-review.md"),
 		[]byte("Review state ownership."), 0o644,
@@ -387,16 +386,16 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
 
 func registerUnreadableDiffAgent(t *testing.T, name string) {
 	t.Helper()
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: name,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(name) })
 }
 
 func TestWorkerFailsReviewWithoutVerdictKeepingOutput(t *testing.T) {
+	t.Parallel()
 	const agentName = "unreadable-diff-test"
 	registerUnreadableDiffAgent(t, agentName)
 
@@ -417,6 +416,7 @@ func TestWorkerFailsReviewWithoutVerdictKeepingOutput(t *testing.T) {
 }
 
 func TestWorkerFailsOverReviewWithoutVerdictWithoutRetry(t *testing.T) {
+	t.Parallel()
 	const agentName = "unreadable-diff-failover-test"
 	registerUnreadableDiffAgent(t, agentName)
 
@@ -436,9 +436,10 @@ func TestWorkerFailsOverReviewWithoutVerdictWithoutRetry(t *testing.T) {
 }
 
 func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	agentName := "structured-review-config-severity-test"
-	agent.Register(&structuredWorkerTestAgent{
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
 	  "schema_version":2,
@@ -449,7 +450,6 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
   ]
 }`),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 	require.NoError(t, os.WriteFile(
 		filepath.Join(tc.TmpDir, "custom-review.md"),
 		[]byte("Review state ownership."), 0o644,
@@ -491,6 +491,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 }
 
 func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})
 	cancelObserved := make(chan struct{})
@@ -504,7 +505,7 @@ func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
 	})
 
 	agentName := "blocked-cancel-rerun"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			close(started)
@@ -514,7 +515,6 @@ func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
 			return "", ctx.Err()
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
@@ -653,7 +653,7 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 		agentHead     string
 		moduleLine    string
 	)
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			agentRepoPath = repoPath
@@ -670,7 +670,6 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	gitRef := baseSHA + ".." + headSHA
 	created, members, _, err := db.CreateCIPanelRun("kenn-io/middleman", 20446, headSHA,
@@ -749,7 +748,7 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 		snapshotPath    string
 		snapshotContent string
 	)
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			agentRepoPath = repoPath
@@ -766,7 +765,6 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	cfg := config.DefaultConfig()
 	cfg.DefaultMaxPromptSize = 6000
@@ -880,7 +878,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 	var mu sync.Mutex
 	seenMarkers := map[string]string{}
 	seenPaths := map[string]string{}
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			headOut, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "HEAD").Output()
@@ -905,7 +903,6 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	createRun := func(pr int, head, gitRef string) *storage.ReviewJob {
 		t.Helper()
@@ -1023,6 +1020,7 @@ func (a *sessionStreamingTestAgent) WithModel(model string) agent.Agent {
 func (a *sessionStreamingTestAgent) CommandLine() string { return a.name }
 
 func TestProcessJob_CapturesSessionID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		streamLine string
@@ -1045,8 +1043,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			tcxt := newWorkerTestContext(t, 1)
 			sha := testutil.GetHeadSHA(t, tcxt.TmpDir)
 			agentName := fmt.Sprintf("session-stream-%s", strings.ReplaceAll(tc.name, " ", "-"))
-			agent.Register(&sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine})
-			t.Cleanup(func() { agent.Unregister(agentName) })
+			agent.RegisterForTest(t, &sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine})
 
 			job := tcxt.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 			tcxt.Pool.processJob(testWorkerID, job)
@@ -1079,6 +1076,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 }
 
 func TestProcessJob_FetchesConfiguredSessionUsageEndpoint(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	sessionID := "codex:thread/789"
@@ -1101,11 +1099,10 @@ func TestProcessJob_FetchesConfiguredSessionUsageEndpoint(t *testing.T) {
 	tc.reconfigurePool(cfg)
 
 	agentName := "configured-session-usage-endpoint"
-	agent.Register(&sessionStreamingTestAgent{
+	agent.RegisterForTest(t, &sessionStreamingTestAgent{
 		name:       agentName,
 		streamLine: fmt.Sprintf(`{"type":"thread.started","thread_id":%q}`, sessionID),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 	tc.Pool.processJob(testWorkerID, job)
@@ -1123,6 +1120,7 @@ func TestProcessJob_FetchesConfiguredSessionUsageEndpoint(t *testing.T) {
 }
 
 func TestProcessJob_UsageEndpointFailureKeepsCompletedJob(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	sessionID := "codex:thread/fail"
@@ -1138,11 +1136,10 @@ func TestProcessJob_UsageEndpointFailureKeepsCompletedJob(t *testing.T) {
 	tc.reconfigurePool(cfg)
 
 	agentName := "failing-session-usage-endpoint"
-	agent.Register(&sessionStreamingTestAgent{
+	agent.RegisterForTest(t, &sessionStreamingTestAgent{
 		name:       agentName,
 		streamLine: fmt.Sprintf(`{"type":"thread.started","thread_id":%q}`, sessionID),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 	tc.Pool.processJob(testWorkerID, job)
@@ -1372,6 +1369,7 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 }
 
 func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	require.NoError(t, os.Mkdir(filepath.Join(tc.TmpDir, ".roborev.toml"), 0o755))
@@ -1381,14 +1379,13 @@ func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 
 	var capturedPrompt string
 	agentName := "stored-review-prompt-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:         tc.Repo.ID,
@@ -1414,6 +1411,7 @@ func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 }
 
 func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing.T) {
+	t.Parallel()
 	instruction := prompt.ReconcileStructuredOutputInstruction("", true)
 	require.NotEmpty(t, instruction)
 
@@ -1444,14 +1442,13 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		tc := newWorkerTestContext(t, 1)
 		var capturedPrompt string
 		agentName := "prebuilt-prose-after-failover"
-		agent.Register(&agent.FakeAgent{
+		agent.RegisterForTest(t, &agent.FakeAgent{
 			NameStr: agentName,
 			ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
 				capturedPrompt = reviewPrompt
 				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 			},
 		})
-		t.Cleanup(func() { agent.Unregister(agentName) })
 
 		body := "review body" + instruction + "\n"
 		job := enqueuePrebuilt(t, tc, agentName, body)
@@ -1469,8 +1466,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 			name:   agentName,
 			result: jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
 		}
-		agent.Register(fake)
-		t.Cleanup(func() { agent.Unregister(agentName) })
+		agent.RegisterForTest(t, fake)
 
 		job := enqueuePrebuilt(t, tc, agentName, "review body\n")
 
@@ -1498,8 +1494,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 				assert.Contains(t, string(full), strings.Repeat("x", 4096-len("review body\n")))
 			},
 		}
-		agent.Register(fake)
-		t.Cleanup(func() { agent.Unregister(agentName) })
+		agent.RegisterForTest(t, fake)
 
 		body := "review body\n" + strings.Repeat("x", 4096-len("review body\n"))
 		require.Len(t, body, 4096)
@@ -1511,9 +1506,10 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 }
 
 func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	agentName := "ci-custom-review-default-config-test"
-	agent.Register(&structuredWorkerTestAgent{
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
   "schema_version":2,
@@ -1522,7 +1518,6 @@ func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing
   "findings":[]
 }`),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	releaseSHA := testutil.GetHeadSHA(t, tc.TmpDir)
 	sha := tc.GitRepo.CommitFiles(map[string]string{
@@ -1568,9 +1563,10 @@ template = "default-review.md"
 }
 
 func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	agentName := "ci-custom-review-invalid-config-test"
-	agent.Register(&structuredWorkerTestAgent{
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
   "schema_version":2,
@@ -1579,7 +1575,6 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
   "findings":[]
 }`),
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	sha := tc.GitRepo.CommitFiles(map[string]string{
 		".roborev.toml":    "invalid = [\n",
@@ -1627,18 +1622,18 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 }
 
 func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	var capturedPrompt string
 	agentName := "dirty-files-prompt-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     tc.Repo.ID,
@@ -1661,16 +1656,16 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 }
 
 func TestProcessJob_BroadcastsBranchOnLifecycleEvents(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	agentName := "branch-event-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
@@ -1705,16 +1700,16 @@ func TestProcessJob_BroadcastsBranchOnLifecycleEvents(t *testing.T) {
 }
 
 func TestProcessJob_BroadcastsCIBaseBranchOnLifecycleEvents(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
 	agentName := "ci-branch-event-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	// CI jobs record the PR head branch and keep the base branch separately for
 	// hooks.
@@ -1764,8 +1759,7 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 			return "review output", nil
 		},
 	}
-	agent.Register(reviewer)
-	t.Cleanup(func() { agent.Unregister("fake-reviewer") })
+	agent.RegisterForTest(t, reviewer)
 
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "promoted-log", "Author", "s", time.Now())
 	require.NoError(t, err)
@@ -1836,8 +1830,7 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 			return "retry review output", nil
 		},
 	}
-	agent.Register(reviewer)
-	t.Cleanup(func() { agent.Unregister("fake-reviewer") })
+	agent.RegisterForTest(t, reviewer)
 
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "promoted-retry-log", "Author", "s", time.Now())
 	require.NoError(t, err)
@@ -1993,6 +1986,7 @@ func TestAnalyzeTaskCodexCommandLinePreservesAgentConfig(t *testing.T) {
 }
 
 func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
@@ -2001,14 +1995,13 @@ func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 
 	var capturedPrompt string
 	agentName := "review-retry-prompt-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   tc.Repo.ID,
@@ -2375,14 +2368,14 @@ func TestProcessJob_OversizedTaskUsesSharedPromptFile(t *testing.T) {
 }
 
 func TestProcessJob_TaskAllowsFreeFormOutputWithUnknownVerdict(t *testing.T) {
+	t.Parallel()
 	const agentName = "task-free-form"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return "Task completed successfully.", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	tc := newWorkerTestContext(t, 1)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
@@ -3877,12 +3870,9 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 }
 
 func TestAutoClosePassingReviews(t *testing.T) {
-	// Not parallel at the outer level: Register/Unregister modify the
-	// global agent registry which isn't synchronized. Running this test
-	// sequentially ensures no other test reads the registry concurrently.
-	// Subtests below are still parallel with each other.
+	t.Parallel()
 	const passAgentName = "auto-close-pass-agent"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: passAgentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, w io.Writer) (string, error) {
 			out := string(testutil.ReviewFixtureJSON("No issues found."))
@@ -3890,7 +3880,6 @@ func TestAutoClosePassingReviews(t *testing.T) {
 			return out, nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(passAgentName) })
 
 	tests := []struct {
 		name       string
@@ -3960,13 +3949,12 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	const agentName = "compact-verdict-agent"
 	const output = `{"schema_version":2,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","problem":"A record is lost.","fix":"Retain the record.","location":"file.go:12"}]}`
 
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return output, nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:  tc.Repo.ID,
@@ -3995,19 +3983,19 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 }
 
 func TestProcessJob_MinSeverityCascade(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	var capturedPrompt string
 	agentName := "min-sev-cascade-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 			capturedPrompt = prompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	// Set global config with ReviewMinSeverity
 	cfg := config.DefaultConfig()
@@ -4032,19 +4020,19 @@ func TestProcessJob_MinSeverityCascade(t *testing.T) {
 }
 
 func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	var capturedPrompt string
 	agentName := "min-sev-override-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 			capturedPrompt = prompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	// Global says "medium" but job says "critical"
 	cfg := config.DefaultConfig()
@@ -4076,19 +4064,19 @@ func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
 }
 
 func TestProcessJobExperimentPlanKeepsClearedExecutionSettings(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	var capturedPrompt string
 	agentName := "experiment-clear-capture"
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
 			capturedPrompt = reviewPrompt
 			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	cfg := config.DefaultConfig()
 	cfg.ReviewMinSeverity = "medium"

@@ -2959,14 +2959,13 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	// Use a fake agent that tracks invocations
-	agent.Register(&agent.FakeAgent{
+	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: "test-pass-skip",
 		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
 			agentCalled.Add(1)
 			return "", nil
 		},
 	})
-	t.Cleanup(func() { agent.Unregister("test-pass-skip") })
 
 	opts := fixOptions{agentName: "test-pass-skip"}
 

@@ -3272,8 +3272,7 @@ func TestResolveCIMatrixMembersInvalidCIReasoningUsesFallback(t *testing.T) {
 func TestResolveMatrixMemberAgentBlankAgentAutoDetectsAvailableAgent(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-daemon"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-daemon") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-daemon"})
 
 	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
@@ -3314,8 +3313,7 @@ func TestResolveMatrixMemberAgentBlankAgentWithExplicitBackupStaysStrict(t *test
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	t.Setenv("PATH", "")
 	h.Cfg.ReviewBackupAgent = "claude-code"
-	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-daemon"})
-	t.Cleanup(func() { agent.Unregister("ci-unrelated-daemon") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-unrelated-daemon"})
 
 	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
@@ -3334,8 +3332,7 @@ func TestResolveMatrixMemberAgentBlankAgentWithExplicitPrimaryStaysStrict(t *tes
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	t.Setenv("PATH", "")
 	h.Cfg.ReviewAgent = "claude-code"
-	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-primary"})
-	t.Cleanup(func() { agent.Unregister("ci-unrelated-primary") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-unrelated-primary"})
 
 	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
@@ -3921,6 +3918,7 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 }
 
 func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	repo.AddRemote("origin", "git@github.com:acme/api.git")
@@ -3929,11 +3927,10 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 	}
 
 	const primaryAgent = "ci-design-unavailable-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-missing-ci-design-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
 
 	cfg.DesignAgent = primaryAgent
 	cfg.DesignBackupAgent = "test"
@@ -4059,8 +4056,7 @@ func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 
 func TestResolveCIAutoDesignAgentBlankAgentAutoDetectsAvailableAgent(t *testing.T) {
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-design") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-design"})
 
 	designAgent, designModel := resolveCIAutoDesignAgent(nil, config.DefaultConfig())
 
@@ -4071,13 +4067,11 @@ func TestResolveCIAutoDesignAgentBlankAgentAutoDetectsAvailableAgent(t *testing.
 func TestResolveCIAutoDesignAgentExplicitDesignAgentStaysStrict(t *testing.T) {
 	t.Setenv("PATH", "")
 	const primaryAgent = "ci-explicit-design-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-missing-explicit-design-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-available"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-design-available") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-design-available"})
 
 	cfg := config.DefaultConfig()
 	cfg.DesignAgent = primaryAgent
@@ -4089,8 +4083,7 @@ func TestResolveCIAutoDesignAgentExplicitDesignAgentStaysStrict(t *testing.T) {
 
 func TestResolveCIAutoDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-generic"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-design-generic") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-design-generic"})
 
 	cfg := config.DefaultConfig()
 	cfg.DefaultAgent = "claude-code"
@@ -4102,8 +4095,7 @@ func TestResolveCIAutoDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) 
 
 func TestResolveCIAutoDesignAgentRepoGenericShadowsGlobalDesignAgent(t *testing.T) {
 	t.Setenv("PATH", "")
-	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-shadowed"})
-	t.Cleanup(func() { agent.Unregister("ci-auto-design-shadowed") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-auto-design-shadowed"})
 
 	repoCfg := &config.RepoConfig{Agent: "claude-code"}
 	cfg := config.DefaultConfig()
@@ -4257,6 +4249,7 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 }
 
 func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	repo.AddRemote("origin", "git@github.com:acme/api.git")
@@ -4265,11 +4258,10 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 	}
 
 	const primaryAgent = "ci-panel-unavailable-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
+	agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{
 		name:    primaryAgent,
 		command: "roborev-missing-ci-panel-primary",
 	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
 
 	p.agentResolverFn = nil
 	cfg.CI.Panel = "ci"
@@ -4318,8 +4310,7 @@ func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) 
 	binDir := t.TempDir()
 	require.NoError(t, os.Symlink(gitPath, filepath.Join(binDir, "git")))
 	t.Setenv("PATH", binDir)
-	agent.Register(&agent.FakeAgent{NameStr: "ci-named-panel-auto"})
-	t.Cleanup(func() { agent.Unregister("ci-named-panel-auto") })
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-named-panel-auto"})
 
 	cfg.CI.Panel = "ci"
 	cfg.Review = config.ReviewConfig{
