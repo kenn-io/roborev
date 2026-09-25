@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -87,7 +87,35 @@ func newRemoteError(status int, format string, args ...any) *remoteError {
 func writeRemoteJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_ = json.MarshalWrite(w, body)
+}
+
+// decodeRemoteBody decodes a request body with the same encoding/json/v2
+// defaults the core Huma handlers use: member names match case-sensitively,
+// duplicate names are an error, and unknown members are ignored. The gates
+// then forward only the re-encoded, checked value (see forwardRemoteBody),
+// so the core handler never reads bytes the gate did not check.
+func decodeRemoteBody(r *http.Request, what string, v any) error {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("read %s request: %w", what, err)
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return newRemoteError(http.StatusBadRequest, "decode %s request: %v", what, err)
+	}
+	return nil
+}
+
+// forwardRemoteBody replaces the request body with the encoding of the
+// value a gate checked.
+func forwardRemoteBody(r *http.Request, v any) error {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	return nil
 }
 
 func writeRemoteError(w http.ResponseWriter, err error) {
@@ -268,8 +296,8 @@ func validBranchName(ctx context.Context, repoRoot, name string) bool {
 
 func (s *Server) serveRemoteEnqueue(w http.ResponseWriter, r *http.Request, core http.Handler) {
 	var req EnqueueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "decode enqueue request: %v", err))
+	if err := decodeRemoteBody(r, "enqueue", &req); err != nil {
+		writeRemoteError(w, err)
 		return
 	}
 	if req.GitRef == "" {
@@ -313,13 +341,10 @@ func (s *Server) serveRemoteEnqueue(w http.ResponseWriter, r *http.Request, core
 		return
 	}
 	req.RepoPath, req.RepoIdentity = repo.RootPath, ""
-	body, err := json.Marshal(req)
-	if err != nil {
+	if err := forwardRemoteBody(r, req); err != nil {
 		writeRemoteError(w, err)
 		return
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
 	core.ServeHTTP(w, r)
 }
 
@@ -348,14 +373,9 @@ func (s *Server) remoteRerunAllowed(job *storage.ReviewJob) (bool, error) {
 }
 
 func (s *Server) serveRemoteRerun(w http.ResponseWriter, r *http.Request, core http.Handler) {
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "read rerun request: %v", err))
-		return
-	}
 	var req RerunJobRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "decode rerun request: %v", err))
+	if err := decodeRemoteBody(r, "rerun", &req); err != nil {
+		writeRemoteError(w, err)
 		return
 	}
 	// A missing job falls through to the core handler's 404. Any other
@@ -379,8 +399,10 @@ func (s *Server) serveRemoteRerun(w http.ResponseWriter, r *http.Request, core h
 			return
 		}
 	}
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	r.ContentLength = int64(len(raw))
+	if err := forwardRemoteBody(r, req); err != nil {
+		writeRemoteError(w, err)
+		return
+	}
 	core.ServeHTTP(w, r)
 }
 
@@ -403,12 +425,22 @@ func (s *Server) serveRemotePack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := importPack(r.Context(), repo.RootPath, r.Body, tips); err != nil {
-		if _, ok := errors.AsType[*missingBaseError](err); ok {
-			writeRemoteError(w, newRemoteError(http.StatusConflict, "%v", err))
-			return
-		}
-		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "%v", err))
+		writeRemoteError(w, classifyPackError(err))
 		return
 	}
 	writeRemoteJSON(w, http.StatusOK, map[string][]string{"pinned": tips})
+}
+
+// classifyPackError maps an importPack failure to a response: 409 when the
+// clone lacks the pack's base commits, 400 when git rejected the pack or a
+// tip is not a full SHA, and 500 for daemon-side failures such as exec or
+// I/O errors and cancellation.
+func classifyPackError(err error) error {
+	if _, ok := errors.AsType[*missingBaseError](err); ok {
+		return newRemoteError(http.StatusConflict, "%v", err)
+	}
+	if _, ok := errors.AsType[*badPackError](err); ok || errors.Is(err, errRemoteRefNotSHA) {
+		return newRemoteError(http.StatusBadRequest, "%v", err)
+	}
+	return err
 }

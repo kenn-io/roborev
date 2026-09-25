@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // RemoteCapability is the tailnet app capability that grants remote API
@@ -43,6 +46,14 @@ type RemoteCaller struct {
 
 type whoisFunc func(ctx context.Context, peer string) (RemoteCaller, error)
 
+// remoteWhoisTimeout bounds one tailscale whois run. The CLI answers from
+// tailscaled over local IPC, which takes well under a second; the bound only
+// keeps a hung tailscaled from holding the caller's connection (and its
+// per-connection auth lock) open. It matches the remote listener's 5-second
+// ReadHeaderTimeout, the time a caller already gets to send its headers.
+// Tests shorten it.
+var remoteWhoisTimeout = 5 * time.Second
+
 // tailscaleWhois identifies peers by running the tailscale CLI, which works
 // with every tailscaled install and needs no Tailscale Go dependency.
 func tailscaleWhois(binary string) whoisFunc {
@@ -50,13 +61,20 @@ func tailscaleWhois(binary string) whoisFunc {
 		binary = "tailscale"
 	}
 	return func(ctx context.Context, peer string) (RemoteCaller, error) {
+		ctx, cancel := context.WithTimeout(ctx, remoteWhoisTimeout)
+		defer cancel()
 		cmd := exec.CommandContext(ctx, binary, "whois", "--json", peer)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			return RemoteCaller{}, fmt.Errorf("tailscale whois failed for %s: %w: %s",
-				peer, err, strings.TrimSpace(stderr.String()))
+			// The caller gets only a short cause: stderr can describe
+			// tailscaled's local state, which is for the daemon log.
+			log.Printf("remote whois for %s failed: %v: %s", peer, err, strings.TrimSpace(stderr.String()))
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return RemoteCaller{}, errors.New("tailscale whois timed out")
+			}
+			return RemoteCaller{}, errors.New("tailscale whois failed")
 		}
 		return parseWhois(out)
 	}

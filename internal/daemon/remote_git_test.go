@@ -3,10 +3,13 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,4 +205,32 @@ func TestImportPackRejectsNonSHATip(t *testing.T) {
 	f := newRemoteGitFixture(t)
 	err := importPack(context.Background(), f.daemonDir, strings.NewReader(""), []string{"HEAD"})
 	require.ErrorIs(t, err, errRemoteRefNotSHA)
+}
+
+func TestImportPackErrorKinds(t *testing.T) {
+	f := newRemoteGitFixture(t)
+	haves, err := daemonHaves(context.Background(), f.daemonDir)
+	require.NoError(t, err)
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, haves)
+	readErr := errors.New("connection reset")
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	t.Run("git rejects the pack", func(t *testing.T) {
+		err := importPack(context.Background(), f.daemonDir, strings.NewReader("not a pack"), []string{f.unpushed})
+		var bad *badPackError
+		require.ErrorAs(t, err, &bad)
+	})
+	t.Run("body read fails", func(t *testing.T) {
+		body := io.MultiReader(bytes.NewReader(pack[:len(pack)/2]), iotest.ErrReader(readErr))
+		err := importPack(context.Background(), f.daemonDir, body, []string{f.unpushed})
+		require.ErrorIs(t, err, readErr)
+		var bad *badPackError
+		assert.NotErrorAs(t, err, &bad, "a read failure is not the caller's bad pack")
+	})
+	t.Run("request canceled", func(t *testing.T) {
+		err := importPack(canceled, f.daemonDir, bytes.NewReader(pack), []string{f.unpushed})
+		require.ErrorIs(t, err, context.Canceled)
+	})
+	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix), "no failed import pins a tip")
 }

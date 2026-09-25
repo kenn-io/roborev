@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,23 @@ func TestTailscaleWhoisRunsCLI(t *testing.T) {
 	assert.Equal(t, RemoteAccessQueue, caller.Access)
 
 	_, err = tailscaleWhois(script)(context.Background(), "100.64.0.9:1")
-	require.ErrorContains(t, err, "tailscale whois failed for 100.64.0.9:1")
-	require.ErrorContains(t, err, "bad args")
+	require.EqualError(t, err, "tailscale whois failed", "stderr stays in the daemon log")
+}
+
+func TestTailscaleWhoisTimesOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake tailscale CLI is a shell script")
+	}
+	script := filepath.Join(t.TempDir(), "tailscale")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
+	orig := remoteWhoisTimeout
+	remoteWhoisTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteWhoisTimeout = orig })
+
+	// A subprocess is outside what testing/synctest can observe, so this
+	// test runs on wall-clock time with a shortened bound.
+	start := time.Now()
+	_, err := tailscaleWhois(script)(context.Background(), "100.64.0.2:5555")
+	require.EqualError(t, err, "tailscale whois timed out")
+	assert.Less(t, time.Since(start), 20*time.Second, "the bound, not the script, ended the run")
 }

@@ -160,6 +160,28 @@ func (e *missingBaseError) Error() string {
 
 func (e *missingBaseError) Unwrap() error { return e.err }
 
+// badPackError reports a pack that git index-pack rejected, which is a
+// problem with the caller's upload rather than with the daemon.
+type badPackError struct{ err error }
+
+func (e *badPackError) Error() string { return fmt.Sprintf("index pack: %v", e.err) }
+
+func (e *badPackError) Unwrap() error { return e.err }
+
+// readErrRecorder remembers the first read error other than io.EOF.
+type readErrRecorder struct {
+	r   io.Reader
+	err error
+}
+
+func (rr *readErrRecorder) Read(p []byte) (int, error) {
+	n, err := rr.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && rr.err == nil {
+		rr.err = err
+	}
+	return n, err
+}
+
 // importPack stores a caller-supplied git pack in the clone's object store
 // and pins each tip under refs/roborev/uploads/. It never touches the
 // working tree, the index, branches, or remote-tracking refs.
@@ -171,7 +193,22 @@ func importPack(ctx context.Context, repoRoot string, pack io.Reader, tips []str
 	}
 	unlock := lockGitMetadata(repoRoot)
 	defer unlock()
-	if _, _, err := gitcmd.New().Run(ctx, repoRoot, pack, "index-pack", "--stdin"); err != nil {
+	body := &readErrRecorder{r: pack}
+	if _, _, err := gitcmd.New().Run(ctx, repoRoot, body, "index-pack", "--stdin"); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("index pack: %w", ctxErr)
+		}
+		// A failed read ends index-pack's input early, so git reports a
+		// truncated pack; the read error is the real cause.
+		if body.err != nil {
+			return fmt.Errorf("read pack: %w", body.err)
+		}
+		// Only index-pack exiting with a failure means it rejected the
+		// input. Anything else, such as git not starting, is a daemon-side
+		// failure.
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
+			return &badPackError{err: err}
+		}
 		return fmt.Errorf("index pack: %w", err)
 	}
 	for _, tip := range tips {

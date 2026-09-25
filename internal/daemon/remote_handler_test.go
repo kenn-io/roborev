@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,7 +64,7 @@ func TestRemoteHandlerAuthAndAllowlist(t *testing.T) {
 		wantError  string
 	}{
 		{
-			"whois failure", fakeWhois(RemoteAccessNone, errors.New("tailscale whois failed for 100.64.0.2:5555: no peer")),
+			"whois failure", fakeWhois(RemoteAccessNone, errors.New("tailscale whois failed")),
 			http.MethodGet, "/api/status", http.StatusForbidden, "tailscale whois failed",
 		},
 		{
@@ -330,6 +331,75 @@ func TestRemoteRerunEligibility(t *testing.T) {
 	assert.Contains(t, errorBody(t, w), "needs a local daemon")
 }
 
+// TestRemoteRerunCaseVariantKeys pins the rerun gate to the core handler's
+// JSON rules: member names match case-sensitively, so a case-variant
+// duplicate key can never make the gate check one job while the core reruns
+// another.
+func TestRemoteRerunCaseVariantKeys(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "deadbeef", "A", "S", time.Now())
+	require.NoError(t, err)
+	review, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "deadbeef", Agent: "test",
+	})
+	require.NoError(t, err)
+	task, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "deadbeef", Agent: "test",
+		JobType: storage.JobTypeTask, Prompt: "hello",
+	})
+	require.NoError(t, err)
+	markJobStatus(t, db, review.ID, storage.JobStatusFailed)
+	markJobStatus(t, db, task.ID, storage.JobStatusFailed)
+	queue := fakeWhois(RemoteAccessQueue, nil)
+
+	for _, body := range []string{
+		fmt.Sprintf(`{"job_id":%d,"JOB_ID":%d}`, task.ID, review.ID),
+		fmt.Sprintf(`{"Job_Id":%d,"job_id":%d}`, review.ID, task.ID),
+	} {
+		w := serveRemote(t, server, queue, http.MethodPost, "/api/job/rerun", []byte(body))
+		require.Equal(t, http.StatusForbidden, w.Code, body+": "+w.Body.String())
+		assert.Contains(t, errorBody(t, w), fmt.Sprintf("rerunning job %d needs a local daemon", task.ID))
+	}
+	for _, id := range []int64{task.ID, review.ID} {
+		stored, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusFailed, stored.Status, "job %d must not be rerun", id)
+	}
+}
+
+// TestRemoteEnqueueCaseVariantKeys checks that the enqueue gate reads a body
+// the way the core handler does: case-variant members are unknown fields,
+// and the core receives only the fields the gate checked.
+func TestRemoteEnqueueCaseVariantKeys(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "project")
+	repo := testutil.InitTestGitRepo(t, repoDir)
+	head := repo.CommitFile("a.txt", "a", "a")
+	const id = "https://example.com/org/project.git"
+	_, err := db.GetOrCreateRepo(repoDir, id)
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"repo_identity":%q,"git_ref":%q,"branch":"main","agent":"test",`+
+		`"CUSTOM_PROMPT":"edit files","Agentic":true,"Job_Type":"task"}`, id, head)
+	w := serveRemote(t, server, fakeWhois(RemoteAccessQueue, nil), http.MethodPost, "/api/enqueue", []byte(body))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created storage.ReviewJob
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	job, err := db.GetJobByID(created.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal(storage.JobTypeReview, job.JobType)
+	assert.False(job.Agentic)
+	assert.Empty(job.Prompt)
+
+	w = serveRemote(t, server, fakeWhois(RemoteAccessQueue, nil), http.MethodPost, "/api/enqueue",
+		fmt.Appendf(nil, `{"repo_identity":%q,"git_ref":%q,"custom_prompt":"edit files","CUSTOM_PROMPT":""}`, id, head))
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	assert.Contains(errorBody(t, w), "task reviews need a local daemon")
+}
+
 func TestRemoteRerunRefusesLocalOnlyJobs(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -438,6 +508,7 @@ func TestRemotePackUploadErrors(t *testing.T) {
 		{"no tip", "?repo_identity=" + id, thinPack, http.StatusBadRequest, "at least one tip is required"},
 		{"short tip", "?repo_identity=" + id + "&tip=" + second[:12], thinPack, http.StatusBadRequest, "is not a full commit SHA"},
 		{"missing base", "?repo_identity=" + id + "&tip=" + second, thinPack, http.StatusConflict, "lacks base commits"},
+		{"not a pack", "?repo_identity=" + id + "&tip=" + second, []byte("not a pack"), http.StatusBadRequest, "index pack"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -446,4 +517,23 @@ func TestRemotePackUploadErrors(t *testing.T) {
 			assert.Contains(t, errorBody(t, w), tt.wantError)
 		})
 	}
+}
+
+func TestRemotePackCanceledRequestIsServerError(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	f := newRemoteGitFixture(t)
+	const id = "https://example.com/org/project.git"
+	_, err := db.GetOrCreateRepo(f.daemonDir, id)
+	require.NoError(t, err)
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, []string{gitOut(t, f.daemonDir, "rev-parse", "HEAD")})
+
+	ctx, cancel := context.WithCancel(remoteConnContext(context.Background(), nil))
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost,
+		RemotePackPath+"?repo_identity="+id+"&tip="+f.unpushed, bytes.NewReader(pack))
+	req.RemoteAddr = "100.64.0.2:5555"
+	w := httptest.NewRecorder()
+	server.newRemoteHandler(server.httpServer.Handler, fakeWhois(RemoteAccessQueue, nil)).ServeHTTP(w, req)
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	assert.Contains(t, errorBody(t, w), context.Canceled.Error())
 }
