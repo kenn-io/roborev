@@ -88,14 +88,37 @@ to the current branch. Use = syntax for explicit values:
 				branchFilter = resolved
 			}
 
-			return tui.Run(tui.Config{
+			cfg := tui.Config{
 				Context:       cmd.Context(),
 				Endpoint:      ep,
 				RepoFilter:    repoFilter,
 				BranchFilter:  branchFilter,
 				ControlSocket: controlSocket,
 				NoQuit:        noQuit,
-			})
+			}
+			remote, err := isRemoteMode()
+			if err != nil {
+				return err
+			}
+			if remote {
+				// Jobs from a remote daemon carry its root paths, so the TUI
+				// filters by the daemon's path for the local checkout.
+				cfg.Remote = true
+				if repoFilter != "" {
+					root, err := remoteRepoRoot(cmd.Context(), ep, repoFilter)
+					if err != nil {
+						return fmt.Errorf("--repo: %w", err)
+					}
+					cfg.RepoFilter = root
+				} else if local, err := resolveRepoFlag(cmd.Context(), "."); err == nil {
+					// The current directory may not be registered on the
+					// daemon; the TUI then starts unfiltered.
+					if root, err := remoteRepoRoot(cmd.Context(), ep, local); err == nil {
+						cfg.RemoteRepoRoot = root
+					}
+				}
+			}
+			return tui.Run(cfg)
 		},
 	}
 

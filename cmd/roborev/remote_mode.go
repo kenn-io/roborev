@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -11,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // remoteEndpoint is set when the CLI talks to a daemon on another machine,
@@ -163,4 +168,55 @@ func ensureRemoteDaemon() error {
 		return fmt.Errorf("remote daemon at http://%s is not reachable: %w", remoteEndpoint.Address, err)
 	}
 	return nil
+}
+
+// repoFilterValue is the repo filter to send for a local checkout: its path
+// for a local daemon, its identity for a remote one.
+func repoFilterValue(root string) (string, error) {
+	remote, err := isRemoteMode()
+	if err != nil {
+		return "", err
+	}
+	if !remote {
+		return root, nil
+	}
+	return remoteRepoIdentity(root)
+}
+
+// remoteRepoRoot returns the daemon-side root path of the registered repo
+// whose identity matches the local checkout at root.
+func remoteRepoRoot(ctx context.Context, ep daemon.DaemonEndpoint, root string) (string, error) {
+	identity, err := remoteRepoIdentity(root)
+	if err != nil {
+		return "", err
+	}
+	resp, err := ep.APIClient(10*time.Second).ListReposRaw(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("list repos on remote daemon: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("list repos on remote daemon: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var body struct {
+		Repos []storage.RepoWithCount `json:"repos"`
+	}
+	if err := json.UnmarshalRead(resp.Body, &body); err != nil {
+		return "", fmt.Errorf("decode remote repo list: %w", err)
+	}
+	var matches []string
+	for _, repo := range body.Repos {
+		if repo.Identity == identity {
+			matches = append(matches, repo.RootPath)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("repo %s is not registered on the remote daemon; run roborev init on the daemon host", identity)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("repo %s matches several remote daemon checkouts: %s", identity, strings.Join(matches, ", "))
+	}
 }

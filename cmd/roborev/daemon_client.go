@@ -141,8 +141,13 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 		normalizedRepo = abs
 	}
 
+	repoFilter, err := repoFilterValue(normalizedRepo)
+	if err != nil {
+		return nil, err
+	}
+
 	// Query by git_ref and repo to avoid matching jobs from different repos
-	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{repoFilter}, Limit: new(int64(1))}})
 	if err != nil {
 		return nil, err
 	}

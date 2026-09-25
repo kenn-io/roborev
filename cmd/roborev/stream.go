@@ -40,7 +40,9 @@ Examples:
 				if err != nil {
 					return fmt.Errorf("resolve repo path: %w", err)
 				}
-				repoFilter = root
+				if repoFilter, err = repoFilterValue(root); err != nil {
+					return err
+				}
 			}
 
 			ep := getDaemonEndpoint()

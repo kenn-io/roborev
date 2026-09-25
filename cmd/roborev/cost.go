@@ -48,21 +48,30 @@ Examples:
 
 			ep := getDaemonEndpoint()
 
+			// repoFilter is what the daemon matches: the checkout path, or
+			// its identity for a remote daemon.
+			repoFilter := repoPath
 			if !allRepos && repoPath == "" {
 				root, err := gitrepo.MainRoot(ctx, ".")
 				if err != nil {
 					return fmt.Errorf("not in a git repo; use --all for all repos or --repo to specify one")
 				}
 				repoPath = root
+				if repoFilter, err = repoFilterValue(root); err != nil {
+					return err
+				}
 			} else if repoPath != "" {
 				if root, err := gitrepo.MainRoot(ctx, repoPath); err == nil {
 					repoPath = root
+					if repoFilter, err = repoFilterValue(root); err != nil {
+						return err
+					}
 				}
 			}
 
 			params := generated.GetCostQuery{}
-			if repoPath != "" {
-				params.Repo = []string{repoPath}
+			if repoFilter != "" {
+				params.Repo = []string{repoFilter}
 			}
 			if branch != "" {
 				params.Branch = new(branch)

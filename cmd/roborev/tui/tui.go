@@ -231,6 +231,9 @@ type model struct {
 	// Track if branch backfill has run this session (one-time migration)
 	branchBackfillDone bool
 
+	// remote is set when the daemon is on another machine.
+	remote bool
+
 	// Repo, worktree, and branch detected from cwd at launch.
 	cwdRepoRoot     string
 	cwdRepoIdentity string
@@ -797,9 +800,12 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var globalCfg *config.Config
 
 	if !opt.disableExternalIO {
-		// Read daemon version from runtime file
-		if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
-			daemonVersion = info.Version
+		// Read daemon version from runtime file. A remote daemon's
+		// runtime file is on another machine.
+		if !opt.remote {
+			if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
+				daemonVersion = info.Version
+			}
 		}
 
 		// Load preferences from config
@@ -848,6 +854,13 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		cwdBranch = opt.cwdBranch
 	}
 
+	// Jobs from a remote daemon carry its root paths, so the automatic repo
+	// filter must use the daemon's path for this checkout (empty when the
+	// daemon does not have it).
+	if opt.remote {
+		cwdRepoRoot = opt.remoteRepoRoot
+	}
+
 	// Determine active filters: CLI flags take priority over auto-filter config
 	var activeRepoFilter []string
 	var filterStack []string
@@ -879,6 +892,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	httpClient := ep.HTTPClient(10 * time.Second)
 	m := model{
 		endpoint:            ep,
+		remote:              opt.remote,
 		daemonVersion:       daemonVersion,
 		client:              httpClient,
 		api:                 newDaemonAPI(ep, httpClient),
@@ -1367,6 +1381,11 @@ type Config struct {
 	BranchFilter  string
 	ControlSocket string // Unix socket path for external control (default: auto)
 	NoQuit        bool   // Suppress keyboard quit (for managed TUI instances)
+	// Remote is set when Endpoint is a daemon on another machine.
+	Remote bool
+	// RemoteRepoRoot is the daemon-side root path of the current
+	// directory's checkout in remote mode, or empty.
+	RemoteRepoRoot string
 }
 
 func programOptionsForModel(m model) []tea.ProgramOption {
@@ -1390,6 +1409,9 @@ func Run(cfg Config) error {
 	}
 	if cfg.NoQuit {
 		opts = append(opts, withNoQuit())
+	}
+	if cfg.Remote {
+		opts = append(opts, withRemote(), withRemoteRepoRoot(cfg.RemoteRepoRoot))
 	}
 	// Resolve socket path before creating the model so the
 	// model knows its socket path for runtime metadata updates.

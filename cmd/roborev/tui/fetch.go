@@ -417,6 +417,10 @@ func (m model) fetchReleaseNotes() tea.Cmd {
 // This is called after consecutive connection failures to handle daemon restarts.
 func (m model) tryReconnect() tea.Cmd {
 	return func() tea.Msg {
+		// A remote daemon has no runtime file here; keep its endpoint.
+		if m.remote {
+			return reconnectMsg{endpoint: m.endpoint}
+		}
 		info, err := daemon.GetAnyRunningDaemon()
 		if err != nil {
 			return reconnectMsg{err: err}

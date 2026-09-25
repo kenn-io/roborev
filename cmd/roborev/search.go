@@ -13,6 +13,7 @@ import (
 
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -145,6 +146,17 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	)
 	if err != nil {
 		return fmt.Errorf("create search client: %w", err)
+	}
+	// A remote daemon cannot read a local checkout path; send its identity.
+	// Names, identities, and daemon root paths pass through.
+	if remote, err := isRemoteMode(); err != nil {
+		return err
+	} else if remote && opts.repo != "" {
+		if root, err := gitrepo.MainRoot(cmd.Context(), opts.repo); err == nil {
+			if opts.repo, err = remoteRepoIdentity(root); err != nil {
+				return err
+			}
+		}
 	}
 	params := searchRequestQuery(query, opts)
 	response, err := api.SearchReviewsWithResponse(cmd.Context(), &generated.SearchReviewsRequestOptions{

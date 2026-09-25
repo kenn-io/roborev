@@ -70,15 +70,20 @@ Examples:
 					localRepoPath = root
 				}
 			}
-			if repoPath == "" {
-				if root, err := gitrepo.MainRoot(ctx, "."); err == nil {
-					repoPath = root
-				}
-			} else {
-				// Normalize explicit --repo to main repo root so worktree
-				// paths match the daemon's stored repo path.
-				if root, err := gitrepo.MainRoot(ctx, repoPath); err == nil {
-					repoPath = root
+			// repoFilter is what the daemon matches: the checkout path, or
+			// its identity for a remote daemon. An explicit --repo that is
+			// not a local checkout passes through unchanged.
+			repoFilter := repoPath
+			mainRootTarget := repoPath
+			if mainRootTarget == "" {
+				mainRootTarget = "."
+			}
+			// Normalize explicit --repo to main repo root so worktree
+			// paths match the daemon's stored repo path.
+			if root, err := gitrepo.MainRoot(ctx, mainRootTarget); err == nil {
+				repoPath = root
+				if repoFilter, err = repoFilterValue(root); err != nil {
+					return err
 				}
 			}
 			// Auto-resolve branch from the target repo when not specified.
@@ -98,8 +103,8 @@ Examples:
 			params := generated.ListJobsQuery{}
 			if repoPrefix != "" {
 				params.RepoPrefix = new(repoPrefix)
-			} else if repoPath != "" {
-				params.Repo = []string{repoPath}
+			} else if repoFilter != "" {
+				params.Repo = []string{repoFilter}
 			}
 			if branch != "" && (repoPrefix == "" || cmd.Flags().Changed("branch")) {
 				params.Branch = new(branch)

@@ -561,6 +561,20 @@ type options struct {
 	cwdRepoRoot       string // tests: simulate detected repo root
 	cwdRepoIdentity   string // tests: simulate detected repo identity
 	cwdBranch         string // tests: simulate detected branch
+	remote            bool   // the daemon is on another machine
+	remoteRepoRoot    string // daemon-side root path of the cwd checkout
+}
+
+// withRemote marks the daemon as remote: the TUI never looks for a local
+// daemon on this machine.
+func withRemote() option {
+	return func(o *options) { o.remote = true }
+}
+
+// withRemoteRepoRoot sets the daemon-side root path of the current
+// directory's checkout, used by the automatic repo filter in remote mode.
+func withRemoteRepoRoot(root string) option {
+	return func(o *options) { o.remoteRepoRoot = root }
 }
 
 // withNoQuit disables keyboard-initiated quit (q key).
