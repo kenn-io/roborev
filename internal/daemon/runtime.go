@@ -478,6 +478,21 @@ func ProbeRemoteDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo,
 	return probePing(ep, timeout)
 }
 
+// PingStatusError is a ping answered with a non-200 status. Reason holds
+// the ErrorResponse message when the daemon sent one, such as the remote
+// listener's explanation for refusing the caller.
+type PingStatusError struct {
+	StatusCode int
+	Reason     string
+}
+
+func (e *PingStatusError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("daemon ping returned %d: %s", e.StatusCode, e.Reason)
+	}
+	return fmt.Sprintf("daemon ping returned %d", e.StatusCode)
+}
+
 func probePing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -489,11 +504,12 @@ func probePing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if resp.StatusCode != http.StatusOK {
 		// The remote listener explains a refusal (for example a failed
 		// Tailscale whois) in an ErrorResponse body; pass that on.
+		statusErr := &PingStatusError{StatusCode: resp.StatusCode}
 		var errResp ErrorResponse
-		if json.UnmarshalRead(resp.Body, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("daemon ping returned %d: %s", resp.StatusCode, errResp.Error)
+		if json.UnmarshalRead(resp.Body, &errResp) == nil {
+			statusErr.Reason = errResp.Error
 		}
-		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
+		return nil, statusErr
 	}
 	var info PingInfo
 	if err := json.UnmarshalRead(resp.Body, &info); err != nil {

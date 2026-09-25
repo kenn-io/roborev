@@ -131,7 +131,10 @@ func syncNowCmd() *cobra.Command {
 		Long:  "Triggers an immediate sync cycle. Requires the daemon to be running with sync enabled.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Check daemon is running
-			if err := ensureLocalDaemon("roborev sync"); err != nil {
+			if err := requireLocalDaemon("roborev sync"); err != nil {
+				return err
+			}
+			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 

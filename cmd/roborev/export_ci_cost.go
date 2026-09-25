@@ -55,7 +55,10 @@ Legacy cursors cannot be resumed against a regular export, or vice versa.`),
 			if err := validateExportCICostOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
-			if err := ensureLocalDaemon("roborev export"); err != nil {
+			if err := requireLocalDaemon("roborev export"); err != nil {
+				return err
+			}
+			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 

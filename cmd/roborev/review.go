@@ -177,6 +177,14 @@ Examples:
 				autoInstallHooks(ctx, root)
 			}
 
+			// Dirty reviews send the working tree's diff, which a remote
+			// daemon cannot review; refuse before contacting it.
+			if dirty && !local {
+				if err := requireLocalDaemon("roborev review --dirty"); err != nil {
+					return err
+				}
+			}
+
 			// Ensure daemon is running (skip for --local mode)
 			if !local {
 				if err := ensureDaemon(); err != nil {
@@ -285,11 +293,6 @@ Examples:
 					cmd.Printf("Reviewing %d commits since %s\n", len(commits), since)
 				}
 			} else if dirty {
-				if !local {
-					if err := requireLocalDaemon("roborev review --dirty"); err != nil {
-						return err
-					}
-				}
 				// Dirty review - capture uncommitted changes
 				hasChanges, err := gitrepo.HasUncommittedChanges(ctx, root)
 				if err != nil {

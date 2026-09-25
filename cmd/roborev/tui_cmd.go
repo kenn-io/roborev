@@ -35,6 +35,9 @@ to the current branch. Use = syntax for explicit values:
   roborev tui --repo --branch         # current repo + branch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --addr follows the --server rule: a remote http://host:port
+			// selects remote mode, and any local address overrides
+			// [remote] server.
 			var addrEndpoint *daemon.DaemonEndpoint
 			if strings.HasPrefix(addr, "http://") {
 				remote, isRemote, err := parseRemoteServer(addr)
@@ -42,7 +45,7 @@ to the current branch. Use = syntax for explicit values:
 					return fmt.Errorf("--addr: %w", err)
 				}
 				if isRemote {
-					remoteEndpoint = &remote
+					setRemoteEndpoint(&remote)
 					addrEndpoint = &remote
 				}
 			}
@@ -51,6 +54,7 @@ to the current branch. Use = syntax for explicit values:
 				if err != nil {
 					return fmt.Errorf("--addr: %w", err)
 				}
+				setRemoteEndpoint(nil)
 				addrEndpoint = &parsed
 			}
 

@@ -50,11 +50,11 @@ func remapCmd() *cobra.Command {
 space-separated) and updates review jobs to point at the
 new commits. Called automatically by the post-rewrite hook.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if isRemoteMode() {
+			if err := requireLocalDaemon("roborev remap"); err != nil {
 				if quiet {
-					return nil
+					return nil // Don't fail the hook
 				}
-				return requireLocalDaemon("roborev remap")
+				return err
 			}
 			ctx := cmd.Context()
 			gitCwd, err := gitrepo.Root(ctx, ".")

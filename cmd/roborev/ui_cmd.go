@@ -27,6 +27,9 @@ func uiCmd() *cobra.Command {
 		Short: "Open the Roborev browser UI",
 		Args:  validateUIArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
+			if err := requireLocalDaemon("roborev ui"); err != nil {
+				return err
+			}
 			if err := uiEnsureDaemon(); err != nil {
 				return err
 			}

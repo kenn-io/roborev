@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -54,11 +55,15 @@ func TestParseRemoteServer(t *testing.T) {
 // and points ROBOREV_DATA_DIR at an empty directory.
 func withRemoteState(t *testing.T) {
 	t.Helper()
-	origServer, origParsed, origRemote := serverAddr, parsedServerEndpoint, remoteEndpoint
+	origServer, origParsed := serverAddr, parsedServerEndpoint
+	origRemote, origResolved, origErr := remoteEndpoint, remoteResolved, remoteErr
 	origStart, origRestart, origProbe := startDaemonForEnsure, restartDaemonForEnsure, probeRemoteDaemon
+	origEnsureProbe, origDiscover := probeDaemonForEnsure, getAnyRunningDaemon
 	t.Cleanup(func() {
-		serverAddr, parsedServerEndpoint, remoteEndpoint = origServer, origParsed, origRemote
+		serverAddr, parsedServerEndpoint = origServer, origParsed
+		remoteEndpoint, remoteResolved, remoteErr = origRemote, origResolved, origErr
 		startDaemonForEnsure, restartDaemonForEnsure, probeRemoteDaemon = origStart, origRestart, origProbe
+		probeDaemonForEnsure, getAnyRunningDaemon = origEnsureProbe, origDiscover
 	})
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 }
@@ -73,14 +78,31 @@ func withRecordingRemote(t *testing.T) *atomic.Int32 {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(ts.Close)
-	remoteEndpoint = &daemon.DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")}
+	setRemoteEndpoint(&daemon.DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")})
 	return &hits
+}
+
+// withSilentRemote puts the CLI in remote mode against a loopback test
+// server that fails the test on any request.
+func withSilentRemote(t *testing.T) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Failf(t, "unexpected request to the remote daemon", "%s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	setRemoteEndpoint(&daemon.DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")})
+}
+
+func writeRemoteConfig(t *testing.T, server string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "config.toml"),
+		[]byte("[remote]\nserver = \""+server+"\"\n"), 0o644))
 }
 
 func TestRemoteModeFromConfig(t *testing.T) {
 	withRemoteState(t)
-	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "config.toml"),
-		[]byte("[remote]\nserver = \"http://daemon-host.example:7474\"\n"), 0o644))
+	writeRemoteConfig(t, "http://daemon-host.example:7474")
 	serverAddr = ""
 	require.NoError(t, validateServerFlag())
 	require.True(t, isRemoteMode())
@@ -187,4 +209,130 @@ func TestRemapRemoteMode(t *testing.T) {
 	cmd.SilenceErrors = true
 	require.ErrorContains(t, cmd.Execute(), "roborev remap needs a local daemon")
 	assert.Zero(t, hits.Load(), "remap must not call the remote daemon")
+}
+
+func TestEnsureRemoteDaemonReportsRefusal(t *testing.T) {
+	withRemoteState(t)
+	serverAddr = "http://daemon-host.example:7474"
+	require.NoError(t, validateServerFlag())
+	probeRemoteDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return nil, &daemon.PingStatusError{StatusCode: http.StatusForbidden, Reason: "tailscale whois failed: no peer"}
+	}
+	err := ensureDaemon()
+	require.EqualError(t, err,
+		"remote daemon at http://daemon-host.example:7474 refused the request: tailscale whois failed: no peer")
+}
+
+func TestInvalidRemoteConfigOnlyFailsDaemonPaths(t *testing.T) {
+	withRemoteState(t)
+	writeRemoteConfig(t, "https://daemon-host.example:7474")
+	serverAddr = ""
+	require.NoError(t, validateServerFlag(), "a bad [remote] server must not fail every command")
+
+	output := captureStdout(t, func() {
+		cmd := configGetCmd()
+		cmd.SetArgs([]string{"--global", "remote.server"})
+		require.NoError(t, cmd.Execute())
+	})
+	assert.Contains(t, output, "https://daemon-host.example:7474")
+
+	startDaemonForEnsure = func() error { panic("a bad remote config must not start a local daemon") }
+	err := ensureDaemon()
+	require.ErrorContains(t, err, "invalid [remote] server")
+	require.ErrorContains(t, err, "roborev config set --global remote.server")
+
+	// Agent hooks use the daemon on this machine and never read [remote].
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return nil, daemon.ErrDaemonAccessDenied
+	}
+	require.ErrorIs(t, agentHookEnsureDaemon(), daemon.ErrDaemonAccessDenied)
+}
+
+func TestLocalOnlyRefusalIsNotWrapped(t *testing.T) {
+	withRemoteState(t)
+	withSilentRemote(t)
+	for name, cmd := range map[string]func() *cobra.Command{
+		"roborev sync":   syncNowCmd,
+		"roborev export": exportReviewsCmd,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := cmd()
+			c.SetArgs([]string{})
+			c.SilenceUsage = true
+			c.SilenceErrors = true
+			err := c.Execute()
+			require.ErrorContains(t, err, name+" needs a local daemon")
+			assert.NotContains(t, err.Error(), "daemon not running")
+		})
+	}
+}
+
+func TestUIRefusesRemoteMode(t *testing.T) {
+	withRemoteState(t)
+	withUICommandDependencies(t,
+		func() error { panic("remote mode must not probe for the UI") },
+		func() (*daemon.RuntimeInfo, error) { panic("remote mode must not discover a local UI") },
+		func(string) error { panic("remote mode must not open a browser") },
+	)
+	withSilentRemote(t)
+	cmd := uiCmd()
+	cmd.SetArgs([]string{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	require.ErrorContains(t, cmd.Execute(), "roborev ui needs a local daemon")
+}
+
+func TestReviewDirtyRemoteSendsNothing(t *testing.T) {
+	withRemoteState(t)
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "initial\n", "initial")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "file.txt"), []byte("changed\n"), 0o600))
+	withSilentRemote(t)
+
+	_, _, err := executeReviewCmd("--repo", repo.Dir, "--dirty", "--agent", "test", "--quiet")
+	require.ErrorContains(t, err, "roborev review --dirty needs a local daemon")
+}
+
+func TestTUIAddrSelectsEndpoint(t *testing.T) {
+	runTUI := func(addr string) error {
+		cmd := tuiCmd()
+		cmd.SetArgs([]string{"--addr", addr})
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		return cmd.Execute()
+	}
+
+	t.Run("remote addr", func(t *testing.T) {
+		withRemoteState(t)
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+		var probed daemon.DaemonEndpoint
+		probeRemoteDaemon = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			probed = ep
+			return nil, errors.New("remote down")
+		}
+		err := runTUI("http://daemon-host.example:7474")
+		require.ErrorContains(t, err, "remote daemon at http://daemon-host.example:7474 is not reachable: remote down")
+		assert.Equal(t, "daemon-host.example:7474", probed.Address)
+	})
+
+	t.Run("local addr overrides remote config", func(t *testing.T) {
+		withRemoteState(t)
+		writeRemoteConfig(t, "http://daemon-host.example:7474")
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+		probeRemoteDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+			panic("a local --addr must not probe the configured remote")
+		}
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+		// Stop ensureDaemon at its local probe, so the test neither starts a
+		// daemon nor opens the TUI.
+		probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+			return nil, daemon.ErrDaemonAccessDenied
+		}
+		err := runTUI("http://127.0.0.1:1")
+		require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+		assert.False(t, isRemoteMode())
+	})
 }

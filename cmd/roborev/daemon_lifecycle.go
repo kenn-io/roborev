@@ -139,10 +139,15 @@ func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 // Called from PersistentPreRunE so invalid values fail fast.
 func validateServerFlag() error {
 	parsedServerEndpoint = nil
-	if err := resolveRemoteEndpoint(); err != nil {
-		return fmt.Errorf("invalid remote server: %w", err)
+	resetRemoteMode()
+	if serverAddr == "" {
+		// [remote] server is read lazily by the paths that contact a daemon.
+		return nil
 	}
-	if serverAddr == "" || isRemoteMode() {
+	if err := resolveRemoteMode(); err != nil {
+		return err
+	}
+	if isRemoteMode() {
 		return nil
 	}
 	ep, err := daemon.ParseEndpoint(serverAddr)
@@ -156,7 +161,7 @@ func validateServerFlag() error {
 // getDaemonEndpoint returns the remote daemon endpoint in remote mode, and
 // the local daemon endpoint otherwise.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
-	if remoteEndpoint != nil {
+	if isRemoteMode() {
 		return *remoteEndpoint
 	}
 	return localDaemonEndpoint()
@@ -239,14 +244,25 @@ func registerRepo(repoPath string) error {
 	return nil
 }
 
-// ensureDaemon checks if daemon is running, starts it if not.
-// If daemon is running but has different version, restart it.
-// Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
-// restarting (useful for development with go run).
+// ensureDaemon checks that the selected daemon is running. In remote mode it
+// only pings the remote daemon; otherwise it runs ensureThisMachineDaemon.
 func ensureDaemon() error {
+	if err := resolveRemoteMode(); err != nil {
+		return err
+	}
 	if remoteEndpoint != nil {
 		return ensureRemoteDaemon()
 	}
+	return ensureThisMachineDaemon()
+}
+
+// ensureThisMachineDaemon checks if the daemon on this machine is running,
+// and starts it if not. It ignores remote mode, for callers such as agent
+// hooks that always use the local daemon.
+// If daemon is running but has different version, restart it.
+// Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
+// restarting (useful for development with go run).
+func ensureThisMachineDaemon() error {
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
 	// First check runtime files for any running daemon
@@ -286,7 +302,7 @@ func ensureDaemon() error {
 
 	// Try the configured default address for manual daemon runs that do not
 	// have a runtime file yet.
-	ep := getDaemonEndpoint()
+	ep := localDaemonEndpoint()
 	probe, probeErr := probeDaemonForEnsure(ep, 2*time.Second)
 	if probeErr == nil {
 		if !skipVersionCheck {

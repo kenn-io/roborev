@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -13,11 +14,44 @@ import (
 
 // remoteEndpoint is set when the CLI talks to a daemon on another machine,
 // through [remote] server or a non-loopback --server http://host:port.
-var remoteEndpoint *daemon.DaemonEndpoint
+// It is resolved lazily, on the first path that contacts a daemon, so a bad
+// [remote] server does not break commands that never contact one (such as
+// roborev config, which the user needs to repair it).
+var (
+	remoteEndpoint *daemon.DaemonEndpoint
+	remoteResolved bool
+	remoteErr      error
+)
 
 var probeRemoteDaemon = daemon.ProbeRemoteDaemonPing
 
-func isRemoteMode() bool { return remoteEndpoint != nil }
+// resetRemoteMode forgets the resolved remote endpoint so the next daemon
+// path resolves it again.
+func resetRemoteMode() {
+	remoteEndpoint, remoteResolved, remoteErr = nil, false, nil
+}
+
+// setRemoteEndpoint fixes the endpoint choice without reading config: a
+// remote endpoint, or nil for a local one.
+func setRemoteEndpoint(ep *daemon.DaemonEndpoint) {
+	remoteEndpoint, remoteResolved, remoteErr = ep, true, nil
+}
+
+// resolveRemoteMode resolves remote mode once and returns the error, if any.
+func resolveRemoteMode() error {
+	if !remoteResolved {
+		remoteEndpoint, remoteErr = loadRemoteEndpoint()
+		remoteResolved = true
+	}
+	return remoteErr
+}
+
+// isRemoteMode reports whether the CLI talks to a remote daemon. A remote
+// config that fails to resolve is not remote mode here; ensureDaemon and
+// requireLocalDaemon report that error.
+func isRemoteMode() bool {
+	return resolveRemoteMode() == nil && remoteEndpoint != nil
+}
 
 // parseRemoteServer parses an http://host:port remote daemon URL. Loopback
 // hosts return ok=false so they keep today's local behavior.
@@ -40,34 +74,44 @@ func parseRemoteServer(raw string) (daemon.DaemonEndpoint, bool, error) {
 	return daemon.DaemonEndpoint{Network: "tcp", Address: u.Host}, true, nil
 }
 
-// resolveRemoteEndpoint picks remote mode from --server, or from
+// loadRemoteEndpoint picks remote mode from --server, or from
 // [remote] server when --server is unset.
-func resolveRemoteEndpoint() error {
-	remoteEndpoint = nil
-	raw := serverAddr
-	if raw == "" {
-		configured, err := config.LoadRemoteServer()
+func loadRemoteEndpoint() (*daemon.DaemonEndpoint, error) {
+	if serverAddr != "" {
+		if !strings.HasPrefix(serverAddr, "http://") {
+			return nil, nil
+		}
+		ep, remote, err := parseRemoteServer(serverAddr)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("invalid --server: %w", err)
 		}
-		if configured == "" {
-			return nil
+		if !remote {
+			return nil, nil
 		}
-		raw = configured
-	} else if !strings.HasPrefix(raw, "http://") {
-		return nil
+		return &ep, nil
 	}
-	ep, remote, err := parseRemoteServer(raw)
+	configured, err := config.LoadRemoteServer()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("%w; fix it with roborev config set --global remote.server <url>", err)
 	}
-	if remote {
-		remoteEndpoint = &ep
+	if configured == "" {
+		return nil, nil
 	}
-	return nil
+	ep, remote, err := parseRemoteServer(configured)
+	if err != nil {
+		return nil, fmt.Errorf("invalid [remote] server in %s: %w; fix it with roborev config set --global remote.server <url>",
+			config.GlobalConfigPath(), err)
+	}
+	if !remote {
+		return nil, nil
+	}
+	return &ep, nil
 }
 
 func requireLocalDaemon(command string) error {
+	if err := resolveRemoteMode(); err != nil {
+		return err
+	}
 	if remoteEndpoint == nil {
 		return nil
 	}
@@ -85,7 +129,16 @@ func ensureLocalDaemon(command string) error {
 }
 
 func ensureRemoteDaemon() error {
-	if _, err := probeRemoteDaemon(*remoteEndpoint, 2*time.Second); err != nil {
+	_, err := probeRemoteDaemon(*remoteEndpoint, 2*time.Second)
+	if statusErr, ok := errors.AsType[*daemon.PingStatusError](err); ok {
+		if statusErr.Reason != "" {
+			return fmt.Errorf("remote daemon at http://%s refused the request: %s",
+				remoteEndpoint.Address, statusErr.Reason)
+		}
+		return fmt.Errorf("remote daemon at http://%s refused the request with HTTP %d",
+			remoteEndpoint.Address, statusErr.StatusCode)
+	}
+	if err != nil {
 		return fmt.Errorf("remote daemon at http://%s is not reachable: %w", remoteEndpoint.Address, err)
 	}
 	return nil
