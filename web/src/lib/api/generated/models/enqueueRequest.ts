@@ -23,6 +23,7 @@ export interface EnqueueRequest {
   panel?: string;
   provider?: string;
   reasoning?: string;
+  repo_identity?: string;
   repo_path: string;
   review_type?: string;
   since?: string;

@@ -35,6 +35,20 @@ type EnqueueRequest struct {
 	MinSeverity       string   `json:"min_severity,omitempty"`        // Minimum severity filter: critical, high, medium, low
 	Panel             string   `json:"panel,omitempty"`               // Panel name; "none" forces single-agent
 	Source            string   `json:"source,omitempty"`              // Provenance, e.g. "post_commit" (empty = foreground)
+	RepoIdentity      string   `json:"repo_identity,omitempty"`       // Remote callers: repo identity instead of repo_path
+}
+
+// MissingCommitsCode marks a remote enqueue that named commits the daemon
+// clone lacks even after fetching.
+const MissingCommitsCode = "missing_commits"
+
+// MissingCommitsResponse lists the missing commits and the commits at the
+// daemon clone's ref tips, so the caller can pack only what is missing.
+type MissingCommitsResponse struct {
+	Error   string   `json:"error"`
+	Code    string   `json:"code"`
+	Missing []string `json:"missing"`
+	Have    []string `json:"have"`
 }
 
 // EnqueueCreatedResponse is returned when an enqueue creates a single job.

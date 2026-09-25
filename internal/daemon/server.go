@@ -2716,6 +2716,7 @@ func (s *Server) humaEnqueue(
 	req.ReviewType = canonical[0]
 
 	currentBranch := metadata.CurrentBranch()
+	_, remoteCaller := RemoteCallerFromContext(ctx)
 	// A post-commit request's explicit branch names the branch being
 	// reviewed, which can differ from the checkout's branch (for example a
 	// pre-push flush of another branch). Exclusion policy must follow the
@@ -2723,7 +2724,11 @@ func (s *Server) humaEnqueue(
 	// drops the review. Manual reviews keep the checkout-branch check:
 	// excluded_branches applies to automatic reviews only.
 	branchToCheck := currentBranch
-	if req.Source == "post_commit" && req.Branch != "" {
+	if remoteCaller {
+		// A remote caller's work has nothing to do with the daemon
+		// checkout's branch; only the branch it reported applies.
+		branchToCheck = req.Branch
+	} else if req.Source == "post_commit" && req.Branch != "" {
 		branchToCheck = req.Branch
 	} else if req.JobType == storage.JobTypeInsights {
 		if req.Branch != "" {
@@ -2742,7 +2747,7 @@ func (s *Server) humaEnqueue(
 		})
 	}
 
-	if req.Branch == "" && req.JobType != storage.JobTypeInsights {
+	if req.Branch == "" && req.JobType != storage.JobTypeInsights && !remoteCaller {
 		req.Branch = currentBranch
 	}
 

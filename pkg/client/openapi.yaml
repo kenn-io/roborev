@@ -1145,6 +1145,8 @@ components:
           type: string
         reasoning:
           type: string
+        repo_identity:
+          type: string
         repo_path:
           type: string
         review_type:
