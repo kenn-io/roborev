@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
@@ -125,7 +124,7 @@ func autoInstallHooks(ctx context.Context, repoPath string) {
 	if err != nil || !insideGitDir {
 		return
 	}
-	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
+	hooksDir, err := git.GetHooksPath(repoPath)
 	if err != nil {
 		return
 	}

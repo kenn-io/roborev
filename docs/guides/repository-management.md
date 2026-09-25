@@ -169,8 +169,20 @@ everything is consolidated under the main repository.
 ### Git Hook Maintenance
 
 If your repository uses `core.hooksPath` (common with Husky and other hook
-managers), roborev resolves relative paths against the main repository root so
-the post-commit hook fires correctly from linked worktrees.
+managers), roborev installs into the directory Git runs hooks from:
+
+- A relative path inside the working tree, such as a tracked `.githooks`
+    directory, stays relative. Git resolves it from each worktree's root, so
+    every linked worktree runs the hooks checked out on its own branch. Running
+    `roborev init` or `roborev install-hook` from a linked worktree installs
+    into that worktree's copy.
+- A relative path under `.git` or outside the working tree (starting with `..`)
+    only works from the main checkout. roborev rewrites it to an absolute path
+    rooted at the main repository so hooks also fire from linked worktrees.
+
+Older roborev versions also made working-tree paths absolute, which made linked
+worktrees run the main checkout's hooks. To restore per-branch hooks, set the
+relative value again, for example `git config core.hooksPath .githooks`.
 
 Automatic hook maintenance during reviews, daemon startup, and updates only
 modifies hooks inside the repository's Git metadata directory (including the

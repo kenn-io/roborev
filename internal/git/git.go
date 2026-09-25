@@ -2085,11 +2085,15 @@ func WorktreePathForBranch(repoPath, branch string) (string, bool, error) {
 	return repoPath, false, nil
 }
 
-// EnsureAbsoluteHooksPath checks whether core.hooksPath is set
-// to a relative value and, if so, resolves it to an absolute
-// path and updates the git config. Relative hooks paths break
-// linked worktrees because git resolves them from the worktree
-// root, not the main repo root.
+// EnsureAbsoluteHooksPath rewrites a relative core.hooksPath that only works
+// from the main checkout to an absolute path rooted at the main repo. Git
+// resolves a relative hooks path against the root of the worktree running the
+// hook, so values under .git or outside the working tree break in linked
+// worktrees.
+//
+// Relative values that stay inside the working tree, such as a tracked
+// .githooks directory, are left alone: each worktree correctly runs the hooks
+// checked out on its own branch.
 func EnsureAbsoluteHooksPath(repoPath string) error {
 	// Read the effective value from any config level
 	// (local, global, system) so we catch relative paths
@@ -2104,7 +2108,8 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		return nil
 	}
 	raw := normalizeMSYSPath(string(out))
-	if raw == "" || filepath.IsAbs(raw) || isGitTildePath(raw) {
+	if raw == "" || filepath.IsAbs(raw) || isGitTildePath(raw) ||
+		!hooksPathNeedsMainRoot(raw) {
 		return nil
 	}
 	// Resolve against the main repo root, not the worktree
@@ -2129,6 +2134,14 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 	return nil
 }
 
+// hooksPathNeedsMainRoot reports whether a relative core.hooksPath points
+// into the git directory or outside the working tree. Those locations only
+// exist relative to the main checkout, so they must be made absolute.
+func hooksPathNeedsMainRoot(raw string) bool {
+	first, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(raw)), "/")
+	return first == ".." || first == ".git"
+}
+
 // isGitTildePath returns true for paths that git expands via
 // tilde expansion: "~", "~/path", "~user", "~user/path".
 // These must not be joined to a repo root. Git calls
@@ -2150,10 +2163,11 @@ func isGitTildePath(s string) bool {
 		(c >= 'A' && c <= 'Z') || c == '_'
 }
 
-// GetHooksPath returns the path to the hooks directory,
-// respecting core.hooksPath. Relative paths are resolved
-// against the main repository root (not the worktree root)
-// so that linked worktrees share the same hooks directory.
+// GetHooksPath returns the absolute hooks directory git
+// dispatches from repoPath, respecting core.hooksPath. A
+// relative core.hooksPath inside the working tree resolves
+// to the current worktree's copy; the default hooks
+// directory is shared through the common git directory.
 func GetHooksPath(repoPath string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--git-path", "hooks")
 	cmd.Dir = repoPath
@@ -2167,19 +2181,38 @@ func GetHooksPath(repoPath string) (string, error) {
 
 	hooksPath := normalizeMSYSPath(string(out))
 
-	if !filepath.IsAbs(hooksPath) {
-		// Resolve against the main repo root so linked
-		// worktrees get the same hooks directory.
-		root, err := GetMainRepoRoot(repoPath)
-		if err != nil {
-			return "", fmt.Errorf(
-				"resolve main repo root for hooks path: %w",
-				err,
-			)
-		}
-		hooksPath = filepath.Join(root, hooksPath)
+	if filepath.IsAbs(hooksPath) {
+		return hooksPath, nil
 	}
 
+	// A relative core.hooksPath under .git or outside the
+	// working tree only exists relative to the main checkout;
+	// EnsureAbsoluteHooksPath rewrites it to that location.
+	cfg := newGitCmd("config", "core.hooksPath")
+	cfg.Dir = repoPath
+	if raw, err := cfg.Output(); err == nil {
+		rel := normalizeMSYSPath(string(raw))
+		if !filepath.IsAbs(rel) && !isGitTildePath(rel) &&
+			hooksPathNeedsMainRoot(rel) {
+			root, err := GetMainRepoRoot(repoPath)
+			if err != nil {
+				return "", fmt.Errorf(
+					"resolve main repo root for hooks path: %w", err,
+				)
+			}
+			return filepath.Join(root, rel), nil
+		}
+	}
+
+	// Otherwise git reports the path relative to the working
+	// directory, which is also where it runs hooks from.
+	// Resolving against repoPath (not the main repo root)
+	// keeps linked worktrees on their own checked-out hooks.
+	absRepo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo path: %w", err)
+	}
+	hooksPath = filepath.Join(absRepo, hooksPath)
 	return hooksPath, nil
 }
 

@@ -59,15 +59,9 @@ roborev uses a `post-commit` git hook to enqueue commits for review. Verify it
 exists:
 
 ```bash
-# Resolves core.hooksPath (relative or absolute) against the main
-# repo root, falling back to .git/hooks. Works from linked worktrees.
-COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
-HP="$(git config core.hooksPath || true)"
-if [ -n "$HP" ]; then
-  case "$HP" in /*) HOOKS="$HP" ;; *) HOOKS="${COMMON%/.git}/$HP" ;; esac
-else
-  HOOKS="$COMMON/hooks"
-fi
+# Prints the hooks directory Git runs from this worktree,
+# respecting core.hooksPath.
+HOOKS="$(git rev-parse --path-format=absolute --git-path hooks)"
 cat "$HOOKS/post-commit"
 ```
 

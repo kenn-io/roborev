@@ -90,7 +90,7 @@ func postCommitCmd() *cobra.Command {
 
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly.
-			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
+			_ = git.EnsureAbsoluteHooksPath(root)
 			var batch postCommitBatchDecision
 			batchSize := 0
 			unlock, err := acquirePostCommitBatchLock(ctx, root)

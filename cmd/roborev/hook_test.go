@@ -865,11 +865,16 @@ func TestInstallHookFromLinkedWorktree(t *testing.T) {
 	installCmd.SetArgs([]string{})
 	require.NoError(t, installCmd.Execute())
 
-	// The hooks should be installed in the main repo's .githooks.
+	// Git runs a relative hooks path from the worktree root, so the
+	// hooks belong in the worktree's own .githooks and the shared
+	// config value must stay relative.
+	assert.Equal(t, ".githooks", runGit(resolved, "config", "core.hooksPath"))
 	for _, name := range []string{"post-commit", "post-rewrite"} {
-		_, err := os.Stat(filepath.Join(customHooks, name))
-		assert.NoError(t, err,
-			"%s should exist in shared hooks dir", name)
+		_, err := os.Stat(filepath.Join(resolved, ".githooks", name))
+		require.NoError(t, err, "%s should exist in worktree hooks dir", name)
+		_, err = os.Stat(filepath.Join(customHooks, name))
+		assert.ErrorIs(t, err, fs.ErrNotExist,
+			"%s should not be written to the main checkout", name)
 	}
 }
 
@@ -915,11 +920,18 @@ func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 		))
 	}
 
-	// Create a linked worktree.
+	// Create a linked worktree with the same hooks checked out.
 	wtDir := t.TempDir()
 	resolved, err := filepath.EvalSymlinks(wtDir)
 	require.NoError(t, err)
 	runGit(repo.Root, "worktree", "add", resolved, "-b", "wt")
+	wtHooks := filepath.Join(resolved, ".githooks")
+	require.NoError(t, os.MkdirAll(wtHooks, 0o755))
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		content, err := os.ReadFile(filepath.Join(customHooks, name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(wtHooks, name), content, 0o755))
+	}
 
 	// Run uninstall-hook from the worktree.
 	origDir, _ := os.Getwd()
@@ -929,10 +941,13 @@ func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 	cmd := uninstallHookCmd()
 	require.NoError(t, cmd.Execute())
 
-	// The hooks in the main repo's .githooks should be removed.
+	// Only the worktree's own hooks are removed; the main checkout
+	// keeps its hooks.
 	for _, name := range []string{"post-commit", "post-rewrite"} {
-		_, err := os.Stat(filepath.Join(customHooks, name))
-		assert.ErrorIs(t, err, fs.ErrNotExist,
-			"%s should be removed from shared hooks dir", name)
+		_, err := os.Stat(filepath.Join(wtHooks, name))
+		require.ErrorIs(t, err, fs.ErrNotExist,
+			"%s should be removed from worktree hooks dir", name)
+		_, err = os.Stat(filepath.Join(customHooks, name))
+		assert.NoError(t, err, "%s should remain in the main checkout", name)
 	}
 }
