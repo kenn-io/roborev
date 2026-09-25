@@ -252,7 +252,6 @@ func TestInvalidRemoteConfigOnlyFailsDaemonPaths(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		panic("a broken [remote] must not discover a local daemon")
 	}
-	require.ErrorContains(t, agentHookEnsureDaemon(), "invalid [remote] server")
 	remote, err := isRemoteMode()
 	require.ErrorContains(t, err, "invalid [remote] server")
 	assert.False(t, remote)
@@ -260,9 +259,20 @@ func TestInvalidRemoteConfigOnlyFailsDaemonPaths(t *testing.T) {
 }
 
 func TestAgentHookRemoteModeNeverManagesLocalDaemon(t *testing.T) {
+	for _, tc := range []struct{ name, server string }{
+		{"valid remote", "http://daemon-host.example:7474"},
+		{"broken remote", "https://daemon-host.example:7474"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testAgentHookNeverManagesLocalDaemon(t, tc.server)
+		})
+	}
+}
+
+func testAgentHookNeverManagesLocalDaemon(t *testing.T, remoteServer string) {
 	setup := func(t *testing.T) {
 		withRemoteState(t)
-		writeRemoteConfig(t, "http://daemon-host.example:7474")
+		writeRemoteConfig(t, remoteServer)
 		serverAddr = ""
 		require.NoError(t, validateServerFlag())
 		origStop := stopDaemonForRestart
@@ -291,6 +301,23 @@ func TestAgentHookRemoteModeNeverManagesLocalDaemon(t *testing.T) {
 		}
 		require.NoError(t, agentHookEnsureDaemon())
 	})
+
+	t.Run("status uses the running local daemon", func(t *testing.T) {
+		setup(t)
+		var hits atomic.Int32
+		local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			_, _ = w.Write([]byte(`{"sessions":[]}`))
+		}))
+		t.Cleanup(local.Close)
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{PID: 42, Address: strings.TrimPrefix(local.URL, "http://")}, nil
+		}
+		var out bytes.Buffer
+		require.NoError(t, runAgentHookStatus(&out))
+		assert.Equal(t, int32(1), hits.Load())
+		assert.JSONEq(t, `{"sessions":[]}`, out.String())
+	})
 }
 
 func TestDaemonRunArgsPassLocalServerThrough(t *testing.T) {
@@ -304,6 +331,16 @@ func TestDaemonRunArgsPassLocalServerThrough(t *testing.T) {
 	serverAddr = ""
 	require.NoError(t, validateServerFlag())
 	assert.Equal(t, []string{"daemon", "run"}, daemonRunArgs())
+}
+
+func TestUpdatedDaemonPassesLocalServerThrough(t *testing.T) {
+	withRemoteState(t)
+	writeRemoteConfig(t, "http://daemon-host.example:7474")
+
+	serverAddr = "127.0.0.1:7373"
+	require.NoError(t, validateServerFlag())
+	assert.Equal(t, []string{"--server", "127.0.0.1:7373", "daemon", "run"},
+		updatedDaemonStartOptions(t.TempDir()).Args)
 }
 
 func TestBrokenRemoteConfigNeverReachesLocalDaemon(t *testing.T) {
@@ -499,17 +536,31 @@ func TestUpdateRemoteModeLeavesLocalDaemonAlone(t *testing.T) {
 	})
 
 	t.Run("broken remote", func(t *testing.T) {
-		stubUpdateCommand(t)
+		info := stubUpdateCommand(t)
 		withRemoteState(t)
 		writeRemoteConfig(t, "https://daemon-host.example:7474")
 		serverAddr = ""
 		require.NoError(t, validateServerFlag())
+		var hookRepairs, skillUpdates atomic.Int32
+		repairHooksForUpdateCommand = func(string, repairHookRunner) error {
+			hookRepairs.Add(1)
+			return nil
+		}
+		updateSkillsForUpdateCommand = func(string) error {
+			skillUpdates.Add(1)
+			return nil
+		}
 
 		output, prepares, restarts, err := runUpdate(t)
-		require.ErrorContains(t, err, "binary installed; local daemon not restarted")
+		require.ErrorContains(t, err, "updated roborev to "+info.LatestVersion+", but the local daemon was not restarted")
 		require.ErrorContains(t, err, "invalid [remote] server")
 		assert := assert.New(t)
 		assert.Contains(output, "Installing   done")
+		assert.Contains(output, "skipped: invalid [remote] server")
+		assert.Contains(output, "Git hooks    done")
+		assert.Contains(output, "Skills       done")
+		assert.Equal(int32(1), hookRepairs.Load(), "hooks were repaired")
+		assert.Equal(int32(1), skillUpdates.Load(), "skills were updated")
 		assert.Zero(prepares, "the local daemon was not drained")
 		assert.Zero(restarts, "the local daemon was not restarted")
 	})

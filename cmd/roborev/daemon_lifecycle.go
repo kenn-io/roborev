@@ -62,15 +62,7 @@ var (
 	startDaemonAfterRestart     = startDaemon
 	stopDaemonForUpdate         = stopDaemon
 	startUpdatedDaemon          = func(binDir string) error {
-		newBinary := filepath.Join(binDir, "roborev")
-		if runtime.GOOS == "windows" {
-			newBinary += ".exe"
-		}
-		return kitdaemon.StartDetached(context.Background(), kitdaemon.StartDetachedOptions{
-			Executable: newBinary,
-			Args:       []string{"daemon", "run"},
-			Env:        filterGitEnv(os.Environ()),
-		})
+		return kitdaemon.StartDetached(context.Background(), updatedDaemonStartOptions(binDir))
 	}
 
 	// setupSignalHandler allows tests to mock signal handling
@@ -422,6 +414,20 @@ func daemonRunArgs() []string {
 		return []string{"--server", serverAddr, "daemon", "run"}
 	}
 	return []string{"daemon", "run"}
+}
+
+// updatedDaemonStartOptions spawns the newly installed binary's "daemon run"
+// with the same arguments startDaemon uses.
+func updatedDaemonStartOptions(binDir string) kitdaemon.StartDetachedOptions {
+	newBinary := filepath.Join(binDir, "roborev")
+	if runtime.GOOS == "windows" {
+		newBinary += ".exe"
+	}
+	return kitdaemon.StartDetachedOptions{
+		Executable: newBinary,
+		Args:       daemonRunArgs(),
+		Env:        filterGitEnv(os.Environ()),
+	}
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {

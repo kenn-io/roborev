@@ -501,8 +501,9 @@ func runControlledUpdate(
 	confirmed := yes
 
 	// In remote mode the CLI never stops or restarts a local daemon: update
-	// only installs the binary. A broken [remote] server is reported where
-	// the restart would happen, and nothing local is touched before that.
+	// only installs the binary and repairs hooks and skills. A broken
+	// [remote] server skips the daemon too, and update returns its error
+	// after the repairs.
 	remote, remoteErr := isRemoteMode()
 	manageDaemon := !noRestart && !remote && remoteErr == nil
 
@@ -664,9 +665,8 @@ func runControlledUpdate(
 		return nil
 	}
 	if remoteErr != nil {
-		return fmt.Errorf("binary installed; local daemon not restarted: %w", remoteErr)
-	}
-	if remote {
+		printUpdatePhase(out, "Daemon", "skipped: "+remoteErr.Error())
+	} else if remote {
 		printUpdatePhase(out, "Daemon", "remote mode is on; no local daemon was restarted")
 	} else if session == nil {
 		printUpdatePhase(out, "Daemon", "not running")
@@ -716,6 +716,10 @@ func runControlledUpdate(
 	}
 	if err := operationCtx.Err(); err != nil {
 		return installedUpdateInterruption(session, err)
+	}
+	if remoteErr != nil {
+		return fmt.Errorf("updated roborev to %s, but the local daemon was not restarted: %w",
+			info.LatestVersion, remoteErr)
 	}
 	fmt.Fprintf(out, "\nUpdated roborev to %s\n", info.LatestVersion)
 	return nil

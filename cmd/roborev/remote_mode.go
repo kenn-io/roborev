@@ -124,15 +124,11 @@ func requireLocalDaemon(command string) error {
 }
 
 // ensureAgentHookDaemon makes sure the daemon on this machine is running for
-// an agent hook. Agent hooks always talk to the local daemon. In remote mode
-// they only look for a running one: a remote client never starts, restarts,
-// or stops a local daemon.
+// an agent hook. Agent hooks always talk to the local daemon. In remote mode,
+// and when [remote] server is broken, they only look for a running one: a
+// remote client never starts, restarts, or stops a local daemon.
 func ensureAgentHookDaemon() error {
-	remote, err := isRemoteMode()
-	if err != nil {
-		return err
-	}
-	if !remote {
+	if remote, err := isRemoteMode(); err == nil && !remote {
 		return ensureThisMachineDaemon()
 	}
 	if _, err := getAnyRunningDaemon(); err != nil {
