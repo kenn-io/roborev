@@ -23,8 +23,8 @@ What does not work remotely:
     `run`, `analyze`, and `compact`.
 - Dirty reviews. The daemon cannot see the client's working tree.
 - `insights`, `pause`, `unpause`, `snooze`, and `remap`.
-- Commands that read or change the local database and log files directly: `log`
-    and the `repo` subcommands.
+- Commands that read or change the local database and log files directly:
+    `log <job-id>` and the `repo` subcommands.
 - Daemon management, sync, export, and the browser application.
 
 Run those on the daemon host. See the [command reference](#command-reference).
@@ -289,7 +289,7 @@ and asks you to fetch on the daemon host.
 | `review` for commits, ranges, and branches                              | `review --dirty`                                         |
 | `comment`, `close`, `cancel`, `tui`, `mcp serve`                        | `fix`, `refine`, `run`, `analyze`, `compact`, `insights` |
 | `init` (hooks only), `update` (binary, hooks, and skills only)          | `pause`, `unpause`, `snooze`, `remap`                    |
-|                                                                         | `log`, `repo` subcommands                                |
+|                                                                         | `log <job-id>`, `repo` subcommands                       |
 
 A command that needs a local daemon fails in remote mode before it contacts
 anything, with a message like:
