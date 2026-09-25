@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
+
+	"go.kenn.io/roborev/internal/procutil"
 )
 
 var errRemoteRefNotSHA = errors.New("remote enqueue needs full commit SHAs")
@@ -67,12 +69,24 @@ func ensureRemoteCommits(ctx context.Context, repoRoot string, shas []string) ([
 	if err != nil || len(missing) == 0 {
 		return missing, err
 	}
-	if _, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "fetch", "--all", "--quiet"); err != nil {
-		log.Printf("remote enqueue: fetch in %s failed: %v", repoRoot, err)
-	} else {
-		pruneUploadRefs(ctx, repoRoot)
-	}
+	fetchRemotes(ctx, repoRoot)
 	return missingCommits(ctx, repoRoot, shas)
+}
+
+// fetchRemotes runs "git fetch --all" with the user's environment and git
+// config, like the CI poller's fetch, so credential helpers, insteadOf
+// rewrites, and core.sshCommand apply. A failed fetch is logged: the caller
+// can still upload the commits as a pack.
+func fetchRemotes(ctx context.Context, repoRoot string) {
+	unlock := lockGitMetadata(repoRoot)
+	defer unlock()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", "--all", "--quiet")
+	procutil.HideConsole(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("remote enqueue: fetch in %s failed: %v: %s", repoRoot, err, strings.TrimSpace(string(out)))
+		return
+	}
+	pruneUploadRefsLocked(ctx, repoRoot)
 }
 
 // daemonHaves lists the distinct commits at the clone's ref tips, peeling
@@ -106,12 +120,25 @@ const uploadRefPrefix = "refs/roborev/uploads/"
 // pruneUploadRefs drops upload refs whose commit a remote-tracking branch
 // now contains. Failures are logged because pruning is housekeeping.
 func pruneUploadRefs(ctx context.Context, repoRoot string) {
-	out, err := gitcmd.New().Output(ctx, repoRoot, "for-each-ref", "--format=%(objectname)", uploadRefPrefix)
+	unlock := lockGitMetadata(repoRoot)
+	defer unlock()
+	pruneUploadRefsLocked(ctx, repoRoot)
+}
+
+// pruneUploadRefsLocked is pruneUploadRefs for callers that already hold
+// lockGitMetadata(repoRoot), which is not re-entrant.
+func pruneUploadRefsLocked(ctx context.Context, repoRoot string) {
+	out, err := gitcmd.New().Output(ctx, repoRoot, "for-each-ref",
+		"--format=%(refname) %(objectname)", uploadRefPrefix)
 	if err != nil {
 		log.Printf("remote uploads: list upload refs in %s: %v", repoRoot, err)
 		return
 	}
-	for sha := range strings.FieldsSeq(string(out)) {
+	for line := range strings.Lines(string(out)) {
+		refname, sha, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
 		contains, err := gitcmd.New().Output(ctx, repoRoot, "for-each-ref",
 			"--count=1", "--contains", sha, "--format=%(refname)", "refs/remotes/")
 		if err != nil {
@@ -121,30 +148,54 @@ func pruneUploadRefs(ctx context.Context, repoRoot string) {
 		if strings.TrimSpace(string(contains)) == "" {
 			continue
 		}
-		if _, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "update-ref", "-d", uploadRefPrefix+sha); err != nil {
-			log.Printf("remote uploads: delete %s in %s: %v", uploadRefPrefix+sha, repoRoot, err)
+		if _, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "update-ref", "-d", refname); err != nil {
+			log.Printf("remote uploads: delete %s in %s: %v", refname, repoRoot, err)
 		}
 	}
 }
 
-type missingBaseError struct{ tip string }
+// missingBaseError reports a pack whose tip needs objects that neither the
+// pack nor the daemon clone has. err is git's report, kept for logging.
+type missingBaseError struct {
+	tip string
+	err error
+}
 
 func (e *missingBaseError) Error() string {
 	return fmt.Sprintf("daemon clone lacks base commits for %s; fetch on the daemon host", e.tip)
 }
 
+func (e *missingBaseError) Unwrap() error { return e.err }
+
 // importPack stores a caller-supplied git pack in the clone's object store
 // and pins each tip under refs/roborev/uploads/. It never touches the
 // working tree, the index, branches, or remote-tracking refs.
 func importPack(ctx context.Context, repoRoot string, pack io.Reader, tips []string) error {
+	for _, tip := range tips {
+		if !isFullSHA(tip) {
+			return fmt.Errorf("pack tip %q: %w", tip, errRemoteRefNotSHA)
+		}
+	}
+	unlock := lockGitMetadata(repoRoot)
+	defer unlock()
 	if _, _, err := gitcmd.New().Run(ctx, repoRoot, pack, "index-pack", "--stdin"); err != nil {
 		return fmt.Errorf("index pack: %w", err)
 	}
 	for _, tip := range tips {
-		if _, _, err := gitcmd.New().Run(ctx, repoRoot, nil,
-			"rev-list", "--quiet", "--objects", tip, "--not", "--all"); err != nil {
-			return &missingBaseError{tip: tip}
+		_, _, err := gitcmd.New().Run(ctx, repoRoot, nil,
+			"rev-list", "--quiet", "--objects", tip, "--not", "--all")
+		if err == nil {
+			continue
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("check pack tip %s: %w", tip, ctxErr)
+		}
+		// Only a git run that exited with a failure means objects are
+		// missing. Anything else, such as git not starting, is returned as is.
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
+			return &missingBaseError{tip: tip, err: err}
+		}
+		return fmt.Errorf("check pack tip %s: %w", tip, err)
 	}
 	for _, tip := range tips {
 		if _, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "update-ref", uploadRefPrefix+tip, tip); err != nil {

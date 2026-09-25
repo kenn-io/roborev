@@ -100,7 +100,7 @@ func buildPack(t *testing.T, dir string, tips, exclude []string) []byte {
 	return out
 }
 
-func TestEnsureRemoteCommitsFetchesOnce(t *testing.T) {
+func TestEnsureRemoteCommitsFetchesMissing(t *testing.T) {
 	f := newRemoteGitFixture(t)
 	ctx := context.Background()
 
@@ -161,6 +161,7 @@ func TestImportPackMissingBase(t *testing.T) {
 	var baseErr *missingBaseError
 	require.ErrorAs(t, err, &baseErr)
 	assert.Contains(t, err.Error(), "daemon clone lacks base commits for "+second)
+	require.Error(t, baseErr.err, "git's report is kept for logging")
 	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix))
 }
 
@@ -176,4 +177,28 @@ func TestPruneUploadRefsAfterPush(t *testing.T) {
 	gitOut(t, f.daemonDir, "fetch", "-q", "--all")
 	pruneUploadRefs(ctx, f.daemonDir)
 	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix))
+}
+
+func TestImportPackLeavesCheckoutUnchanged(t *testing.T) {
+	f := newRemoteGitFixture(t)
+	ctx := context.Background()
+	snapshot := func() []string {
+		return []string{
+			gitOut(t, f.daemonDir, "for-each-ref", "refs/heads", "refs/remotes"),
+			gitOut(t, f.daemonDir, "rev-parse", "HEAD"),
+			gitOut(t, f.daemonDir, "status", "--porcelain"),
+		}
+	}
+	before := snapshot()
+	haves, err := daemonHaves(ctx, f.daemonDir)
+	require.NoError(t, err)
+	pack := buildPack(t, f.laptopDir, []string{f.unpushed}, haves)
+	require.NoError(t, importPack(ctx, f.daemonDir, bytes.NewReader(pack), []string{f.unpushed}))
+	assert.Equal(t, before, snapshot())
+}
+
+func TestImportPackRejectsNonSHATip(t *testing.T) {
+	f := newRemoteGitFixture(t)
+	err := importPack(context.Background(), f.daemonDir, strings.NewReader(""), []string{"HEAD"})
+	require.ErrorIs(t, err, errRemoteRefNotSHA)
 }
