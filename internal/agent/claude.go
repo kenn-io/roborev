@@ -692,6 +692,18 @@ func parseClaudeClassifyStream(r io.Reader) (jsontext.Value, error) {
 	return validateClaudeClassifyJSON(finalLabel, final)
 }
 
+// schemaWaitError keeps parsed stream diagnostics on failed schema calls.
+func (a *ClaudeAgent) schemaWaitError(waitErr error, stdout []byte, stderr string) error {
+	_, parseErr := parseStreamJSON(bytes.NewReader(stdout), nil)
+	return formatDetailedCLIWaitError(streamingCLIResult{
+		ParseErr: parseErr,
+		WaitErr:  waitErr,
+	}, detailedCLIWaitErrorOptions{
+		AgentName: a.Name(),
+		Stderr:    strings.TrimSpace(stderr),
+	})
+}
+
 // ClassifyWithSchema runs a single constrained Claude Code invocation and
 // returns the final JSON conforming to schema. Implements SchemaAgent.
 func (a *ClaudeAgent) ClassifyWithSchema(
@@ -742,7 +754,7 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 		_, _ = out.Write(buf)
 	}
 	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("claude exited: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+		return nil, a.schemaWaitError(err, buf, stderr.String())
 	}
 	return parseClaudeClassifyStream(strings.NewReader(string(buf)))
 }
@@ -802,10 +814,7 @@ func (a *ClaudeAgent) ReviewWithSchema(
 		_, _ = out.Write(buf)
 	}
 	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf(
-			"claude exited: %w (stderr: %s)",
-			err, strings.TrimSpace(stderr.String()),
-		)
+		return nil, a.schemaWaitError(err, buf, stderr.String())
 	}
 	return parseClaudeClassifyStream(bytes.NewReader(buf))
 }

@@ -131,6 +131,25 @@ stream: stream errors: You've hit your session limit · resets 5:50am (UTC): exi
 	}
 }
 
+func TestClassifyLimitClaudeWeeklyLimitIsQuota(t *testing.T) {
+	const message = "agent: claude-code failed\nstream: stream errors: You've hit your weekly limit"
+
+	classification := ClassifyLimit("claude-code", message)
+	assert := assert.New(t)
+	assert.Equal(LimitKindQuota, classification.Kind)
+	assert.Equal("claude-code", classification.Agent)
+	assert.Equal(message, classification.Message)
+	assert.True(classification.ResetAt.IsZero())
+	assert.Zero(classification.CooldownFor)
+}
+
+func TestClassifyLimitWeeklyWordingIsAgentScoped(t *testing.T) {
+	const message = "You've hit your weekly limit"
+
+	assert.Equal(t, LimitKindQuota, ClassifyLimit("claude-code", message).Kind)
+	assert.Equal(t, LimitKindNone, ClassifyLimit("codex", message).Kind)
+}
+
 func TestClassifyLimitWithRulesIsolatesSyntheticPattern(t *testing.T) {
 	// Synthetic rule used only inside this test — does not pollute
 	// defaultLimitRules.
