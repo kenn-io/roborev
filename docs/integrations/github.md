@@ -12,7 +12,8 @@ system: each PR HEAD gets one panel run and one synthesis parent review.
 
 The CI poller runs inside the roborev daemon. On each interval it:
 
-1. Lists open PRs for each configured repo via `gh pr list`
+1. Lists all open PRs for each configured repo through the GitHub API, following
+    every page even when a repo has more than 100 open PRs
 1. Skips PRs that have already been reviewed at their current HEAD SHA, subject
     to throttling and deferred retry state
 1. Fetches the PR head commit (including fork-based PRs)

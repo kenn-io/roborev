@@ -32,41 +32,39 @@ type PullRequestInfo struct {
 	Labels      []string
 }
 
-func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit int) ([]OpenPullRequest, error) {
+// ListOpenPullRequests returns every open pull request, following all API pages.
+func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string) ([]OpenPullRequest, error) {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
 	opts := &googlegithub.PullRequestListOptions{
 		State:   "open",
-		PerPage: limit,
+		PerPage: 100,
 	}
 
-	prs, _, err := c.api.PullRequests.List(ctx, owner, repo, opts)
-	if err != nil {
-		return nil, fmt.Errorf("list pull requests: %w", err)
+	var result []OpenPullRequest
+	for {
+		prs, resp, err := c.api.PullRequests.List(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list pull requests: %w", err)
+		}
+		for _, pr := range prs {
+			result = append(result, OpenPullRequest{
+				Number:      pr.GetNumber(),
+				HeadRefOID:  pr.GetHead().GetSHA(),
+				HeadRefName: pr.GetHead().GetRef(),
+				BaseRefName: pr.GetBase().GetRef(),
+				Title:       pr.GetTitle(),
+				AuthorLogin: pr.GetUser().GetLogin(),
+				Labels:      pullRequestLabelNames(pr.GetLabels()),
+			})
+		}
+		if resp.NextPage == 0 {
+			return result, nil
+		}
+		opts.Page = resp.NextPage
 	}
-
-	result := make([]OpenPullRequest, 0, len(prs))
-	for _, pr := range prs {
-		result = append(result, OpenPullRequest{
-			Number:      pr.GetNumber(),
-			HeadRefOID:  pr.GetHead().GetSHA(),
-			HeadRefName: pr.GetHead().GetRef(),
-			BaseRefName: pr.GetBase().GetRef(),
-			Title:       pr.GetTitle(),
-			AuthorLogin: pr.GetUser().GetLogin(),
-			Labels:      pullRequestLabelNames(pr.GetLabels()),
-		})
-	}
-	return result, nil
 }
 
 func (c *Client) IsPullRequestOpen(ctx context.Context, ghRepo string, prNumber int) (bool, error) {

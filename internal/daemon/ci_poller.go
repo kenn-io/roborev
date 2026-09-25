@@ -1953,7 +1953,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 	if err != nil {
 		return nil, err
 	}
-	openPRs, err := client.ListOpenPullRequests(ctx, ghRepo, 100)
+	openPRs, err := client.ListOpenPullRequests(ctx, ghRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -2698,8 +2698,8 @@ func parseBatchReviewTime(value string) (time.Time, bool) {
 
 // retryDueReviewAttempts re-enqueues a fresh panel run for each deferred review
 // attempt whose next_attempt_at is due. For every due attempt it finds the
-// matching open PR (by number) in the poll's open-PR list: a closed PR (absent
-// from the list) is left for Task 10's cleanup, and a PR whose HEAD has moved on
+// matching open PR (by number) in the poll's open-PR list or fetches it directly:
+// a closed PR is left for cleanup, and a PR whose HEAD has moved on
 // is skipped because the new HEAD already has its own attempt via the normal
 // poll. For an open PR still at the attempt's HEAD it claims the attempt with the
 // ClaimDueReviewAttempt CAS (so only one sweep wins) and, on a win, runs the
@@ -2732,7 +2732,7 @@ func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, pr
 }
 
 // retryDueReviewAttempt re-enqueues one due deferred attempt and reports whether
-// a fresh panel run was created. For attempts absent from the first open-PR page
+// a fresh panel run was created. For attempts absent from the poll's open-PR list
 // it fetches the PR directly before deciding whether the PR is closed, advanced,
 // or still retryable. On an open PR still at the attempt's HEAD it claims the
 // attempt (CAS); only the winner enqueues, so concurrent sweeps cannot
@@ -2843,8 +2843,8 @@ func (p *CIPoller) retryAttemptPR(
 // enumerating non-terminal attempts catches it so a reopen at the same HEAD gets
 // a fresh review. Each PR is open-checked at most once (the union dedups), so a
 // PR present in both sets never double-calls the GitHub API. For each PR absent
-// from the open list AND confirmed closed by callIsPROpen (the list may be
-// truncated at 100) it cancels the run parent-first, deletes its mapping, and
+// from the open list AND confirmed closed by callIsPROpen (PR state can change
+// during a poll) it cancels the run parent-first, deletes its mapping, and
 // deletes the PR's attempt rows. Per-PR errors are logged and the sweep continues.
 func (p *CIPoller) cleanupClosedPRPanels(ctx context.Context, ghRepo string, openPRs map[int]bool) {
 	prNumbers, err := p.closedPRCleanupCandidates(ghRepo)

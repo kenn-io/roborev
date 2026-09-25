@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,61 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestListOpenPullRequests_Pagination(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		pageStatus int
+	}{
+		{name: "all pages", pageStatus: http.StatusOK},
+		{name: "later page fails", pageStatus: http.StatusBadGateway},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(http.MethodGet, r.Method)
+				assert.Equal("/api/v3/repos/acme/api/pulls", r.URL.Path)
+				assert.Equal("open", r.URL.Query().Get("state"))
+				assert.Equal("100", r.URL.Query().Get("per_page"))
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Query().Get("page") {
+				case "":
+					w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+					var prs []map[string]int
+					for number := 101; number > 1; number-- {
+						prs = append(prs, map[string]int{"number": number})
+					}
+					assert.NoError(json.NewEncoder(w).Encode(prs))
+				case "2":
+					w.WriteHeader(tt.pageStatus)
+					if tt.pageStatus == http.StatusOK {
+						fmt.Fprint(w, `[{"number":1}]`)
+					} else {
+						fmt.Fprint(w, `{"message":"upstream unavailable"}`)
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			client, err := NewClient("", WithBaseURL(server.URL+"/"))
+			require.NoError(t, err)
+			prs, err := client.ListOpenPullRequests(t.Context(), "acme/api")
+			if tt.pageStatus != http.StatusOK {
+				var responseError *googlegithub.ErrorResponse
+				require.ErrorAs(t, err, &responseError)
+				assert.Equal(http.StatusBadGateway, responseError.Response.StatusCode)
+				assert.Nil(prs, "a failed page must not return an incomplete PR list")
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, prs, 101)
+			assert.Equal(101, prs[0].Number)
+			assert.Equal(1, prs[100].Number)
+		})
+	}
+}
 
 type repoAPIServer struct {
 	t *testing.T
