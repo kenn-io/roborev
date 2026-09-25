@@ -2839,3 +2839,45 @@ func newDeferredReminderSource(repoPath string, failedReviewCount *int) ReviewSo
 		},
 	}
 }
+
+func TestRecordStopSuppressesReminderWithoutReviewGuidelines(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	closed := false
+	verdict := "F"
+	var guidelinesMissing atomic.Bool
+	guidelinesMissing.Store(true)
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{
+				Tracked: true, RootPath: path, Name: filepath.Base(path),
+				ReviewGuidelinesMissing: guidelinesMissing.Load(),
+			}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return []storage.ReviewJob{{
+				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	stop := func() Response {
+		resp, err := store.Record(Request{
+			Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+			Threshold: 1, FailedReviewThreshold: 1, Instruction: "Run roborev fix.",
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	muted := stop()
+	assert.True(muted.Skipped)
+	assert.False(muted.Triggered)
+	state := store.sessions["session-1"]
+	assert.Zero(state.ReminderPromptCount)
+	assert.Equal(head, state.RepoHeads[worktreeSequenceKey(repo.Path(), repo.Path())])
+
+	guidelinesMissing.Store(false)
+	assert.True(stop().Triggered)
+}

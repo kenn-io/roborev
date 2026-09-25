@@ -25,6 +25,11 @@ description: Get up and running with roborev in minutes
 
     Ensure `$GOPATH/bin` is in your PATH.
 
+!!! tip "Let your agent do it"
+
+    Prefer to have your coding agent handle setup? Give it the
+    [Agent-Assisted Setup](/docs/agent-setup/) prompt.
+
 ## Set Up Your Repo
 
 ```bash

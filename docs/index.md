@@ -55,8 +55,9 @@ roborev tui                   # browse reviews in the terminal
 roborev ui                    # or in the native browser application
 ```
 
-New here? Run `roborev quickstart` and point your coding agent at it: the
-built-in guide inspects the repo and helps finish configuration.
+New here? Hand your coding agent the [Agent-Assisted Setup](agent-setup.md)
+prompt. It installs the hooks and skills, asks before each change, and explains
+the Agent Hook's risks before offering to install it.
 
 ## How roborev works
 
@@ -79,8 +80,8 @@ built-in guide inspects the repo and helps finish configuration.
 
 - **Start**
 
-    [Quick Start](quickstart.md), [Installation](installation.md), and the
-    [Changelog](changelog.md).
+    [Quick Start](quickstart.md), [Installation](installation.md),
+    [Agent-Assisted Setup](agent-setup.md), and the [Changelog](changelog.md).
 
 - **Automation**
 

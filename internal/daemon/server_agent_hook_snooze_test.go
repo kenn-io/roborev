@@ -78,3 +78,34 @@ func TestAgentHookSnoozeAPIUpdatesResolveMetadata(t *testing.T) {
 	require.NotNil(t, resumedMetadata.Body.Repo)
 	assert.Nil(resumedMetadata.Body.Repo.AgentHookSnoozedUntil)
 }
+
+func TestAgentHookSourceReportsMissingReviewGuidelines(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		files   map[string]string
+		missing bool
+	}{
+		{name: "no guidance", files: map[string]string{"main.go": "package main\n"}, missing: true},
+		{name: "empty review_guidelines", files: map[string]string{".roborev.toml": "agent = \"test\"\n"}, missing: true},
+		{name: "review_guidelines", files: map[string]string{".roborev.toml": "review_guidelines = \"Flag missing tests.\"\n"}},
+		{name: "REVIEW.md fallback", files: map[string]string{"REVIEW.md": "Flag missing tests.\n"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, db, _ := newTestServer(t)
+			repo := testutil.NewTestRepo(t)
+			repo.CommitFiles(tc.files, "initial")
+			mainRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
+			require.NoError(t, err)
+			_, err = db.GetOrCreateRepo(mainRoot)
+			require.NoError(t, err)
+
+			resolved, ok := daemonAgentHookSource{db: db}.ResolveTrackedRepo(
+				context.Background(), repo.Root, "main",
+			)
+
+			require.True(t, ok)
+			require.True(t, resolved.Tracked)
+			assert.Equal(t, tc.missing, resolved.ReviewGuidelinesMissing)
+		})
+	}
+}

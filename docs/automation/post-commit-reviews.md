@@ -75,7 +75,9 @@ the bundled skills automatically for supported profiles.
 
 The agent hook watches supported coding-agent sessions and, once review work
 piles up, supplies exact review IDs to the `roborev-fix` skill before the
-session ends. It never runs the separate `roborev fix --open` agent workflow.
+session ends. It never runs the separate `roborev fix --open` agent workflow. It
+stays silent in repositories without their own review guidelines, because an
+agent that fixes every generic finding tends to overengineer the code.
 
 ```bash
 roborev agent-hook install    # wire harnesses and update supported bundled skills
@@ -92,8 +94,16 @@ reviews) works regardless of which agent or app you use.
 
 ## Let an agent finish setup
 
-Point your coding agent at the built-in guide and it will inspect this repo and
-help you finish configuration:
+Hand your coding agent the [Agent-Assisted Setup](../agent-setup.md) prompt. It
+walks through both layers, asks before each change, and explains the Agent
+Hook's risks before offering to install it:
+
+```text
+Read https://roborev.io/docs/agent-setup.md and follow it to set up roborev
+in this repository.
+```
+
+The built-in guide gives an agent the same repository state from the CLI:
 
 ```bash
 roborev quickstart            # human-readable

@@ -14,6 +14,7 @@ use_directory_urls = true
 nav = [
   {"Quick Start" = "quickstart.md"},
   {"Installation" = "installation.md"},
+  {"Agent-Assisted Setup" = "agent-setup.md"},
   {"Changelog" = "changelog.md"},
   {"Automation" = [
     {"Post-Commit Reviews" = "automation/post-commit-reviews.md"},

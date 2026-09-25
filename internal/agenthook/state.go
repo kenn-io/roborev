@@ -35,7 +35,17 @@ type hookScope struct {
 	WorktreeKey         string
 	CandidateLineageKey string
 	SnoozedUntil        time.Time
-	Tracked             bool
+	// ReviewGuidelinesMissing mutes reminders like a snooze. Without
+	// repo-specific review guidance, reviews flag generic concerns, and
+	// having the agent fix all of them tends to overengineer the code.
+	ReviewGuidelinesMissing bool
+	Tracked                 bool
+}
+
+// remindersMuted reports whether agent-facing reminders are suppressed for
+// this checkout. Muted checkouts still advance their baselines.
+func (s hookScope) remindersMuted(now time.Time) bool {
+	return s.SnoozedUntil.After(now) || s.ReviewGuidelinesMissing
 }
 
 type TrackedRepoResolution struct {
@@ -44,6 +54,13 @@ type TrackedRepoResolution struct {
 	Identity     string
 	Name         string
 	SnoozedUntil time.Time
+	// ReviewGuidelinesMissing reports that the repo has no review guidance
+	// of its own (review_guidelines in .roborev.toml, or REVIEW.md).
+	ReviewGuidelinesMissing bool
+}
+
+func (r TrackedRepoResolution) remindersMuted(now time.Time) bool {
+	return r.SnoozedUntil.After(now) || r.ReviewGuidelinesMissing
 }
 
 type gitScope struct {
@@ -271,7 +288,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 			}, nil
 		}
 	}
-	snoozed := ok && scope.SnoozedUntil.After(time.Now())
+	snoozed := ok && scope.remindersMuted(time.Now())
 	var prepare func(*SessionState) Response
 	if snoozed {
 		prepare = func(st *SessionState) Response {
@@ -422,7 +439,7 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 			Skipped:               true,
 		}, nil
 	}
-	if scope.SnoozedUntil.After(time.Now()) {
+	if scope.remindersMuted(time.Now()) {
 		return s.recordSnoozed(ctx, req, scope)
 	}
 
@@ -482,7 +499,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			Skipped:               true,
 		}, nil
 	}
-	if scope.SnoozedUntil.After(time.Now()) {
+	if scope.remindersMuted(time.Now()) {
 		return s.recordSnoozed(ctx, req, scope)
 	}
 
@@ -852,7 +869,7 @@ func (s *StateStore) deliverPendingReminder(
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
 		}
-		if known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())) {
+		if known && (!resolved.Tracked || resolved.remindersMuted(time.Now())) {
 			discards = append(discards, candidate)
 			continue
 		}
@@ -1490,6 +1507,7 @@ func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScop
 	trackedIdentity := ""
 	tracked := true
 	var snoozedUntil time.Time
+	guidelinesMissing := false
 	if s.reviews != nil {
 		resolved, known := s.reviews.ResolveTrackedRepo(
 			ctx, gitInfo.WorktreeRoot, gitInfo.Branch,
@@ -1502,6 +1520,7 @@ func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScop
 			}
 			trackedIdentity = strings.TrimSpace(resolved.Identity)
 			snoozedUntil = resolved.SnoozedUntil
+			guidelinesMissing = resolved.ReviewGuidelinesMissing
 		}
 	}
 	return hookScope{
@@ -1514,8 +1533,9 @@ func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScop
 		CandidateLineageKey: lineageSequenceKey(
 			trackedRoot, gitInfo.Branch, gitInfo.WorktreeRoot, gitInfo.Head,
 		),
-		SnoozedUntil: snoozedUntil,
-		Tracked:      tracked,
+		SnoozedUntil:            snoozedUntil,
+		ReviewGuidelinesMissing: guidelinesMissing,
+		Tracked:                 tracked,
 	}, true
 }
 

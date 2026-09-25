@@ -29,6 +29,9 @@ as raw Markdown at /docs/<page>.md.
   repo, read reviews, act on findings
 - [Installation](https://roborev.io/docs/installation.md): every install
   method, upgrades, and uninstall
+- [Agent-assisted setup](https://roborev.io/docs/agent-setup.md): a prompt to
+  hand your coding agent; it installs the git hooks and skills and explains the
+  Agent Hook's risks before asking to install it
 - [Changelog](https://roborev.io/docs/changelog.md): release history
 - [Post-commit reviews](https://roborev.io/docs/automation/post-commit-reviews.md):
   the two automation layers, batching, and hands-off setup

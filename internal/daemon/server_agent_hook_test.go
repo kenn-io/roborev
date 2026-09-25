@@ -94,7 +94,10 @@ func TestAgentHookEventUsesDatabaseReviewState(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFile("main.go", "package main\n", "initial")
+	head := repo.CommitFiles(map[string]string{
+		"main.go":       "package main\n",
+		".roborev.toml": "review_guidelines = \"Flag unsafe queries.\"\n",
+	}, "initial")
 	storedRepo, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	commit, err := db.GetOrCreateCommit(
