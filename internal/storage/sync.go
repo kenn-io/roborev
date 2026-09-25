@@ -301,6 +301,39 @@ func (db *DB) GetRepoByIdentity(identity string) (*Repo, error) {
 	return &r, nil
 }
 
+// FindReposByIdentity returns registered repos with a real checkout whose
+// identity matches exactly. Sync placeholders (root_path == identity) are
+// excluded because they have no checkout to review in.
+func (db *DB) FindReposByIdentity(identity string) ([]Repo, error) {
+	rows, err := db.Query(`
+		SELECT id, root_path, name, created_at, identity
+		FROM repos
+		WHERE identity = ? AND root_path != identity
+		ORDER BY root_path
+	`, identity)
+	if err != nil {
+		return nil, fmt.Errorf("query repos by identity: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []Repo
+	for rows.Next() {
+		var r Repo
+		var createdAt string
+		var identityVal sql.NullString
+		if err := rows.Scan(&r.ID, &r.RootPath, &r.Name, &createdAt, &identityVal); err != nil {
+			return nil, fmt.Errorf("scan repo: %w", err)
+		}
+		r.CreatedAt = parseSQLiteTime(createdAt)
+		r.Identity = identityVal.String
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find repos by identity: %w", err)
+	}
+	return repos, nil
+}
+
 // GetRepoByIdentityCaseInsensitive is like GetRepoByIdentity but uses
 // case-insensitive comparison. Used by the CI poller since GitHub
 // owner/repo names are case-insensitive.
