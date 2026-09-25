@@ -248,9 +248,10 @@ func TestInvalidRemoteConfigOnlyFailsDaemonPaths(t *testing.T) {
 	require.ErrorContains(t, err, "invalid [remote] server")
 	require.ErrorContains(t, err, "roborev config set --global remote.server")
 
-	// No path falls back to the local daemon on a broken [remote].
+	// Remote-aware endpoint resolution never falls back to the local daemon on
+	// a broken [remote]. Agent hooks discover it separately.
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		panic("a broken [remote] must not discover a local daemon")
+		panic("remote-aware endpoint resolution must not discover a local daemon on a broken [remote]")
 	}
 	remote, err := isRemoteMode()
 	require.ErrorContains(t, err, "invalid [remote] server")
