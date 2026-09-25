@@ -61,6 +61,8 @@ type Server struct {
 	browserListener         net.Listener
 	browserRuntime          *BrowserRuntimeInfo
 	browserStopping         bool
+	remoteServer            *http.Server
+	remoteWhois             whoisFunc // tests override tailscale whois
 	allowWebCompilationStub bool
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
@@ -410,6 +412,22 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return err
 	}
+	if err := s.startRemoteServer(cfg.RemoteAPI); err != nil {
+		s.browserMu.Lock()
+		browserServer := s.browserServer
+		s.browserMu.Unlock()
+		if browserServer != nil {
+			_ = browserServer.Close()
+		}
+		_ = s.httpServer.Close()
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
+		s.stopSearch()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 	s.browserMu.Lock()
 	if s.browserStopping {
 		s.browserMu.Unlock()
@@ -646,6 +664,7 @@ func (s *Server) stopOnce0() error {
 	s.browserStopping = true
 	browserServer := s.browserServer
 	browserListener := s.browserListener
+	remoteServer := s.remoteServer
 	s.browserMu.Unlock()
 
 	// Stop new CI polling work. Keep its completion listener subscribed while
@@ -697,6 +716,12 @@ func (s *Server) stopOnce0() error {
 				cleanupErr,
 				fmt.Errorf("close browser listener: %w", err),
 			)
+		}
+	}
+	if remoteServer != nil {
+		if err := remoteServer.Shutdown(shutdownCleanupCtx); err != nil {
+			log.Printf("Remote API server shutdown error: %v", err)
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("shutdown remote API server: %w", err))
 		}
 	}
 
