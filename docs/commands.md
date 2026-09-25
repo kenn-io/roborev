@@ -1211,7 +1211,7 @@ These flags work across most commands:
 
 | Flag | Description |
 |------|-------------|
-| `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets |
+| `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets. A non-loopback `http://host:port` selects a [remote daemon](/docs/remote-daemon/) and overrides `[remote] server` |
 | `-v, --verbose` | Verbose output |
 
 ## Update

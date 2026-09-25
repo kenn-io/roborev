@@ -1004,6 +1004,10 @@ column_borders = true             # Show separators between TUI columns
 | `web.auth_mode` | string | - | Browser admission mode; set `proxy` to delegate admission to an external access boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
+| `remote_api.enabled` | bool | false | Serve the daemon API to tailnet peers that a policy grant allows. See [Remote Daemon](/docs/remote-daemon/) | No |
+| `remote_api.listen` | string | - | This host's Tailscale IP and a fixed, non-zero port, such as `100.101.102.103:7474`. Other addresses are rejected | No |
+| `remote_api.tailscale_path` | string | `tailscale` from PATH | Path to the `tailscale` CLI used to identify callers | No |
+| `remote.server` | string | - | Client setting: remote daemon URL, `http://host:port`. Overridden by `--server` | N/A |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
@@ -1099,8 +1103,8 @@ The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
 **Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, the `[mcp]` section, the `[sync]` section, and the `[search]`
-section.
+`[web]` section, the `[mcp]` section, the `[remote_api]` section, the `[sync]`
+section, and the `[search]` section.
 
 ### Browser Application
 
@@ -1193,6 +1197,26 @@ browser access needs to be configured instead of opening a dead URL.
 See [Browser UI](/docs/web-ui/) for the exact installed-user workflow, a
 Tailscale Serve recipe, browser-session behavior, and the analytics metric
 definitions.
+
+### Remote Daemon
+
+A client can read and queue reviews on a daemon on another machine in the same
+Tailscale tailnet. The daemon host serves a second listener on its Tailscale
+address, and the client points at it:
+
+```toml
+# Daemon host
+[remote_api]
+enabled = true
+listen = "100.101.102.103:7474"
+
+# Client machine
+[remote]
+server = "http://daemon-host.example-tailnet.ts.net:7474"
+```
+
+Both sections are global-only. See [Remote Daemon](/docs/remote-daemon/) for the
+tailnet policy grant, repo registration, and what works remotely.
 
 ### MCP Server
 

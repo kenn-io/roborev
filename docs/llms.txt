@@ -43,6 +43,8 @@ as raw Markdown at /docs/<page>.md.
   in the terminal
 - [Browser UI](https://roborev.io/docs/web-ui.md): the review workspace and
   analytics served by the daemon
+- [Remote daemon](https://roborev.io/docs/remote-daemon.md): read and queue
+  reviews on a daemon on another tailnet machine
 - [Configuration](https://roborev.io/docs/configuration.md): global and
   per-repo settings, guidelines, agents, models, panels, experiments
 - [Supported agents](https://roborev.io/docs/agents.md): agent detection,

@@ -7,6 +7,15 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Use a roborev daemon on another machine in your Tailscale tailnet. Set
+    `[remote_api]` on the daemon host and `[remote] server` on the client, then
+    list, read, search, and queue reviews from the client. Tailnet policy grants
+    decide who can read and who can queue, and unpushed commits upload
+    automatically. Commands that edit code or manage the daemon still need a
+    local daemon. See [Remote Daemon](/docs/remote-daemon/).
+
 **Improvements**
 
 - Older Markdown reviews come back without an AI agent. During upgrade, roborev
