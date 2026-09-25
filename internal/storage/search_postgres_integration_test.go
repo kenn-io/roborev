@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestIntegration_SearchPullWakeReconcilesAllModes(t *testing.T) {
+func TestIntegration_SearchPullWakeReconcilesAllModes(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	ctx := t.Context()
 	postgresURL := os.Getenv("TEST_POSTGRES_URL")
 	if postgresURL == "" {

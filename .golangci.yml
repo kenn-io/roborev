@@ -14,10 +14,14 @@ linters:
     - govet
     - ineffassign
     - modernize
+    - paralleltest
     - staticcheck
     - testifylint
     - unused
   settings:
+    paralleltest:
+      # Subtests inside a parallel test share its fixture, so only top-level tests must opt in.
+      ignore-missing-subtests: true
     errcheck:
       check-type-assertions: false
       check-blank: false
@@ -48,6 +52,10 @@ linters:
       - linters:
           - modernize
         text: "omitzero:"
+      # Only the storage and tui tests run in parallel so far.
+      - linters:
+          - paralleltest
+        path-except: (internal/storage|cmd/roborev/tui)/
     paths:
       - third_party$
       - builtin$
