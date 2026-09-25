@@ -286,7 +286,7 @@ func TestFindReposByIdentity(t *testing.T) {
 	db := openTestDB(t)
 	const id = "https://example.com/org/project.git"
 
-	_, err := db.GetOrCreateRepo(id, id) // sync placeholder: root_path == identity
+	_, err := db.GetOrCreateRepoByIdentity(id) // sync placeholder: root_path == identity
 	require.NoError(t, err)
 	none, err := db.FindReposByIdentity(id)
 	require.NoError(t, err)
@@ -1106,7 +1106,7 @@ func TestRemoteHandlerRepoFilters(t *testing.T) {
 func TestRemoteHandlerRepoIdentityResolution(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	const id = "https://example.com/org/dup.git"
-	_, err := db.GetOrCreateRepo(id, id) // placeholder never matches
+	_, err := db.GetOrCreateRepoByIdentity(id) // sync placeholder: never matches
 	require.NoError(t, err)
 	queue := fakeWhois(RemoteAccessQueue, nil)
 	body, _ := json.Marshal(EnqueueRequest{RepoIdentity: id, GitRef: shaA, Agent: "test"})
@@ -1940,6 +1940,8 @@ git commit -m "feat(daemon): start the remote API listener when remote_api is en
 - Create: `cmd/roborev/remote_mode.go`
 - Modify: `cmd/roborev/daemon_lifecycle.go` (`validateServerFlag` :140,
   `getDaemonEndpoint` :155, `ensureDaemon` :234)
+- Modify: `internal/daemon/runtime.go` (`ProbeDaemonPing` at ~462: split so a
+  remote variant skips the loopback check)
 - Modify: `cmd/roborev/agent_hook_client.go:186` (`agentHookEndpoint` uses
   the local resolver)
 - Modify: the local-only call sites (see Step 3)
@@ -1959,7 +1961,8 @@ git commit -m "feat(daemon): start the remote API listener when remote_api is en
     `getDaemonEndpoint` body
   - `func requireLocalDaemon(command string) error`
   - `func ensureLocalDaemon(command string) error`
-  - `var probeRemoteDaemon = daemon.ProbeDaemonPing`
+  - `func daemon.ProbeRemoteDaemonPing(ep daemon.DaemonEndpoint, timeout time.Duration) (*daemon.PingInfo, error)`
+  - `var probeRemoteDaemon = daemon.ProbeRemoteDaemonPing`
   - `func ensureRemoteDaemon() error`
   - test helper `func withRemoteState(t *testing.T)` (saves and restores
     `serverAddr`, `remoteEndpoint`, and the daemon start/probe hooks, and sets
@@ -2112,7 +2115,7 @@ import (
 // through [remote] server or a non-loopback --server http://host:port.
 var remoteEndpoint *daemon.DaemonEndpoint
 
-var probeRemoteDaemon = daemon.ProbeDaemonPing
+var probeRemoteDaemon = daemon.ProbeRemoteDaemonPing
 
 func isRemoteMode() bool { return remoteEndpoint != nil }
 
@@ -2189,6 +2192,40 @@ func ensureRemoteDaemon() error {
 }
 ```
 
+`internal/daemon/runtime.go`: `ProbeDaemonPing` rejects non-loopback TCP
+addresses, so a remote probe cannot use it. Split it:
+
+```go
+// ProbeDaemonPing validates a local daemon endpoint ... (keep the existing doc)
+func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	if ep.Address == "" {
+		return nil, fmt.Errorf("empty daemon address")
+	}
+	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
+	}
+	return probePing(ep, timeout)
+}
+
+// ProbeRemoteDaemonPing pings a daemon on another machine. The remote
+// listener authenticates the caller, so no loopback check applies.
+func ProbeRemoteDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	if ep.Address == "" || ep.IsUnix() {
+		return nil, fmt.Errorf("remote daemon address must be host:port, got %q", ep.Address)
+	}
+	return probePing(ep, timeout)
+}
+```
+
+`probePing` holds the rest of today's `ProbeDaemonPing` body unchanged (the
+request, the status check, the decode, and the `OK` and service checks). Add
+`TestProbeRemoteDaemonPing` in `internal/daemon`, with two cases:
+- An `httptest` server whose `/api/ping` returns
+  `{"ok":true,"service":"roborev","version":"x"}`: the probe succeeds.
+- A Unix endpoint: the probe returns an error.
+
+Check the exact service name against `daemonServiceName`.
+
 `daemon_lifecycle.go`:
 - `validateServerFlag`: first run `if err := resolveRemoteEndpoint(); err != nil { return fmt.Errorf("invalid remote server: %w", err) }`.
   Then `if serverAddr == "" || isRemoteMode() { return nil }`, then the
@@ -2215,6 +2252,16 @@ Local-only call sites. Replace `ensureDaemon()` with
 - pause.go:50 (`"roborev pause"`)
 - export.go:95, export_ci.go:66, export_ci_cost.go:58 (`"roborev export"`)
 - daemon_cmd.go at both `daemonEnsure` call sites (`"roborev daemon"`)
+
+Every `roborev daemon` subcommand (start, stop, restart, run, and any
+other) acts on the local machine's daemon, and the spec makes lifecycle
+commands local-only. Add `if err := requireLocalDaemon("roborev daemon <sub>"); err != nil { return err }`
+as the first statement of each subcommand's `RunE` in `daemon_cmd.go`. Do
+this before any stop, cleanup, or runtime-file access, so remote mode never
+stops or restarts a local daemon. Add a test: in remote mode,
+`roborev daemon stop` returns the "needs a local daemon" error, and the stop
+hook it would call is never invoked. Find the stubbable stop function in
+`daemon_cmd.go`.
 
 In `review.go`, before the dirty path gathers the diff:
 `if dirty { if err := requireLocalDaemon("roborev review --dirty"); err != nil { return err } }`.
@@ -2277,7 +2324,7 @@ git commit -m "feat(cli): add remote mode that never manages a local daemon"
 - Produces:
   - `func remoteRepoIdentity(root string) (string, error)`
   - `func resolveRemoteGitRef(ctx context.Context, root, ref string) (string, error)`
-  - `func remoteEnqueue(ctx context.Context, ep daemon.DaemonEndpoint, client, uploadClient *http.Client, root string, req daemon.EnqueueRequest) (int, []byte, error)`
+  - `func remoteEnqueue(ctx context.Context, ep daemon.DaemonEndpoint, client *http.Client, root string, req daemon.EnqueueRequest) (int, []byte, error)`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2399,7 +2446,7 @@ func TestRemoteEnqueueUploadsFromForkRemote(t *testing.T) {
 	t.Cleanup(ts.Close)
 	ep := daemon.DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")}
 
-	status, body, err := remoteEnqueue(context.Background(), ep, ts.Client(), ts.Client(), laptop,
+	status, body, err := remoteEnqueue(context.Background(), ep, ts.Client(), laptop,
 		daemon.EnqueueRequest{GitRef: "HEAD", Branch: "main", Source: "post_commit"})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, status, string(body))
@@ -2503,7 +2550,7 @@ func resolveRemoteGitRef(ctx context.Context, root, ref string) (string, error) 
 // remoteEnqueue queues a review on a remote daemon. If the daemon lacks
 // the commits, it uploads them as a git pack and retries once.
 func remoteEnqueue(
-	ctx context.Context, ep daemon.DaemonEndpoint, client, uploadClient *http.Client,
+	ctx context.Context, ep daemon.DaemonEndpoint, client *http.Client,
 	root string, req daemon.EnqueueRequest,
 ) (int, []byte, error) {
 	identity, err := remoteRepoIdentity(root)
@@ -2530,7 +2577,7 @@ func remoteEnqueue(
 	if json.Unmarshal(respBody, &missing) != nil || missing.Code != daemon.MissingCommitsCode {
 		return status, respBody, nil
 	}
-	if err := uploadRemotePack(ctx, ep, uploadClient, root, identity, missing.Missing, missing.Have); err != nil {
+	if err := uploadRemotePack(ctx, ep, client, root, identity, missing.Missing, missing.Have); err != nil {
 		return 0, nil, err
 	}
 	return postRemoteEnqueue(ctx, ep, client, body)
@@ -2601,8 +2648,7 @@ func uploadRemotePack(
 			var status int
 			var body []byte
 			if isRemoteMode() {
-				status, body, err = remoteEnqueue(cmd.Context(), ep,
-					ep.HTTPClient(10*time.Second), ep.HTTPClient(0), root, reqFields)
+				status, body, err = remoteEnqueue(cmd.Context(), ep, ep.HTTPClient(0), root, reqFields)
 				if err != nil {
 					return err
 				}
@@ -2618,13 +2664,28 @@ func uploadRemotePack(
 ```
 
 The rest of the response handling reads `status` in place of
-`resp.StatusCode`. The upload client has no whole-request timeout, so a large
-first upload is not cut off. Ctrl-C cancels it through the command context.
+`resp.StatusCode`. The remote client has no whole-request timeout. The
+daemon may run `git fetch` before it answers, and a large first upload can
+take a while. Ctrl-C cancels both through the command context.
 
-`postcommit.go` (~196-213): in remote mode, call
-`remoteEnqueue(cmd.Context(), ep, hookHTTPClient(timeout), hookHTTPClient(timeout), root, daemon.EnqueueRequest{GitRef: gitRef, Branch: branchName, Source: "post_commit"})`.
-The hook runs inside `git commit`, so it stays bounded by the configured hook
-timeout. A failed upload is logged with `hookLog(root, "fail", ...)` and
+`postcommit.go` (~196-213): the hook runs inside `git commit`, so the
+whole remote sequence (enqueue, pack build, upload, and retry) shares one
+deadline, not one per request:
+
+```go
+			if isRemoteMode() {
+				hookCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
+				defer cancel()
+				status, body, err = remoteEnqueue(hookCtx, ep, hookHTTPClient(timeout), root,
+					daemon.EnqueueRequest{GitRef: gitRef, Branch: branchName, Source: "post_commit"})
+			}
+```
+
+`gitcmd` runs git with the context, so a deadline that fires mid-pack stops
+`pack-objects` too. Add a test with a mock daemon whose `/api/enqueue`
+blocks until the request context ends. With a short configured hook
+timeout, the hook returns within about that timeout, logs a failure, and
+leaves the batch unadvanced. A failed upload is logged with `hookLog(root, "fail", ...)` and
 leaves the batch unadvanced, so the next commit retries. Keep the existing
 `status >= 400` logging and checkpoint logic for both paths.
 
@@ -2694,13 +2755,7 @@ func TestRepoFilterValue(t *testing.T) {
 Add a `roborev list` test in remote mode. The mock daemon must receive
 `repo=example/project` in the `/api/jobs` query.
 
-TUI test in `cmd/roborev/tui/remote_test.go`, using the existing model test
-options (`withAutoFilterRepo`-style overrides in `tui.go`; find the option
-that sets `opt.cwdRepoRoot`/`opt.cwdRepoIdentity`): with `remote: true` and
-auto-filter on, `activeRepoFilter` equals `[]string{cwdRepoIdentity}`. With
-`remote: false` it equals `[]string{cwdRepoRoot}`. A second test: in remote
-mode, `tryReconnect` returns the configured endpoint and never reads runtime
-files.
+TUI tests: see the TUI part of Step 3.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
 
@@ -2728,33 +2783,81 @@ alone values that came from daemon responses (`root_path` from
 `/api/repos`); the remote handler passes those through.
 
 TUI:
-- Add `Remote bool` to `tui.Config`, and a matching option (`withRemote`)
-  that sets a `remote` field on the model.
-- `tui_cmd.go` passes `Remote: isRemoteMode()`.
-- For `--repo` in remote mode, `resolveRepoFlag` yields a local path. Convert
-  it with `repoFilterValue` before passing it as `RepoFilter`.
-- `tui.go` (~858) runs `filepath.ToSlash(filepath.Clean(opt.repoFilter))`,
-  which would turn an identity such as `https://example.com/org/project.git`
-  into `https:/example.com/...`. When `opt.remote` is set, use
-  `opt.repoFilter` unchanged. Add a TUI test: in remote mode, a URL identity
-  passed as the repo filter reaches `activeRepoFilter` byte for byte.
-- In `tui.go`, the auto-filter branch becomes:
+
+The TUI filters jobs on the client too: `filter.go:308` hides every job whose
+`RepoPath` is not in `activeRepoFilter`. So in remote mode `activeRepoFilter`
+must hold daemon root paths, the same values `/api/repos` returns, never
+identities. The TUI uses the checkout's identity only to look up the daemon
+root path.
+
+- Add `Remote bool` and `RemoteRepoRoot string` to `tui.Config`, with matching
+  options that set `remote` and `remoteRepoRoot` fields on the model's
+  options.
+- In `tui_cmd.go`, in remote mode, resolve the local checkout to its daemon
+  root path before starting the TUI. The checkout is the `--repo` value when
+  set, otherwise the current directory's repo if there is one.
 
 ```go
-	} else if autoFilterRepo && cwdRepoRoot != "" {
-		filter := cwdRepoRoot
-		if opt.remote && cwdRepoIdentity != "" {
-			// A remote daemon knows this checkout only by identity.
-			filter = cwdRepoIdentity
+// remoteRepoRoot returns the daemon-side root path of the registered repo
+// whose identity matches the local checkout at root.
+func remoteRepoRoot(ctx context.Context, ep daemon.DaemonEndpoint, root string) (string, error) {
+	identity, err := remoteRepoIdentity(root)
+	if err != nil {
+		return "", err
+	}
+	resp, err := ep.APIClient(10*time.Second).ListReposRaw(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("list repos on remote daemon: %w", err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Repos []storage.RepoWithCount `json:"repos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode remote repo list: %w", err)
+	}
+	var matches []string
+	for _, repo := range body.Repos {
+		if repo.Identity == identity {
+			matches = append(matches, repo.RootPath)
 		}
-		activeRepoFilter = []string{filter}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("repo %s is not registered on the remote daemon; run roborev init on the daemon host", identity)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("repo %s matches several remote daemon checkouts: %s", identity, strings.Join(matches, ", "))
+	}
+}
 ```
 
-- `fetch.go` `tryReconnect`: when `m.remote`, return
+  - Explicit `--repo` in remote mode: pass `RepoFilter: <daemon root path>`.
+    An error is returned to the user.
+  - Auto-filter in remote mode: pass `RemoteRepoRoot: <daemon root path>`.
+    If the lookup fails, start unfiltered and do not error: the current
+    directory may simply not be a registered repo.
+  - Check the generated client's method name for `GET /api/repos`
+    (`ListReposRaw` or similar) in `pkg/client/generated`.
+- In `tui.go`, when `opt.remote` is set, replace the locally detected
+  `cwdRepoRoot` with `opt.remoteRepoRoot` (empty when unresolved) before the
+  auto-filter branch. The existing branch then sets
+  `activeRepoFilter = []string{cwdRepoRoot}`, which is now a daemon path, and
+  `filter.go`'s job matching and auto-filter checks work unchanged.
+- `fetch.go` `tryReconnect`: when remote, return
   `reconnectMsg{endpoint: m.endpoint}` without calling
   `daemon.GetAnyRunningDaemon()`. Use the model's actual endpoint field name.
-- `tui.go` ~801 skips reading the daemon version from local runtime files
-  when `opt.remote`.
+- `tui.go` ~801 skips reading the daemon version from local runtime files in
+  remote mode.
+
+TUI tests:
+- In `cmd/roborev/tui/remote_test.go`, with the remote options and
+  auto-filter on, `activeRepoFilter` equals `[]string{remoteRepoRoot}`.
+- A job whose `RepoPath` equals that root stays visible.
+- In remote mode, `tryReconnect` returns the configured endpoint.
+- In `cmd/roborev`, test `remoteRepoRoot` against a mock `/api/repos` with
+  three cases: one match, no match, and two matches.
 
 MCP: the `repo_path` values its tools accept come from `roborev_list_repos`
 (daemon `root_path`), which the remote handler passes through. The only MCP
