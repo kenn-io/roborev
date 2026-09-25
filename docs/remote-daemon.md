@@ -135,8 +135,10 @@ Add a grant like this to your tailnet policy file:
 
 The daemon refuses a request with `403` and a reason when:
 
-- `tailscale whois` fails, for example because tailscaled is down or the binary
-    is missing. The daemon never falls back to allowing the request.
+- `tailscale whois` fails or does not answer within 5 seconds, for example
+    because tailscaled is down or the binary is missing. The caller sees only
+    `tailscale whois failed` or `tailscale whois timed out`; the daemon log has
+    the details. The daemon never falls back to allowing the request.
 - The policy gives the node no `kenn.io/cap/roborev` grant.
 - A `read` caller tries a `queue` action.
 - The route is not available remotely.
@@ -370,9 +372,15 @@ responsibility. Replace it with `[remote_api]` and a tailnet policy grant.
 - **Uploads add data to your clone.** A `queue` caller can store git objects and
     `refs/roborev/uploads/*` refs in any registered clone. There is no size
     limit.
-- **Fetches run with your git config.** A remote review of a missing commit runs
-    `git fetch --all` in the daemon clone as the daemon's user, with that user's
-    credentials.
-- **Nothing edits code.** Remote callers cannot run agentic reviews, fixes, or
-    tasks, so no remote request leads to an agent writing to the daemon host's
-    checkout.
+- **Queue callers can trigger fetches.** When a `queue` caller asks for a review
+    of a commit the daemon clone lacks, the daemon runs `git fetch --all` in
+    that clone. Each such request can start a fetch.
+- **Fetches run with your git config.** The fetch runs as the daemon's user,
+    with that user's credentials.
+- **A fetch holds the repo lock.** The fetch holds a per-repo lock in the
+    daemon, so other git work the daemon does in that clone waits until it
+    finishes. That includes pack uploads, CI fetches, and CI review checkouts.
+- **Nothing edits the working tree.** Remote callers cannot queue or rerun
+    agentic reviews, fixes, or tasks, so no remote request leads to an agent
+    writing to the daemon host's checkout. Uploads and fetches change only git
+    objects and refs, as described above.

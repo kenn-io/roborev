@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -111,11 +113,34 @@ func remoteEnqueue(
 	if json.Unmarshal(respBody, &missing) != nil || missing.Code != daemon.MissingCommitsCode {
 		return status, respBody, nil
 	}
+	if err := checkMissingSent(req.GitRef, missing.Missing); err != nil {
+		return 0, nil, err
+	}
 	if err := uploadRemotePack(ctx, ep, client, root, identity, missing.Missing, missing.Have); err != nil {
 		return 0, nil, err
 	}
 	return postRemoteEnqueue(ctx, ep, client, body)
 }
+
+// checkMissingSent refuses to pack anything the daemon lists as missing
+// unless it is a full SHA this request sent, as the commit or a range
+// endpoint. pack-objects would accept any revision, such as a private
+// branch name, so the list must never reach it unchecked.
+func checkMissingSent(gitRef string, missing []string) error {
+	start, end, isRange := strings.Cut(gitRef, "..")
+	sent := []string{gitRef}
+	if isRange {
+		sent = []string{strings.TrimSuffix(start, "^"), end}
+	}
+	for _, sha := range missing {
+		if !fullSHAPattern.MatchString(sha) || !slices.Contains(sent, sha) {
+			return fmt.Errorf("remote daemon asked for %q, which is not a commit this review sent; refusing to upload it", sha)
+		}
+	}
+	return nil
+}
+
+var fullSHAPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 func postRemoteEnqueue(ctx context.Context, ep daemon.DaemonEndpoint, client *http.Client, body []byte) (int, []byte, error) {
 	resp, err := newDaemonAPI(ep.BaseURL(), client).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(body))

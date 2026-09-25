@@ -540,3 +540,58 @@ func TestPostCommitRemoteSharesOneDeadline(t *testing.T) {
 		assert.Equal(int32(1), enqueues.Load(), "the retry must not run past the shared deadline")
 	})
 }
+
+func TestCheckMissingSent(t *testing.T) {
+	const a = "0123456789abcdef0123456789abcdef01234567"
+	const b = "89abcdef0123456789abcdef0123456789abcdef"
+	tests := []struct {
+		name    string
+		gitRef  string
+		missing []string
+		wantErr string
+	}{
+		{"commit", a, []string{a}, ""},
+		{"range endpoints", a + ".." + b, []string{a, b}, ""},
+		{"inclusive range start", a + "^.." + b, []string{a}, ""},
+		{"branch name", a, []string{"refs/heads/private"}, `remote daemon asked for "refs/heads/private"`},
+		{"unsent SHA", a, []string{b}, "is not a commit this review sent"},
+		{"abbreviated SHA", a, []string{a[:12]}, "refusing to upload it"},
+		{"parent spelling", a + "^.." + b, []string{a + "^"}, "refusing to upload it"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkMissingSent(tt.gitRef, tt.missing)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// TestRemoteEnqueueRefusesUnsentMissing checks that a daemon naming a
+// revision the client never sent gets no pack.
+func TestRemoteEnqueueRefusesUnsentMissing(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+	writeRoborevID(t, repo)
+	var packs atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		respondJSON(w, http.StatusConflict, daemon.MissingCommitsResponse{
+			Error: "missing", Code: daemon.MissingCommitsCode, Missing: []string{"refs/heads/private"},
+		})
+	})
+	mux.HandleFunc(daemon.RemotePackPath, func(w http.ResponseWriter, r *http.Request) {
+		packs.Add(1)
+		respondJSON(w, http.StatusOK, map[string]any{})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	ep := daemon.DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")}
+
+	_, _, err := remoteEnqueue(context.Background(), ep, ts.Client(), repo.Dir, daemon.EnqueueRequest{GitRef: "HEAD"})
+	require.ErrorContains(t, err, `remote daemon asked for "refs/heads/private"`)
+	assert.Zero(t, packs.Load(), "nothing was uploaded")
+}
