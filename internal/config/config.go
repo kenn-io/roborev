@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path"
@@ -160,6 +162,68 @@ type WebConfig struct {
 // the daemon.
 type MCPConfig struct {
 	Enabled bool `toml:"enabled" comment:"Serve the MCP endpoint at /mcp on the daemon API listener. Requires a daemon restart."`
+}
+
+// RemoteAPIConfig configures the listener that serves the daemon API to
+// other tailnet machines. Callers are identified by tailscaled.
+type RemoteAPIConfig struct {
+	Enabled       bool   `toml:"enabled" comment:"Serve the daemon API to tailnet peers granted kenn.io/cap/roborev."`
+	Listen        string `toml:"listen" comment:"This host's Tailscale IP and port, for example 100.101.102.103:7474."`
+	TailscalePath string `toml:"tailscale_path" comment:"Path to the tailscale CLI. Empty uses tailscale from PATH."`
+}
+
+// RemoteConfig points the CLI at a daemon on another machine.
+type RemoteConfig struct {
+	Server string `toml:"server" comment:"Remote daemon URL, for example http://daemon-host.example-tailnet.ts.net:7474."`
+}
+
+var (
+	tailscaleIPv4 = netip.MustParsePrefix("100.64.0.0/10")
+	tailscaleIPv6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
+)
+
+// IsTailscaleAddr reports whether addr is in Tailscale's address ranges.
+func IsTailscaleAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return tailscaleIPv4.Contains(addr) || tailscaleIPv6.Contains(addr)
+}
+
+// LoadRemoteServer reads only [remote] server from the global config. The
+// CLI checks it before every command, so it must not fail on unrelated
+// settings that full validation would reject. A missing file means no
+// remote server.
+func LoadRemoteServer() (string, error) {
+	var cfg struct {
+		Remote RemoteConfig `toml:"remote"`
+	}
+	if _, err := toml.DecodeFile(GlobalConfigPath(), &cfg); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read [remote] server from %s: %w", GlobalConfigPath(), err)
+	}
+	return strings.TrimSpace(cfg.Remote.Server), nil
+}
+
+func normalizeRemoteAPIConfig(remote *RemoteAPIConfig) error {
+	if !remote.Enabled {
+		return nil
+	}
+	addrPort, err := netip.ParseAddrPort(remote.Listen)
+	if err != nil {
+		return fmt.Errorf(
+			"remote_api.listen %q must be a Tailscale IP and port, such as 100.101.102.103:7474: %w",
+			remote.Listen, err)
+	}
+	if !IsTailscaleAddr(addrPort.Addr()) {
+		return fmt.Errorf(
+			"remote_api.listen %q is not a Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48); only tailnet peers can be identified",
+			remote.Listen)
+	}
+	if addrPort.Port() == 0 {
+		return fmt.Errorf("remote_api.listen %q needs a fixed port", remote.Listen)
+	}
+	return nil
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.
@@ -364,6 +428,10 @@ type Config struct {
 
 	// Browser application configuration
 	Web WebConfig `toml:"web"`
+
+	// Tailnet listener and remote daemon client settings
+	RemoteAPI RemoteAPIConfig `toml:"remote_api"`
+	Remote    RemoteConfig    `toml:"remote"`
 
 	// Read-only MCP endpoint served on the daemon API listener
 	MCP MCPConfig `toml:"mcp"`
@@ -992,7 +1060,10 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := normalizeSearchConfig(&cfg.Search); err != nil {
 		return err
 	}
-	return normalizeWebConfig(&cfg.Web)
+	if err := normalizeWebConfig(&cfg.Web); err != nil {
+		return err
+	}
+	return normalizeRemoteAPIConfig(&cfg.RemoteAPI)
 }
 
 func normalizeWebConfig(web *WebConfig) error {
