@@ -589,26 +589,39 @@ func TestGetHooksPath(t *testing.T) {
 		repo.Run("config", "core.hooksPath", "custom-hooks")
 
 		hooksPath, err := GetHooksPath(repo.Dir)
-		require.NoError(t, err)
+		require.NoError(t, err, "GetHooksPath failed: %v", err)
 
-		assert.Equal(t, filepath.Join(repo.Dir, "custom-hooks"), hooksPath)
+		assert.True(t, filepath.IsAbs(hooksPath),
+			"hooks path should be absolute, got: %s", hooksPath)
+		// GetMainRepoRoot resolves symlinks, so compare
+		// against the resolved dir.
+		resolvedDir, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(resolvedDir, "custom-hooks"),
+			hooksPath)
 	})
 
-	t.Run("relative hooksPath resolves to the linked worktree",
+	t.Run("relative hooksPath resolves to main repo from worktree",
 		func(t *testing.T) {
 			repo := NewTestRepo(t)
 			repo.Run("commit", "--allow-empty", "-m", "init")
 			repo.Run("config", "core.hooksPath", ".githooks")
 
 			wtDir := t.TempDir()
-			repo.Run("worktree", "add", wtDir, "-b", "wt")
+			resolved, err := filepath.EvalSymlinks(wtDir)
+			require.NoError(t, err)
+			repo.Run("worktree", "add", resolved, "-b", "wt")
 
-			hooksPath, err := GetHooksPath(wtDir)
+			hooksPath, err := GetHooksPath(resolved)
 			require.NoError(t, err)
 
-			// Git runs a relative hooks path from the worktree
-			// root, so each branch uses its own checked-out hooks.
-			assert.Equal(t, filepath.Join(wtDir, ".githooks"), hooksPath)
+			resolvedMain, err := filepath.EvalSymlinks(repo.Dir)
+			require.NoError(t, err)
+			assert.Equal(t,
+				filepath.Join(resolvedMain, ".githooks"),
+				hooksPath,
+				"should resolve against main repo, not worktree",
+			)
 		})
 
 	t.Run("default hooksPath resolves to main repo from worktree",
@@ -631,6 +644,142 @@ func TestGetHooksPath(t *testing.T) {
 				hooksPath,
 				"default hooks path from worktree should point "+
 					"at main repo .git/hooks",
+			)
+		})
+}
+
+func TestEnsureAbsoluteHooksPath(t *testing.T) {
+	t.Run("noop when not set", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		// Verify core.hooksPath is still unset.
+		cmd := exec.Command(
+			"git", "config", "--local", "core.hooksPath",
+		)
+		cmd.Dir = repo.Dir
+		assert.Error(t, cmd.Run(), "core.hooksPath should remain unset")
+	})
+
+	t.Run("noop when already absolute", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		absPath := filepath.Join(repo.Dir, "my-hooks")
+		repo.Run("config", "core.hooksPath", absPath)
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, absPath, got)
+	})
+
+	t.Run("noop for tilde home path", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", "~/my-hooks")
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, "~/my-hooks", got,
+			"~/path should be left for git to expand")
+	})
+
+	t.Run("noop for bare tilde", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", "~")
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, "~", got,
+			"bare ~ should be left for git to expand")
+	})
+
+	t.Run("converts relative to absolute", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", ".githooks")
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.True(t, filepath.IsAbs(got),
+			"expected absolute path, got: %s", got)
+		// GetMainRepoRoot resolves symlinks (e.g. macOS
+		// /var → /private/var), so compare against the
+		// resolved repo dir.
+		resolvedDir, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(resolvedDir, ".githooks"), got)
+	})
+
+	t.Run("resolves against main repo root from worktree", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("commit", "--allow-empty", "-m", "init")
+		repo.Run("config", "core.hooksPath", ".githooks")
+
+		wtDir := t.TempDir()
+		resolved, err := filepath.EvalSymlinks(wtDir)
+		require.NoError(t, err)
+		repo.Run("worktree", "add", resolved, "-b", "wt-branch")
+
+		// Run from the linked worktree, not the main repo.
+		err = EnsureAbsoluteHooksPath(resolved)
+		require.NoError(t, err)
+
+		// The rewritten path must point at the main repo's
+		// .githooks, not the worktree's.
+		resolvedMain, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		wt := &TestRepo{T: t, Dir: resolved}
+		got := wt.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, filepath.Join(resolvedMain, ".githooks"), got,
+			"should resolve against main repo root, not worktree")
+	})
+
+	t.Run("overrides relative global config with local absolute",
+		func(t *testing.T) {
+			// Simulate a global ~/.gitconfig with relative
+			// core.hooksPath (no local config set).
+			fakeHome := t.TempDir()
+			t.Setenv("HOME", fakeHome)
+			t.Setenv("USERPROFILE", fakeHome)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(
+				fakeHome, ".config",
+			))
+			globalCfg := filepath.Join(fakeHome, ".gitconfig")
+			t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+			err := os.WriteFile(globalCfg, []byte(
+				"[core]\n\thooksPath = .githooks\n",
+			), 0o644)
+			require.NoError(t, err)
+
+			repo := NewTestRepo(t)
+
+			// Verify no local override exists yet.
+			check := exec.Command(
+				"git", "config", "--local", "core.hooksPath",
+			)
+			check.Dir = repo.Dir
+			require.Error(t, check.Run(),
+				"should have no local core.hooksPath")
+
+			err = EnsureAbsoluteHooksPath(repo.Dir)
+			require.NoError(t, err)
+
+			// Should now have a local absolute override.
+			got := repo.Run(
+				"config", "--local", "core.hooksPath",
+			)
+			assert.True(t, filepath.IsAbs(got),
+				"expected absolute path, got: %s", got)
+			resolvedDir, err := filepath.EvalSymlinks(repo.Dir)
+			require.NoError(t, err)
+			assert.Equal(t,
+				filepath.Join(resolvedDir, ".githooks"), got,
 			)
 		})
 }
