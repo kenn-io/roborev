@@ -9,6 +9,7 @@ import (
 )
 
 func TestClaimJobReturnsNilWhenQueuePaused(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -24,6 +25,7 @@ func TestClaimJobReturnsNilWhenQueuePaused(t *testing.T) {
 }
 
 func TestClaimJobReturnsNilWhileShutdownDrainIsActive(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -39,6 +41,7 @@ func TestClaimJobReturnsNilWhileShutdownDrainIsActive(t *testing.T) {
 }
 
 func TestClearShutdownDrainingPreservesQueuePause(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -55,6 +58,7 @@ func TestClearShutdownDrainingPreservesQueuePause(t *testing.T) {
 }
 
 func TestQueuePauseStateDefaultsAndPersists(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
 	db, err := Open(dbPath)

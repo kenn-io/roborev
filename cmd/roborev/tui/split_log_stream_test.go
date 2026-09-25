@@ -21,6 +21,7 @@ import (
 // can be decoded with the wrong protocol instead of following the selected
 // agent and source.
 func TestPaneLogPollAppendsNewBytesWhileRunning(t *testing.T) {
+	t.Parallel()
 	const firstLine = "first streamed line"
 	const secondLine = "second streamed line"
 	firstBody := firstLine + "\n"
@@ -74,6 +75,7 @@ func TestPaneLogPollAppendsNewBytesWhileRunning(t *testing.T) {
 }
 
 func TestPaneLogPollGrowsUnterminatedLastRow(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("offset") {
 		case "0":
@@ -127,6 +129,7 @@ func TestPaneLogPollGrowsUnterminatedLastRow(t *testing.T) {
 }
 
 func TestPaneLogPollReplacesAllWrappedPendingRows(t *testing.T) {
+	t.Parallel()
 	// Incremental replacement used to drop only the last rendered row. A
 	// growing unterminated suffix that wraps then duplicated earlier wrap
 	// fragments on every poll.
@@ -184,6 +187,7 @@ func TestPaneLogPollReplacesAllWrappedPendingRows(t *testing.T) {
 }
 
 func TestPaneLogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
+	t.Parallel()
 	bodies := map[string]string{}
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		offset := r.URL.Query().Get("offset")
@@ -247,6 +251,7 @@ func TestPaneLogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
 }
 
 func TestPaneLogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
+	t.Parallel()
 	const incomplete = `{"type":"end"`
 	bodies := map[string]string{
 		"0":                                incomplete,
@@ -296,6 +301,7 @@ func TestPaneLogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
 }
 
 func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
+	t.Parallel()
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	mixed := strings.Join([]string{
 		`{"type":"item.completed","item":{"type":"agent_message","text":"classifier"}}`,
@@ -361,6 +367,7 @@ func TestPaneLogFetchUsesJobIdentity(t *testing.T) {
 }
 
 func TestPaneLogFetchRefreshesIdentityAfterFailover(t *testing.T) {
+	t.Parallel()
 	const response = "replacement split provider output"
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "codex", r.Header.Get("X-Job-Agent"))
@@ -393,6 +400,7 @@ func TestPaneLogFetchRefreshesIdentityAfterFailover(t *testing.T) {
 }
 
 func TestPaneLogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
+	t.Parallel()
 	const response = "replacement split auto-design output"
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "50", r.URL.Query().Get("offset"))
@@ -434,6 +442,7 @@ func TestPaneLogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
 // expected, adjacent response chunks become separate Markdown rows and wrap
 // independently.
 func TestPaneLogFetchKeepsGrokTextTogetherAcrossPolls(t *testing.T) {
+	t.Parallel()
 	const response = "This commit is an empty live fire probe."
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("offset") {
@@ -486,6 +495,7 @@ func TestPaneLogFetchKeepsGrokTextTogetherAcrossPolls(t *testing.T) {
 }
 
 func TestPaneLogEmptyTerminalPollFlushesBufferedGrokText(t *testing.T) {
+	t.Parallel()
 	const response = "buffered until the split terminal poll"
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("offset") {
@@ -531,6 +541,7 @@ func TestPaneLogEmptyTerminalPollFlushesBufferedGrokText(t *testing.T) {
 }
 
 func TestPaneLogJobsCompletionDoesNotDelayReviewHandoff(t *testing.T) {
+	t.Parallel()
 	// Once the jobs feed marks the selected row terminal, the detail pane no
 	// longer renders its live-log tail. Review handoff must not wait for a
 	// scheduled poll that can only update that hidden buffer.
@@ -569,6 +580,7 @@ func TestPaneLogJobsCompletionDoesNotDelayReviewHandoff(t *testing.T) {
 // If a split-pane resize rebuild drops source identity, an auto-design tail
 // loses the classifier half when it is re-rendered at the new width.
 func TestPaneLogResizeKeepsJobIdentity(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"item.completed","item":{"type":"agent_message","text":"classifier after resize"}}`,
 		`{"type":"text","data":"design after resize"}`,

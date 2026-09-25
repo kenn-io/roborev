@@ -14,6 +14,7 @@ import (
 // placeholder instead of a blank cell, while jobs that have (or should
 // have) no branch concept stay blank.
 func TestTaskCellsBranchColumn(t *testing.T) {
+	t.Parallel()
 	repo := testutil.InitTestRepo(t)
 	firstSHA := repo.CommitFile("a.txt", "one", "first")
 	repo.CheckoutDetached()

@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetKnownJobUUIDs(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 
 	t.Run("returns empty when no jobs exist", func(t *testing.T) {
@@ -35,6 +36,7 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 }
 
 func TestParseSQLiteTime(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -237,7 +239,7 @@ func reviewSyncIDs(h *syncTestHelper) ([]int64, error) {
 	return ids, nil
 }
 
-func TestGetJobsToSync_TimestampComparison(t *testing.T) {
+func TestGetJobsToSync_TimestampComparison(t *testing.T) { //nolint:paralleltest // t.Setenv of TZ in a subtest via testSyncTimestampComparison
 	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
 		entityName: "job",
 
@@ -270,7 +272,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 	})
 }
 
-func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
+func TestGetReviewsToSync_TimestampComparison(t *testing.T) { //nolint:paralleltest // t.Setenv of TZ in a subtest via testSyncTimestampComparison
 	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
 		entityName: "review",
 
@@ -319,6 +321,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 }
 
 func TestSessionID_SyncRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := newSyncTestHelper(t)
 
 	job := src.createCompletedJob("session-sync-sha")
@@ -385,6 +388,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 // UpsertPulledJob must import it (pull side). The marker carries the "an agent
 // ran" cost-eligibility signal across machines, since command_line is not synced.
 func TestAgentInvoked_SyncRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := newSyncTestHelper(t)
 
 	job := src.createCompletedJob("agent-invoked-sync-sha")
@@ -447,6 +451,7 @@ func TestAgentInvoked_SyncRoundTrip(t *testing.T) {
 // no session cannot retain the prior attempt's session id and reattach stale
 // cost to it. A non-terminal row still preserves an existing session.
 func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	dst := newSyncTestHelper(t)
 
@@ -504,6 +509,7 @@ func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
 // merging them. A rerun that ends in skip after a priced attempt must not
 // retain the prior attempt's cost, session, or agent-ran markers.
 func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	dst := newSyncTestHelper(t)
 
@@ -563,6 +569,7 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 // equal in that window; ReenqueueJob clears synced_at so the row re-selects
 // regardless of timestamp granularity.
 func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	h := newSyncTestHelper(t)
 
@@ -611,6 +618,7 @@ func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
 // synced_at, or a same-second rerun can leave stale spend in PostgreSQL (see
 // TestReenqueueClearsSyncedAtForSameSecondRerun for the end-to-end behavior).
 func TestResetPathsClearSyncedAt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		setup func(t *testing.T, db *DB) int64
@@ -712,6 +720,7 @@ func TestResetPathsClearSyncedAt(t *testing.T) {
 }
 
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 	job := h.createCompletedJob("legacy-resp-sha")
 
@@ -757,6 +766,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 }
 
 func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

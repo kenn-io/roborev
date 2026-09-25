@@ -16,6 +16,7 @@ import (
 )
 
 func TestProjectDisplayNameGroupsBareWorktrees(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	repo := testutil.NewTestRepoWithCommit(t)
 	bare := filepath.Join(t.TempDir(), "project.git")

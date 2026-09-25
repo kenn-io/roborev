@@ -10,6 +10,7 @@ import (
 )
 
 func TestGetOrCreateRepoByIdentity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -154,6 +155,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 }
 
 func TestExtractRepoNameFromIdentity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		identity string
 		expected string
@@ -187,6 +189,7 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 }
 
 func TestSetRepoIdentity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -208,6 +211,7 @@ func TestSetRepoIdentity(t *testing.T) {
 }
 
 func TestGetRepoByIdentity_NotFound(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -218,6 +222,7 @@ func TestGetRepoByIdentity_NotFound(t *testing.T) {
 }
 
 func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
+	t.Parallel()
 	// This test verifies GetRepoByIdentity returns an error if duplicates exist.
 	// Multiple repos can share the same identity (e.g., multiple clones of the same remote),
 	// but GetRepoByIdentity should return an error when asked to find a unique repo.
@@ -238,6 +243,7 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 }
 
 func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
+	t.Parallel()
 	// This test creates an old-schema database manually, runs migration,
 	// and verifies that the same SHA can now exist in different repos.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -300,6 +306,7 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 }
 
 func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
+	t.Parallel()
 	// This test verifies that migration succeeds even when duplicate
 	// repos.identity values exist. Multiple clones of the same repo
 	// should be allowed (fix for https://github.com/roborev-dev/roborev/issues/131).
@@ -339,6 +346,7 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 }
 
 func TestUniqueIndexMigration(t *testing.T) {
+	t.Parallel()
 	// This test verifies that an existing database with the old UNIQUE index
 	// on repos.identity is properly migrated to a non-unique index.
 	// See: https://github.com/roborev-dev/roborev/issues/131

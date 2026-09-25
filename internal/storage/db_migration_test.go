@@ -37,6 +37,7 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 }
 
 func TestOpenReadOnly(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reviews.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
@@ -254,6 +255,7 @@ const legacyReviewJobSeedWithOutputPrefix = `
 // here triggers the rebuild path; the test asserts the seeded non-empty
 // output_prefix value survives.
 func TestMigrationPreservesOutputPrefixDuringRebuild(t *testing.T) {
+	t.Parallel()
 	db := prepareMigratedDB(
 		t,
 		"output_prefix_rebuild.db",
@@ -291,6 +293,7 @@ func prepareMigratedDB(
 }
 
 func TestMigrationFromOldSchema(t *testing.T) {
+	t.Parallel()
 	db := prepareMigratedDB(
 		t, "old.db", legacyReviewJobSchema, legacyReviewJobSeed,
 	)
@@ -417,6 +420,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 }
 
 func TestReviewJobPositionIndexExistsOnFreshSchema(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
@@ -424,6 +428,7 @@ func TestReviewJobPositionIndexExistsOnFreshSchema(t *testing.T) {
 }
 
 func TestReviewJobPositionIndexSurvivesLegacyRebuild(t *testing.T) {
+	t.Parallel()
 	db := prepareMigratedDB(
 		t, "position-index-legacy.db", legacyReviewJobSchema, legacyReviewJobSeed,
 	)
@@ -442,6 +447,7 @@ func assertReviewJobPositionIndexExists(t *testing.T, db *DB) {
 }
 
 func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "paths.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
@@ -522,6 +528,7 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 }
 
 func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -539,6 +546,7 @@ func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
 }
 
 func TestMigrationAddsSessionIDColumn(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -557,6 +565,7 @@ func TestMigrationAddsSessionIDColumn(t *testing.T) {
 }
 
 func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -636,6 +645,7 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 }
 
 func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
+	t.Parallel()
 	// Regression test: after a prior migration rebuilds review_jobs via
 	// ALTER TABLE ... RENAME, SQLite stores the table name quoted as
 	// "review_jobs". The applied/rebased constraint migration must
@@ -835,6 +845,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 }
 
 func TestMigrationCleansUpStaleTemp(t *testing.T) {
+	t.Parallel()
 	// If a prior migration attempt failed and left review_jobs_new
 	// behind, the next attempt should clean it up and succeed.
 	tmpDir := t.TempDir()
@@ -989,6 +1000,7 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 }
 
 func TestMigrationWithAlterTableColumnOrder(t *testing.T) {
+	t.Parallel()
 	// Test that migration works when columns were added via ALTER TABLE,
 	// which puts them at the end of the table (different from CREATE TABLE order)
 	tmpDir := t.TempDir()
@@ -1168,6 +1180,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 }
 
 func TestMigrationReasoningColumn(t *testing.T) {
+	t.Parallel()
 	t.Run("missing reasoning gets default", func(t *testing.T) {
 		db := prepareMigratedDB(
 			t,
@@ -1256,6 +1269,7 @@ func legacyTableExists(t *testing.T, db *DB, name string) bool {
 }
 
 func TestDrainAndDropOldCIBatchTables(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -1276,6 +1290,7 @@ func TestDrainAndDropOldCIBatchTables(t *testing.T) {
 }
 
 func TestDrainAndDropOldCIBatchTablesHandlesMissingJoinTable(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -1296,6 +1311,7 @@ func TestDrainAndDropOldCIBatchTablesHandlesMissingJoinTable(t *testing.T) {
 }
 
 func TestPatchIDMigration(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

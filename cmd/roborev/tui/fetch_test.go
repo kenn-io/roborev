@@ -15,6 +15,7 @@ import (
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	values := neturl.Values{}
@@ -32,6 +33,7 @@ func TestListJobsParamsRepeatedRepo(t *testing.T) {
 }
 
 func TestListJobsParamsNoRepo(t *testing.T) {
+	t.Parallel()
 	query := listJobsQuery(neturl.Values{})
 	require.NotNil(t, query)
 	assert.Nil(t, query.Repo, "absent repo means no filter")
@@ -42,6 +44,7 @@ func TestListJobsParamsNoRepo(t *testing.T) {
 // falling back to limit=0 and loading every job — the regression that
 // crashed the daemon on large databases.
 func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	var jobsQuery neturl.Values
@@ -81,6 +84,7 @@ func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
 // payload and repeated polls were the daemon's main allocation driver.
 // Detail views (single job, /api/review) still fetch the full record.
 func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	var mu sync.Mutex

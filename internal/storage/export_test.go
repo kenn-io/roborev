@@ -21,6 +21,7 @@ import (
 )
 
 func TestExportReviewsContentProfile(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -85,6 +86,7 @@ func TestExportReviewsContentProfile(t *testing.T) {
 }
 
 func TestExportReviewsMetadataProfileOmitsContent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -123,6 +125,7 @@ const exportTestCanonicalDocument = `{"schema_version":2,"summary":"Two problems
 	`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}]}`
 
 func TestExportReviewsContentProfileExportsCanonicalDocument(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -158,6 +161,7 @@ func TestExportReviewsContentProfileExportsCanonicalDocument(t *testing.T) {
 }
 
 func TestExportReviewsDocumentIsNullWithoutStoredDocumentOrInMetadataProfile(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -194,6 +198,7 @@ func TestExportReviewsDocumentIsNullWithoutStoredDocumentOrInMetadataProfile(t *
 }
 
 func TestExportReviewsExportsSubagentDocuments(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -234,6 +239,7 @@ func TestExportReviewsExportsSubagentDocuments(t *testing.T) {
 }
 
 func TestExportReviewsRepoFilterUsesExportedRepoIdentifier(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -261,6 +267,7 @@ func TestExportReviewsRepoFilterUsesExportedRepoIdentifier(t *testing.T) {
 }
 
 func TestExportReviewsFiltersAndOrdering(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -306,6 +313,7 @@ func TestExportReviewsFiltersAndOrdering(t *testing.T) {
 }
 
 func TestExportReviewsReportsClosedStateAndUpdatedAt(t *testing.T) {
+	t.Parallel()
 	for _, profile := range []ExportProfile{ExportProfileContent, ExportProfileMetadata} {
 		t.Run(string(profile), func(t *testing.T) {
 			db := openTestDB(t)
@@ -344,6 +352,7 @@ func TestExportReviewsReportsClosedStateAndUpdatedAt(t *testing.T) {
 }
 
 func TestExportReviewsUpdatedAtFallsBackToCompletedAt(t *testing.T) {
+	t.Parallel()
 	for name, updatedAt := range map[string]any{"null": nil, "empty": "", "blank": "  "} {
 		t.Run(name, func(t *testing.T) {
 			db := openTestDB(t)
@@ -375,6 +384,7 @@ func TestExportReviewsUpdatedAtFallsBackToCompletedAt(t *testing.T) {
 }
 
 func TestExportReviewsUpdatedSinceReturnsReviewClosedAfterBound(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -398,6 +408,7 @@ func TestExportReviewsUpdatedSinceReturnsReviewClosedAfterBound(t *testing.T) {
 }
 
 func TestExportReviewsUpdatedSinceIsInclusiveAndCombinesWithOtherFilters(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -440,6 +451,7 @@ func TestExportReviewsUpdatedSinceIsInclusiveAndCombinesWithOtherFilters(t *test
 }
 
 func TestExportReviewsCursorPaginationWithUpdatedSinceReturnsEachMatchOnce(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -490,6 +502,7 @@ func TestExportReviewsCursorPaginationWithUpdatedSinceReturnsEachMatchOnce(t *te
 }
 
 func TestExportReviewsPagination(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -521,6 +534,7 @@ func TestExportReviewsPagination(t *testing.T) {
 }
 
 func TestExportReviewsCursorRoundTripAcrossPagesMatchesUnpaginated(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -563,6 +577,7 @@ func TestExportReviewsCursorRoundTripAcrossPagesMatchesUnpaginated(t *testing.T)
 }
 
 func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -584,6 +599,7 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
 }
 
 func TestExportReviewsCursorPaginatesSameCompletedTimestampPileup(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -621,6 +637,7 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestampPileup(t *testing.T) 
 }
 
 func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -637,6 +654,7 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 }
 
 func TestExportReviewsEmptyPageUsesEmptyReviewsArray(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -651,6 +669,7 @@ func TestExportReviewsEmptyPageUsesEmptyReviewsArray(t *testing.T) {
 }
 
 func TestExportReviewsNonTruncatedPageIncludesResumeCursor(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -676,6 +695,7 @@ func TestExportReviewsNonTruncatedPageIncludesResumeCursor(t *testing.T) {
 }
 
 func TestExportReviewsRejectsInvalidCursorTimestamp(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -689,6 +709,7 @@ func TestExportReviewsRejectsInvalidCursorTimestamp(t *testing.T) {
 }
 
 func TestExportReviewsRejectsCorruptCursor(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -702,6 +723,7 @@ func TestExportReviewsRejectsCorruptCursor(t *testing.T) {
 }
 
 func TestExportReviewsRejectsCursorFromDifferentDatabaseID(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -716,6 +738,7 @@ func TestExportReviewsRejectsCursorFromDifferentDatabaseID(t *testing.T) {
 }
 
 func TestExportReviewsRejectsNoLongerResolvableCursor(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -730,6 +753,7 @@ func TestExportReviewsRejectsNoLongerResolvableCursor(t *testing.T) {
 }
 
 func TestExportReviewsPanelSubagents(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	assert := assert.New(t)
@@ -792,6 +816,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 }
 
 func TestExportReviewsSynthesisWithoutMembersUsesEmptySubagentsArray(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -811,6 +836,7 @@ func TestExportReviewsSynthesisWithoutMembersUsesEmptySubagentsArray(t *testing.
 }
 
 func TestExportReviewsCISynthesisFields(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -840,6 +866,7 @@ func TestExportReviewsCISynthesisFields(t *testing.T) {
 }
 
 func TestExportReviewsPreservesLargeContent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -863,6 +890,7 @@ func TestExportReviewsPreservesLargeContent(t *testing.T) {
 }
 
 func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
@@ -887,6 +915,7 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 }
 
 func TestUpsertPulledReviewWithEmptyOutputIsNotExportable(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1054,6 +1083,7 @@ func uniqueValues[T comparable](values []T) map[T]struct{} {
 }
 
 func TestExportLegacyDocumentSchema(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "legacy-export")
 	fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "prose-export", "Keep the original historical text.", 0, false)
 	require.NoError(t, env.db.migrateLegacyReviews())
@@ -1101,6 +1131,7 @@ func TestExportLegacyDocumentSchema(t *testing.T) {
 }
 
 func TestExportReviewsUnknownLegacyVerdict(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "unknown-legacy-export")
 	fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "unknown-review", "Historical prose without a verdict.", nil, false)
 	panelRun := testUUID("legacy-export-panel")

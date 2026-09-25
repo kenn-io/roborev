@@ -8,6 +8,7 @@ import (
 )
 
 func TestPickLayout(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		w, h int
@@ -30,6 +31,7 @@ func TestPickLayout(t *testing.T) {
 }
 
 func TestSplitGeometry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// At 140 wide: list = clamp(140-100, 50, 90) = 50, detail = 90.
@@ -78,6 +80,7 @@ func TestSplitGeometry(t *testing.T) {
 }
 
 func TestSplitGeometryWithDetailFocus(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withReview(splitTestReview()), withDimensions(180, 40))
 	m.focus = focusDetail
 	footerLines := len(convertAndReflowHelpRows(m.splitFooterRows(), m.width))
@@ -94,6 +97,7 @@ func TestSplitGeometryWithDetailFocus(t *testing.T) {
 }
 
 func TestResolveLayoutLocking(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withDimensions(150, 40))
 

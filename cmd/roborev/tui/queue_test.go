@@ -49,6 +49,7 @@ const (
 )
 
 func TestTUIQueueNavigation(t *testing.T) {
+	t.Parallel()
 	threeJobs := []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2, withStatus(storage.JobStatusQueued)),
@@ -161,6 +162,7 @@ func TestTUIQueueNavigation(t *testing.T) {
 }
 
 func TestTUIQueueMouseClickSelectsVisibleRow(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
@@ -182,6 +184,7 @@ func TestTUIQueueMouseClickSelectsVisibleRow(t *testing.T) {
 }
 
 func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
@@ -202,6 +205,7 @@ func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
 }
 
 func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.jobs = []storage.ReviewJob{
@@ -217,6 +221,7 @@ func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
 }
 
 func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
@@ -232,6 +237,7 @@ func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
 }
 
 func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
@@ -250,6 +256,7 @@ func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
 }
 
 func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
@@ -286,6 +293,7 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 }
 
 func TestTUIQueueCompactMode(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 80
@@ -314,6 +322,7 @@ func TestTUIQueueCompactMode(t *testing.T) {
 }
 
 func TestTUIQueueDistractionFreeToggle(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
@@ -347,6 +356,7 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 // so compact mode must still supply (empty) headers and strip the resulting
 // blank line.
 func TestTUIQueueDistractionFreePreservesLastJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	for _, h := range []int{20, 24, 30} {
 		for _, n := range []int{10, 25, 40} {
@@ -383,6 +393,7 @@ func TestTUIQueueDistractionFreePreservesLastJob(t *testing.T) {
 }
 
 func TestTUITasksMouseClickSelectsRow(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 140
@@ -399,6 +410,7 @@ func TestTUITasksMouseClickSelectsRow(t *testing.T) {
 }
 
 func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.fixJobs = []storage.ReviewJob{
@@ -416,6 +428,7 @@ func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
 }
 
 func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
+	t.Parallel()
 	parentID := int64(77)
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
@@ -431,6 +444,7 @@ func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
 }
 
 func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.fixJobs = []storage.ReviewJob{
@@ -445,6 +459,7 @@ func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
 }
 
 func TestTUITasksCtrlJFetchesReview(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.fixJobs = []storage.ReviewJob{
@@ -460,6 +475,7 @@ func TestTUITasksCtrlJFetchesReview(t *testing.T) {
 }
 
 func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
+	t.Parallel()
 	enqueued := time.Date(2026, time.February, 25, 16, 42, 0, 0, time.Local)
 	started := enqueued.Add(30 * time.Second)
 	finished := started.Add(1 * time.Minute)
@@ -495,6 +511,7 @@ func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
 }
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
+	t.Parallel()
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1), makeJob(2), makeJob(3)),
 		withQueueTestSelection(0),
@@ -517,6 +534,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 }
 
 func TestTUIQueueNavigationBoundariesWithMultiRepoFilter(t *testing.T) {
+	t.Parallel()
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/repo1")), makeJob(2, withRepoPath("/repo2"))),
 		withQueueTestSelection(1),
@@ -531,6 +549,7 @@ func TestTUIQueueNavigationBoundariesWithMultiRepoFilter(t *testing.T) {
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
+	t.Parallel()
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1)),
 		withQueueTestSelection(0),
@@ -544,6 +563,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 }
 
 func TestTUINavigateDownLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
+	t.Parallel()
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
 		withQueueTestSelection(0),
@@ -558,6 +578,7 @@ func TestTUINavigateDownLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
 }
 
 func TestTUIJobCellsContent(t *testing.T) {
+	t.Parallel()
 	m := model{width: 200}
 
 	t.Run("basic cell values", func(t *testing.T) {
@@ -665,6 +686,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 }
 
 func TestTUIJobCellsReviewTypeColumn(t *testing.T) {
+	t.Parallel()
 	m := model{width: 80}
 
 	tests := []struct {
@@ -695,6 +717,7 @@ func TestTUIJobCellsReviewTypeColumn(t *testing.T) {
 }
 
 func TestTUIJobCellsCost(t *testing.T) {
+	t.Parallel()
 	m := model{width: 200}
 	// cells[k] maps to logical column colRef+k (see jobCells copy),
 	// so the cost cell is at colCost-colRef.
@@ -737,6 +760,7 @@ func TestTUIJobCellsCost(t *testing.T) {
 }
 
 func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
 	m.height = 30
@@ -756,6 +780,7 @@ func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
 }
 
 func TestTUIQueueShowsReviewTypeColumnByDefault(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
 	m.height = 30
@@ -775,6 +800,7 @@ func TestTUIQueueShowsReviewTypeColumnByDefault(t *testing.T) {
 }
 
 func TestTUIQueueKeepsIdentifyingColumnsAt80Characters(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 	m.height = 30
@@ -799,6 +825,7 @@ func TestTUIQueueKeepsIdentifyingColumnsAt80Characters(t *testing.T) {
 }
 
 func TestTUIQueuePanelParentRendersPanelElapsedTime(t *testing.T) {
+	t.Parallel()
 	firstMemberStarted := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
 	synthesisStarted := firstMemberStarted.Add(9 * time.Minute)
 	synthesisFinished := firstMemberStarted.Add(11 * time.Minute)
@@ -828,6 +855,7 @@ func TestTUIQueuePanelParentRendersPanelElapsedTime(t *testing.T) {
 }
 
 func TestTUIQueueHeaderShowsPausedQueueState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
@@ -840,6 +868,7 @@ func TestTUIQueueHeaderShowsPausedQueueState(t *testing.T) {
 }
 
 func TestTUIQueueHeaderShowsPausedBadgeWhenFiltered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
 	m.height = 30
@@ -852,6 +881,7 @@ func TestTUIQueueHeaderShowsPausedBadgeWhenFiltered(t *testing.T) {
 }
 
 func TestTUIQueueCompactShowsPausedBadge(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
 	m.height = 10 // height < 15 triggers compact mode
@@ -863,6 +893,7 @@ func TestTUIQueueCompactShowsPausedBadge(t *testing.T) {
 }
 
 func TestTUITogglePauseKeyFlipsBadgeOptimistically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -880,6 +911,7 @@ func TestTUITogglePauseKeyFlipsBadgeOptimistically(t *testing.T) {
 }
 
 func TestTUIPauseResultRollsBackOnError(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.status.QueuePaused = true // optimistic pause already applied
@@ -891,6 +923,7 @@ func TestTUIPauseResultRollsBackOnError(t *testing.T) {
 }
 
 func TestTUIQueueHelpShowsPauseToggleLabel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200
@@ -905,6 +938,7 @@ func TestTUIQueueHelpShowsPauseToggleLabel(t *testing.T) {
 }
 
 func TestTUIQueueCollapsedPanelShowsAggregatedMemberCost(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2}))
 	memberA := makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone))
@@ -926,6 +960,7 @@ func TestTUIQueueCollapsedPanelShowsAggregatedMemberCost(t *testing.T) {
 }
 
 func TestTUIQueueCostCellDistinguishesMissingAmountFromZero(t *testing.T) {
+	t.Parallel()
 	m := model{}
 
 	drifted := storage.ReviewJob{
@@ -942,6 +977,7 @@ func TestTUIQueueCostCellDistinguishesMissingAmountFromZero(t *testing.T) {
 }
 
 func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{
 			MembersTotal:        2,
@@ -966,6 +1002,7 @@ func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
 }
 
 func TestTUIQueueCollapsedPanelShowsPartialSummaryCostBeforeExpansion(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{
 			MembersTotal:        2,
@@ -990,6 +1027,7 @@ func TestTUIQueueCollapsedPanelShowsPartialSummaryCostBeforeExpansion(t *testing
 }
 
 func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{
 			MembersTotal:        2,
@@ -1016,6 +1054,7 @@ func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T)
 }
 
 func TestTUIQueueCollapsedPanelShowsPartialCachedMemberCost(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2}))
 	memberA := makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone))
@@ -1037,6 +1076,7 @@ func TestTUIQueueCollapsedPanelShowsPartialCachedMemberCost(t *testing.T) {
 }
 
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
+	t.Parallel()
 	widths := []int{80, 100, 120, 200}
 	for _, w := range widths {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
@@ -1067,6 +1107,7 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 }
 
 func TestStatusColumnAutoWidth(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		statuses  []storage.JobStatus
@@ -1119,6 +1160,7 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 }
 
 func TestTUIPaginationAppendMode(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	initialJobs := make([]storage.ReviewJob, 50)
@@ -1148,6 +1190,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	jobs := make([]storage.ReviewJob, 100)
@@ -1173,6 +1216,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.loadingMore = true
 
@@ -1185,6 +1229,7 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.loadingMore = true
 
@@ -1197,6 +1242,7 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = true
@@ -1214,6 +1260,7 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = false
@@ -1231,6 +1278,7 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPaginationAllowedForMultiRepoFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = false
@@ -1251,6 +1299,7 @@ func TestTUIPaginationAllowedForMultiRepoFilter(t *testing.T) {
 }
 
 func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = false
@@ -1269,6 +1318,7 @@ func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = true
@@ -1287,6 +1337,7 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -1326,6 +1377,7 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 }
 
 func TestTUIResizeBehavior(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                      string
 		initialHeight             int
@@ -1445,6 +1497,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -1474,6 +1527,7 @@ func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -1503,6 +1557,7 @@ func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 }
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1519,6 +1574,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1535,6 +1591,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1549,6 +1606,7 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 }
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1562,6 +1620,7 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 }
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
@@ -1587,6 +1646,7 @@ func setupQueue(jobs []storage.ReviewJob, selectedIdx int) model {
 }
 
 func TestTUIJobClosedTransitions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		initialJobs      []storage.ReviewJob
@@ -1730,6 +1790,7 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 }
 
 func TestTUIReviewClosedTransitions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                 string
 		initialReviewPending map[int64]pendingState
@@ -1766,6 +1827,7 @@ func TestTUIReviewClosedTransitions(t *testing.T) {
 }
 
 func TestTUIClosedHideClosedStats(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		initialJobs    []storage.ReviewJob
@@ -1836,6 +1898,7 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 }
 
 func TestTUIQueueNavigationSequences(t *testing.T) {
+	t.Parallel()
 	threeJobs := []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
@@ -1908,6 +1971,7 @@ func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 }
 
 func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
+	t.Parallel()
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -1925,6 +1989,7 @@ func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
 }
 
 func TestTUIQueueLongCellContent(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 	m.height = 20
@@ -1951,6 +2016,7 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 }
 
 func TestTUIQueueLongAgentName(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1976,6 +2042,7 @@ func TestTUIQueueLongAgentName(t *testing.T) {
 }
 
 func TestTUIQueueWideCharacterWidth(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -2002,6 +2069,7 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 }
 
 func TestTUIQueueAgentColumnCapped(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 120
 	m.height = 20
@@ -2035,6 +2103,7 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 }
 
 func TestTUITasksFlexOvershootHandled(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 50
@@ -2061,6 +2130,7 @@ func TestTUITasksFlexOvershootHandled(t *testing.T) {
 }
 
 func TestTUIQueueFlexOvershootHandled(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		width  int
@@ -2102,6 +2172,7 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 }
 
 func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	// Leave room for the default-visible Reasoning column.
 	m.width = 130
@@ -2123,6 +2194,7 @@ func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 }
 
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 120
@@ -2138,6 +2210,7 @@ func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
 }
 
 func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
+	t.Parallel()
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newTuiModel("http://localhost")
@@ -2155,6 +2228,7 @@ func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
 }
 
 func TestColumnOptionsModalOpenClose(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.currentView = viewQueue
@@ -2177,6 +2251,7 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 }
 
 func TestColumnOptionsToggle(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.currentView = viewQueue
@@ -2197,6 +2272,7 @@ func TestColumnOptionsToggle(t *testing.T) {
 }
 
 func TestColumnOptionsMouseClick(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.currentView = viewQueue
@@ -2226,6 +2302,7 @@ func TestColumnOptionsMouseClick(t *testing.T) {
 }
 
 func TestColumnOptionsMouseClickSentinel(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.currentView = viewQueue
@@ -2265,6 +2342,7 @@ func TestColumnOptionsMouseClickSentinel(t *testing.T) {
 }
 
 func TestColumnOptionsMouseWheel(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.currentView = viewQueue
@@ -2287,6 +2365,7 @@ func TestColumnOptionsMouseWheel(t *testing.T) {
 }
 
 func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.mouseEnabled = false
@@ -2308,6 +2387,7 @@ func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
 }
 
 func TestHiddenColumnNotRendered(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withBranch("main"), withAgent("codex")),
@@ -2325,6 +2405,7 @@ func TestHiddenColumnNotRendered(t *testing.T) {
 }
 
 func TestColumnBordersRendered(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withBranch("main"), withAgent("codex")),
@@ -2347,6 +2428,7 @@ func TestColumnBordersRendered(t *testing.T) {
 }
 
 func TestQueueColWidthCacheColdStart(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.width = 120
 	m.height = 24
@@ -2363,6 +2445,7 @@ func TestQueueColWidthCacheColdStart(t *testing.T) {
 }
 
 func TestQueueColWidthCacheInvalidation(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.width = 120
 	m.height = 24
@@ -2395,6 +2478,7 @@ func TestQueueColWidthCacheInvalidation(t *testing.T) {
 }
 
 func TestQueueColWidthCacheReuse(t *testing.T) {
+	t.Parallel()
 	m := newTuiModel("http://localhost")
 	m.width = 120
 	m.height = 24
@@ -2414,6 +2498,7 @@ func TestQueueColWidthCacheReuse(t *testing.T) {
 }
 
 func TestTaskColWidthCacheColdStart(t *testing.T) {
+	t.Parallel()
 	parentID := int64(42)
 	m := newTuiModel("http://localhost")
 	m.width = 120
@@ -2435,6 +2520,7 @@ func TestTaskColWidthCacheColdStart(t *testing.T) {
 }
 
 func TestTaskColWidthCacheInvalidation(t *testing.T) {
+	t.Parallel()
 	parentID := int64(42)
 	m := newTuiModel("http://localhost")
 	m.width = 120
@@ -2456,6 +2542,7 @@ func TestTaskColWidthCacheInvalidation(t *testing.T) {
 }
 
 func TestTaskColWidthCacheReuse(t *testing.T) {
+	t.Parallel()
 	parentID := int64(42)
 	m := newTuiModel("http://localhost")
 	m.width = 120
@@ -2474,6 +2561,7 @@ func TestTaskColWidthCacheReuse(t *testing.T) {
 }
 
 func TestStatusLabel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		job  storage.ReviewJob
@@ -2497,6 +2585,7 @@ func TestStatusLabel(t *testing.T) {
 }
 
 func TestStatusColor(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		status storage.JobStatus
@@ -2523,6 +2612,7 @@ func TestStatusColor(t *testing.T) {
 }
 
 func TestVerdictColor(t *testing.T) {
+	t.Parallel()
 	strPtr := func(s string) *string { return &s }
 
 	tests := []struct {
@@ -2545,6 +2635,7 @@ func TestVerdictColor(t *testing.T) {
 }
 
 func TestClosedKeyShortcut(t *testing.T) {
+	t.Parallel()
 	newTestModel := func() model {
 		return setupTestModel([]storage.ReviewJob{
 			makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
@@ -2573,6 +2664,7 @@ func TestClosedKeyShortcut(t *testing.T) {
 }
 
 func TestMigrateColumnConfig(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		columnOrder  []string
@@ -2679,6 +2771,7 @@ func TestMigrateColumnConfig(t *testing.T) {
 }
 
 func TestParseColumnOrderAppendsMissing(t *testing.T) {
+	t.Parallel()
 	oldCustom := []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"}
 	got := parseColumnOrder(oldCustom)
 
@@ -2705,6 +2798,7 @@ func TestParseColumnOrderAppendsMissing(t *testing.T) {
 }
 
 func TestDefaultColumnOrderDetection(t *testing.T) {
+	t.Parallel()
 	defaultOrder := make([]int, len(toggleableColumns))
 	copy(defaultOrder, toggleableColumns)
 
@@ -2718,6 +2812,7 @@ func TestDefaultColumnOrderDetection(t *testing.T) {
 }
 
 func TestDefaultColumnOrderPlacesFindingsBesideVerdict(t *testing.T) {
+	t.Parallel()
 	pfIndex := slices.Index(toggleableColumns, colPF)
 	findingsIndex := slices.Index(toggleableColumns, colFindings)
 
@@ -2725,6 +2820,7 @@ func TestDefaultColumnOrderPlacesFindingsBesideVerdict(t *testing.T) {
 }
 
 func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
+	t.Parallel()
 	hidden := parseHiddenColumns(nil)
 	assert.True(t, hidden[colSessionID])
 	assert.True(t, hidden[colRequestedModel])
@@ -2741,6 +2837,7 @@ func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
 // TestColumnMetadataComplete verifies every toggleable column has
 // entries in all required metadata maps.
 func TestColumnMetadataComplete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// toggleableColumns should cover all columns except colSel
@@ -2763,6 +2860,7 @@ func TestColumnMetadataComplete(t *testing.T) {
 // rendered output. Catches missing entries in the allHeaders array
 // inside renderQueueView.
 func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 300 // wide enough for all columns
 	m.height = 20
@@ -2803,6 +2901,7 @@ func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
 // migration, new default-hidden columns must be hidden and flex
 // columns (Ref, Branch, Repo) must retain usable widths.
 func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
+	t.Parallel()
 	// Pre-upgrade config (version 0): only session_id hidden
 	staleCfg := &config.Config{
 		HiddenColumns: []string{"session_id"},
@@ -2850,6 +2949,7 @@ func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
 // version-1 migration, a user who explicitly unhides new columns
 // keeps their choice on subsequent startups.
 func TestQueueRenderPostMigrationUserChoice(t *testing.T) {
+	t.Parallel()
 	// Post-migration config: user unhid all default-hidden columns
 	postCfg := &config.Config{
 		HiddenColumns:       []string{"branch"},
@@ -2867,6 +2967,7 @@ func TestQueueRenderPostMigrationUserChoice(t *testing.T) {
 // options modal, and saves. On next startup, the saved config must
 // not be re-migrated — saveColumnOptions stamps ColumnConfigVersion.
 func TestSaveColumnOptionStampsVersion(t *testing.T) {
+	t.Parallel()
 	// Simulate what saveColumnOptions writes: the user chose to hide
 	// only "branch", showing all default-hidden columns.
 	// saveColumnOptions now stamps ColumnConfigVersion = 1.
@@ -2897,7 +2998,7 @@ func TestSaveColumnOptionStampsVersion(t *testing.T) {
 // TestSaveColumnOptionsWritesVersion exercises the real
 // saveColumnOptions → config.LoadGlobal/SaveGlobal path and
 // verifies ColumnConfigVersion is persisted.
-func TestSaveColumnOptionsWritesVersion(t *testing.T) {
+func TestSaveColumnOptionsWritesVersion(t *testing.T) { //nolint:paralleltest // t.Setenv of ROBOREV_DATA_DIR
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
@@ -2939,6 +3040,7 @@ func TestSaveColumnOptionsWritesVersion(t *testing.T) {
 // backfills. This is the correct tradeoff: the buggy window was
 // brief and the columns being visible caused broken layouts.
 func TestMigratePreV1ConfigWithVisibleNewColumns(t *testing.T) {
+	t.Parallel()
 	// User saved ["branch"] during buggy window, intending to show
 	// requested_model and requested_provider. No version stamp.
 	cfg := &config.Config{
@@ -2960,6 +3062,7 @@ func TestMigratePreV1ConfigWithVisibleNewColumns(t *testing.T) {
 }
 
 func TestJobCells_Skipped(t *testing.T) {
+	t.Parallel()
 	m := newQueueTestModel()
 	j := storage.ReviewJob{
 		ID:         42,
@@ -2977,6 +3080,7 @@ func TestJobCells_Skipped(t *testing.T) {
 }
 
 func TestQueueRenderUnchangedWithoutPanels(t *testing.T) {
+	t.Parallel()
 	jobs := []storage.ReviewJob{
 		makeJob(3, withRef("aaa1111"), withStatus(storage.JobStatusDone)),
 		makeJob(2, withRef("bbb2222"), withStatus(storage.JobStatusRunning)),
@@ -3017,6 +3121,7 @@ func seededPanelModel(t *testing.T) model {
 }
 
 func TestQueueShowsPanelMemberNamesWithSameReviewType(t *testing.T) {
+	t.Parallel()
 	for _, width := range []int{120, 180} {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
 			m := seededPanelModel(t)
@@ -3046,6 +3151,7 @@ func TestQueueShowsPanelMemberNamesWithSameReviewType(t *testing.T) {
 }
 
 func TestSelectedJobResolvesMember(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member, not in m.jobs
@@ -3055,6 +3161,7 @@ func TestSelectedJobResolvesMember(t *testing.T) {
 }
 
 func TestNavSkipsCollapsedMembers(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)            // collapsed: visible rows = [20, 10]
 	m, _ = pressSpecial(m, tea.KeyDown) // 20 -> 10
 	assert.Equal(t, int64(10), m.selectedJobID)
@@ -3063,6 +3170,7 @@ func TestNavSkipsCollapsedMembers(t *testing.T) {
 }
 
 func TestNavWalksExpandedMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true // visible rows = [20, 10, 11, 12]
@@ -3076,6 +3184,7 @@ func TestNavWalksExpandedMembers(t *testing.T) {
 }
 
 func TestPrevNextKeysWalkFlattenedRows(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 10, 1
@@ -3086,6 +3195,7 @@ func TestPrevNextKeysWalkFlattenedRows(t *testing.T) {
 }
 
 func TestSelectionRestoredByIDAfterRefresh(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member is selected
@@ -3095,6 +3205,7 @@ func TestSelectionRestoredByIDAfterRefresh(t *testing.T) {
 }
 
 func TestMutatingActionsBlockedOnMember(t *testing.T) {
+	t.Parallel()
 	for _, key := range []rune{'r', 'a', 'x'} {
 		m := seededPanelModel(t)
 		m.expandedPanels[testUUID("R")] = true
@@ -3106,6 +3217,7 @@ func TestMutatingActionsBlockedOnMember(t *testing.T) {
 }
 
 func TestMemberCloseDoesNotTouchParentStatsOrSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
@@ -3122,6 +3234,7 @@ func TestMemberCloseDoesNotTouchParentStatsOrSelection(t *testing.T) {
 }
 
 func TestBoundaryFlashWithExpandedPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// rows when expanded: [20 (top), 10 (parent), 11, 12 (last member)]
 	m := seededPanelModel(t)
@@ -3142,6 +3255,7 @@ func TestBoundaryFlashWithExpandedPanel(t *testing.T) {
 }
 
 func TestSpaceTogglesPanelParent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
 	m, _ = pressKey(m, ' ')
@@ -3151,6 +3265,7 @@ func TestSpaceTogglesPanelParent(t *testing.T) {
 }
 
 func TestRightArrowExpandsPanelParent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
 
@@ -3161,6 +3276,7 @@ func TestRightArrowExpandsPanelParent(t *testing.T) {
 }
 
 func TestLeftArrowCollapsesExpandedPanelParent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
@@ -3172,6 +3288,7 @@ func TestLeftArrowCollapsesExpandedPanelParent(t *testing.T) {
 }
 
 func TestLeftArrowOnPanelMemberCollapsesParent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 11, -1 // first member
@@ -3183,6 +3300,7 @@ func TestLeftArrowOnPanelMemberCollapsesParent(t *testing.T) {
 }
 
 func TestPanelArrowKeysFallBackToNavigationOnPlainRows(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 20, 0 // standalone job above the panel
 
@@ -3202,6 +3320,7 @@ func TestPanelArrowKeysFallBackToNavigationOnPlainRows(t *testing.T) {
 }
 
 func TestSpaceNoOpOnNonParent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 20, 0 // a standalone job
 	before := len(m.expandedPanels)
@@ -3211,6 +3330,7 @@ func TestSpaceNoOpOnNonParent(t *testing.T) {
 }
 
 func TestExpandFetchesMembersWhenUncached(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	delete(m.panelMembers, testUUID("R")) // not yet fetched
 	m.selectedJobID, m.selectedIdx = 10, 1
@@ -3220,6 +3340,7 @@ func TestExpandFetchesMembersWhenUncached(t *testing.T) {
 }
 
 func TestExpandUsesCacheWhenPresent(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t) // members for R already cached
 	m.selectedJobID, m.selectedIdx = 10, 1
 	_, cmd := pressKey(m, ' ')
@@ -3227,6 +3348,7 @@ func TestExpandUsesCacheWhenPresent(t *testing.T) {
 }
 
 func TestPanelMembersMsgSuccessCaches(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	delete(m.panelMembers, testUUID("R"))
 	fetched := []storage.ReviewJob{
@@ -3239,6 +3361,7 @@ func TestPanelMembersMsgSuccessCaches(t *testing.T) {
 }
 
 func TestPanelMembersMsgErrorDoesNotCache(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	delete(m.panelMembers, testUUID("R"))
 	updated, _ := m.Update(panelMembersMsg{runUUID: testUUID("R"), err: assert.AnError})
@@ -3249,6 +3372,7 @@ func TestPanelMembersMsgErrorDoesNotCache(t *testing.T) {
 }
 
 func TestCollapseKeepsParentSelected(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true // members 11,12 visible
 	m.selectedJobID, m.selectedIdx = 10, 1 // the parent is selected
@@ -3258,6 +3382,7 @@ func TestCollapseKeepsParentSelected(t *testing.T) {
 }
 
 func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// The server returns the full run: a synthesis row plus two members given
 	// out of order (index 1 before index 0). The cmd must drop the synthesis
@@ -3287,6 +3412,7 @@ func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
 }
 
 func TestFetchPanelMembersServerError(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -3298,6 +3424,7 @@ func TestFetchPanelMembersServerError(t *testing.T) {
 }
 
 func TestFetchPanelMembersEmptyRun(t *testing.T) {
+	t.Parallel()
 	// A run with only a synthesis row (no members yet) yields no members
 	// and no error.
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -3322,7 +3449,7 @@ func withTestColor(t *testing.T) {
 	t.Setenv("ROBOREV_COLOR_MODE", "dark")
 }
 
-func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {
+func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) { //nolint:paralleltest // t.Setenv of NO_COLOR, CLICOLOR and ROBOREV_COLOR_MODE via withTestColor
 	withTestColor(t)
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
@@ -3332,6 +3459,7 @@ func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {
 }
 
 func TestRenderShowsTerminalOutcomeSplit(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersSucceeded: 2, MembersFailed: 1}))
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -3344,6 +3472,7 @@ func TestRenderShowsTerminalOutcomeSplit(t *testing.T) {
 }
 
 func TestRenderNoDisclosureColumnWhenNoPanels(t *testing.T) {
+	t.Parallel()
 	jobs := []storage.ReviewJob{makeJob(1, withRef("plain"), withStatus(storage.JobStatusDone))}
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width, m.height = 120, 30
@@ -3356,6 +3485,7 @@ func TestRenderNoDisclosureColumnWhenNoPanels(t *testing.T) {
 }
 
 func TestExpandHintOnlyWhenParentSelected(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)               // jobs = [20 standalone, 10 parent]
 	m.selectedJobID, m.selectedIdx = 20, 0 // standalone selected
 	assert.NotContains(t, stripTestANSI(m.renderQueueView()), "space",
@@ -3371,6 +3501,7 @@ func TestExpandHintOnlyWhenParentSelected(t *testing.T) {
 // when a panel parent is selected. Cover widths with and without an extra
 // reflow line so adding a shortcut does not invalidate the test's fixture.
 func TestQueueHelpLinesAccountForExpandHint(t *testing.T) {
+	t.Parallel()
 	var extraLineWidths, sameHeightWidths int
 	for w := 80; w <= 160; w++ {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
@@ -3403,6 +3534,7 @@ func TestQueueHelpLinesAccountForExpandHint(t *testing.T) {
 }
 
 func TestEnterOnInProgressParentFlashesProgress(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withStatus(storage.JobStatusRunning),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 2}))
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -3414,6 +3546,7 @@ func TestEnterOnInProgressParentFlashesProgress(t *testing.T) {
 }
 
 func TestEnterOnFailedParentOpensError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	parent := makeJob(10, withStatus(storage.JobStatusFailed),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersFailed: 3}))
@@ -3429,6 +3562,7 @@ func TestEnterOnFailedParentOpensError(t *testing.T) {
 }
 
 func TestPanelMembersNeedFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	assert.True(m.panelMembersNeedFetch(testUUID("R")), "uncached run needs a fetch")
@@ -3442,6 +3576,7 @@ func TestPanelMembersNeedFetch(t *testing.T) {
 }
 
 func TestEnterOnDoneParentFetchesSynthesisReview(t *testing.T) {
+	t.Parallel()
 	parent := makeJob(10, withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersSucceeded: 3}))
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -3452,6 +3587,7 @@ func TestEnterOnDoneParentFetchesSynthesisReview(t *testing.T) {
 }
 
 func TestEnterOnMemberFetchesMemberReview(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t) // members 11,12 done
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 11 // a member row
@@ -3460,6 +3596,7 @@ func TestEnterOnMemberFetchesMemberReview(t *testing.T) {
 }
 
 func TestStaleExpandedPanelRunsTriggersOnNonTerminal(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning // one member still running
@@ -3468,12 +3605,14 @@ func TestStaleExpandedPanelRunsTriggersOnNonTerminal(t *testing.T) {
 }
 
 func TestStaleExpandedPanelRunsSkipsAllTerminal(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t) // members 11,12 both Done
 	m.expandedPanels[testUUID("R")] = true
 	assert.Empty(t, m.staleExpandedPanelRuns(), "all-terminal panel does not refetch")
 }
 
 func TestStaleExpandedPanelRunsSkipsCollapsed(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning
 	// R is NOT expanded
@@ -3481,6 +3620,7 @@ func TestStaleExpandedPanelRunsSkipsCollapsed(t *testing.T) {
 }
 
 func TestJobsRefreshRefetchesStalePanel(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning
@@ -3490,6 +3630,7 @@ func TestJobsRefreshRefetchesStalePanel(t *testing.T) {
 }
 
 func TestRefreshedMembersKeepSelection(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member selected
@@ -3502,6 +3643,7 @@ func TestRefreshedMembersKeepSelection(t *testing.T) {
 }
 
 func TestStaleExpandedPanelRunsSortsMultipleRuns(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	summary := storage.PanelSummary{MembersTotal: 1}
 	// Two synthesis parents listed Z-before-A so the result order proves the
@@ -3521,6 +3663,7 @@ func TestStaleExpandedPanelRunsSortsMultipleRuns(t *testing.T) {
 }
 
 func TestContentNavWalksFlattenedRowsFromMember(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := seededPanelModel(t)                // jobs [20,10]; members 11,12 (all Done)
 	m.expandedPanels[testUUID("R")] = true  // flattened: [20, 10, 11, 12]
@@ -3541,6 +3684,7 @@ func TestContentNavWalksFlattenedRowsFromMember(t *testing.T) {
 // (hasMore, not loading, no repo/branch filter), so the gate is the decisive
 // factor — the guard assertion below keeps the test from going vacuous.
 func TestMemberAtBoundaryDoesNotPaginate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true  // flattened: [20, 10, 11, 12]
@@ -3556,6 +3700,7 @@ func TestMemberAtBoundaryDoesNotPaginate(t *testing.T) {
 }
 
 func TestContentNavFromMemberSkipsIneligible(t *testing.T) {
+	t.Parallel()
 	// In log view a queued member is ineligible (log predicate = not queued).
 	// Log view binds j/k to scrolling; ←/→ are its prev/next (handlers_modal.go).
 	m := seededPanelModel(t)
@@ -3570,6 +3715,7 @@ func TestContentNavFromMemberSkipsIneligible(t *testing.T) {
 }
 
 func TestContentNavSelectionGoneFlashesStable(t *testing.T) {
+	t.Parallel()
 	// Selection id not present in the flattened rows (panel collapsed under us):
 	// flash and keep the current view stable; do not jump to a parent index.
 	m := seededPanelModel(t)
@@ -3586,6 +3732,7 @@ func TestContentNavSelectionGoneFlashesStable(t *testing.T) {
 }
 
 func TestContentNavParentOnlyUnchanged(t *testing.T) {
+	t.Parallel()
 	// With no panels, content nav must behave exactly as before (parent list).
 	jobs := []storage.ReviewJob{
 		makeJob(3, withStatus(storage.JobStatusDone)),
@@ -3604,6 +3751,7 @@ func TestContentNavParentOnlyUnchanged(t *testing.T) {
 }
 
 func TestPageKeysStillScrollInReview(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 11, -1
@@ -3620,6 +3768,7 @@ func TestPageKeysStillScrollInReview(t *testing.T) {
 // adjacent visible review, not strand the user with a "no longer visible" flash.
 // Both directions recover from the hidden anchor over m.jobs.
 func TestContentNavParentHiddenByHideClosedRecovers(t *testing.T) {
+	t.Parallel()
 	// Newest-first, all standalone Done jobs (no panels). Job 2 is closed, so
 	// hide-closed removes it from the flattened rows; jobs 3 and 1 stay visible.
 	newHidden := func() model {
@@ -3669,6 +3818,7 @@ func TestContentNavParentHiddenByHideClosedRecovers(t *testing.T) {
 // m.jobs and not in the flattened rows) keeps flash-and-stay — no positional
 // jump, since a member has no m.jobs anchor.
 func TestContentNavHiddenMemberFlashesStable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := seededPanelModel(t)                // members 11,12 in panelMembers, not m.jobs
 	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 absent from rows
@@ -3692,6 +3842,7 @@ func TestContentNavHiddenMemberFlashesStable(t *testing.T) {
 // points at the shifted successor, so the positional fallback must start there
 // rather than at selectedIdx+dir, or older-nav skips the true-adjacent review.
 func TestContentNavParentOmittedFromJobsRecovers(t *testing.T) {
+	t.Parallel()
 	// Originally [4,3,2,1] with job 3 selected (idx 1). Job 3 was closed and a
 	// refresh omitted it: m.jobs is now [4,2,1] but selectedIdx stays 1 (now
 	// job 2). selectedJobID 3 is absent from m.jobs.
@@ -3731,6 +3882,7 @@ func TestContentNavParentOmittedFromJobsRecovers(t *testing.T) {
 }
 
 func TestQueueReasoningColumn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width, m.height = 200, 20

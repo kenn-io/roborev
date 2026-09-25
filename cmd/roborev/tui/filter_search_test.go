@@ -10,6 +10,7 @@ import (
 )
 
 func TestTUIFilterSearch(t *testing.T) {
+	t.Parallel()
 	testNodes := []treeFilterNode{
 		{name: "repo-alpha", count: 5},
 		{name: "repo-beta", count: 3},
@@ -42,6 +43,7 @@ func TestTUIFilterSearch(t *testing.T) {
 }
 
 func TestTUIFilterSearchSequential(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-alpha", 5),
 		makeNode("repo-beta", 3),
@@ -68,6 +70,7 @@ func TestTUIFilterSearchSequential(t *testing.T) {
 }
 
 func TestTUIFilterTypingSearch(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(
 		withCurrentView(viewFilter),
 		withFilterTree([]treeFilterNode{makeNode("repo-a", 5)}),
@@ -102,6 +105,7 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 }
 
 func TestTUIFilterTypingHAndL(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "highlight",
@@ -123,6 +127,7 @@ func TestTUIFilterTypingHAndL(t *testing.T) {
 // vim-style navigation/quit shortcuts instead of being appended to
 // the search text.
 func TestTUIFilterTypingJKQ(t *testing.T) {
+	t.Parallel()
 	for _, r := range []rune{'j', 'k', 'q'} {
 		t.Run(string(r), func(t *testing.T) {
 			m := initFilterModel([]treeFilterNode{
@@ -142,6 +147,7 @@ func TestTUIFilterTypingJKQ(t *testing.T) {
 }
 
 func TestTUIFilterSearchByRepoPath(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
@@ -157,6 +163,7 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 }
 
 func TestTUIFilterSearchByDisplayName(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{name: "My Project", rootPaths: []string{"/home/user/my-project-repo"}, count: 2},
 
@@ -183,6 +190,7 @@ func TestTUIFilterSearchByDisplayName(t *testing.T) {
 }
 
 func TestTUIFilterBackspaceMultiByte(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(
 		withCurrentView(viewFilter),
 		withFilterTree([]treeFilterNode{makeNode("repo-a", 10)}),
@@ -217,6 +225,7 @@ func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 }
 
 func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -244,6 +253,7 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 }
 
 func TestTUISearchFetchProgressiveLoading(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	nodes := make([]treeFilterNode, 8)
@@ -290,6 +300,7 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 }
 
 func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	nodes := make([]treeFilterNode, 3)
@@ -328,6 +339,7 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 }
 
 func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -352,6 +364,7 @@ func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
 }
 
 func TestTUILateErrorAfterSearchClear(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -382,6 +395,7 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 // session. Scenario: type "f" → clear → type "m" → old error
 // arrives with stale searchSeq.
 func TestTUIStaleSearchErrorIgnored(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
@@ -416,6 +430,7 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 // search text before repos have loaded, fetchUnloadedBranches is
 // triggered once repos arrive via reposMsg.
 func TestTUISearchBeforeReposLoad(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 
@@ -447,6 +462,7 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 // text (non-empty → non-empty) clears fetchFailed so previously
 // failed repos are retried with the new search.
 func TestTUISearchEditClearsFetchFailed(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{

@@ -73,6 +73,7 @@ func seedPanelRow(t *testing.T, db *DB, githubRepo string, pr int, headSHA strin
 }
 
 func TestClaimPanelForPosting(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	id := seedPanelRow(t, db, "o/r", 7, "h")
@@ -100,6 +101,7 @@ func TestClaimPanelForPosting(t *testing.T) {
 // which directly guards timestamp-format correctness: backdating the claim to be
 // older than staleWindow makes it reclaimable, while a fresh claim does not.
 func TestClaimPanelForPostingStaleReclaim(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -127,6 +129,7 @@ func TestClaimPanelForPostingStaleReclaim(t *testing.T) {
 // TestClaimPanelForPostingRace covers F3: N concurrent posters for one panel row
 // produce exactly one winner, guaranteeing a single PR comment per run.
 func TestClaimPanelForPostingRace(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	id := seedPanelRow(t, db, "o/r", 9, "race")
@@ -158,6 +161,7 @@ func TestClaimPanelForPostingRace(t *testing.T) {
 // queried repo, and DeleteCIPanel removes a single mapping row. The query is
 // DISTINCT with no ORDER BY, so results are compared order-independently.
 func TestGetPendingPanelPRsAndDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -197,6 +201,7 @@ func TestGetPendingPanelPRsAndDelete(t *testing.T) {
 // query returns only the un-posted (posted_at IS NULL) rows for the given
 // (github_repo, pr_number), excluding posted rows and rows for other PRs/repos.
 func TestGetActivePanelsForPR(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -222,6 +227,7 @@ func TestGetActivePanelsForPR(t *testing.T) {
 // time. A recent running member, an old posted run, and an old queued member are
 // all excluded.
 func TestGetTimedOutPanels(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -264,6 +270,7 @@ func TestGetTimedOutPanels(t *testing.T) {
 }
 
 func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -314,6 +321,7 @@ func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testi
 // TestDeleteCIPanelByRun covers F13: deleting by panel_run_uuid removes the
 // mapping row. seedPanelRow sets panel_run_uuid to "run-"+headSHA.
 func TestDeleteCIPanelByRun(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -326,6 +334,7 @@ func TestDeleteCIPanelByRun(t *testing.T) {
 }
 
 func TestDeleteCIPanelByRunDoesNotClaimUnmappedPanel(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -342,6 +351,7 @@ func TestDeleteCIPanelByRunDoesNotClaimUnmappedPanel(t *testing.T) {
 }
 
 func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -383,6 +393,7 @@ func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
 }
 
 func TestGetCIPanelByPRSHANotFound(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -392,6 +403,7 @@ func TestGetCIPanelByPRSHANotFound(t *testing.T) {
 }
 
 func TestGetCIPanelBySynthesisJobIDNotFound(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -404,6 +416,7 @@ func TestGetCIPanelBySynthesisJobIDNotFound(t *testing.T) {
 // recent run's created_at across SHAs, the zero time when no run exists, and
 // honors the github_repo + pr_number filter.
 func TestLatestPanelTimeForPR(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -432,6 +445,7 @@ func TestLatestPanelTimeForPR(t *testing.T) {
 }
 
 func TestLatestPanelTimeForPRHandlesMixedTimestampFormats(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -474,6 +488,7 @@ func seedPanelRunForRepo(t *testing.T, db *DB, repoID int64, githubRepo string, 
 // and the github_repo filter scopes the result. The failed-unposted case proves
 // raw-fallback runs (synthesis crashed, no review) still get a recovery pass.
 func TestGetUnpostedTerminalPanels(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -513,6 +528,7 @@ func TestGetUnpostedTerminalPanels(t *testing.T) {
 // every member and the synthesis job, the mapping records that uuid, and
 // synthesis_job_id is backfilled to the synthesis job's id.
 func TestCreateCIPanelRunHappyPath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -550,6 +566,7 @@ func TestCreateCIPanelRunHappyPath(t *testing.T) {
 }
 
 func TestCreateCIPanelRunReclaimsRetiredSameHead(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -577,6 +594,7 @@ func TestCreateCIPanelRunReclaimsRetiredSameHead(t *testing.T) {
 }
 
 func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -594,6 +612,7 @@ func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
 // TestCreateCIPanelRunRace covers F2: two concurrent creators for the same
 // (repo, pr, sha) produce exactly one winner, and the loser creates no jobs.
 func TestCreateCIPanelRunRace(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -636,6 +655,7 @@ func TestCreateCIPanelRunRace(t *testing.T) {
 }
 
 func TestCIPanelTerminalMetricsRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -656,6 +676,7 @@ func TestCIPanelTerminalMetricsRoundTrip(t *testing.T) {
 }
 
 func TestCIPanelTerminalMetricsNullForLegacyRows(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -674,6 +695,7 @@ func TestCIPanelTerminalMetricsNullForLegacyRows(t *testing.T) {
 // pool's later connections have it OFF, so an FK-based trigger is a false pass.
 // failingExecer is pragma-independent — it forces the synthesis insert to fail.
 func TestCreateCIPanelRunAtomicity(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -722,6 +744,7 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 }
 
 func TestMarkPanelPostedSnapshotsAttemptMetrics(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -756,6 +779,7 @@ func TestMarkPanelPostedSnapshotsAttemptMetrics(t *testing.T) {
 }
 
 func TestMarkPanelPostedWithoutAttemptRow(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -777,6 +801,7 @@ func TestMarkPanelPostedWithoutAttemptRow(t *testing.T) {
 // first_attempt_at/attempt_count/posted_at, and the attempt row set 'done' by
 // the first call must stay 'done' rather than being touched again.
 func TestMarkPanelPostedTwiceErrorsAndPreservesFirstResult(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -821,6 +846,7 @@ func TestMarkPanelPostedTwiceErrorsAndPreservesFirstResult(t *testing.T) {
 // must not mark the attempt row done, since the panel run was abandoned by
 // the retire, not completed.
 func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -851,6 +877,7 @@ func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
 // still-active runs at other HEADs are flagged; same-HEAD, posted, retired,
 // other-PR, and other-repo rows are untouched.
 func TestMarkPanelsAllowStalePost(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -889,6 +916,7 @@ func TestMarkPanelsAllowStalePost(t *testing.T) {
 // TestMarkPanelRetiredIfStalePostDisallowed covers the atomic
 // retire-unless-flagged CAS used by the stale-head posting guard.
 func TestMarkPanelRetiredIfStalePostDisallowed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

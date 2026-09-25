@@ -10,6 +10,7 @@ import (
 )
 
 func TestPatchIDSyncRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -109,6 +110,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 }
 
 func TestRemapJobGitRef_RunningJob(t *testing.T) {
+	t.Parallel()
 	// Running jobs must be skipped by remap: the worker has already
 	// built the prompt with the old SHA, so updating git_ref would
 	// create a mismatch between the stored prompt and the ref.
@@ -152,6 +154,7 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 }
 
 func TestRemapJob_RunningJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -185,6 +188,7 @@ func TestRemapJob_RunningJob(t *testing.T) {
 }
 
 func TestRemapTriggersResync(t *testing.T) {
+	t.Parallel()
 	// After remapping a synced job, updated_at should exceed synced_at,
 	// causing GetJobsToSync to include it again.
 	db := openTestDB(t)

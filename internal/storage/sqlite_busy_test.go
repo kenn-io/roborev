@@ -14,6 +14,7 @@ import (
 )
 
 func TestIsSQLiteBusy(t *testing.T) {
+	t.Parallel()
 	assert.False(t, IsSQLiteBusy(nil))
 	assert.False(t, IsSQLiteBusy(errors.New("disk I/O error")))
 	assert.False(t, IsSQLiteBusy(errors.New("no such table: review_jobs")))
@@ -24,6 +25,7 @@ func TestIsSQLiteBusy(t *testing.T) {
 }
 
 func TestIsSQLiteBusyRealError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "busy.db")
 	dsn := path + "?_pragma=journal_mode(DELETE)&_pragma=busy_timeout(0)"
@@ -48,6 +50,7 @@ func TestIsSQLiteBusyRealError(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusySucceedsAfterContention(t *testing.T) {
+	t.Parallel()
 	n := 0
 	var sleeps []time.Duration
 	job, err := retryOnSQLiteBusy(context.Background(), 4, 0, 50*time.Millisecond, func(_ context.Context, d time.Duration) error {
@@ -68,6 +71,7 @@ func TestRetryOnSQLiteBusySucceedsAfterContention(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyDoesNotRetryPermanentErrors(t *testing.T) {
+	t.Parallel()
 	n := 0
 	sleepCalls := 0
 	_, err := retryOnSQLiteBusy(context.Background(), 4, 0, time.Millisecond, func(context.Context, time.Duration) error {
@@ -83,6 +87,7 @@ func TestRetryOnSQLiteBusyDoesNotRetryPermanentErrors(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyGivesUp(t *testing.T) {
+	t.Parallel()
 	n := 0
 	_, err := retryOnSQLiteBusy(context.Background(), 3, 0, time.Millisecond, func(context.Context, time.Duration) error { return nil }, func(context.Context) (*ReviewJob, error) {
 		n++
@@ -94,6 +99,7 @@ func TestRetryOnSQLiteBusyGivesUp(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyNilIsSuccess(t *testing.T) {
+	t.Parallel()
 	job, err := retryOnSQLiteBusy(context.Background(), 4, 0, time.Millisecond, nil, func(context.Context) (*ReviewJob, error) {
 		return nil, nil
 	})
@@ -102,6 +108,7 @@ func TestRetryOnSQLiteBusyNilIsSuccess(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyReturnsSuccessAfterAttemptDeadline(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	job, err := retryOnSQLiteBusy(context.Background(), 4, 5*time.Millisecond, 0, nil, func(ctx context.Context) (*ReviewJob, error) {
 		calls++
@@ -115,6 +122,7 @@ func TestRetryOnSQLiteBusyReturnsSuccessAfterAttemptDeadline(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyStopsWhenContextIsCanceled(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
 	_, err := retryOnSQLiteBusy(ctx, 4, 0, time.Hour, nil, func(context.Context) (*ReviewJob, error) {
@@ -127,7 +135,8 @@ func TestRetryOnSQLiteBusyStopsWhenContextIsCanceled(t *testing.T) {
 }
 
 func TestRetryOnSQLiteBusyUsesEachAttemptBudget(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	calls := 0
 

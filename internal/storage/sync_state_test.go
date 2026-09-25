@@ -14,6 +14,7 @@ import (
 )
 
 func TestSyncState(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -55,6 +56,7 @@ func TestSyncState(t *testing.T) {
 }
 
 func TestGetMachineID(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -85,6 +87,7 @@ func TestGetMachineID(t *testing.T) {
 }
 
 func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
+	t.Parallel()
 	a := assert.New(t)
 	r := require.New(t)
 
@@ -108,6 +111,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 }
 
 func TestGetDatabaseIDStableAcrossRestartAndChangesAfterRecreation(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reviews.db")
 
 	db, err := Open(dbPath)
@@ -138,6 +142,7 @@ func TestGetDatabaseIDStableAcrossRestartAndChangesAfterRecreation(t *testing.T)
 }
 
 func TestGetOrCreateSyncStateValue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -163,6 +168,7 @@ func TestGetOrCreateSyncStateValue(t *testing.T) {
 }
 
 func TestSyncWorker_StartStopStart(t *testing.T) {
+	t.Parallel()
 	// This test verifies that SyncWorker can be started, stopped, and restarted
 	// without issues (channel reinitialization on restart).
 	db := openTestDB(t)
@@ -236,6 +242,7 @@ func TestSyncWorker_StartStopStart(t *testing.T) {
 }
 
 func TestSyncWorker_SyncNowReturnsErrorWhenNotRunning(t *testing.T) {
+	t.Parallel()
 	a := assert.New(t)
 	r := require.New(t)
 
@@ -257,6 +264,7 @@ func TestSyncWorker_SyncNowReturnsErrorWhenNotRunning(t *testing.T) {
 }
 
 func TestSyncWorker_FinalPushReturnsNilWhenNotConnected(t *testing.T) {
+	t.Parallel()
 	r := require.New(t)
 
 	dir := t.TempDir()

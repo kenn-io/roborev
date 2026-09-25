@@ -14,6 +14,7 @@ import (
 )
 
 func TestTUIFilterNavigation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		startIdx    int
 		key         rune
@@ -41,6 +42,7 @@ func TestTUIFilterNavigation(t *testing.T) {
 }
 
 func TestTUIFilterNavigationSequential(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 1),
 		makeNode("repo-b", 1),
@@ -58,6 +60,7 @@ func TestTUIFilterNavigationSequential(t *testing.T) {
 }
 
 func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 2),
 		makeNode("repo-b", 0),
@@ -87,6 +90,7 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIFilterChangeFetchesFirstPageOnly(t *testing.T) {
+	t.Parallel()
 	var gotLimit string
 	var gotRepo string
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +122,7 @@ func TestTUIFilterChangeFetchesFirstPageOnly(t *testing.T) {
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
+	t.Parallel()
 	// A display name spanning multiple repos is scoped server-side via an IN
 	// clause and paginated, so the status counts come from the server
 	// aggregate (jobStats), not from counting the loaded page. The loaded
@@ -145,6 +150,7 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 }
 
 func TestTUIBranchFilterApplied(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -167,6 +173,7 @@ func TestTUIBranchFilterApplied(t *testing.T) {
 }
 
 func TestTUIBranchFilterNone(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -188,6 +195,7 @@ func TestTUIBranchFilterNone(t *testing.T) {
 }
 
 func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -209,6 +217,7 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 }
 
 func TestTUINavigateDownLoadsMoreWhenBranchFiltered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -227,6 +236,7 @@ func TestTUINavigateDownLoadsMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUINavigateJKeyLoadsMoreWhenBranchFiltered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -245,6 +255,7 @@ func TestTUINavigateJKeyLoadsMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUIPageDownLoadsMoreWhenBranchFiltered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -264,6 +275,7 @@ func TestTUIPageDownLoadsMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.currentView = viewQueue
@@ -280,6 +292,7 @@ func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 }
 
 func TestTUIQueueNavigationWithFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -310,6 +323,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 }
 
 func TestTUIJobsRefreshWithFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -344,6 +358,7 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 }
 
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -364,6 +379,7 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -386,6 +402,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIBKeyOpensBranchFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoName("repo-a"))}
@@ -399,6 +416,7 @@ func TestTUIBKeyOpensBranchFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.branchBackfillDone = false
@@ -412,6 +430,7 @@ func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
 }
 
 func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.cwdRepoRoot = "/path/to/repo-b"
@@ -432,6 +451,7 @@ func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterNoCwdNoReorder(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 
@@ -450,6 +470,7 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 }
 
 func TestTUIAutoRepoFilterUsesRenamedRepoDisplayName(t *testing.T) {
+	t.Parallel()
 	oldRoot := "/workspace/old-service"
 	newRoot := "/workspace/new-service"
 	m := newModel(localhostEndpoint, withExternalIODisabled(), withAutoFilterRepo(newRoot))
@@ -467,6 +488,7 @@ func TestTUIAutoRepoFilterUsesRenamedRepoDisplayName(t *testing.T) {
 }
 
 func TestTUIAutoRepoFilterFallsBackToIdentity(t *testing.T) {
+	t.Parallel()
 	oldRoot := "/workspace/old-service"
 	newRoot := "/workspace/cool-rebrand"
 	identity := "https://github.com/test/service.git"
@@ -493,6 +515,7 @@ func TestTUIAutoRepoFilterFallsBackToIdentity(t *testing.T) {
 }
 
 func TestTUIAutoRepoFilterPrefersIdentityOverDisplayName(t *testing.T) {
+	t.Parallel()
 	expectedRoot := "/workspace/team-a/service"
 	wrongRoot := "/workspace/team-b/service"
 	newRoot := "/workspace/team-c/service"
@@ -520,6 +543,7 @@ func TestTUIAutoRepoFilterPrefersIdentityOverDisplayName(t *testing.T) {
 }
 
 func TestTUIAutoRepoFilterKeepsTrackedCloneWithSharedIdentity(t *testing.T) {
+	t.Parallel()
 	currentRoot := "/workspace/team-a/service"
 	otherRoot := "/workspace/team-b/service"
 	identity := "https://github.com/test/service.git"
@@ -547,6 +571,7 @@ func TestTUIAutoRepoFilterKeepsTrackedCloneWithSharedIdentity(t *testing.T) {
 }
 
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	job := makeJob(1)
 	m.currentView = viewReview

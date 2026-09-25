@@ -30,6 +30,7 @@ func makeNode(name string, count int) treeFilterNode {
 }
 
 func TestTUIFilterOpenModal(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -52,6 +53,7 @@ func TestTUIFilterOpenModal(t *testing.T) {
 }
 
 func TestTUIFilterReposMsg(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	repos := []repoFilterItem{
@@ -72,6 +74,7 @@ func TestTUIFilterReposMsg(t *testing.T) {
 }
 
 func TestTUIFilterSelectRepo(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 2),
 		makeNode("repo-b", 1),
@@ -94,6 +97,7 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 }
 
 func TestTUIFilterSelectAll(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 2),
 	})
@@ -111,6 +115,7 @@ func TestTUIFilterSelectAll(t *testing.T) {
 }
 
 func TestTUIFilterPreselectsCurrent(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/path/to/repo-b"}
 
@@ -126,6 +131,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 }
 
 func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	m.activeRepoFilter = []string{"/path/b", "/path/a"}
@@ -140,6 +146,7 @@ func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
 }
 
 func TestTUIFilterAggregatedDisplayName(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
@@ -164,6 +171,7 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 }
 
 func TestTUIFilterViewSmallTerminal(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 5),
 		makeNode("repo-b", 3),
@@ -222,6 +230,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 }
 
 func TestTUIFilterViewScrollWindow(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-1", 5),
 		makeNode("repo-2", 4),
@@ -256,6 +265,7 @@ func TestTUIFilterViewScrollWindow(t *testing.T) {
 }
 
 func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 	m.width = 100
 	m.height = 20
@@ -270,6 +280,7 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -289,6 +300,7 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 }
 
 func TestTUIWindowResizeLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
@@ -310,6 +322,7 @@ func TestTUIWindowResizeLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
 }
 
 func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -327,6 +340,7 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 }
 
 func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -347,6 +361,7 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -367,6 +382,7 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.branchBackfillDone = true

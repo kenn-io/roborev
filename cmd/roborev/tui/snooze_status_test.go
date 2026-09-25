@@ -14,6 +14,7 @@ import (
 )
 
 func TestTUIActiveSnoozeRequiresExactFilteredCheckout(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 10, 15, 0, 0, 0, time.UTC)
 	until := now.Add(time.Hour)
 	base := model{
@@ -71,6 +72,7 @@ func TestTUIActiveSnoozeRequiresExactFilteredCheckout(t *testing.T) {
 }
 
 func TestDetectCwdRepoContextPreservesLinkedWorktree(t *testing.T) {
+	t.Parallel()
 	repo := testutil.NewTestRepoWithCommit(t)
 	worktree := filepath.Join(t.TempDir(), "status-worktree")
 	repo.Run("worktree", "add", "-b", "feature/status", worktree)
@@ -88,6 +90,7 @@ func TestDetectCwdRepoContextPreservesLinkedWorktree(t *testing.T) {
 }
 
 func TestTUIQueueTitleShowsExactSnooze(t *testing.T) {
+	t.Parallel()
 	until := time.Now().Add(time.Hour)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 200

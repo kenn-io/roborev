@@ -9,6 +9,7 @@ import (
 )
 
 func TestSanitizePostgresTextReplacesInvalidUTF8(t *testing.T) {
+	t.Parallel()
 	invalid := "ReportLab PDF marker: " + string([]byte{0x93}) + " after header"
 	require.False(t, utf8.ValidString(invalid))
 
@@ -19,6 +20,7 @@ func TestSanitizePostgresTextReplacesInvalidUTF8(t *testing.T) {
 }
 
 func TestSanitizePostgresTextReplacesNUL(t *testing.T) {
+	t.Parallel()
 	input := "binary marker: \x00 after header"
 	require.True(t, utf8.ValidString(input))
 
@@ -30,6 +32,7 @@ func TestSanitizePostgresTextReplacesNUL(t *testing.T) {
 }
 
 func TestSanitizePostgresTextPointer(t *testing.T) {
+	t.Parallel()
 	invalid := "diff " + string([]byte{0x93})
 	got := sanitizePostgresTextPointer(&invalid)
 

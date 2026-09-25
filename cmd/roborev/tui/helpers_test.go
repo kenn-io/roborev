@@ -27,6 +27,7 @@ func stripTestANSI(s string) string {
 }
 
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
+	t.Parallel()
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
 	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, 80, styles.DarkStyleConfig, 2, termenv.TrueColor)
 
@@ -41,12 +42,14 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
+	t.Parallel()
 	lines := renderMarkdownLines("", 80, 80, styles.DarkStyleConfig, 2, termenv.TrueColor)
 	// Should not panic and should produce some output (even if empty)
 	assert.NotNil(t, lines)
 }
 
 func TestMarkdownCacheBehavior(t *testing.T) {
+	t.Parallel()
 	baseText := "Hello\nWorld"
 	baseWidth := 80
 	baseID := int64(1)
@@ -98,6 +101,7 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 }
 
 func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
+	t.Parallel()
 	c := &markdownCache{}
 
 	// Review and prompt caches are independent
@@ -111,6 +115,7 @@ func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
 }
 
 func TestRenderViewSafety_NilCache(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		view   viewKind
@@ -155,6 +160,7 @@ func TestRenderViewSafety_NilCache(t *testing.T) {
 }
 
 func TestScrollPageUpAfterPageDown(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		view viewKind
@@ -219,6 +225,7 @@ func TestScrollPageUpAfterPageDown(t *testing.T) {
 }
 
 func TestTruncateLongLinesOnlyTruncatesCodeBlocks(t *testing.T) {
+	t.Parallel()
 	longLine := "a very long line that exceeds the width by a lot and should be truncated down to size"
 	input := "short\n```\n" + longLine + "\n```\n" + longLine
 	out := truncateLongLines(input, 20, 2)
@@ -232,6 +239,7 @@ func TestTruncateLongLinesOnlyTruncatesCodeBlocks(t *testing.T) {
 }
 
 func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
+	t.Parallel()
 	longLine := strings.Repeat("x", 50)
 	tests := []struct {
 		name      string
@@ -299,6 +307,7 @@ func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
 }
 
 func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
+	t.Parallel()
 	// Ensure blank lines and structure are preserved
 	input := "line1\n\n\nline4"
 	out := truncateLongLines(input, 80, 2)
@@ -306,6 +315,7 @@ func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
+	t.Parallel()
 	// Long prose lines should be word-wrapped by glamour, not truncated.
 	// All words must appear in the rendered output.
 	longProse := "This is a very long prose line with important content that should be word-wrapped by glamour rather than truncated so that no information is lost from the rendered output"
@@ -322,6 +332,7 @@ func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
 }
 
 func TestSanitizeEscapes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -425,6 +436,7 @@ func TestSanitizeEscapes(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
+	t.Parallel()
 	// A long diff line should be truncated by renderMarkdownLines, not wrapped
 	longLine := strings.Repeat("x", 200)
 	text := "Review:\n\n```\n" + longLine + "\n```\n"
@@ -440,6 +452,7 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesNoColor(t *testing.T) {
+	t.Parallel()
 	// When colorProfile is Ascii, stripTrailingPadding removes all SGR
 	// sequences (colors, bold, underline, reset) so no formatting can
 	// bleed across lines.
@@ -452,7 +465,7 @@ func TestRenderMarkdownLinesNoColor(t *testing.T) {
 	assert.Empty(t, matches, "expected no SGR sequences with Ascii profile, got: %v", matches)
 }
 
-func TestHelpOutputParity(t *testing.T) {
+func TestHelpOutputParity(t *testing.T) { //nolint:paralleltest // t.Setenv of NO_COLOR and ROBOREV_COLOR_MODE
 	// Expectations came from the local renderer at 5c372165 before migration.
 	tests := []struct {
 		name        string
@@ -567,6 +580,7 @@ func TestHelpOutputParity(t *testing.T) {
 }
 
 func TestReflowHelpRows(t *testing.T) {
+	t.Parallel()
 	a := helplayout.HelpItem{Key: "a", Description: "one"}
 	b := helplayout.HelpItem{Key: "b", Description: "two"}
 	c := helplayout.HelpItem{Key: "c", Description: "three"}
@@ -663,6 +677,7 @@ func TestReflowHelpRows(t *testing.T) {
 }
 
 func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
+	t.Parallel()
 	// Real help row sets used by the TUI views.
 	helpSets := map[string][][]helplayout.HelpItem{
 		"queue": {
@@ -705,6 +720,7 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 }
 
 func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
+	t.Parallel()
 	disabled := newModel(testEndpoint, withExternalIODisabled()).queueHelpRows()
 	assert.NotEmpty(t, disabled, "expected queue help rows")
 	for _, row := range disabled {
@@ -732,6 +748,7 @@ func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
 }
 
 func TestQueueHelpRowsDistinguishesRerunActions(t *testing.T) {
+	t.Parallel()
 	rows := newModel(testEndpoint, withExternalIODisabled()).queueHelpRows()
 	labels := make(map[string]string)
 	for _, row := range rows {
@@ -745,6 +762,7 @@ func TestQueueHelpRowsDistinguishesRerunActions(t *testing.T) {
 }
 
 func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
+	t.Parallel()
 	disabled := strings.Join(helpLines(false, false), "\n")
 	assert.Contains(t, stripTestANSI(disabled), "Trigger fix for selected review (disabled)")
 	assert.Contains(t, stripTestANSI(disabled), "Trigger fix (opens inline panel) (disabled)")
@@ -756,6 +774,7 @@ func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
 }
 
 func TestSanitizeForDisplay(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -817,6 +836,7 @@ func TestSanitizeForDisplay(t *testing.T) {
 }
 
 func TestPatchFiles(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		patch string
@@ -914,6 +934,7 @@ func TestPatchFiles(t *testing.T) {
 }
 
 func TestShortRef(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		ref  string
@@ -970,6 +991,7 @@ func TestShortRef(t *testing.T) {
 }
 
 func TestShortJobRef(t *testing.T) {
+	t.Parallel()
 	fullSHA1 := "abc1234567890def1234567890abcdef12345678"
 	fullSHA2 := "fed9876543210abc9876543210fedcba98765432"
 	commitID := int64(1)
@@ -1024,6 +1046,7 @@ func TestShortJobRef(t *testing.T) {
 }
 
 func TestDirtyPatchFilesError(t *testing.T) {
+	t.Parallel()
 	// dirtyPatchFiles should return an error when git diff fails
 	// (e.g., invalid repo path), not silently return nil.
 	missingPath := filepath.Join(t.TempDir(), "missing")
@@ -1034,6 +1057,7 @@ func TestDirtyPatchFilesError(t *testing.T) {
 }
 
 func TestWrapLine(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		line  string
@@ -1128,6 +1152,7 @@ func TestWrapLine(t *testing.T) {
 }
 
 func TestStripTrailingPadding(t *testing.T) {
+	t.Parallel()
 	bold := "\x1b[1m"
 	underline := "\x1b[4m"
 	reset := "\x1b[0m"

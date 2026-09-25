@@ -9,6 +9,7 @@ import (
 )
 
 func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "experiment-single")
 	assignment := &ExperimentAssignmentInput{
 		ExperimentID:        "session-v1",
@@ -60,6 +61,7 @@ func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
 }
 
 func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "experiment-panel")
 	runUUID := testUUID("panel-run-one")
 	assignment := &ExperimentAssignmentInput{
@@ -108,6 +110,7 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 }
 
 func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "experiment-export")
 	assignment := &ExperimentAssignmentInput{
 		ExperimentID:        "session-v1",
@@ -141,6 +144,7 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 }
 
 func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) {
+	t.Parallel()
 	db, _ := setupDBAndRepo(t, "experiment-pull-conflict")
 	assignedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	for _, definition := range []SyncableExperimentDefinition{
@@ -184,6 +188,7 @@ func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 }
 
 func TestGetExperimentDefinitionsToSyncIncludesForeignDefinitionForLocalAssignment(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "experiment-definition-dependency")
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)

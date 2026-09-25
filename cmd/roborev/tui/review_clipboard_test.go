@@ -28,6 +28,7 @@ func (m *mockClipboard) WriteText(text string) error {
 }
 
 func TestTUIYankCopyFromReviewView(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -50,6 +51,7 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
@@ -69,6 +71,7 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -93,6 +96,7 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsFriendlyMessageWhenNoClipboardTool(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -113,6 +117,7 @@ func TestTUIYankCopyShowsFriendlyMessageWhenNoClipboardTool(t *testing.T) {
 }
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
@@ -130,6 +135,7 @@ func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 }
 
 func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{
@@ -147,6 +153,7 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{}
 
 	_, m := mockServerModel(t, mockReviewHandler(
@@ -170,6 +177,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{}
 
 	responses := []storage.Response{
@@ -202,6 +210,7 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -218,6 +227,7 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, mockReviewHandler(
 		storage.Review{
 			VerdictBool: testutil.ReviewFixtureVerdict(""), ID: 1, JobID: 123, Agent: "test", Output: "",
@@ -237,6 +247,7 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 }
 
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: xclip not found")}
 
 	m := initTestModel(
@@ -258,6 +269,7 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: pbcopy not found")}
 
 	_, m := mockServerModel(t, mockReviewHandler(
@@ -280,6 +292,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
+	t.Parallel()
 	mock := &mockClipboard{}
 
 	_, m := mockServerModel(t, mockReviewHandler(
@@ -305,6 +318,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 }
 
 func TestFormatClipboardContent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		review   *storage.Review
@@ -479,6 +493,7 @@ func TestFormatClipboardContent(t *testing.T) {
 }
 
 func TestFormatClipboardContentWithResponses(t *testing.T) {
+	t.Parallel()
 	review := &storage.Review{
 		VerdictBool: testutil.ReviewFixtureVerdict("Some findings here"),
 		ID:          1,
@@ -513,6 +528,7 @@ func TestFormatClipboardContentWithResponses(t *testing.T) {
 }
 
 func TestFormatClipboardContentNoResponses(t *testing.T) {
+	t.Parallel()
 	review := &storage.Review{
 		VerdictBool: testutil.ReviewFixtureVerdict("Review content"),
 		ID:          1,
@@ -528,6 +544,7 @@ func TestFormatClipboardContentNoResponses(t *testing.T) {
 }
 
 func TestOSC52ClipboardWritesEscapeSequence(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	cb := &osc52Clipboard{output: &buf}
 
@@ -542,6 +559,7 @@ func TestOSC52ClipboardWritesEscapeSequence(t *testing.T) {
 }
 
 func TestOSC52ClipboardEmptyText(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	cb := &osc52Clipboard{output: &buf}
 
@@ -551,7 +569,7 @@ func TestOSC52ClipboardEmptyText(t *testing.T) {
 	assert.Contains(t, buf.String(), "\x1b]52;")
 }
 
-func TestNewClipboardReturnsOSC52OverSSH(t *testing.T) {
+func TestNewClipboardReturnsOSC52OverSSH(t *testing.T) { //nolint:paralleltest // t.Setenv of SSH_TTY, SSH_CLIENT and SSH_CONNECTION
 	tests := []struct {
 		name    string
 		envVars map[string]string

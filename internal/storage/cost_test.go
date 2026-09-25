@@ -9,6 +9,7 @@ import (
 )
 
 func TestGetCostAggregate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -95,6 +96,7 @@ func TestGetCostAggregate(t *testing.T) {
 // of the denominator, so coverage is not dragged below 100% by a row that can
 // never report cost.
 func TestGetCostAggregateExcludesNoAgentRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -123,6 +125,7 @@ func TestGetCostAggregateExcludesNoAgentRows(t *testing.T) {
 }
 
 func TestGetCostAggregateMultiRepo(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -161,6 +164,7 @@ func TestGetCostAggregateMultiRepo(t *testing.T) {
 }
 
 func TestGetCostAggregateIncludesPanelMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -198,6 +202,7 @@ func TestGetCostAggregateIncludesPanelMembers(t *testing.T) {
 // the marker existed — still proves an agent ran via its cost JSON, so it must
 // count toward coverage.
 func TestGetCostAggregateIncludesPricedRowsWithoutMarker(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -228,6 +233,7 @@ func TestGetCostAggregateIncludesPricedRowsWithoutMarker(t *testing.T) {
 // and full coverage while real money went unrecorded. An explicit $0 is a real
 // free run and must still count.
 func TestGetCostAggregateExcludesFlaggedRowsWithNoAmount(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -263,6 +269,7 @@ func TestGetCostAggregateExcludesFlaggedRowsWithNoAmount(t *testing.T) {
 // only recorded consumption is cache writes still proves an agent ran, so
 // leaving it out of the denominator would overstate coverage.
 func TestGetCostAggregateIncludesCacheWriteOnlyRowsWithoutMarker(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -289,6 +296,7 @@ func TestGetCostAggregateIncludesCacheWriteOnlyRowsWithoutMarker(t *testing.T) {
 // agent_invoked marker, so a second run that reports no cost is counted as
 // eligible-but-unpriced, not as priced.
 func TestGetCostAggregateRerunClearsStaleCost(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -329,6 +337,7 @@ func TestGetCostAggregateRerunClearsStaleCost(t *testing.T) {
 // onto the row after a rerun cleared it and a new attempt took over under a
 // different session.
 func TestSaveJobTokenUsageIgnoresStaleSession(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -367,6 +376,7 @@ func TestSaveJobTokenUsageIgnoresStaleSession(t *testing.T) {
 // TestResetStaleJobsClearsCostMetadata verifies restart recovery does not
 // carry a prior attempt's session id or cost into the requeued run.
 func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -416,6 +426,7 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 // unset and no usage was captured; the row can never report cost and must not
 // drag coverage below 100%.
 func TestGetCostAggregateExcludesPreAgentFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -448,6 +459,7 @@ func TestGetCostAggregateExcludesPreAgentFailure(t *testing.T) {
 // is not synced, so without the synced marker such a row (no usage locally) would
 // be invisible to cost coverage. A pulled row that never ran an agent stays out.
 func TestGetCostAggregateCountsPulledUnpricedJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

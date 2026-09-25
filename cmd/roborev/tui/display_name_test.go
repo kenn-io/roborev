@@ -9,6 +9,7 @@ import (
 )
 
 func TestUniqueJobRepoPathsDedupesInOrder(t *testing.T) {
+	t.Parallel()
 	jobs := []storage.ReviewJob{
 		{RepoPath: "/repo/a"},
 		{RepoPath: ""},

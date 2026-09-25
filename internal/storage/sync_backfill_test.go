@@ -14,6 +14,7 @@ import (
 )
 
 func TestBackfillSourceMachineID(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 
 	job := h.createPendingJob("abc123")
@@ -41,6 +42,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -77,6 +79,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -104,6 +107,7 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -130,6 +134,7 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -160,6 +165,7 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 }
 
 func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
+	t.Parallel()
 	// This test verifies that upserting a pulled job with a model value backfills
 	// an existing job that has NULL model (COALESCE behavior in SQLite)
 	db := openTestDB(t)
@@ -224,6 +230,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 }
 
 func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 
 	// Enqueue a job with a worktree path
@@ -261,6 +268,7 @@ func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
 }
 
 func TestGetJobsToSync_IncludesSource(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 
 	commit, err := h.db.GetOrCreateCommit(h.repo.ID, "source-sync-abc", "Author", "Subject", time.Now())
@@ -301,6 +309,7 @@ func TestGetJobsToSync_IncludesSource(t *testing.T) {
 // pull must overwrite token_usage, while a non-terminal (requeued) pull preserves
 // it until the re-attempt completes.
 func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -349,6 +358,7 @@ func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
 }
 
 func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -392,6 +402,7 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 }
 
 func TestUpsertPulledJob_PreservesSource(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -427,6 +438,7 @@ func TestUpsertPulledJob_PreservesSource(t *testing.T) {
 }
 
 func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

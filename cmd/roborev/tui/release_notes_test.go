@@ -12,6 +12,7 @@ import (
 )
 
 func TestReleaseNotesViewRendersAndCloses(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(withCurrentView(viewReleaseNotes), withDimensions(100, 28))
 	m.releaseNotesFromView = viewQueue
 	m.releaseNotes = []storage.ReleaseNote{{

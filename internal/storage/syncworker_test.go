@@ -13,6 +13,7 @@ import (
 )
 
 func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
 	var notifications atomic.Int64
@@ -55,6 +56,7 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 }
 
 func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
 	var notifications atomic.Int64
@@ -102,6 +104,7 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 }
 
 func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
 	var notifications atomic.Int64
@@ -152,6 +155,7 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 }
 
 func TestSyncPullWriteCallbackIsRaceSafeNilSafeAndInvokedOutsideLock(t *testing.T) {
+	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
 	worker.SetAfterPullWrite(nil)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestSSESubscription_ReceivesEvents(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/stream/events", r.URL.Path)
 
@@ -42,6 +43,7 @@ func TestSSESubscription_ReceivesEvents(t *testing.T) {
 }
 
 func TestSSESubscription_StopsOnStopChannel(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.(http.Flusher).Flush()
@@ -70,6 +72,7 @@ func TestSSESubscription_StopsOnStopChannel(t *testing.T) {
 }
 
 func TestSSESubscription_ReconnectsOnError(t *testing.T) {
+	t.Parallel()
 	var attempt atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := attempt.Add(1)
@@ -99,6 +102,7 @@ func TestSSESubscription_ReconnectsOnError(t *testing.T) {
 }
 
 func TestWaitForSSE_ReturnsOnSignal(t *testing.T) {
+	t.Parallel()
 	ch := make(chan struct{}, 1)
 	stopCh := make(chan struct{})
 	ch <- struct{}{}
@@ -111,6 +115,7 @@ func TestWaitForSSE_ReturnsOnSignal(t *testing.T) {
 }
 
 func TestWaitForSSE_ReturnsNilOnStop(t *testing.T) {
+	t.Parallel()
 	ch := make(chan struct{}, 1)
 	stopCh := make(chan struct{})
 	close(stopCh)

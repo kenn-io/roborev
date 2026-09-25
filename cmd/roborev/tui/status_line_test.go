@@ -11,6 +11,7 @@ import (
 )
 
 func TestFitStatusSegments(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	segs := []statusSeg{
 		{rendered: "Daemon: v1", prio: 0},
@@ -45,6 +46,7 @@ func TestFitStatusSegments(t *testing.T) {
 }
 
 func TestRenderQueueStatusLineAdaptsToWidth(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := model{
 		width:         200,
@@ -72,6 +74,7 @@ func TestRenderQueueStatusLineAdaptsToWidth(t *testing.T) {
 }
 
 func TestRenderQueueTitleShowsMismatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// Matching daemon: client version right-aligned, no daemon callout anywhere.
@@ -92,6 +95,7 @@ func TestRenderQueueTitleShowsMismatch(t *testing.T) {
 }
 
 func TestFitTitleLeft(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	app := "roborev"
 	filters := " [f: roborev] [b: feat/aggregate-cost]"
@@ -113,6 +117,7 @@ func TestFitTitleLeft(t *testing.T) {
 }
 
 func TestRenderQueueTitleRightAlignsVersion(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// Wide: the version is pushed to the far right and the line fits the width.
@@ -130,6 +135,7 @@ func TestRenderQueueTitleRightAlignsVersion(t *testing.T) {
 }
 
 func TestRenderQueueStatusLineOmitsStaleCost(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := model{
 		width:    200,

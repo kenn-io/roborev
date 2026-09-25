@@ -9,6 +9,7 @@ import (
 )
 
 func TestCostSegmentText(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	var m model
@@ -31,6 +32,7 @@ func TestCostSegmentText(t *testing.T) {
 }
 
 func TestHandleCostMsgStaleGuard(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := model{fetchSeq: 5}
@@ -50,6 +52,7 @@ func TestHandleCostMsgStaleGuard(t *testing.T) {
 // already have rendered, but the stored cost still describes the old scope, so
 // the segment must hide until the matching cost response lands.
 func TestCostSegmentHiddenAfterFilterChange(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// Cost fetched for the current filter generation (seq 2) shows.

@@ -11,6 +11,7 @@ import (
 )
 
 func TestReviewDetailReasoningLabel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		model     string
@@ -52,6 +53,7 @@ func TestReviewDetailReasoningLabel(t *testing.T) {
 }
 
 func TestReviewDetailReasoningLabelFitsPane(t *testing.T) {
+	t.Parallel()
 	m := setupRenderModel(viewReview, &storage.Review{
 		ID:  10,
 		Job: &storage.ReviewJob{ID: 1, RepoName: "myrepo", GitRef: "abc1234", Agent: "codex", Model: "gpt-5.5", Reasoning: "xhigh"},

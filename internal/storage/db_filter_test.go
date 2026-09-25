@@ -12,6 +12,7 @@ import (
 )
 
 func TestJobCounts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -51,6 +52,7 @@ func TestJobCounts(t *testing.T) {
 }
 
 func TestCountStalledJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -89,6 +91,7 @@ func TestCountStalledJobs(t *testing.T) {
 }
 
 func TestListReposWithReviewCounts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -160,6 +163,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 }
 
 func TestListJobsWithRepoFilter(t *testing.T) {
+	t.Parallel()
 	// seedTwoRepos is shared setup: creates repo1 (3 jobs) and repo2 (2 jobs).
 	type twoRepos struct {
 		db    *DB
@@ -305,6 +309,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 }
 
 func TestListJobsHydratesOutputPrefix(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -326,6 +331,7 @@ func TestListJobsHydratesOutputPrefix(t *testing.T) {
 }
 
 func TestListJobsWithRepoPaths(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -375,6 +381,7 @@ func TestListJobsWithRepoPaths(t *testing.T) {
 }
 
 func TestListJobsWithGitRefFilter(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -425,6 +432,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 }
 
 func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -478,6 +486,7 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 }
 
 func TestWithBranchOrEmpty(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -519,6 +528,7 @@ func TestWithBranchOrEmpty(t *testing.T) {
 }
 
 func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -589,6 +599,7 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 }
 
 func TestListReposWithReviewCountsByBranch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -654,6 +665,7 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 }
 
 func TestListBranchesWithCounts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -712,6 +724,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 }
 
 func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -742,6 +755,7 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 }
 
 func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -768,6 +782,7 @@ func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
 }
 
 func TestListJobsWithJobTypeFilter(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -815,6 +830,7 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 }
 
 func TestListJobsWithHideClassifyJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -922,6 +938,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 }
 
 func TestEscapeLike(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -941,6 +958,7 @@ func TestEscapeLike(t *testing.T) {
 }
 
 func TestPrefixFilterWithSpecialChars(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1045,6 +1063,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 }
 
 func TestRootPrefixMatchesAllRepos(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1083,6 +1102,7 @@ func TestRootPrefixMatchesAllRepos(t *testing.T) {
 }
 
 func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1146,6 +1166,7 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 }
 
 func TestListJobsWithBeforeCursor(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1215,6 +1236,7 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 }
 
 func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		open func(*testing.T) *DB
@@ -1273,6 +1295,7 @@ func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
 }
 
 func TestListJobsPaginatesRerunsByEnqueueTime(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	_, jobs := seedJobs(t, db, "/tmp/rerun-cursor-repo", 3)
@@ -1300,6 +1323,7 @@ func TestListJobsPaginatesRerunsByEnqueueTime(t *testing.T) {
 }
 
 func TestListJobsWithoutPrompt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -1358,6 +1382,7 @@ func TestListJobsWithoutPrompt(t *testing.T) {
 }
 
 func TestListJobsDoesNotParseMarkdownWhenVerdictBoolNull(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

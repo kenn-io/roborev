@@ -24,6 +24,7 @@ type searchFeedFixture struct {
 }
 
 func TestSearchEligibilityAndStablePaging(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -72,6 +73,7 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 }
 
 func TestSearchFeedLimitSkipsSemanticallyEmptyStructuredRows(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -105,6 +107,7 @@ func TestSearchFeedLimitSkipsSemanticallyEmptyStructuredRows(t *testing.T) {
 }
 
 func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -158,6 +161,7 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 }
 
 func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -194,6 +198,7 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 }
 
 func TestSearchDocumentLookupSupportsUUIDAndLegacyLocalKey(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

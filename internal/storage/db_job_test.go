@@ -36,6 +36,7 @@ func setupJobEnv(
 }
 
 func TestJobLifecycle(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "abc123")
 
 	assert.Equal(t, JobStatusQueued, env.job.Status)
@@ -63,6 +64,7 @@ func TestJobLifecycle(t *testing.T) {
 }
 
 func TestGetJobByIDRejectsInvalidUUID(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/invalid-job-uuid", "invalid-uuid")
 	_, err := env.db.Exec(`UPDATE review_jobs SET uuid = 'not-a-uuid' WHERE id = ?`, env.job.ID)
 	require.NoError(t, err)
@@ -72,6 +74,7 @@ func TestGetJobByIDRejectsInvalidUUID(t *testing.T) {
 }
 
 func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/structured-verdict", "structured123")
 	claimed := claimJob(t, env.db, "worker-1")
 	require.NotNil(t, claimed)
@@ -94,6 +97,7 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 }
 
 func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/task-verdict")
@@ -114,6 +118,7 @@ func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
 }
 
 func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/unknown-verdict", "unknown123")
 	claimJob(t, env.db, "worker-1")
 
@@ -132,6 +137,7 @@ func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
 }
 
 func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  jsontext.Value
@@ -164,6 +170,7 @@ func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 }
 
 func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	_, jobs := seedJobs(t, db, "/tmp/mixed-enqueue-order", 2)
@@ -186,6 +193,7 @@ func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
 }
 
 func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/precise-attempt-start", "precise-start")
 
 	claimed, err := env.db.ClaimJob("precise-start-worker")
@@ -200,6 +208,7 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 }
 
 func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/claim-hydration-rollback", "claim-hydration-rollback")
 	_, err := env.db.Exec(`UPDATE review_jobs SET panel_member_index = ? WHERE id = ?`, "invalid", env.job.ID)
 	require.NoError(t, err)
@@ -213,7 +222,7 @@ func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 	assert.Equal(t, string(JobStatusQueued), status)
 }
 
-func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) {
+func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) { //nolint:paralleltest // assigns claimJobBeforeCommitForTest, which every ClaimJob reads
 	env := setupJobEnv(t, "/tmp/claim-cancel-before-commit", "claim-cancel-before-commit")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -260,6 +269,7 @@ func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) {
 }
 
 func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/claim-busy-retry", "claim-busy-retry")
 	lockConn, err := env.db.Conn(t.Context())
 	require.NoError(t, err)
@@ -297,6 +307,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 }
 
 func TestJobFailure(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "def456")
 	claimJob(t, env.db, "worker-1")
 
@@ -312,6 +323,7 @@ func TestJobFailure(t *testing.T) {
 }
 
 func TestFailJobOwnerScoped(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "fail-owner")
 	claimJob(t, env.db, "worker-1")
 
@@ -341,6 +353,7 @@ func TestFailJobOwnerScoped(t *testing.T) {
 }
 
 func TestRetryJobOwnerScoped(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "retry-owner")
 	claimJob(t, env.db, "worker-1")
 
@@ -369,6 +382,7 @@ func TestRetryJobOwnerScoped(t *testing.T) {
 }
 
 func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/update-requeue", "update-requeue-sha")
 	claimed, err := env.db.ClaimJob("worker-A")
 	require.NoError(t, err)
@@ -410,6 +424,7 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 }
 
 func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/update-requeue-owner", "update-owner-sha")
 	_, err := env.db.ClaimJob("worker-A")
 	require.NoError(t, err)
@@ -433,6 +448,7 @@ func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {
 }
 
 func TestRunningJobIDsAndTargetedCount(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, jobs := seedJobs(t, db, "/tmp/update-running-ids", 3)
@@ -459,6 +475,7 @@ func TestRunningJobIDsAndTargetedCount(t *testing.T) {
 }
 
 func TestReviewOperations(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "rev123")
 	claimJob(t, env.db, "worker-1")
 	require.NoError(t, completeReviewFixture(env.db,
@@ -474,6 +491,7 @@ func TestReviewOperations(t *testing.T) {
 }
 
 func TestReviewVerdictComputation(t *testing.T) {
+	t.Parallel()
 	t.Run("verdict populated when output exists and no error", func(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-pass")
 		_, err := env.db.ClaimJob("worker-1")
@@ -578,6 +596,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 }
 
 func TestResponseOperations(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -598,6 +617,7 @@ func TestResponseOperations(t *testing.T) {
 }
 
 func TestMarkReviewClosed(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "addr123")
 	_, err := env.db.ClaimJob("worker-1")
 	require.NoError(t, err)
@@ -631,6 +651,7 @@ func TestMarkReviewClosed(t *testing.T) {
 }
 
 func TestMarkReviewClosedNotFound(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -643,6 +664,7 @@ func TestMarkReviewClosedNotFound(t *testing.T) {
 }
 
 func TestMarkReviewClosedByJobID(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "jobaddr123")
 	_, err := env.db.ClaimJob("worker-1")
 	require.NoError(t, err)
@@ -676,6 +698,7 @@ func TestMarkReviewClosedByJobID(t *testing.T) {
 }
 
 func TestMarkReviewClosedByJobIDNotFound(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "jobaddr-missing")
 
 	// Try to mark a non-existent job
@@ -687,6 +710,7 @@ func TestMarkReviewClosedByJobIDNotFound(t *testing.T) {
 }
 
 func TestRetryJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -743,6 +767,7 @@ func TestRetryJob(t *testing.T) {
 }
 
 func TestRetryJobOnlyWorksForRunning(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -765,6 +790,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 }
 
 func TestRetryJobAtomic(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -785,6 +811,7 @@ func TestRetryJobAtomic(t *testing.T) {
 }
 
 func TestRetryJobBackoffDefersClaim(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -816,6 +843,7 @@ func TestRetryJobBackoffDefersClaim(t *testing.T) {
 }
 
 func TestRetryJobZeroBackoffLeavesNotBeforeNull(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -837,6 +865,7 @@ func TestRetryJobZeroBackoffLeavesNotBeforeNull(t *testing.T) {
 }
 
 func TestFailoverJob(t *testing.T) {
+	t.Parallel()
 	t.Run("succeeds with backup agent", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
@@ -1088,6 +1117,7 @@ func TestFailoverJob(t *testing.T) {
 }
 
 func TestCancelJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1172,6 +1202,7 @@ func TestCancelJob(t *testing.T) {
 }
 
 func TestMarkJobApplied(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1218,6 +1249,7 @@ func TestMarkJobApplied(t *testing.T) {
 }
 
 func TestMarkJobRebased(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1254,6 +1286,7 @@ func TestMarkJobRebased(t *testing.T) {
 }
 
 func TestReenqueueJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1336,10 +1369,13 @@ func TestReenqueueJob(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		before := time.Now().Truncate(time.Second)
 		require.NoError(t, isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{}))
+		after := time.Now()
 		updated, err := isolatedDB.GetJobByID(job.ID)
 		require.NoError(t, err)
-		assert.WithinDuration(t, time.Now(), updated.EnqueuedAt, 2*time.Second)
+		assert.False(t, updated.EnqueuedAt.Before(before), "enqueued_at %v is before the rerun started at %v", updated.EnqueuedAt, before)
+		assert.False(t, updated.EnqueuedAt.After(after), "enqueued_at %v is after the rerun returned at %v", updated.EnqueuedAt, after)
 
 		var storedEnqueuedAt string
 		err = isolatedDB.QueryRow(
@@ -1510,6 +1546,7 @@ func TestReenqueueJob(t *testing.T) {
 }
 
 func TestReenqueueJob_ClearsPrebuiltPrompt(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1545,6 +1582,7 @@ func TestReenqueueJob_ClearsPrebuiltPrompt(t *testing.T) {
 }
 
 func TestReenqueueJob_PreservesDirtyFiles(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1575,6 +1613,7 @@ func TestReenqueueJob_PreservesDirtyFiles(t *testing.T) {
 }
 
 func TestReenqueueJob_PreservesTaskPrompt(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1606,6 +1645,7 @@ func TestReenqueueJob_PreservesTaskPrompt(t *testing.T) {
 }
 
 func TestEnqueueJobWithPatchID(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1631,6 +1671,7 @@ func TestEnqueueJobWithPatchID(t *testing.T) {
 }
 
 func TestEnqueueJobWithCIBaseBranch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1661,12 +1702,14 @@ func TestEnqueueJobWithCIBaseBranch(t *testing.T) {
 }
 
 func TestHookBranchPrefersCIBaseBranch(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "main", ReviewJob{Branch: "feat/x", CIBaseBranch: "main"}.HookBranch())
 	assert.Equal(t, "main", ReviewJob{CIBaseBranch: "main"}.HookBranch())
 	assert.Empty(t, ReviewJob{}.HookBranch())
 }
 
 func TestRemapJobGitRef(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1723,6 +1766,7 @@ func TestRemapJobGitRef(t *testing.T) {
 }
 
 func TestJobTypeBackfill(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1792,6 +1836,7 @@ func TestJobTypeBackfill(t *testing.T) {
 }
 
 func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1848,6 +1893,7 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 // its attempt was canceled and re-claimed by another worker must not set the
 // marker on the new attempt's row, which would wrongly make it cost-eligible.
 func TestMarkJobAgentInvoked_StaleWorkerIgnored(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -1883,6 +1929,7 @@ func TestMarkJobAgentInvoked_StaleWorkerIgnored(t *testing.T) {
 }
 
 func TestMinSeverityRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -1930,6 +1977,7 @@ func TestMinSeverityRoundTrip(t *testing.T) {
 }
 
 func TestMinSeverityNormalizesOnWrite(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -1950,6 +1998,7 @@ func TestMinSeverityNormalizesOnWrite(t *testing.T) {
 }
 
 func TestReenqueueJob_AcceptsSkipped(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -1986,6 +2035,7 @@ func seedRunningClassify(t *testing.T, db *DB, path, sha, workerID string) int64
 }
 
 func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2020,6 +2070,7 @@ func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
 }
 
 func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2035,6 +2086,7 @@ func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {
 }
 
 func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2053,6 +2105,7 @@ func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
 }
 
 func TestMarkClassifyAsSkippedDesign_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2075,6 +2128,7 @@ func TestMarkClassifyAsSkippedDesign_HappyPath(t *testing.T) {
 }
 
 func TestMarkClassifyAgentInvokedRejectsStaleWorker(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2094,6 +2148,7 @@ func TestMarkClassifyAgentInvokedRejectsStaleWorker(t *testing.T) {
 }
 
 func TestMarkClassifyAsSkippedDesign_WritesErrorOnFailure(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2112,6 +2167,7 @@ func TestMarkClassifyAsSkippedDesign_WritesErrorOnFailure(t *testing.T) {
 }
 
 func TestMarkClassifyAsSkippedDesign_StaleWorkerNoOps(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2127,6 +2183,7 @@ func TestMarkClassifyAsSkippedDesign_StaleWorkerNoOps(t *testing.T) {
 }
 
 func TestMarkClassifyAsSkippedDesign_CanceledNoOps(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2149,6 +2206,7 @@ func TestMarkClassifyAsSkippedDesign_CanceledNoOps(t *testing.T) {
 }
 
 func TestInsertSkippedDesignJob_BasicAndDedup(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2179,6 +2237,7 @@ func TestInsertSkippedDesignJob_BasicAndDedup(t *testing.T) {
 }
 
 func TestEnqueueAutoDesignJob_BasicAndDedup(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2208,6 +2267,7 @@ func TestEnqueueAutoDesignJob_BasicAndDedup(t *testing.T) {
 }
 
 func TestHasAutoDesignSlotForCommit(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2261,6 +2321,7 @@ func TestHasAutoDesignSlotForCommit(t *testing.T) {
 }
 
 func TestHasAutoDesignSlotForCommit_CommitlessRowOccupiesByGitRef(t *testing.T) {
+	t.Parallel()
 	// When commit metadata lookup fails at dispatch time, an
 	// auto_design row is inserted with commit_id=NULL. A later
 	// dispatch that successfully resolves commit_id must still
@@ -2298,6 +2359,7 @@ func TestHasAutoDesignSlotForCommit_CommitlessRowOccupiesByGitRef(t *testing.T) 
 }
 
 func TestGetJobCounts_IncludesSkipped(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2323,6 +2385,7 @@ func TestGetJobCounts_IncludesSkipped(t *testing.T) {
 }
 
 func TestBackupColumnsRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -2361,6 +2424,7 @@ func TestBackupColumnsRoundTrip(t *testing.T) {
 }
 
 func TestGetJobsToSyncIncludesBackupColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -2384,6 +2448,7 @@ func TestGetJobsToSyncIncludesBackupColumns(t *testing.T) {
 }
 
 func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -2414,6 +2479,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 }
 
 func TestClaimJobHydratesUUID(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	_, _, enqueued := createJobChain(t, db, "/repo/uuid-hydration", "abc123")
@@ -2426,6 +2492,7 @@ func TestClaimJobHydratesUUID(t *testing.T) {
 }
 
 func TestEnqueuePostCommitJobDeduplicatesNonCanceled(t *testing.T) {
+	t.Parallel()
 	statuses := []JobStatus{
 		JobStatusQueued,
 		JobStatusRunning,
@@ -2467,6 +2534,7 @@ func TestEnqueuePostCommitJobDeduplicatesNonCanceled(t *testing.T) {
 }
 
 func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/post-commit-canceled")
@@ -2497,6 +2565,7 @@ func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
 // output exists (so they can skip reading the output column). An empty-output
 // completion must therefore leave verdict_bool NULL, matching CompleteJob.
 func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2513,6 +2582,7 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 }
 
 func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

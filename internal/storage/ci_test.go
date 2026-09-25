@@ -28,6 +28,7 @@ func mustEnqueueReviewJob(t *testing.T, db *DB, repoID int64, gitRef, agent, rev
 }
 
 func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -53,6 +54,7 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 }
 
 func TestCancelJobWithError(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

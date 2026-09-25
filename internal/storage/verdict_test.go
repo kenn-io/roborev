@@ -25,6 +25,7 @@ func runVerdictTests(t *testing.T, tests []verdictTestCase) {
 }
 
 func TestReviewVerdictUsesStoredValue(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, VerdictFail, (Review{
 		Output:      "No issues found.",
 		VerdictBool: new(0),
@@ -816,6 +817,7 @@ var verdictTests = []verdictTestCase{
 }
 
 func TestClassifyOutput(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.Equal(OutputEmpty, ClassifyOutput(""))
 	assert.Equal(OutputEmpty, ClassifyOutput("  \n"))
@@ -830,10 +832,12 @@ func TestClassifyOutput(t *testing.T) {
 }
 
 func TestParseVerdict(t *testing.T) {
+	t.Parallel()
 	runVerdictTests(t, verdictTests)
 }
 
 func TestParseVerdictAtSeverity(t *testing.T) {
+	t.Parallel()
 	const lowOnly = "Summary.\n\n- Low: naming nit\n\n---\n\n- Low — another nit"
 	const mixed = "Summary.\n\n- Low: naming nit\n\n**Severity**: High\nProblem: crash"
 	tests := []struct {

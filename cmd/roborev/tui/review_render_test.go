@@ -38,6 +38,7 @@ func assertAbsent(t *testing.T, got, want string) {
 }
 
 func TestTUIRenderViews(t *testing.T) {
+	t.Parallel()
 	verdictPass := "P"
 
 	tests := []struct {
@@ -287,6 +288,7 @@ func TestTUIRenderViews(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationTable(t *testing.T) {
+	t.Parallel()
 	verdictPass := "P"
 	verdictFail := "F"
 
@@ -404,6 +406,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 }
 
 func TestPanelReviewHeaderSummarizesMembers(t *testing.T) {
+	t.Parallel()
 	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2}))
 	members := []storage.ReviewJob{
 		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
@@ -416,6 +419,7 @@ func TestPanelReviewHeaderSummarizesMembers(t *testing.T) {
 }
 
 func TestPanelReviewHeaderMarksNonVotingMembers(t *testing.T) {
+	t.Parallel()
 	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2}))
 	observer := makeJob(12, withPanelMember("R", "observer", 1), withVerdict("F"))
 	observer.NonVoting = true
@@ -432,6 +436,7 @@ func TestPanelReviewHeaderMarksNonVotingMembers(t *testing.T) {
 }
 
 func TestPanelReviewHeaderFallsBackToSummary(t *testing.T) {
+	t.Parallel()
 	// Opening a parent that was never expanded (members not cached) must still
 	// render a header — from PanelSummary — never dropped.
 	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersSucceeded: 2, MembersFailed: 1}))
@@ -442,6 +447,7 @@ func TestPanelReviewHeaderFallsBackToSummary(t *testing.T) {
 }
 
 func TestRenderReviewPrefixesPanelHeader(t *testing.T) {
+	t.Parallel()
 	job := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersSucceeded: 2}))
 	review := makeReview(1, &job, withReviewOutput("Synthesized findings"))
@@ -460,6 +466,7 @@ func TestRenderReviewPrefixesPanelHeader(t *testing.T) {
 }
 
 func TestRenderReviewShowsReviewType(t *testing.T) {
+	t.Parallel()
 	job := makeJob(42, withReviewType("project-conventions"))
 	review := makeReview(1, &job, withReviewOutput("Review output"))
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -472,6 +479,7 @@ func TestRenderReviewShowsReviewType(t *testing.T) {
 }
 
 func TestReviewDetailsIdentifyPanelMember(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"bugs", "maintainability"} {
 		t.Run(name, func(t *testing.T) {
 			job := makeJob(42, withPanelMember("R", name, 0), withReviewType("default"))
@@ -489,6 +497,7 @@ func TestReviewDetailsIdentifyPanelMember(t *testing.T) {
 }
 
 func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
+	t.Parallel()
 	reviewType := strings.Repeat("a", 64)
 	verdict := "P"
 	job := makeJob(42, withReviewType(reviewType))

@@ -40,7 +40,7 @@ func splitModel(opts ...testModelOption) model {
 	return m
 }
 
-func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
+func TestRenderSplitMatchesBaselineGrid(t *testing.T) { //nolint:paralleltest // t.Setenv of CLICOLOR, NO_COLOR and ROBOREV_COLOR_MODE
 	t.Setenv("CLICOLOR", "")
 	t.Setenv("CLICOLOR_FORCE", "")
 	previousLocation := time.Local
@@ -102,6 +102,7 @@ func TestRenderSplitMatchesBaselineGrid(t *testing.T) {
 }
 
 func TestRenderSplitShowsBothPanes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	out := m.renderSplit()
@@ -115,6 +116,7 @@ func TestRenderSplitShowsBothPanes(t *testing.T) {
 }
 
 func TestViewContentDispatchesToSplit(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withReview(splitTestReview()))
 	assert.Contains(t, m.viewContent(), "first finding")
 
@@ -124,6 +126,7 @@ func TestViewContentDispatchesToSplit(t *testing.T) {
 }
 
 func TestSplitViewMouseCaptureFollowsFocusedPane(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withReview(splitTestReview()))
 
 	assert.Equal(t, tea.MouseModeCellMotion, m.View().MouseMode)
@@ -134,6 +137,7 @@ func TestSplitViewMouseCaptureFollowsFocusedPane(t *testing.T) {
 }
 
 func TestDetailPaneStates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// Failed job: error text.
@@ -172,6 +176,7 @@ func TestDetailPaneStates(t *testing.T) {
 // correctly falls back to the status card in this case; splitInfoLine must
 // not compute a scroll indicator from the stale review either.
 func TestSplitInfoLineStaleReview(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withReview(splitTestReview()), withSelection(0, 3))
 	m.focus = focusDetail
 
@@ -184,6 +189,7 @@ func TestSplitInfoLineStaleReview(t *testing.T) {
 }
 
 func TestStateSnapshotIncludesLayout(t *testing.T) {
+	t.Parallel()
 	m := splitModel()
 	resp := m.buildStateResponse()
 	snap, ok := resp.Data.(stateSnapshot)
@@ -233,6 +239,7 @@ func splitFirstDataRowY(t *testing.T, m model, marker string) int {
 }
 
 func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	g := splitLayoutConfig.Geometry(150, 40, len(convertAndReflowHelpRows(m.splitFooterRows(), 150)))
@@ -264,6 +271,7 @@ func TestSplitMouseClickSelectsAndFocuses(t *testing.T) {
 }
 
 func TestSplitMouseWheelScrollsPaneUnderCursor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewScroll = 5
@@ -287,6 +295,7 @@ func TestSplitMouseWheelScrollsPaneUnderCursor(t *testing.T) {
 // then incidentally re-clicking/re-wheeling the same list row would silently
 // discard the reader's scroll position.
 func TestSplitMouseUnchangedSelectionPreservesScroll(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// (a) Wheel up while already at the topmost row: selection clamps in
@@ -332,6 +341,7 @@ func TestSplitMouseUnchangedSelectionPreservesScroll(t *testing.T) {
 // scheduleDetailFollow callers (split_render.go) that must call
 // disarmPendingReviewOpen when the wheel genuinely moves the selection.
 func TestSplitMouseWheelOverListDisarmsPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected
@@ -351,6 +361,7 @@ func TestSplitMouseWheelOverListDisarmsPendingReviewOpen(t *testing.T) {
 // counterpart to TestSplitMouseWheelOverListDisarmsPendingReviewOpen,
 // covering handleSplitMouse's other direct scheduleDetailFollow call site.
 func TestSplitMouseClickOnDifferentRowDisarmsPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected
@@ -373,6 +384,7 @@ func TestSplitMouseClickOnDifferentRowDisarmsPendingReviewOpen(t *testing.T) {
 // (previously the wheel called moveQueueSelection bare and wheel users could
 // never load older jobs past the final loaded row).
 func TestSplitWheelDownPaginatesAtBottom(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := splitModel(withSelection(2, 1)) // job 1, the last loaded row
@@ -399,6 +411,7 @@ func TestSplitWheelDownPaginatesAtBottom(t *testing.T) {
 // near the end of loaded data triggers the same prefetch as keyboard
 // navigation (maybePrefetch), batched with the detail-follow cmd.
 func TestSplitWheelDownPrefetchesNearEnd(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected
 	m.hasMore = true
@@ -418,6 +431,7 @@ func TestSplitWheelDownPrefetchesNearEnd(t *testing.T) {
 // selectedReviewLoaded must report the loaded review stale so tab and the
 // detail-pane click stop handing review actions to the replaced attempt.
 func TestSplitExternalRerunBlocksStaleReviewActions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
@@ -457,6 +471,7 @@ func TestSplitExternalRerunBlocksStaleReviewActions(t *testing.T) {
 // while the refetch is in flight -- and must not mask splitDetailErr when
 // that refetch fails, or obsolete output would display indefinitely.
 func TestDetailPaneHidesStaleAttemptReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
 	require.Contains(t, strings.Join(m.renderDetailPane(88, 25), "\n"), "first finding",
@@ -481,6 +496,7 @@ func TestDetailPaneHidesStaleAttemptReview(t *testing.T) {
 // exit must repair the selection or the queue renders no highlighted row
 // and the split pane "No job selected" until a refresh heals it.
 func TestTasksExitRestoresQueueSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	taskSelected := func() model {
@@ -525,6 +541,7 @@ func TestTasksExitRestoresQueueSelection(t *testing.T) {
 // detail focus until the next jobs refresh. Job 2's own observation
 // survives for when the user returns to it.
 func TestCrossJobRerunObservationDoesNotBlockFailedReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected, review loaded
@@ -560,6 +577,7 @@ func TestCrossJobRerunObservationDoesNotBlockFailedReview(t *testing.T) {
 // comparison (reviewJobCompletionChanged) is the fallback that still marks
 // the loaded review stale.
 func TestSelectedReviewLoadedDetectsMissedRerunCompletion(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
 	assert.True(m.selectedReviewLoaded())
@@ -577,6 +595,7 @@ func TestSelectedReviewLoadedDetectsMissedRerunCompletion(t *testing.T) {
 // shows a status card. splitReconcileDetail must close it, mirroring
 // handleRerunResultMsg's close on the local-rerun path.
 func TestSplitExternalRerunClosesFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
 	m.reviewFixPanelOpen = true
@@ -618,6 +637,7 @@ func TestSplitExternalRerunClosesFixPanel(t *testing.T) {
 // review). normalizeSplitState's focus invariant (repair 3) must clear the
 // focus; the panel itself stays open with its typed text preserved.
 func TestSplitSameRowClickUnfocusesFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected, review loaded
 	m.currentView = viewReview
@@ -646,6 +666,7 @@ func TestSplitSameRowClickUnfocusesFixPanel(t *testing.T) {
 // to whatever view is current). normalizeSplitState's focus invariant
 // clears it; the open panel itself survives for tab to re-focus later.
 func TestPendingFixPanelConsumedUnderTransientViewIsNotLeftFocused(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -679,6 +700,7 @@ func TestPendingFixPanelConsumedUnderTransientViewIsNotLeftFocused(t *testing.T)
 // the box wraps past its 3-line budget and the 5-line pane cap silently
 // drops the help line.
 func TestFixPanelPaneLinesLongInputKeepsHelpLine(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewFixPanelOpen = true
@@ -702,6 +724,7 @@ func TestFixPanelPaneLinesLongInputKeepsHelpLine(t *testing.T) {
 // job list" check, leaving the list pane underfilled until the next SSE
 // event or fallback poll. The refill must be batched with the tail restart.
 func TestResizeRefillsDuringPaneTailRestart(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogStreaming = 3, true
@@ -722,6 +745,7 @@ func TestResizeRefillsDuringPaneTailRestart(t *testing.T) {
 // schedule a follow for the unrendered pane, since scheduleDetailFollow
 // zeroes the reviewScroll of the review the user is reading.
 func TestSplitEngageKeepsTasksOriginReviewScroll(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel()
 	m.currentView = viewReview
@@ -743,6 +767,7 @@ func TestSplitEngageKeepsTasksOriginReviewScroll(t *testing.T) {
 // must reconcile the detail pane itself or the pane stalls (no review
 // fetch, no log tail) until an unrelated SSE event or the fallback poll.
 func TestPanelMembersMsgReconcilesSelectedMemberDetail(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	finishedAt := splitTestFinishedAt
 	queuedMember := storage.ReviewJob{
@@ -772,6 +797,7 @@ func TestPanelMembersMsgReconcilesSelectedMemberDetail(t *testing.T) {
 // must sync it into the loaded review, or the [CLOSED] badge goes stale and
 // the next local toggle submits the already-current state.
 func TestSplitReconcileSyncsExternallyToggledClosed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 done, review loaded, Closed=false
 	closed := true
@@ -795,6 +821,7 @@ func TestSplitReconcileSyncsExternallyToggledClosed(t *testing.T) {
 // originating dispatch can still be served -- it retries once, and the
 // retry's success serves the explicit open.
 func TestFollowFailureRetriesPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel() // job 2 (done) selected
@@ -843,6 +870,7 @@ func TestFollowFailureRetriesPendingReviewOpen(t *testing.T) {
 // a second follow failure clears the intent with a warning flash targeted
 // at the origin view.
 func TestSecondFollowFailureClearsPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel()
@@ -913,6 +941,7 @@ func testQueueJobs() []storage.ReviewJob {
 }
 
 func TestRenderQueueTableAtNarrowWidth(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(
 		withCurrentView(viewQueue),
 		withDimensions(150, 40),
@@ -932,6 +961,7 @@ func TestRenderQueueTableAtNarrowWidth(t *testing.T) {
 }
 
 func TestQueuePaneColumnsNarrowing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -966,6 +996,7 @@ func TestQueuePaneColumnsNarrowing(t *testing.T) {
 // are supplied directly (not derived from real rows) so the exact boundary
 // between "everything fits" and "one drop" is deterministic.
 func TestQueuePaneColumnsDropOrder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewQueue))
 	m.columnOrder = []int{colRef, colBranch, colRepo, colAgent}
@@ -996,6 +1027,7 @@ func TestQueuePaneColumnsDropOrder(t *testing.T) {
 }
 
 func TestRenderQueuePaneBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -1016,6 +1048,7 @@ func TestRenderQueuePaneBody(t *testing.T) {
 }
 
 func TestRenderReviewPaneBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -1033,6 +1066,7 @@ func TestRenderReviewPaneBody(t *testing.T) {
 }
 
 func TestRenderReviewPaneBodyScrolls(t *testing.T) {
+	t.Parallel()
 	rev := splitTestReview()
 	// Content must be non-repeating: a periodic body (e.g. the same line
 	// repeated) can make two different scroll offsets land on the same
@@ -1056,6 +1090,7 @@ func TestRenderReviewPaneBodyScrolls(t *testing.T) {
 }
 
 func TestWindowResizeSwitchesLayout(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(80, 24),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2))
@@ -1077,6 +1112,7 @@ func TestWindowResizeSwitchesLayout(t *testing.T) {
 // offset/lines, rebuilt formatter, a fresh fetch) or the live log stays
 // wrapped for the previous pane size.
 func TestWindowResizeRestartsPaneLogAtNewWidth(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1098,6 +1134,7 @@ func TestWindowResizeRestartsPaneLogAtNewWidth(t *testing.T) {
 // in stacked), so a resize landing in/staying in stacked layout must not
 // touch it.
 func TestWindowResizeLeavesPaneLogAloneInStacked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -1127,6 +1164,7 @@ func TestWindowResizeLeavesPaneLogAloneInStacked(t *testing.T) {
 // invalidate the stale-width background tail (bump seq, stop streaming)
 // without touching the buffered lines or issuing its own fetch.
 func TestWindowResizeRunsLogViewBehindActivePaneLog(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1154,6 +1192,7 @@ func TestWindowResizeRunsLogViewBehindActivePaneLog(t *testing.T) {
 }
 
 func TestToggleLayoutKey(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel()
 	m.width, m.height = 150, 40
@@ -1182,6 +1221,7 @@ func TestToggleLayoutKey(t *testing.T) {
 // selection: nothing needs fetching, so maybeBootstrapDetail must not
 // schedule a follow tick or reset reviewScroll.
 func TestBootstrapDetailPreservesScrollOnMatchingReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewReview),
@@ -1207,6 +1247,7 @@ func TestBootstrapDetailPreservesScrollOnMatchingReview(t *testing.T) {
 // bootstrap path: no review loaded for the current selection, so entering
 // split must schedule a follow tick as before.
 func TestBootstrapDetailSchedulesWhenNoMatchingReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -1226,6 +1267,7 @@ func TestBootstrapDetailSchedulesWhenNoMatchingReview(t *testing.T) {
 }
 
 func TestSplitFocusKeys(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 
@@ -1260,6 +1302,7 @@ func TestSplitFocusKeys(t *testing.T) {
 }
 
 func TestReviewMsgFocusesDetailInSplit(t *testing.T) {
+	t.Parallel()
 	m := splitModel()
 	res, _ := m.handleReviewMsg(reviewMsg{review: splitTestReview(), jobID: 2})
 	got := res.(model)
@@ -1268,6 +1311,7 @@ func TestReviewMsgFocusesDetailInSplit(t *testing.T) {
 }
 
 func TestFollowScheduledOnCursorMove(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel() // selection on job 2
 	prevGen := m.detailFollowGen
@@ -1286,6 +1330,7 @@ func TestFollowScheduledOnCursorMove(t *testing.T) {
 }
 
 func TestFollowTickFetchesForDoneJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2: done
 	m.detailFollowGen = 7
@@ -1305,6 +1350,7 @@ func TestFollowTickFetchesForDoneJob(t *testing.T) {
 }
 
 func TestFollowTickSynthesizesFailedReview(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withSelection(2, 1)) // job 1: failed
 	m.detailFollowGen = 1
 	res, _ := m.handleDetailFollowTick(detailFollowTickMsg{gen: 1})
@@ -1315,6 +1361,7 @@ func TestFollowTickSynthesizesFailedReview(t *testing.T) {
 }
 
 func TestFailedReviewDoesNotChangeColourAfterDetailFollow(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withSelection(2, 1)) // job 1: failed
 	m.currentReview = nil
 
@@ -1330,6 +1377,7 @@ func TestFailedReviewDoesNotChangeColourAfterDetailFollow(t *testing.T) {
 }
 
 func TestFollowReviewMsgKeepsListFocus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2))
 	res, _ := m.handleReviewMsg(reviewMsg{review: splitTestReview(), jobID: 2, follow: true})
@@ -1344,6 +1392,7 @@ func TestFollowReviewMsgKeepsListFocus(t *testing.T) {
 // must update m.layout but leave the transient view and its in-progress
 // text alone.
 func TestResizeAcrossBreakpointPreservesCommentEditor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel()
 	m.width, m.height = 150, 40
@@ -1360,6 +1409,7 @@ func TestResizeAcrossBreakpointPreservesCommentEditor(t *testing.T) {
 // TestResizeAcrossBreakpointPreservesLogView is the same as
 // TestResizeAcrossBreakpointPreservesCommentEditor but for the log view.
 func TestResizeAcrossBreakpointPreservesLogView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel()
 	m.width, m.height = 150, 40
@@ -1378,6 +1428,7 @@ func TestResizeAcrossBreakpointPreservesLogView(t *testing.T) {
 // normalizeSplitState step must reconcile focus against the resulting view
 // with no panic, for both the queue and the review destinations.
 func TestTransientViewExitReconcilesSplitFocus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// Exit into viewQueue: focus reconciles to focusList.
@@ -1417,6 +1468,7 @@ func TestTransientViewExitReconcilesSplitFocus(t *testing.T) {
 // handleDetailFollowTick: startPaneLog resets the pane's log state
 // and kicks off the first fetch.
 func TestStartPaneLogInitializesState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	job, _ := m.selectedJob()
@@ -1432,6 +1484,7 @@ func TestStartPaneLogInitializesState(t *testing.T) {
 // pane's inner width, not the full terminal width -- a regression here
 // wraps log text for the terminal and then hard-truncates it to the pane.
 func TestPaneLogWidthUsesDetailPaneNotTerminalWidth(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	footerRows := m.splitFooterRows()
@@ -1444,6 +1497,7 @@ func TestPaneLogWidthUsesDetailPaneNotTerminalWidth(t *testing.T) {
 // stale seq is dropped, a live seq appends lines and schedules the next
 // poll, and the appended text shows up in the rendered detail pane.
 func TestPaneLogOutputAppendsAndSchedulesTick(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1473,6 +1527,7 @@ func TestPaneLogOutputAppendsAndSchedulesTick(t *testing.T) {
 // replacement log. append=true still appends, and
 // the buffer still trims to the 500-line cap.
 func TestPaneLogOutputReplacesOnNonIncrementalFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1506,6 +1561,7 @@ func TestPaneLogOutputReplacesOnNonIncrementalFetch(t *testing.T) {
 // TestPaneLogCompletionTriggersReviewFetch covers the running->done swap:
 // once the job stops streaming, the pane reconciles via a review fetch.
 func TestPaneLogCompletionTriggersReviewFetch(t *testing.T) {
+	t.Parallel()
 	m := splitModel(withSelection(0, 3))
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
 	// hasMore=false: job stopped streaming -- reconcile via a review fetch.
@@ -1518,6 +1574,7 @@ func TestPaneLogCompletionTriggersReviewFetch(t *testing.T) {
 // current-seq tick for the still-running, still-selected job re-issues the
 // fetch; a stale seq or a job that's moved on is a silent no-op.
 func TestPaneLogTickRefetchesWhileRunning(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3))
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1541,6 +1598,7 @@ func TestPaneLogTickRefetchesWhileRunning(t *testing.T) {
 // pane still shows something else (e.g. a stale log tail), the jobs refresh
 // triggers a review fetch to swap the pane over.
 func TestSplitReconcileDetailOnJobsUpdate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogStreaming = 3, true
@@ -1564,6 +1622,7 @@ func TestSplitReconcileDetailOnJobsUpdate(t *testing.T) {
 // the pane permanently once a rerun reused this job ID and returned it to
 // running (see TestSplitReconcileDetailRestartsTailAfterRerunReusesJobID).
 func TestPaneLogTickClearsStreamingWhenJobStopsRunning(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1584,6 +1643,7 @@ func TestPaneLogTickClearsStreamingWhenJobStopsRunning(t *testing.T) {
 // job-status check, so a live tail's paneLogStreaming/paneLogSeq must be
 // untouched.
 func TestPaneLogTickStaleSeqLeavesActiveTailAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1605,6 +1665,7 @@ func TestPaneLogTickStaleSeqLeavesActiveTailAlone(t *testing.T) {
 // paneLogStreaming) stayed satisfied and the tail was never restarted,
 // freezing the pane on stale output indefinitely.
 func TestSplitReconcileDetailRestartsTailAfterRerunReusesJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1632,6 +1693,7 @@ func TestSplitReconcileDetailRestartsTailAfterRerunReusesJobID(t *testing.T) {
 // and any active tail for that job must be stopped so it can't keep polling
 // a job that no longer exists in running state.
 func TestSplitReconcileDetailSynthesizesFailedReviewAndStopsTail(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1656,6 +1718,7 @@ func TestSplitReconcileDetailSynthesizesFailedReviewAndStopsTail(t *testing.T) {
 // renderReviewPaneBody (scrollable, focusable) -- not the card+wrapped-error
 // fallback that only shows until the next selection change.
 func TestFailedReviewFromReconcileRendersThroughReviewPaneBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogStreaming = 3, true
@@ -1682,6 +1745,7 @@ func TestFailedReviewFromReconcileRendersThroughReviewPaneBody(t *testing.T) {
 // review or churn paneLogSeq again (mirroring the Done branch's existing
 // currentReview-match guard).
 func TestSplitReconcileDetailFailedIdempotent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -1716,6 +1780,7 @@ func TestSplitReconcileDetailFailedIdempotent(t *testing.T) {
 // review carrying different error text, with its tail still marked
 // active, must be replaced with the fresh synthesis and the tail stopped.
 func TestSplitReconcileDetailReplacesStaleFailedReviewFromRerun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, current error "boom"
@@ -1741,6 +1806,7 @@ func TestSplitReconcileDetailReplacesStaleFailedReviewFromRerun(t *testing.T) {
 // when the review already looked current survive this branch
 // indefinitely.
 func TestSplitReconcileDetailFailedStopsTailEvenWhenReviewAlreadyCurrent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, "boom"
 	m.currentReview = synthesizeFailedReview(&m.jobs[2], nil)
@@ -1760,6 +1826,7 @@ func TestSplitReconcileDetailFailedStopsTailEvenWhenReviewAlreadyCurrent(t *test
 // state (same job ID, same error text) and no tail is active, reconcile
 // must not rebuild the review or churn paneLogSeq.
 func TestSplitReconcileDetailFailedIdempotentWhenErrorUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, "boom"
 	m.currentReview = synthesizeFailedReview(&m.jobs[2], nil)
@@ -1791,6 +1858,7 @@ func TestSplitReconcileDetailFailedIdempotentWhenErrorUnchanged(t *testing.T) {
 // completion from a previous one when the loaded review's embedded Job
 // disagrees with the freshly-polled job.
 func TestSplitReconcileDetailRefetchesDoneReviewWhenCompletionChanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	oldFinish := time.Now().Add(-time.Hour)
 	m := splitModel(withSelection(1, 2)) // job 2: done
@@ -1813,6 +1881,7 @@ func TestSplitReconcileDetailRefetchesDoneReviewWhenCompletionChanged(t *testing
 // job.FinishedAt matches the freshly-polled job's FinishedAt (the review
 // already reflects this exact completion), reconcile must not refetch.
 func TestSplitReconcileDetailDoneIdempotentWhenCompletionUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	finish := time.Now()
 	m := splitModel(withSelection(1, 2)) // job 2: done
@@ -1845,6 +1914,7 @@ func TestSplitReconcileDetailDoneIdempotentWhenCompletionUnchanged(t *testing.T)
 // is the loop repro, and must NOT refetch under the fixed, forward-only
 // comparison.
 func TestSplitReconcileDetailDoneNoRefetchWhenPolledSnapshotIsOlder(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	newer := time.Now()
 	older := newer.Add(-time.Hour)
@@ -1873,6 +1943,7 @@ func TestSplitReconcileDetailDoneNoRefetchWhenPolledSnapshotIsOlder(t *testing.T
 // cursor (selectedJobID/selectedIdx) -- keeping list/detail selection in
 // sync even though the list pane isn't focused.
 func TestArrowKeysStepReviewNavInSplitDetailFocus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// testQueueJobs order: job 3 (running, idx0), job 2 (done, idx1),
@@ -1905,6 +1976,7 @@ func TestArrowKeysStepReviewNavInSplitDetailFocus(t *testing.T) {
 // currentView in {viewQueue, viewReview}), and 'esc' returns to viewReview
 // with focus/layout/currentReview all intact.
 func TestSplitTransientRoundTripPrompt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	rev := splitTestReview()
 	rev.Prompt = "review this diff"
@@ -1929,6 +2001,7 @@ func TestSplitTransientRoundTripPrompt(t *testing.T) {
 // TestSplitTransientRoundTripHelp is TestSplitTransientRoundTripPrompt's
 // counterpart for '?' (help).
 func TestSplitTransientRoundTripHelp(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.focus = focusDetail
@@ -1951,6 +2024,7 @@ func TestSplitTransientRoundTripHelp(t *testing.T) {
 // review, and growing back past the breakpoint must restore split with
 // focus back on the detail pane, still showing that review.
 func TestResizeBelowBreakpointWhileDetailFocused(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.focus = focusDetail
@@ -1980,6 +2054,7 @@ func TestResizeBelowBreakpointWhileDetailFocused(t *testing.T) {
 // full-screen chrome reservation, or a resize into a taller split pane can
 // leave rows unfilled even though more data is available server-side.
 func TestWindowResizeRefillsToPaneCapacityInSplit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewQueue),
@@ -2020,11 +2095,12 @@ func TestWindowResizeRefillsToPaneCapacityInSplit(t *testing.T) {
 // while split is active and list-focused must surface on the split info
 // line (splitInfoLine renders m.renderFlash(m.currentView) first).
 func TestSplitInfoLineShowsFlash(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel()
 	m.focus = focusList
 	m.currentView = viewQueue
-	m.setFlash("No older review", 2*time.Second, viewQueue)
+	m.setFlash("No older review", time.Hour, viewQueue)
 
 	footerRows := m.splitFooterRows()
 	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(footerRows, m.width)))
@@ -2042,6 +2118,7 @@ func TestSplitInfoLineShowsFlash(t *testing.T) {
 // of leaving the "Loading review..." placeholder stuck forever. A stale
 // jobID (selection has since moved on) is dropped.
 func TestReviewFollowFetchFailureShowsInPane(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -2078,6 +2155,7 @@ func TestReviewFollowFetchFailureShowsInPane(t *testing.T) {
 // clears any earlier splitDetailErr so a stale error from a DIFFERENT job
 // doesn't linger and get misattributed once the new job's content loads.
 func TestScheduleDetailFollowClearsSplitDetailErr(t *testing.T) {
+	t.Parallel()
 	m := splitModel()
 	m.splitDetailErr = errors.New("stale error from a previous job")
 
@@ -2091,6 +2169,7 @@ func TestScheduleDetailFollowClearsSplitDetailErr(t *testing.T) {
 // (paneLogStreaming=false, no further tick scheduled) and records the error
 // for renderDetailPane's running-branch to show as one line.
 func TestPaneLogOutputErrorShowsInPaneAndStopsTick(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2118,6 +2197,7 @@ func TestPaneLogOutputErrorShowsInPaneAndStopsTick(t *testing.T) {
 // render passes -- proving each pass computed and wrote its own, not a
 // stale value the other renderer left behind.
 func TestMdCacheMaxScrollSingleRendererPerFrame(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	rev := splitTestReview()
 	var sb strings.Builder
@@ -2152,6 +2232,7 @@ func TestMdCacheMaxScrollSingleRendererPerFrame(t *testing.T) {
 // is still stored so it's ready once the user returns from the transient
 // view.
 func TestReviewMsgDoesNotClobberTransientView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -2194,6 +2275,7 @@ func TestReviewMsgDoesNotClobberTransientView(t *testing.T) {
 // viewTasks in its allowed set, or this legitimate switch silently stops
 // happening.
 func TestTasksViewEnterSwitchesToReviewView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40))
@@ -2222,6 +2304,7 @@ func TestTasksViewEnterSwitchesToReviewView(t *testing.T) {
 // TestTasksViewEnterSwitchesToReviewView's counterpart for 'P' (open parent
 // review for a fix task).
 func TestTasksViewParentShortcutSwitchesToReviewView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	parentID := int64(77)
@@ -2253,6 +2336,7 @@ func TestTasksViewParentShortcutSwitchesToReviewView(t *testing.T) {
 // 8 / Finding A) must not also block the pending-fix-panel consumption, or
 // it's stranded forever (nothing else ever reopens it).
 func TestReviewMsgConsumesPendingFixPanelEvenWithTransientViewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -2292,6 +2376,7 @@ func TestReviewMsgConsumesPendingFixPanelEvenWithTransientViewOpen(t *testing.T)
 // response for the OLD job -- including a failure -- can still land after
 // the fact and set splitDetailErr for whatever job is newly selected.
 func TestScheduleDetailFollowInvalidatesStalePaneLogTail(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2318,6 +2403,7 @@ func TestScheduleDetailFollowInvalidatesStalePaneLogTail(t *testing.T) {
 // follow reschedule that does NOT change the selection (e.g. re-selecting
 // the same job) must not disturb an in-progress tail for that same job.
 func TestScheduleDetailFollowLeavesTailAloneWhenSelectionUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2335,6 +2421,7 @@ func TestScheduleDetailFollowLeavesTailAloneWhenSelectionUnchanged(t *testing.T)
 // must notice a running selected job whose tail isn't active and restart it
 // -- recovering automatically within one refresh cycle.
 func TestSplitReconcileDetailRestartsStalledRunningTail(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, false
@@ -2352,6 +2439,7 @@ func TestSplitReconcileDetailRestartsStalledRunningTail(t *testing.T) {
 // restarted (that would reset paneLogLines/offset and drop buffered log
 // content for no reason).
 func TestSplitReconcileDetailLeavesActiveTailAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2370,6 +2458,7 @@ func TestSplitReconcileDetailLeavesActiveTailAlone(t *testing.T) {
 // or a stale error from an earlier failed attempt can render for one frame
 // against the freshly-resolving job before the new fetch lands.
 func TestSplitReconcileDetailClearsStaleSplitDetailErr(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2: done
 	m.splitDetailErr = errors.New("stale error from a previous attempt")
@@ -2380,6 +2469,7 @@ func TestSplitReconcileDetailClearsStaleSplitDetailErr(t *testing.T) {
 }
 
 func TestPaneLogCompletionClearsStaleSplitDetailErr(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2404,6 +2494,7 @@ func TestPaneLogCompletionClearsStaleSplitDetailErr(t *testing.T) {
 // renderQueuePaneBody's budget without updating this helper would still be
 // caught.
 func TestQueuePaneRowCapacityMatchesRenderInCompactMode(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withDimensions(150, 14)) // height < 15 -> queueCompact() true
 	require.True(t, m.queueCompact())
@@ -2444,6 +2535,7 @@ func TestQueuePaneRowCapacityMatchesRenderInCompactMode(t *testing.T) {
 // site): the switch only fires when currentView is still the origin the
 // fetch was dispatched from, or already viewReview.
 func TestReviewMsgRespectsDispatchOriginQueueThenTasks(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -2480,6 +2572,7 @@ func TestReviewMsgRespectsDispatchOriginQueueThenTasks(t *testing.T) {
 // resolve into viewReview if the user has since backed out to the queue
 // (Esc/T from handleTasksKey).
 func TestReviewMsgRespectsDispatchOriginTasksThenQueue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40))
@@ -2528,6 +2621,7 @@ func TestReviewMsgRespectsDispatchOriginTasksThenQueue(t *testing.T) {
 // (reviewFromView == viewTasks) so it renders full-screen via the ordinary
 // review renderer instead, same as any other transient view.
 func TestSplitActiveExcludesTasksOriginReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewTasks), withDimensions(150, 40))
@@ -2564,6 +2658,7 @@ func TestSplitActiveExcludesTasksOriginReview(t *testing.T) {
 // tasks-origin review -- they must fall through to the general
 // reviewFromView-based return logic instead, landing back on viewTasks.
 func TestSplitEscQuitReturnTasksOriginReviewToTasksView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	newTasksOriginReview := func() model {
 		m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40))
@@ -2589,6 +2684,7 @@ func TestSplitEscQuitReturnTasksOriginReviewToTasksView(t *testing.T) {
 // value) must still render through the split pane, unaffected by the
 // tasks-origin exclusion.
 func TestSplitActiveStillTrueForQueueOriginReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	assert.True(m.splitActive())
@@ -2606,6 +2702,7 @@ func TestSplitActiveStillTrueForQueueOriginReview(t *testing.T) {
 // here), so it has no rendering or key-handling impact for a tasks-origin
 // review.
 func TestSplitNormalizeStateHarmlessForTasksOriginReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40))
 	m.layout = splitlayout.Split
@@ -2636,6 +2733,7 @@ func TestSplitNormalizeStateHarmlessForTasksOriginReview(t *testing.T) {
 // review full-screen. handleTabKey now stamps reviewFromView = viewQueue
 // on this transition to prevent that.
 func TestSplitTabKeyStampsQueueOriginAfterStaleTasksReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // queue-origin review already loaded via follow-fetch
 	m.focus = focusList
@@ -2656,6 +2754,7 @@ func TestSplitTabKeyStampsQueueOriginAfterStaleTasksReview(t *testing.T) {
 // the identical staleness risk (same "already-loaded via follow-fetch, not
 // through the origin-tracking guard" reasoning) and needed the same fix.
 func TestSplitMouseClickIntoDetailStampsQueueOrigin(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	m.reviewFromView = viewTasks // stale
@@ -2679,6 +2778,7 @@ func TestSplitMouseClickIntoDetailStampsQueueOrigin(t *testing.T) {
 // to seq -- an independent, message-level invariant that doesn't depend on
 // every selection-mutation call site remembering to invalidate the tail.
 func TestPaneLogOutputRejectsMismatchedJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2711,6 +2811,7 @@ func TestPaneLogOutputRejectsMismatchedJobID(t *testing.T) {
 // "Failed to load log" from a PREVIOUS job over the new job's live tail
 // forever.
 func TestSplitReconcileDetailClearsSplitDetailErrOnTailRestart(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	jobs := []storage.ReviewJob{
 		{
@@ -2745,6 +2846,7 @@ func TestSplitReconcileDetailClearsSplitDetailErrOnTailRestart(t *testing.T) {
 }
 
 func TestPaneLogOutputSuccessClearsStaleSplitDetailErr(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -2776,6 +2878,7 @@ func TestPaneLogOutputSuccessClearsStaleSplitDetailErr(t *testing.T) {
 // old job. handleCtrlSelectJob now routes a real selection change through
 // scheduleDetailFollow when split layout is on.
 func TestCtrlSelectJobRoutesThroughDetailFollowInSplit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
@@ -2808,6 +2911,7 @@ func TestCtrlSelectJobRoutesThroughDetailFollowInSplit(t *testing.T) {
 // splitDetailErr that belongs to the newly selected job. Routing select-job
 // through scheduleDetailFollow bumps paneLogSeq, so it is now rejected.
 func TestCtrlSelectJobRejectsInFlightTailResponseFromOldJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
@@ -2843,6 +2947,7 @@ func TestCtrlSelectJobRejectsInFlightTailResponseFromOldJob(t *testing.T) {
 // no detail pane to follow, so select-job behaves exactly as before -- no
 // follow cmd, no tail invalidation.
 func TestCtrlSelectJobStackedLeavesPaneLogAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3))
@@ -2885,6 +2990,7 @@ func reviewNavJobs() []storage.ReviewJob {
 // msg.dispatchedFrom, stamped by fetchReview from currentView at
 // command-creation time.
 func TestStepReviewNavFetchDoesNotReopenReviewAfterEsc(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -2921,6 +3027,7 @@ func TestStepReviewNavFetchDoesNotReopenReviewAfterEsc(t *testing.T) {
 // the user who stays in the review view gets the stepped-to review, exactly
 // as before.
 func TestStepReviewNavFetchUpdatesInPlaceWhenStillInReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -2952,6 +3059,7 @@ func TestStepReviewNavFetchUpdatesInPlaceWhenStillInReview(t *testing.T) {
 // built, so the origin reflects where the user actually was when the fetch
 // was issued.
 func TestReviewMsgStampsDispatchOriginFromCurrentView(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -2987,6 +3095,7 @@ func TestReviewMsgStampsDispatchOriginFromCurrentView(t *testing.T) {
 // it; L never did). applyLayout now invalidates the tail on the way out.
 // Mirrors TestSplitReconcileDetailRestartsStalledRunningTail's shape.
 func TestToggleLayoutInvalidatesTailWhenLeavingSplit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
@@ -3027,6 +3136,7 @@ func TestToggleLayoutInvalidatesTailWhenLeavingSplit(t *testing.T) {
 // dispatcher (which matches currentReview.JobID against the selection)
 // could not recognize it as the selected job's review.
 func TestPaneLogPaginateNavFailedReviewCarriesJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -3075,6 +3185,7 @@ func TestPaneLogPaginateNavFailedReviewCarriesJobID(t *testing.T) {
 // explicitly: pagination lands on a failed job and installs a synthesized
 // review while a fix panel bound to the PREVIOUS job is still open.
 func TestPaginationAutoNavClosesStaleFixPanelViewReviewFailedJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -3112,6 +3223,7 @@ func TestPaginationAutoNavClosesStaleFixPanelViewReviewFailedJob(t *testing.T) {
 // EARLY -- verifying the fix panel is still closed on that early-return path,
 // not only the Failed sub-case that falls through to the function's end.
 func TestPaginationAutoNavClosesStaleFixPanelViewReviewDoneJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -3140,6 +3252,7 @@ func TestPaginationAutoNavClosesStaleFixPanelViewReviewDoneJob(t *testing.T) {
 // viewKindPrompt arm -- the second switch case the reviewer asked to audit
 // alongside viewReview.
 func TestPaginationAutoNavClosesStaleFixPanelPromptView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -3174,6 +3287,7 @@ func TestPaginationAutoNavClosesStaleFixPanelPromptView(t *testing.T) {
 // interfere -- the panel reaches this block still bound to job 5 so the fix's
 // own guard is what's actually under test.
 func TestPaginationAutoNavKeepsFixPanelBoundToNewSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -3208,6 +3322,7 @@ func TestPaginationAutoNavKeepsFixPanelBoundToNewSelection(t *testing.T) {
 // on a done job must not move focus, change the view, dispatch a fetch, or
 // flash anything -- the pane already shows the review for the selected job.
 func TestEnterKeyNoOpInSplitListFocus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2: done
 	m.focus = focusList
@@ -3226,6 +3341,7 @@ func TestEnterKeyNoOpInSplitListFocus(t *testing.T) {
 // queued/running job -- previously Enter would flash "no review yet" even
 // though the split pane already shows the job's live status/log.
 func TestEnterKeyNoOpInSplitListFocusRunningJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
 	m.focus = focusList
@@ -3244,6 +3360,7 @@ func TestEnterKeyNoOpInSplitListFocusRunningJob(t *testing.T) {
 // in split -- that branch becomes unreachable from the queue via Enter in
 // split layout.
 func TestEnterKeyNoOpInSplitListFocusFailedJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed
 	m.focus = focusList
@@ -3263,6 +3380,7 @@ func TestEnterKeyNoOpInSplitListFocusFailedJob(t *testing.T) {
 // job in the (default) stacked layout. This test names that behavior
 // directly and pins it against the split no-op added in this task.
 func TestEnterKeyStillDispatchesFetchInStackedLayout(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -3285,6 +3403,7 @@ func TestEnterKeyStillDispatchesFetchInStackedLayout(t *testing.T) {
 // enter (it's now a no-op there) but must still show the tab hint used to
 // focus the detail pane.
 func TestSplitFooterListFocusOmitsEnterHint(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2))
 	m.focus = focusList
@@ -3319,6 +3438,7 @@ func TestSplitFooterListFocusOmitsEnterHint(t *testing.T) {
 // review body -- the user typed blind. The panel must now render inline,
 // below the review body, with the body's window shrunk to make room.
 func TestReviewPaneFixPanelFocusedRendersInline(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()), withFixPanel(true, true))
 	m.fixPromptText = "add nil check"
@@ -3335,6 +3455,7 @@ func TestReviewPaneFixPanelFocusedRendersInline(t *testing.T) {
 // of Finding 1: panel open but keyboard focus still on the pane/list, shown
 // dimmed with the default-prompt hint.
 func TestReviewPaneFixPanelUnfocusedRendersDimmed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()), withFixPanel(true, false))
 
@@ -3350,6 +3471,7 @@ func TestReviewPaneFixPanelUnfocusedRendersDimmed(t *testing.T) {
 // with the panel closed, rendering must be byte-identical to before this
 // fix (no panel markers, no height change).
 func TestReviewPaneFixPanelClosedRendersUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	baseline := m.renderDetailPane(88, 25)
@@ -3370,6 +3492,7 @@ func TestReviewPaneFixPanelClosedRendersUnchanged(t *testing.T) {
 // reserved rows, so the split info line's "[x-y of z lines]" stays honest
 // once the panel is showing.
 func TestReviewPaneFixPanelReservesHeightFromScrollInfo(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	rev := splitTestReview()
 	var sb strings.Builder
@@ -3395,6 +3518,7 @@ func TestReviewPaneFixPanelReservesHeightFromScrollInfo(t *testing.T) {
 // that case -- doing so would hand review actions (close/comment/fix) to
 // the wrong job.
 func TestSplitTabKeyNoOpWhenSelectedReviewStale(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// currentReview is for job 2; selection is on job 3 (running).
 	m := splitModel(withReview(splitTestReview()), withSelection(0, 3))
@@ -3417,6 +3541,7 @@ func TestSplitTabKeyNoOpWhenSelectedReviewStale(t *testing.T) {
 // the detail pane must not enter detail focus either while the loaded
 // review belongs to a different job than the one currently selected.
 func TestSplitMouseClickIntoDetailNoOpWhenSelectedReviewStale(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// currentReview is for job 2; selection is on job 3 (running).
 	m := splitModel(withReview(splitTestReview()), withSelection(0, 3))
@@ -3435,6 +3560,7 @@ func TestSplitMouseClickIntoDetailNoOpWhenSelectedReviewStale(t *testing.T) {
 // loaded, currentReview (and its dependent state) must be cleared so the
 // follow/reconcile machinery refetches once the rerun finishes.
 func TestRerunResultClearsStaleCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()), withSelection(1, 2)) // job 2 done, review loaded
 	m.currentResponses = []storage.Response{{ID: 1}}
@@ -3453,6 +3579,7 @@ func TestRerunResultClearsStaleCurrentReview(t *testing.T) {
 // path: a failed rerun request must leave the previously loaded review in
 // place (only the optimistic job-state fields are rolled back).
 func TestRerunResultMsgErrRetainsCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()), withSelection(1, 2))
 
@@ -3467,6 +3594,7 @@ func TestRerunResultMsgErrRetainsCurrentReview(t *testing.T) {
 // loaded (e.g. rerunning from the queue while a different review is open)
 // must not clear currentReview.
 func TestRerunResultMsgLeavesUnrelatedReviewAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()), withSelection(1, 2)) // review for job 2
 
@@ -3483,6 +3611,7 @@ func TestRerunResultMsgLeavesUnrelatedReviewAlone(t *testing.T) {
 // rather than silently doing nothing (which is what the stale JobID match
 // used to cause).
 func TestRerunResultThenJobDoneTriggersFollowFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview()), withSelection(1, 2)) // job 2 done, review loaded
@@ -3506,6 +3635,7 @@ func TestRerunResultThenJobDoneTriggersFollowFetch(t *testing.T) {
 // terminal escapes -- OSC clipboard writes, CSI cursor/screen control, or
 // \r/\b overwrite tricks.
 func TestDetailPaneFailedJobSanitizesError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed
 	m.currentReview = nil
@@ -3550,6 +3680,7 @@ func TestDetailPaneFailedJobSanitizesError(t *testing.T) {
 // subsequent down-key must move the queue cursor, not the orphaned
 // reviewScroll.
 func TestNormalizeSplitStateRepairsStaleReviewViewStacked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -3584,6 +3715,7 @@ func TestNormalizeSplitStateRepairsStaleReviewViewStacked(t *testing.T) {
 // did before this fix -- the detail pane falls back to its loading/status
 // rendering and focus is normalized back to the list.
 func TestNormalizeSplitStateRerunStillHealsInSplit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview()), withSelection(1, 2)) // job 2 done, review loaded
@@ -3610,6 +3742,7 @@ func TestNormalizeSplitStateRerunStillHealsInSplit(t *testing.T) {
 // when a DIFFERENT job's rerun is confirmed -- the JobID guard in
 // handleRerunResultMsg (Finding 3) must not over-fire.
 func TestNormalizeSplitStateRerunOfDifferentJobLeavesReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -3663,6 +3796,7 @@ func TestNormalizeSplitStateRerunOfDifferentJobLeavesReviewOpen(t *testing.T) {
 // The rejecting mechanism is the per-job attempt stamp, not
 // detailFollowGen, which a confirmed rerun does not bump.
 func TestFollowRejectsPreRerunAttemptAfterRerunClear(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2), withReview(splitTestReview())) // job 2 done, review loaded
@@ -3703,6 +3837,7 @@ func TestFollowRejectsPreRerunAttemptAfterRerunClear(t *testing.T) {
 // a follow fetch dispatched at (and still tagged with) the current
 // generation must land exactly as before this fix.
 func TestFollowAtCurrentGenLandsNormally(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2))
 	// A real selection move bumps detailFollowGen; the fetch dispatched
@@ -3721,6 +3856,7 @@ func TestFollowAtCurrentGenLandsNormally(t *testing.T) {
 // stamping half of the fix: fetchReviewFollow's dispatched reviewMsg
 // carries whatever m.detailFollowGen was at call time.
 func TestFetchReviewFollowStampsCurrentGen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -3743,6 +3879,7 @@ func TestFetchReviewFollowStampsCurrentGen(t *testing.T) {
 // fetchReview call, not just the follow wrapper: a regular (non-follow)
 // fetch also carries whatever m.detailFollowGen was at call time.
 func TestFetchReviewStampsCurrentGen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -3765,6 +3902,7 @@ func TestFetchReviewStampsCurrentGen(t *testing.T) {
 // bumps it here) must still open the review normally when the response
 // lands.
 func TestQueueEnterLandsAtUnchangedGenInStackedMode(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -3792,6 +3930,7 @@ func TestQueueEnterLandsAtUnchangedGenInStackedMode(t *testing.T) {
 // jobID still equals the (now-restored) selectedJobID, so the pre-existing
 // jobID-only check alone would have let it through.
 func TestNonFollowFetchRejectedAfterInterveningSelectionChange(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2 selected
@@ -3826,6 +3965,7 @@ func TestNonFollowFetchRejectedAfterInterveningSelectionChange(t *testing.T) {
 // doesn't move the selection) and resurrected the previous attempt's
 // review.
 func TestNonFollowFetchRejectedAfterSameJobRerunConfirms(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2), withReview(splitTestReview())) // job 2, review loaded
@@ -3859,6 +3999,7 @@ func TestNonFollowFetchRejectedAfterSameJobRerunConfirms(t *testing.T) {
 // ever being fetched. (The invalidation is the per-job attempt counter,
 // which is what the assertion below names.)
 func TestSelectedJobRerunInvalidatesFetchEvenWhileReviewLoading(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
@@ -3901,6 +4042,7 @@ func TestSelectedJobRerunInvalidatesFetchEvenWhileReviewLoading(t *testing.T) {
 // produces the rerunResultMsg this handler processes -- so exercising the
 // handler directly covers both dispatch paths.
 func TestRerunClearsFixPanelForRerunJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2), withReview(splitTestReview())) // job 2 review loaded
 	m.reviewFixPanelOpen = true
@@ -3955,6 +4097,7 @@ func TestRerunClearsFixPanelForRerunJob(t *testing.T) {
 // TestFixPanelPendingRescuedOnGenMismatchWhenStillFreshest for the
 // sibling case this test no longer covers (rescue).
 func TestFixPanelPendingNotClearedWhenSuperseded(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2 selected
 	m.reviewFixPanelPending = true
@@ -3989,6 +4132,7 @@ func TestFixPanelPendingNotClearedWhenSuperseded(t *testing.T) {
 // debounced follow can be dropped, e.g. if the layout flips back before it
 // fires).
 func TestFixPanelPendingRescuedOnGenMismatchWhenStillFreshest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2 selected
 	m.reviewFixPanelPending = true
@@ -4023,6 +4167,7 @@ func TestFixPanelPendingRescuedOnGenMismatchWhenStillFreshest(t *testing.T) {
 // still matched). A failing closedResultMsg must roll BOTH back together,
 // keyed by the same seq.
 func TestSplitListCloseFlipsCurrentReviewClosedState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded, list focus
@@ -4059,6 +4204,7 @@ func TestSplitListCloseFlipsCurrentReviewClosedState(t *testing.T) {
 // response lands through the follow path without switching view or
 // stealing focus.
 func TestSplitListCommentResultRefreshesViaFollow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	responses := []storage.Response{{ID: 1, Response: "a new comment"}}
@@ -4096,6 +4242,7 @@ func TestSplitListCommentResultRefreshesViaFollow(t *testing.T) {
 // splitReconcileDetail, which runs from handleJobsMsg regardless of how
 // the selection got there. This test pins that path explicitly.
 func TestFailedJobViaJobsMsgArrivalFocusableThroughReviewPaneBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// Selection already on the failed job (job 1) with no currentReview
@@ -4126,6 +4273,7 @@ func TestFailedJobViaJobsMsgArrivalFocusableThroughReviewPaneBody(t *testing.T) 
 // review..." until the next periodic refresh (up to ~15s) even though
 // nothing about the review changed.
 func TestSplitPromptEscPreservesCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4143,6 +4291,7 @@ func TestSplitPromptEscPreservesCurrentReview(t *testing.T) {
 }
 
 func TestSplitPromptQuitPreservesCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4163,6 +4312,7 @@ func TestSplitPromptQuitPreservesCurrentReview(t *testing.T) {
 // (handlePromptKey's own viewKindPrompt branch, reached by pressing 'p'
 // again while already in the prompt view) with the same fix.
 func TestSplitPromptToggleKeyPreservesCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4180,6 +4330,7 @@ func TestSplitPromptToggleKeyPreservesCurrentReview(t *testing.T) {
 // control for Finding 4: stacked layout has no persistent pane to retain a
 // review for, so it must keep the prior nil-and-reload behavior.
 func TestStackedPromptEscStillClearsCurrentReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(
 		withCurrentView(viewKindPrompt),
@@ -4205,6 +4356,7 @@ func TestStackedPromptEscStillClearsCurrentReview(t *testing.T) {
 // the state-machine signal to catch what the timestamp comparison alone
 // cannot.
 func TestSplitReconcileDetailDetectsSameSecondRerunViaNonTerminalObservation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	finish := time.Now().Truncate(time.Second) // whole-second, matching storage precision
 	m := splitModel(withSelection(1, 2))       // job 2: done
@@ -4234,6 +4386,7 @@ func TestSplitReconcileDetailDetectsSameSecondRerunViaNonTerminalObservation(t *
 // identical either way (it's built from job.Error alone), so only the
 // observed-non-terminal signal can catch this.
 func TestSplitReconcileDetailReplacesFailedReviewWithChangedMetadataDespiteSameErrorText(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, "boom", agent claude-code
@@ -4273,6 +4426,7 @@ func TestSplitReconcileDetailReplacesFailedReviewWithChangedMetadataDespiteSameE
 // stale comments underneath. Nothing else catches this: reconcile's
 // idempotency checks only ever examine currentReview, never its siblings.
 func TestPromptNavToDifferentJobClearsStaleSiblings(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// Job X (2) selected+loaded with X's review AND X's comments.
@@ -4318,6 +4472,7 @@ func TestPromptNavToDifferentJobClearsStaleSiblings(t *testing.T) {
 // already cleared, so no later reconcile pass would retry -- a stuck stale
 // review plus a stuck pane error until manual reselection.
 func TestSplitReconcileDetailRetriesAfterFollowFetchFails(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	finish := time.Now().Truncate(time.Second)
@@ -4361,6 +4516,7 @@ func TestSplitReconcileDetailRetriesAfterFollowFetchFails(t *testing.T) {
 // the follow fetch actually succeeds -- not at every reconcile pass
 // thereafter.
 func TestSplitReconcileDetailResetsSignalExactlyOnceOnSuccess(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	finish := time.Now().Truncate(time.Second)
@@ -4404,6 +4560,7 @@ func TestSplitReconcileDetailResetsSignalExactlyOnceOnSuccess(t *testing.T) {
 // comments of its own) could render the PREVIOUS job's stale comments.
 // This test covers stepReviewNav as the representative site.
 func TestStepReviewNavFailedReviewClearsStaleResponses(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// Job 2 (done) selected with stale comments loaded; stepReviewNav
@@ -4423,6 +4580,7 @@ func TestStepReviewNavFailedReviewClearsStaleResponses(t *testing.T) {
 // control-socket close route (handleCtrlCloseReview) sets pendingClosed
 // and must also flip currentReview.Closed, like the key path does.
 func TestControlSocketCloseFlipsCurrentReviewClosedState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4452,6 +4610,7 @@ func TestControlSocketCloseFlipsCurrentReviewClosedState(t *testing.T) {
 // running, then completes; two consecutive jobs refreshes arrive before
 // any response lands -- only the FIRST issues a fetch cmd.
 func TestSplitReconcileDetailSuppressesDuplicateFollowDispatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	finish := time.Now().Truncate(time.Second)
@@ -4488,6 +4647,7 @@ func TestSplitReconcileDetailSuppressesDuplicateFollowDispatch(t *testing.T) {
 // accepting the newer one first must make a later-arriving older response
 // get dropped instead of overwriting currentReview.
 func TestSplitReconcileDetailRejectsOlderFollowResponseAfterNewerAccepted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	finish := time.Now().Truncate(time.Second)
@@ -4566,6 +4726,7 @@ func TestSplitReconcileDetailRejectsOlderFollowResponseAfterNewerAccepted(t *tes
 // just keep the retry signal set), so a later refresh actually dispatches
 // again instead of being suppressed by a stuck in-flight flag.
 func TestSplitReconcileDetailRetriesAfterFollowFetchFailsAndInFlightClears(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	finish := time.Now().Truncate(time.Second)
@@ -4608,6 +4769,7 @@ func TestSplitReconcileDetailRetriesAfterFollowFetchFailsAndInFlightClears(t *te
 // is unaffected by the in-flight suppression -- it still dispatches
 // exactly one fetch.
 func TestSplitReconcileDetailNormalDonePathDispatchesSingleFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, selected
 	m.currentReview = nil
@@ -4638,6 +4800,7 @@ func TestSplitReconcileDetailNormalDonePathDispatchesSingleFetch(t *testing.T) {
 // genuinely needs a rebuild -- this must not be blocked by job A's stale,
 // unresolved tracked-request slot.
 func TestSplitReconcileDetailStalePendingForOldJobDoesNotBlockDifferentJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -4702,6 +4865,7 @@ func TestSplitReconcileDetailStalePendingForOldJobDoesNotBlockDifferentJob(t *te
 // SOME response landed, or reconcile would dispatch a duplicate on top of
 // the still-outstanding one once the original job needs another rebuild.
 func TestUntrackedFollowResponseForDifferentJobDoesNotClearTrackedPending(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -4761,6 +4925,7 @@ func TestUntrackedFollowResponseForDifferentJobDoesNotClearTrackedPending(t *tes
 // for the reselected job. Both a stale-gen error (discarded) and a
 // current-gen error (recorded) are covered (test e).
 func TestReviewFollowErrMsgDiscardsStaleGen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2 selected
 
@@ -4798,6 +4963,7 @@ func TestReviewFollowErrMsgDiscardsStaleGen(t *testing.T) {
 // selection changes route through scheduleDetailFollow without ever
 // passing through the panel's own close paths.
 func TestScheduleDetailFollowClosesFixPanelOnDifferentJobSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4820,6 +4986,7 @@ func TestScheduleDetailFollowClosesFixPanelOnDifferentJobSelection(t *testing.T)
 // 1(b): the control-socket select-job path goes through the same
 // scheduleDetailFollow call and must close the panel identically.
 func TestCtrlSelectJobClosesFixPanelOnDifferentJobSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
@@ -4840,6 +5007,7 @@ func TestCtrlSelectJobClosesFixPanelOnDifferentJobSelection(t *testing.T) {
 // 1(c): a selection "change" that lands on the SAME job the panel is
 // already scoped to must not close it.
 func TestScheduleDetailFollowLeavesFixPanelAloneForSameJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 selected+loaded
 	m.reviewFixPanelOpen = true
@@ -4858,6 +5026,7 @@ func TestScheduleDetailFollowLeavesFixPanelAloneForSameJob(t *testing.T) {
 // scheduleDetailFollow, so this should hold trivially -- verified
 // explicitly per the request).
 func TestReconcilePassLeavesFixPanelAloneWhenJobUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2: done, selected
 	m.currentReview = splitTestReview()
@@ -4879,6 +5048,7 @@ func TestReconcilePassLeavesFixPanelAloneWhenJobUnchanged(t *testing.T) {
 // and seq, used to satisfy the old guard even though the selection (and
 // the pane's actual content) had already moved on.
 func TestPaneLogOutputRejectsLateResponseAfterVanishedSelectionReassignment(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
@@ -4907,6 +5077,7 @@ func TestPaneLogOutputRejectsLateResponseAfterVanishedSelectionReassignment(t *t
 // rollback (handleClosedResultMsg) moves the selection back via
 // selectJobByID, also bypassing scheduleDetailFollow.
 func TestPaneLogOutputRejectsLateResponseAfterCloseRollbackRestoreSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// Selection was on job 3 (tailed, running) -- e.g. after optimistically
@@ -4947,6 +5118,7 @@ func TestPaneLogOutputRejectsLateResponseAfterCloseRollbackRestoreSelection(t *t
 // control: a response for the job that's both currently tailed AND
 // currently selected must still be accepted normally.
 func TestPaneLogOutputAcceptsNormalSameJobResponse(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -4979,6 +5151,7 @@ func TestPaneLogOutputAcceptsNormalSameJobResponse(t *testing.T) {
 // (dispatched before the comment) then finally lands -- currentResponses
 // must still contain the new comment.
 func TestOlderTrackedResponseDoesNotOverwriteNewerUntrackedCommentRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -5041,6 +5214,7 @@ func TestOlderTrackedResponseDoesNotOverwriteNewerUntrackedCommentRefresh(t *tes
 // accepted, a stale tracked response landing afterward must not be able
 // to overwrite it.
 func TestUntrackedAcceptanceBlocksLaterStaleTrackedResponse(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -5094,6 +5268,7 @@ func TestUntrackedAcceptanceBlocksLaterStaleTrackedResponse(t *testing.T) {
 // to be outstanding. The suppression guard (reconcileFetchJobID) stays
 // scoped to splitReconcileDetail's own dispatches only.
 func TestUntrackedCallersStillDispatchWhileTrackedRequestOutstanding(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// handleDetailFollowTick.
@@ -5138,6 +5313,7 @@ func TestUntrackedCallersStillDispatchWhileTrackedRequestOutstanding(t *testing.
 // restart guard would see the dead tail as still active and never
 // restart it -- the live log freezes permanently.
 func TestPaneLogOutputInvalidatesLiveTailWhenSelectionMovedElsewhere(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -5170,6 +5346,7 @@ func TestPaneLogOutputInvalidatesLiveTailWhenSelectionMovedElsewhere(t *testing.
 // without touching a live tail at all -- the same distinction
 // handlePaneLogTickMsg's second guard draws.
 func TestPaneLogOutputStaleSeqLeavesLiveTailAlone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running, tailed, selected
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 3, 5, true
@@ -5193,6 +5370,7 @@ func TestPaneLogOutputStaleSeqLeavesLiveTailAlone(t *testing.T) {
 // disturb the ordering seq an ALREADY-outstanding legitimate fetch for the
 // CURRENTLY selected job depends on.
 func TestCommentResultSkipsDispatchForJobNoLongerSelected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// Split, job X (2) was showing when the comment was submitted; the
@@ -5231,6 +5409,7 @@ func TestCommentResultSkipsDispatchForJobNoLongerSelected(t *testing.T) {
 // and wipe currentResponses back to pre-comment content: the same
 // "comment disappears" symptom, just reachable from detail focus too.
 func TestCommentResultFromSplitDetailFocusUsesSequencedPath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -5306,6 +5485,7 @@ func TestCommentResultFromSplitDetailFocusUsesSequencedPath(t *testing.T) {
 // moved off does not refresh -- the same outcome as before, since the
 // response was dropped on arrival, just reached without collateral damage.
 func TestCommentResultStackedSkipsRefreshOnceTheSelectionMovedOn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -5350,6 +5530,7 @@ func TestCommentResultStackedSkipsRefreshOnceTheSelectionMovedOn(t *testing.T) {
 // instead, whose failures surface through the ordinary full-screen error
 // mechanism.
 func TestCommentResultTasksOriginReviewUsesNonFollowPathEvenInSplit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withCurrentView(viewReview), withReview(splitTestReview())) // job 2's review loaded, split-capable terminal
@@ -5394,6 +5575,7 @@ func TestCommentResultTasksOriginReviewUsesNonFollowPathEvenInSplit(t *testing.T
 // for -- confirmed both immediately (gen bump, non-nil cmd, a real fetch
 // from the resulting tick) and after esc back to the queue.
 func TestLogNavInSplitSchedulesDetailFollow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// testQueueJobs order: job 3 (running, idx0), job 2 (done, idx1),
@@ -5438,6 +5620,7 @@ func TestLogNavInSplitSchedulesDetailFollow(t *testing.T) {
 // nextFixLog/prevFixLog instead, which walk m.fixJobs via fixSelectedIdx),
 // so it must not touch selectedJobID or schedule a detail follow.
 func TestLogNavFromTasksDoesNotScheduleDetailFollow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2 selected in the queue
@@ -5468,6 +5651,7 @@ func TestLogNavFromTasksDoesNotScheduleDetailFollow(t *testing.T) {
 // selectedJobID/opens the new job's log exactly as before, with no follow
 // side effects -- there is no persistent detail pane to follow.
 func TestLogNavInStackedDoesNotScheduleDetailFollow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -5505,6 +5689,7 @@ func TestLogNavInStackedDoesNotScheduleDetailFollow(t *testing.T) {
 // bottom of handleJobsMsg -- so the split detail pane had no self-healing
 // path at all until the next unrelated jobs refresh.
 func TestLogPaginateNavSchedulesDetailFollow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -5574,6 +5759,7 @@ func TestLogPaginateNavSchedulesDetailFollow(t *testing.T) {
 // failure (the retry's own), the pending flag must be cleared with a
 // user-visible flash instead of left armed with nothing in flight.
 func TestPendingFixPanelRetriesThenClearsAfterFollowFetchFails(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -5635,6 +5821,7 @@ func TestPendingFixPanelRetriesThenClearsAfterFollowFetchFails(t *testing.T) {
 // retry machinery: the panel still opens the instant ITS OWN fetch's
 // response lands.
 func TestPendingFixPanelUnaffectedByOrdinaryFlowSuccess(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2), withTasksEnabled(true)) // job 2: done, nothing loaded yet
@@ -5660,6 +5847,7 @@ func TestPendingFixPanelUnaffectedByOrdinaryFlowSuccess(t *testing.T) {
 // -- no retry is dispatched and no flash is shown, since there is
 // nothing pending to resolve.
 func TestReviewFollowErrMsgNoPendingPanelUnaffected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2)) // job 2: done, no pending fix panel
@@ -5699,6 +5887,7 @@ func TestReviewFollowErrMsgNoPendingPanelUnaffected(t *testing.T) {
 // -- so the previous attempt's review was accepted as current content and
 // the view switched to it.
 func TestStackedPreRerunResponseRejectedAfterReturnToJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -5746,6 +5935,7 @@ func TestStackedPreRerunResponseRejectedAfterReturnToJob(t *testing.T) {
 // job Y completely alone. This is what made an unconditional detailFollowGen
 // bump unacceptable; a per-job counter has no such cross-job cost.
 func TestUnrelatedJobRerunDoesNotInvalidateSelectedJobFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // Y = job 3 selected
@@ -5777,6 +5967,7 @@ func TestUnrelatedJobRerunDoesNotInvalidateSelectedJobFetch(t *testing.T) {
 // value and must be accepted normally. The counter invalidates the old
 // attempt, not the job.
 func TestPostRerunFetchForSameJobAccepted(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -5805,6 +5996,7 @@ func TestPostRerunFetchForSameJobAccepted(t *testing.T) {
 // superseded must not reach splitDetailErr. Same shape for the ordinary
 // fetch's typed failure, so both error handlers are covered.
 func TestPreRerunFollowErrRejectedForUnselectedRerun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2))
@@ -5842,6 +6034,7 @@ func TestPreRerunFollowErrRejectedForUnselectedRerun(t *testing.T) {
 // counter of the job it is FETCHING -- not of the selected job -- and
 // fetchReviewFollow carries it through onto the follow failure it re-tags.
 func TestFetchReviewStampsJobAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -5913,6 +6106,7 @@ func tailingPromptModel() model {
 }
 
 func TestPromptNavInSplitFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := tailingPromptModel()
@@ -5954,6 +6148,7 @@ func TestPromptNavInSplitFollowsSelection(t *testing.T) {
 // meanwhile still tailing (and still showing the error of) the job the user
 // navigated away from.
 func TestPromptPaginateNavInSplitFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -5997,6 +6192,7 @@ func TestPromptPaginateNavInSplitFollowsSelection(t *testing.T) {
 // followSelectionChange gates on m.layout, so stacked prompt nav still just
 // moves the selection and installs the new job's prompt.
 func TestPromptNavInStackedUnaffected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(
@@ -6045,6 +6241,7 @@ func TestPromptNavInStackedUnaffected(t *testing.T) {
 // response for job 2 lands. The review must NOT open and no panel may spring
 // open.
 func TestNormalizationDisarmsPendingOpenForDeselectedJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2)) // split, viewQueue, job 2 selected
@@ -6098,6 +6295,7 @@ func TestNormalizationDisarmsPendingOpenForDeselectedJob(t *testing.T) {
 // abandons nothing, so the armed intent is still served when its own
 // response arrives.
 func TestNormalizationKeepsIntentWhenSelectionUnchanged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2))
@@ -6132,6 +6330,7 @@ func TestNormalizationKeepsIntentWhenSelectionUnchanged(t *testing.T) {
 // job -- tasks 'P' on a parent that the queue selection has never sat on, for
 // instance -- is untouched by unrelated normalization.
 func TestNormalizationLeavesForeignIntentArmed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2))
 	// An intent armed for job 9, which is not the selection.
@@ -6160,6 +6359,7 @@ func TestNormalizationLeavesForeignIntentArmed(t *testing.T) {
 // response for it opens the review (or springs the pending panel open) with
 // a filter change as the only thing the user actually asked for.
 func TestFilterResetDisarmsPendingOpenForDeselectedJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2))
@@ -6225,6 +6425,7 @@ func tailingTasksModel() model {
 }
 
 func TestTasksParentKeyFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	parentID := int64(2)
@@ -6249,6 +6450,7 @@ func TestTasksParentKeyFollowsSelection(t *testing.T) {
 }
 
 func TestTasksEnterFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := tailingTasksModel()
@@ -6270,6 +6472,7 @@ func TestTasksEnterFollowsSelection(t *testing.T) {
 // TestTasksKeysInStackedUnaffected confirms the site-21 fix is inert outside
 // split layout, like every other followSelectionChange caller.
 func TestTasksKeysInStackedUnaffected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	parentID := int64(2)
@@ -6314,6 +6517,7 @@ func TestTasksKeysInStackedUnaffected(t *testing.T) {
 // through followSelectionChange first would strand the pane on the old
 // job, so this test fails deliberately if the predicate changes.
 func TestEligibleReviewRowExcludesLiveJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.False(eligibleReviewRow(storage.ReviewJob{Status: storage.JobStatusRunning}),
 		"running jobs must stay out of review nav -- see eligibleReviewRow's constraint comment (nav.go)")
@@ -6328,6 +6532,7 @@ func TestEligibleReviewRowExcludesLiveJobs(t *testing.T) {
 // /api/review fetch would 404 and the created comment would never appear.
 // The handler must append the posted comment directly instead.
 func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed
@@ -6356,6 +6561,7 @@ func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
 // too -- synthesized reviews all share ID 0, so nothing else tells the
 // two requests apart.
 func TestStaleFailedCommentsResponseCannotOverwriteNewerState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, selected
@@ -6395,6 +6601,7 @@ func TestStaleFailedCommentsResponseCannotOverwriteNewerState(t *testing.T) {
 // failed job's review survive navigating away and back (the rebuild
 // clears the in-memory copy; the fetch restores server state).
 func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, selected
@@ -6444,6 +6651,7 @@ func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
 // detail pane stays actionable for the invisible review. The rollback
 // restores by msg.jobID, so a server rejection still re-selects it.
 func TestClosingLastVisibleJobClearsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	closed := false
@@ -6475,6 +6683,7 @@ func TestClosingLastVisibleJobClearsSelection(t *testing.T) {
 // clear the selection, matching normalizeSelectionIfHidden's own
 // out-of-bounds branch.
 func TestNormalizeSelectionClearsWhenNothingVisible(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	closed := true
 	finishedAt := splitTestFinishedAt
@@ -6498,6 +6707,7 @@ func TestNormalizeSelectionClearsWhenNothingVisible(t *testing.T) {
 // replace currentReview -- swapping the displayed prompt's backing review
 // out from under the user.
 func TestRunningTaskPromptNotOverwrittenByReconcile(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // queue selection: job 2
@@ -6531,6 +6741,7 @@ func TestRunningTaskPromptNotOverwrittenByReconcile(t *testing.T) {
 // keep rendering the loaded review (and its actions must stay unblocked,
 // e.g. 'a' to unclose) instead of vanishing into "No job selected".
 func TestAnchoredClosedReviewSurvivesHideClosedPruning(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2's review loaded
@@ -6563,6 +6774,7 @@ func TestAnchoredClosedReviewSurvivesHideClosedPruning(t *testing.T) {
 // currentReview directly without acceptReview's wrong-job panel close)
 // shows the stale panel and submitting targets the previous job.
 func TestLeaveSplitClosesPanelWithDiscardedReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2's review loaded
@@ -6592,6 +6804,7 @@ func TestLeaveSplitClosesPanelWithDiscardedReview(t *testing.T) {
 // owes nothing -- an unconditional content-present switch would yank the
 // user back into the review with no request outstanding.
 func TestSupersededResponseDoesNotReopenAfterEsc(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel() // job 2 (done) selected, viewQueue
@@ -6630,6 +6843,7 @@ func TestSupersededResponseDoesNotReopenAfterEsc(t *testing.T) {
 // viewContent then silently renders the queue while keys still route as
 // prompt input. normalizeSplitState must repair the view.
 func TestRerunDuringPromptViewReturnsToQueue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2's review loaded
@@ -6652,6 +6866,7 @@ func TestRerunDuringPromptViewReturnsToQueue(t *testing.T) {
 // what marks it stale, in both selectedReviewLoaded and the reconcile
 // fast path.
 func TestFailedReviewStaleAfterMissedRerunWindow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(2, 1)) // job 1: failed, error "boom"
@@ -6680,6 +6895,7 @@ func TestFailedReviewStaleAfterMissedRerunWindow(t *testing.T) {
 // -- would land after the rebuild and replace the synthesized failure
 // with the previous attempt's review until a later refresh corrected it.
 func TestPreRerunResponseCannotOverwriteSynthesizedFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel() // job 2 (done) selected, no review loaded
@@ -6715,6 +6931,7 @@ func TestPreRerunResponseCannotOverwriteSynthesizedFailure(t *testing.T) {
 // freshness gate, so skipping the fetch would stall that placeholder until
 // the next fallback poll.
 func TestDetailFollowTickRefetchesStaleAttemptReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
 	later := splitTestFinishedAt.Add(time.Minute)
@@ -6737,6 +6954,7 @@ func TestDetailFollowTickRefetchesStaleAttemptReview(t *testing.T) {
 // stale-but-matching review must schedule the follow rather than leave the
 // pane's loading placeholder stalled.
 func TestBootstrapDetailRefetchesStaleAttemptReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel(withReview(splitTestReview()))
 	later := splitTestFinishedAt.Add(time.Minute)
@@ -6758,6 +6976,7 @@ func TestBootstrapDetailRefetchesStaleAttemptReview(t *testing.T) {
 // the reconcile suppression slot (left armed, it suppresses the
 // re-selected job's replacement fetch until another refresh).
 func TestFilterResetAbandonsPromptAndReconcileSlot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -6794,6 +7013,7 @@ func TestFilterResetAbandonsPromptAndReconcileSlot(t *testing.T) {
 // selection normalization (the selected job vanished from the refresh) is
 // the same abandonment event -- same request-scoped state to doom.
 func TestJobsNormalizationAbandonsPromptAndReconcileSlot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel() // job 2 (done) selected
@@ -6821,6 +7041,7 @@ func TestJobsNormalizationAbandonsPromptAndReconcileSlot(t *testing.T) {
 // carry into stacked, where reconcile no longer runs to replace it and
 // review actions would target the obsolete attempt indefinitely.
 func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := splitModel(withReview(splitTestReview())) // job 2 (done) selected
@@ -6861,6 +7082,7 @@ func TestLeaveSplitDropsStaleAttemptReview(t *testing.T) {
 // entirely, not render split chrome around a compact list. L cannot
 // re-engage split while it is active; toggling D off restores split.
 func TestDistractionFreeForcesStackedAtSplitDims(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withReview(splitTestReview())) // 150x40: split-capable
@@ -6893,6 +7115,7 @@ func TestDistractionFreeForcesStackedAtSplitDims(t *testing.T) {
 // TUI holds. splitReconcileDetail's failure synthesis must carry it over,
 // or the open prompt view blanks unrecoverably.
 func TestRunningPromptSurvivesJobFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running
@@ -6922,6 +7145,7 @@ func TestRunningPromptSurvivesJobFailure(t *testing.T) {
 // a filter/tasks/help view -- the dispatch-origin guard must drop it
 // rather than replace the view the user is now in.
 func TestPromptMsgDoesNotYankTransientView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel() // job 2 (done) selected, viewQueue
 	cmd := m.dispatchPromptFetch(2)
@@ -6946,6 +7170,7 @@ func TestPromptMsgDoesNotYankTransientView(t *testing.T) {
 // fresh keypress. followSelectionChange bumps promptFetchSeq on every
 // genuine selection change, dooming the in-flight request.
 func TestAbandonedPromptRequestDroppedOnReturn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := splitModel() // job 2 (done) selected, viewQueue
 	cmd := m.dispatchPromptFetch(2)
@@ -6976,6 +7201,7 @@ func TestAbandonedPromptRequestDroppedOnReturn(t *testing.T) {
 // from a superseded attempt overwrites the nil handleRerunResultMsg just
 // wrote and then blocks the rerun's real result from ever being fetched.
 func TestPromptFetchRejectedAfterRerunSupersedesAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -7010,6 +7236,7 @@ func TestPromptFetchRejectedAfterRerunSupersedesAttempt(t *testing.T) {
 // the view, and a post-rerun fetch is stamped with the new value and lands
 // normally.
 func TestPromptFetchAcceptedAtCurrentAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, mockReviewHandler(*splitTestReview(), nil))
@@ -7057,6 +7284,7 @@ func panelSynthesisJobs() []storage.ReviewJob {
 }
 
 func TestPanelSynthesisRerunDoesNotSupersedeAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withTestJobs(panelSynthesisJobs()...), withSelection(1, 2),
@@ -7105,6 +7333,7 @@ func TestPanelSynthesisRerunDoesNotSupersedeAttempt(t *testing.T) {
 // TestOrdinaryRerunStillSupersedesAttempt is the counterpart: the exception
 // is scoped to panel synthesis parents and must not weaken the ordinary case.
 func TestOrdinaryRerunStillSupersedesAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(1, 2), withReview(splitTestReview()))
@@ -7120,6 +7349,7 @@ func TestOrdinaryRerunStillSupersedesAttempt(t *testing.T) {
 // the flag at DISPATCH -- where the job is provably in hand, unlike when the
 // result lands (by then the job may have left m.jobs).
 func TestRerunDispatchRecordsPanelRunShape(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	rerunOK := func(w http.ResponseWriter, r *http.Request) {
@@ -7161,6 +7391,7 @@ func TestRerunDispatchRecordsPanelRunShape(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReviewNavClearsPreviousJobsDetailError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// testQueueJobs: job 3 running (idx0), job 2 done (idx1), job 1 failed (idx2).
@@ -7185,6 +7416,7 @@ func TestReviewNavClearsPreviousJobsDetailError(t *testing.T) {
 }
 
 func TestReviewPaginateNavClearsPreviousJobsDetailError(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(
@@ -7265,6 +7497,7 @@ func synthesisParentJobs() []storage.ReviewJob {
 }
 
 func TestRerunKeyLeavesSynthesisParentRowIntact(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7301,6 +7534,7 @@ func TestRerunKeyLeavesSynthesisParentRowIntact(t *testing.T) {
 }
 
 func TestCtrlRerunLeavesSynthesisParentRowIntact(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7324,6 +7558,7 @@ func TestCtrlRerunLeavesSynthesisParentRowIntact(t *testing.T) {
 // for a job the daemon really does re-run in place, the optimistic re-queue
 // is correct and must be unchanged.
 func TestRerunKeyStillShowsOptimisticQueueForOrdinaryJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7384,7 +7619,7 @@ func rerunPickerModel(t *testing.T, handler http.HandlerFunc) model {
 	return m
 }
 
-func TestRerunAgentPickerTransitionsAndOptions(t *testing.T) {
+func TestRerunAgentPickerTransitionsAndOptions(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
 	registerRerunPickerAgent(t, "picker-current")
 	registerRerunPickerAgent(t, "picker-alpha")
 	registerRerunPickerAgent(t, "picker-zeta")
@@ -7414,7 +7649,7 @@ func TestRerunAgentPickerTransitionsAndOptions(t *testing.T) {
 	assert.Empty(t, got.rerunAgentOptions)
 }
 
-func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) {
+func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
 	registerRerunPickerAgent(t, "picker-current")
 	registerRerunPickerAgent(t, "picker-non-schema")
 	registerRerunPickerSchemaAgent(t, "picker-schema")
@@ -7430,7 +7665,7 @@ func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) {
 	assert.NotContains(t, got.rerunAgentOptions, "picker-non-schema")
 }
 
-func TestRerunAgentPickerEligibility(t *testing.T) {
+func TestRerunAgentPickerEligibility(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
 	registerRerunPickerAgent(t, "picker-alternate")
 	for _, tt := range []struct {
 		name     string
@@ -7458,7 +7693,7 @@ func TestRerunAgentPickerEligibility(t *testing.T) {
 	}
 }
 
-func TestRerunAgentPickerRechecksJobBeforeEnter(t *testing.T) {
+func TestRerunAgentPickerRechecksJobBeforeEnter(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
 	registerRerunPickerAgent(t, "picker-current")
 	registerRerunPickerAgent(t, "picker-recheck")
 	m := rerunPickerModel(t, rerunOKHandler)
@@ -7475,7 +7710,7 @@ func TestRerunAgentPickerRechecksJobBeforeEnter(t *testing.T) {
 	assert.Equal(t, "picker-current", got.jobs[0].Agent)
 }
 
-func TestRerunAgentPickerSubmission(t *testing.T) {
+func TestRerunAgentPickerSubmission(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
 	registerRerunPickerAgent(t, "picker-current")
 	registerRerunPickerAgent(t, "picker-selected")
 	for _, tt := range []struct {
@@ -7521,6 +7756,7 @@ func TestRerunAgentPickerSubmission(t *testing.T) {
 }
 
 func TestDefaultAndControlRerunsOmitAgent(t *testing.T) {
+	t.Parallel()
 	var requests []map[string]any
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -7560,6 +7796,7 @@ func TestDefaultAndControlRerunsOmitAgent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPanelRerunSuppressesDuplicateDispatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7594,6 +7831,7 @@ func TestPanelRerunSuppressesDuplicateDispatch(t *testing.T) {
 // TestPanelRerunSlotReleasedOnFailure is the no-leak half: a failed request
 // must not leave the job blocked for the rest of the session.
 func TestPanelRerunSlotReleasedOnFailure(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7617,6 +7855,7 @@ func TestPanelRerunSlotReleasedOnFailure(t *testing.T) {
 }
 
 func TestCtrlPanelRerunSuppressesDuplicateDispatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7639,6 +7878,7 @@ func TestCtrlPanelRerunSuppressesDuplicateDispatch(t *testing.T) {
 // re-queue is what suppresses its second press, exactly as before, and it
 // never enters the panel set.
 func TestOrdinaryRerunUnaffectedBySuppression(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7660,6 +7900,7 @@ func TestOrdinaryRerunUnaffectedBySuppression(t *testing.T) {
 // changed while the request was in flight, and the failure must surface
 // without dragging the row back to its pre-rerun snapshot.
 func TestFailedPanelRerunKeepsInterleavedRowState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	_, m := mockServerModel(t, rerunOKHandler)
@@ -7709,6 +7950,7 @@ func TestFailedPanelRerunKeepsInterleavedRowState(t *testing.T) {
 // with no fresh keypress. The rule is layout-independent: the selection
 // leaving a job abandons its pending requests, whoever moves it.
 func TestStackedNavigateAwayAndBackAbandonsPendingOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -7748,6 +7990,7 @@ func TestStackedNavigateAwayAndBackAbandonsPendingOpen(t *testing.T) {
 // twin: F on X, navigate away and back, X's response arrives -- the panel
 // must not spring open for a request the user walked away from.
 func TestStackedNavigateAwayAndBackAbandonsPendingFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -7788,6 +8031,7 @@ func TestStackedNavigateAwayAndBackAbandonsPendingFixPanel(t *testing.T) {
 // row. It must normalize exactly as the stacked return path does, follow
 // the resulting selection change, and refill the hideClosed-pruned queue.
 func TestSplitEscNormalizesHiddenSelectionAndRefills(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	jobs := testQueueJobs()
@@ -7816,6 +8060,7 @@ func TestSplitEscNormalizesHiddenSelectionAndRefills(t *testing.T) {
 // esc test above -- both split shortcuts share the same body and had the
 // same gap.
 func TestSplitQuitNormalizesHiddenSelectionAndRefills(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	jobs := testQueueJobs()
@@ -7846,6 +8091,7 @@ func TestSplitQuitNormalizesHiddenSelectionAndRefills(t *testing.T) {
 // to move the selection while skipping the abandonment chokepoint -- the
 // pending-open intent stayed armed for a job the cursor already left.
 func TestStackedMouseWheelAwayAbandonsPendingOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -7880,6 +8126,7 @@ func TestStackedMouseWheelAwayAbandonsPendingOpen(t *testing.T) {
 // chokepoint the same way the wheel did, so X's late response sprang the
 // fix panel open for a request the user walked away from.
 func TestStackedMouseClickAwayAbandonsPendingFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -7922,6 +8169,7 @@ func TestStackedMouseClickAwayAbandonsPendingFixPanel(t *testing.T) {
 // and sprang the panel open when a later refresh reselected X and the old
 // response finally landed.
 func TestStackedNormalizationDisarmsPendingFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -7978,6 +8226,7 @@ func TestStackedNormalizationDisarmsPendingFixPanel(t *testing.T) {
 // the abandonment gen bump must not fire (it is gated on the selection
 // actually moving).
 func TestStackedOpenFixPanelSurvivesRefreshNormalization(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewReview), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(1, 2),
@@ -8009,6 +8258,7 @@ func TestStackedOpenFixPanelSurvivesRefreshNormalization(t *testing.T) {
 // the refetch re-selected the same job, the stale response passed every
 // gate and opened the review off a filter change.
 func TestFilterResetDoomsArmedEraDispatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
@@ -8053,6 +8303,7 @@ func TestFilterResetDoomsArmedEraDispatch(t *testing.T) {
 // on the selected job survives the engage untouched (the same-selection
 // no-disarm rule).
 func TestSplitBootstrapClosesJobMismatchedPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := initTestModel(withCurrentView(viewQueue), withDimensions(150, 40),
 		withTestJobs(testQueueJobs()...), withSelection(0, 3),
@@ -8086,6 +8337,7 @@ func TestSplitBootstrapClosesJobMismatchedPanel(t *testing.T) {
 // to the split view must resume the tail immediately -- previously nothing
 // did until the next jobs refresh, freezing the log for up to ~15s.
 func TestResizeDuringTransientViewResumesPaneLogOnReturn(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	m := splitModel(withSelection(0, 3)) // job 3: running

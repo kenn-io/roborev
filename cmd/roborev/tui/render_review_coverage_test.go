@@ -13,6 +13,7 @@ import (
 )
 
 func TestReviewDetailsRenderStoredFileCoverage(t *testing.T) {
+	t.Parallel()
 	zero, excluded := 0, 3
 	job := makeJob(42)
 	review := makeReview(1, &job, withReviewOutput("review output"))
@@ -35,6 +36,7 @@ func TestReviewDetailsRenderStoredFileCoverage(t *testing.T) {
 }
 
 func TestReviewDetailsRenderLegacyDocument(t *testing.T) {
+	t.Parallel()
 	doc, err := structuredreview.Decode(jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"## Historical finding\n\nThe write loses data.","recorded_verdict":false}}`))
 	require.NoError(t, err)
 	job := makeJob(42)

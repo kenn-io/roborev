@@ -10,6 +10,7 @@ import (
 )
 
 func TestReviewFindingCounts(t *testing.T) {
+	t.Parallel()
 	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"critical","problem":"p","fix":"f","location":null},{"severity":"high","problem":"p","fix":"f","location":null},{"severity":"medium","problem":"p","fix":"f","location":null},{"severity":"low","problem":"p","fix":"f","location":null}]}`
 	structuredV1 := `{"schema_version":1,"summary":"review","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`
 
@@ -37,6 +38,7 @@ func TestReviewFindingCounts(t *testing.T) {
 }
 
 func TestJobFindingCountsEligibility(t *testing.T) {
+	t.Parallel()
 	commitID := int64(1)
 	tests := []struct {
 		name string
@@ -71,6 +73,7 @@ func TestJobFindingCountsEligibility(t *testing.T) {
 }
 
 func TestJobFindingCountsMetadataVariants(t *testing.T) {
+	t.Parallel()
 	sourceMachineID := uuid.UUID{2}
 	resumeSourceJobUUID := uuid.UUID{3}
 	tests := []struct {
@@ -94,6 +97,7 @@ func TestJobFindingCountsMetadataVariants(t *testing.T) {
 }
 
 func TestListJobsFindingCounts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/finding-counts")
@@ -162,6 +166,7 @@ func TestListJobsFindingCounts(t *testing.T) {
 }
 
 func TestListJobsFindingCountsOmitsTypedDiffContent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/finding-counts-typed-diff")

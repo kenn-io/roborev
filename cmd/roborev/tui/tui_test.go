@@ -267,6 +267,7 @@ func withReviewAgent(agent string) func(*storage.Review) {
 }
 
 func TestTUIFetchJobsSuccess(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" {
 			assert.Condition(t, func() bool {
@@ -292,6 +293,7 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 }
 
 func TestTUIFetchJobsError(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -306,6 +308,7 @@ func TestTUIFetchJobsError(t *testing.T) {
 }
 
 func TestTUIHTTPTimeout(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		// Hold the response until the client timeout cancels the request.
 		<-r.Context().Done()
@@ -323,6 +326,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 }
 
 func TestTUIGetVisibleJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -364,6 +368,7 @@ func TestTUIGetVisibleJobs(t *testing.T) {
 }
 
 func TestTUIGetVisibleSelectedIdx(t *testing.T) {
+	t.Parallel()
 	// Shared setup
 	jobs := []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -403,6 +408,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 }
 
 func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true
@@ -421,6 +427,7 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpointFromURL("http://localhost"))
 	m.loadingJobs = false
 	m.loadingMore = false
@@ -440,6 +447,7 @@ func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
 }
 
 func TestTUITickInterval(t *testing.T) {
+	t.Parallel()
 	// tickInterval returns a constant fallback interval now that SSE
 	// handles real-time updates. Verify it doesn't vary with queue state.
 	tests := []struct {
@@ -461,6 +469,7 @@ func TestTUITickInterval(t *testing.T) {
 }
 
 func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true
@@ -482,6 +491,7 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true (shouldn't normally happen with append, but test the logic)
@@ -504,6 +514,7 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 }
 
 func TestTUINewModelLoadingJobsTrue(t *testing.T) {
+	t.Parallel()
 	// newModel should initialize loadingJobs to true since Init() calls fetchJobs
 	m := newModel(testEndpoint, withExternalIODisabled())
 	if !m.loadingJobs {
@@ -514,6 +525,7 @@ func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 }
 
 func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.loadingJobs = true
 
@@ -533,6 +545,7 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 }
 
 func TestTUITickInFlightGuards(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		loadingStatus  bool
@@ -596,6 +609,7 @@ func TestTUITickInFlightGuards(t *testing.T) {
 }
 
 func TestTUIStatusResponseClearsLoadingFlag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.loadingStatus = true
@@ -610,6 +624,7 @@ func TestTUIStatusResponseClearsLoadingFlag(t *testing.T) {
 }
 
 func TestTUIFixJobsResponseClearsLoadingFlag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.loadingFixJobs = true
@@ -624,6 +639,7 @@ func TestTUIFixJobsResponseClearsLoadingFlag(t *testing.T) {
 }
 
 func TestTUIFixJobsStaleFlagTriggersFollowUp(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(testEndpoint, withExternalIODisabled())
 
@@ -652,6 +668,7 @@ func TestTUIFixJobsStaleFlagTriggersFollowUp(t *testing.T) {
 }
 
 func TestTUIStatusStaleFlagTriggersFollowUp(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	m := newModel(testEndpoint, withExternalIODisabled())
 
@@ -679,7 +696,7 @@ func TestTUIStatusStaleFlagTriggersFollowUp(t *testing.T) {
 	assert.NotNil(cmd, "should return follow-up command on error path")
 }
 
-func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
+func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	tmpDir := setupTuiTestEnv(t)
 
 	// Write malformed TOML that LoadGlobal will fail to parse
@@ -727,6 +744,7 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 }
 
 func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 
@@ -768,6 +786,7 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationInQueueView(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
@@ -803,6 +822,7 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationDevBuild(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
@@ -824,6 +844,7 @@ func TestTUIUpdateNotificationDevBuild(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.width = 80
@@ -839,7 +860,7 @@ func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
 	}
 }
 
-func TestTUIVersionMismatchDetection(t *testing.T) {
+func TestTUIVersionMismatchDetection(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	_ = setupTuiTestEnv(t)
 
 	t.Run("detects version mismatch", func(t *testing.T) {
@@ -968,7 +989,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 }
 
-func TestTUIConfigReloadFlash(t *testing.T) {
+func TestTUIConfigReloadFlash(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	_ = setupTuiTestEnv(t)
 	m := newModel(testEndpoint, withExternalIODisabled())
 
@@ -1066,7 +1087,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 	})
 }
 
-func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
+func TestTUIReconnectOnConsecutiveErrors(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	_ = setupTuiTestEnv(t)
 
 	type testCase struct {
@@ -1235,6 +1256,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 }
 
 func TestTUIStatusDisplaysCorrectly(t *testing.T) {
+	t.Parallel()
 	// Test that the queue view renders status correctly
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.width = 200
@@ -1268,6 +1290,7 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 }
 
 func TestHandleFixKeyRejectsFixJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.tasksEnabled = true
@@ -1303,6 +1326,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 }
 
 func TestTUIFixTriggerResultMsg(t *testing.T) {
+	t.Parallel()
 	t.Run("warning shows flash and triggers refresh", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewTasks
@@ -1385,7 +1409,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 }
 
-func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
+func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	setupTuiTestEnv(t)
 
 	m := newModel(testEndpoint, withExternalIODisabled())
@@ -1454,7 +1478,7 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 	}
 }
 
-func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
+func TestTUIColumnOptionsCanDisableMouse(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	setupTuiTestEnv(t)
 
 	m := newModel(testEndpoint, withExternalIODisabled())
@@ -1536,7 +1560,7 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 	}
 }
 
-func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
+func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	setupTuiTestEnv(t)
 
 	m := newModel(testEndpoint, withExternalIODisabled())
@@ -1610,7 +1634,7 @@ func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 	}
 }
 
-func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
+func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	tmpDir := setupTuiTestEnv(t)
 
 	configPath := filepath.Join(tmpDir, "config.toml")
@@ -1634,6 +1658,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 }
 
 func TestTUISelection(t *testing.T) {
+	t.Parallel()
 	t.Run("MaintainedOnInsert", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 
@@ -1729,7 +1754,7 @@ func TestTUISelection(t *testing.T) {
 	})
 }
 
-func TestTUIHideClosed(t *testing.T) {
+func TestTUIHideClosed(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	t.Run("DefaultFromConfig", func(t *testing.T) {
 		tmpDir := setupTuiTestEnv(t)
 
@@ -2130,13 +2155,14 @@ func TestTUIHideClosed(t *testing.T) {
 }
 
 func TestTUIFlashMessage(t *testing.T) {
+	t.Parallel()
 	t.Run("AppearsInQueueView", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.width = 80
 		m.height = 24
 		m.flashMessage = "Copied to clipboard"
-		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashExpiresAt = time.Now().Add(time.Hour)
 		m.flashView = viewQueue // Flash was triggered in queue view
 
 		output := m.renderQueueView()
@@ -2152,7 +2178,7 @@ func TestTUIFlashMessage(t *testing.T) {
 		m.width = 80
 		m.height = 24
 		m.flashMessage = "Copied to clipboard"
-		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashExpiresAt = time.Now().Add(time.Hour)
 		m.flashView = viewQueue // Flash was triggered in queue view, not review view
 		m.currentReview = makeReview(1, &storage.ReviewJob{}, withReviewOutput("Test review content"))
 
@@ -2166,6 +2192,7 @@ func TestTUIFlashMessage(t *testing.T) {
 }
 
 func TestNewTuiModelOptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                 string
 		opts                 []option
@@ -2287,6 +2314,7 @@ func TestNewTuiModelOptions(t *testing.T) {
 }
 
 func TestSSEEventTriggersRefresh(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.sseCh = make(chan struct{}, 1)
 	m.loadingJobs = false
@@ -2297,6 +2325,7 @@ func TestSSEEventTriggersRefresh(t *testing.T) {
 }
 
 func TestSSEEventSkipsRefreshWhileLoading(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.sseCh = make(chan struct{}, 1)
 	m.loadingJobs = true
@@ -2307,6 +2336,7 @@ func TestSSEEventSkipsRefreshWhileLoading(t *testing.T) {
 }
 
 func TestSSEDisabledInTestMode(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	assert.Nil(t, m.sseCh, "sseCh should be nil when external IO is disabled")
@@ -2314,6 +2344,7 @@ func TestSSEDisabledInTestMode(t *testing.T) {
 }
 
 func TestSSEPendingRefreshStateMachine(t *testing.T) {
+	t.Parallel()
 	t.Run("set during loadingJobs and drained on jobs completion", func(t *testing.T) {
 		assert := assert.New(t)
 		m := newModel(localhostEndpoint, withExternalIODisabled())

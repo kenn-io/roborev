@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUIReviewNavigation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                 string
 		initialJobs          []storage.ReviewJob
@@ -175,6 +176,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 }
 
 func TestTUIReviewStaleResponseIgnored(t *testing.T) {
+	t.Parallel()
 	// Test that stale review responses are ignored (race condition fix)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
@@ -201,6 +203,7 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 }
 
 func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
+	t.Parallel()
 	// Test that review responses with matching job ID are accepted
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
@@ -225,6 +228,7 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 }
 
 func TestTUISelectionSyncInReviewView(t *testing.T) {
+	t.Parallel()
 	// Test that selectedIdx syncs with currentReview.Job.ID when jobs refresh
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
@@ -255,6 +259,7 @@ func TestTUISelectionSyncInReviewView(t *testing.T) {
 }
 
 func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
+	t.Parallel()
 	// Test that jobs refresh during review navigation doesn't reset selection
 	// This tests the race condition fix: user navigates to job 3, but jobs refresh
 	// arrives before the review loads. Selection should stay on job 3, not revert
@@ -305,6 +310,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 }
 
 func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
+	t.Parallel()
 	// Test that transient empty jobs refresh doesn't break selection
 	// when viewing a review. Selection should restore to displayed review
 	// when jobs repopulate.
@@ -343,6 +349,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 }
 
 func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
+	t.Parallel()
 	// Test that if selectedJobID somehow becomes 0 while viewing a review,
 	// it gets seeded from the current review when jobs repopulate
 	m := newModel(localhostEndpoint, withExternalIODisabled())

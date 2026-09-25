@@ -9,6 +9,7 @@ import (
 )
 
 func TestRepoOperations(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -27,6 +28,7 @@ func TestRepoOperations(t *testing.T) {
 }
 
 func TestCommitOperations(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -47,6 +49,7 @@ func TestCommitOperations(t *testing.T) {
 }
 
 func TestGetOrCreateCommitConcurrentInsert(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/concurrent-commit")
@@ -95,6 +98,7 @@ func TestGetOrCreateCommitConcurrentInsert(t *testing.T) {
 }
 
 func TestBranchPersistence(t *testing.T) {
+	t.Parallel()
 	t.Run("EnqueueJob stores branch", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
@@ -224,6 +228,7 @@ func TestBranchPersistence(t *testing.T) {
 }
 
 func TestRepoIdentity(t *testing.T) {
+	t.Parallel()
 	t.Run("sets identity on create", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
@@ -315,6 +320,7 @@ func TestRepoIdentity(t *testing.T) {
 }
 
 func TestDuplicateSHAHandling(t *testing.T) {
+	t.Parallel()
 	t.Run("same SHA in different repos creates separate commits", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()

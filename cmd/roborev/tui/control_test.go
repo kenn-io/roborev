@@ -24,6 +24,7 @@ import (
 // --- Unit tests for control types ---
 
 func TestViewKindString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		v    viewKind
 		want string
@@ -44,6 +45,7 @@ func TestViewKindString(t *testing.T) {
 }
 
 func TestParseViewKind(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		s    string
 		want viewKind
@@ -60,6 +62,7 @@ func TestParseViewKind(t *testing.T) {
 }
 
 func TestIsControlCommand(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		cmd        string
 		wantQuery  bool
@@ -84,6 +87,7 @@ func TestIsControlCommand(t *testing.T) {
 // --- Unit tests for query handlers ---
 
 func TestBuildStateResponse(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoPath("/a")),
@@ -103,6 +107,7 @@ func TestBuildStateResponse(t *testing.T) {
 }
 
 func TestBuildFilterResponse(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
@@ -114,6 +119,7 @@ func TestBuildFilterResponse(t *testing.T) {
 }
 
 func TestBuildJobsResponse(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("claude-code"), withRepoPath("/r")),
@@ -130,6 +136,7 @@ func TestBuildJobsResponse(t *testing.T) {
 }
 
 func TestBuildSelectedResponse_NoSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.selectedIdx = -1
 
@@ -140,6 +147,7 @@ func TestBuildSelectedResponse_NoSelection(t *testing.T) {
 }
 
 func TestBuildSelectedResponse_WithSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(42, withAgent("codex"), withClosed(new(false))),
@@ -158,6 +166,7 @@ func TestBuildSelectedResponse_WithSelection(t *testing.T) {
 // --- Unit tests for mutation handlers ---
 
 func TestHandleCtrlSetFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	repo := "/test/repo"
 	branch := "feature"
@@ -174,6 +183,7 @@ func TestHandleCtrlSetFilter(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"msgvault": {"/home/user/projects/msgvault"},
@@ -191,6 +201,7 @@ func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"backend": {
@@ -213,6 +224,7 @@ func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate: jobs are loaded for "roborev" but "msgvault" has no
 	// visible jobs. repoNames (from /api/repos) knows about both.
@@ -235,6 +247,7 @@ func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
 }
 
 func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate init fetch: repoNames knows both repos.
 	m.repoNames = map[string][]string{
@@ -270,6 +283,7 @@ func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
 }
 
 func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			// Verify branch key is absent (not just empty).
@@ -298,6 +312,7 @@ func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
 }
 
 func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"roborev": {"/home/user/projects/roborev"},
@@ -321,6 +336,7 @@ func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
 }
 
 func TestSetFilterFallbackWhenRepoNamesEmpty(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate startup fetch failure: repoNames is nil.
 	m.repoNames = nil
@@ -334,6 +350,7 @@ func TestSetFilterFallbackWhenRepoNamesEmpty(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedRepoFilter = true
 
@@ -344,6 +361,7 @@ func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 
@@ -353,6 +371,7 @@ func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedBranchNoRepoMutation(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 	m.activeRepoFilter = []string{"/original"}
@@ -369,6 +388,7 @@ func TestHandleCtrlSetFilter_LockedBranchNoRepoMutation(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/old"}
 	m.filterStack = []string{"repo"}
@@ -381,6 +401,7 @@ func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
 }
 
 func TestHandleCtrlClearFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
@@ -396,6 +417,7 @@ func TestHandleCtrlClearFilter(t *testing.T) {
 }
 
 func TestHandleCtrlClearFilter_LockedBranchNoRepoMutation(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 	m.activeRepoFilter = []string{"/repo"}
@@ -417,6 +439,7 @@ func TestHandleCtrlClearFilter_LockedBranchNoRepoMutation(t *testing.T) {
 }
 
 func TestHandleCtrlSetHideClosed(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = false
 
@@ -427,6 +450,7 @@ func TestHandleCtrlSetHideClosed(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(10), makeJob(20), makeJob(30),
@@ -440,6 +464,7 @@ func TestHandleCtrlSelectJob(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 
@@ -449,6 +474,7 @@ func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(10, withRepoPath("/visible")),
@@ -462,6 +488,7 @@ func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -475,6 +502,7 @@ func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
 }
 
 func TestHandleCtrlSetView(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
@@ -485,6 +513,7 @@ func TestHandleCtrlSetView(t *testing.T) {
 }
 
 func TestHandleCtrlSetView_Invalid(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	params, _ := json.Marshal(map[string]string{"view": "review"})
@@ -493,6 +522,7 @@ func TestHandleCtrlSetView_Invalid(t *testing.T) {
 }
 
 func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.tasksEnabled = false
 
@@ -503,6 +533,7 @@ func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	closed := false
 	m.jobs = []storage.ReviewJob{
@@ -520,6 +551,7 @@ func TestHandleCtrlCloseReview(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	closed := false
@@ -545,6 +577,7 @@ func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(5, withStatus(storage.JobStatusRunning)),
@@ -556,6 +589,7 @@ func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	// Only one visible job — closing it leaves no visible jobs.
@@ -578,6 +612,7 @@ func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -607,6 +642,7 @@ func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(7, withStatus(storage.JobStatusRunning)),
@@ -620,6 +656,7 @@ func TestHandleCtrlCancelJob(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -641,6 +678,7 @@ func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	// Only one visible job — canceling it hides it under hideClosed.
@@ -660,6 +698,7 @@ func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_RollbackRestoresSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -687,6 +726,7 @@ func TestHandleCtrlCancelJob_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(7, withStatus(storage.JobStatusDone)),
@@ -698,6 +738,7 @@ func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
 }
 
 func TestHandleCancelKey_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -718,6 +759,7 @@ func TestHandleCancelKey_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCancelKey_RollbackRestoresSelection(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -744,6 +786,7 @@ func TestHandleCancelKey_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlRerunJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(8, withStatus(storage.JobStatusFailed)),
@@ -757,6 +800,7 @@ func TestHandleCtrlRerunJob(t *testing.T) {
 }
 
 func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
+	t.Parallel()
 	verdict := "FAIL"
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
@@ -784,6 +828,7 @@ func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
 }
 
 func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(8, withStatus(storage.JobStatusRunning)),
@@ -795,6 +840,7 @@ func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 }
 
 func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
+	t.Parallel()
 	verdict := "FAIL"
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -821,6 +867,7 @@ func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
 }
 
 func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
+	t.Parallel()
 	verdict := "FAIL"
 	closed := true
 	m := newModel(testEndpoint, withExternalIODisabled())
@@ -849,6 +896,7 @@ func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
 }
 
 func TestHandleCtrlQuit(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 
 	updated, resp, cmd := m.handleCtrlQuit()
@@ -858,6 +906,7 @@ func TestHandleCtrlQuit(t *testing.T) {
 }
 
 func TestNoQuit_QKeyInQueueView(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
@@ -869,6 +918,7 @@ func TestNoQuit_QKeyInQueueView(t *testing.T) {
 }
 
 func TestNoQuit_CtrlCStillQuits(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
@@ -878,6 +928,7 @@ func TestNoQuit_CtrlCStillQuits(t *testing.T) {
 }
 
 func TestNoQuit_QStillClosesModal(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewReview
 	m.currentReview = &storage.Review{
@@ -891,6 +942,7 @@ func TestNoQuit_QStillClosesModal(t *testing.T) {
 }
 
 func TestNoQuit_QueueHelpOmitsQuit(t *testing.T) {
+	t.Parallel()
 	normal := newModel(testEndpoint, withExternalIODisabled())
 	noQuit := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 
@@ -915,6 +967,7 @@ func TestNoQuit_QueueHelpOmitsQuit(t *testing.T) {
 }
 
 func TestNoQuit_HelpViewOmitsQuit(t *testing.T) {
+	t.Parallel()
 	normal := helpLines(true, false)
 	noQuit := helpLines(true, true)
 
@@ -934,6 +987,7 @@ func TestNoQuit_HelpViewOmitsQuit(t *testing.T) {
 }
 
 func TestNoQuit_TasksEmptyHelpOmitsQuit(t *testing.T) {
+	t.Parallel()
 	normal := newModel(testEndpoint, withExternalIODisabled())
 	normal.currentView = viewTasks
 	normal.tasksEnabled = true
@@ -956,6 +1010,7 @@ func TestNoQuit_TasksEmptyHelpOmitsQuit(t *testing.T) {
 // --- Control message routing through Update() ---
 
 func TestUpdateRoutesControlQuery(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 
@@ -978,6 +1033,7 @@ func TestUpdateRoutesControlQuery(t *testing.T) {
 }
 
 func TestUpdateRoutesControlMutation(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2)}
 
@@ -1005,6 +1061,7 @@ func TestUpdateRoutesControlMutation(t *testing.T) {
 // --- Integration test with real Unix socket ---
 
 func TestControlSocketRoundtrip(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -1102,6 +1159,7 @@ func controlTestServer(t *testing.T) *httptest.Server {
 }
 
 func TestControlSocketInvalidJSON(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
@@ -1130,11 +1188,13 @@ func newTestProgram(t *testing.T) *tea.Program {
 // --- Stale socket safety tests ---
 
 func TestRemoveStaleSocket_NonexistentPath(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "nosuch.sock")
 	assert.NoError(t, removeStaleSocket(path))
 }
 
 func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "file.txt")
 	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
 
@@ -1144,6 +1204,7 @@ func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
 }
 
 func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
+	t.Parallel()
 	// Use a short path to stay within the Unix socket length limit.
 	path := shortSocketPath(t, "stale")
 	ln, err := net.Listen("unix", path)
@@ -1156,6 +1217,7 @@ func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
 }
 
 func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
+	t.Parallel()
 	path := shortSocketPath(t, "live")
 	ln, err := net.Listen("unix", path)
 	require.NoError(t, err)
@@ -1167,6 +1229,7 @@ func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 }
 
 func TestEnsureSocketDir_CreatesParentDir(t *testing.T) {
+	t.Parallel()
 	base := shortSocketPath(t, "dir")
 	// Remove the file shortSocketPath created, use it as a subdir.
 	os.Remove(base)
@@ -1184,6 +1247,7 @@ func TestEnsureSocketDir_CreatesParentDir(t *testing.T) {
 }
 
 func TestStartControlListener_CreatesCustomParentDir(t *testing.T) {
+	t.Parallel()
 	base := shortSocketPath(t, "cust")
 	os.Remove(base)
 	socketPath := filepath.Join(base, "sub", "t.sock")
@@ -1212,7 +1276,7 @@ func shortSocketPath(t *testing.T, prefix string) string {
 
 // --- Runtime metadata tests ---
 
-func TestTUIRuntimeWriteAndRead(t *testing.T) {
+func TestTUIRuntimeWriteAndRead(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1233,7 +1297,7 @@ func TestTUIRuntimeWriteAndRead(t *testing.T) {
 	assert.Equal(info.SocketPath, runtimes[0].SocketPath)
 }
 
-func TestCleanupStaleTUIRuntimes(t *testing.T) {
+func TestCleanupStaleTUIRuntimes(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1261,7 +1325,7 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) {
 		"stale socket file should be removed")
 }
 
-func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) {
+func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) { //nolint:paralleltest // os.Setenv of ROBOREV_DATA_DIR through setupTuiTestEnv
 	assert := assert.New(t)
 	require := require.New(t)
 

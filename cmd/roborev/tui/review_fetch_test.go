@@ -14,6 +14,7 @@ import (
 )
 
 func TestTUIFetchReviewNotFound(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -37,6 +38,7 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -51,6 +53,7 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 }
 
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
+	t.Parallel()
 	// Test that when job_id responses are empty, TUI falls back to SHA-based responses
 	requestedPaths := []string{}
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +128,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 }
 
 func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
+	t.Parallel()
 	// Test that SHA fallback is NOT used for range reviews (abc..def format)
 	requestedPaths := []string{}
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +175,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 }
 
 func TestTUIFetchReviewNoFallbackForDirtyReviewWithCommitID(t *testing.T) {
+	t.Parallel()
 	requestedPaths := []string{}
 	commitID := int64(42)
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {

@@ -44,6 +44,7 @@ func seedExportCICostJob(t *testing.T, db *DB, repoID int64, seed ciCostJobSeed)
 }
 
 func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -85,6 +86,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 }
 
 func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -122,6 +124,7 @@ func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
 }
 
 func TestExportCICostsCursorPreservesWindow(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -194,6 +197,7 @@ func reviewJobUUIDs(jobs ...*ReviewJob) []uuid.UUID {
 }
 
 func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -275,6 +279,7 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 }
 
 func TestExportCICostsOrderingAndBounds(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -297,6 +302,7 @@ func TestExportCICostsOrderingAndBounds(t *testing.T) {
 }
 
 func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -337,6 +343,7 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 }
 
 func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -378,6 +385,7 @@ func seedLegacyCICostJob(t *testing.T, db *DB, repoID int64, gitRef, agent, enqu
 }
 
 func TestExportCICostsLegacyInfersDoneJobInvocation(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -401,6 +409,7 @@ func TestExportCICostsLegacyInfersDoneJobInvocation(t *testing.T) {
 }
 
 func TestExportCICostsLegacyReconstructionAndPagination(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
