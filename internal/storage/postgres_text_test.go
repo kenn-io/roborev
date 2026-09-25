@@ -46,6 +46,7 @@ func TestSanitizePostgresTextPointer(t *testing.T) {
 }
 
 func TestSanitizePostgresStructuredOutput(t *testing.T) {
+	t.Parallel()
 	input := append([]byte(`{"schema_version":2,"summary":"summary\u0000 `), 0xff)
 	input = append(input, []byte(`","verdict":"pass","findings":[{"title":"finding\u0000","description":"clean"}],"legacy":{"markdown":"legacy\u0000"}}`)...)
 	original := append([]byte(nil), input...)
