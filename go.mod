@@ -37,7 +37,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.0.1
 	gitlab.com/gitlab-org/api/client-go/v3 v3.4.0
-	go.kenn.io/kit v0.25.1-0.20260916162410-e9840a327158
+	go.kenn.io/kit v0.26.1-0.20260925210828-b958a0ae305a
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -129,6 +129,7 @@ require (
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pathologize v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect

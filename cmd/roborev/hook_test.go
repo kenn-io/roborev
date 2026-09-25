@@ -873,6 +873,64 @@ func TestInstallHookFromLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestInstallHookFromLinkedWorktreeWithTrackedHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix worktree semantics")
+	}
+
+	// A committed .githooks directory is branch content: each worktree
+	// runs its own checked-out copy.
+	repo := testutil.NewTestRepoWithCommit(t)
+	customHooks := filepath.Join(repo.Root, ".githooks")
+	require.NoError(t, os.MkdirAll(customHooks, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(customHooks, "pre-commit"), []byte("#!/bin/sh\n"), 0o755,
+	))
+
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(
+			os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	runGit(repo.Root, "add", ".githooks")
+	runGit(repo.Root, "commit", "-m", "add tracked hooks")
+	runGit(repo.Root, "config", "core.hooksPath", ".githooks")
+
+	wtDir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(wtDir)
+	require.NoError(t, err)
+	runGit(repo.Root, "worktree", "add", resolved, "-b", "wt")
+
+	origDir, _ := os.Getwd()
+	require.NoError(t, os.Chdir(resolved))
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	installCmd := installHookCmd()
+	installCmd.SetArgs([]string{})
+	require.NoError(t, installCmd.Execute())
+
+	assert.Equal(t, ".githooks", runGit(resolved, "config", "core.hooksPath"),
+		"tracked hooks path must stay relative")
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		_, err := os.Stat(filepath.Join(resolved, ".githooks", name))
+		require.NoError(t, err, "%s should exist in the worktree's hooks", name)
+		_, err = os.Stat(filepath.Join(customHooks, name))
+		assert.ErrorIs(t, err, fs.ErrNotExist,
+			"%s should not be written to the main checkout", name)
+	}
+}
+
 func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix worktree semantics")
