@@ -3,6 +3,23 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/svelte";
 import { afterEach } from "vitest";
 
+// CI's runner Node predates Promise.withResolvers (Node 22), which tests use.
+if (!("withResolvers" in Promise)) {
+  Object.defineProperty(Promise, "withResolvers", {
+    configurable: true,
+    writable: true,
+    value: <T>(): PromiseWithResolvers<T> => {
+      let resolve!: (value: T | PromiseLike<T>) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    },
+  });
+}
+
 // Bun exposes an optional process-global localStorage whose undefined value can
 // shadow jsdom's origin-scoped implementation. Supply a standards-shaped test
 // store when that happens.
