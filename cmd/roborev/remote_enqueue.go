@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -47,7 +49,16 @@ func resolveRemoteGitRef(ctx context.Context, root, ref string) (string, error) 
 		out, _, err := gitcmd.New().Run(ctx, root, nil,
 			"rev-parse", "--verify", "--quiet", "--end-of-options", r+"^{commit}")
 		if err != nil {
-			return "", fmt.Errorf("resolve %s: not a commit in this repo: %w", r, err)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", fmt.Errorf("resolve %s: %w", r, ctxErr)
+			}
+			// rev-parse --verify --quiet exits 1 only when the ref does
+			// not resolve; anything else (128 for a broken or missing
+			// repo) is a real failure.
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 {
+				return "", fmt.Errorf("resolve %s: not a commit in this repo", r)
+			}
+			return "", fmt.Errorf("resolve %s in %s: %w", r, root, err)
 		}
 		return strings.TrimSpace(string(out)), nil
 	}

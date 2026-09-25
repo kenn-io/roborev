@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -107,6 +108,21 @@ func TestResolveRemoteGitRefRejectsSymmetricRange(t *testing.T) {
 	_, err := resolveRemoteGitRef(context.Background(), t.TempDir(), "main...feature")
 	require.ErrorContains(t, err, `"main...feature"`)
 	assert.ErrorContains(t, err, "symmetric ranges (A...B) are not supported with a remote daemon")
+}
+
+func TestResolveRemoteGitRefReportsGitFailures(t *testing.T) {
+	// Not a repo: rev-parse exits 128, which is not "not a commit".
+	_, err := resolveRemoteGitRef(context.Background(), t.TempDir(), "HEAD")
+	require.ErrorContains(t, err, "exit status 128")
+	assert.NotContains(t, err.Error(), "not a commit")
+
+	repo := newTestGitRepo(t)
+	repo.CommitFile("a.txt", "a", "first")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = resolveRemoteGitRef(ctx, repo.Dir, "HEAD")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "not a commit")
 }
 
 func TestResolveRemoteGitRefRejectsBadSides(t *testing.T) {
@@ -382,6 +398,47 @@ func TestPostCommitRemoteLogsDaemonError(t *testing.T) {
 	assert.Contains(string(data), "daemon returned 404")
 }
 
+// inProcessTransport serves each request with handler in this process, so
+// a synctest bubble owns every timer and channel the request touches.
+type inProcessTransport struct{ handler http.Handler }
+
+func (tr inProcessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body == nil {
+		req.Body = http.NoBody
+	}
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tr.handler.ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+		return rec.Result(), nil
+	case <-req.Context().Done():
+		<-done
+		return nil, req.Context().Err()
+	}
+}
+
+// withInProcessRemote puts the CLI in remote mode and sends hook requests
+// to handler in process. The ping probe is stubbed so ensureDaemon succeeds.
+func withInProcessRemote(t *testing.T, handler http.Handler) daemon.DaemonEndpoint {
+	t.Helper()
+	withRemoteState(t)
+	probeRemoteDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return &daemon.PingInfo{OK: true, Service: "roborev"}, nil
+	}
+	ep := daemon.DaemonEndpoint{Network: "tcp", Address: "daemon-host.example:7474"}
+	setRemoteEndpoint(&ep)
+	orig := hookHTTPClient
+	hookHTTPClient = func(timeout time.Duration) *http.Client {
+		return &http.Client{Timeout: timeout, Transport: inProcessTransport{handler: handler}}
+	}
+	t.Cleanup(func() { hookHTTPClient = orig })
+	return ep
+}
+
 // TestPostCommitRemoteTimeoutKeepsBatch checks that a stalled remote daemon
 // is bounded by the hook timeout and leaves the batch unadvanced, so the
 // next commit retries the whole range.
@@ -406,7 +463,7 @@ func TestPostCommitRemoteTimeoutKeepsBatch(t *testing.T) {
 		}
 		respondJSON(w, http.StatusCreated, map[string]any{"id": 1})
 	})
-	withRemoteMock(t, mux)
+	withInProcessRemote(t, mux)
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
@@ -417,12 +474,12 @@ func TestPostCommitRemoteTimeoutKeepsBatch(t *testing.T) {
 	require.NoError(t, err)
 	repo.CommitFile("two.txt", "two", "two")
 
-	// Wall clock: the hook waits on a real socket and git subprocesses,
-	// which testing/synctest cannot observe.
-	start := time.Now()
-	_, _, err = executePostCommitCmd("--repo", repo.Dir)
-	require.NoError(t, err)
-	assert.Less(time.Since(start), 5*time.Second, "hook must stop at its timeout")
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		_, _, err := executePostCommitCmd("--repo", repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(time.Second, time.Since(start), "hook must stop at its timeout")
+	})
 	<-requests
 	data, err := os.ReadFile(logFile)
 	require.NoError(t, err)
@@ -438,14 +495,9 @@ func TestPostCommitRemoteTimeoutKeepsBatch(t *testing.T) {
 
 // TestPostCommitRemoteSharesOneDeadline checks that the enqueue, the pack
 // upload, and the retry share one hook timeout. Each step alone fits in the
-// timeout, so the hook would succeed if each request had its own.
+// timeout, so the retry would run if each request had its own.
 func TestPostCommitRemoteSharesOneDeadline(t *testing.T) {
-	assert := assert.New(t)
-	logFile := withHookLog(t)
 	herrs := newHandlerErrors(t)
-	// Wall clock: the delays run in a real HTTP server around git
-	// subprocesses, which testing/synctest cannot observe. Each delay is
-	// 0.6 of the 1s hook timeout.
 	const step = 600 * time.Millisecond
 	wait := func(r *http.Request) {
 		select {
@@ -457,7 +509,6 @@ func TestPostCommitRemoteSharesOneDeadline(t *testing.T) {
 	repo := newTestGitRepo(t)
 	head := repo.CommitFile("file.txt", "content", "initial")
 	writeRoborevID(t, repo)
-	writeRoborevConfig(t, repo, "hook_timeout_seconds = 1\n")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		if enqueues.Add(1) > 1 {
@@ -476,15 +527,16 @@ func TestPostCommitRemoteSharesOneDeadline(t *testing.T) {
 		wait(r)
 		respondJSON(w, http.StatusOK, map[string]any{"pinned": []string{head}})
 	})
-	withRemoteMock(t, mux)
+	ep := withInProcessRemote(t, mux)
 
-	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	require.NoError(t, err)
-
-	assert.Equal(int32(1), uploads.Load(), "the upload must start")
-	assert.Equal(int32(1), enqueues.Load(), "the retry must not run past the shared deadline")
-	data, err := os.ReadFile(logFile)
-	require.NoError(t, err)
-	assert.Contains(string(data), `"outcome":"fail"`)
-	assert.NotContains(string(data), `"outcome":"ok"`)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		start := time.Now()
+		_, _, err := postCommitEnqueue(context.Background(), ep, true, time.Second, repo.Dir,
+			daemon.EnqueueRequest{GitRef: "HEAD", Source: "post_commit"})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(time.Second, time.Since(start), "the deadline covers the whole sequence")
+		assert.Equal(int32(1), uploads.Load(), "the upload must start")
+		assert.Equal(int32(1), enqueues.Load(), "the retry must not run past the shared deadline")
+	})
 }
