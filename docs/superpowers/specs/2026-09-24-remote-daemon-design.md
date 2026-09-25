@@ -84,9 +84,10 @@ tailscale_path = ""               # optional; default: "tailscale" from PATH
 ### Request authentication
 
 For each new TCP connection on the remote listener, the daemon runs
-`tailscale whois --json <remote-addr>` before serving the first request. The
-result is cached for the life of that connection. A revoked grant takes effect
-on the peer's next connection.
+`tailscale whois --json <remote-addr>` before serving the first request. A
+successful result is cached for the life of that connection. A failed whois is
+not cached; the next request on the connection runs whois again. A revoked
+grant takes effect on the peer's next connection.
 
 - A whois failure (tailscaled down, binary missing, or unknown peer) returns
   `403` with a message naming the cause. The daemon never falls back to
