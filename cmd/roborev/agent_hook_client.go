@@ -22,7 +22,7 @@ import (
 
 var (
 	postAgentHook         = postAgentHookRequest
-	agentHookEnsureDaemon = ensureThisMachineDaemon
+	agentHookEnsureDaemon = ensureAgentHookDaemon
 )
 
 //go:embed agent_hook_fix_reason.md.gotmpl

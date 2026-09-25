@@ -20,7 +20,9 @@ var mcpProbeDaemon = daemon.ProbeDaemonPing
 // --server address is only probed: auto-start would launch a daemon at the
 // configured address rather than the selected one and then fail to connect.
 func ensureMCPDaemon() error {
-	if isRemoteMode() {
+	if remote, err := isRemoteMode(); err != nil {
+		return err
+	} else if remote {
 		return ensureRemoteDaemon()
 	}
 	if serverAddr == "" {

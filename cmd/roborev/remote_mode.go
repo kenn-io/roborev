@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -47,10 +48,13 @@ func resolveRemoteMode() error {
 }
 
 // isRemoteMode reports whether the CLI talks to a remote daemon. A remote
-// config that fails to resolve is not remote mode here; ensureDaemon and
-// requireLocalDaemon report that error.
-func isRemoteMode() bool {
-	return resolveRemoteMode() == nil && remoteEndpoint != nil
+// config that fails to resolve returns its error: it is neither remote nor
+// local mode, and callers must not fall back to the local daemon.
+func isRemoteMode() (bool, error) {
+	if err := resolveRemoteMode(); err != nil {
+		return false, err
+	}
+	return remoteEndpoint != nil, nil
 }
 
 // parseRemoteServer parses an http://host:port remote daemon URL. Loopback
@@ -117,6 +121,27 @@ func requireLocalDaemon(command string) error {
 	}
 	return fmt.Errorf("%s needs a local daemon; the remote daemon at http://%s cannot run it",
 		command, remoteEndpoint.Address)
+}
+
+// ensureAgentHookDaemon makes sure the daemon on this machine is running for
+// an agent hook. Agent hooks always talk to the local daemon. In remote mode
+// they only look for a running one: a remote client never starts, restarts,
+// or stops a local daemon.
+func ensureAgentHookDaemon() error {
+	remote, err := isRemoteMode()
+	if err != nil {
+		return err
+	}
+	if !remote {
+		return ensureThisMachineDaemon()
+	}
+	if _, err := getAnyRunningDaemon(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrDaemonNotRunning
+		}
+		return err
+	}
+	return nil
 }
 
 // ensureLocalDaemon is ensureDaemon for commands that only work against a

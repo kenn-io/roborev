@@ -127,10 +127,15 @@ func defaultDaemonEndpoint() daemon.DaemonEndpoint {
 	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 }
 
+// unroutableDaemonEndpoint is an endpoint where no daemon listens.
+func unroutableDaemonEndpoint() daemon.DaemonEndpoint {
+	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
+}
+
 func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 	exe, err := os.Executable()
 	if err == nil && shouldRefuseAutoStartDaemon(exe) {
-		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
+		return unroutableDaemonEndpoint()
 	}
 	return defaultDaemonEndpoint()
 }
@@ -144,11 +149,8 @@ func validateServerFlag() error {
 		// [remote] server is read lazily by the paths that contact a daemon.
 		return nil
 	}
-	if err := resolveRemoteMode(); err != nil {
+	if remote, err := isRemoteMode(); err != nil || remote {
 		return err
-	}
-	if isRemoteMode() {
-		return nil
 	}
 	ep, err := daemon.ParseEndpoint(serverAddr)
 	if err != nil {
@@ -159,9 +161,16 @@ func validateServerFlag() error {
 }
 
 // getDaemonEndpoint returns the remote daemon endpoint in remote mode, and
-// the local daemon endpoint otherwise.
+// the local daemon endpoint otherwise. When [remote] fails to resolve it
+// returns an unroutable endpoint, so no caller reaches a local daemon by
+// mistake; ensureDaemon, requireLocalDaemon, and isRemoteMode report the
+// error itself.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
-	if isRemoteMode() {
+	remote, err := isRemoteMode()
+	if err != nil {
+		return unroutableDaemonEndpoint()
+	}
+	if remote {
 		return *remoteEndpoint
 	}
 	return localDaemonEndpoint()
@@ -370,7 +379,7 @@ func startDaemon() error {
 			defer closeLogs()
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
-				Args:            []string{"daemon", "run"},
+				Args:            daemonRunArgs(),
 				Env:             filterGitEnv(os.Environ()),
 				Stdout:          stdout,
 				Stderr:          stderr,
@@ -402,6 +411,17 @@ func startDaemon() error {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 	return nil
+}
+
+// daemonRunArgs builds the arguments for the spawned "daemon run". An
+// explicit local --server is passed through, so the child sees the same
+// endpoint choice as this process and its local-only guard does not refuse
+// because of [remote] server.
+func daemonRunArgs() []string {
+	if serverAddr != "" && remoteEndpoint == nil {
+		return []string{"--server", serverAddr, "daemon", "run"}
+	}
+	return []string{"daemon", "run"}
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {

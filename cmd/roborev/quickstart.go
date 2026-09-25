@@ -51,7 +51,7 @@ var quickstartCheckIDs = []string{
 }
 
 func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstartState {
-	daemonUp := daemonReachable()
+	daemonUp, daemonErr := daemonReachable()
 	global, _ := config.LoadGlobal()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
 	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
@@ -59,7 +59,7 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	grokPath := agenthook.DefaultGrokHooksPath()
 
 	checks := []quickstartCheck{
-		checkDaemon(daemonUp),
+		checkDaemon(daemonUp, daemonErr),
 		checkPostCommitHook(ctx, repoRoot, inGitRepo),
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
@@ -84,14 +84,25 @@ func resolveQuickstartReviewAgent(repoRoot string, global *config.Config) string
 	return config.ResolveAgentForWorkflow("", repoRoot, global, "review", reasoning)
 }
 
-func daemonReachable() bool {
+// daemonReachable reports whether the daemon answers. A broken [remote]
+// server returns its error without contacting any daemon.
+func daemonReachable() (bool, error) {
+	if err := resolveRemoteMode(); err != nil {
+		return false, err
+	}
 	_, err := probeDaemonWithRetry(getDaemonEndpoint(), 1*time.Second)
-	return err == nil
+	return err == nil, nil
 }
 
-func checkDaemon(up bool) quickstartCheck {
+func checkDaemon(up bool, configErr error) quickstartCheck {
 	if up {
 		return quickstartCheck{ID: "daemon_running", Status: statusOK, Details: "daemon is running"}
+	}
+	if configErr != nil {
+		return quickstartCheck{
+			ID: "daemon_running", Status: statusMissing,
+			Details: configErr.Error(), FixCommand: "roborev config set --global remote.server <url>",
+		}
 	}
 	return quickstartCheck{
 		ID: "daemon_running", Status: statusMissing,

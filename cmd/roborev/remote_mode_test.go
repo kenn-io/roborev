@@ -96,6 +96,7 @@ func withSilentRemote(t *testing.T) {
 
 func writeRemoteConfig(t *testing.T, server string) {
 	t.Helper()
+	require.NoError(t, os.MkdirAll(os.Getenv("ROBOREV_DATA_DIR"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "config.toml"),
 		[]byte("[remote]\nserver = \""+server+"\"\n"), 0o644))
 }
@@ -105,12 +106,16 @@ func TestRemoteModeFromConfig(t *testing.T) {
 	writeRemoteConfig(t, "http://daemon-host.example:7474")
 	serverAddr = ""
 	require.NoError(t, validateServerFlag())
-	require.True(t, isRemoteMode())
+	remote, err := isRemoteMode()
+	require.NoError(t, err)
+	require.True(t, remote)
 	assert.Equal(t, "daemon-host.example:7474", getDaemonEndpoint().Address)
 
 	serverAddr = "http://127.0.0.1:7373" // a loopback flag overrides the config
 	require.NoError(t, validateServerFlag())
-	assert.False(t, isRemoteMode())
+	remote, err = isRemoteMode()
+	require.NoError(t, err)
+	assert.False(t, remote)
 }
 
 func TestEnsureDaemonRemoteNeverStartsLocal(t *testing.T) {
@@ -241,12 +246,124 @@ func TestInvalidRemoteConfigOnlyFailsDaemonPaths(t *testing.T) {
 	require.ErrorContains(t, err, "invalid [remote] server")
 	require.ErrorContains(t, err, "roborev config set --global remote.server")
 
-	// Agent hooks use the daemon on this machine and never read [remote].
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-		return nil, daemon.ErrDaemonAccessDenied
+	// No path falls back to the local daemon on a broken [remote].
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		panic("a broken [remote] must not discover a local daemon")
 	}
-	require.ErrorIs(t, agentHookEnsureDaemon(), daemon.ErrDaemonAccessDenied)
+	require.ErrorContains(t, agentHookEnsureDaemon(), "invalid [remote] server")
+	remote, err := isRemoteMode()
+	require.ErrorContains(t, err, "invalid [remote] server")
+	assert.False(t, remote)
+	assert.Equal(t, "127.0.0.1:1", getDaemonEndpoint().Address, "unroutable, never a local daemon")
+}
+
+func TestAgentHookRemoteModeNeverManagesLocalDaemon(t *testing.T) {
+	setup := func(t *testing.T) {
+		withRemoteState(t)
+		writeRemoteConfig(t, "http://daemon-host.example:7474")
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+		origStop := stopDaemonForRestart
+		t.Cleanup(func() { stopDaemonForRestart = origStop })
+		startDaemonForEnsure = func() error { panic("remote mode must not start a local daemon") }
+		restartDaemonForEnsure = func() error { panic("remote mode must not restart a local daemon") }
+		stopDaemonForRestart = func() error { panic("remote mode must not stop a local daemon") }
+		probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+			panic("remote mode must not version-check a local daemon")
+		}
+		probeRemoteDaemon = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+			panic("agent hooks must not ping the remote daemon")
+		}
+	}
+
+	t.Run("no local daemon", func(t *testing.T) {
+		setup(t)
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+		require.ErrorIs(t, agentHookEnsureDaemon(), ErrDaemonNotRunning)
+	})
+
+	t.Run("stale local daemon", func(t *testing.T) {
+		setup(t)
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{PID: 42, Address: "127.0.0.1:7373", Version: "stale-version"}, nil
+		}
+		require.NoError(t, agentHookEnsureDaemon())
+	})
+}
+
+func TestDaemonRunArgsPassLocalServerThrough(t *testing.T) {
+	withRemoteState(t)
+	writeRemoteConfig(t, "http://daemon-host.example:7474")
+
+	serverAddr = "127.0.0.1:7373"
+	require.NoError(t, validateServerFlag())
+	assert.Equal(t, []string{"--server", "127.0.0.1:7373", "daemon", "run"}, daemonRunArgs())
+
+	serverAddr = ""
+	require.NoError(t, validateServerFlag())
+	assert.Equal(t, []string{"daemon", "run"}, daemonRunArgs())
+}
+
+func TestBrokenRemoteConfigNeverReachesLocalDaemon(t *testing.T) {
+	var hits atomic.Int32
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(local.Close)
+	brokenRemote := func(t *testing.T) {
+		writeRemoteConfig(t, "https://daemon-host.example:7474")
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{Address: strings.TrimPrefix(local.URL, "http://")}, nil
+		}
+	}
+
+	t.Run("init --no-daemon", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping on Windows due to shell script stubs")
+		}
+		withRemoteState(t)
+		initNoDaemonSetup(t)
+		brokenRemote(t)
+		var err error
+		output := captureStdout(t, func() {
+			cmd := initCmd()
+			cmd.SetArgs([]string{"--no-daemon"})
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			err = cmd.Execute()
+		})
+		require.ErrorContains(t, err, "invalid [remote] server")
+		assert.NotContains(t, output, "Repo registered")
+	})
+
+	t.Run("status", func(t *testing.T) {
+		withRemoteState(t)
+		brokenRemote(t)
+		origEnsure := statusEnsureDaemon
+		t.Cleanup(func() { statusEnsureDaemon = origEnsure })
+		statusEnsureDaemon = func() error { panic("a broken [remote] must not check a local daemon") }
+		cmd := statusCmd()
+		cmd.SetArgs([]string{})
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		require.ErrorContains(t, cmd.Execute(), "invalid [remote] server")
+	})
+
+	t.Run("quickstart", func(t *testing.T) {
+		withRemoteState(t)
+		brokenRemote(t)
+		up, err := daemonReachable()
+		require.ErrorContains(t, err, "invalid [remote] server")
+		assert.False(t, up)
+		check := checkDaemon(up, err)
+		assert.Contains(t, check.Details, "invalid [remote] server")
+		assert.Equal(t, "roborev config set --global remote.server <url>", check.FixCommand)
+	})
+
+	assert.Zero(t, hits.Load(), "no request reached the local daemon")
 }
 
 func TestLocalOnlyRefusalIsNotWrapped(t *testing.T) {
@@ -333,6 +450,8 @@ func TestTUIAddrSelectsEndpoint(t *testing.T) {
 		}
 		err := runTUI("http://127.0.0.1:1")
 		require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
-		assert.False(t, isRemoteMode())
+		remote, err := isRemoteMode()
+		require.NoError(t, err)
+		assert.False(t, remote)
 	})
 }

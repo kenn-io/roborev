@@ -62,6 +62,11 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
+			// A broken [remote] server is a config error, not "not running".
+			if err := resolveRemoteMode(); err != nil {
+				return err
+			}
+
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
 				if errors.Is(err, daemon.ErrDaemonAccessDenied) {
