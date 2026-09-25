@@ -66,7 +66,11 @@ Check the manifests for each changed file's language, including every language a
 - Go: go.mod / go.sum.
 - TypeScript / JavaScript: package.json, a lockfile (yarn.lock, package-lock.json, pnpm-lock.yaml), tsconfig.json.
 - Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
-- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).`
+- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).
+
+Before claiming that code does not compile or a test fails, run the smallest relevant check at the reviewed revision using the repository-pinned toolchain. Include the command, toolchain version, and actual failure output. If execution is unavailable, label the claim unverified and explain the limitation. A passing check is not a failure; describe any untested conditions separately. Do not replace a pinned toolchain with an older local default or infer compiler errors from remembered language rules.
+
+Before reporting missing fixture setup or initialization, trace the full setup path through helpers, exports, constructors, and transaction callbacks. Check state where it is used, not just nearby inserts. Existing calls may provision identities, defaults, or other required state. Do not request duplicate initialization when the complete path already provides it.`
 
 // antiTestSlopInstruction keeps reviewers from recommending tests that cannot
 // detect a behavioral regression because their assertions restate the code.
