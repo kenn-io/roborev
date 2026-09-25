@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -34,19 +35,32 @@ to the current branch. Use = syntax for explicit values:
   roborev tui --repo --branch         # current repo + branch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var addrEndpoint *daemon.DaemonEndpoint
+			if strings.HasPrefix(addr, "http://") {
+				remote, isRemote, err := parseRemoteServer(addr)
+				if err != nil {
+					return fmt.Errorf("--addr: %w", err)
+				}
+				if isRemote {
+					remoteEndpoint = &remote
+					addrEndpoint = &remote
+				}
+			}
+			if addr != "" && addrEndpoint == nil {
+				parsed, err := daemon.ParseEndpoint(addr)
+				if err != nil {
+					return fmt.Errorf("--addr: %w", err)
+				}
+				addrEndpoint = &parsed
+			}
+
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon error: %w", err)
 			}
 
-			var ep daemon.DaemonEndpoint
-			if addr == "" {
-				ep = getDaemonEndpoint()
-			} else {
-				var err error
-				ep, err = daemon.ParseEndpoint(addr)
-				if err != nil {
-					return fmt.Errorf("--addr: %w", err)
-				}
+			ep := getDaemonEndpoint()
+			if addrEndpoint != nil {
+				ep = *addrEndpoint
 			}
 
 			if cmd.Flags().Changed("repo") {

@@ -285,6 +285,11 @@ Examples:
 					cmd.Printf("Reviewing %d commits since %s\n", len(commits), since)
 				}
 			} else if dirty {
+				if !local {
+					if err := requireLocalDaemon("roborev review --dirty"); err != nil {
+						return err
+					}
+				}
 				// Dirty review - capture uncommitted changes
 				hasChanges, err := gitrepo.HasUncommittedChanges(ctx, root)
 				if err != nil {

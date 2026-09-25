@@ -139,7 +139,10 @@ func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 // Called from PersistentPreRunE so invalid values fail fast.
 func validateServerFlag() error {
 	parsedServerEndpoint = nil
-	if serverAddr == "" {
+	if err := resolveRemoteEndpoint(); err != nil {
+		return fmt.Errorf("invalid remote server: %w", err)
+	}
+	if serverAddr == "" || isRemoteMode() {
 		return nil
 	}
 	ep, err := daemon.ParseEndpoint(serverAddr)
@@ -150,11 +153,20 @@ func validateServerFlag() error {
 	return nil
 }
 
-// getDaemonEndpoint returns the daemon endpoint from runtime file or config.
-// An explicit --server flag takes precedence over auto-discovered daemons.
+// getDaemonEndpoint returns the remote daemon endpoint in remote mode, and
+// the local daemon endpoint otherwise.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
-	// Explicit --server flag takes precedence over auto-discovery
-	if serverAddr != "" {
+	if remoteEndpoint != nil {
+		return *remoteEndpoint
+	}
+	return localDaemonEndpoint()
+}
+
+// localDaemonEndpoint returns the daemon endpoint from runtime file or config.
+// An explicit local --server flag takes precedence over auto-discovered
+// daemons; a remote --server says nothing about the local daemon.
+func localDaemonEndpoint() daemon.DaemonEndpoint {
+	if serverAddr != "" && remoteEndpoint == nil {
 		if parsedServerEndpoint != nil {
 			return *parsedServerEndpoint
 		}
@@ -232,6 +244,9 @@ func registerRepo(repoPath string) error {
 // Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
 // restarting (useful for development with go run).
 func ensureDaemon() error {
+	if remoteEndpoint != nil {
+		return ensureRemoteDaemon()
+	}
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
 	// First check runtime files for any running daemon

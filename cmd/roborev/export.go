@@ -92,7 +92,7 @@ completed_at cursor pull with a separate --updated-since pull.`),
 			if err := validateExportReviewsOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
-			if err := ensureDaemon(); err != nil {
+			if err := ensureLocalDaemon("roborev export"); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 

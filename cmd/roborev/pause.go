@@ -47,7 +47,7 @@ func setQueuePaused(paused bool) error {
 		pendingStartPause = &paused
 		defer func() { pendingStartPause = nil }()
 	}
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev pause"); err != nil {
 		return err
 	}
 

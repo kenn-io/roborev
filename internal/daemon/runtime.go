@@ -466,6 +466,19 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
+	return probePing(ep, timeout)
+}
+
+// ProbeRemoteDaemonPing pings a daemon on another machine. The remote
+// listener authenticates the caller, so no loopback check applies.
+func ProbeRemoteDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	if ep.Address == "" || ep.IsUnix() {
+		return nil, fmt.Errorf("remote daemon address must be host:port, got %q", ep.Address)
+	}
+	return probePing(ep, timeout)
+}
+
+func probePing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	resp, err := ep.APIClient(timeout).PingRaw(ctx)
@@ -474,6 +487,12 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		// The remote listener explains a refusal (for example a failed
+		// Tailscale whois) in an ErrorResponse body; pass that on.
+		var errResp ErrorResponse
+		if json.UnmarshalRead(resp.Body, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("daemon ping returned %d: %s", resp.StatusCode, errResp.Error)
+		}
 		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
 	}
 	var info PingInfo

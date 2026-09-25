@@ -297,7 +297,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev analyze"); err != nil {
 		return err
 	}
 

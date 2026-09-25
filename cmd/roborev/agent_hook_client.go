@@ -185,7 +185,7 @@ func doAgentHookRequest(
 
 func agentHookEndpoint(addr string) (daemon.DaemonEndpoint, error) {
 	if strings.TrimSpace(addr) == "" {
-		return getDaemonEndpoint(), nil
+		return localDaemonEndpoint(), nil
 	}
 	ep, err := daemon.ParseEndpoint(addr)
 	if err != nil {

@@ -1016,3 +1016,29 @@ func TestKillDaemonDoesNotRemoveReusedUnixSocket(t *testing.T) {
 	assert.NoFileExists(t, runtimePath)
 	assert.FileExists(t, socketPath)
 }
+
+func TestProbeRemoteDaemonPing(t *testing.T) {
+	assert := assert.New(t)
+	serve := func(status int, body string) DaemonEndpoint {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal("/api/ping", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(ts.Close)
+		return DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(ts.URL, "http://")}
+	}
+
+	ep := serve(http.StatusOK, `{"ok":true,"service":"`+daemonServiceName+`","version":"x"}`)
+	info, err := ProbeRemoteDaemonPing(ep, 2*time.Second)
+	require.NoError(t, err)
+	assert.Equal("x", info.Version)
+
+	ep = serve(http.StatusForbidden, `{"error":"tailscale whois failed for 100.64.0.2:5555: no peer"}`)
+	_, err = ProbeRemoteDaemonPing(ep, 2*time.Second)
+	require.ErrorContains(t, err, "daemon ping returned 403: tailscale whois failed")
+
+	_, err = ProbeRemoteDaemonPing(DaemonEndpoint{Network: "unix", Address: "/tmp/roborev.sock"}, time.Second)
+	assert.ErrorContains(err, "must be host:port")
+}

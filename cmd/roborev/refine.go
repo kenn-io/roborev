@@ -397,7 +397,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	}
 
 	// 2. Connect to daemon (only after all validation passes)
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev refine"); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 
@@ -809,7 +809,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 func runRefineList(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev refine"); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	ctx := cmd.Context()
@@ -941,7 +941,7 @@ func runRefineAllBranches(
 		)
 	}
 
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev refine"); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	// Use main repo root for API queries

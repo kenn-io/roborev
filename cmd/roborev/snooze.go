@@ -59,7 +59,7 @@ func runSnooze(cmd *cobra.Command, enabled bool, duration time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev snooze"); err != nil {
 		return err
 	}
 

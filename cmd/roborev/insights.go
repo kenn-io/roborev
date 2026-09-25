@@ -127,7 +127,7 @@ func runInsights(ctx context.Context, cmd *cobra.Command, opts insightsOptions) 
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev insights"); err != nil {
 		return err
 	}
 

@@ -302,7 +302,7 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 // to avoid running multiple compact commands simultaneously on the same branch.
 func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	// Setup
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev compact"); err != nil {
 		return err
 	}
 	ctx := cmd.Context()

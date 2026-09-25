@@ -520,7 +520,7 @@ func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions, tracker *fixSes
 
 func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen map[int64]bool, tracker *fixSessionTracker) error {
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev fix"); err != nil {
 		return err
 	}
 
@@ -586,7 +586,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 // opposed to auto-resolving the current branch).
 func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions, tracker *fixSessionTracker) error {
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev fix"); err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -889,7 +889,7 @@ func runFixList(
 	branch string,
 	allBranches, explicitBranch, newestFirst bool,
 ) error {
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev fix"); err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -1231,7 +1231,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	if opts.classify == nil {
 		opts.classify = agent.ClassifyLimit
 	}
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev fix"); err != nil {
 		return err
 	}
 	ctx := cmd.Context()

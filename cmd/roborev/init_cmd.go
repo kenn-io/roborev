@@ -102,7 +102,9 @@ func initCmd() *cobra.Command {
 
 			// 6. Start daemon (or just register if --no-daemon)
 			var initIncomplete bool
-			if noDaemon {
+			if isRemoteMode() {
+				fmt.Printf("Remote daemon configured (http://%s). Register this repo on the daemon host by running roborev init there.\n", remoteEndpoint.Address)
+			} else if noDaemon {
 				// Try to register with an already-running daemon, but don't start one
 				if err := registerRepo(root); err != nil {
 					initIncomplete = true

@@ -125,6 +125,9 @@ func daemonCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Start the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalDaemon("roborev daemon start"); err != nil {
+				return err
+			}
 			if err := daemonEnsure(); err != nil {
 				return err
 			}
@@ -137,6 +140,9 @@ func daemonCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalDaemon("roborev daemon stop"); err != nil {
+				return err
+			}
 			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
 				fmt.Println("Daemon was not running")
 				return nil
@@ -152,6 +158,9 @@ func daemonCmd() *cobra.Command {
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalDaemon("roborev daemon restart"); err != nil {
+				return err
+			}
 			wasRunning := true
 			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
 				wasRunning = false
@@ -170,7 +179,17 @@ func daemonCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(statusCmd())
+	// "roborev daemon status" is the top-level status command, but under
+	// "daemon" it reports on this machine's daemon, so it is local-only.
+	status := statusCmd()
+	statusRunE := status.RunE
+	status.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := requireLocalDaemon("roborev daemon status"); err != nil {
+			return err
+		}
+		return statusRunE(cmd, args)
+	}
+	cmd.AddCommand(status)
 	cmd.AddCommand(daemonRunCmd())
 
 	return cmd
@@ -231,6 +250,9 @@ func daemonRunCmd() *cobra.Command {
 		Short: "Run the daemon in foreground",
 		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalDaemon("roborev daemon run"); err != nil {
+				return err
+			}
 			// Defense-in-depth: clear git repo-context env vars that hooks may set.
 			// The spawn sites (startDaemon, upgrade) filter these out, but
 			// clear them here too in case the daemon is started manually.

@@ -63,7 +63,7 @@ export, or vice versa.`),
 			if err := validateExportCIMetricsOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
-			if err := ensureDaemon(); err != nil {
+			if err := ensureLocalDaemon("roborev export"); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 

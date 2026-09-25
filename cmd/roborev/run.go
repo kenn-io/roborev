@@ -235,7 +235,7 @@ func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	if err := ensureLocalDaemon("roborev run"); err != nil {
 		return err
 	}
 
