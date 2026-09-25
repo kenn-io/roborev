@@ -145,9 +145,14 @@ func TestRemoteFilterCommandsSendIdentity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mux := http.NewServeMux()
-			queries := make(chan []string, 1)
+			// Recorded without blocking, so a retry fails the count check
+			// instead of hanging the handler.
+			var calls atomic.Int32
+			var got atomic.Pointer[[]string]
 			mux.HandleFunc(tt.path, func(w http.ResponseWriter, r *http.Request) {
-				queries <- r.URL.Query()["repo"]
+				calls.Add(1)
+				repo := r.URL.Query()["repo"]
+				got.Store(&repo)
 				w.WriteHeader(http.StatusServiceUnavailable)
 			})
 			withRemoteMock(t, mux)
@@ -160,10 +165,9 @@ func TestRemoteFilterCommandsSendIdentity(t *testing.T) {
 			cmd.SetArgs(tt.args(repo.Dir))
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
-			// The mock answers 503, so the command fails after the request.
-			_ = cmd.Execute()
-			require.Len(t, queries, 1, "the command never reached %s", tt.path)
-			assert.Equal(t, []string{"example/project"}, <-queries)
+			require.Error(t, cmd.Execute(), "the mock answers 503")
+			require.Equal(t, int32(1), calls.Load(), "requests to %s", tt.path)
+			assert.Equal(t, []string{"example/project"}, *got.Load())
 		})
 	}
 }
@@ -225,6 +229,8 @@ func TestTUIRemoteRepo(t *testing.T) {
 	}{
 		{name: "local checkout maps to the daemon root", args: []string{"--repo=CHECKOUT"}, repos: registered, wantRepo: "/srv/project", wantRepoCalls: 1},
 		{name: "daemon root path passes through", args: []string{"--repo=/srv/other"}, wantRepo: "/srv/other"},
+		{name: "Windows daemon root path passes through", args: []string{`--repo=C:\srv\other`}, wantRepo: `C:\srv\other`},
+		{name: "Windows daemon root path with forward slashes", args: []string{"--repo=D:/srv/other"}, wantRepo: "D:/srv/other"},
 		{name: "relative non-checkout is refused", args: []string{"--repo=example/project"}, wantErr: "neither a local checkout nor an absolute daemon root path"},
 		{name: "current branch needs a local checkout", args: []string{"--repo=/srv/other", "--branch"}, wantErr: "use --branch=<name>"},
 		{name: "daemon root path with a named branch", args: []string{"--repo=/srv/other", "--branch=main"}, wantRepo: "/srv/other"},

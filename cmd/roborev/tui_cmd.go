@@ -83,7 +83,7 @@ to the current branch. Use = syntax for explicit values:
 				switch {
 				case err == nil:
 					repoFilter = resolved
-				case remote && filepath.IsAbs(repoFilter):
+				case remote && isDaemonAbsPath(repoFilter):
 					daemonRepo = true
 				case remote:
 					return fmt.Errorf("--repo %q is neither a local checkout nor an absolute daemon root path", repoFilter)
@@ -184,4 +184,15 @@ func resolveRemoteTUIRepo(ctx context.Context, ep daemon.DaemonEndpoint, cfg *tu
 		cfg.RemoteRepoRoot = root
 	}
 	return nil
+}
+
+// isDaemonAbsPath reports whether v is an absolute path on the daemon host,
+// whose OS may differ from this client's: a Unix path, or a Windows drive
+// or UNC path with either separator.
+func isDaemonAbsPath(v string) bool {
+	if filepath.IsAbs(v) || strings.HasPrefix(v, "/") || strings.HasPrefix(v, `\\`) {
+		return true
+	}
+	return len(v) >= 3 && v[1] == ':' && (v[2] == '/' || v[2] == '\\') &&
+		('a' <= v[0] && v[0] <= 'z' || 'A' <= v[0] && v[0] <= 'Z')
 }
