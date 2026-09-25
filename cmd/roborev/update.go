@@ -500,7 +500,13 @@ func runControlledUpdate(
 	var session *updateDaemonSession
 	confirmed := yes
 
-	if !noRestart {
+	// In remote mode the CLI never stops or restarts a local daemon: update
+	// only installs the binary. A broken [remote] server is reported where
+	// the restart would happen, and nothing local is touched before that.
+	remote, remoteErr := isRemoteMode()
+	manageDaemon := !noRestart && !remote && remoteErr == nil
+
+	if manageDaemon {
 		var err error
 		runningDaemon, err = discoverDaemonForUpdate()
 		if err != nil {
@@ -596,7 +602,7 @@ func runControlledUpdate(
 		}
 		return nil
 	}
-	if runningDaemon == nil && !noRestart {
+	if runningDaemon == nil && manageDaemon {
 		appeared, err := discoverDaemonForUpdate()
 		if err != nil {
 			return err
@@ -632,7 +638,7 @@ func runControlledUpdate(
 		return installedUpdateInterruption(session, preferHeartbeatFailure(err, heartbeatFailure))
 	}
 
-	if session == nil && !noRestart {
+	if session == nil && manageDaemon {
 		appeared, err := discoverDaemonForUpdate()
 		if err != nil {
 			return installedUpdateInterruption(session, err)
@@ -657,7 +663,12 @@ func runControlledUpdate(
 		fmt.Fprintf(out, "\nUpdated roborev to %s\n", info.LatestVersion)
 		return nil
 	}
-	if session == nil {
+	if remoteErr != nil {
+		return fmt.Errorf("binary installed; local daemon not restarted: %w", remoteErr)
+	}
+	if remote {
+		printUpdatePhase(out, "Daemon", "remote mode is on; no local daemon was restarted")
+	} else if session == nil {
 		printUpdatePhase(out, "Daemon", "not running")
 	} else {
 		stopHeartbeat()

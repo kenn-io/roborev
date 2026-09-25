@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -453,5 +455,62 @@ func TestTUIAddrSelectsEndpoint(t *testing.T) {
 		remote, err := isRemoteMode()
 		require.NoError(t, err)
 		assert.False(t, remote)
+	})
+}
+
+func TestUpdateRemoteModeLeavesLocalDaemonAlone(t *testing.T) {
+	runUpdate := func(t *testing.T) (string, int32, int32, error) {
+		t.Helper()
+		var prepareCalls, restartCalls atomic.Int32
+		endpoint := updateTestEndpoint(t, updateDaemonHandler(0, &prepareCalls, nil, nil))
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
+		}
+		restartUpdatedDaemonForCommand = func(context.Context, string, string, *daemon.RuntimeInfo) error {
+			restartCalls.Add(1)
+			return nil
+		}
+		var out bytes.Buffer
+		cmd := updateCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"--yes"})
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		err := cmd.Execute()
+		return out.String(), prepareCalls.Load(), restartCalls.Load(), err
+	}
+
+	t.Run("valid remote", func(t *testing.T) {
+		info := stubUpdateCommand(t)
+		withRemoteState(t)
+		writeRemoteConfig(t, "http://daemon-host.example:7474")
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+
+		output, prepares, restarts, err := runUpdate(t)
+		require.NoError(t, err)
+		assert := assert.New(t)
+		assert.Contains(output, "Installing   done")
+		assert.Contains(output, "remote mode is on; no local daemon was restarted")
+		assert.Contains(output, "Updated roborev to "+info.LatestVersion)
+		assert.Zero(prepares, "the local daemon was not drained")
+		assert.Zero(restarts, "the local daemon was not restarted")
+	})
+
+	t.Run("broken remote", func(t *testing.T) {
+		stubUpdateCommand(t)
+		withRemoteState(t)
+		writeRemoteConfig(t, "https://daemon-host.example:7474")
+		serverAddr = ""
+		require.NoError(t, validateServerFlag())
+
+		output, prepares, restarts, err := runUpdate(t)
+		require.ErrorContains(t, err, "binary installed; local daemon not restarted")
+		require.ErrorContains(t, err, "invalid [remote] server")
+		assert := assert.New(t)
+		assert.Contains(output, "Installing   done")
+		assert.Zero(prepares, "the local daemon was not drained")
+		assert.Zero(restarts, "the local daemon was not restarted")
 	})
 }
