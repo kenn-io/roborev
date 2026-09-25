@@ -10,8 +10,6 @@ import (
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
-
-	"go.kenn.io/roborev/internal/git"
 )
 
 // runner shells out through kit's defensive git runner so inherited git
@@ -29,7 +27,7 @@ func RepairRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, er
 	if err != nil {
 		return false, nil
 	}
-	hooksDir, err := git.GetHooksPath(root)
+	hooksDir, err := gitrepo.HooksPath(ctx, root)
 	if err != nil {
 		return false, fmt.Errorf("get hooks path: %w", err)
 	}
@@ -62,7 +60,7 @@ func RepairRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, er
 // working tree) use this to detect and warn about stale hooks that
 // NeedsUpgrade misses because the version marker is current.
 func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false
 	}
@@ -85,7 +83,7 @@ func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string)
 // processes and automatic CLI maintenance must only write hooks when this
 // reports true. Explicit installation and repair may opt into other locations.
 func HooksInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
-	hooksDir, err := git.GetHooksPath(repoPath)
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("get hooks path: %w", err)
 	}

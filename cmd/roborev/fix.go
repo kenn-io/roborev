@@ -97,7 +97,7 @@ Examples:
 			// self-heal when hooks are already misresolved.
 			ctx := cmd.Context()
 			if root, err := gitrepo.Root(ctx, "."); err == nil {
-				_ = git.EnsureAbsoluteHooksPath(root)
+				_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 			}
 
 			if allBranches && branch != "" {

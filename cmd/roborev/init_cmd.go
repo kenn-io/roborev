@@ -74,10 +74,10 @@ func initCmd() *cobra.Command {
 			}
 
 			// 5. Install hooks
-			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
+			if err := gitrepo.EnsureAbsoluteHooksPath(ctx, root); err != nil {
 				return fmt.Errorf("normalize hooks path: %w", err)
 			}
-			hooksDir, err := git.GetHooksPath(root)
+			hooksDir, err := gitrepo.HooksPath(ctx, root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}

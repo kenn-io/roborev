@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 // ErrNonShellHook is returned when a hook uses a non-shell
@@ -101,7 +101,7 @@ var ReadFile = os.ReadFile
 // NeedsUpgrade checks whether a repo's named hook contains
 // roborev but is outdated (missing the given version marker).
 func NeedsUpgrade(ctx context.Context, repoPath, hookName, versionMarker string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false
 	}
@@ -124,7 +124,7 @@ func NeedsUpgradeInDir(hooksDir, hookName, versionMarker string) bool {
 // NotInstalled checks whether the named hook file is absent
 // or does not contain any roborev content.
 func NotInstalled(ctx context.Context, repoPath, hookName string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false
 	}
@@ -142,7 +142,7 @@ func NotInstalled(ctx context.Context, repoPath, hookName string) bool {
 // Missing checks whether a repo has roborev installed
 // (post-commit hook present) but is missing the named hook.
 func Missing(ctx context.Context, repoPath, hookName string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false
 	}

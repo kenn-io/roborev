@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 )
 
@@ -26,10 +25,10 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("not a git repository: %w", err)
 			}
 
-			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
+			if err := gitrepo.EnsureAbsoluteHooksPath(ctx, root); err != nil {
 				return fmt.Errorf("normalize hooks path: %w", err)
 			}
-			hooksDir, err := git.GetHooksPath(root)
+			hooksDir, err := gitrepo.HooksPath(ctx, root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
@@ -70,7 +69,7 @@ func uninstallHookCmd() *cobra.Command {
 				return fmt.Errorf("not a git repository: %w", err)
 			}
 
-			hooksDir, err := git.GetHooksPath(root)
+			hooksDir, err := gitrepo.HooksPath(ctx, root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
