@@ -566,3 +566,32 @@ func TestUpdateRemoteModeLeavesLocalDaemonAlone(t *testing.T) {
 		assert.Zero(restarts, "the local daemon was not restarted")
 	})
 }
+
+func TestLogAndRepoRefuseRemoteMode(t *testing.T) {
+	withRemoteState(t)
+	withSilentRemote(t)
+	cases := []struct {
+		name string
+		cmd  func() *cobra.Command
+		args []string
+	}{
+		{"roborev log", logCmd, []string{"42"}},
+		{"roborev repo list", repoCmd, []string{"list"}},
+		{"roborev repo show", repoCmd, []string{"show", "project"}},
+		{"roborev repo rename", repoCmd, []string{"rename", "project", "renamed"}},
+		{"roborev repo move", repoCmd, []string{"move", "project", t.TempDir()}},
+		{"roborev repo delete", repoCmd, []string{"delete", "--yes", "project"}},
+		{"roborev repo merge", repoCmd, []string{"merge", "--yes", "project", "other"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.cmd()
+			c.SetArgs(tc.args)
+			c.SilenceUsage = true
+			c.SilenceErrors = true
+			require.ErrorContains(t, c.Execute(), tc.name+" needs a local daemon")
+			assert.NoFileExists(t, filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "reviews.db"),
+				"a local-only command must not open the local database in remote mode")
+		})
+	}
+}

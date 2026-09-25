@@ -1007,7 +1007,7 @@ column_borders = true             # Show separators between TUI columns
 | `remote_api.enabled` | bool | false | Serve the daemon API to tailnet peers that a policy grant allows. See [Remote Daemon](/docs/remote-daemon/) | No |
 | `remote_api.listen` | string | - | This host's Tailscale IP and a fixed, non-zero port, such as `100.101.102.103:7474`. Other addresses are rejected | No |
 | `remote_api.tailscale_path` | string | `tailscale` from PATH | Path to the `tailscale` CLI used to identify callers | No |
-| `remote.server` | string | - | Client setting: remote daemon URL, `http://host:port`. Overridden by `--server` | N/A |
+| `remote.server` | string | - | Client setting: remote daemon URL, `http://host:port`. Overridden by `--server` and by `roborev tui --addr` | N/A |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |

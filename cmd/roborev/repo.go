@@ -120,6 +120,18 @@ Subcommands:
 	cmd.AddCommand(repoDeleteCmd())
 	cmd.AddCommand(repoMergeCmd())
 
+	// Every subcommand edits the local database directly, so none of them
+	// can act on a remote daemon's repos.
+	for _, sub := range cmd.Commands() {
+		name, run := "roborev repo "+sub.Name(), sub.RunE
+		sub.RunE = func(cmd *cobra.Command, args []string) error {
+			if err := requireLocalDaemon(name); err != nil {
+				return err
+			}
+			return run(cmd, args)
+		}
+	}
+
 	return cmd
 }
 

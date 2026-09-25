@@ -40,6 +40,10 @@ Examples:
   roborev log --path 42   # Print the log file path`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Job logs and their metadata live on the daemon's machine.
+			if err := requireLocalDaemon("roborev log"); err != nil {
+				return err
+			}
 			jobID, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return fmt.Errorf("invalid job ID: %w", err)

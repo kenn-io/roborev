@@ -117,16 +117,9 @@ func daemonHaves(ctx context.Context, repoRoot string) ([]string, error) {
 
 const uploadRefPrefix = "refs/roborev/uploads/"
 
-// pruneUploadRefs drops upload refs whose commit a remote-tracking branch
-// now contains. Failures are logged because pruning is housekeeping.
-func pruneUploadRefs(ctx context.Context, repoRoot string) {
-	unlock := lockGitMetadata(repoRoot)
-	defer unlock()
-	pruneUploadRefsLocked(ctx, repoRoot)
-}
-
-// pruneUploadRefsLocked is pruneUploadRefs for callers that already hold
-// lockGitMetadata(repoRoot), which is not re-entrant.
+// pruneUploadRefsLocked drops upload refs whose commit a remote-tracking
+// branch now contains. Failures are logged because pruning is housekeeping.
+// The caller must hold lockGitMetadata(repoRoot), which is not re-entrant.
 func pruneUploadRefsLocked(ctx context.Context, repoRoot string) {
 	out, err := gitcmd.New().Output(ctx, repoRoot, "for-each-ref",
 		"--format=%(refname) %(objectname)", uploadRefPrefix)

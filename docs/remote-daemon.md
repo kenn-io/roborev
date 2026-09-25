@@ -10,7 +10,7 @@ machine.
 
 What works today:
 
-- Reading jobs, reviews, comments, logs, and cost and summary data.
+- Reading jobs, reviews, comments, agent output, and cost and summary data.
 - The terminal UI, the MCP stdio server, and review history search.
 - Queuing reviews of commits and commit ranges, including from the post-commit
     hook.
@@ -20,9 +20,14 @@ What works today:
 What does not work remotely:
 
 - Anything that edits code or runs an agent with write access: `fix`, `refine`,
-    `run`, `analyze`, `compact`, and dirty reviews.
-- Daemon management, sync, export, and the browser application. Run those on the
-    daemon host.
+    `run`, `analyze`, and `compact`.
+- Dirty reviews. The daemon cannot see the client's working tree.
+- `insights`, `pause`, `unpause`, `snooze`, and `remap`.
+- Commands that read or change the local database and log files directly: `log`
+    and the `repo` subcommands.
+- Daemon management, sync, export, and the browser application.
+
+Run those on the daemon host. See the [command reference](#command-reference).
 
 ## How It Works
 
@@ -83,6 +88,12 @@ Rules for `listen`:
 - The daemon refuses to start when `listen` breaks either rule. The error names
     the bad value.
 
+The whole daemon also stops if it cannot open the listener at startup, for
+example because Tailscale is not up yet and the address is not assigned. The
+loopback API and the workers stop with it. Start the daemon after Tailscale is
+up. If it stopped, run any roborev command on the host that starts the daemon
+automatically, such as `roborev status`, or run `roborev daemon start`.
+
 `remote_api` is global config only. Changes need a daemon restart.
 
 ## Grant Access in the Tailnet Policy
@@ -94,6 +105,14 @@ tailnet policy grants. Each grant value is an object with an `access` field:
 | ------- | ----------------------------------------------------------------------------------------------------- |
 | `read`  | Read jobs, reviews, comments, logs, repos, branches, summary, cost, activity, search, and live events |
 | `queue` | Everything in `read`, plus queue reviews, upload commits, cancel, rerun, comment, and close reviews   |
+
+A grant covers the whole daemon, not one repo:
+
+- A `read` grant shows every registered repo's reviews and agent output, which
+    can quote source code. It also shows the daemon host's checkout paths, which
+    often contain the host user's name.
+- A `queue` grant can cancel, rerun, close, or comment on any job on the daemon,
+    including the host owner's own local reviews.
 
 Add a grant like this to your tailnet policy file:
 
@@ -145,8 +164,8 @@ Or set it with the config command:
 roborev config set --global remote.server http://daemon-host.example-tailnet.ts.net:7474
 ```
 
-You can also pass the URL for a single command. `--server` overrides
-`[remote] server`:
+You can also pass the URL for a single command. `--server`, and `--addr` for
+`roborev tui`, override `[remote] server`:
 
 ```bash
 roborev --server http://daemon-host.example-tailnet.ts.net:7474 list
@@ -231,9 +250,11 @@ repo's `.roborev.toml` in the daemon's clone. The branch comes from the client:
 Hooks fire for remote reviews the same way they do for local ones.
 
 The post-commit hook must finish within `hook_timeout_seconds` (3 seconds by
-default, 30 on Windows). A remote review that needs a fetch or an upload can
-take longer. Raise the timeout if remote post-commit reviews fail. Failures are
-recorded in the hook log and never block the commit.
+default, 30 on Windows). The hook reads this setting on the client machine, from
+the client's global config or the repo's `.roborev.toml`, not from the daemon
+host. A remote review that needs a fetch or an upload can take longer. Raise the
+timeout if remote post-commit reviews fail. Failures are recorded in the hook
+log and never block the commit.
 
 ## Unpushed Commits
 
@@ -251,21 +272,24 @@ uploads it automatically:
 Uploads write only git objects and those pin refs. They never touch the daemon
 clone's working tree, index, or branches.
 
-After you push, the pins clear on their own. Each time the daemon fetches for a
-remote review, it deletes every pin whose commit is now on a remote-tracking
-branch.
+Pins are removed only after the daemon fetches for a remote review. That fetch
+happens when a later remote review names a commit the daemon clone lacks. After
+a successful fetch, the daemon deletes every pin whose commit is now on a
+remote-tracking branch. Pushing alone does not remove a pin, and neither does a
+fetch from another source, such as a manual `git fetch` on the daemon host.
 
 If an upload depends on history the daemon clone lacks, the daemon returns `409`
 and asks you to fetch on the daemon host.
 
 ## Command Reference
 
-| Works remotely                                                          | Needs a local daemon                                        |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `status`, `list`, `show`, `wait`, `stream`, `search`, `summary`, `cost` | `daemon` subcommands, `ui`, `sync now`, `export`            |
-| `review` for commits, ranges, and branches                              | `review --dirty`                                            |
-| `comment`, `close`, `tui`, `mcp serve`                                  | `fix`, `refine`, `run`, `analyze`, `compact`, `insights`    |
-| `init` (hooks only), `update` (binary, hooks, and skills only)          | `pause`, `snooze`, `remap`                                  |
+| Works remotely                                                          | Needs a local daemon                                     |
+| ----------------------------------------------------------------------- | -------------------------------------------------------- |
+| `status`, `list`, `show`, `wait`, `stream`, `search`, `summary`, `cost` | `daemon` subcommands, `ui`, `sync now`, `export`         |
+| `review` for commits, ranges, and branches                              | `review --dirty`                                         |
+| `comment`, `close`, `cancel`, `tui`, `mcp serve`                        | `fix`, `refine`, `run`, `analyze`, `compact`, `insights` |
+| `init` (hooks only), `update` (binary, hooks, and skills only)          | `pause`, `unpause`, `snooze`, `remap`                    |
+|                                                                         | `log`, `repo` subcommands                                |
 
 A command that needs a local daemon fails in remote mode before it contacts
 anything, with a message like:
@@ -275,6 +299,8 @@ roborev fix needs a local daemon; the remote daemon at http://daemon-host.exampl
 ```
 
 The post-rewrite hook calls `remap`, which exits quietly in remote mode.
+
+To read a job's agent output remotely, open its log in the TUI.
 
 Through `mcp serve`, the tools that read reviews, comment, and close work. The
 snooze and hook fix completion tools get the daemon's `403`, because those
@@ -325,11 +351,15 @@ whois would identify the proxy instead of the real caller.
 
 Some setups forward a hostname through a reverse proxy to the daemon's loopback
 API. That path has no authentication at all. Anyone who can reach the proxy gets
-every route, including the ones the remote listener refuses. roborev does not
-control that proxy. Replace it with `[remote_api]` and a tailnet policy grant.
+every route, including the ones the remote listener refuses. roborev cannot
+authenticate callers that come through such a proxy, so securing it is your
+responsibility. Replace it with `[remote_api]` and a tailnet policy grant.
 
 ## Security
 
+- **A grant covers every repo on the daemon.** There is no per-repo access. A
+    `read` caller sees all reviews, agent output, and daemon-host paths. A
+    `queue` caller can cancel, rerun, close, or comment on any job.
 - **Queue access spends your quota.** Anyone the `queue` grant covers can make
     the daemon host run review agents on its agent accounts. Grant `queue` only
     to people and machines you trust with that.

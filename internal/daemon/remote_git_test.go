@@ -174,8 +174,9 @@ func TestPruneUploadRefsAfterPush(t *testing.T) {
 	require.NoError(t, importPack(ctx, f.daemonDir, bytes.NewReader(pack), []string{f.unpushed}))
 
 	gitOut(t, f.laptopDir, "push", "-q", "origin", "HEAD:refs/heads/main")
-	gitOut(t, f.daemonDir, "fetch", "-q", "--all")
-	pruneUploadRefs(ctx, f.daemonDir)
+	// The daemon prunes upload refs after the fetch it runs for a remote
+	// enqueue of a missing commit.
+	fetchRemotes(ctx, f.daemonDir)
 	assert.Empty(t, gitOut(t, f.daemonDir, "for-each-ref", uploadRefPrefix))
 }
 
