@@ -3403,6 +3403,41 @@ func TestUnavailableAgentErrorFailsOverWithoutRetry(t *testing.T) {
 	assert.Zero(t, retryCount)
 }
 
+func TestClaudeWeeklyLimitFailsOverToBackupWithoutRetry(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	cfg.DefaultBackupModel = "claude-sonnet"
+	cfg.AgentQuotaCooldown = "10m"
+	tc.reconfigurePool(cfg)
+
+	job := tc.createAndClaimJobWithAgent(t, "claude-weekly-limit", testWorkerID, "claude-code")
+	job.RepoPath = tc.TmpDir
+	start := time.Now()
+	executionErr := errors.New("claude-code failed\nstream: stream errors: You've hit your weekly limit · resets 4pm (UTC): exit status 1")
+	classification := agent.ClassifyLimit("claude-code", executionErr.Error())
+	assert.Equal(t, agent.LimitKindQuota, classification.Kind)
+	assert.True(t, classification.ResetAt.IsZero())
+	assert.Zero(t, classification.CooldownFor)
+
+	tc.Pool.failOrRetryAgentExecutionContext(
+		context.Background(), testWorkerID, job, "claude-code", executionErr,
+	)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, "test", updated.Agent)
+	assert.Equal(t, "claude-sonnet", updated.Model)
+	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+	require.NoError(t, err)
+	assert.Zero(t, retryCount)
+
+	tc.Pool.agentCooldownsMu.RLock()
+	expiry, ok := tc.Pool.agentCooldowns["claude-code"]
+	tc.Pool.agentCooldownsMu.RUnlock()
+	require.True(t, ok, "expected claude-code cooldown entry")
+	assert.WithinDuration(t, start.Add(10*time.Minute), expiry, time.Minute)
+}
+
 func TestUnavailableAgentErrorSkipsCoolingBackup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	cfg := config.DefaultConfig()

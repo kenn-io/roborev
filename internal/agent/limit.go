@@ -12,7 +12,7 @@ type LimitKind int
 const (
 	LimitKindNone      LimitKind = iota // no rate-limit signal recognized
 	LimitKindTransient                  // 429-style; retry locally, no cooldown
-	LimitKindQuota                      // hard quota exhaustion (Gemini/Codex today)
+	LimitKindQuota                      // hard quota exhaustion
 	// LimitKindSession is a session-level cap (e.g. Claude 5-hour).
 	LimitKindSession
 )
@@ -94,6 +94,8 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
 	// Claude Code five-hour session cap, captured from real daemon logs.
 	{Agents: []string{"claude-code"}, Substring: "you've hit your session limit", Kind: LimitKindSession},
+	// Claude Code weekly limits outlast same-agent retries.
+	{Agents: []string{"claude-code"}, Substring: "you've hit your weekly limit", Kind: LimitKindQuota},
 	// Transient/outage — observed provider wording only (no speculative
 	// substrings; see the no-speculative note above). Retried with backoff.
 	{Agents: []string{"*"}, Substring: "too many requests", Kind: LimitKindTransient},

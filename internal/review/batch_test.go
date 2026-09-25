@@ -112,6 +112,7 @@ func TestFormatBatchAgentError(t *testing.T) {
 		agentName string
 		err       error
 		want      string
+		wantQuota bool
 	}{
 		{
 			name:      "unknown unavailable",
@@ -130,6 +131,7 @@ func TestFormatBatchAgentError(t *testing.T) {
 			agentName: "codex",
 			err:       agent.MarkUnavailable(fmt.Errorf("you've hit your usage limit")),
 			want:      QuotaErrorPrefix + "agent review: you've hit your usage limit",
+			wantQuota: true,
 		},
 		{
 			name:      "attached quota classification wins over bounded message",
@@ -138,7 +140,21 @@ func TestFormatBatchAgentError(t *testing.T) {
 				errors.New("bounded diagnostics"),
 				agent.LimitClassification{Kind: agent.LimitKindQuota, Agent: "codex"},
 			)),
-			want: QuotaErrorPrefix + "agent review: bounded diagnostics",
+			want:      QuotaErrorPrefix + "agent review: bounded diagnostics",
+			wantQuota: true,
+		},
+		{
+			name:      "claude weekly limit",
+			agentName: "claude-code",
+			err:       fmt.Errorf("You've hit your weekly limit"),
+			want:      QuotaErrorPrefix + "agent review: You've hit your weekly limit",
+			wantQuota: true,
+		},
+		{
+			name:      "claude weekly wording stays scoped",
+			agentName: "codex",
+			err:       fmt.Errorf("You've hit your weekly limit"),
+			want:      "agent review: You've hit your weekly limit",
 		},
 		{
 			name:      "session wins over unavailable",
@@ -156,7 +172,12 @@ func TestFormatBatchAgentError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, formatBatchAgentError(tt.agentName, tt.err))
+			got := formatBatchAgentError(tt.agentName, tt.err)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantQuota, IsQuotaFailure(ReviewResult{
+				Status: ResultFailed,
+				Error:  got,
+			}))
 		})
 	}
 }

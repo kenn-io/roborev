@@ -1118,6 +1118,11 @@ During cooldown:
     capped by `agent_quota_cooldown`. Provider reset hints can shorten the
     cooldown, not lengthen it beyond your configured cap.
 
+Claude Code's "You've hit your weekly limit" error is treated as a quota
+failure. roborev skips same-agent retries and sends the review to a configured
+backup during the cooldown. The reset time in that message is not parsed, so the
+configured maximum can expire before the provider reset.
+
 No configuration is needed unless you want a different cap. Quota detection and
 cooldown are automatic. The daemon logs cooldown start and end events so you can
 monitor agent availability.

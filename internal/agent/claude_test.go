@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"io"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -830,6 +832,93 @@ exit 1
 	errStr := err.Error()
 	assert.Contains(errStr, "quota exceeded")
 	assert.Contains(errStr, "failed")
+}
+
+func TestClaudeReviewWithSchemaWeeklyLimitIsQuota(t *testing.T) {
+	const weeklyLimit = "You've hit your weekly limit · resets 4pm (UTC)"
+	mock := mockAgentCLI(t, MockCLIOpts{
+		StdoutLines: []string{
+			`{"type":"result","is_error":true,"result":"You've hit your weekly limit · resets 4pm (UTC)"}`,
+		},
+		ExitCode: 1,
+	})
+	a := NewClaudeAgent(mock.CmdPath)
+
+	_, err := a.ReviewWithSchema(
+		context.Background(), t.TempDir(), "abc123", "review this",
+		jsontext.Value(`{"type":"object"}`), nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), weeklyLimit)
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	classification := ClassifyLimit("claude-code", "agent: "+err.Error())
+	assert.Equal(t, LimitKindQuota, classification.Kind)
+	assert.True(t, classification.ResetAt.IsZero())
+	assert.Zero(t, classification.CooldownFor)
+}
+
+func TestClaudeClassifyWithSchemaKeepsStreamError(t *testing.T) {
+	const weeklyLimit = "You've hit your weekly limit · resets 4pm (UTC)"
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput: "usage: claude --tools",
+		StdoutLines: []string{
+			`{"type":"result","is_error":true,"result":"You've hit your weekly limit · resets 4pm (UTC)"}`,
+		},
+		ExitCode: 1,
+	})
+	a := NewClaudeAgent(mock.CmdPath)
+
+	_, err := a.ClassifyWithSchema(
+		context.Background(), t.TempDir(), "abc123", "classify this",
+		jsontext.Value(`{"type":"object"}`), nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), weeklyLimit)
+}
+
+func TestClaudeSchemaWaitErrorKeepsStderrAndExitError(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*ClaudeAgent) error
+	}{
+		{
+			name: "classify",
+			call: func(a *ClaudeAgent) error {
+				_, err := a.ClassifyWithSchema(
+					context.Background(), t.TempDir(), "abc123", "classify this",
+					jsontext.Value(`{"type":"object"}`), nil,
+				)
+				return err
+			},
+		},
+		{
+			name: "review",
+			call: func(a *ClaudeAgent) error {
+				_, err := a.ReviewWithSchema(
+					context.Background(), t.TempDir(), "abc123", "review this",
+					jsontext.Value(`{"type":"object"}`), nil,
+				)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{
+				HelpOutput:  "usage: claude --tools",
+				StderrLines: []string{"authentication failed"},
+				ExitCode:    2,
+			})
+			err := tt.call(NewClaudeAgent(mock.CmdPath))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "authentication failed")
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
+			assert.Equal(t, 2, exitErr.ExitCode())
+		})
+	}
 }
 
 func TestAnthropicAPIKey(t *testing.T) {
