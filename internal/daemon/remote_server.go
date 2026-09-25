@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"go.kenn.io/roborev/internal/config"
@@ -23,21 +22,11 @@ func (s *Server) startRemoteServer(remote config.RemoteAPIConfig) error {
 	if !remote.Enabled {
 		return nil
 	}
-	addrPort, err := netip.ParseAddrPort(remote.Listen)
+	addrPort, err := config.ValidateRemoteListen(remote.Listen, remoteListenAddrAllowed)
 	if err != nil {
-		return fmt.Errorf(
-			"remote_api.listen %q must be a Tailscale IP and port, such as 100.101.102.103:7474: %w",
-			remote.Listen, err)
+		return err
 	}
-	if !remoteListenAddrAllowed(addrPort.Addr()) {
-		return fmt.Errorf(
-			"remote_api.listen %q is not a Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48); set it to this host's Tailscale IP",
-			remote.Listen)
-	}
-	if addrPort.Port() == 0 {
-		return fmt.Errorf("remote_api.listen %q needs a fixed port", remote.Listen)
-	}
-	listener, err := net.Listen("tcp", remote.Listen)
+	listener, err := net.Listen("tcp", addrPort.String())
 	if err != nil {
 		return fmt.Errorf("listen on remote_api.listen %s: %w", remote.Listen, err)
 	}

@@ -209,21 +209,29 @@ func normalizeRemoteAPIConfig(remote *RemoteAPIConfig) error {
 	if !remote.Enabled {
 		return nil
 	}
-	addrPort, err := netip.ParseAddrPort(remote.Listen)
+	_, err := ValidateRemoteListen(remote.Listen, IsTailscaleAddr)
+	return err
+}
+
+// ValidateRemoteListen parses remote_api.listen and checks that it is a
+// literal IP with a fixed port that isTailnet accepts. Pass IsTailscaleAddr
+// for isTailnet outside tests.
+func ValidateRemoteListen(listen string, isTailnet func(netip.Addr) bool) (netip.AddrPort, error) {
+	addrPort, err := netip.ParseAddrPort(listen)
 	if err != nil {
-		return fmt.Errorf(
+		return netip.AddrPort{}, fmt.Errorf(
 			"remote_api.listen %q must be a Tailscale IP and port, such as 100.101.102.103:7474: %w",
-			remote.Listen, err)
+			listen, err)
 	}
-	if !IsTailscaleAddr(addrPort.Addr()) {
-		return fmt.Errorf(
+	if !isTailnet(addrPort.Addr()) {
+		return netip.AddrPort{}, fmt.Errorf(
 			"remote_api.listen %q is not a Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48); only tailnet peers can be identified",
-			remote.Listen)
+			listen)
 	}
 	if addrPort.Port() == 0 {
-		return fmt.Errorf("remote_api.listen %q needs a fixed port", remote.Listen)
+		return netip.AddrPort{}, fmt.Errorf("remote_api.listen %q needs a fixed port", listen)
 	}
-	return nil
+	return addrPort, nil
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.
