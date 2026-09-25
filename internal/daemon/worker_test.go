@@ -3421,7 +3421,11 @@ func TestClaudeWeeklyLimitFailsOverToBackupWithoutRetry(t *testing.T) {
 	job := tc.createAndClaimJobWithAgent(t, "claude-weekly-limit", testWorkerID, "claude-code")
 	job.RepoPath = tc.TmpDir
 	start := time.Now()
-	executionErr := errors.New("claude-code failed\nstream: stream errors: You've hit your weekly limit: exit status 1")
+	executionErr := errors.New("claude-code failed\nstream: stream errors: You've hit your weekly limit · resets 4pm (UTC): exit status 1")
+	classification := agent.ClassifyLimit("claude-code", executionErr.Error())
+	assert.Equal(t, agent.LimitKindQuota, classification.Kind)
+	assert.True(t, classification.ResetAt.IsZero())
+	assert.Zero(t, classification.CooldownFor)
 
 	tc.Pool.failOrRetryAgentExecutionContext(
 		context.Background(), testWorkerID, job, "claude-code", executionErr,

@@ -835,10 +835,10 @@ exit 1
 }
 
 func TestClaudeReviewWithSchemaWeeklyLimitIsQuota(t *testing.T) {
-	const weeklyLimit = "You've hit your weekly limit"
+	const weeklyLimit = "You've hit your weekly limit · resets 4pm (UTC)"
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StdoutLines: []string{
-			`{"type":"result","is_error":true,"result":"You've hit your weekly limit"}`,
+			`{"type":"result","is_error":true,"result":"You've hit your weekly limit · resets 4pm (UTC)"}`,
 		},
 		ExitCode: 1,
 	})
@@ -852,15 +852,18 @@ func TestClaudeReviewWithSchemaWeeklyLimitIsQuota(t *testing.T) {
 	assert.Contains(t, err.Error(), weeklyLimit)
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
-	assert.Equal(t, LimitKindQuota, ClassifyLimit("claude-code", "agent: "+err.Error()).Kind)
+	classification := ClassifyLimit("claude-code", "agent: "+err.Error())
+	assert.Equal(t, LimitKindQuota, classification.Kind)
+	assert.True(t, classification.ResetAt.IsZero())
+	assert.Zero(t, classification.CooldownFor)
 }
 
 func TestClaudeClassifyWithSchemaKeepsStreamError(t *testing.T) {
-	const weeklyLimit = "You've hit your weekly limit"
+	const weeklyLimit = "You've hit your weekly limit · resets 4pm (UTC)"
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput: "usage: claude --tools",
 		StdoutLines: []string{
-			`{"type":"result","is_error":true,"result":"You've hit your weekly limit"}`,
+			`{"type":"result","is_error":true,"result":"You've hit your weekly limit · resets 4pm (UTC)"}`,
 		},
 		ExitCode: 1,
 	})
