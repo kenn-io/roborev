@@ -148,7 +148,8 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 		return fmt.Errorf("create search client: %w", err)
 	}
 	// A remote daemon cannot read a local checkout path; send its identity.
-	// Names, identities, and daemon root paths pass through.
+	// Other values pass through. The remote daemon accepts an identity or
+	// an exact root path from /api/repos, but not a repo name.
 	if remote, err := isRemoteMode(); err != nil {
 		return err
 	} else if remote && opts.repo != "" {

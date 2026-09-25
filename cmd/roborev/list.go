@@ -91,9 +91,15 @@ Examples:
 				branch = gitrepo.CurrentBranch(ctx, localRepoPath)
 			}
 
-			// Workspace mode: not in a git repo and no --repo specified
+			// Workspace mode: not in a git repo and no --repo specified.
+			// A remote daemon has no local path to match a prefix against,
+			// so remote mode lists every repo instead.
+			remote, err := isRemoteMode()
+			if err != nil {
+				return err
+			}
 			var repoPrefix string
-			if repoPath == "" && localRepoPath == "" {
+			if repoPath == "" && localRepoPath == "" && !remote {
 				if abs, err := filepath.Abs("."); err == nil {
 					repoPrefix = filepath.ToSlash(abs)
 				}

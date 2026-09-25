@@ -413,13 +413,21 @@ func (m model) fetchReleaseNotes() tea.Cmd {
 	}
 }
 
+// probeRemoteDaemon pings a remote daemon; tests replace it.
+var probeRemoteDaemon = daemon.ProbeRemoteDaemonPing
+
 // tryReconnect attempts to find a running daemon at a new address.
 // This is called after consecutive connection failures to handle daemon restarts.
 func (m model) tryReconnect() tea.Cmd {
 	return func() tea.Msg {
-		// A remote daemon has no runtime file here; keep its endpoint.
+		// A remote daemon has no runtime file here. Keep its endpoint and
+		// report success only when it answers a ping.
 		if m.remote {
-			return reconnectMsg{endpoint: m.endpoint}
+			info, err := probeRemoteDaemon(m.endpoint, 2*time.Second)
+			if err != nil {
+				return reconnectMsg{err: err}
+			}
+			return reconnectMsg{endpoint: m.endpoint, version: info.Version}
 		}
 		info, err := daemon.GetAnyRunningDaemon()
 		if err != nil {

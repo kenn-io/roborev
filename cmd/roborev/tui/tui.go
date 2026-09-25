@@ -801,11 +801,13 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 
 	if !opt.disableExternalIO {
 		// Read daemon version from runtime file. A remote daemon's
-		// runtime file is on another machine.
-		if !opt.remote {
-			if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
+		// runtime file is on another machine, so ask it instead.
+		if opt.remote {
+			if info, err := probeRemoteDaemon(ep, 2*time.Second); err == nil && info.Version != "" {
 				daemonVersion = info.Version
 			}
+		} else if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
+			daemonVersion = info.Version
 		}
 
 		// Load preferences from config

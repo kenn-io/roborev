@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/cmd/roborev/tui"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 )
 
@@ -67,14 +70,31 @@ to the current branch. Use = syntax for explicit values:
 				ep = *addrEndpoint
 			}
 
+			remote, err := isRemoteMode()
+			if err != nil {
+				return err
+			}
+
+			// daemonRepo is set when a remote-mode --repo is not a local
+			// checkout: it is a daemon root path, sent unchanged.
+			var daemonRepo bool
 			if cmd.Flags().Changed("repo") {
 				resolved, err := resolveRepoFlag(cmd.Context(), repoFilter)
-				if err != nil {
+				switch {
+				case err == nil:
+					repoFilter = resolved
+				case remote && filepath.IsAbs(repoFilter):
+					daemonRepo = true
+				case remote:
+					return fmt.Errorf("--repo %q is neither a local checkout nor an absolute daemon root path", repoFilter)
+				default:
 					return fmt.Errorf("--repo: %w", err)
 				}
-				repoFilter = resolved
 			}
 			if cmd.Flags().Changed("branch") {
+				if daemonRepo && branchFilter == "HEAD" {
+					return fmt.Errorf("--branch without a value needs a local checkout, and --repo %s is a daemon path; use --branch=<name>", repoFilter)
+				}
 				branchRepo := "."
 				if repoFilter != "" {
 					branchRepo = repoFilter
@@ -95,30 +115,14 @@ to the current branch. Use = syntax for explicit values:
 				BranchFilter:  branchFilter,
 				ControlSocket: controlSocket,
 				NoQuit:        noQuit,
-			}
-			remote, err := isRemoteMode()
-			if err != nil {
-				return err
+				Remote:        remote,
 			}
 			if remote {
-				// Jobs from a remote daemon carry its root paths, so the TUI
-				// filters by the daemon's path for the local checkout.
-				cfg.Remote = true
-				if repoFilter != "" {
-					root, err := remoteRepoRoot(cmd.Context(), ep, repoFilter)
-					if err != nil {
-						return fmt.Errorf("--repo: %w", err)
-					}
-					cfg.RepoFilter = root
-				} else if local, err := resolveRepoFlag(cmd.Context(), "."); err == nil {
-					// The current directory may not be registered on the
-					// daemon; the TUI then starts unfiltered.
-					if root, err := remoteRepoRoot(cmd.Context(), ep, local); err == nil {
-						cfg.RemoteRepoRoot = root
-					}
+				if err := resolveRemoteTUIRepo(cmd.Context(), ep, &cfg, daemonRepo); err != nil {
+					return err
 				}
 			}
-			return tui.Run(cfg)
+			return runTUI(cfg)
 		},
 	}
 
@@ -146,4 +150,38 @@ to the current branch. Use = syntax for explicit values:
 	)
 
 	return cmd
+}
+
+// runTUI starts the TUI; tests replace it.
+var runTUI = tui.Run
+
+// resolveRemoteTUIRepo turns local checkout paths into the daemon root
+// paths that remote jobs carry, since the TUI filters jobs by those paths.
+func resolveRemoteTUIRepo(ctx context.Context, ep daemon.DaemonEndpoint, cfg *tui.Config, daemonRepo bool) error {
+	if cfg.RepoFilter != "" {
+		if daemonRepo {
+			return nil
+		}
+		root, err := remoteRepoRoot(ctx, ep, cfg.RepoFilter)
+		if err != nil {
+			return fmt.Errorf("--repo: %w", err)
+		}
+		cfg.RepoFilter = root
+		return nil
+	}
+	// Only the automatic repo filter needs the current directory's path.
+	// A config the TUI cannot load leaves the filter off there too.
+	if globalCfg, err := config.LoadGlobal(); err != nil || !globalCfg.AutoFilterRepo {
+		return nil
+	}
+	local, err := resolveRepoFlag(ctx, ".")
+	if err != nil {
+		return nil
+	}
+	// The current directory may not be registered on the daemon; the TUI
+	// then starts unfiltered.
+	if root, err := remoteRepoRoot(ctx, ep, local); err == nil {
+		cfg.RemoteRepoRoot = root
+	}
+	return nil
 }

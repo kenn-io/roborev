@@ -196,7 +196,10 @@ func remoteRepoRoot(ctx context.Context, ep daemon.DaemonEndpoint, root string) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("list repos on remote daemon: %s (read body: %w)", resp.Status, err)
+		}
 		return "", fmt.Errorf("list repos on remote daemon: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var body struct {
