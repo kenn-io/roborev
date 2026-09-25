@@ -59,12 +59,12 @@ func RemoteCallerFromContext(ctx context.Context) (RemoteCaller, bool) {
 	return caller, ok
 }
 
-// remoteConnAuth caches one whois result per TCP connection, so a revoked
-// grant takes effect on the peer's next connection.
+// remoteConnAuth caches a successful whois result per TCP connection, so a
+// revoked grant takes effect on the peer's next connection. A failed whois is
+// not cached: the next request on the connection runs whois again.
 type remoteConnAuth struct {
-	once   sync.Once
-	caller RemoteCaller
-	err    error
+	mu     sync.Mutex
+	caller *RemoteCaller
 }
 
 type remoteConnAuthKey struct{}
@@ -103,10 +103,17 @@ func authenticateRemote(r *http.Request, whois whoisFunc) (RemoteCaller, error) 
 	if !ok {
 		return RemoteCaller{}, errors.New("remote connection has no identity state")
 	}
-	auth.once.Do(func() {
-		auth.caller, auth.err = whois(r.Context(), r.RemoteAddr)
-	})
-	return auth.caller, auth.err
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+	if auth.caller != nil {
+		return *auth.caller, nil
+	}
+	caller, err := whois(r.Context(), r.RemoteAddr)
+	if err != nil {
+		return RemoteCaller{}, err
+	}
+	auth.caller = &caller
+	return caller, nil
 }
 
 func (s *Server) newRemoteHandler(core http.Handler, whois whoisFunc) http.Handler {
@@ -157,6 +164,9 @@ func (s *Server) newRemoteHandler(core http.Handler, whois whoisFunc) http.Handl
 // resolveRemoteRepo maps a repo identity to the single registered checkout
 // with that identity.
 func (s *Server) resolveRemoteRepo(identity string) (*storage.Repo, error) {
+	if identity == "" {
+		return nil, newRemoteError(http.StatusBadRequest, "repo identity is required")
+	}
 	repos, err := s.db.FindReposByIdentity(identity)
 	if err != nil {
 		return nil, fmt.Errorf("look up repo %s: %w", identity, err)
@@ -242,17 +252,17 @@ func validateRemoteEnqueue(req *EnqueueRequest) error {
 	if kind != "" {
 		return newRemoteError(http.StatusForbidden, "%s reviews need a local daemon", kind)
 	}
-	if req.Branch != "" && !validBranchName(req.Branch) {
-		return newRemoteError(http.StatusBadRequest, "invalid branch name %q", req.Branch)
-	}
 	return nil
 }
 
-func validBranchName(name string) bool {
-	if strings.HasPrefix(name, "-") {
+// validBranchName reports whether name is a literal branch name. The "@{"
+// check rejects @{-N} shorthands, which check-ref-format --branch would
+// expand against the daemon clone's checkout history.
+func validBranchName(ctx context.Context, repoRoot, name string) bool {
+	if strings.HasPrefix(name, "-") || strings.Contains(name, "@{") {
 		return false
 	}
-	_, _, err := gitcmd.New().Run(context.Background(), "", nil, "check-ref-format", "--branch", name)
+	_, _, err := gitcmd.New().Run(ctx, repoRoot, nil, "check-ref-format", "--branch", name)
 	return err == nil
 }
 
@@ -277,6 +287,10 @@ func (s *Server) serveRemoteEnqueue(w http.ResponseWriter, r *http.Request, core
 	repo, err := s.resolveRemoteRepo(req.RepoIdentity)
 	if err != nil {
 		writeRemoteError(w, err)
+		return
+	}
+	if req.Branch != "" && !validBranchName(r.Context(), repo.RootPath, req.Branch) {
+		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "invalid branch name %q", req.Branch))
 		return
 	}
 	missing, err := ensureRemoteCommits(r.Context(), repo.RootPath, shas)
@@ -344,8 +358,16 @@ func (s *Server) serveRemoteRerun(w http.ResponseWriter, r *http.Request, core h
 		writeRemoteError(w, newRemoteError(http.StatusBadRequest, "decode rerun request: %v", err))
 		return
 	}
-	// A missing job falls through to the core handler's 404.
-	if job, err := s.db.GetJobByID(req.JobID); err == nil {
+	// A missing job falls through to the core handler's 404. Any other
+	// lookup failure stops here: the core handler reads the job again and
+	// must never see a job this gate did not check.
+	job, err := s.db.GetJobByID(req.JobID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		writeRemoteError(w, fmt.Errorf("look up job %d: %w", req.JobID, err))
+		return
+	default:
 		allowed, err := s.remoteRerunAllowed(job)
 		if err != nil {
 			writeRemoteError(w, err)
