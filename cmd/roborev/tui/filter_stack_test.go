@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUIFilterClearWithEsc(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -31,6 +32,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 }
 
 func TestTUIFilterClearWithEscLayered(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -55,6 +57,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 }
 
 func TestTUIFilterClearHideClosedOnly(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -72,6 +75,7 @@ func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 }
 
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -97,6 +101,7 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 }
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -130,6 +135,7 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 }
 
 func TestTUIFilterEscapeCloses(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 1),
 	})
@@ -142,6 +148,7 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 }
 
 func TestTUIFilterStackPush(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	m.pushFilter("repo")
@@ -152,6 +159,7 @@ func TestTUIFilterStackPush(t *testing.T) {
 }
 
 func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	m.pushFilter("repo")
@@ -162,6 +170,7 @@ func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
 }
 
 func TestTUIFilterStackPopClearsValue(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	m.activeRepoFilter = []string{"/path/to/repo"}
@@ -182,6 +191,7 @@ func TestTUIFilterStackPopClearsValue(t *testing.T) {
 }
 
 func TestTUIFilterStackEscapeOrder(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(
 		withTestJobs(makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main"))),
 		withSelection(0, 1),
@@ -219,6 +229,7 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 }
 
 func TestTUIFilterStackTitleBarOrder(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -242,6 +253,7 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 }
 
 func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/workspace/old-service"}
@@ -257,6 +269,7 @@ func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
 }
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -277,6 +290,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 }
 
 func TestTUIRemoveFilterFromStack(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.filterStack = []string{"repo", "branch", "other"}
@@ -292,6 +306,7 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 // daemon reconnect clears fetchFailed and retriggers branch
 // fetches when search is active.
 func TestTUIReconnectClearsFetchFailed(t *testing.T) {
+	t.Parallel()
 	m := newModel(testEndpointFromURL("http://localhost:7373"), withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
@@ -327,6 +342,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 }
 
 func TestTUILockedFilterModalBlocksAll(t *testing.T) {
+	t.Parallel()
 	nodes := []treeFilterNode{
 		makeNode("repo-a", 3),
 	}
@@ -345,6 +361,7 @@ func TestTUILockedFilterModalBlocksAll(t *testing.T) {
 }
 
 func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/unlocked/repo"}
 	m.activeBranchFilter = "locked-branch"
@@ -360,6 +377,7 @@ func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
 }
 
 func TestTUIPopFilterAllLocked(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/locked/repo"}
 	m.activeBranchFilter = "locked-branch"
@@ -373,6 +391,7 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 }
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{

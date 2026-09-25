@@ -83,6 +83,7 @@ func readStoredReview(t *testing.T, db *DB, jobID int64) storedLegacyReview {
 }
 
 func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-upgrade", "upgrade-head")
 	findings := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "findings", legacyFindingsMarkdown, 0, true)
 	clean := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "clean", legacyNoIssuesMarkdown, 1, false)
@@ -171,6 +172,7 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 }
 
 func TestConvertLegacyReviewsRestoresArchivedReviews(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-convert", "convert-head")
 	findings := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "findings", legacyFindingsMarkdown, 0, true)
 	clean := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "clean", legacyNoIssuesMarkdown, 1, false)
@@ -230,6 +232,7 @@ func TestConvertLegacyReviewsRestoresArchivedReviews(t *testing.T) {
 }
 
 func TestConvertLegacyReviewsLeavesAJobWithAnActiveReviewAlone(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-active", "active-head")
 	archived := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "rerun", legacyNoIssuesMarkdown, 1, false)
 	archiveAsOlderRelease(t, env.db)
@@ -271,6 +274,7 @@ func seedLegacyPanel(t *testing.T, env jobEnv, name string) int64 {
 }
 
 func TestConvertLegacySynthesisReviews(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-synthesis-convert", "synthesis-convert-head")
 	insert := func(jobID int64, name, markdown string, verdict int) {
 		_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', ?, ?, ?)`,
@@ -310,6 +314,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 }
 
 func TestConvertedReviewIsNotOverwrittenByAMarkdownOnlyPeer(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-peer", "peer-head")
 	fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "peer", legacyFindingsMarkdown, 0, false)
 	require.NoError(t, env.db.migrateLegacyReviews())

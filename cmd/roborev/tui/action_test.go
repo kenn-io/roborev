@@ -24,6 +24,7 @@ import (
 )
 
 func TestTUICloseReviewSuccess(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, expectJSONPost(t, "", closeRequest{JobID: 100, Closed: true}, map[string]bool{"success": true}))
 	cmd := m.closeReview(42, 100, true, false, 1)
 	msg := cmd()
@@ -35,6 +36,7 @@ func TestTUICloseReviewSuccess(t *testing.T) {
 }
 
 func TestCommitPatchWithMetadata(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -58,6 +60,7 @@ func TestCommitPatchWithMetadata(t *testing.T) {
 }
 
 func TestTUICloseReviewNotFound(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -71,6 +74,7 @@ func TestTUICloseReviewNotFound(t *testing.T) {
 }
 
 func TestTUIToggleClosedForJobSuccess(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 1, Closed: true}, map[string]bool{"success": true}))
 	currentState := false
 	cmd := m.toggleClosedForJob(1, &currentState)
@@ -81,6 +85,7 @@ func TestTUIToggleClosedForJobSuccess(t *testing.T) {
 }
 
 func TestTUIToggleClosedNoReview(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -92,6 +97,7 @@ func TestTUIToggleClosedNoReview(t *testing.T) {
 }
 
 func TestTUICloseFromReviewView_Navigation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		initialIdx   int
@@ -189,6 +195,7 @@ type closeRequest struct {
 }
 
 func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 42, Closed: true}, map[string]bool{"success": true}))
 	cmd := m.closeReviewInBackground(42, true, false, 1, false)
 	msg := cmd()
@@ -201,6 +208,7 @@ func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
 }
 
 func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
 			assert.Equal(t, "/api/review/close", r.URL.Path, "Unexpected request path, got: %s", r.URL.Path)
@@ -225,6 +233,7 @@ func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 }
 
 func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
 			assert.Equal(t, "/api/review/close", r.URL.Path, "Unexpected request: %s %s", r.Method, r.URL.Path)
@@ -248,6 +257,7 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 }
 
 func TestTUIClosedRollbackOnError(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
@@ -284,6 +294,7 @@ func TestTUIClosedRollbackOnError(t *testing.T) {
 }
 
 func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
@@ -322,6 +333,7 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 }
 
 func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
@@ -349,6 +361,7 @@ func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 }
 
 func TestTUIClosedSuccessNoRollback(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	})
@@ -376,6 +389,7 @@ func TestTUIClosedSuccessNoRollback(t *testing.T) {
 }
 
 func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withClosed(new(false))),
 		makeJob(2, withClosed(new(false))),
@@ -397,6 +411,7 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 }
 
 func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
@@ -434,6 +449,7 @@ func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
 }
 
 func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
@@ -474,6 +490,7 @@ func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
 }
 
 func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
@@ -515,6 +532,7 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 // should preserve the anchor so ←/→ navigation and escape-to-queue
 // both land near the bottom — not at the top.
 func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// 5 open jobs; user is on the last one (index 4, ID 1).
@@ -582,6 +600,7 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 // in a review-anchored view, selectedIdx stays in bounds but points to
 // a different job. normalizeSelectionIfHidden must resync selectedJobID.
 func TestNormalizeResyncsStaleJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -629,6 +648,7 @@ func TestNormalizeResyncsStaleJobID(t *testing.T) {
 // Regression: prompt view opened from review should preserve the anchor
 // so esc back to review keeps ←/→ navigation correct.
 func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -671,6 +691,7 @@ func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
 // review → prompt → log) should preserve the anchor. logReviewAnchored
 // is set by openLogView based on the calling view's isReviewAnchored().
 func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -703,6 +724,7 @@ func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 // Regression: empty-list refresh in a review-anchored view should
 // preserve selectedJobID so esc back to review doesn't lose context.
 func TestReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -730,6 +752,7 @@ func TestReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
 // Regression: review-anchored log view without currentReview should
 // still preserve selectedJobID on empty-list refresh.
 func TestLogReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -754,6 +777,7 @@ func TestLogReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
 // when a refresh removes the viewed job, so esc/q doesn't leave stale
 // selectedIdx.
 func TestPromptFromQueueRefreshNormalizesSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -784,6 +808,7 @@ func TestPromptFromQueueRefreshNormalizesSelection(t *testing.T) {
 // Regression: log view should normalize selection when a refresh removes
 // the viewed job, so esc/q doesn't leave stale selectedIdx.
 func TestLogViewRefreshNormalizesSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
@@ -811,6 +836,7 @@ func TestLogViewRefreshNormalizesSelection(t *testing.T) {
 }
 
 func TestTUISetJobClosedHelper(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -836,6 +862,7 @@ func TestTUISetJobClosedHelper(t *testing.T) {
 }
 
 func TestTUICancelJobSuccess(t *testing.T) {
+	t.Parallel()
 	type cancelRequest struct {
 		JobID int64 `json:"job_id"`
 	}
@@ -855,6 +882,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 }
 
 func TestTUICancelJobNotFound(t *testing.T) {
+	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
@@ -870,6 +898,7 @@ func TestTUICancelJobNotFound(t *testing.T) {
 }
 
 func TestTUICancelRollbackOnError(t *testing.T) {
+	t.Parallel()
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -898,6 +927,7 @@ func TestTUICancelRollbackOnError(t *testing.T) {
 }
 
 func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
+	t.Parallel()
 	startTime := time.Now().Add(-5 * time.Minute)
 	originalFinished := time.Now().Add(-2 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
@@ -928,6 +958,7 @@ func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 }
 
 func TestTUICancelOptimisticUpdate(t *testing.T) {
+	t.Parallel()
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -946,6 +977,7 @@ func TestTUICancelOptimisticUpdate(t *testing.T) {
 }
 
 func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
+	t.Parallel()
 	testCases := []storage.JobStatus{
 		storage.JobStatusDone,
 		storage.JobStatusFailed,
@@ -974,6 +1006,7 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 }
 
 func TestTUIRespondTextPreservation(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withRef("abc1234")),
 		makeJob(2, withRef("def5678")),
@@ -1014,6 +1047,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 }
 
 func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withRef("abc1234")),
 		makeJob(2, withRef("def5678")),
@@ -1037,6 +1071,7 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 }
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
@@ -1072,6 +1107,7 @@ func containsRune(s string, r rune) bool {
 }
 
 func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
@@ -1105,6 +1141,7 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 }
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
@@ -1123,6 +1160,7 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 }
 
 func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusRunning)),
@@ -1146,6 +1184,7 @@ func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 }
 
 func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
 			withClosed(new(false))),
@@ -1168,6 +1207,7 @@ func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
 }
 
 func TestClosedKeyUpdatesStatsFromReviewView(t *testing.T) {
+	t.Parallel()
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
 			withClosed(new(false))),

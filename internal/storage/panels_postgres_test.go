@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostgresPanelColumnRoundTrip(t *testing.T) {
+func TestPostgresPanelColumnRoundTrip(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	assert := assert.New(t)
 	ctx := t.Context()
 	pool := openTestPgPool(t)
@@ -59,7 +59,7 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 	assert.JSONEq(`{"agent":"test","review_type":"security"}`, found.PanelMemberConfigJSON)
 }
 
-func TestPostgresBackupColumnRoundTrip(t *testing.T) {
+func TestPostgresBackupColumnRoundTrip(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	assert := assert.New(t)
 	ctx := t.Context()
 	pool := openTestPgPool(t)

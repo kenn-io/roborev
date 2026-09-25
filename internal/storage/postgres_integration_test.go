@@ -400,7 +400,7 @@ func requireLocalJobByUUID(t *testing.T, db *DB, jobUUID *uuid.UUID) ReviewJob {
 // (addressed→closed rename) succeeds when the reviews table already
 // has the closed column. This happens when legacy schema_version
 // exists at an old version but data tables were created fresh.
-func TestIntegration_MigrationV6Idempotent(t *testing.T) {
+func TestIntegration_MigrationV6Idempotent(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	url := getIntegrationPostgresURL()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -462,7 +462,7 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 	}
 }
 
-func TestIntegration_SyncFullCycle(t *testing.T) {
+func TestIntegration_SyncFullCycle(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -491,7 +491,7 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 	}
 }
 
-func TestIntegration_SyncMultipleRepos(t *testing.T) {
+func TestIntegration_SyncMultipleRepos(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -508,7 +508,7 @@ func TestIntegration_SyncMultipleRepos(t *testing.T) {
 	env.assertPgCountWhere("commits", "sha = $1", []any{sameSHA}, 2)
 }
 
-func TestIntegration_PullFromRemote(t *testing.T) {
+func TestIntegration_PullFromRemote(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	// Insert data directly into postgres (simulating another machine's sync)
@@ -574,7 +574,7 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 	}
 }
 
-func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *testing.T) {
+func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	const identity = "git@github.com:test/search-wake.git"
 
@@ -628,7 +628,7 @@ func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *t
 	assert.Equal(t, wakesBeforeReplay, wakes.Load(), "cursor lookback replay must not wake search")
 }
 
-func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t *testing.T) {
+func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	const identity = "git@github.com:test/search-wake-late-failure.git"
 
@@ -668,7 +668,7 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	assert.Zero(t, reviewCount)
 }
 
-func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {
+func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	repoIdentity := "git@github.com:test/late-visible.git"
@@ -747,7 +747,7 @@ func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
 	assert.Equal(t, JobStatusApplied, localFixJob.Status)
 }
 
-func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
+func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	repoIdentity := "git@github.com:test/late-response.git"
@@ -805,7 +805,7 @@ func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
 	assert.Contains(t, uuids, lateUUID)
 }
 
-func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) {
+func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	assignedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	machineID := testUUID("experiment-assignment-machine")
@@ -857,7 +857,7 @@ func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 	assert.Equal(t, original.EffectiveConfigHash, effectiveConfigHash)
 }
 
-func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) {
+func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	sourceMachineID := testUUID("experiment-source-machine")
 	excludeMachineID := testUUID("experiment-excluded-machine")
@@ -914,7 +914,7 @@ func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) 
 	assert.Equal(t, late.ReviewUnitUUID, third[0].ReviewUnitUUID)
 }
 
-func TestIntegration_FinalPush(t *testing.T) {
+func TestIntegration_FinalPush(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -946,7 +946,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 	env.assertPgCount("reviews", jobCount)
 }
 
-func TestIntegration_FinalPush_NoCommit(t *testing.T) {
+func TestIntegration_FinalPush_NoCommit(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -980,7 +980,7 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 	env.assertPgCount("reviews", 1)
 }
 
-func TestIntegration_SchemaCreation(t *testing.T) {
+func TestIntegration_SchemaCreation(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	tables := []string{"machines", "repos", "commits", "review_jobs", "reviews", "responses"}
@@ -1005,7 +1005,7 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 	}
 }
 
-func TestIntegration_Multiplayer(t *testing.T) {
+func TestIntegration_Multiplayer(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:test/multiplayer-repo.git"
@@ -1141,7 +1141,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 	t.Log("Multiplayer sync verified: both machines can see each other's reviews")
 }
 
-func TestIntegration_MultiplayerSameCommit(t *testing.T) {
+func TestIntegration_MultiplayerSameCommit(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:test/same-commit-repo.git"
@@ -1327,7 +1327,7 @@ func runConcurrentReviewsAndSync(start <-chan struct{}, db *DB, repoID int64, wo
 	}()
 }
 
-func TestIntegration_MultiplayerRealistic(t *testing.T) {
+func TestIntegration_MultiplayerRealistic(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	sharedRepoIdentity := "git@github.com:team/shared-project.git"
@@ -1594,7 +1594,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		len(jobsCreatedByA), len(jobsCreatedByB), len(jobsCreatedByC))
 }
 
-func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
+func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	dbA := env.openDB("machine_a.db")
@@ -1677,7 +1677,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	t.Log("Offline/reconnect verified: reviews created offline sync correctly after reconnect")
 }
 
-func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
+func TestIntegration_SyncNowPushesAllBatches(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -1776,7 +1776,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 		stats.PushedJobs, stats.PushedReviews, syncBatchSize)
 }
 
-func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
+func TestIntegration_SyncNowWithProgressAbort(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")
 
@@ -1830,7 +1830,7 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 		stats.PushedJobs, numJobs)
 }
 
-func TestIntegration_TickerSync(t *testing.T) {
+func TestIntegration_TickerSync(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 
 	dbA := env.openDB("machine_a.db")

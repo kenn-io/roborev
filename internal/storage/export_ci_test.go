@@ -23,6 +23,7 @@ import (
 // snapshots — falling back to the run's earliest job enqueue when the
 // attempt row was cleaned up.
 func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
+	t.Parallel()
 	tmpl, err := getTemplatePath()
 	require.NoError(t, err)
 	data, err := os.ReadFile(tmpl)
@@ -139,6 +140,7 @@ func failSynthesisWithError(t *testing.T, db *DB, jobID int64, errText string) {
 // the pair from the synthesis job, so the export still reports the model
 // after the repo (and its review_jobs rows) are deleted.
 func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
+	t.Parallel()
 	tmpl, err := getTemplatePath()
 	require.NoError(t, err)
 	data, err := os.ReadFile(tmpl)
@@ -221,6 +223,7 @@ func seedPostedPanel(t *testing.T, db *DB, pr int, sha, outcome string) *CIPanel
 }
 
 func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -278,6 +281,7 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 }
 
 func TestExportCIMetricsLegacyRowsAreUnknown(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -303,6 +307,7 @@ func TestExportCIMetricsLegacyRowsAreUnknown(t *testing.T) {
 // its review_jobs rows are cascade-deleted. Jobs, which is sourced live from
 // review_jobs by panel_run_uuid, is expected to come back empty in that case.
 func TestExportCIMetricsSurvivesCascadeRepoDeletion(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -338,6 +343,7 @@ func TestExportCIMetricsSurvivesCascadeRepoDeletion(t *testing.T) {
 }
 
 func TestExportCIMetricsCursorPagination(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -358,6 +364,7 @@ func TestExportCIMetricsCursorPagination(t *testing.T) {
 }
 
 func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -407,6 +414,7 @@ func seedPanelEraMarker(t *testing.T, db *DB, createdAt string) {
 }
 
 func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -471,6 +479,7 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 // modes as terminal and posted the available output), while a group with no
 // successful job posted nothing reviewable and is excluded.
 func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -528,6 +537,7 @@ func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
 // wall clock to the migration's timestamp), leaving its lone done job a
 // singleton.
 func TestExportCIMetricsLegacyExcludesUnfinishedMigrationCancels(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -553,6 +563,7 @@ func TestExportCIMetricsLegacyExcludesUnfinishedMigrationCancels(t *testing.T) {
 // checkout basename, so same-named clones of different repositories are not
 // conflated.
 func TestExportCIMetricsLegacyUsesRepoIdentity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -576,6 +587,7 @@ func TestExportCIMetricsLegacyUsesRepoIdentity(t *testing.T) {
 // units, so post-panel manual reviews of the same ref never appear as new
 // pseudopanels, and a database with no panel activity exports nothing.
 func TestExportCIMetricsLegacyBoundedToPrePanelEra(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -611,6 +623,7 @@ func TestExportCIMetricsLegacyBoundedToPrePanelEra(t *testing.T) {
 // must not stretch the unit's wall clock (a production ref re-reviewed 12
 // days later inflated its turnaround to 290 hours before this bound).
 func TestExportCIMetricsLegacyExcludesNonAdjacentReReview(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -634,6 +647,7 @@ func TestExportCIMetricsLegacyExcludesNonAdjacentReReview(t *testing.T) {
 }
 
 func TestExportCIMetricsLegacyPagination(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -663,6 +677,7 @@ func TestExportCIMetricsLegacyPagination(t *testing.T) {
 }
 
 func TestExportCIMetricsRejectsCursorModeMismatch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -691,6 +706,7 @@ func TestExportCIMetricsRejectsCursorModeMismatch(t *testing.T) {
 }
 
 func TestExportCIMetricsLegacyAndPanelModesAreDisjoint(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

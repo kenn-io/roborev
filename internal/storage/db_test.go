@@ -11,6 +11,7 @@ import (
 )
 
 func TestOpenAndClose(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -24,6 +25,7 @@ func TestOpenAndClose(t *testing.T) {
 }
 
 func TestMigration19_SkippedStatusAndClassifyType(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -58,6 +60,7 @@ func TestMigration19_SkippedStatusAndClassifyType(t *testing.T) {
 }
 
 func TestAutoDesignDedup_AutoRowsDedup(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -87,6 +90,7 @@ func TestAutoDesignDedup_AutoRowsDedup(t *testing.T) {
 }
 
 func TestAutoDesignDedup_ExplicitRowsNotAffected(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -113,6 +117,7 @@ func TestAutoDesignDedup_ExplicitRowsNotAffected(t *testing.T) {
 }
 
 func TestAutoDesignDedup_CommitlessIndex(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -153,6 +158,7 @@ func TestAutoDesignDedup_CommitlessIndex(t *testing.T) {
 }
 
 func TestMigration19_Idempotent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 

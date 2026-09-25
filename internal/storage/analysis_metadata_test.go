@@ -10,6 +10,7 @@ import (
 )
 
 func TestAnalysisMetadata(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "analysis-metadata")
 
 	recorded, err := db.EnqueueJob(EnqueueOpts{
@@ -87,6 +88,7 @@ func TestAnalysisMetadata(t *testing.T) {
 }
 
 func TestMigrateAddsAnalysisColumns(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
@@ -100,6 +102,7 @@ func TestMigrateAddsAnalysisColumns(t *testing.T) {
 }
 
 func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "analysis-metadata-sync")
 
 	pulledUUID := uuid.New()
@@ -127,6 +130,7 @@ func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
 }
 
 func TestAnalysisMetadataSurvivesClaimAndRetry(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "analysis-metadata-lifecycle")
 
 	job, err := db.EnqueueJob(EnqueueOpts{

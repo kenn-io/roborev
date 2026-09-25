@@ -12,6 +12,7 @@ import (
 )
 
 func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reviews.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
@@ -51,6 +52,7 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 }
 
 func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-candidates", 14)
@@ -108,6 +110,7 @@ func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
 }
 
 func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-pages", 4)
@@ -152,6 +155,7 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 }
 
 func TestListTokenCostCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-cutoff", 2)
@@ -181,6 +185,7 @@ func TestListTokenCostCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
 }
 
 func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-unpriced-json", 1)
@@ -200,6 +205,7 @@ func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
 }
 
 func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-log-candidates", 3)
@@ -226,6 +232,7 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 }
 
 func TestListTokenUsageLogCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-log-cutoff", 2)
@@ -254,6 +261,7 @@ func TestListTokenUsageLogCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
 }
 
 func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-canceled-release", 2)
@@ -302,6 +310,7 @@ func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
 }
 
 func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-ownership", 4)
@@ -338,6 +347,7 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 }
 
 func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-attempt-history", 1)
@@ -376,6 +386,7 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 }
 
 func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/token-cost-prepopulated-session")
@@ -412,6 +423,7 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 }
 
 func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/token-cost-cross-machine-resume")
@@ -464,6 +476,7 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 }
 
 func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "legacy-sessions.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
@@ -555,6 +568,7 @@ func BenchmarkSessionResumedMigration(b *testing.B) {
 }
 
 func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/token-cost-auto-design")
@@ -598,6 +612,7 @@ func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 // reconciliation skips it, but the live worker's attempt-scoped capture must
 // still store the usage it observed.
 func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-imported-rerun", 1)
@@ -640,6 +655,7 @@ func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
 }
 
 func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-attempt-race", 1)
@@ -676,6 +692,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 }
 
 func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-reuse-race", 2)
@@ -713,6 +730,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 }
 
 func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-stale-race", 1)

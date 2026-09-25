@@ -11,6 +11,7 @@ import (
 )
 
 func TestReviewFileCoverageContract(t *testing.T) {
+	t.Parallel()
 	zero, one, twentySeven, four := 0, 1, 27, 4
 	assert.Equal(t, "0 files reviewed, 27 excluded",
 		(&ReviewFileCoverage{Reviewed: &zero, Excluded: &twentySeven}).FormatSummary())
@@ -32,6 +33,7 @@ func TestReviewFileCoverageContract(t *testing.T) {
 }
 
 func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -92,6 +94,7 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 }
 
 func TestReviewFileCoveragePartialAndSync(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -165,7 +168,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	assert.Equal(t, 9, *stored.FileCoverage.Excluded)
 }
 
-func TestIntegrationCoveragePostgres(t *testing.T) {
+func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	jobUUID := uuid.New()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})

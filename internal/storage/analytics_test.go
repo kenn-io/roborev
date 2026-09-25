@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -119,6 +120,7 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 }
 
 func TestGetAnalyticsUsesVerdictsForFailureRateAcrossSuccessfulTerminalStates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -158,6 +160,7 @@ func TestGetAnalyticsUsesVerdictsForFailureRateAcrossSuccessfulTerminalStates(t 
 }
 
 func TestGetAnalyticsIncludesInvokedSkippedAttempts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
@@ -186,6 +189,7 @@ func TestGetAnalyticsIncludesInvokedSkippedAttempts(t *testing.T) {
 }
 
 func TestGetAnalyticsAttributesInvokedClassifierSkip(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
@@ -216,6 +220,7 @@ func TestGetAnalyticsAttributesInvokedClassifierSkip(t *testing.T) {
 }
 
 func TestGetAnalyticsPreservesFractionalSecondBounds(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC)
@@ -248,6 +253,7 @@ func TestGetAnalyticsPreservesFractionalSecondBounds(t *testing.T) {
 }
 
 func TestGetAnalyticsEmitsContinuousTimeBuckets(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
@@ -275,6 +281,7 @@ func TestGetAnalyticsEmitsContinuousTimeBuckets(t *testing.T) {
 }
 
 func TestGetAnalyticsPreservesRequestedTimeRange(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
@@ -289,6 +296,7 @@ func TestGetAnalyticsPreservesRequestedTimeRange(t *testing.T) {
 }
 
 func TestGetAnalyticsAlignsBucketBoundaries(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name        string
@@ -410,6 +418,7 @@ func analyticsTestTimeSeriesEndpoints(series []AnalyticsTimeBucket) (time.Time, 
 }
 
 func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
@@ -440,6 +449,7 @@ func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
 }
 
 func TestGetAnalyticsFiltersPopulationsIndependently(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -535,6 +545,7 @@ func seedAnalyticsJob(t *testing.T, db *DB, repo *Repo, seed analyticsJobSeed) *
 }
 
 func TestAnalyticsBucketString(t *testing.T) {
+	t.Parallel()
 	for _, bucket := range []AnalyticsBucket{
 		AnalyticsBucketHour, AnalyticsBucketDay, AnalyticsBucketWeek, AnalyticsBucketMonth,
 	} {

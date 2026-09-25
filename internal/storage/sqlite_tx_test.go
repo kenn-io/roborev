@@ -8,6 +8,7 @@ import (
 )
 
 func TestBeginImmediateFailureDoesNotPoolOpenTransaction(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	db.SetMaxOpenConns(1)

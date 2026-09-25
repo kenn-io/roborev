@@ -9,6 +9,7 @@ import (
 )
 
 func TestDaemonStatusIncludesUpdateDrainState(t *testing.T) {
+	t.Parallel()
 	status := DaemonStatus{
 		UpdateDraining:       true,
 		UpdateDrainPolicy:    "interrupt",

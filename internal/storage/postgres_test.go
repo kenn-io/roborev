@@ -21,6 +21,7 @@ var postgresV1Schema string
 var defaultTestMachineID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 func TestDefaultPgPoolConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultPgPoolConfig()
 
 	assert.Equal(t, 5*time.Second, cfg.ConnectTimeout)
@@ -31,6 +32,7 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 }
 
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
+	t.Parallel()
 	requiredStatements := []string{
 		"CREATE SCHEMA IF NOT EXISTS roborev",
 		"CREATE TABLE IF NOT EXISTS roborev.schema_version",
@@ -51,6 +53,7 @@ func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 }
 
 func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
+	t.Parallel()
 	requiredIndexes := []string{
 		"idx_review_jobs_source",
 		"idx_review_jobs_updated",
@@ -69,6 +72,7 @@ func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 }
 
 func TestPgSchemaStatementsSplitsCleanly(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	stmts := pgSchemaStatements()
 
@@ -115,7 +119,7 @@ func firstNonCommentLine(stmt string) string {
 // Integration tests require a live PostgreSQL instance.
 // Run with: TEST_POSTGRES_URL=postgres://... go test -run Integration
 
-func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
+func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
@@ -265,7 +269,7 @@ func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID uuid.
 	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, otherMachineID)
 }
 
-func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) {
+func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that EnsureSchema auto-initializes when schema_version table is empty
 	pool := openTestPgPool(t)
 	ctx := t.Context()
@@ -286,7 +290,7 @@ func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) {
 	assert.Equal(t, pgSchemaVersion, version)
 }
 
-func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
+func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that EnsureSchema returns error when schema version is newer than supported
 	pool := openTestPgPool(t)
 	ctx := t.Context()
@@ -307,7 +311,7 @@ func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "newer than supported")
 }
 
-func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
+func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that a fresh database (no roborev schema) can be initialized
 	connString := getTestPostgresURL(t)
 	ctx := t.Context()
@@ -402,7 +406,7 @@ func countSuccesses(success []bool) int {
 	return count
 }
 
-func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
+func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that tables in public schema are migrated to roborev
 	ctx := t.Context()
 
@@ -445,7 +449,7 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	assert.Equal(t, 1, version)
 }
 
-func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing.T) {
+func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies migration with multiple tables in public and mixed state
 	// (some tables already in roborev, some in public)
 	ctx := t.Context()
@@ -511,7 +515,7 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	assert.Equal(t, "test-repo-legacy", repoIdentity)
 }
 
-func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
+func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that having a table in both schemas with data in public
 	// causes an error requiring manual reconciliation.
 	ctx := t.Context()
@@ -541,7 +545,7 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "manual reconciliation required")
 }
 
-func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
+func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that an empty table in public is dropped when the same
 	// table exists in roborev schema.
 	ctx := t.Context()
@@ -584,7 +588,7 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	assert.Equal(t, "new-repo", repoIdentity)
 }
 
-func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
+func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that a public table with data is properly migrated
 	// to roborev schema when roborev doesn't have that table yet.
 	// This is the normal migration path and also what the 42P01 fallback uses.
@@ -626,7 +630,7 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	assert.Equal(t, 2, count)
 }
 
-func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
+func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
@@ -652,7 +656,7 @@ func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
 	t.Logf("Database ID: %s", dbID1)
 }
 
-func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
+func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that when connecting to a different Postgres database
 	// (different database_id), the SQLite synced_at timestamps get cleared.
 	pool := openTestPgPool(t)
@@ -728,7 +732,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	assert.Equal(t, dbIDText, newTargetID)
 }
 
-func TestIntegration_BatchUpsertJobs(t *testing.T) {
+func TestIntegration_BatchUpsertJobs(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
@@ -1106,7 +1110,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 }
 
-func TestIntegration_BatchUpsertReviews(t *testing.T) {
+func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	zero, excluded := 0, 4
@@ -1217,7 +1221,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	})
 }
 
-func TestIntegration_BatchInsertResponses(t *testing.T) {
+func TestIntegration_BatchInsertResponses(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
@@ -1299,7 +1303,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	})
 }
 
-func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
+func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that a v1 schema (without model column) gets migrated to v2
 	ctx := t.Context()
 
@@ -1369,7 +1373,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	assert.Nil(t, jobModel)
 }
 
-func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
+func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// This test verifies that upserting a job with a model value backfills
 	// an existing job that has NULL model (COALESCE behavior)
 	pool := openTestPgPool(t)
@@ -1452,7 +1456,7 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 	assert.Nil(t, requestedProviderCleared, "Expected empty requested_provider upsert to clear existing requested provider")
 }
 
-func TestIntegration_UpsertJob_PreservesSource(t *testing.T) {
+func TestIntegration_UpsertJob_PreservesSource(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 

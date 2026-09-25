@@ -9,6 +9,7 @@ import (
 )
 
 func TestIsTaskJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	tests := []struct {
@@ -106,6 +107,7 @@ func TestIsTaskJob(t *testing.T) {
 }
 
 func TestIsDirtyJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	tests := []struct {
@@ -158,6 +160,7 @@ func TestIsDirtyJob(t *testing.T) {
 }
 
 func TestIsReviewJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	tests := []struct {
@@ -187,20 +190,24 @@ func TestIsReviewJob(t *testing.T) {
 }
 
 func TestJobStatusSkipped(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, storage.JobStatusSkipped, storage.JobStatus("skipped"))
 }
 
 func TestJobTypeClassify(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, storage.JobTypeClassify, "classify")
 }
 
 func TestReviewJobHasSkipReason(t *testing.T) {
+	t.Parallel()
 	j := storage.ReviewJob{}
 	j.SkipReason = "trivial diff"
 	assert.Equal(t, "trivial diff", j.SkipReason)
 }
 
 func TestUsesStoredPrompt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	tests := []struct {
@@ -226,6 +233,7 @@ func TestUsesStoredPrompt(t *testing.T) {
 }
 
 func TestLegacyCommentLookupTarget(t *testing.T) {
+	t.Parallel()
 	commitID := int64(42)
 	diff := "diff"
 
@@ -282,6 +290,7 @@ func TestLegacyCommentLookupTarget(t *testing.T) {
 }
 
 func TestIsCIReview(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		job  storage.ReviewJob

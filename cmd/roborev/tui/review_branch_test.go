@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -32,6 +33,7 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 }
 
 func TestReviewBranchName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		job  *storage.ReviewJob
@@ -111,6 +113,7 @@ func TestReviewBranchName(t *testing.T) {
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123..def456")),
@@ -132,6 +135,7 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 }
 
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
+	t.Parallel()
 	// Test that navigating from a successful review with branch to a failed job clears the branch
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
@@ -160,6 +164,7 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 }
 
 func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
+	t.Parallel()
 	// Test that pressing Enter on a failed job clears the branch
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
@@ -184,6 +189,7 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 }
 
 func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
+	t.Parallel()
 	// Test that renderQueueView doesn't panic when branch filter is active
 	// but repo filter is empty (regression test for index out of range)
 	m := newModel(localhostEndpoint, withExternalIODisabled())

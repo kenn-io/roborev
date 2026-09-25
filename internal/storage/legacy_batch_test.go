@@ -9,6 +9,7 @@ import (
 )
 
 func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "batch-migration")
 	// More than two batches, including a partial final batch.
 	const count = 205
@@ -75,6 +76,7 @@ func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
 }
 
 func TestVerdictBackfillContinuesPastUnchangedBatch(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "verdict-batches")
 	for i := range 105 {
 		fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, fmt.Sprintf("unknown-%d", i), "Unknown historical verdict.", nil, false)

@@ -84,7 +84,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	return pool
 }
 
-func TestPostgresMigration_CanonicalReview(t *testing.T) {
+func TestPostgresMigration_CanonicalReview(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	openTestPgPoolRawAtVersion(t, 18)
 	ctx := t.Context()
 
@@ -101,7 +101,7 @@ func TestPostgresMigration_CanonicalReview(t *testing.T) {
 	assert.Equal(t, 2, count)
 }
 
-func TestPostgresMigration_ResponseSource(t *testing.T) {
+func TestPostgresMigration_ResponseSource(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 17)
 	ctx := t.Context()
 
@@ -137,7 +137,7 @@ func TestPostgresMigration_ResponseSource(t *testing.T) {
 // pgxPool returns the underlying pgxpool.Pool for low-level access in tests.
 func pgxPool(p *PgPool) *pgxpool.Pool { return p.pool }
 
-func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) {
+func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	// Bootstrap at v11 (pre skip_reason/source) so this exercises the v12
 	// migration it is named for, independent of the current schema version.
 	oldPool := openTestPgPoolRawAtVersion(t, 11)
@@ -182,7 +182,7 @@ func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPostgresMigration_ResponseInsertedAt(t *testing.T) {
+func TestPostgresMigration_ResponseInsertedAt(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 13)
 	ctx := context.Background()
 
@@ -227,7 +227,7 @@ func TestPostgresMigration_ResponseInsertedAt(t *testing.T) {
 // without error. Regression guard: the embedded base schema is replayed on
 // every startup, so a panel index in the base schema would try to index
 // columns that the v15 migration has not added yet and abort the upgrade.
-func TestPostgresMigration_PanelColumns(t *testing.T) {
+func TestPostgresMigration_PanelColumns(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 13)
 	ctx := context.Background()
 
@@ -278,7 +278,7 @@ func TestPostgresMigration_PanelColumns(t *testing.T) {
 // TestPostgresMigration_BackupColumns verifies that upgrading a pre-backup
 // (v14) database to the current schema adds backup_agent/backup_model (F7)
 // without error and preserves existing rows.
-func TestPostgresMigration_BackupColumns(t *testing.T) {
+func TestPostgresMigration_BackupColumns(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 14)
 	ctx := context.Background()
 

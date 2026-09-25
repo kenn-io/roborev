@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/termstyle"
 )
 
-func TestBackgroundColorUpdatesStyles(t *testing.T) {
+func TestBackgroundColorUpdatesStyles(t *testing.T) { //nolint:paralleltest // t.Setenv of ROBOREV_COLOR_MODE and NO_COLOR
 	for _, tt := range []struct {
 		name    string
 		mode    string
@@ -69,7 +69,7 @@ func TestBackgroundColorUpdatesStyles(t *testing.T) {
 	}
 }
 
-func TestBackgroundColorRefreshesOpenLog(t *testing.T) {
+func TestBackgroundColorRefreshesOpenLog(t *testing.T) { //nolint:paralleltest // t.Setenv of ROBOREV_COLOR_MODE and NO_COLOR
 	for _, view := range []string{"log", "help"} {
 		t.Run(view, func(t *testing.T) {
 			t.Setenv("ROBOREV_COLOR_MODE", "dark")
@@ -104,7 +104,7 @@ func TestBackgroundColorRefreshesOpenLog(t *testing.T) {
 	}
 }
 
-func TestBackgroundColorInput(t *testing.T) {
+func TestBackgroundColorInput(t *testing.T) { //nolint:paralleltest // t.Setenv of ROBOREV_COLOR_MODE and NO_COLOR
 	for _, tt := range []struct {
 		name  string
 		reply string

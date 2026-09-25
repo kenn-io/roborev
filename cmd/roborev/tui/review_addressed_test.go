@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Initial state with review view showing an open review
@@ -40,6 +41,7 @@ func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
 }
 
 func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Initial state with review view
@@ -65,6 +67,7 @@ func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
 }
 
 func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Setup: jobs in queue with closed=false
@@ -109,6 +112,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 }
 
 func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Setup: job in queue with closed=false
@@ -133,6 +137,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 }
 
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
+	t.Parallel()
 	// Test that review-view errors without jobID are still handled if
 	// pendingReviewClosed matches
 	m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -170,6 +175,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 }
 
 func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
+	t.Parallel()
 	// Test that stale review-view errors without jobID are ignored
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
@@ -207,6 +213,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 }
 
 func TestTUIReviewViewSameStateLateError(t *testing.T) {
+	t.Parallel()
 	// Test: true (seq 1) -> false (seq 2) -> true (seq 3), with late error from first true
 	// The late error has newState=true which matches current pending newState,
 	// but sequence numbers now distinguish same-state toggles.

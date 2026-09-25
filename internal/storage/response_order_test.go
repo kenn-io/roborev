@@ -12,6 +12,7 @@ import (
 )
 
 func TestCompareResponsesUsesStableCrossDatabaseOrder(t *testing.T) {
+	t.Parallel()
 	timestamp := time.Date(2026, time.September, 15, 12, 0, 0, 0, time.UTC)
 	firstUUID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	secondUUID := uuid.MustParse("00000000-0000-4000-8000-000000000002")

@@ -8,6 +8,7 @@ import (
 )
 
 func TestGetLatestLogicalReviewJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo, jobs := seedJobs(t, db, "/tmp/mixed-projection-order", 2)

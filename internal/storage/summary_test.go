@@ -10,6 +10,7 @@ import (
 )
 
 func TestGetSummary_Empty(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -25,6 +26,7 @@ func TestGetSummary_Empty(t *testing.T) {
 }
 
 func TestGetSummary_Overview(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -52,6 +54,7 @@ func TestGetSummary_Overview(t *testing.T) {
 }
 
 func TestGetSummary_Verdicts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -81,6 +84,7 @@ func TestGetSummary_Verdicts(t *testing.T) {
 }
 
 func TestGetSummary_ResolutionRate(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -108,6 +112,7 @@ func TestGetSummary_ResolutionRate(t *testing.T) {
 }
 
 func TestGetSummary_AgentBreakdown(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -136,6 +141,7 @@ func TestGetSummary_AgentBreakdown(t *testing.T) {
 }
 
 func TestGetSummary_JobTypes(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -165,6 +171,7 @@ func TestGetSummary_JobTypes(t *testing.T) {
 }
 
 func TestGetSummary_Failures(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -195,6 +202,7 @@ func TestGetSummary_Failures(t *testing.T) {
 }
 
 func TestGetSummary_RepoFilter(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -224,6 +232,7 @@ func TestGetSummary_RepoFilter(t *testing.T) {
 }
 
 func TestGetSummary_RepoFilterNormalizesWindowsSeparators(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -241,6 +250,7 @@ func TestGetSummary_RepoFilterNormalizesWindowsSeparators(t *testing.T) {
 }
 
 func TestGetSummary_BranchFilter(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -264,6 +274,7 @@ func TestGetSummary_BranchFilter(t *testing.T) {
 }
 
 func TestGetSummary_SinceFilter(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -288,6 +299,7 @@ func TestGetSummary_SinceFilter(t *testing.T) {
 }
 
 func TestGetSummary_RFC3339Timestamps(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -313,6 +325,7 @@ func TestGetSummary_RFC3339Timestamps(t *testing.T) {
 }
 
 func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -366,6 +379,7 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 }
 
 func TestGetSummary_RepoBreakdown(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -409,6 +423,7 @@ func TestGetSummary_RepoBreakdown(t *testing.T) {
 }
 
 func TestGetSummary_RepoBreakdownOmittedForSingleRepo(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -425,6 +440,7 @@ func TestGetSummary_RepoBreakdownOmittedForSingleRepo(t *testing.T) {
 }
 
 func TestBackfillVerdictBool(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -485,6 +501,7 @@ func TestBackfillVerdictBool(t *testing.T) {
 // rely on non-NULL verdict_bool implying a non-empty output, so the startup
 // backfill pass must clear those legacy rows.
 func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, "/tmp/backfill-freeform-repo")
@@ -514,6 +531,7 @@ func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
 }
 
 func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -541,6 +559,7 @@ func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 }
 
 func TestPercentile(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		values []float64
@@ -563,6 +582,7 @@ func TestPercentile(t *testing.T) {
 }
 
 func TestCategorizeError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		err  string
 		want string

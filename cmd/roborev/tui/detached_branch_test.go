@@ -15,6 +15,7 @@ import (
 // "(detached @ <sha>)" instead - but only for jobs where a branch is
 // meaningful in the first place.
 func TestDetachedBranchLabel(t *testing.T) {
+	t.Parallel()
 	commitID := int64(42)
 	tests := []struct {
 		name string

@@ -26,6 +26,7 @@ func hasReviewJobsColumn(t *testing.T, db *DB, name string) bool {
 }
 
 func TestPanelColumnsMigration(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -60,6 +61,7 @@ func TestPanelColumnsMigration(t *testing.T) {
 }
 
 func TestPanelColumnsMigrationIdempotent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -70,6 +72,7 @@ func TestPanelColumnsMigrationIdempotent(t *testing.T) {
 }
 
 func TestPanelColumnsRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -118,6 +121,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 }
 
 func TestJobTypeHelpersForSynthesis(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	synth := ReviewJob{JobType: JobTypeSynthesis}
@@ -138,6 +142,7 @@ func TestJobTypeHelpersForSynthesis(t *testing.T) {
 }
 
 func TestClaimJobSkipsClaimBlocked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -217,6 +222,7 @@ func claimBlockedOf(t *testing.T, db *DB, jobID int64) bool {
 }
 
 func TestMaybeReleasePanelSynthesis(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		statuses  []JobStatus
@@ -249,6 +255,7 @@ func TestMaybeReleasePanelSynthesis(t *testing.T) {
 }
 
 func TestMaybeReleasePanelSynthesisIdempotent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/release-idem")
@@ -264,6 +271,7 @@ func TestMaybeReleasePanelSynthesisIdempotent(t *testing.T) {
 }
 
 func TestMaybeReleasePanelSynthesisUnknownRun(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	// No rows for this run — must be a clean no-op.
@@ -271,6 +279,7 @@ func TestMaybeReleasePanelSynthesisUnknownRun(t *testing.T) {
 }
 
 func TestApplyJobVerdictForSynthesis(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -300,6 +309,7 @@ func TestApplyJobVerdictForSynthesis(t *testing.T) {
 }
 
 func TestWithPanelRunAndExcludeMembers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -332,6 +342,7 @@ func TestWithPanelRunAndExcludeMembers(t *testing.T) {
 }
 
 func TestGetPanelMembersOrdered(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -355,6 +366,7 @@ func TestGetPanelMembersOrdered(t *testing.T) {
 }
 
 func TestPanelIndexSurvivesLegacyRebuild(t *testing.T) {
+	t.Parallel()
 	// A legacy DB (status CHECK without 'skipped', no skip_reason) triggers
 	// migrateReviewJobsConstraintsForAutoDesign's table rebuild (DROP+RENAME).
 	// The panel index must be created AFTER that rebuild, or it is dropped
@@ -378,6 +390,7 @@ func TestPanelIndexSurvivesLegacyRebuild(t *testing.T) {
 }
 
 func TestReviewHydrationIncludesPanelFields(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -444,6 +457,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 // contributes no dollars, so counting it as priced would report the panel's
 // member cost as complete while real spend went unrecorded.
 func TestGetPanelSummariesExcludesMembersWithNoCostAmount(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -467,6 +481,7 @@ func TestGetPanelSummariesExcludesMembersWithNoCostAmount(t *testing.T) {
 }
 
 func TestGetPanelSummaries(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -550,6 +565,7 @@ func TestGetPanelSummaries(t *testing.T) {
 }
 
 func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -583,6 +599,7 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 }
 
 func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -629,6 +646,7 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 }
 
 func TestGetSynthesisJob(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -654,6 +672,7 @@ func TestGetSynthesisJob(t *testing.T) {
 }
 
 func TestGetPanelMemberReviews(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -719,6 +738,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 }
 
 func TestListStuckPanelRuns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -748,6 +768,7 @@ func TestListStuckPanelRuns(t *testing.T) {
 }
 
 func TestEnqueuePanelRunAtomic(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -804,6 +825,7 @@ func TestEnqueuePanelRunAtomic(t *testing.T) {
 // members are stored with panel_role=member. Without enforcement a forgotten
 // gate would let the synthesis be claimed and run before its members exist.
 func TestEnqueuePanelRunEnforcesSynthesisGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -866,6 +888,7 @@ func (f *failingExecer) ExecContext(ctx context.Context, query string, args ...a
 }
 
 func TestEnqueuePanelRunRollback(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/panel-enqueue-rollback")
@@ -915,6 +938,7 @@ func TestEnqueuePanelRunRollback(t *testing.T) {
 }
 
 func TestSynthBlockedIndexExists(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
@@ -934,6 +958,7 @@ func TestSynthBlockedIndexExists(t *testing.T) {
 // only members have completed (synthesis pending or failed) — members and
 // synthesis share the frozen git_ref.
 func TestGetReviewByCommitSHAExcludesPanelMembers(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, "/tmp/sha-excl-members")
@@ -967,6 +992,7 @@ func TestGetReviewByCommitSHAExcludesPanelMembers(t *testing.T) {
 // resolution returns sql.ErrNoRows ("synthesis pending") rather than a stale
 // older standalone review for the same ref.
 func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, "/tmp/sha-pending-synth")
@@ -1006,6 +1032,7 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 }
 
 func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/post-commit-panel")
@@ -1059,6 +1086,7 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 // released once every voting member is terminal, even while a non-voting member
 // is still running: an advisory trial must never delay the authoritative result.
 func TestMaybeReleasePanelSynthesisIgnoresNonVotingMembers(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/release-non-voting")
@@ -1104,6 +1132,7 @@ func TestMaybeReleasePanelSynthesisIgnoresNonVotingMembers(t *testing.T) {
 // synced non_voting column: the shared column lists guarantee a new job column
 // cannot be missed by one query and silently read as false.
 func TestJobReadPathsReturnNonVoting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

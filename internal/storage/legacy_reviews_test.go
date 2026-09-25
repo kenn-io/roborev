@@ -11,6 +11,7 @@ import (
 )
 
 func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-review", "legacy-head")
 	claimJob(t, env.db, "worker")
 	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid)
@@ -46,6 +47,7 @@ func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
 }
 
 func TestReviewWritesRequireJSON(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/json-review", "json-head")
 	claimJob(t, env.db, "worker")
 	require.ErrorContains(t, env.db.CompleteJob(env.job.ID, "test", "prompt", "No issues found."), "JSON document is required")
@@ -63,6 +65,7 @@ func TestReviewWritesRequireJSON(t *testing.T) {
 }
 
 func TestLegacyReviewWithJSONUsesDocument(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/dual-review", "dual-head")
 	raw := `{"schema_version":2,"summary":"Canonical summary.","verdict":"pass","findings":[]}`
 	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid)
@@ -82,6 +85,7 @@ func TestLegacyReviewWithJSONUsesDocument(t *testing.T) {
 }
 
 func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-synthesis", "synthesis-head")
 	runID := testUUID("legacy-synthesis")
 	_, err := env.db.Exec(`UPDATE review_jobs SET job_type = 'synthesis', panel_run_uuid = ?, panel_role = 'synthesis' WHERE id = ?`, runID, env.job.ID)
@@ -126,6 +130,7 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 }
 
 func TestLegacyReviewResolvedBySync(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-sync", "sync-head")
 	incoming := PulledReview{
 		UUID: testUUID("legacy-sync-review"), JobUUID: *env.job.UUID,
@@ -151,6 +156,7 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 }
 
 func TestStaleMarkdownSyncKeepsCanonicalReview(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/canonical-sync", "canonical-head")
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
 	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}

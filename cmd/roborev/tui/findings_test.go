@@ -19,6 +19,7 @@ import (
 )
 
 func TestTUIFindingsQueue(t *testing.T) {
+	t.Parallel()
 	closed := false
 	m := newTuiModel("http://localhost")
 	m.currentView = viewQueue
@@ -48,12 +49,14 @@ func TestTUIFindingsQueue(t *testing.T) {
 }
 
 func TestTUIFindingsUnavailable(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "-", findingCountsCell(nil))
 	assert.Equal(t, "0/0/0", findingCountsCell(&storage.FindingCounts{}))
 	assert.Equal(t, "1/0/2", findingCountsCell(&storage.FindingCounts{High: 1, Low: 2}))
 }
 
 func TestTUIFindingsColor(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, failStyle.GetForeground(), findingCountsColor(&storage.FindingCounts{Critical: 1}))
 	assert.Equal(t, failStyle.GetForeground(), findingCountsColor(&storage.FindingCounts{High: 1, Medium: 2}))
 	assert.Equal(t, failedStyle.GetForeground(), findingCountsColor(&storage.FindingCounts{Medium: 1}))
@@ -63,6 +66,7 @@ func TestTUIFindingsColor(t *testing.T) {
 }
 
 func TestTUIFindingsPanels(t *testing.T) {
+	t.Parallel()
 	m := seededPanelModel(t)
 	m.jobs[1].FindingCounts = &storage.FindingCounts{High: 1}
 	m.panelMembers[testUUID("R")][0].FindingCounts = &storage.FindingCounts{Medium: 2}
@@ -77,7 +81,7 @@ func TestTUIFindingsPanels(t *testing.T) {
 	assert.NotContains(t, findingCountsCell(rows[1].job.FindingCounts), "2")
 }
 
-func TestTUIFindingsRenderProof(t *testing.T) {
+func TestTUIFindingsRenderProof(t *testing.T) { //nolint:paralleltest // t.Setenv of NO_COLOR and ROBOREV_COLOR_MODE
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("ROBOREV_COLOR_MODE", "dark")
 	m := newTuiModel("http://localhost")
@@ -121,7 +125,7 @@ func TestTUIFindingsRenderProof(t *testing.T) {
 	t.Logf("queue no_color=1 contains_sgr=%t", strings.Contains(output, "\x1b[38;"))
 }
 
-func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) {
+func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) { //nolint:paralleltest // t.Setenv of NO_COLOR and color forcing variables
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("ROBOREV_COLOR_MODE", "dark")
 	m := newTuiModel("http://localhost")
@@ -157,6 +161,7 @@ func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) {
 }
 
 func TestTUIFindingsRequestOption(t *testing.T) {
+	t.Parallel()
 	queries := map[string]url.Values{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {

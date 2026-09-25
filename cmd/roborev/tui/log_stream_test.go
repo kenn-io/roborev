@@ -18,6 +18,7 @@ import (
 )
 
 func TestTUILogFetchWrapsChunkedGrokTextAtPaneWidth(t *testing.T) {
+	t.Parallel()
 	// If adjacent Grok response chunks are rendered as separate messages,
 	// wide TUI log panes show one token per row and hide most of the review.
 	const response = "This commit is an empty live fire probe."
@@ -77,6 +78,7 @@ func TestTUILogFetchWrapsChunkedGrokTextAtPaneWidth(t *testing.T) {
 }
 
 func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
+	t.Parallel()
 	bodies := map[string]string{}
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		offset := r.URL.Query().Get("offset")
@@ -122,6 +124,7 @@ func TestTUILogPollReplacesAllWrappedPendingRows(t *testing.T) {
 }
 
 func TestTUILogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
+	t.Parallel()
 	bodies := map[string]string{}
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		offset := r.URL.Query().Get("offset")
@@ -175,6 +178,7 @@ func TestTUILogPollTracksPendingRowsAfterCompleteLine(t *testing.T) {
 }
 
 func TestTUILogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
+	t.Parallel()
 	const incomplete = `{"type":"end"`
 	bodies := map[string]string{
 		"0":                                incomplete,
@@ -219,6 +223,7 @@ func TestTUILogPollClearsPendingRowsWhenDecoderEmitsNothing(t *testing.T) {
 // frames can be interpreted with the wrong protocol or hidden from users who
 // need unknown-agent output for diagnosis.
 func TestTUILogFetchUsesOpenedJobIdentity(t *testing.T) {
+	t.Parallel()
 	const grokLine = `{"type":"text","data":"wrong provider"}`
 	tests := []struct {
 		name  string
@@ -258,6 +263,7 @@ func TestTUILogFetchUsesOpenedJobIdentity(t *testing.T) {
 // If a retry changes provider on the same job row, the log response identity
 // must replace the decoder captured when the view first opened.
 func TestTUILogFetchRefreshesIdentityAfterFailover(t *testing.T) {
+	t.Parallel()
 	const response = "replacement provider output"
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "codex", r.Header.Get("X-Job-Agent"))
@@ -288,6 +294,7 @@ func TestTUILogFetchRefreshesIdentityAfterFailover(t *testing.T) {
 // signal distinguishes a full replacement from an incremental auto-design
 // chunk. Ignoring it leaves stale rows ahead of the new provider output.
 func TestTUILogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
+	t.Parallel()
 	const response = "replacement auto-design output"
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "50", r.URL.Query().Get("offset"))
@@ -324,6 +331,7 @@ func TestTUILogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
 // classifier output or the appended design output, while ordinary logs regain
 // protocol-shape guessing.
 func TestTUILogFetchUsesMixedDecoderOnlyForAutoDesign(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"item.completed","item":{"type":"agent_message","text":"classifier"}}`,
 		`{"type":"text","data":"design"}`,
@@ -363,6 +371,7 @@ func TestTUILogFetchUsesMixedDecoderOnlyForAutoDesign(t *testing.T) {
 }
 
 func TestTUILogFetchKeepsGrokTextChunksTogetherAcrossPolls(t *testing.T) {
+	t.Parallel()
 	// If a live-log poll finalizes Grok text before the response event ends,
 	// users still get one short row per poll after the job completes.
 	const response = "This commit is an empty live fire probe."
@@ -411,6 +420,7 @@ func TestTUILogFetchKeepsGrokTextChunksTogetherAcrossPolls(t *testing.T) {
 }
 
 func TestTUILogEmptyTerminalPollFlushesBufferedGrokText(t *testing.T) {
+	t.Parallel()
 	// If the final poll returns no new bytes, it still marks the boundary
 	// where the persistent decoder must release text buffered by earlier
 	// running polls.
@@ -452,6 +462,7 @@ func TestTUILogEmptyTerminalPollFlushesBufferedGrokText(t *testing.T) {
 }
 
 func TestTUILogOffsetResetClearsRowsBeforeBufferedReplacement(t *testing.T) {
+	t.Parallel()
 	// A reset can return a smaller, nonzero replacement chunk whose Grok
 	// text is still buffered. The absence of rendered rows must not leave
 	// pre-reset rows visible.
@@ -485,6 +496,7 @@ func TestTUILogOffsetResetClearsRowsBeforeBufferedReplacement(t *testing.T) {
 // If an offset reset rebuilds the formatter without the retained source, a
 // replacement auto-design log drops the classifier half of the mixed stream.
 func TestTUILogFetchKeepsIdentityOnOffsetReset(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"item.completed","item":{"type":"agent_message","text":"classifier after reset"}}`,
 		`{"type":"text","data":"design after reset"}`,
@@ -517,6 +529,7 @@ func TestTUILogFetchKeepsIdentityOnOffsetReset(t *testing.T) {
 // If a resize rebuild drops source identity, the freshly rendered full log no
 // longer shows both halves of an auto-design stream.
 func TestTUILogResizeKeepsOpenedJobIdentity(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		`{"type":"item.completed","item":{"type":"agent_message","text":"classifier after resize"}}`,
 		`{"type":"text","data":"design after resize"}`,
@@ -557,6 +570,7 @@ func TestTUILogResizeKeepsOpenedJobIdentity(t *testing.T) {
 }
 
 func TestTUILogResizeRebuildsBufferedDecoderAlongsideQueueRefill(t *testing.T) {
+	t.Parallel()
 	// A running Grok stream can have decoder state but no visible rows. A
 	// resize must still invalidate that fetch session and re-render the full
 	// log at the new width, even when the taller viewport also needs jobs.

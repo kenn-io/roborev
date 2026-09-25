@@ -10,6 +10,7 @@ import (
 )
 
 func TestAgentHookSnoozeIsScopedAndExpires(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -57,6 +58,7 @@ func TestAgentHookSnoozeIsScopedAndExpires(t *testing.T) {
 }
 
 func TestListActiveAgentHookSnoozes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -107,6 +109,7 @@ func TestListActiveAgentHookSnoozes(t *testing.T) {
 }
 
 func TestOpenAddsAgentHookSnoozesToExistingDatabase(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "existing.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)

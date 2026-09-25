@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
-func TestIntegrationLegacyReviewMigration(t *testing.T) {
+func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
@@ -50,7 +50,7 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) {
 	assert.Empty(t, output)
 }
 
-func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
+func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
@@ -115,7 +115,7 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) {
 	assert.Equal(t, "Legacy finding", original)
 }
 
-func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) {
+func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
@@ -197,7 +197,7 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) {
 	assert.Equal(t, 1, active(archived))
 }
 
-func TestIntegrationRestoreLegacyAndImport(t *testing.T) {
+func TestIntegrationRestoreLegacyAndImport(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
@@ -232,7 +232,7 @@ func TestIntegrationRestoreLegacyAndImport(t *testing.T) {
 	assert.True(t, closed)
 }
 
-func TestIntegrationLegacyMigrationBatches(t *testing.T) {
+func TestIntegrationLegacyMigrationBatches(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	pool, ctx := env.Pool, t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})

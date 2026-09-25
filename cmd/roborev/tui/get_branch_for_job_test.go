@@ -15,6 +15,7 @@ import (
 // git name-rev either. Instead of caching and returning "", getBranchForJob
 // should surface a "(detached @ <sha>)" placeholder.
 func TestGetBranchForJobDetachedHead(t *testing.T) {
+	t.Parallel()
 	repo := testutil.InitTestRepo(t)
 	repo.CommitFile("a.txt", "one", "first")
 	// Detach HEAD and commit again, mirroring a commit made mid git-bisect:
@@ -56,6 +57,7 @@ func TestGetBranchForJobDetachedHead(t *testing.T) {
 // unbackfilled so their empty stored branch keeps rendering the detached
 // placeholder, while task/remote/reachable jobs persist as before.
 func TestBackfillBranchValue(t *testing.T) {
+	t.Parallel()
 	repo := testutil.InitTestRepo(t)
 	firstSHA := repo.CommitFile("a.txt", "one", "first")
 	repo.CheckoutDetached()
@@ -111,6 +113,7 @@ func TestBackfillBranchValue(t *testing.T) {
 // rendered with the detached placeholder still match the (none) branch
 // filter, agreeing with the branch picker's counts (#499 follow-up).
 func TestBranchMatchesFilterDetachedGroupsUnderNone(t *testing.T) {
+	t.Parallel()
 	repo := testutil.InitTestRepo(t)
 	repo.CommitFile("a.txt", "one", "first")
 	repo.CheckoutDetached()
@@ -140,6 +143,7 @@ func TestBranchMatchesFilterDetachedGroupsUnderNone(t *testing.T) {
 // fallback still wins over the new placeholder when the commit is in fact
 // reachable from a local branch.
 func TestGetBranchForJobReachableFromBranch(t *testing.T) {
+	t.Parallel()
 	repo := testutil.InitTestRepo(t)
 	sha := repo.CommitFile("a.txt", "one", "first")
 

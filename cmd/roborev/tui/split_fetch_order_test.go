@@ -73,6 +73,7 @@ func applyReviewMsg(t *testing.T, m model, msg tea.Msg) model {
 // refresh and overwrite currentResponses with pre-comment content -- the
 // user's just-submitted comment vanishing indefinitely.
 func TestOlderOrdinaryFetchMustNotOverwriteNewerCommentRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -112,6 +113,7 @@ func TestOlderOrdinaryFetchMustNotOverwriteNewerCommentRefresh(t *testing.T) {
 // it still compared equal to the current sequence and was accepted on top
 // of the fresher ordinary content.
 func TestOlderFollowResponseMustNotOverwriteNewerOrdinaryFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -144,6 +146,7 @@ func TestOlderFollowResponseMustNotOverwriteNewerOrdinaryFetch(t *testing.T) {
 // the panel is pending for exactly the job whose review is arriving, must
 // still open the panel.
 func TestQueueFixKeyFlowOpensPanelWhenReviewLands(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -170,6 +173,7 @@ func TestQueueFixKeyFlowOpensPanelWhenReviewLands(t *testing.T) {
 // has nothing to do with -- submitting would start a fix for the job the
 // user is no longer looking at.
 func TestAcceptedReviewForDifferentJobClosesFixPanel(t *testing.T) {
+	t.Parallel()
 	arriving := &storage.Review{
 		VerdictBool: testutil.ReviewFixtureVerdict("job 3 review"),
 		ID:          40, JobID: 3, Agent: "codex", Output: "job 3 review",
@@ -235,6 +239,7 @@ func TestAcceptedReviewForDifferentJobClosesFixPanel(t *testing.T) {
 // PREVIOUS job -- closing, commenting on, fixing, prompting, fetching a
 // commit message for, or copying the wrong review.
 func TestSplitDetailReviewActionsBlockedWhileReviewStale(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	// Three done jobs so detail nav has somewhere to go that requires an
@@ -325,6 +330,7 @@ func TestSplitDetailReviewActionsBlockedWhileReviewStale(t *testing.T) {
 // still bound to the just-closed job, pointed at a job the list no longer
 // highlights.
 func TestCtrlCloseReviewHideClosedFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -373,6 +379,7 @@ func TestCtrlCloseReviewHideClosedFollowsSelection(t *testing.T) {
 // via selectJobByID -- another selection mutation that skipped the shared
 // transition.
 func TestClosedResultRollbackFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -410,6 +417,7 @@ func TestClosedResultRollbackFollowsSelection(t *testing.T) {
 // TestCancelResultRollbackFollowsSelection is the cancel-side twin of the
 // close rollback above.
 func TestCancelResultRollbackFollowsSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -434,6 +442,7 @@ func TestCancelResultRollbackFollowsSelection(t *testing.T) {
 // stamp could never match). It doubles as the "every dispatcher can still
 // dispatch" regression net for the suppression guard.
 func TestEveryReviewFetchDispatcherStampsTheSharedEpoch(t *testing.T) {
+	t.Parallel()
 	t1 := time.Now().Truncate(time.Second)
 	doneJob := func(id int64) storage.ReviewJob {
 		return storage.ReviewJob{
@@ -538,6 +547,7 @@ func TestEveryReviewFetchDispatcherStampsTheSharedEpoch(t *testing.T) {
 // response rejected for display still frees it, and never released by a
 // foreign response, which is what would break convergence.
 func TestReconcileSuppressionReleasedByItsOwnResponse(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	t1 := time.Now().Truncate(time.Second)
@@ -597,6 +607,7 @@ func TestReconcileSuppressionReleasedByItsOwnResponse(t *testing.T) {
 // pane's CONTENT there, but the fix panel is keyed to a job, so it needs
 // the same close the shared selection transition applies.
 func TestJobsRefreshSelectionReassignmentClosesStaleFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -627,6 +638,7 @@ func TestJobsRefreshSelectionReassignmentClosesStaleFixPanel(t *testing.T) {
 // selected. Stacked mode has no splitReconcileDetail to heal it, so that
 // review is silently skipped entirely.
 func TestStackedCommentRefreshForUnselectedJobDoesNotDestroyConcurrentFetch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -690,6 +702,7 @@ func TestStackedCommentRefreshForUnselectedJobDoesNotDestroyConcurrentFetch(t *t
 // panel and the user's fix prompt was interpreted as queue keys ('f'
 // opening the filter modal, and so on) over a panel that looked focused.
 func TestFollowResponseOpeningPendingFixPanelMakesItReachable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -732,6 +745,7 @@ func TestFollowResponseOpeningPendingFixPanelMakesItReachable(t *testing.T) {
 // deliberately opened while the fetch was in flight (the comment editor,
 // mid-typing). openReviewView's guard is what keeps those two apart.
 func TestPendingFixPanelStillWaitsWhenUserMovedToATransientView(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -767,6 +781,7 @@ func TestPendingFixPanelStillWaitsWhenUserMovedToATransientView(t *testing.T) {
 // exactly this liveness property, so it must be released by the matching
 // response and nothing else.
 func TestReconcileConvergesWhenAnOlderResponseForTheSameJobLands(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -823,6 +838,7 @@ func TestReconcileConvergesWhenAnOlderResponseForTheSameJobLands(t *testing.T) {
 // interrupting the comment they are typing. The decision belongs to the
 // origin of the request that ARMED the flag.
 func TestPendingFixPanelUsesArmedOriginNotTheAcceptingResponsesOrigin(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -888,6 +904,7 @@ func TestPendingFixPanelUsesArmedOriginNotTheAcceptingResponsesOrigin(t *testing
 // request must still result in the review opening once that follow response
 // does land, or the user's action silently does nothing.
 func TestTasksParentReviewOpensDespiteReconcileFollowRace(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -957,6 +974,7 @@ func TestTasksParentReviewOpensDespiteReconcileFollowRace(t *testing.T) {
 // response never dispatches a competing follow, and the ordinary response
 // opens the review exactly as before.
 func TestTasksParentReviewOpensInStackedDespiteJobsRefresh(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1003,6 +1021,7 @@ func TestTasksParentReviewOpensInStackedDespiteJobsRefresh(t *testing.T) {
 // pendingReviewOpenRetried's doc comment), then the second failure
 // resolves (clears) the intent, the same shape reviewFixPanelPending gets.
 func TestFollowFailureResolvesSupersededPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1057,6 +1076,7 @@ func TestFollowFailureResolvesSupersededPendingReviewOpen(t *testing.T) {
 // would eventually produce, had it not been rescued already) is asserted
 // not to do anything further -- the intent was already consumed.
 func TestOrdinaryFetchStillOpensReviewAfterLayoutToggleBeforeResponseLands(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1113,6 +1133,7 @@ func TestOrdinaryFetchStillOpensReviewAfterLayoutToggleBeforeResponseLands(t *te
 // GENUINELY changed, still fires for a real move -- distinguishing it from maybeBootstrapDetail's same-job
 // bootstrap call, which deliberately does not.
 func TestGenuineSelectionChangeDisarmsPendingReviewOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1143,6 +1164,7 @@ func TestGenuineSelectionChangeDisarmsPendingReviewOpen(t *testing.T) {
 // intent, and B's own eventual response must still be able to open the
 // review.
 func TestStaleOrdinaryResponseDoesNotClobberFreshlyArmedPendingOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1209,6 +1231,7 @@ func TestStaleOrdinaryResponseDoesNotClobberFreshlyArmedPendingOpen(t *testing.T
 // request, and that fresh request must still open the panel once its own
 // review lands.
 func TestOldFollowFailureDoesNotClobberFreshlyArmedFixPanel(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1267,6 +1290,7 @@ func TestOldFollowFailureDoesNotClobberFreshlyArmedFixPanel(t *testing.T) {
 // finally lands, gen-stale. It must not cancel C's still-in-flight retry,
 // and C's own success must still open the panel.
 func TestOriginalDispatchGenStaleResponseDoesNotCancelInFlightFixPanelRetry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1338,6 +1362,7 @@ func TestOriginalDispatchGenStaleResponseDoesNotCancelInFlightFixPanelRetry(t *t
 // user with VISIBLE feedback in the view they made the request from
 // (viewTasks), never silence.
 func TestFollowFailureAfterTasksParentReviewShowsVisibleFlashNotSilence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1389,6 +1414,7 @@ func TestFollowFailureAfterTasksParentReviewShowsVisibleFlashNotSilence(t *testi
 // still-selected job does not switch views (there is nothing left for it
 // to serve).
 func TestReviewErrMsgResolvesPendingOpenWithVisibleFlashNotSilence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1449,6 +1475,7 @@ func TestReviewErrMsgResolvesPendingOpenWithVisibleFlashNotSilence(t *testing.T)
 // TestFixPanelPendingRescuedOnGenMismatchWhenStillFreshest, which reach
 // it through a bootstrap bump rather than a rerun.
 func TestFixPanelDoesNotSpringOpenAfterRerunConfirmsWhilePaneLoading(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1494,6 +1521,7 @@ func TestFixPanelDoesNotSpringOpenAfterRerunConfirmsWhilePaneLoading(t *testing.
 // per-job attempt stamp rather than as gen-stale, so this does not
 // traverse reviewIntentRescuable; the property is unchanged.
 func TestTasksNotYankedOutAfterRerunConfirmsParentWhilePending(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1546,6 +1574,7 @@ func TestTasksNotYankedOutAfterRerunConfirmsParentWhilePending(t *testing.T) {
 // via an unrelated action -- verified by toggling layout again afterward
 // and confirming nothing unexpected happens.
 func TestThreeKeystrokeRescueRepro(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1642,6 +1671,7 @@ func TestThreeKeystrokeRescueRepro(t *testing.T) {
 // as defense-in-depth; the second half keeps the original end-to-end
 // keystroke sequence to prove the final outcome.
 func TestRerunConfirmedWhileNotSelectedDoesNotWronglyServePendingOpen(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

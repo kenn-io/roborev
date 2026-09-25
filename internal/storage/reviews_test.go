@@ -14,6 +14,7 @@ import (
 // TestAddCommentToJobAllStates verifies that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestAddCommentToJobAllStates(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -65,6 +66,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 // TestAddCommentToJobNonExistent verifies that adding a comment to a
 // non-existent job returns an appropriate error.
 func TestAddCommentToJobNonExistent(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -77,6 +79,7 @@ func TestAddCommentToJobNonExistent(t *testing.T) {
 // TestAddCommentToJobMultipleComments verifies that multiple comments
 // can be added to the same job.
 func TestAddCommentToJobMultipleComments(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -114,6 +117,7 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 // TestAddCommentToJobWithNoReview verifies that comments can be added
 // to jobs that have no review (i.e., job exists but has no review record yet).
 func TestAddCommentToJobWithNoReview(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -132,6 +136,7 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 }
 
 func TestGetAllCommentsForJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -248,6 +253,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 }
 
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -283,6 +289,7 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 }
 
 func TestGetJobsWithReviewsByIDs(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -353,6 +360,7 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 }
 
 func TestGetJobsWithReviewsByIDsPreservesMinSeverity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -375,6 +383,7 @@ func TestGetJobsWithReviewsByIDsPreservesMinSeverity(t *testing.T) {
 // TestGetJobsWithReviewsByIDsPreservesBackup verifies the batch getter hydrates
 // backup_agent/backup_model (they were omitted from the SELECT entirely).
 func TestGetJobsWithReviewsByIDsPreservesBackup(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -405,6 +414,7 @@ func TestGetJobsWithReviewsByIDsPreservesBackup(t *testing.T) {
 // hydration. The columns are scanned into the scan-fields struct so
 // applyReviewJobScan does not clobber them back to zero.
 func TestSingleReviewGettersPreserveBackupAndMinSeverity(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -439,6 +449,7 @@ func TestSingleReviewGettersPreserveBackupAndMinSeverity(t *testing.T) {
 }
 
 func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -481,6 +492,7 @@ func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 }
 
 func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -528,6 +540,7 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 }
 
 func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -549,6 +562,7 @@ func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
 }
 
 func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -656,6 +670,7 @@ func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, outpu
 }
 
 func TestGetRecentRangeReviewCandidates(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, "/tmp/range-context-repo")
@@ -697,6 +712,7 @@ func TestGetRecentRangeReviewCandidates(t *testing.T) {
 }
 
 func TestGetReviewByJobIDIncludesBranch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -728,6 +744,7 @@ func TestGetReviewByJobIDIncludesBranch(t *testing.T) {
 }
 
 func TestGetReviewByCommitSHAIncludesBranch(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -750,6 +767,7 @@ func TestGetReviewByCommitSHAIncludesBranch(t *testing.T) {
 // does not shadow an existing completed review. The lookup must still resolve the
 // canonical SHA-review row, not return ErrNoRows.
 func TestGetReviewByCommitSHAIgnoresNonReviewJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -787,6 +805,7 @@ func TestGetReviewByCommitSHAIgnoresNonReviewJobs(t *testing.T) {
 // run, a newer synthesis job (a review-producing type) is resolved as the
 // canonical review for the SHA, never an individual member job.
 func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -820,6 +839,7 @@ func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
 }
 
 func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -852,6 +872,7 @@ func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
 }
 
 func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -920,6 +941,7 @@ func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T
 }
 
 func TestFindReusableSessionCandidatesIncludesRangeReviewJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -946,6 +968,7 @@ func TestFindReusableSessionCandidatesIncludesRangeReviewJobs(t *testing.T) {
 }
 
 func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -981,6 +1004,7 @@ func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
 }
 
 func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "compatible-session-source")
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
@@ -1019,6 +1043,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 }
 
 func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "compatible-session-ci-pr")
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestRestoreLegacyHistoryAndImport(t *testing.T) {
+	t.Parallel()
 	for _, archived := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct upgrade", true: "already archived"}[archived], func(t *testing.T) {
 			env := setupJobEnv(t, t.TempDir(), "legacy-head")
@@ -69,6 +70,7 @@ func TestRestoreLegacyHistoryAndImport(t *testing.T) {
 }
 
 func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "sync-head")
 	incoming := PulledReview{
 		UUID: testUUID("legacy-sync-document"), JobUUID: *env.job.UUID, Agent: "test", CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -92,6 +94,7 @@ func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 }
 
 func TestMigrateLegacySynthesisValidatesSources(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "synthesis-head")
 	jobID := seedLegacyPanel(t, env, "legacy-source-check")
 	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', ?, 0, ?)`, jobID, legacyFindingsMarkdown, testUUID("legacy-source-check"))
@@ -113,6 +116,7 @@ func TestMigrateLegacySynthesisValidatesSources(t *testing.T) {
 }
 
 func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "synthesis-existing-json")
 	jobID := seedLegacyPanel(t, env, "existing-json")
 	raw := `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}]}`

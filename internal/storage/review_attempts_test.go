@@ -26,6 +26,7 @@ func attemptHeads(attempts []ReviewAttempt) []string {
 }
 
 func TestReviewAttemptsTableExists(t *testing.T) {
+	t.Parallel()
 	db := openReviewAttemptsTestDB(t)
 	insert := `INSERT INTO ci_pr_review_attempts
 		(github_repo, pr_number, head_sha, attempt, first_attempt_at, next_attempt_at,
@@ -42,6 +43,7 @@ func TestReviewAttemptsTableExists(t *testing.T) {
 }
 
 func TestReviewAttemptLifecycle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -87,6 +89,7 @@ func TestReviewAttemptLifecycle(t *testing.T) {
 }
 
 func TestGetDueReviewAttempts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -132,6 +135,7 @@ func TestGetDueReviewAttempts(t *testing.T) {
 }
 
 func TestMakeTransientReviewAttemptsDue(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -170,6 +174,7 @@ func TestMakeTransientReviewAttemptsDue(t *testing.T) {
 }
 
 func TestGetNonTerminalAttemptPRs(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -207,6 +212,7 @@ func TestGetNonTerminalAttemptPRs(t *testing.T) {
 }
 
 func TestGetPendingReviewAttempts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -243,6 +249,7 @@ func TestGetPendingReviewAttempts(t *testing.T) {
 }
 
 func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
+	t.Parallel()
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
@@ -265,6 +272,7 @@ func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
 }
 
 func TestRearmStuckReviewAttempt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
@@ -307,6 +315,7 @@ func TestRearmStuckReviewAttempt(t *testing.T) {
 }
 
 func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
+	t.Parallel()
 	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 	// reserve + defer the row so it is due:

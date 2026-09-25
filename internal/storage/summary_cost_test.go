@@ -9,6 +9,7 @@ import (
 )
 
 func TestGetSummaryIncludesCost(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

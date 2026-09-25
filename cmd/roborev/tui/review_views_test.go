@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.hideClosed = true
@@ -42,6 +43,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
 }
 
 func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.hideClosed = false
@@ -72,6 +74,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
 }
 
 func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
+	t.Parallel()
 	// Test that pressing escape in commit message view returns to the originating view (queue)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1, withRef("abc123"))}
@@ -106,6 +109,7 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 }
 
 func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
+	t.Parallel()
 	// Test that pressing escape in commit message view returns to the originating view (review)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))
@@ -127,6 +131,7 @@ func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 }
 
 func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
+	t.Parallel()
 	// Test that pressing 'q' in commit message view also returns to originating view
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewCommitMsg
@@ -148,6 +153,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 }
 
 func TestTUICtrlDQuitsFromQueueView(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(withCurrentView(viewQueue))
 
 	_, cmd := pressCtrl(m, 'd')
@@ -161,6 +167,7 @@ func TestTUICtrlDQuitsFromQueueView(t *testing.T) {
 }
 
 func TestTUICtrlDNavigatesBackFromReviewView(t *testing.T) {
+	t.Parallel()
 	job := makeJob(1)
 	m := initTestModel(
 		withCurrentView(viewReview),
@@ -174,6 +181,7 @@ func TestTUICtrlDNavigatesBackFromReviewView(t *testing.T) {
 }
 
 func TestTUICtrlDNoOpInCommentModal(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(withCurrentView(viewKindComment))
 	m.commentFromView = viewQueue
 	m.commentText = "draft comment"
@@ -200,6 +208,7 @@ func TestTUICtrlDNoOpInCommentModal(t *testing.T) {
 }
 
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
+	t.Parallel()
 	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
 	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
@@ -355,6 +364,7 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 }
 
 func TestTUIHelpViewToggleFromQueue(t *testing.T) {
+	t.Parallel()
 	// Test that '?' opens help from queue and pressing '?' again returns to queue
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -384,6 +394,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 }
 
 func TestTUIHelpViewToggleFromReview(t *testing.T) {
+	t.Parallel()
 	// Test that '?' opens help from review and escape returns to review
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))

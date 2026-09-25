@@ -11,6 +11,7 @@ import (
 )
 
 func TestJobIDsSurviveRepositoryDeletion(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "job-id-history")
 	old := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "archived", "Preserve this original review text.", 0, false)
 	require.NoError(t, env.db.migrateLegacyReviews())
@@ -31,6 +32,7 @@ func TestJobIDsSurviveRepositoryDeletion(t *testing.T) {
 }
 
 func TestMigrateJobIDsPreservesHistory(t *testing.T) {
+	t.Parallel()
 	// Build the schema before the forward ID migration, as a shipped database.
 	path := filepath.Join(t.TempDir(), "reviews.db")
 	conn, err := sql.Open("sqlite", path)

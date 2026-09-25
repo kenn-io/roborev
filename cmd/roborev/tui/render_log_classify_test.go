@@ -12,6 +12,7 @@ import (
 )
 
 func TestClassifyReasoningLines(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		job       *storage.ReviewJob
@@ -175,6 +176,7 @@ func TestClassifyReasoningLines(t *testing.T) {
 // entry), and a multiline blob would break the row-reservation
 // invariant in logVisibleLines.
 func TestClassifyReasoningLinesFoldsNewlines(t *testing.T) {
+	t.Parallel()
 	job := &storage.ReviewJob{
 		ID:         7,
 		JobType:    storage.JobTypeReview,
@@ -201,6 +203,7 @@ func TestClassifyReasoningLinesFoldsNewlines(t *testing.T) {
 // reserved-space calculation would be wrong and the log content area
 // would misalign.
 func TestClassifyReasoningLinesTruncation(t *testing.T) {
+	t.Parallel()
 	longReason := strings.Repeat("very long classifier reason ", 8)
 	longError := strings.Repeat("internal error blob ", 12)
 	job := &storage.ReviewJob{

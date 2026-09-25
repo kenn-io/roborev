@@ -19,6 +19,7 @@ func setupFilterTree(m *model, nodes []treeFilterNode) {
 }
 
 func TestTUITreeFilterExpandCollapse(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -52,6 +53,7 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 }
 
 func TestTUITreeFilterSelectBranch(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -93,6 +95,7 @@ func TestTUITreeFilterSelectBranch(t *testing.T) {
 }
 
 func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 5),
 	})
@@ -119,6 +122,7 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -141,6 +145,7 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.filterBranchMode = true
@@ -167,6 +172,7 @@ func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -190,6 +196,7 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 }
 
 func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -212,6 +219,7 @@ func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
 }
 
 func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -243,6 +251,7 @@ func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 }
 
 func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 5),
 	})
@@ -268,6 +277,7 @@ func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
 }
 
 func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -299,6 +309,7 @@ func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
 }
 
 func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -322,6 +333,7 @@ func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
 }
 
 func TestRootPathsMatchOrderIndependent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		a, b  []string
@@ -350,6 +362,7 @@ func TestRootPathsMatchOrderIndependent(t *testing.T) {
 }
 
 func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "multi-root",
@@ -391,6 +404,7 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 }
 
 func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel(nil)
 
 	nodes := make([]treeFilterNode, 10)
@@ -416,6 +430,7 @@ func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 }
 
 func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
+	t.Parallel()
 	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
@@ -441,6 +456,7 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 }
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
@@ -470,6 +486,7 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -481,6 +498,7 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -492,6 +510,7 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 }
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -509,6 +528,7 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = true
 
@@ -520,6 +540,7 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 }
 
 func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
@@ -545,6 +566,7 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 }
 
 func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -565,6 +587,7 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 }
 
 func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -588,6 +611,7 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 }
 
 func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -602,6 +626,7 @@ func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
 }
 
 func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.cwdRepoRoot = "/path/to/repo-a"
@@ -631,6 +656,7 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
@@ -652,6 +678,7 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 }
 
 func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {
+	t.Parallel()
 	nodes := []treeFilterNode{
 		makeNode("repo-a", 3),
 	}
@@ -669,6 +696,7 @@ func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {
 }
 
 func TestTUILockedRepoPreservedOnBranchSelect(t *testing.T) {
+	t.Parallel()
 	node := makeNode("repo-a", 2)
 	node.children = []branchFilterItem{
 		{name: "feature-x", count: 2},

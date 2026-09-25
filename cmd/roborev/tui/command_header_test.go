@@ -22,6 +22,7 @@ func cmdHeaderLine(view string) string {
 }
 
 func TestCommandHeaderLinesCollapsedTruncates(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 12 // narrower than "Command: test" (13)
 
@@ -33,6 +34,7 @@ func TestCommandHeaderLinesCollapsedTruncates(t *testing.T) {
 }
 
 func TestCommandHeaderLinesExpandedWraps(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 12
 
@@ -49,6 +51,7 @@ func TestCommandHeaderLinesExpandedWraps(t *testing.T) {
 }
 
 func TestCommandHeaderLinesEmptyForNoCommand(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 
@@ -57,6 +60,7 @@ func TestCommandHeaderLinesEmptyForNoCommand(t *testing.T) {
 }
 
 func TestCommandHeaderLinesFitsWithoutTruncation(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 
@@ -69,6 +73,7 @@ func TestCommandHeaderLinesFitsWithoutTruncation(t *testing.T) {
 }
 
 func TestLogVisibleLinesShrinksWhenCommandExpanded(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 30
 	m.width = 12 // forces the command to wrap when expanded
@@ -84,6 +89,7 @@ func TestLogVisibleLinesShrinksWhenCommandExpanded(t *testing.T) {
 }
 
 func TestLogViewTogglesCommandExpand(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -102,6 +108,7 @@ func TestLogViewTogglesCommandExpand(t *testing.T) {
 }
 
 func TestPromptViewTogglesCommandExpand(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindPrompt
 	m.height = 30
@@ -125,6 +132,7 @@ func TestPromptViewTogglesCommandExpand(t *testing.T) {
 }
 
 func TestQueueViewIgnoresCommandExpandKey(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.height = 30
@@ -140,6 +148,7 @@ func TestQueueViewIgnoresCommandExpandKey(t *testing.T) {
 }
 
 func TestLogViewRendersFullCommandWhenExpanded(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -158,6 +167,7 @@ func TestLogViewRendersFullCommandWhenExpanded(t *testing.T) {
 }
 
 func TestPromptCommandWrapsByDefault(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 12
 	job := makeJob(1, withAgent("test"))
@@ -169,6 +179,7 @@ func TestPromptCommandWrapsByDefault(t *testing.T) {
 }
 
 func TestCommandExpansionStateIsIndependentByView(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 30
 	m.width = 12
@@ -198,6 +209,7 @@ func TestCommandExpansionStateIsIndependentByView(t *testing.T) {
 }
 
 func TestPromptViewLabelsCommandToggle(t *testing.T) {
+	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindPrompt
 	m.height = 30
