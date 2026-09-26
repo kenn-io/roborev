@@ -51,7 +51,7 @@ func TestJobCounts(t *testing.T) {
 	assert.Equal(t, 1, failed)
 }
 
-func TestCountStalledJobs(t *testing.T) {
+func TestListStalledJobIDs(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
@@ -59,19 +59,19 @@ func TestCountStalledJobs(t *testing.T) {
 	repo, _, _ := createJobChain(t, db, "/tmp/test-repo", "recent1")
 	_, _ = db.ClaimJob("worker-1")
 
-	count, err := db.CountStalledJobs(30 * time.Minute)
-	require.NoError(t, err, "CountStalledJobs failed: %v")
+	ids, err := db.ListStalledJobIDs(30 * time.Minute)
+	require.NoError(t, err, "ListStalledJobIDs failed: %v")
 
-	assert.Equal(t, 0, count)
+	assert.Empty(t, ids)
 
 	commit2 := createCommit(t, db, repo.ID, "stalled1")
 	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stalled1")
 	backdateJobStart(t, db, job2.ID, 1*time.Hour)
 
-	count, err = db.CountStalledJobs(30 * time.Minute)
-	require.NoError(t, err, "CountStalledJobs failed: %v")
+	ids, err = db.ListStalledJobIDs(30 * time.Minute)
+	require.NoError(t, err, "ListStalledJobIDs failed: %v")
 
-	assert.Equal(t, 1, count)
+	assert.Equal(t, []int64{job2.ID}, ids)
 
 	commit3 := createCommit(t, db, repo.ID, "stalled2")
 	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stalled2")
@@ -79,15 +79,15 @@ func TestCountStalledJobs(t *testing.T) {
 	tzMinus7 := time.FixedZone("UTC-7", -7*60*60)
 	backdateJobStartWithOffset(t, db, job3.ID, 1*time.Hour, tzMinus7)
 
-	count, err = db.CountStalledJobs(30 * time.Minute)
-	require.NoError(t, err, "CountStalledJobs failed: %v")
+	ids, err = db.ListStalledJobIDs(30 * time.Minute)
+	require.NoError(t, err, "ListStalledJobIDs failed: %v")
 
-	assert.Equal(t, 2, count)
+	assert.Equal(t, []int64{job2.ID, job3.ID}, ids)
 
-	count, err = db.CountStalledJobs(2 * time.Hour)
-	require.NoError(t, err, "CountStalledJobs failed: %v")
+	ids, err = db.ListStalledJobIDs(2 * time.Hour)
+	require.NoError(t, err, "ListStalledJobIDs failed: %v")
 
-	assert.Equal(t, 0, count)
+	assert.Empty(t, ids)
 }
 
 func TestListReposWithReviewCounts(t *testing.T) {

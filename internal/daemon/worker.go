@@ -37,6 +37,7 @@ const (
 
 type runningJobCancellation struct {
 	cancel                context.CancelFunc
+	deadline              time.Time
 	callerBroadcastsEvent bool
 }
 
@@ -327,12 +328,12 @@ func (wp *WorkerPool) isJobCancellable(job *storage.ReviewJob) bool {
 // registerRunningJob tracks a running job for potential cancellation.
 // If the job was already marked for cancellation (race condition), it
 // immediately cancels it.
-func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc) {
+func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc, deadline time.Time) {
 	wp.runningJobsMu.Lock()
 	callerBroadcastsEvent, pending := wp.pendingCancels[jobID]
 	_, updateInterrupted := wp.updateInterruptTargets[jobID]
 	wp.runningJobs[jobID] = runningJobCancellation{
-		cancel: cancel, callerBroadcastsEvent: callerBroadcastsEvent,
+		cancel: cancel, deadline: deadline, callerBroadcastsEvent: callerBroadcastsEvent,
 	}
 
 	// Check if this job was canceled before we registered it
@@ -348,6 +349,28 @@ func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc)
 		return
 	}
 	wp.runningJobsMu.Unlock()
+}
+
+// countStalledJobs preserves the 30-minute check for abandoned jobs while
+// allowing tracked attempts to use their assigned timeout, even after reloads.
+func (wp *WorkerPool) countStalledJobs() (int, error) {
+	// Snapshot before the query so a job completing during collection retains
+	// its deadline instead of briefly appearing abandoned.
+	wp.runningJobsMu.Lock()
+	running := maps.Clone(wp.runningJobs)
+	wp.runningJobsMu.Unlock()
+	ids, err := wp.db.ListStalledJobIDs(30 * time.Minute)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	count := 0
+	for _, id := range ids {
+		if !now.Before(running[id].deadline) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // InterruptJobsForUpdate marks the running attempts as update-owned and
@@ -807,7 +830,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	defer cancel()
 
 	// Register for cancellation tracking
-	wp.registerRunningJob(job.ID, cancel)
+	deadline, _ := ctx.Deadline()
+	wp.registerRunningJob(job.ID, cancel, deadline)
 	defer wp.finishRunningJob(workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.

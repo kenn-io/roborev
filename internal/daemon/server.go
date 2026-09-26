@@ -3631,7 +3631,7 @@ func (s *Server) humaGetHealth(
 
 	workersHealthy := true
 	workersMessage := ""
-	stalledCount, err := s.db.CountStalledJobs(30 * time.Minute)
+	stalledCount, err := s.workerPool.countStalledJobs()
 	if err != nil {
 		workersHealthy = false
 		workersMessage = fmt.Sprintf(
@@ -3641,7 +3641,7 @@ func (s *Server) humaGetHealth(
 	} else if stalledCount > 0 {
 		workersHealthy = false
 		workersMessage = fmt.Sprintf(
-			"%d stalled job(s) running > 30 min", stalledCount,
+			"%d stalled job(s) running beyond their allowed time", stalledCount,
 		)
 		allHealthy = false
 	}

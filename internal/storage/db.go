@@ -2285,23 +2285,32 @@ func (db *DB) ResetStaleJobs() error {
 	return err
 }
 
-// CountStalledJobs returns the number of jobs that have been running longer than the threshold
-func (db *DB) CountStalledJobs(threshold time.Duration) (int, error) {
+// ListStalledJobIDs returns IDs of jobs running longer than the threshold.
+func (db *DB) ListStalledJobIDs(threshold time.Duration) ([]int64, error) {
 	// Use threshold in seconds for SQLite datetime arithmetic
 	// This avoids timezone issues with RFC3339 string comparison
 	thresholdSecs := int64(threshold.Seconds())
 
-	var count int
-	err := db.QueryRow(`
-		SELECT COUNT(*) FROM review_jobs
+	rows, err := db.Query(`
+		SELECT id FROM review_jobs
 		WHERE status = 'running'
 		AND started_at IS NOT NULL
 		AND datetime(started_at) < datetime('now', ? || ' seconds')
-	`, -thresholdSecs).Scan(&count)
+		ORDER BY id
+	`, -thresholdSecs)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return count, nil
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // migrateReviewJobsConstraintsForAutoDesign rebuilds review_jobs to:

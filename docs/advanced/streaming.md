@@ -47,6 +47,15 @@ operations, and token backfill. Most JSON endpoints are represented in the
 generated client; endpoints that stream or return raw bytes are exposed through
 raw helper methods.
 
+### Worker health
+
+`/api/health` reports stalled jobs through the `workers` component. A job that
+has run for more than 30 minutes is unhealthy if it has no active worker or its
+assigned execution deadline has passed. Longer reviews remain healthy while
+their worker still has time remaining. The deadline includes repository, global,
+and panel-member timeout settings resolved when the attempt starts;
+configuration reloads do not change it during that attempt.
+
 ## Public Go Client
 
 External Go integrations can import the public daemon client:

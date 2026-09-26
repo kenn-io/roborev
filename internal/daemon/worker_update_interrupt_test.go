@@ -81,7 +81,7 @@ func TestRegisterRunningJobCancelsUpdateTarget(t *testing.T) {
 	canceled := make(chan struct{})
 
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	tc.Pool.registerRunningJob(job.ID, func() { close(canceled) })
+	tc.Pool.registerRunningJob(job.ID, func() { close(canceled) }, time.Time{})
 
 	require.True(t, waitForUpdateSignal(canceled, time.Second),
 		"update target was not canceled during registration")

@@ -3,15 +3,20 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/vector"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
@@ -126,6 +131,111 @@ func TestHealth(t *testing.T) {
 		w := executeHealthCheck(server, http.MethodPost)
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
+}
+
+func TestHealthAllowsRunningJobsWithinTheirTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		globalMinutes int
+		repoConfig    string
+		panelConfig   string
+	}{
+		{name: "global", globalMinutes: 75},
+		{name: "repository", repoConfig: "job_timeout_minutes = 75\n"},
+		{name: "panel", panelConfig: `{"timeout":"75m"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := setupTestServer(t)
+			server.configWatcher.cfg.JobTimeoutMinutes = tc.globalMinutes
+			repoPath := t.TempDir()
+			testutil.InitTestGitRepo(t, repoPath)
+			if tc.repoConfig != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(tc.repoConfig), 0o600))
+			}
+			repo, err := server.db.GetOrCreateRepo(repoPath)
+			require.NoError(t, err)
+			const agentName = "health-long-review"
+			started := make(chan time.Time, 1)
+			release := make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: agentName,
+				ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+					deadline, _ := ctx.Deadline()
+					started <- deadline
+					select {
+					case <-release:
+						return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
+				},
+			})
+			opts := storage.EnqueueOpts{
+				RepoID: repo.ID, GitRef: testutil.GetHeadSHA(t, repoPath), Agent: agentName,
+			}
+			if tc.panelConfig != "" {
+				runID := uuid.New()
+				opts.PanelRunUUID = &runID
+				opts.PanelRole = storage.PanelRoleMember
+				opts.PanelMemberConfigJSON = tc.panelConfig
+			}
+			job, err := server.db.EnqueueJob(opts)
+			require.NoError(t, err)
+			server.workerPool.Start()
+			deadline := testutil.ReceiveWithTimeout(t, started, 10*time.Second)
+			require.Greater(t, time.Until(deadline), time.Hour)
+
+			// Simulate an old running attempt without waiting for the wall clock.
+			_, err = server.db.Exec("UPDATE review_jobs SET started_at = ? WHERE id = ?",
+				time.Now().Add(-45*time.Minute).UTC().Format(time.RFC3339), job.ID)
+			require.NoError(t, err)
+			// Reloading config must not shorten the running attempt's deadline.
+			server.configWatcher.cfgMu.Lock()
+			server.configWatcher.cfg = config.DefaultConfig()
+			server.configWatcher.cfgMu.Unlock()
+
+			response := executeHealthCheck(server, http.MethodGet)
+			require.Equal(t, http.StatusOK, response.Code)
+			health := decodeHealthStatus(t, response)
+			assert.True(t, health.Healthy)
+			assert.Contains(t, health.Components, storage.ComponentHealth{Name: "workers", Healthy: true})
+		})
+	}
+}
+
+func TestHealthReportsAbandonedAndOverdueJobs(t *testing.T) {
+	for _, tracked := range []bool{false, true} {
+		name := "abandoned"
+		if tracked {
+			name = "overdue"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := setupTestServer(t)
+			repo, err := server.db.GetOrCreateRepo(t.TempDir())
+			require.NoError(t, err)
+			_, err = server.db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+			require.NoError(t, err)
+			job, err := server.db.ClaimJob("worker-test")
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			_, err = server.db.Exec("UPDATE review_jobs SET started_at = ? WHERE id = ?",
+				time.Now().Add(-45*time.Minute).UTC().Format(time.RFC3339), job.ID)
+			require.NoError(t, err)
+			if tracked {
+				server.workerPool.registerRunningJob(job.ID, func() {}, time.Now().Add(-time.Minute))
+			}
+
+			response := executeHealthCheck(server, http.MethodGet)
+			require.Equal(t, http.StatusOK, response.Code)
+			health := decodeHealthStatus(t, response)
+			assert.False(t, health.Healthy)
+			assert.Contains(t, health.Components, storage.ComponentHealth{
+				Name: "workers", Healthy: false,
+				Message: "1 stalled job(s) running beyond their allowed time",
+			})
+		})
+	}
 }
 
 func TestHealthIncludesOptionalSearchWithoutDegradingDaemon(t *testing.T) {
