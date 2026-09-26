@@ -545,6 +545,57 @@ func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
 	assert.Equal(t, 1, indexCount)
 }
 
+func TestCommentsForCommitUseCommitIDIndex(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		open func(t *testing.T) *DB
+	}{
+		{
+			name: "fresh schema",
+			open: func(t *testing.T) *DB {
+				db := openTestDB(t)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				return db
+			},
+		},
+		{
+			name: "migrated legacy schema",
+			open: func(t *testing.T) *DB {
+				return prepareMigratedDB(
+					t, "commit-comments-plan-legacy.db",
+					legacyReviewJobSchema, legacyReviewJobSeed,
+				)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := test.open(t)
+			rows, err := db.Query(`
+				EXPLAIN QUERY PLAN
+				SELECT id, commit_id, job_id, responder, response, source, created_at, uuid
+				FROM responses
+				WHERE commit_id = ?
+				ORDER BY created_at ASC
+			`, 1)
+			require.NoError(t, err)
+			defer rows.Close()
+
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(t, plan, "USING INDEX idx_responses_commit_id")
+			assert.NotContains(t, plan, "SCAN responses")
+		})
+	}
+}
+
 func TestMigrationAddsSessionIDColumn(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

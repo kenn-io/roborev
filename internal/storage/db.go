@@ -1885,6 +1885,12 @@ func (db *DB) migrateSyncColumns() error {
 		return fmt.Errorf("create idx_responses_sync: %w", err)
 	}
 
+	// Create index for legacy commit-based comment lookups (GetCommentsForCommit)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_responses_commit_id ON responses(commit_id)`)
+	if err != nil {
+		return fmt.Errorf("create idx_responses_commit_id: %w", err)
+	}
+
 	// Migration: Add identity column to repos
 	has, err := hasColumn("repos", "identity")
 	if err != nil {
