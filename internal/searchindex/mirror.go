@@ -52,8 +52,13 @@ func (index *Index) RefreshMirrorPage(ctx context.Context, docs []searchdoc.Docu
 		if err := upsertMirrorRow(ctx, tx, wanted); err != nil {
 			return 0, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM review_fts WHERE doc_key = ?`, doc.DocKey); err != nil {
-			return 0, fmt.Errorf("delete stale review FTS row: %w", err)
+		// Mirror and FTS rows are written and deleted in the same transaction,
+		// so a document without a mirror row has no FTS row to replace. The
+		// doc_key delete scans the whole FTS table, so skip it for new documents.
+		if found {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM review_fts WHERE doc_key = ?`, doc.DocKey); err != nil {
+				return 0, fmt.Errorf("delete stale review FTS row: %w", err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO review_fts(doc_key, content, identifiers) VALUES (?, ?, ?)`,
@@ -92,17 +97,20 @@ func rowForDocument(doc searchdoc.Document) mirrorRow {
 	}
 }
 
+// readMirrorRowSQL reads only review_mirror. review_fts.doc_key is UNINDEXED,
+// so any doc_key lookup there scans every FTS row.
+const readMirrorRowSQL = `
+	SELECT m.doc_key, m.review_id, COALESCE(m.review_uuid, ''),
+	       m.job_id, COALESCE(m.job_uuid, ''), m.group_key,
+	       m.repo_id, m.repo_name, COALESCE(m.branch, ''), m.git_ref,
+	       COALESCE(m.commit_sha, ''), COALESCE(m.finished_at, ''),
+	       COALESCE(m.verdict, ''), m.closed, COALESCE(m.panel_role, ''),
+	       m.content, m.content_hash, m.identifiers
+	  FROM review_mirror m WHERE m.doc_key = ?`
+
 func readMirrorRow(ctx context.Context, tx *sql.Tx, docKey string) (mirrorRow, bool, error) {
 	var row mirrorRow
-	err := tx.QueryRowContext(ctx, `
-		SELECT m.doc_key, m.review_id, COALESCE(m.review_uuid, ''),
-		       m.job_id, COALESCE(m.job_uuid, ''), m.group_key,
-		       m.repo_id, m.repo_name, COALESCE(m.branch, ''), m.git_ref,
-		       COALESCE(m.commit_sha, ''), COALESCE(m.finished_at, ''),
-		       COALESCE(m.verdict, ''), m.closed, COALESCE(m.panel_role, ''),
-		       m.content, m.content_hash,
-		       COALESCE((SELECT identifiers FROM review_fts f WHERE f.doc_key = m.doc_key LIMIT 1), '')
-		  FROM review_mirror m WHERE m.doc_key = ?`, docKey).Scan(
+	err := tx.QueryRowContext(ctx, readMirrorRowSQL, docKey).Scan(
 		&row.DocKey, &row.ReviewID, &row.ReviewUUID, &row.JobID, &row.JobUUID,
 		&row.GroupKey, &row.RepoID, &row.RepoName, &row.Branch, &row.GitRef,
 		&row.CommitSHA, &row.FinishedAt, &row.Verdict, &row.Closed, &row.PanelRole,
@@ -121,8 +129,8 @@ func upsertMirrorRow(ctx context.Context, tx *sql.Tx, row mirrorRow) error {
 		INSERT INTO review_mirror (
 			doc_key, review_id, review_uuid, job_id, job_uuid, group_key,
 			repo_id, repo_name, branch, git_ref, commit_sha, finished_at,
-			verdict, closed, panel_role, content, content_hash, embed_gen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+			verdict, closed, panel_role, content, identifiers, content_hash, embed_gen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
 		ON CONFLICT(doc_key) DO UPDATE SET
 			review_id = excluded.review_id,
 			review_uuid = excluded.review_uuid,
@@ -139,6 +147,7 @@ func upsertMirrorRow(ctx context.Context, tx *sql.Tx, row mirrorRow) error {
 			closed = excluded.closed,
 			panel_role = excluded.panel_role,
 			content = excluded.content,
+			identifiers = excluded.identifiers,
 			content_hash = excluded.content_hash,
 			embed_gen = CASE
 				WHEN review_mirror.content_hash IS excluded.content_hash THEN review_mirror.embed_gen
@@ -146,7 +155,7 @@ func upsertMirrorRow(ctx context.Context, tx *sql.Tx, row mirrorRow) error {
 			END`,
 		row.DocKey, row.ReviewID, nullable(row.ReviewUUID), row.JobID, nullable(row.JobUUID), row.GroupKey,
 		row.RepoID, row.RepoName, nullable(row.Branch), row.GitRef, nullable(row.CommitSHA), nullable(row.FinishedAt),
-		nullable(row.Verdict), row.Closed, nullable(row.PanelRole), row.Content, row.ContentHash)
+		nullable(row.Verdict), row.Closed, nullable(row.PanelRole), row.Content, row.Identifiers, row.ContentHash)
 	if err != nil {
 		return fmt.Errorf("upsert search mirror row: %w", err)
 	}

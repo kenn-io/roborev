@@ -100,6 +100,60 @@ func TestMirrorRefreshUpdatesLocalMetadataWithoutInvalidatingVectors(t *testing.
 	assert.Equal(t, updated.Identifiers, ftsIdentifiers)
 }
 
+func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+
+	doc := testDocument(1, "stable content")
+	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, changed)
+
+	updated := doc
+	updated.Identifiers += "\nextra-identifier"
+	changed, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed)
+
+	changed, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
+	require.NoError(t, err)
+	assert.Zero(t, changed)
+
+	var mirrorIdentifiers string
+	err = index.db.QueryRowContext(ctx,
+		`SELECT identifiers FROM review_mirror WHERE doc_key = ?`, doc.DocKey).Scan(&mirrorIdentifiers)
+	require.NoError(t, err)
+	assert.Equal(t, updated.Identifiers, mirrorIdentifiers)
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
+}
+
+func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
+	ctx := context.Background()
+	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+
+	// The mirror refresh runs this lookup once per document on every pass,
+	// so a full scan here makes each pass quadratic in the corpus size.
+	rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+readMirrorRowSQL, "doc")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rows.Close()) })
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.NotEmpty(t, details)
+	for _, detail := range details {
+		assert.NotContains(t, detail, "SCAN")
+	}
+}
+
 func TestMirrorDeleteMissingRemovesFTSAndEveryVectorGeneration(t *testing.T) {
 	ctx := context.Background()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))

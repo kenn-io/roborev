@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const sidecarSchemaVersion = "1"
+const sidecarSchemaVersion = "2"
 
 const sidecarSchema = `
 CREATE TABLE search_meta (
@@ -34,6 +34,7 @@ CREATE TABLE review_mirror (
   closed INTEGER NOT NULL,
   panel_role TEXT,
   content TEXT NOT NULL,
+  identifiers TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   embed_gen TEXT
 );
@@ -45,7 +46,7 @@ CREATE VIRTUAL TABLE review_fts USING fts5(
   tokenize = 'unicode61'
 );
 
-INSERT INTO search_meta(key, value) VALUES ('schema_version', '1');
+INSERT INTO search_meta(key, value) VALUES ('schema_version', '2');
 `
 
 type columnDefinition struct {
@@ -87,6 +88,7 @@ var expectedSchema = []tableDefinition{
 			{name: "closed", columnType: "INTEGER", notNull: 1},
 			{name: "panel_role", columnType: "TEXT"},
 			{name: "content", columnType: "TEXT", notNull: 1},
+			{name: "identifiers", columnType: "TEXT", notNull: 1},
 			{name: "content_hash", columnType: "TEXT", notNull: 1},
 			{name: "embed_gen", columnType: "TEXT"},
 		},
