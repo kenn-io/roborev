@@ -106,6 +106,8 @@ func pullRequestLabelNames(labels []*googlegithub.Label) []string {
 	return names
 }
 
+// ListOwnerRepos discovers CI repositories, excluding archived repositories and
+// those that explicitly disable pull requests.
 func (c *Client) ListOwnerRepos(ctx context.Context, owner string, limit int) ([]string, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -369,7 +371,7 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 		}
 		for _, repo := range authPage {
 			fullName := repo.GetFullName()
-			if repo.GetArchived() || !strings.EqualFold(strings.TrimSpace(repoOwner(repo)), owner) {
+			if repo.GetArchived() || (repo.HasPullRequests != nil && !repo.GetHasPullRequests()) || !strings.EqualFold(strings.TrimSpace(repoOwner(repo)), owner) {
 				continue
 			}
 			if _, ok := seen[strings.ToLower(fullName)]; ok {
@@ -403,7 +405,7 @@ func (c *Client) collectRepos(ctx context.Context, limit int, fetch func() ([]*g
 			return nil, fmt.Errorf("list repositories: %w", err)
 		}
 		for _, repo := range pageRepos {
-			if repo.GetArchived() {
+			if repo.GetArchived() || (repo.HasPullRequests != nil && !repo.GetHasPullRequests()) {
 				continue
 			}
 			repos = append(repos, repo.GetFullName())

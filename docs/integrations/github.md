@@ -470,8 +470,10 @@ Patterns use Go's `path.Match` syntax (`*` matches any sequence of characters,
 `?` matches a single character, `[...]` matches character classes). Matching is
 case-insensitive.
 
-Wildcard expansion calls the GitHub API (`gh repo list`) and caches results for
-one hour. Archived repos are automatically excluded from the API results.
+Wildcard expansion calls the GitHub API and caches results for one hour.
+Archived repos and repos with pull requests explicitly disabled are excluded.
+Repos remain eligible when the API omits the pull-request setting. If you enable
+pull requests later, the next discovery refresh includes the repo again.
 Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
 
 Exclusion patterns in `exclude_repos` apply to both exact entries and

@@ -107,12 +107,14 @@ func (s *repoAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func TestListOwnerRepos_FiltersArchivedAndFallsBackToAuthenticatedUser(t *testing.T) {
+func TestListOwnerRepos_FiltersArchivedAndPRDisabled(t *testing.T) {
 	api := &repoAPIServer{
 		t: t,
 		orgRepos: []*googlegithub.Repository{
-			{FullName: ptr("acme/api"), Archived: ptr(false)},
+			{FullName: ptr("acme/api"), HasPullRequests: ptr(true)},
+			{FullName: ptr("acme/unknown")},
 			{FullName: ptr("acme/old"), Archived: ptr(true)},
+			{FullName: ptr("acme/disabled"), HasPullRequests: ptr(false)},
 		},
 		userRepos: []*googlegithub.Repository{
 			{
@@ -120,12 +122,23 @@ func TestListOwnerRepos_FiltersArchivedAndFallsBackToAuthenticatedUser(t *testin
 				Archived: ptr(false),
 				Owner:    &googlegithub.User{Login: ptr("jane")},
 			},
+			{FullName: ptr("jane/enabled"), HasPullRequests: ptr(true)},
+			{FullName: ptr("jane/disabled-public"), HasPullRequests: ptr(false)},
 		},
 		authRepos: []*googlegithub.Repository{
 			{
-				FullName: ptr("jane/private"),
-				Archived: ptr(false),
+				FullName:        ptr("jane/private"),
+				HasPullRequests: ptr(true),
+				Owner:           &googlegithub.User{Login: ptr("jane")},
+			},
+			{
+				FullName: ptr("jane/unknown"),
 				Owner:    &googlegithub.User{Login: ptr("jane")},
+			},
+			{
+				FullName:        ptr("jane/disabled-private"),
+				HasPullRequests: ptr(false),
+				Owner:           &googlegithub.User{Login: ptr("jane")},
 			},
 			{
 				FullName: ptr("other/nope"),
@@ -142,11 +155,11 @@ func TestListOwnerRepos_FiltersArchivedAndFallsBackToAuthenticatedUser(t *testin
 
 	orgRepos, err := client.ListOwnerRepos(context.Background(), "acme", 1000)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"acme/api"}, orgRepos)
+	assert.Equal(t, []string{"acme/api", "acme/unknown"}, orgRepos)
 
 	userRepos, err := client.ListOwnerRepos(context.Background(), "jane", 1000)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"jane/app", "jane/private"}, userRepos)
+	assert.Equal(t, []string{"jane/app", "jane/enabled", "jane/private", "jane/unknown"}, userRepos)
 }
 
 func TestListOwnerRepos_KeepsPublicReposWhenAuthenticatedListingFails(t *testing.T) {
