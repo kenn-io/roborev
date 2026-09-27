@@ -366,6 +366,7 @@ func TestStatusCmdShowsSearchHealthWithoutDegradingDaemon(t *testing.T) {
 					EmbeddingBacklog: 7, VectorState: "unavailable",
 					RatePerSecond: &rate, ETASeconds: &eta,
 					LastError: "embedding authentication rejected", LastErrorStatus: 401,
+					Credential: "rejected", CredentialSource: "env:EMBEDDING_KEY", CredentialReason: "embedding authentication rejected (401)",
 				},
 			})
 			return true
@@ -382,6 +383,8 @@ func TestStatusCmdShowsSearchHealthWithoutDegradingDaemon(t *testing.T) {
 	assert.Contains(t, output, "Lexical: 12 indexed, mirror complete, 3 pending")
 	assert.Contains(t, output, "Vectors: unavailable, 5 embedded, 7 pending, 2 skipped, 1.50/s, ETA 8s")
 	assert.Contains(t, output, "Error: embedding authentication rejected (HTTP 401)")
+	assert.Contains(t, output, "Credential: rejected (env:EMBEDDING_KEY)")
+	assert.Contains(t, output, "embedding authentication rejected (401)")
 }
 
 func TestStatusCmdJSONIncludesActiveSnoozes(t *testing.T) {
@@ -503,4 +506,27 @@ func TestStatusCmdOmitsActiveSnoozesWhenEmpty(t *testing.T) {
 	})
 
 	assert.NotContains(t, output, "Active Snoozes:")
+}
+
+func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnStatus: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			_ = json.NewEncoder(w).Encode(storage.DaemonStatus{Version: version.Version})
+			return true
+		},
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			if r.URL.Path != "/api/health" {
+				return false
+			}
+			_ = json.NewEncoder(w).Encode(storage.HealthStatus{Healthy: true, Version: version.Version, Search: &storage.SearchHealth{
+				EmbeddingsConfigured: true, VectorState: "unavailable", Credential: "missing", CredentialSource: "env:EMBEDDING_KEY", CredentialReason: "no embedding API key (env EMBEDDING_KEY is unset)",
+			}})
+			return true
+		},
+	})
+	defer md.Close()
+	output := captureStdout(t, func() { require.NoError(t, statusCmd().Execute()) })
+	assert.Contains(t, output, "Health: OK")
+	assert.Contains(t, output, "Credential: missing (env:EMBEDDING_KEY)")
+	assert.Contains(t, output, "no embedding API key (env EMBEDDING_KEY is unset)")
 }

@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -22,6 +25,7 @@ type EmbeddingConfig struct {
 	Model               string `toml:"model"`
 	Dims                int    `toml:"dims"`
 	APIKey              string `toml:"api_key" sensitive:"true"`
+	APIKeyFile          string `toml:"api_key_file"`
 	APIKeyEnv           string `toml:"api_key_env"`
 	InputTypeMode       string `toml:"input_type_mode"`
 	FingerprintSalt     string `toml:"fingerprint_salt"`
@@ -30,25 +34,107 @@ type EmbeddingConfig struct {
 	TrustPrivateNetwork bool   `toml:"trust_private_network"`
 }
 
-// ResolveAPIKey returns the inline key or resolves the configured environment
-// variable. Callers should invoke it only while starting the daemon so config
-// loading and inspection never depend on process-local credentials.
+// EmbeddingCredential describes a startup credential without exposing its value
+// through health. Key is only passed to the provider client.
+type EmbeddingCredential struct {
+	Key    string
+	Source string
+	Reason string
+}
+
+// ResolveAPIKey resolves credentials at daemon startup. An unavailable source
+// returns an empty key; only conflicting configuration returns an error.
 func (c EmbeddingConfig) ResolveAPIKey() (string, error) {
-	if c.APIKey != "" && strings.TrimSpace(c.APIKeyEnv) != "" {
-		return "", fmt.Errorf("search.embeddings api_key and api_key_env are mutually exclusive")
+	credential, err := c.ResolveCredential()
+	return credential.Key, err
+}
+
+// ResolveCredential separates normal credential unavailability from invalid
+// configuration. Inspection of config never invokes this method.
+func (c EmbeddingConfig) ResolveCredential() (EmbeddingCredential, error) {
+	if err := c.validateKeySources(); err != nil {
+		return EmbeddingCredential{}, err
+	}
+	missing := func(source, detail string) EmbeddingCredential {
+		reason := "no embedding API key"
+		if detail != "" {
+			reason += " (" + detail + ")"
+		}
+		return EmbeddingCredential{Source: source, Reason: reason}
 	}
 	if c.APIKey != "" {
-		return c.APIKey, nil
+		if strings.TrimSpace(c.APIKey) == "" {
+			return missing("inline", "inline key is empty"), nil
+		}
+		return EmbeddingCredential{Key: c.APIKey, Source: "inline"}, nil
 	}
-	name := strings.TrimSpace(c.APIKeyEnv)
-	if name == "" {
-		return "", nil
+	if raw := strings.TrimSpace(c.APIKeyFile); raw != "" {
+		source := "file:" + raw
+		path := raw
+		if raw == "~" || strings.HasPrefix(raw, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return missing(source, "key file home directory is unavailable"), nil
+			}
+			path = home
+			if raw != "~" {
+				path = filepath.Join(home, strings.TrimPrefix(raw, "~/"))
+			}
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return missing(source, "key file is missing or unreadable"), nil
+		}
+		if !info.Mode().IsRegular() {
+			return missing(source, "key file is not a readable regular file"), nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return missing(source, "key file is missing or unreadable"), nil
+		}
+		defer file.Close()
+		info, err = file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			return missing(source, "key file is not a readable regular file"), nil
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+			return missing(source, "key file permissions must restrict access to its owner (0600)"), nil
+		}
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return missing(source, "key file is unreadable"), nil
+		}
+		key := strings.TrimRight(string(data), "\r\n")
+		if strings.TrimSpace(key) == "" {
+			return missing(source, "key file is empty"), nil
+		}
+		return EmbeddingCredential{Key: key, Source: source}, nil
 	}
-	value, ok := os.LookupEnv(name)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("embedding API key environment variable %q is missing or empty", name)
+	if name := strings.TrimSpace(c.APIKeyEnv); name != "" {
+		value := os.Getenv(name)
+		if strings.TrimSpace(value) == "" {
+			return missing("env:"+name, "env "+name+" is unset or empty"), nil
+		}
+		return EmbeddingCredential{Key: value, Source: "env:" + name}, nil
 	}
-	return value, nil
+	return missing("", "no key source is configured"), nil
+}
+
+func (c EmbeddingConfig) validateKeySources() error {
+	sources := make([]string, 0, 3)
+	if c.APIKey != "" {
+		sources = append(sources, "api_key")
+	}
+	if strings.TrimSpace(c.APIKeyFile) != "" {
+		sources = append(sources, "api_key_file")
+	}
+	if strings.TrimSpace(c.APIKeyEnv) != "" {
+		sources = append(sources, "api_key_env")
+	}
+	if len(sources) > 1 {
+		return fmt.Errorf("search.embeddings %s are mutually exclusive", strings.Join(sources, " and "))
+	}
+	return nil
 }
 
 func normalizeSearchConfig(search *SearchConfig) error {
@@ -79,15 +165,15 @@ func validateEmbeddingConfig(embeddings *EmbeddingConfig) error {
 		return nil
 	}
 
-	if embeddings.APIKey != "" && strings.TrimSpace(embeddings.APIKeyEnv) != "" {
-		return fmt.Errorf("search.embeddings api_key and api_key_env are mutually exclusive")
+	if err := embeddings.validateKeySources(); err != nil {
+		return err
 	}
 
 	baseSet := strings.TrimSpace(embeddings.BaseURL) != ""
 	modelSet := strings.TrimSpace(embeddings.Model) != ""
 	dimsSet := embeddings.Dims > 0
 	anySet := baseSet || modelSet || embeddings.Dims != 0 || embeddings.APIKey != "" ||
-		strings.TrimSpace(embeddings.APIKeyEnv) != "" || embeddings.InputTypeMode != "" ||
+		strings.TrimSpace(embeddings.APIKeyEnv) != "" || strings.TrimSpace(embeddings.APIKeyFile) != "" || embeddings.InputTypeMode != "" ||
 		embeddings.FingerprintSalt != "" || embeddings.BatchSize != 0 ||
 		embeddings.TimeoutSeconds != 0 || embeddings.TrustPrivateNetwork
 	if anySet && (!baseSet || !modelSet || !dimsSet) {

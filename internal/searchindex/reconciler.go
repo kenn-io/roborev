@@ -39,7 +39,9 @@ type Embedder interface {
 
 // ReconcilerConfig bounds each background reconciliation turn.
 type ReconcilerConfig struct {
-	MirrorPageSize int
+	CredentialSource string
+	CredentialReason string
+	MirrorPageSize   int
 	// MaxFillBatches is the maximum number of pending documents kit Fill may
 	// start in one turn. Kit completes every started document, including
 	// those that span multiple provider calls.
@@ -72,17 +74,28 @@ type Reconciler struct {
 func NewReconciler(store searchDocumentStore, index *Index, embedder Embedder, config ReconcilerConfig) *Reconciler {
 	config = normalizeReconcilerConfig(config)
 	state := HealthSnapshot{
-		EmbeddingsConfigured: embedder != nil,
+		EmbeddingsConfigured: embedder != nil || config.CredentialReason != "",
+		CredentialSource:     config.CredentialSource,
+		CredentialReason:     config.CredentialReason,
 		VectorState:          "unconfigured",
 	}
+	if config.CredentialReason != "" {
+		state.Credential = "missing"
+		state.VectorState = "error"
+	}
 	if embedder != nil {
+		state.Credential = "ok"
 		state.VectorState = "building"
 		state.Generation = embedder.Generation().Fingerprint()
 	}
-	return &Reconciler{
+	r := &Reconciler{
 		store: store, index: index, embedder: embedder, config: config,
 		wake: make(chan struct{}, 1), health: state,
 	}
+	if embedder != nil {
+		r.embedder = observedEmbedder{Embedder: embedder, observer: r}
+	}
+	return r
 }
 
 func normalizeReconcilerConfig(config ReconcilerConfig) ReconcilerConfig {
@@ -231,8 +244,7 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 		r.mirrorCursor = cursor
 	}
 	r.health.LastSuccessAt = new(now)
-	r.health.LastError = ""
-	r.health.LastErrorStatus = 0
+	clearNonAuthenticationError(&r.health)
 	r.mu.Unlock()
 	return !complete, nil
 }
@@ -359,8 +371,7 @@ func (r *Reconciler) updateGenerationHealth(
 		r.health.LastProgressAt = new(now)
 	}
 	r.health.LastSuccessAt = new(now)
-	r.health.LastError = ""
-	r.health.LastErrorStatus = 0
+	clearNonAuthenticationError(&r.health)
 	elapsed := now.Sub(r.generationStarted).Seconds()
 	if elapsed < 1 {
 		elapsed = 1
@@ -399,8 +410,12 @@ func (r *Reconciler) recordError(err error) {
 	}
 	r.mu.Lock()
 	r.failures++
-	r.health.LastError = category
-	r.health.LastErrorStatus = status
+	// Authentication state is written at the provider-call boundary. A delayed
+	// reconciliation error must not override a newer successful query.
+	if category != "authentication" && r.health.Credential != "rejected" {
+		r.health.LastError = category
+		r.health.LastErrorStatus = status
+	}
 	if r.embedder != nil {
 		if matchingActive {
 			r.health.VectorState = "ready"

@@ -1074,18 +1074,30 @@ timeout_seconds = 30
 | `base_url` | - | OpenAI-compatible endpoint base; Roborev appends `/embeddings` |
 | `model` | - | Provider model identifier |
 | `dims` | - | Required positive response dimension |
-| `api_key` | - | Optional inline bearer credential; mutually exclusive with `api_key_env` |
-| `api_key_env` | - | Environment variable containing the bearer credential; preferred to `api_key` |
+| `api_key` | - | Inline bearer credential; choose only one key source |
+| `api_key_env` | - | Environment variable containing the bearer credential |
+| `api_key_file` | - | Private key file read at daemon start; supports `~/` and trims trailing newlines |
 | `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
 | `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
 | `batch_size` | `64` | Maximum documents per provider request |
 | `timeout_seconds` | `30` | Provider request timeout in seconds |
 | `trust_private_network` | `false` | Allow a bearer token over HTTP to a trusted private-network endpoint |
 
-`base_url`, `model`, and `dims` must be configured together. A configured
-`api_key_env` must exist and contain a non-empty value when the daemon starts.
-Embedding settings require a daemon restart and cannot be overridden in
-`.roborev.toml`.
+`base_url`, `model`, and `dims` must be configured together. Choose only one of
+`api_key`, `api_key_file`, and `api_key_env`; multiple sources are a config
+error. On Unix, key files must not grant group or world access (`chmod 600`). If
+the selected source is missing, empty, unreadable, or has insecure permissions,
+the daemon starts normally with semantic search disabled and makes no embedding
+requests. Reviews and lexical search continue without startup warnings.
+
+The Search section of `roborev daemon status` and `GET /api/health` reports
+`credential` (`missing`, `rejected`, or `ok`), `credential_source` (never the
+key), and a readable `credential_reason` when unavailable. `auto` search
+includes the reason when falling back to lexical; explicit semantic/hybrid modes
+fail with it. Provider rejection (401/403) clears after a successful embedding
+request. A service-started daemon may not inherit shell variables; prefer
+`api_key_file` for that setup. Embedding settings require a daemon restart and
+cannot be overridden in `.roborev.toml`.
 
 For Voyage, this release supports the default 1,024-dimensional output from
 `voyage-4-large`. Roborev validates `dims` but does not send Voyage's

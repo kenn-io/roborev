@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -441,17 +444,6 @@ func TestDaemonSearchClosesSidecarOnConstructionFailures(t *testing.T) {
 			wantError: "base_url, model, and dims",
 		},
 		{
-			name: "missing environment credential",
-			configure: func(cfg *config.Config) {
-				cfg.Search.Embeddings = &config.EmbeddingConfig{
-					BaseURL: "https://embeddings.example", Model: "model", Dims: 2,
-					APIKeyEnv: "ROBOREV_TEST_MISSING_EMBEDDING_KEY",
-				}
-			},
-			wantError:  "ROBOREV_TEST_MISSING_EMBEDDING_KEY",
-			notInError: "embeddings.example",
-		},
-		{
 			name: "invalid embedding client",
 			configure: func(cfg *config.Config) {
 				cfg.Search.Embeddings = &config.EmbeddingConfig{
@@ -542,6 +534,100 @@ func TestRunDaemonWithSearchClosesSidecarOnEveryExit(t *testing.T) {
 					require.ErrorIs(t, err, expected)
 				}
 			}
+		})
+	}
+}
+
+func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(401) }))
+	defer provider.Close()
+	t.Setenv("ROBOREV_TEST_EMBEDDING_KEY", "")
+	var logs bytes.Buffer
+	original := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(original) })
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("test-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
+	cfg := config.DefaultConfig()
+	cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: provider.URL, Model: "test", Dims: 2, APIKeyEnv: "ROBOREV_TEST_EMBEDDING_KEY", TrustPrivateNetwork: true}
+	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, search.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- search.reconciler.Run(ctx) }()
+	require.Eventually(t, func() bool { return search.reconciler.Health().MirrorComplete }, time.Second, time.Millisecond)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	health := search.reconciler.Health()
+	assert.Equal(t, "missing", health.Credential)
+	assert.Equal(t, "env:ROBOREV_TEST_EMBEDDING_KEY", health.CredentialSource)
+	result, err := search.service.Search(t.Context(), searchindex.SearchParams{Query: "needle"})
+	require.NoError(t, err)
+	require.Len(t, result.Hits, 1)
+	assert.Equal(t, job.ID, result.Hits[0].JobID)
+	assert.Equal(t, searchindex.ModeLexical, result.Mode)
+	assert.True(t, result.Degraded)
+	assert.Contains(t, result.DegradedReason, "no embedding API key")
+	assert.Contains(t, result.DegradedReason, "ROBOREV_TEST_EMBEDDING_KEY")
+	assert.True(t, result.Coverage.EmbeddingsConfigured)
+	assert.Equal(t, searchindex.VectorUnavailable, result.Coverage.VectorState)
+	for _, mode := range []searchindex.SearchMode{searchindex.ModeSemantic, searchindex.ModeHybrid} {
+		_, err = search.service.Search(t.Context(), searchindex.SearchParams{Query: "needle", Mode: mode})
+		var modeErr *searchindex.ModeError
+		require.ErrorAs(t, err, &modeErr)
+		assert.Equal(t, 503, modeErr.Status)
+		assert.Equal(t, result.DegradedReason, modeErr.Reason)
+	}
+	assert.Zero(t, requests.Load())
+	assert.NotContains(t, logs.String(), "embedding API key")
+}
+
+func TestDaemonSearchCredentialFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, contents, credential, reason string
+		mode                               os.FileMode
+	}{
+		{"private", "example-key\n", "ok", "", 0o600},
+		{"empty", "\n", "missing", "key file is empty", 0o600},
+		{"insecure", "example-key", "missing", "permissions", 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && tc.name == "insecure" {
+				t.Skip("Unix permissions")
+			}
+			path := filepath.Join(t.TempDir(), "embedding.key")
+			require.NoError(t, os.WriteFile(path, []byte(tc.contents), tc.mode))
+			dbPath := filepath.Join(t.TempDir(), "reviews.db")
+			db, err := storage.Open(dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			cfg := config.DefaultConfig()
+			cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKeyFile: path}
+			search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, search.Close()) })
+			health := search.reconciler.Health()
+			assert.Equal(t, tc.credential, health.Credential)
+			assert.Equal(t, "file:"+path, health.CredentialSource)
+			if tc.reason != "" {
+				assert.Contains(t, health.CredentialReason, tc.reason)
+			} else {
+				assert.Empty(t, health.CredentialReason)
+			}
+			assert.NotContains(t, health.CredentialReason, "example-key")
 		})
 	}
 }

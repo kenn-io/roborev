@@ -215,6 +215,16 @@ func statusCmd() *cobra.Command {
 					} else {
 						fmt.Println("  Vectors: disabled")
 					}
+					if health.Search.Credential != "" {
+						line := "  Credential: " + health.Search.Credential
+						if health.Search.CredentialSource != "" {
+							line += " (" + health.Search.CredentialSource + ")"
+						}
+						fmt.Println(line)
+						if health.Search.CredentialReason != "" {
+							fmt.Println("  " + health.Search.CredentialReason)
+						}
+					}
 					if health.Search.LastError != "" {
 						errorLine := "  Error: " + health.Search.LastError
 						if health.Search.LastErrorStatus != 0 {

@@ -709,3 +709,33 @@ func TestSemanticCandidatesRejectRevisionChangedAfterVectorQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceCredentialRejectedReasonAndRecovery(t *testing.T) {
+	index := openQueryTestIndex(t)
+	doc := queryTestDocument(1, "group", "literal needle", queryDocOptions{})
+	_, err := index.RefreshMirrorPage(t.Context(), []searchdoc.Document{doc}, nil)
+	require.NoError(t, err)
+	model := vector.Generation{Model: "test", Dimensions: 2}
+	seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{doc.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}})
+	var failure error = &embedding.APIError{StatusCode: 401}
+	embedder := &serviceEmbedder{model: model, embed: func(context.Context) ([]float32, error) { return []float32{1, 0}, failure }}
+	r := NewReconciler(&reconcilerStore{}, index, embedder, ReconcilerConfig{CredentialSource: "inline"})
+	service := NewService(newServiceStore(doc), index, embedder, r)
+	result, err := service.Search(t.Context(), SearchParams{Query: "needle", Mode: ModeAuto})
+	require.NoError(t, err)
+	assert.Equal(t, "embedding authentication rejected (401)", result.DegradedReason)
+	assert.Equal(t, "rejected", r.Health().Credential)
+	for _, mode := range []SearchMode{ModeSemantic, ModeHybrid} {
+		_, err = service.Search(t.Context(), SearchParams{Query: "needle", Mode: mode})
+		var modeErr *ModeError
+		require.ErrorAs(t, err, &modeErr)
+		assert.Equal(t, 503, modeErr.Status)
+		assert.Equal(t, "embedding authentication rejected (401)", modeErr.Reason)
+	}
+	failure = nil
+	_, err = service.Search(t.Context(), SearchParams{Query: "needle", Mode: ModeSemantic})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", r.Health().Credential)
+	assert.Empty(t, r.Health().CredentialReason)
+	assert.Empty(t, r.Health().LastError)
+}

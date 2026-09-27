@@ -274,6 +274,7 @@ func TestReconcilerHonorsRetryAfterAndUsesFixedDefinitiveErrors(t *testing.T) {
 	definitive := &embedding.APIError{StatusCode: http.StatusUnauthorized}
 	assert.Equal(t, 5*time.Minute, r.backoffFor(definitive))
 
+	r.ObserveEmbeddingResult(definitive)
 	r.recordError(definitive)
 	health := r.Health()
 	assert.Equal(t, "authentication", health.LastError)

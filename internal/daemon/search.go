@@ -279,6 +279,7 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 
 func searchHealthFromSnapshot(snapshot searchindex.HealthSnapshot) *storage.SearchHealth {
 	return &storage.SearchHealth{
+		Credential: snapshot.Credential, CredentialSource: snapshot.CredentialSource, CredentialReason: snapshot.CredentialReason,
 		Indexed: snapshot.Indexed, MirrorComplete: snapshot.MirrorComplete,
 		MirrorBacklog:        snapshot.MirrorBacklog,
 		EmbeddingsConfigured: snapshot.EmbeddingsConfigured,

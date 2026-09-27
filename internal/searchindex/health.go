@@ -4,6 +4,9 @@ import "time"
 
 // HealthSnapshot is a sanitized, point-in-time view of reconciliation.
 type HealthSnapshot struct {
+	Credential           string
+	CredentialSource     string
+	CredentialReason     string
 	Indexed              int64
 	MirrorComplete       bool
 	MirrorBacklog        *int64

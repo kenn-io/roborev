@@ -140,6 +140,7 @@ export * from "./reviewProjectionReview";
 export * from "./reviewStructuredOutput";
 export * from "./searchCoverage";
 export * from "./searchHealth";
+export * from "./searchHealthCredential";
 export * from "./searchHit";
 export * from "./searchResponse";
 export * from "./searchReviewsMode";

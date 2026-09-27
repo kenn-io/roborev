@@ -472,6 +472,9 @@ type HealthStatus struct {
 
 // SearchHealth is a compact, sanitized snapshot of search reconciliation.
 type SearchHealth struct {
+	Credential           string     `json:"credential,omitempty" enum:"missing,rejected,ok" doc:"Embedding credential availability; ok means a key resolved, not provider acceptance"`
+	CredentialSource     string     `json:"credential_source,omitempty" doc:"Credential source (inline, env:NAME, or file:path), never its value"`
+	CredentialReason     string     `json:"credential_reason,omitempty" doc:"Sanitized reason semantic search is unavailable because of credentials"`
 	Indexed              int64      `json:"indexed"`
 	MirrorComplete       bool       `json:"mirror_complete"`
 	MirrorBacklog        *int64     `json:"mirror_backlog,omitempty"`

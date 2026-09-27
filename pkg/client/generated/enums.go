@@ -8,6 +8,25 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+// SearchHealthCredential Embedding credential availability; ok means a key resolved, not provider acceptance
+type SearchHealthCredential string
+
+const (
+	Missing  SearchHealthCredential = "missing"
+	Ok       SearchHealthCredential = "ok"
+	Rejected SearchHealthCredential = "rejected"
+)
+
+// Validate checks if the SearchHealthCredential value is valid
+func (s SearchHealthCredential) Validate() error {
+	switch s {
+	case Missing, Ok, Rejected:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SearchHealthCredential value, got: %v", s))
+	}
+}
+
 type UpdateDrainRequestBodyPolicy string
 
 const (

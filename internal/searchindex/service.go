@@ -140,6 +140,9 @@ type Service struct {
 
 // NewService constructs a transport-neutral review search service.
 func NewService(store canonicalSearchStore, index *Index, embedder Embedder, runtime searchRuntime) *Service {
+	if observer, ok := runtime.(embeddingObserver); ok && embedder != nil {
+		embedder = observedEmbedder{Embedder: embedder, observer: observer}
+	}
 	return &Service{store: store, index: index, embedder: embedder, runtime: runtime}
 }
 
@@ -217,7 +220,7 @@ func (service *Service) Search(ctx context.Context, params SearchParams) (Search
 			}
 			result.Mode = ModeLexical
 			result.Degraded = true
-			result.DegradedReason = ReasonSemanticUnavailable
+			result.DegradedReason = service.semanticReason(semanticErr)
 			lexical, err = service.hydrate(ctx, lexical, filters)
 			if err != nil {
 				return SearchResult{}, err
@@ -237,7 +240,7 @@ func (service *Service) Search(ctx context.Context, params SearchParams) (Search
 				}
 				result.Mode = ModeLexical
 				result.Degraded = true
-				result.DegradedReason = ReasonSemanticUnavailable
+				result.DegradedReason = service.semanticReason(err)
 				result.Hits = service.toHits(lexical, params.Limit)
 				break
 			}
@@ -301,6 +304,13 @@ func (service *Service) resolveMode(ctx context.Context, requested SearchMode) (
 		return "", false, "", &ModeError{Status: 400, Reason: "invalid search mode"}
 	}
 	if service.embedder == nil {
+		if service.health().EmbeddingsConfigured {
+			reason := service.semanticReason(nil)
+			if requested == ModeAuto {
+				return ModeLexical, true, reason, nil
+			}
+			return "", false, "", &ModeError{Status: 503, Reason: reason}
+		}
 		if requested == ModeAuto {
 			return ModeLexical, false, "", nil
 		}
@@ -309,15 +319,15 @@ func (service *Service) resolveMode(ctx context.Context, requested SearchMode) (
 	available, err := service.index.GenerationAvailable(ctx, service.embedder.Generation().Fingerprint())
 	if err != nil {
 		if requested == ModeAuto {
-			return ModeLexical, true, ReasonSemanticUnavailable, nil
+			return ModeLexical, true, service.semanticReason(err), nil
 		}
 		return "", false, "", service.unavailableError(err)
 	}
 	if !available {
 		if requested == ModeAuto {
-			return ModeLexical, true, ReasonSemanticUnavailable, nil
+			return ModeLexical, true, service.semanticReason(nil), nil
 		}
-		return "", false, "", &ModeError{Status: 503, Reason: ReasonSemanticUnavailable}
+		return "", false, "", &ModeError{Status: 503, Reason: service.semanticReason(nil)}
 	}
 	if requested == ModeSemantic {
 		return ModeSemantic, false, "", nil
@@ -651,11 +661,21 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+func (service *Service) semanticReason(err error) string {
+	if reason := authenticationReason(err); reason != "" {
+		return reason
+	}
+	if reason := service.health().CredentialReason; reason != "" {
+		return reason
+	}
+	return ReasonSemanticUnavailable
+}
+
 func (service *Service) unavailableError(err error) error {
 	if _, ok := errors.AsType[*ModeError](err); ok {
 		return err
 	}
-	return &ModeError{Status: 503, Reason: ReasonSemanticUnavailable, Err: err}
+	return &ModeError{Status: 503, Reason: service.semanticReason(err), Err: err}
 }
 
 func (service *Service) health() HealthSnapshot {
@@ -674,11 +694,14 @@ func (service *Service) wake() {
 func (service *Service) coverage(ctx context.Context, health HealthSnapshot) SearchCoverage {
 	coverage := SearchCoverage{
 		MirrorComplete: health.MirrorComplete, MirrorBacklog: health.MirrorBacklog,
-		EmbeddingsConfigured: service.embedder != nil,
+		EmbeddingsConfigured: health.EmbeddingsConfigured,
 		EmbeddingBacklog:     health.EmbeddingBacklog, Skipped: health.Skipped,
 		VectorState: VectorDisabled,
 	}
 	if service.embedder == nil {
+		if health.EmbeddingsConfigured {
+			coverage.VectorState = VectorUnavailable
+		}
 		coverage.EmbeddingBacklog = 0
 		return coverage
 	}

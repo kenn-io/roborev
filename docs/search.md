@@ -138,8 +138,9 @@ the stale hit and wakes reconciliation instead of serving stale content.
 Use `roborev daemon status` or its `roborev status` alias to watch search
 health. The Search section reports indexed lexical documents, mirror state and
 backlog, vector state, embedded and pending counts, skipped documents, rate,
-ETA, and the latest sanitized provider error when available. The same data is
-available in the `search` object from `GET /api/health`.
+ETA, credential availability, and the latest sanitized provider error when
+available. The same data is available in the `search` object from
+`GET /api/health`.
 
 ## Configure Voyage embeddings
 
@@ -172,9 +173,36 @@ This release supports Voyage's default 1,024-dimensional output for
 Voyage's provider-specific `output_dimension` parameter. Non-default Voyage
 dimensions are outside this release.
 
-`api_key_env` is preferred to an inline `api_key`. The two settings are mutually
-exclusive. If the configured environment variable is absent or empty, daemon
-startup fails without making an unauthenticated provider call.
+Choose one credential source: `api_key`, `api_key_env`, or `api_key_file`.
+Configuring more than one remains an error. A daemon started by a service or
+autostart may not inherit your shell's environment. For those setups, a private
+key file avoids relying on an exported variable:
+
+```toml
+# Replace api_key_env above with this setting.
+api_key_file = "~/.config/roborev/embedding.key"
+```
+
+The daemon reads the file at startup, expands `~/`, and removes trailing newline
+characters. On Unix, the file must restrict access to its owner, for example
+with `chmod 600`. Missing, empty, unreadable, or insecure key files disable
+semantic search; restart after changing the file or environment.
+
+If no key resolves, the daemon starts normally, makes no embedding requests, and
+keeps reviews and lexical search running. This replaces the previous startup
+failure: reviews must not depend on an optional search credential. There is no
+startup warning. `auto` search falls back to lexical results with
+`Degraded: no embedding API key` and a source-specific reason. Explicit semantic
+and hybrid modes return the same readable reason as a service-unavailable error.
+An unconfigured lexical-only setup remains silent.
+
+Health reports `credential` as `missing`, `rejected`, or `ok`, plus
+`credential_source` (`inline`, `env:NAME`, or `file:<configured path>`) and
+`credential_reason` when unavailable. These fields never contain the key. `ok`
+means a key resolved, not that the provider has accepted it. A 401 or 403 sets
+`rejected`, and search explains, for example,
+`embedding authentication rejected (401)`. A successful embedding request clears
+the rejection; lexical scans and existing vectors do not.
 
 An HTTP endpoint carrying a bearer token is rejected by default. Set
 `trust_private_network = true` only for an HTTP service on a private network

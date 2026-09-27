@@ -411,3 +411,36 @@ func hasError(errors []storage.ErrorEntry, component string, jobID int64) bool {
 	}
 	return false
 }
+
+func TestHealthCredentialAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		credential, source, reason string
+		status                     int
+	}{
+		{"missing", "env:EMBEDDING_KEY", "no embedding API key (env EMBEDDING_KEY is unset)", 0},
+		{"rejected", "file:~/.config/roborev/embedding.key", "embedding authentication rejected (401)", 401},
+		{"ok", "inline", "", 0},
+	} {
+		t.Run(tc.credential, func(t *testing.T) {
+			server := setupTestServer(t)
+			r := newRecordingSearchReconciler()
+			r.health = searchindex.HealthSnapshot{
+				EmbeddingsConfigured: true, VectorState: "error",
+				Credential: tc.credential, CredentialSource: tc.source, CredentialReason: tc.reason, LastErrorStatus: tc.status,
+			}
+			server.searchReconciler = r
+			response := executeHealthCheck(server, http.MethodGet)
+			require.Equal(t, 200, response.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			search, ok := body["search"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.credential, search["credential"])
+			assert.Equal(t, tc.source, search["credential_source"])
+			if tc.reason != "" {
+				assert.Equal(t, tc.reason, search["credential_reason"])
+			}
+			assert.True(t, decodeHealthStatus(t, response).Healthy)
+		})
+	}
+}

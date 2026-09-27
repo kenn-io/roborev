@@ -63,14 +63,15 @@ func newDaemonSearch(
 	}
 
 	var embedder searchindex.Embedder
+	reconcilerConfig := searchindex.ReconcilerConfig{}
 	embeddings := cfg.Search.Embeddings
 	if embeddings != nil && strings.TrimSpace(embeddings.BaseURL) != "" {
-		apiKey, err := embeddings.ResolveAPIKey()
+		credential, err := embeddings.ResolveCredential()
 		if err != nil {
 			return nil, err
 		}
 		client, err := embedding.New(embedding.Config{
-			BaseURL: embeddings.BaseURL, Model: embeddings.Model, APIKey: apiKey,
+			BaseURL: embeddings.BaseURL, Model: embeddings.Model, APIKey: credential.Key,
 			Salt: embeddings.FingerprintSalt, RecipeVersion: searchdoc.RecipeVersion,
 			Dims: embeddings.Dims, BatchSize: embeddings.BatchSize,
 			Timeout:             time.Duration(embeddings.TimeoutSeconds) * time.Second,
@@ -80,10 +81,14 @@ func newDaemonSearch(
 		if err != nil {
 			return nil, err
 		}
-		embedder = client
+		reconcilerConfig.CredentialSource = credential.Source
+		reconcilerConfig.CredentialReason = credential.Reason
+		if credential.Key != "" {
+			embedder = client
+		}
 	}
 
-	reconciler := searchindex.NewReconciler(db, index, embedder, searchindex.ReconcilerConfig{})
+	reconciler := searchindex.NewReconciler(db, index, embedder, reconcilerConfig)
 	service := searchindex.NewService(db, index, embedder, reconciler)
 	return &daemonSearch{
 		path: path, index: index, service: service, reconciler: reconciler,

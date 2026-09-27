@@ -7,6 +7,14 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**Bug fixes**
+
+- Missing embedding credentials no longer prevent the daemon from starting.
+    Reviews and lexical search continue without startup warnings. Search and
+    status explain missing keys and provider rejection, and health exposes
+    credential state without the key. `search.embeddings.api_key_file` reads a
+    private key file at startup. See [search credentials](/docs/search/).
+
 **Improvements**
 
 - Behavior change: the TUI now opens filtered to the current repository and

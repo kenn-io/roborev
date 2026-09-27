@@ -3270,6 +3270,19 @@ components:
       properties:
         active_generation:
           type: string
+        credential:
+          description: Embedding credential availability; ok means a key resolved, not provider acceptance
+          enum:
+            - missing
+            - rejected
+            - ok
+          type: string
+        credential_reason:
+          description: Sanitized reason semantic search is unavailable because of credentials
+          type: string
+        credential_source:
+          description: Credential source (inline, env:NAME, or file:path), never its value
+          type: string
         embedded:
           format: int64
           type: integer

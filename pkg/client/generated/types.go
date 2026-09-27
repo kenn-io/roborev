@@ -2884,7 +2884,16 @@ func (s SearchCoverage) Validate() error {
 }
 
 type SearchHealth struct {
-	ActiveGeneration     *string    `json:"active_generation,omitempty"`
+	ActiveGeneration *string `json:"active_generation,omitempty"`
+
+	// Credential Embedding credential availability; ok means a key resolved, not provider acceptance
+	Credential *SearchHealthCredential `json:"credential,omitempty"`
+
+	// CredentialReason Sanitized reason semantic search is unavailable because of credentials
+	CredentialReason *string `json:"credential_reason,omitempty"`
+
+	// CredentialSource Credential source (inline, env:NAME, or file:path), never its value
+	CredentialSource     *string    `json:"credential_source,omitempty"`
 	Embedded             int64      `json:"embedded"`
 	EmbeddingBacklog     int64      `json:"embedding_backlog"`
 	EmbeddingsConfigured bool       `json:"embeddings_configured"`
@@ -2902,7 +2911,21 @@ type SearchHealth struct {
 }
 
 func (s SearchHealth) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+	var errors runtime.ValidationErrors
+	if s.Credential != nil {
+		if v, ok := any(s.Credential).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Credential", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.VectorState, "required"); err != nil {
+		errors = errors.Append("VectorState", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SearchHit struct {
