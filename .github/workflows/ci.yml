@@ -433,6 +433,14 @@ jobs:
         with:
           version: ${{ steps.golangci.outputs.version }}
 
+      - name: golangci-lint for Windows
+        if: needs.go-changes.outputs.changed == 'true'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        env:
+          GOOS: windows
+        with:
+          version: ${{ steps.golangci.outputs.version }}
+
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           enable-cache: true
