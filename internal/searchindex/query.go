@@ -472,7 +472,10 @@ func semanticHitVectors(hits []semanticHit) []vector.Hit[string] {
 func (index *Index) semanticCandidates(
 	ctx context.Context, hits []semanticHit, filters SearchFilters,
 ) ([]rankedCandidate, error) {
-	rolled := vector.RollupByDocument(semanticHitVectors(hits))
+	rolled, err := vector.RollupByDocument(semanticHitVectors(hits))
+	if err != nil {
+		return nil, fmt.Errorf("roll up semantic hits: %w", err)
+	}
 	best := make(map[string]semanticHit, len(hits))
 	for _, hit := range hits {
 		current, found := best[hit.Doc]
