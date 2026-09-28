@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchindex"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -529,4 +530,27 @@ func TestSearchLifecycleSerializesOverlappingStartAndStop(t *testing.T) {
 		"search must not subscribe after shutdown")
 	startedCount, _ = reconciler.counts()
 	assert.Equal(t, 1, startedCount, "search must not start after shutdown")
+}
+
+func TestRerunWakesSearchReconcilerToDropTheDeletedReview(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	reconciler := newRecordingSearchReconciler()
+	server.searchReconciler = reconciler
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "rerun-search", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-search", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	_, err = db.FailJob(job.ID, "", "some error")
+	require.NoError(t, err)
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Len(t, reconciler.wakes, 1)
 }

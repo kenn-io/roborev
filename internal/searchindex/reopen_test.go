@@ -51,7 +51,7 @@ func TestReopenPreservesExistingGenerationAndVectors(t *testing.T) {
 	resolved, err := index.ResolveGeneration(ctx, space)
 	require.NoError(t, err)
 	assert.Equal(t, key, resolved)
-	hits, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, 10, SearchFilters{})
+	hits, err := flatten(index.SearchSemantic(ctx, key, vector.Vector{1, 0}, 10, SearchFilters{}))
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, doc.DocKey, hits[0].DocKey)

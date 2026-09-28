@@ -2469,6 +2469,11 @@ func (s *Server) humaRerunJob(
 			job.Agent = rerunOpts.Agent
 		}
 		s.broadcastRerunEnqueued(resultJobID, job.UUID, job)
+		// A rerun deletes the job's review, so search must drop it now rather
+		// than at the next safety sweep.
+		if s.searchReconciler != nil {
+			s.searchReconciler.Wake()
+		}
 	}
 
 	resp := &RerunJobOutput{}

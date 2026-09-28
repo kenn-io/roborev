@@ -60,7 +60,7 @@ func TestSearchLexicalTreatsPathsHyphensQuotesAndKeywordsLiterally(t *testing.T)
 		"OR NEAR NOT":   docs[2].DocKey,
 	} {
 		t.Run(query, func(t *testing.T) {
-			hits, err := index.SearchLexical(ctx, query, SearchFilters{}, 20)
+			hits, err := flatten(index.SearchLexical(ctx, query, SearchFilters{}, 20))
 			require.NoError(t, err)
 			require.NotEmpty(t, hits)
 			assert.Equal(t, wantDoc, hits[0].DocKey)
@@ -68,7 +68,7 @@ func TestSearchLexicalTreatsPathsHyphensQuotesAndKeywordsLiterally(t *testing.T)
 	}
 
 	for _, query := range []string{"", " \t\n ", "--- / :::"} {
-		hits, err := index.SearchLexical(ctx, query, SearchFilters{}, 20)
+		hits, err := flatten(index.SearchLexical(ctx, query, SearchFilters{}, 20))
 		require.NoError(t, err)
 		assert.Empty(t, hits)
 	}
@@ -96,22 +96,22 @@ func TestSearchLexicalRanksIdentifiersAndSHAPrefixesBeforeBM25(t *testing.T) {
 	_, err := index.RefreshMirrorPage(ctx, docs, nil)
 	require.NoError(t, err)
 
-	full, err := index.SearchLexical(ctx, shaA, SearchFilters{}, 10)
+	full, err := flatten(index.SearchLexical(ctx, shaA, SearchFilters{}, 10))
 	require.NoError(t, err)
 	require.NotEmpty(t, full)
 	assert.Equal(t, docs[1].DocKey, full[0].DocKey)
-	assert.Contains(t, full[0].MatchedIn, MatchIdentifier)
+	assert.Contains(t, full[0].MatchedIn(), MatchIdentifier)
 
-	unique, err := index.SearchLexical(ctx, "abcdef01", SearchFilters{}, 10)
+	unique, err := flatten(index.SearchLexical(ctx, "abcdef01", SearchFilters{}, 10))
 	require.NoError(t, err)
 	require.Len(t, unique, 1)
 	assert.Equal(t, docs[1].DocKey, unique[0].DocKey)
 
-	ambiguous, err := index.SearchLexical(ctx, "abcdef0", SearchFilters{}, 10)
+	ambiguous, err := flatten(index.SearchLexical(ctx, "abcdef0", SearchFilters{}, 10))
 	require.NoError(t, err)
 	require.Len(t, ambiguous, 2)
 	assert.Equal(t, []string{docs[2].DocKey, docs[1].DocKey}, []string{ambiguous[0].DocKey, ambiguous[1].DocKey})
-	assert.ElementsMatch(t, []string{MatchIdentifier}, ambiguous[0].MatchedIn)
+	assert.ElementsMatch(t, []string{MatchIdentifier}, ambiguous[0].MatchedIn())
 }
 
 func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
@@ -138,9 +138,9 @@ func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
 	_, err := index.RefreshMirrorPage(ctx, docs, nil)
 	require.NoError(t, err)
 
-	hits, err := index.SearchLexical(ctx, "needle", SearchFilters{
+	hits, err := flatten(index.SearchLexical(ctx, "needle", SearchFilters{
 		RepoID: 7, Branch: "feature/search", Since: &cutoff, Verdict: "pass", State: StateOpen,
-	}, 1)
+	}, 1))
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, wanted.DocKey, hits[0].DocKey)
@@ -169,7 +169,7 @@ func TestSemanticProbeReportsTheRawNeighborBeyondTheDeepCeiling(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hasProbe)
 	assert.InDelta(t, 1, probeScore, 0.0001)
-	candidates, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{})
+	candidates, err := flatten(index.SearchSemantic(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{}))
 	require.NoError(t, err)
 	require.Len(t, candidates, 1, "chunks roll up to their document")
 	assert.Equal(t, doc.DocKey, candidates[0].DocKey)
@@ -211,13 +211,13 @@ func TestSemanticProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
 	stale = searchdoc.Render(stale.Source)
 	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{stale}, nil)
 	require.NoError(t, err)
-	beyond, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit+2, SearchFilters{})
+	beyond, err := flatten(index.SearchSemantic(ctx, key, vector.Vector{1, 0}, semanticDeepLimit+2, SearchFilters{}))
 	require.NoError(t, err)
 	require.Len(t, beyond, 1, "the fresh above-floor hit exists just beyond the stale raw window")
 	assert.Equal(t, fresh.DocKey, beyond[0].DocKey)
 	assert.GreaterOrEqual(t, beyond[0].Score, semanticCosineFloor)
 
-	hits, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{})
+	hits, err := flatten(index.SearchSemantic(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{}))
 	require.NoError(t, err)
 	assert.Empty(t, hits, "stale raw hits must not become candidates")
 	probeScore, hasProbe, err := index.SemanticProbe(ctx, key, vector.Vector{1, 0}, semanticDeepLimit)
@@ -298,16 +298,24 @@ func TestSemanticCandidatesApplyFiltersAfterTheCandidateWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	candidates, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 3,
-		SearchFilters{RepoID: 7, State: StateOpen})
+	candidates, err := flatten(index.SearchSemantic(ctx, serving.Key, vector.Vector{1, 0}, 3,
+		SearchFilters{RepoID: 7, State: StateOpen}))
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, open.DocKey, candidates[0].DocKey)
-	assert.Equal(t, open.ContentHash, candidates[0].ContentHash)
-	assert.Equal(t, 1, candidates[0].Rank)
 
-	windowed, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 1,
-		SearchFilters{RepoID: 7, State: StateOpen})
+	windowed, err := flatten(index.SearchSemantic(ctx, serving.Key, vector.Vector{1, 0}, 1,
+		SearchFilters{RepoID: 7, State: StateOpen}))
 	require.NoError(t, err)
 	assert.Empty(t, windowed, "filters run after the raw candidate window, not before it")
+}
+
+// flatten lists a leg's members in rank order: groups best first, members best
+// first within each group.
+func flatten(groups []legGroup, err error) ([]legMember, error) {
+	var members []legMember
+	for _, group := range groups {
+		members = append(members, group.Members...)
+	}
+	return members, err
 }

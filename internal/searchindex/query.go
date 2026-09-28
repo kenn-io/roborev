@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"go.kenn.io/kit/search/lexical"
+	"go.kenn.io/kit/search/sqlitefts"
 	"go.kenn.io/kit/search/sqlquery"
 	"go.kenn.io/kit/vector"
 	"go.kenn.io/kit/vector/sqlitevec"
@@ -21,8 +23,7 @@ const (
 	semanticProbeReason = "semantic candidate ceiling exhausted"
 )
 
-// SearchFilters are applied first to mirrored candidates and again to the
-// canonical documents used to hydrate results.
+// SearchFilters restrict every retrieval leg to matching mirrored reviews.
 type SearchFilters struct {
 	RepoID  int64
 	Branch  string
@@ -31,35 +32,40 @@ type SearchFilters struct {
 	State   string
 }
 
-type rankedCandidate struct {
-	DocKey        string
-	GroupKey      string
-	ReviewID      int64
-	ReviewUUID    string
-	JobID         int64
-	JobUUID       string
-	RepoID        int64
-	RepoName      string
-	Branch        string
-	GitRef        string
-	CommitSHA     string
-	FinishedAt    time.Time
-	Verdict       string
-	Closed        bool
-	PanelRole     string
-	Content       string
-	ContentHash   string
-	ChunkIndex    int
-	Rank          int
-	Score         float64
-	MatchedIn     []string
-	Excerpt       string
-	identifier    bool
-	identifiers   string
-	repoPath      string
-	commitSubject string
-	reviewType    string
-	agent         string
+// legMember is one review a retrieval leg returned. Legs order members best
+// first within each panel group, and groups best first.
+type legMember struct {
+	DocKey     string
+	Score      float64
+	ChunkIndex int
+	Identifier bool
+	Lexical    bool
+	Semantic   bool
+	Excerpt    string
+	// FinishedKey and JobID break score ties: newer, then higher job, then key.
+	FinishedKey string
+	JobID       int64
+}
+
+// MatchedIn names the retrieval evidence for this member.
+func (member legMember) MatchedIn() []string {
+	var matches []string
+	if member.Identifier {
+		matches = append(matches, MatchIdentifier)
+	}
+	if member.Lexical {
+		matches = append(matches, MatchLexical)
+	}
+	if member.Semantic {
+		matches = append(matches, MatchSemantic)
+	}
+	return matches
+}
+
+// legGroup is one panel group and the members a leg found for it.
+type legGroup struct {
+	Key     string
+	Members []legMember
 }
 
 func candidateTarget(limit int) int {
@@ -85,434 +91,281 @@ func containsSearchToken(value string) bool {
 	}) >= 0
 }
 
-// SearchLexical returns candidates from at most limit panel groups while
-// retaining alternate members until canonical hydration. Exact identifiers
-// and full or short commit SHA matches precede FTS rank.
-func (index *Index) SearchLexical(
-	ctx context.Context, query string, filters SearchFilters, limit int,
-) ([]rankedCandidate, error) {
-	query = strings.TrimSpace(query)
-	if query == "" || limit <= 0 {
-		return nil, nil
-	}
-
-	exact, err := index.searchExactIdentifiers(ctx, query, filters, limit)
-	if err != nil {
-		return nil, err
-	}
-	var lexical []rankedCandidate
-	if ftsQuery := literalFTSQuery(query); ftsQuery != "" {
-		lexical, err = index.searchFTS(ctx, ftsQuery, filters, limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	byDocument := make(map[string]rankedCandidate, len(exact)+len(lexical))
-	for _, candidate := range lexical {
-		byDocument[candidate.DocKey] = candidate
-	}
-	for _, candidate := range exact {
-		if previous, ok := byDocument[candidate.DocKey]; ok {
-			candidate.MatchedIn = stableMatches(append(candidate.MatchedIn, previous.MatchedIn...))
-			if candidate.Excerpt == "" {
-				candidate.Excerpt = previous.Excerpt
-			}
-		}
-		byDocument[candidate.DocKey] = candidate
-	}
-
-	merged := make([]rankedCandidate, 0, len(byDocument))
-	for _, candidate := range byDocument {
-		merged = append(merged, candidate)
-	}
-	merged = rankLegCandidatesPreservingGroups(merged, compareLexicalCandidates)
-	firstBeyondLimit := len(merged)
-	for i, candidate := range merged {
-		if candidate.Rank > limit {
-			firstBeyondLimit = i
-			break
-		}
-	}
-	return merged[:firstBeyondLimit], nil
+// sortableTime turns a stored RFC3339Nano UTC timestamp into fixed-width text
+// that sorts in time order. RFC3339Nano drops trailing zeros, so the raw text
+// misorders times within one second. A missing time sorts oldest.
+func sortableTime(expression string) string {
+	value := "COALESCE(" + expression + ", '')"
+	return "(substr(" + value + ", 1, 19) || substr(CASE WHEN substr(" + value + ", 20, 1) = '.' " +
+		"THEN substr(" + value + ", 21, length(" + value + ") - 21) ELSE '' END || '000000000', 1, 9))"
 }
 
-func (index *Index) searchExactIdentifiers(
-	ctx context.Context, query string, filters SearchFilters, limit int,
-) ([]rankedCandidate, error) {
-	var statement strings.Builder
-	statement.WriteString(`
-		WITH matches AS MATERIALIZED (
-			SELECT m.doc_key, m.review_id, COALESCE(m.review_uuid, '') AS review_uuid,
-			       m.job_id, COALESCE(m.job_uuid, '') AS job_uuid, m.group_key,
-			       m.repo_id, m.repo_name, COALESCE(m.branch, '') AS branch, m.git_ref,
-			       COALESCE(m.commit_sha, '') AS commit_sha,
-			       COALESCE(m.finished_at, '') AS finished_at,
-			       COALESCE(m.verdict, '') AS verdict, m.closed,
-			       COALESCE(m.panel_role, '') AS panel_role,
-			       m.content, m.content_hash, f.identifiers
-			  FROM review_mirror m
-			  JOIN review_fts f ON f.doc_key = m.doc_key
-			 WHERE (
-				instr(char(10) || lower(f.identifiers) || char(10),
-				      char(10) || lower(?) || char(10)) > 0`)
-	args := []any{query}
-	if isSHAPrefix(query) {
-		statement.WriteString(` OR lower(COALESCE(m.commit_sha, '')) LIKE lower(?) || '%'`)
-		args = append(args, query)
-	}
-	statement.WriteString(")")
-	appendSQLFilters(&statement, &args, "m", filters)
-	statement.WriteString(`
-		), ranked AS (
-			SELECT matches.*,
-			       row_number() OVER (
-				PARTITION BY group_key
-				ORDER BY finished_at DESC, job_id DESC, doc_key ASC
-			       ) AS group_rank
-			  FROM matches
-		), top_groups AS (
-			SELECT group_key
-			  FROM ranked
-			 WHERE group_rank = 1
-			 ORDER BY finished_at DESC, job_id DESC, doc_key ASC
-			 LIMIT ?
-		)
-		SELECT ranked.doc_key, ranked.review_id, ranked.review_uuid,
-		       ranked.job_id, ranked.job_uuid, ranked.group_key,
-		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
-		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
-		       ranked.panel_role, ranked.content, ranked.content_hash,
-		       ranked.identifiers
-		  FROM ranked JOIN top_groups USING (group_key)
-		 ORDER BY ranked.finished_at DESC, ranked.job_id DESC, ranked.doc_key ASC`)
-	args = append(args, limit)
-	rows, err := index.db.QueryContext(ctx, statement.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("search exact review identifiers: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	candidates, err := scanCandidates(rows)
-	if err != nil {
-		return nil, err
-	}
-	for i := range candidates {
-		candidates[i].identifier = true
-		candidates[i].Score = 1
-		candidates[i].MatchedIn = []string{MatchIdentifier}
-		candidates[i].Excerpt = candidates[i].Content
-	}
-	return candidates, nil
+// sortableTimeKey formats t the way sortableTime formats a stored time.
+func sortableTimeKey(t time.Time) string {
+	t = t.UTC()
+	return t.Format("2006-01-02T15:04:05") + fmt.Sprintf("%09d", t.Nanosecond())
 }
 
-func (index *Index) searchFTS(
-	ctx context.Context, query string, filters SearchFilters, limit int,
-) ([]rankedCandidate, error) {
-	var statement strings.Builder
-	statement.WriteString(`
-		WITH matches AS MATERIALIZED (
-			SELECT m.doc_key, m.review_id, COALESCE(m.review_uuid, '') AS review_uuid,
-			       m.job_id, COALESCE(m.job_uuid, '') AS job_uuid, m.group_key,
-			       m.repo_id, m.repo_name, COALESCE(m.branch, '') AS branch, m.git_ref,
-			       COALESCE(m.commit_sha, '') AS commit_sha,
-			       COALESCE(m.finished_at, '') AS finished_at,
-			       COALESCE(m.verdict, '') AS verdict, m.closed,
-			       COALESCE(m.panel_role, '') AS panel_role,
-			       m.content, m.content_hash, review_fts.identifiers,
-			       bm25(review_fts) AS lexical_score,
-			       snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) AS excerpt
-			  FROM review_fts
-			  JOIN review_mirror m ON m.doc_key = review_fts.doc_key
-			 WHERE review_fts MATCH ?`)
-	args := []any{query}
-	appendSQLFilters(&statement, &args, "m", filters)
-	statement.WriteString(`
-		), ranked AS (
-			SELECT matches.*,
-			       row_number() OVER (
-				PARTITION BY group_key
-				ORDER BY lexical_score ASC, finished_at DESC, job_id DESC, doc_key ASC
-			       ) AS group_rank
-			  FROM matches
-		), top_groups AS (
-			SELECT group_key
-			  FROM ranked
-			 WHERE group_rank = 1
-			 ORDER BY lexical_score ASC, finished_at DESC, job_id DESC, doc_key ASC
-			 LIMIT ?
-		)
-		SELECT ranked.doc_key, ranked.review_id, ranked.review_uuid,
-		       ranked.job_id, ranked.job_uuid, ranked.group_key,
-		       ranked.repo_id, ranked.repo_name, ranked.branch, ranked.git_ref,
-		       ranked.commit_sha, ranked.finished_at, ranked.verdict, ranked.closed,
-		       ranked.panel_role, ranked.content, ranked.content_hash,
-		       ranked.identifiers,
-		       ranked.lexical_score, ranked.excerpt
-		  FROM ranked JOIN top_groups USING (group_key)
-		 ORDER BY ranked.lexical_score ASC, ranked.finished_at DESC,
-		          ranked.job_id DESC, ranked.doc_key ASC`)
-	args = append(args, limit)
-	rows, err := index.db.QueryContext(ctx, statement.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("search review text: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var candidates []rankedCandidate
-	for rows.Next() {
-		candidate, finishedAt, closed, err := scanCandidateBase(rows,
-			&candidateScoreExcerptScanner{})
-		if err != nil {
-			return nil, fmt.Errorf("scan lexical review candidate: %w", err)
-		}
-		candidate.FinishedAt = parseCandidateTime(finishedAt)
-		candidate.Closed = closed != 0
-		candidate.Score = -candidate.Score
-		candidate.MatchedIn = []string{MatchLexical}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan lexical review candidates: %w", err)
-	}
-	return candidates, nil
-}
-
-type rowScanner interface {
-	Scan(...any) error
-}
-
-type candidateRows interface {
-	rowScanner
-	Next() bool
-	Err() error
-}
-
-type candidateScoreExcerptScanner struct{}
-
-func scanCandidateBase(scanner rowScanner, extra *candidateScoreExcerptScanner) (rankedCandidate, string, int, error) {
-	var candidate rankedCandidate
-	var finishedAt string
-	var closed int
-	destinations := []any{
-		&candidate.DocKey, &candidate.ReviewID, &candidate.ReviewUUID,
-		&candidate.JobID, &candidate.JobUUID, &candidate.GroupKey,
-		&candidate.RepoID, &candidate.RepoName, &candidate.Branch, &candidate.GitRef,
-		&candidate.CommitSHA, &finishedAt, &candidate.Verdict, &closed,
-		&candidate.PanelRole, &candidate.Content, &candidate.ContentHash,
-		&candidate.identifiers,
-	}
-	if extra != nil {
-		destinations = append(destinations, &candidate.Score, &candidate.Excerpt)
-	}
-	err := scanner.Scan(destinations...)
-	return candidate, finishedAt, closed, err
-}
-
-func scanCandidates(rows candidateRows) ([]rankedCandidate, error) {
-	var candidates []rankedCandidate
-	for rows.Next() {
-		candidate, finishedAt, closed, err := scanCandidateBase(rows, nil)
-		if err != nil {
-			return nil, fmt.Errorf("scan review candidate: %w", err)
-		}
-		candidate.FinishedAt = parseCandidateTime(finishedAt)
-		candidate.Closed = closed != 0
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan review candidates: %w", err)
-	}
-	return candidates, nil
-}
-
-func appendSQLFilters(statement *strings.Builder, args *[]any, alias string, filters SearchFilters) {
+// filterPredicate restricts a leg's source rows, aliased d, to filters.
+func filterPredicate(filters SearchFilters) sqlquery.Predicate {
+	var clauses []string
+	var args []any
 	if filters.RepoID != 0 {
-		statement.WriteString(" AND " + alias + ".repo_id = ?")
-		*args = append(*args, filters.RepoID)
+		clauses = append(clauses, "d.repo_id = ?")
+		args = append(args, filters.RepoID)
 	}
 	if filters.Branch != "" {
-		statement.WriteString(" AND " + alias + ".branch = ?")
-		*args = append(*args, filters.Branch)
+		clauses = append(clauses, "d.branch = ?")
+		args = append(args, filters.Branch)
 	}
 	if filters.Since != nil {
-		statement.WriteString(" AND " + alias + ".finished_at >= ?")
-		*args = append(*args, filters.Since.UTC().Format(time.RFC3339Nano))
+		clauses = append(clauses, sortableTime("d.finished_at")+" >= ?")
+		args = append(args, sortableTimeKey(*filters.Since))
 	}
 	if filters.Verdict != "" {
-		statement.WriteString(" AND " + alias + ".verdict = ?")
-		*args = append(*args, filters.Verdict)
+		clauses = append(clauses, "d.verdict = ?")
+		args = append(args, filters.Verdict)
 	}
 	switch filters.State {
 	case StateOpen:
-		statement.WriteString(" AND " + alias + ".closed = 0")
+		clauses = append(clauses, "d.closed = 0")
 	case StateClosed:
-		statement.WriteString(" AND " + alias + ".closed = 1")
+		clauses = append(clauses, "d.closed = 1")
 	}
+	if len(clauses) == 0 {
+		return sqlquery.Predicate{SQL: "1"}
+	}
+	return sqlquery.Predicate{SQL: strings.Join(clauses, " AND "), Args: args}
 }
 
-func isSHAPrefix(query string) bool {
-	if len(query) < 7 || len(query) > 40 {
-		return false
+var reviewFTS = func() sqlitefts.Helper {
+	helper, err := sqlitefts.New(
+		sqlitefts.WithIndexTable("review_fts"), sqlitefts.WithIndexKey("doc_key"),
+		sqlitefts.WithSourceTable("review_mirror"), sqlitefts.WithSourceKey("doc_key"),
+	)
+	if err != nil {
+		panic(err)
 	}
-	for _, value := range query {
-		if !unicode.Is(unicode.ASCII_Hex_Digit, value) {
-			return false
+	return helper
+}()
+
+// lexicalLeg returns every member of the best groupLimit panel groups that
+// match query. Exact identifiers and full or short commit SHAs rank before
+// FTS matches, which rank by BM25. Filters run before the group limit.
+func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit int) (sqlquery.Query, error) {
+	predicate := filterPredicate(filters)
+	var args []any
+
+	// Every FTS match: the outer query limits panel groups, not rows.
+	fts := `SELECT NULL AS doc_key, NULL AS score WHERE 0`
+	match := literalFTSQuery(query)
+	if match != "" {
+		built, err := reviewFTS.Build(sqlitefts.Request{
+			Match: match, SourcePredicate: predicate, CandidateLimit: math.MaxInt,
+		})
+		if err != nil {
+			return sqlquery.Query{}, fmt.Errorf("build review text query: %w", err)
 		}
+		fts = built.SQL
+		args = append(args, built.Args...)
 	}
-	return true
+
+	identifier := `instr(char(10) || lower(d.identifiers) || char(10), char(10) || lower(?) || char(10)) > 0`
+	args = append(args, query)
+	if isSHAPrefix(query) {
+		identifier += ` OR lower(COALESCE(d.commit_sha, '')) LIKE lower(?) || '%'`
+		args = append(args, query)
+	}
+	args = append(args, predicate.Args...)
+
+	order := `identifier DESC, score DESC, finished_key DESC, job_id DESC, doc_key ASC`
+	excerpts := `SELECT NULL AS doc_key, NULL AS excerpt WHERE 0`
+	if match != "" {
+		excerpts = `SELECT review_fts.doc_key,
+		       snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) AS excerpt
+		  FROM review_fts
+		 WHERE review_fts MATCH ?
+		   AND review_fts.doc_key IN (SELECT doc_key FROM members WHERE lexical AND NOT identifier)`
+	}
+	statement := `
+		WITH fts AS MATERIALIZED (` + fts + `),
+		ident AS MATERIALIZED (
+			SELECT d.doc_key FROM review_mirror AS d
+			 WHERE (` + identifier + `) AND (` + predicate.SQL + `)
+		),
+		keys AS (SELECT doc_key FROM fts UNION SELECT doc_key FROM ident),
+		matches AS MATERIALIZED (
+			SELECT d.doc_key, d.group_key, d.job_id,
+			       ` + sortableTime("d.finished_at") + ` AS finished_key,
+			       ident.doc_key IS NOT NULL AS identifier,
+			       fts.doc_key IS NOT NULL AS lexical,
+			       CASE WHEN ident.doc_key IS NOT NULL THEN 1.0 ELSE fts.score END AS score,
+			       CASE WHEN ident.doc_key IS NOT NULL THEN d.content END AS identifier_excerpt
+			  FROM keys
+			  JOIN review_mirror AS d ON d.doc_key = keys.doc_key
+			  LEFT JOIN fts ON fts.doc_key = keys.doc_key
+			  LEFT JOIN ident ON ident.doc_key = keys.doc_key
+		),
+		ranked AS MATERIALIZED (
+			SELECT matches.*, row_number() OVER (PARTITION BY group_key ORDER BY ` + order + `) AS member_rank
+			  FROM matches
+		),
+		top_groups AS MATERIALIZED (
+			SELECT group_key, row_number() OVER (ORDER BY ` + order + `) AS group_rank
+			  FROM ranked WHERE member_rank = 1
+			 ORDER BY group_rank LIMIT ?
+		),
+		members AS MATERIALIZED (
+			SELECT ranked.*, top_groups.group_rank
+			  FROM ranked JOIN top_groups ON top_groups.group_key = ranked.group_key
+		),
+		excerpts AS MATERIALIZED (` + excerpts + `)
+		SELECT members.group_key, members.doc_key, members.score, members.identifier, members.lexical,
+		       COALESCE(members.identifier_excerpt, excerpts.excerpt, ''), members.finished_key, members.job_id
+		  FROM members LEFT JOIN excerpts ON excerpts.doc_key = members.doc_key
+		 ORDER BY members.group_rank, members.member_rank`
+	args = append(args, groupLimit)
+	if match != "" {
+		args = append(args, match)
+	}
+	return sqlquery.Query{SQL: statement, Args: args}, nil
 }
 
-func compareLexicalCandidates(left, right rankedCandidate) int {
-	if left.identifier != right.identifier {
-		if left.identifier {
-			return -1
-		}
-		return 1
-	}
-	if left.Score != right.Score {
-		if left.Score > right.Score {
-			return -1
-		}
-		return 1
-	}
-	return compareCandidateTie(left, right)
+func scanLexicalRow(rows *sql.Rows) (string, legMember, error) {
+	var group string
+	var member legMember
+	err := rows.Scan(&group, &member.DocKey, &member.Score, &member.Identifier, &member.Lexical,
+		&member.Excerpt, &member.FinishedKey, &member.JobID)
+	return group, member, err
 }
 
-func compareCandidateTie(left, right rankedCandidate) int {
-	if comparison := right.FinishedAt.Compare(left.FinishedAt); comparison != 0 {
-		return comparison
-	}
-	if left.JobID != right.JobID {
-		if left.JobID > right.JobID {
-			return -1
-		}
-		return 1
-	}
-	return strings.Compare(left.DocKey, right.DocKey)
-}
-
-func parseCandidateTime(value string) time.Time {
-	if value == "" {
-		return time.Time{}
-	}
-	parsed, _ := time.Parse(time.RFC3339Nano, value)
-	return parsed
-}
-
-var semanticSourceColumns = []sqlquery.Column{
-	{Name: "review_id", As: "review_id"},
-	{Name: "review_uuid", As: "review_uuid"},
-	{Name: "job_id", As: "job_id"},
-	{Name: "job_uuid", As: "job_uuid"},
-	{Name: "group_key", As: "group_key"},
-	{Name: "repo_id", As: "repo_id"},
-	{Name: "repo_name", As: "repo_name"},
-	{Name: "branch", As: "branch"},
-	{Name: "git_ref", As: "git_ref"},
-	{Name: "commit_sha", As: "commit_sha"},
-	{Name: "finished_at", As: "finished_at"},
-	{Name: "verdict", As: "verdict"},
-	{Name: "closed", As: "closed"},
-	{Name: "panel_role", As: "panel_role"},
-	{Name: "content", As: "content"},
-}
-
-// semanticChunk is one current chunk row from kit's candidate query. Revision
-// comes from the same statement as the distance, so a later mirror update
-// cannot inherit this score.
-type semanticChunk struct {
-	hit       vector.Hit[string]
-	candidate rankedCandidate
-}
-
-// SemanticCandidates runs a bounded KNN search over key's current chunks and
-// returns per-document candidates ranked with their panel groups. Filters
-// apply after the candidate window, like freshness.
-func (index *Index) SemanticCandidates(
-	ctx context.Context, key string, query vector.Vector, limit int, filters SearchFilters,
-) ([]rankedCandidate, error) {
-	if limit <= 0 {
+// SearchLexical runs the lexical leg alone and returns its panel groups.
+func (index *Index) SearchLexical(
+	ctx context.Context, query string, filters SearchFilters, groupLimit int,
+) ([]legGroup, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || groupLimit <= 0 {
 		return nil, nil
 	}
-	statement, err := index.vectors.BuildCandidateQuery(ctx, index.db, key, query, sqlitevec.CandidateQuery{
-		CandidateLimit:  limit,
-		ExtraSourceCols: semanticSourceColumns,
-	})
+	statement, err := index.lexicalLeg(query, filters, groupLimit)
 	if err != nil {
-		return nil, fmt.Errorf("build semantic candidate query: %w", err)
+		return nil, err
 	}
-	chunks, err := statement.All(ctx, index.db, scanSemanticChunk)
+	groups, err := runLeg(ctx, index.db, statement, scanLexicalRow)
 	if err != nil {
-		return nil, fmt.Errorf("query semantic candidates: %w", err)
+		return nil, fmt.Errorf("search review text: %w", err)
 	}
-	hits := make([]vector.Hit[string], len(chunks))
-	byDocument := make(map[string]rankedCandidate, len(chunks))
-	for i, chunk := range chunks {
-		hits[i] = chunk.hit
-		if _, found := byDocument[chunk.hit.Doc]; !found {
-			byDocument[chunk.hit.Doc] = chunk.candidate
-		}
-	}
-	rolled, err := vector.RollupByDocument(hits)
-	if err != nil {
-		return nil, fmt.Errorf("roll up semantic hits: %w", err)
-	}
-	candidates := make([]rankedCandidate, 0, len(rolled))
-	for _, hit := range rolled {
-		if float64(hit.Score) < semanticCosineFloor {
-			continue
-		}
-		candidate := byDocument[hit.Doc]
-		if !candidateMatchesFilters(candidate, filters) {
-			continue
-		}
-		candidate.Score = float64(hit.Score)
-		candidate.ChunkIndex = hit.ChunkIndex
-		candidate.MatchedIn = []string{MatchSemantic}
-		candidates = append(candidates, candidate)
-	}
-	return rankLegCandidatesPreservingGroups(candidates, func(left, right rankedCandidate) int {
-		if left.Score != right.Score {
-			if left.Score > right.Score {
-				return -1
-			}
-			return 1
-		}
-		return compareCandidateTie(left, right)
-	}), nil
+	return groups, nil
 }
 
-func scanSemanticChunk(rows *sql.Rows) (semanticChunk, error) {
-	var chunk semanticChunk
-	var revision sql.NullString
+// semanticLeg ranks reviews by their closest current chunk in generation key.
+// The candidate limit bounds raw neighbors; filters and the cosine floor run
+// after that window, as sqlite-vec requires.
+func (index *Index) semanticLeg(
+	ctx context.Context, key string, query vector.Vector, candidateLimit int, filters SearchFilters,
+) (sqlquery.Query, error) {
+	candidates, err := index.vectors.BuildCandidateQuery(ctx, index.db, key, query, sqlitevec.CandidateQuery{
+		CandidateLimit:  candidateLimit,
+		SourcePredicate: filterPredicate(filters),
+		ExtraSourceCols: []sqlquery.Column{
+			{Name: "group_key", As: "group_key"},
+			{Name: "finished_at", As: "finished_at"},
+			{Name: "job_id", As: "job_id"},
+		},
+	})
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("build semantic candidate query: %w", err)
+	}
+	order := `distance ASC, finished_key DESC, job_id DESC, doc_key ASC`
+	statement := `
+		WITH chunks AS MATERIALIZED (` + candidates.SQL + `),
+		best AS MATERIALIZED (
+			SELECT doc_key, group_key, job_id, chunk_index, distance,
+			       ` + sortableTime("finished_at") + ` AS finished_key,
+			       row_number() OVER (PARTITION BY doc_key ORDER BY distance, chunk_index) AS chunk_rank
+			  FROM chunks
+		),
+		docs AS MATERIALIZED (
+			SELECT * FROM best WHERE chunk_rank = 1 AND 1 - distance >= ?
+		),
+		ranked AS MATERIALIZED (
+			SELECT docs.*, row_number() OVER (PARTITION BY group_key ORDER BY ` + order + `) AS member_rank
+			  FROM docs
+		),
+		groups AS MATERIALIZED (
+			SELECT group_key, row_number() OVER (ORDER BY ` + order + `) AS group_rank
+			  FROM ranked WHERE member_rank = 1
+		)
+		SELECT ranked.group_key, ranked.doc_key, ranked.distance, ranked.chunk_index,
+		       ranked.finished_key, ranked.job_id
+		  FROM ranked JOIN groups ON groups.group_key = ranked.group_key
+		 ORDER BY groups.group_rank, ranked.member_rank`
+	return sqlquery.Query{
+		SQL:       statement,
+		Args:      append(candidates.Args, semanticCosineFloor),
+		RawWindow: candidates.RawWindow,
+	}, nil
+}
+
+func scanSemanticRow(rows *sql.Rows) (string, legMember, error) {
+	var group string
 	var distance float64
-	var reviewUUID, jobUUID, branch, commitSHA, finishedAt, verdict, panelRole sql.NullString
-	var closed int
-	candidate := &chunk.candidate
-	if err := rows.Scan(
-		&candidate.DocKey, &candidate.ChunkIndex, &revision, &distance,
-		&candidate.ReviewID, &reviewUUID, &candidate.JobID, &jobUUID, &candidate.GroupKey,
-		&candidate.RepoID, &candidate.RepoName, &branch, &candidate.GitRef, &commitSHA,
-		&finishedAt, &verdict, &closed, &panelRole, &candidate.Content,
-	); err != nil {
-		return semanticChunk{}, err
+	member := legMember{Semantic: true}
+	if err := rows.Scan(&group, &member.DocKey, &distance, &member.ChunkIndex,
+		&member.FinishedKey, &member.JobID); err != nil {
+		return "", legMember{}, err
 	}
 	score, err := sqlitevec.ScoreFromDistance(distance)
 	if err != nil {
-		return semanticChunk{}, err
+		return "", legMember{}, err
 	}
-	candidate.ReviewUUID = reviewUUID.String
-	candidate.JobUUID = jobUUID.String
-	candidate.Branch = branch.String
-	candidate.CommitSHA = commitSHA.String
-	candidate.FinishedAt = parseCandidateTime(finishedAt.String)
-	candidate.Verdict = verdict.String
-	candidate.Closed = closed != 0
-	candidate.PanelRole = panelRole.String
-	candidate.ContentHash = revision.String
-	chunk.hit = vector.Hit[string]{
-		Doc: candidate.DocKey, ChunkIndex: candidate.ChunkIndex, Revision: revision.String, Score: score,
+	member.Score = float64(score)
+	return group, member, nil
+}
+
+// SearchSemantic runs the semantic leg alone and returns its panel groups.
+func (index *Index) SearchSemantic(
+	ctx context.Context, key string, query vector.Vector, candidateLimit int, filters SearchFilters,
+) ([]legGroup, error) {
+	if candidateLimit <= 0 {
+		return nil, nil
 	}
-	return chunk, nil
+	statement, err := index.semanticLeg(ctx, key, query, candidateLimit, filters)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := runLeg(ctx, index.db, statement, scanSemanticRow)
+	if err != nil {
+		return nil, fmt.Errorf("query semantic candidates: %w", err)
+	}
+	return groups, nil
+}
+
+// runLeg executes one leg and groups consecutive rows by panel group.
+func runLeg(
+	ctx context.Context, db sqlquery.Queryer, statement sqlquery.Query,
+	scan func(*sql.Rows) (string, legMember, error),
+) ([]legGroup, error) {
+	type row struct {
+		group  string
+		member legMember
+	}
+	rows, err := statement.All(ctx, db, func(rows *sql.Rows) (row, error) {
+		group, member, err := scan(rows)
+		return row{group: group, member: member}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	var groups []legGroup
+	for _, item := range rows {
+		if len(groups) == 0 || groups[len(groups)-1].Key != item.group {
+			groups = append(groups, legGroup{Key: item.group})
+		}
+		last := len(groups) - 1
+		groups[last].Members = append(groups[last].Members, item.member)
+	}
+	return groups, nil
 }
 
 // SemanticProbe reports the similarity of the first raw neighbor beyond limit.
@@ -528,24 +381,44 @@ func (index *Index) SemanticProbe(
 	return window.ProbeScore, window.HasProbe, nil
 }
 
-func candidateMatchesFilters(candidate rankedCandidate, filters SearchFilters) bool {
-	if filters.RepoID != 0 && candidate.RepoID != filters.RepoID {
+// mirrorContents returns the mirrored text of docKeys, for semantic excerpts.
+func (index *Index) mirrorContents(ctx context.Context, docKeys []string) (map[string]string, error) {
+	contents := make(map[string]string, len(docKeys))
+	if len(docKeys) == 0 {
+		return contents, nil
+	}
+	args := make([]any, len(docKeys))
+	for i, key := range docKeys {
+		args[i] = key
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(docKeys)), ",")
+	rows, err := index.db.QueryContext(ctx,
+		`SELECT doc_key, content FROM review_mirror WHERE doc_key IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read search mirror content: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key, content string
+		if err := rows.Scan(&key, &content); err != nil {
+			return nil, fmt.Errorf("scan search mirror content: %w", err)
+		}
+		contents[key] = content
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read search mirror content: %w", err)
+	}
+	return contents, nil
+}
+
+func isSHAPrefix(query string) bool {
+	if len(query) < 7 || len(query) > 40 {
 		return false
 	}
-	if filters.Branch != "" && candidate.Branch != filters.Branch {
-		return false
-	}
-	if filters.Since != nil && candidate.FinishedAt.Before(*filters.Since) {
-		return false
-	}
-	if filters.Verdict != "" && candidate.Verdict != filters.Verdict {
-		return false
-	}
-	if filters.State == StateOpen && candidate.Closed {
-		return false
-	}
-	if filters.State == StateClosed && !candidate.Closed {
-		return false
+	for _, value := range query {
+		if !unicode.Is(unicode.ASCII_Hex_Digit, value) {
+			return false
+		}
 	}
 	return true
 }

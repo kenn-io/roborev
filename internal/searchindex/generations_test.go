@@ -98,7 +98,7 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 	require.NoError(t, err)
 	assert.Len(t, generations, 1, "no replacement generation is created")
 
-	candidates, err := index.SemanticCandidates(ctx, served.Key, vector.Vector{1, 0}, 5, SearchFilters{})
+	candidates, err := flatten(index.SearchSemantic(ctx, served.Key, vector.Vector{1, 0}, 5, SearchFilters{}))
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, doc.DocKey, candidates[0].DocKey)
@@ -202,7 +202,7 @@ func TestGenerationCutoverReclaimsRetiredVectorTables(t *testing.T) {
 	require.NoError(t, index.SaveGenerationVectors(ctx, firstKey, pending[0],
 		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
 	require.NoError(t, index.ActivateGeneration(ctx, firstKey))
-	candidates, err := index.SemanticCandidates(ctx, firstKey, vector.Vector{1, 0}, 5, SearchFilters{})
+	candidates, err := flatten(index.SearchSemantic(ctx, firstKey, vector.Vector{1, 0}, 5, SearchFilters{}))
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, doc.DocKey, candidates[0].DocKey)

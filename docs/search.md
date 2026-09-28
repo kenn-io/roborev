@@ -132,9 +132,12 @@ during the build but does not query vectors from an incompatible generation.
 `auto` therefore degrades to lexical search until the replacement activates.
 Explicit semantic and hybrid requests remain unavailable during that window.
 
-Search rehydrates every candidate from the canonical review database before
-returning it. If a review changed after the sidecar was updated, Roborev drops
-the stale hit and wakes reconciliation instead of serving stale content.
+Search ranks and filters reviews in the sidecar, then loads the returned page
+from the canonical review database. Closing, reopening, commenting on,
+remapping, or rerunning a review wakes reconciliation, so the sidecar follows
+those changes within seconds. If a returned review no longer exists or no longer
+matches the filters, Roborev shows another member of its panel instead, or drops
+the hit, and wakes reconciliation.
 
 Use `roborev daemon status` or its `roborev status` alias to watch search
 health. The Search section reports indexed lexical documents, mirror state and

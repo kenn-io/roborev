@@ -11,9 +11,10 @@ import (
 	"time"
 	"unicode"
 
+	"go.kenn.io/kit/search/hybrid"
+	"go.kenn.io/kit/search/rrf"
 	"go.kenn.io/kit/vector"
 
-	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 )
@@ -120,7 +121,7 @@ func (e *ModeError) Error() string { return e.Reason }
 func (e *ModeError) Unwrap() error { return e.Err }
 
 type canonicalSearchStore interface {
-	GetSearchDocument(context.Context, string) (*storage.SearchReviewSource, error)
+	GetSearchReviews(context.Context, []string) (map[string]storage.SearchReviewSource, error)
 	GetRepoByID(int64) (*storage.Repo, error)
 }
 
@@ -129,8 +130,8 @@ type searchRuntime interface {
 	Wake()
 }
 
-// Service coordinates retrieval against the disposable sidecar and canonical
-// hydration against reviews.db.
+// Service ranks reviews from the disposable sidecar and loads the canonical
+// review data for the page it returns from reviews.db.
 type Service struct {
 	store    canonicalSearchStore
 	index    *Index
@@ -146,16 +147,30 @@ func NewService(store canonicalSearchStore, index *Index, embedder Embedder, run
 	return &Service{store: store, index: index, embedder: embedder, runtime: runtime}
 }
 
-type semanticLegResult struct {
-	Candidates     []rankedCandidate
-	Query          vector.Vector
-	GenerationKey  string
-	Deep           bool
-	CeilingReached bool
+const reciprocalRankConstant = 60
+
+// pageGroup is one ranked panel group. Members are in preference order: the
+// page shows the first one that is still a live, matching canonical review.
+type pageGroup struct {
+	Members []legMember
+	// Fused groups carry their reciprocal-rank score and the evidence from
+	// every leg. A single-leg group reports its member's own score.
+	Fused   bool
+	Score   float64
+	Matches []string
+	// LexicalExcerpts holds FTS snippets by document key, preferred over a
+	// semantic chunk excerpt for a document both legs found.
+	LexicalExcerpts map[string]string
 }
 
-// Search runs the effective retrieval mode and hydrates every result from the
-// canonical store before returning it.
+// semanticQuery is the encoded query and the generation that serves it.
+type semanticQuery struct {
+	key    string
+	vector vector.Vector
+}
+
+// Search runs the effective retrieval mode and loads the returned page from
+// the canonical store.
 func (service *Service) Search(ctx context.Context, params SearchParams) (SearchResult, error) {
 	params = normalizeSearchParams(params)
 	health := service.health()
@@ -176,86 +191,41 @@ func (service *Service) Search(ctx context.Context, params SearchParams) (Search
 	target := candidateTarget(params.Limit)
 	switch effective {
 	case ModeLexical:
-		candidates, err := service.index.SearchLexical(ctx, params.Query, filters, target)
+		result.Hits, err = service.searchLexical(ctx, params, filters, target)
 		if err != nil {
 			return SearchResult{}, err
 		}
-		candidates, err = service.hydrate(ctx, candidates, filters)
-		if err != nil {
-			return SearchResult{}, err
-		}
-		result.Hits = service.toHits(candidates, params.Limit)
 	case ModeSemantic:
-		semantic, err := service.searchSemantic(ctx, params.Query, filters, target)
+		hits, ceiling, err := service.searchSemantic(ctx, params, filters, target)
 		if err != nil {
-			return SearchResult{}, service.unavailableError(err)
-		}
-		semantic, unavailable, err := service.hydrateAndRefillSemantic(ctx, semantic, filters, target)
-		if err != nil {
-			if unavailable {
-				return SearchResult{}, service.unavailableError(err)
-			}
 			return SearchResult{}, err
 		}
-		if semanticPageBounded(len(semantic.Candidates), params.Limit, semantic.CeilingReached) {
+		if semanticPageBounded(len(hits), params.Limit, ceiling) {
 			return SearchResult{}, &ModeError{Status: 503, Reason: ReasonSemanticCeiling}
 		}
-		result.Hits = service.toHits(semantic.Candidates, params.Limit)
-		result.Partial = result.Partial || semantic.CeilingReached
+		result.Hits = hits
+		result.Partial = result.Partial || ceiling
 	case ModeHybrid:
-		lexical, semantic, lexicalErr, semanticErr := runHybridLegs(ctx,
-			func(ctx context.Context) ([]rankedCandidate, error) {
-				return service.index.SearchLexical(ctx, params.Query, filters, target)
-			},
-			func(ctx context.Context) (semanticLegResult, error) {
-				return service.searchSemantic(ctx, params.Query, filters, target)
-			})
-		if lexicalErr != nil {
-			return SearchResult{}, lexicalErr
-		}
-		if semanticErr != nil {
-			if params.Mode != ModeAuto {
-				return SearchResult{}, service.unavailableError(semanticErr)
+		hits, ceiling, err := service.searchHybrid(ctx, params, filters, target)
+		if err != nil {
+			if _, unavailable := errors.AsType[*ModeError](err); !unavailable || params.Mode != ModeAuto {
+				return SearchResult{}, err
 			}
 			result.Mode = ModeLexical
 			result.Degraded = true
-			result.DegradedReason = service.semanticReason(semanticErr)
-			lexical, err = service.hydrate(ctx, lexical, filters)
+			result.DegradedReason = service.semanticReason(err)
+			result.Hits, err = service.searchLexical(ctx, params, filters, target)
 			if err != nil {
 				return SearchResult{}, err
 			}
-			result.Hits = service.toHits(lexical, params.Limit)
 			break
 		}
-		lexical, err = service.hydrate(ctx, lexical, filters)
-		if err != nil {
-			return SearchResult{}, err
-		}
-		semantic, unavailable, err := service.hydrateAndRefillSemantic(ctx, semantic, filters, target)
-		if err != nil {
-			if unavailable {
-				if params.Mode != ModeAuto {
-					return SearchResult{}, service.unavailableError(err)
-				}
-				result.Mode = ModeLexical
-				result.Degraded = true
-				result.DegradedReason = service.semanticReason(err)
-				result.Hits = service.toHits(lexical, params.Limit)
-				break
-			}
-			return SearchResult{}, err
-		}
-		bounded := semanticPageBounded(len(semantic.Candidates), params.Limit, semantic.CeilingReached)
+		bounded := semanticPageBounded(len(hits), params.Limit, ceiling)
 		if bounded && params.Mode != ModeAuto {
 			return SearchResult{}, &ModeError{Status: 503, Reason: ReasonSemanticCeiling}
 		}
-		merged, err := mergeGroupRRF(lexical, semantic.Candidates, params.Limit)
-		if err != nil {
-			return SearchResult{}, err
-		}
-		preferLexicalExcerpts(merged, lexical)
-		result.Hits = service.toHits(merged, params.Limit)
-		result.Partial = result.Partial || semantic.CeilingReached
+		result.Hits = hits
+		result.Partial = result.Partial || ceiling
 		if bounded {
 			result.Bounded = true
 			result.BoundedReason = ReasonSemanticCeiling
@@ -337,197 +307,346 @@ func (service *Service) resolveMode(ctx context.Context, requested SearchMode) (
 	return ModeHybrid, false, "", nil
 }
 
-func (service *Service) searchSemantic(
-	ctx context.Context, query string, filters SearchFilters, target int,
-) (semanticLegResult, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, queryEmbeddingTimeout)
-	encoded, err := vector.EncodeBatched(queryCtx, encodeQueries(service.embedder), []vector.Chunk{{Index: 0, Text: query}})
-	cancel()
+func (service *Service) searchLexical(
+	ctx context.Context, params SearchParams, filters SearchFilters, target int,
+) ([]SearchHit, error) {
+	groups, err := service.index.SearchLexical(ctx, params.Query, filters, target)
 	if err != nil {
-		return semanticLegResult{}, err
+		return nil, err
 	}
-	if len(encoded) != 1 {
-		return semanticLegResult{}, fmt.Errorf("query embedding returned %d vectors", len(encoded))
-	}
-	queryVector := encoded[0]
-	serving, ok, err := service.index.ServingGeneration(ctx, service.embedder.Space())
-	if err != nil {
-		return semanticLegResult{}, err
-	}
-	if !ok {
-		return semanticLegResult{}, &ModeError{Status: 503, Reason: ReasonSemanticUnavailable}
-	}
-	key := serving.Key
-	candidates, err := service.index.SemanticCandidates(ctx, key, queryVector, target, filters)
-	if err != nil {
-		return semanticLegResult{}, err
-	}
-	if candidateGroupCount(candidates) >= target {
-		return semanticLegResult{
-			Candidates: candidates, Query: queryVector, GenerationKey: key,
-		}, nil
-	}
-	return service.searchSemanticDeep(ctx, key, queryVector, filters)
+	return service.page(ctx, singleLegPage(groups), filters, params.Limit)
 }
 
-func candidateGroupCount(candidates []rankedCandidate) int {
-	groups := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		groups[candidate.GroupKey] = struct{}{}
+// prepareSemantic encodes the query and resolves the serving generation.
+// Every failure is a semantic-unavailable mode error.
+func (service *Service) prepareSemantic(ctx context.Context, query string) (semanticQuery, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, queryEmbeddingTimeout)
+	encoded, err := vector.EncodeOne(queryCtx, encodeQueries(service.embedder), query)
+	cancel()
+	if err != nil {
+		return semanticQuery{}, service.unavailableError(err)
 	}
-	return len(groups)
+	serving, ok, err := service.index.ServingGeneration(ctx, service.embedder.Space())
+	if err != nil {
+		return semanticQuery{}, service.unavailableError(err)
+	}
+	if !ok {
+		return semanticQuery{}, &ModeError{Status: 503, Reason: service.semanticReason(nil)}
+	}
+	return semanticQuery{key: serving.Key, vector: encoded}, nil
+}
+
+// searchSemantic widens the candidate window once, to the deep ceiling, when
+// the first window cannot fill the page. The bool reports that eligible
+// neighbors may remain beyond that ceiling.
+func (service *Service) searchSemantic(
+	ctx context.Context, params SearchParams, filters SearchFilters, target int,
+) ([]SearchHit, bool, error) {
+	query, err := service.prepareSemantic(ctx, params.Query)
+	if err != nil {
+		return nil, false, err
+	}
+	groups, err := service.index.SearchSemantic(ctx, query.key, query.vector, target, filters)
+	if err != nil {
+		return nil, false, service.unavailableError(err)
+	}
+	deep := len(groups) < target
+	ceiling := false
+	if deep {
+		if groups, ceiling, err = service.searchSemanticDeep(ctx, query, filters); err != nil {
+			return nil, false, err
+		}
+	}
+	hits, err := service.page(ctx, singleLegPage(groups), filters, params.Limit)
+	if err != nil || deep || len(hits) >= params.Limit {
+		return hits, ceiling, err
+	}
+	if groups, ceiling, err = service.searchSemanticDeep(ctx, query, filters); err != nil {
+		return nil, false, err
+	}
+	hits, err = service.page(ctx, singleLegPage(groups), filters, params.Limit)
+	return hits, ceiling, err
 }
 
 func (service *Service) searchSemanticDeep(
-	ctx context.Context, key string, query vector.Vector, filters SearchFilters,
-) (semanticLegResult, error) {
-	probeScore, hasProbe, err := service.index.SemanticProbe(ctx, key, query, semanticDeepLimit)
+	ctx context.Context, query semanticQuery, filters SearchFilters,
+) ([]legGroup, bool, error) {
+	probeScore, hasProbe, err := service.index.SemanticProbe(ctx, query.key, query.vector, semanticDeepLimit)
 	if err != nil {
-		return semanticLegResult{}, err
+		return nil, false, service.unavailableError(err)
 	}
-	candidates, err := service.index.SemanticCandidates(ctx, key, query, semanticDeepLimit, filters)
+	groups, err := service.index.SearchSemantic(ctx, query.key, query.vector, semanticDeepLimit, filters)
 	if err != nil {
-		return semanticLegResult{}, err
+		return nil, false, service.unavailableError(err)
 	}
-	return semanticLegResult{
-		Candidates: candidates, Query: query, GenerationKey: key,
-		Deep: true, CeilingReached: semanticCeilingReached(probeScore, hasProbe),
-	}, nil
+	return groups, semanticCeilingReached(probeScore, hasProbe), nil
 }
 
-// hydrateAndRefillSemantic makes the single deep-retry decision only after
-// canonical liveness, filters, and content hashes have suppressed stale rows.
-// The bool result identifies vector retrieval failures for mode degradation.
-func (service *Service) hydrateAndRefillSemantic(
-	ctx context.Context, semantic semanticLegResult, filters SearchFilters, target int,
-) (semanticLegResult, bool, error) {
-	hydrated, err := service.hydrate(ctx, semantic.Candidates, filters)
+// searchHybrid fuses the lexical and semantic legs with kit's grouped
+// reciprocal rank fusion, widening the semantic window like searchSemantic.
+func (service *Service) searchHybrid(
+	ctx context.Context, params SearchParams, filters SearchFilters, target int,
+) ([]SearchHit, bool, error) {
+	query, err := service.prepareSemantic(ctx, params.Query)
 	if err != nil {
-		return semanticLegResult{}, false, err
+		return nil, false, err
 	}
-	semantic.Candidates = hydrated
-	if semantic.Deep || len(hydrated) >= target {
-		return semantic, false, nil
-	}
-	semantic, err = service.searchSemanticDeep(
-		ctx, semantic.GenerationKey, semantic.Query, filters,
-	)
+	groups, semanticGroups, err := service.fuse(ctx, params.Query, query, filters, target, target)
 	if err != nil {
-		return semanticLegResult{}, true, err
+		return nil, false, err
 	}
-	hydrated, err = service.hydrate(ctx, semantic.Candidates, filters)
-	if err != nil {
-		return semanticLegResult{}, false, err
+	deep := semanticGroups < target
+	ceiling := false
+	if deep {
+		if groups, ceiling, err = service.fuseDeep(ctx, params.Query, query, filters, target); err != nil {
+			return nil, false, err
+		}
 	}
-	semantic.Candidates = hydrated
-	return semantic, false, nil
+	hits, err := service.page(ctx, groups, filters, params.Limit)
+	if err != nil || deep || len(hits) >= params.Limit {
+		return hits, ceiling, err
+	}
+	if groups, ceiling, err = service.fuseDeep(ctx, params.Query, query, filters, target); err != nil {
+		return nil, false, err
+	}
+	hits, err = service.page(ctx, groups, filters, params.Limit)
+	return hits, ceiling, err
 }
 
-func runHybridLegs(
-	ctx context.Context,
-	lexicalFn func(context.Context) ([]rankedCandidate, error),
-	semanticFn func(context.Context) (semanticLegResult, error),
-) ([]rankedCandidate, semanticLegResult, error, error) {
-	type lexicalOutput struct {
-		candidates []rankedCandidate
-		err        error
+func (service *Service) fuseDeep(
+	ctx context.Context, text string, query semanticQuery, filters SearchFilters, target int,
+) ([]pageGroup, bool, error) {
+	probeScore, hasProbe, err := service.index.SemanticProbe(ctx, query.key, query.vector, semanticDeepLimit)
+	if err != nil {
+		return nil, false, service.unavailableError(err)
 	}
-	type semanticOutput struct {
-		result semanticLegResult
-		err    error
-	}
-	lexicalCh := make(chan lexicalOutput, 1)
-	semanticCh := make(chan semanticOutput, 1)
-	go func() {
-		candidates, err := lexicalFn(ctx)
-		lexicalCh <- lexicalOutput{candidates: candidates, err: err}
-	}()
-	go func() {
-		result, err := semanticFn(ctx)
-		semanticCh <- semanticOutput{result: result, err: err}
-	}()
-	lexical := <-lexicalCh
-	semantic := <-semanticCh
-	return lexical.candidates, semantic.result, lexical.err, semantic.err
+	groups, _, err := service.fuse(ctx, text, query, filters, target, semanticDeepLimit)
+	return groups, semanticCeilingReached(probeScore, hasProbe), err
 }
 
-func (service *Service) hydrate(
-	ctx context.Context, candidates []rankedCandidate, filters SearchFilters,
-) ([]rankedCandidate, error) {
-	hydrated := make([]rankedCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		source, err := service.store.GetSearchDocument(ctx, candidate.DocKey)
+// fuse runs both legs through hybrid.RunGroups and returns the fused groups
+// in rank order, plus how many groups the semantic leg found.
+func (service *Service) fuse(
+	ctx context.Context, text string, query semanticQuery, filters SearchFilters,
+	lexicalGroups, semanticCandidates int,
+) ([]pageGroup, int, error) {
+	lexicalLeg, err := service.index.lexicalLeg(text, filters, lexicalGroups)
+	if err != nil {
+		return nil, 0, err
+	}
+	semanticLeg, err := service.index.semanticLeg(ctx, query.key, query.vector, semanticCandidates, filters)
+	if err != nil {
+		return nil, 0, service.unavailableError(err)
+	}
+	fused, err := hybrid.RunGroups(ctx, service.index.db, reciprocalRankConstant, []hybrid.GroupLeg[string, legMember]{
+		{Name: MatchLexical, Weight: 1, Query: lexicalLeg, Scan: scanLexicalRow},
+		{Name: MatchSemantic, Weight: 1, Query: semanticLeg, Scan: scanSemanticRow},
+	})
+	if err != nil {
+		return nil, 0, service.unavailableError(err)
+	}
+	semanticGroups := 0
+	groups := make([]pageGroup, 0, len(fused.Hits))
+	for _, hit := range fused.Hits {
+		group := fusedPageGroup(hit)
+		if slices.ContainsFunc(hit.Contributions, func(c rrf.Contribution) bool { return c.Leg == MatchSemantic }) {
+			semanticGroups++
+		}
+		groups = append(groups, group)
+	}
+	// Equal fused scores keep canonical tie order: newer review, then higher
+	// job, then document key, judged on each group's representative.
+	slices.SortStableFunc(groups, func(left, right pageGroup) int {
+		if left.Score != right.Score {
+			if left.Score > right.Score {
+				return -1
+			}
+			return 1
+		}
+		return compareMemberTie(left.Members[0], right.Members[0])
+	})
+	return groups, semanticGroups, nil
+}
+
+// fusedPageGroup orders a fused group's members: the leg that ranked the
+// group best goes first, lexical on a tie, each leg keeping its own order.
+func fusedPageGroup(hit rrf.GroupHit[string, legMember]) pageGroup {
+	legRank := make(map[string]int, len(hit.Contributions))
+	for _, contribution := range hit.Contributions {
+		legRank[contribution.Leg] = contribution.Rank
+	}
+	legs := []string{MatchLexical, MatchSemantic}
+	if rank, ok := legRank[MatchSemantic]; ok {
+		if lexicalRank, lexicalOK := legRank[MatchLexical]; !lexicalOK || rank < lexicalRank {
+			legs = []string{MatchSemantic, MatchLexical}
+		}
+	}
+	group := pageGroup{Fused: true, Score: hit.Score, LexicalExcerpts: map[string]string{}}
+	var matches []string
+	for _, leg := range legs {
+		first := true
+		for _, alternate := range hit.Alternates {
+			if alternate.Leg != leg {
+				continue
+			}
+			group.Members = append(group.Members, alternate.Member)
+			if first {
+				matches = append(matches, alternate.Member.MatchedIn()...)
+				first = false
+			}
+			if leg == MatchLexical {
+				group.LexicalExcerpts[alternate.Member.DocKey] = alternate.Member.Excerpt
+			}
+		}
+	}
+	group.Matches = stableMatches(matches)
+	return group
+}
+
+func singleLegPage(groups []legGroup) []pageGroup {
+	page := make([]pageGroup, len(groups))
+	for i, group := range groups {
+		page[i] = pageGroup{Members: group.Members}
+	}
+	return page
+}
+
+func compareMemberTie(left, right legMember) int {
+	if comparison := strings.Compare(right.FinishedKey, left.FinishedKey); comparison != 0 {
+		return comparison
+	}
+	if left.JobID != right.JobID {
+		if left.JobID > right.JobID {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(left.DocKey, right.DocKey)
+}
+
+func stableMatches(matches []string) []string {
+	ordered := make([]string, 0, 3)
+	for _, match := range []string{MatchIdentifier, MatchLexical, MatchSemantic} {
+		if slices.Contains(matches, match) {
+			ordered = append(ordered, match)
+		}
+	}
+	return ordered
+}
+
+// page loads up to limit hits from the canonical store in group order. A group
+// shows its first member that is still a live review matching filters; when
+// none is, the sidecar is behind reviews.db and the reconciler is woken.
+func (service *Service) page(
+	ctx context.Context, groups []pageGroup, filters SearchFilters, limit int,
+) ([]SearchHit, error) {
+	hits := make([]SearchHit, 0, min(limit, len(groups)))
+	repoPaths := map[int64]string{}
+	stale := false
+	// Load groups in candidate-target batches: stale groups are rare, so the
+	// first batch usually fills the page with one canonical query.
+	batchSize := candidateTarget(limit)
+	for next := 0; next < len(groups) && len(hits) < limit; {
+		batch := groups[next:min(next+batchSize, len(groups))]
+		next += len(batch)
+		var keys []string
+		for _, group := range batch {
+			for _, member := range group.Members {
+				keys = append(keys, member.DocKey)
+			}
+		}
+		sources, err := service.store.GetSearchReviews(ctx, keys)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				service.wake()
-				continue
+			return nil, fmt.Errorf("load search reviews: %w", err)
+		}
+		type choice struct {
+			group  pageGroup
+			member legMember
+			source storage.SearchReviewSource
+		}
+		var chosen []choice
+		var chunkDocs []string
+		for _, group := range batch {
+			found := false
+			for _, member := range group.Members {
+				source, ok := sources[member.DocKey]
+				if !ok || !sourceMatchesFilters(source, filters) {
+					stale = true
+					continue
+				}
+				chosen = append(chosen, choice{group: group, member: member, source: source})
+				if _, lexical := group.LexicalExcerpts[member.DocKey]; member.Semantic && !lexical {
+					chunkDocs = append(chunkDocs, member.DocKey)
+				}
+				found = true
+				break
 			}
-			return nil, fmt.Errorf("hydrate search review: %w", err)
+			if !found {
+				stale = true
+			}
 		}
-		document := searchdoc.Render(*source)
-		if document.DocKey != candidate.DocKey || document.ContentHash != candidate.ContentHash ||
-			lexicalIdentifiersChanged(candidate, document) ||
-			!sourceMatchesFilters(*source, filters) {
-			service.wake()
-			continue
-		}
-		repo, err := service.store.GetRepoByID(source.RepoID)
+		contents, err := service.index.mirrorContents(ctx, chunkDocs)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				service.wake()
-				continue
-			}
-			return nil, fmt.Errorf("hydrate search repository: %w", err)
+			return nil, err
 		}
-		candidate = hydrateCandidate(candidate, document, repo.RootPath)
-		if hasMatch(candidate.MatchedIn, MatchSemantic) && !hasMatch(candidate.MatchedIn, MatchLexical) {
-			chunks := vector.Split(document.Content, vector.SplitOptions{
-				MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap,
-			})
-			if candidate.ChunkIndex < 0 || candidate.ChunkIndex >= len(chunks) {
-				service.wake()
-				continue
+		for _, item := range chosen {
+			if len(hits) == limit {
+				break
 			}
-			candidate.Excerpt = sanitizePlainExcerpt(chunks[candidate.ChunkIndex].Text)
-		} else {
-			candidate.Excerpt = sanitizeLexicalExcerpt(candidate.Excerpt)
+			repoPath, ok := repoPaths[item.source.RepoID]
+			if !ok {
+				repo, err := service.store.GetRepoByID(item.source.RepoID)
+				if errors.Is(err, sql.ErrNoRows) {
+					stale = true
+					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("load search repository: %w", err)
+				}
+				repoPath = repo.RootPath
+				repoPaths[item.source.RepoID] = repoPath
+			}
+			hits = append(hits, searchHit(item.group, item.member, item.source, repoPath, contents))
 		}
-		hydrated = append(hydrated, candidate)
 	}
-	return groupLegCandidates(hydrated), nil
+	if stale {
+		service.wake()
+	}
+	return hits, nil
 }
 
-func lexicalIdentifiersChanged(candidate rankedCandidate, document searchdoc.Document) bool {
-	lexical := hasMatch(candidate.MatchedIn, MatchIdentifier) || hasMatch(candidate.MatchedIn, MatchLexical)
-	return lexical && candidate.identifiers != document.Identifiers
-}
-
-func hydrateCandidate(candidate rankedCandidate, document searchdoc.Document, repoPath string) rankedCandidate {
-	source := document.Source
-	candidate.DocKey = document.DocKey
-	candidate.GroupKey = document.GroupKey
-	candidate.ReviewID = source.ReviewID
-	candidate.ReviewUUID = source.ReviewUUID
-	candidate.JobID = source.JobID
-	candidate.JobUUID = source.JobUUID
-	candidate.RepoID = source.RepoID
-	candidate.RepoName = source.RepoName
-	candidate.Branch = source.Branch
-	candidate.GitRef = source.GitRef
-	candidate.CommitSHA = source.CommitSHA
-	candidate.FinishedAt = source.FinishedAt
-	candidate.Verdict = source.Verdict
-	candidate.Closed = source.Closed
-	candidate.PanelRole = source.PanelRole
-	candidate.Content = document.Content
-	candidate.ContentHash = document.ContentHash
-	candidate.identifiers = document.Identifiers
-	// RepoPath and the remaining canonical-only fields are carried by the hit.
-	candidate.repoPath = repoPath
-	candidate.commitSubject = source.CommitSubject
-	candidate.reviewType = source.ReviewType
-	candidate.agent = source.Agent
-	return candidate
+func searchHit(
+	group pageGroup, member legMember, source storage.SearchReviewSource, repoPath string,
+	contents map[string]string,
+) SearchHit {
+	hit := SearchHit{
+		JobID: source.JobID, JobUUID: source.JobUUID,
+		ReviewID: source.ReviewID, ReviewUUID: source.ReviewUUID,
+		RepoName: source.RepoName, RepoPath: repoPath,
+		GitRef: source.GitRef, CommitSHA: source.CommitSHA,
+		CommitSubject: source.CommitSubject, Branch: source.Branch,
+		ReviewType: source.ReviewType, PanelRole: source.PanelRole,
+		Agent: source.Agent, Verdict: source.Verdict, Closed: source.Closed,
+		FinishedAt: source.FinishedAt, Score: member.Score, MatchedIn: member.MatchedIn(),
+	}
+	if group.Fused {
+		hit.Score = group.Score
+		hit.MatchedIn = group.Matches
+	}
+	switch excerpt, lexical := group.LexicalExcerpts[member.DocKey]; {
+	case lexical && excerpt != "":
+		hit.Excerpt = sanitizeLexicalExcerpt(excerpt)
+	case member.Semantic:
+		chunks := vector.Split(contents[member.DocKey], vector.SplitOptions{
+			MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap,
+		})
+		if member.ChunkIndex >= 0 && member.ChunkIndex < len(chunks) {
+			hit.Excerpt = sanitizePlainExcerpt(chunks[member.ChunkIndex].Text)
+		}
+	default:
+		hit.Excerpt = sanitizeLexicalExcerpt(member.Excerpt)
+	}
+	return hit
 }
 
 func sourceMatchesFilters(source storage.SearchReviewSource, filters SearchFilters) bool {
@@ -552,51 +671,12 @@ func sourceMatchesFilters(source storage.SearchReviewSource, filters SearchFilte
 	return true
 }
 
-func (service *Service) toHits(candidates []rankedCandidate, limit int) []SearchHit {
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
-	}
-	hits := make([]SearchHit, 0, len(candidates))
-	for _, candidate := range candidates {
-		hits = append(hits, SearchHit{
-			JobID: candidate.JobID, JobUUID: candidate.JobUUID,
-			ReviewID: candidate.ReviewID, ReviewUUID: candidate.ReviewUUID,
-			RepoName: candidate.RepoName, RepoPath: candidate.repoPath,
-			GitRef: candidate.GitRef, CommitSHA: candidate.CommitSHA,
-			CommitSubject: candidate.commitSubject, Branch: candidate.Branch,
-			ReviewType: candidate.reviewType, PanelRole: candidate.PanelRole,
-			Agent: candidate.agent, Verdict: candidate.Verdict, Closed: candidate.Closed,
-			FinishedAt: candidate.FinishedAt, Score: candidate.Score,
-			MatchedIn: candidate.MatchedIn, Excerpt: candidate.Excerpt,
-		})
-	}
-	return hits
-}
-
 func semanticCeilingReached(probeScore float32, hasProbe bool) bool {
 	return hasProbe && float64(probeScore) >= semanticCosineFloor
 }
 
 func semanticPageBounded(resultCount, requestedLimit int, ceilingReached bool) bool {
 	return resultCount < requestedLimit && ceilingReached
-}
-
-func preferLexicalExcerpts(merged, lexical []rankedCandidate) {
-	byDocument := make(map[string]string, len(lexical))
-	for _, candidate := range lexical {
-		byDocument[candidate.DocKey] = candidate.Excerpt
-	}
-	for i := range merged {
-		if hasMatch(merged[i].MatchedIn, MatchLexical) && hasMatch(merged[i].MatchedIn, MatchSemantic) {
-			if excerpt, found := byDocument[merged[i].DocKey]; found {
-				merged[i].Excerpt = excerpt
-			}
-		}
-	}
-}
-
-func hasMatch(matches []string, wanted string) bool {
-	return slices.Contains(matches, wanted)
 }
 
 func sanitizeLexicalExcerpt(value string) string {

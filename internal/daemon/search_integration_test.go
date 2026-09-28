@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -134,6 +135,21 @@ func newIntegrationEmbeddingClient(t *testing.T, endpoint, model, apiKey string)
 	return client
 }
 
+// searchFeedDocument returns the canonical search source for key.
+func searchFeedDocument(t *testing.T, db *storage.DB, key string) (*storage.SearchReviewSource, error) {
+	t.Helper()
+	sources, err := db.ListSearchDocuments(t.Context(), 0, 1000)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sources {
+		if storage.SearchDocumentKey(sources[i].ReviewID, sources[i].ReviewUUID) == key {
+			return &sources[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
 // servesGeneration reports whether the active generation belongs to client.
 func servesGeneration(t *testing.T, index *searchindex.Index, client *searchindex.Embeddings) bool {
 	t.Helper()
@@ -238,7 +254,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 		assert.Equal(t, reviewUUID, decoded.Hits[0].ReviewUUID)
 	}
 
-	before, err := db.GetSearchDocument(ctx, reviewUUID)
+	before, err := searchFeedDocument(t, db, reviewUUID)
 	require.NoError(t, err)
 	require.NotNil(t, before)
 	beforeHash := searchdoc.Render(*before).ContentHash
@@ -272,7 +288,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 		})
 		return searchErr == nil && len(result.Hits) == 1
 	})
-	after, err := db.GetSearchDocument(ctx, reviewUUID)
+	after, err := searchFeedDocument(t, db, reviewUUID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
 	assert.NotEqual(t, beforeHash, searchdoc.Render(*after).ContentHash)
@@ -292,9 +308,9 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 		})
 		return searchErr == nil && len(result.Hits) == 1 && result.Hits[0].ReviewUUID == secondReviewUUID
 	})
-	firstBeforeRemap, err := db.GetSearchDocument(ctx, reviewUUID)
+	firstBeforeRemap, err := searchFeedDocument(t, db, reviewUUID)
 	require.NoError(t, err)
-	secondBeforeRemap, err := db.GetSearchDocument(ctx, secondReviewUUID)
+	secondBeforeRemap, err := searchFeedDocument(t, db, secondReviewUUID)
 	require.NoError(t, err)
 	require.NotNil(t, firstBeforeRemap)
 	require.NotNil(t, secondBeforeRemap)
@@ -317,9 +333,9 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 		return editedErr == nil && originalErr == nil && len(edited.Hits) == 1 && len(original.Hits) == 1 &&
 			edited.Hits[0].CommitSHA == remappedSHA && original.Hits[0].CommitSHA == remappedSHA
 	})
-	firstAfterRemap, err := db.GetSearchDocument(ctx, reviewUUID)
+	firstAfterRemap, err := searchFeedDocument(t, db, reviewUUID)
 	require.NoError(t, err)
-	secondAfterRemap, err := db.GetSearchDocument(ctx, secondReviewUUID)
+	secondAfterRemap, err := searchFeedDocument(t, db, secondReviewUUID)
 	require.NoError(t, err)
 	require.NotNil(t, firstAfterRemap)
 	require.NotNil(t, secondAfterRemap)

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -56,10 +55,7 @@ func Render(source storage.SearchReviewSource) Document {
 }
 
 func documentKey(source storage.SearchReviewSource) string {
-	if source.ReviewUUID != "" {
-		return source.ReviewUUID
-	}
-	return "local:" + strconv.FormatInt(source.ReviewID, 10)
+	return storage.SearchDocumentKey(source.ReviewID, source.ReviewUUID)
 }
 
 func groupKey(source storage.SearchReviewSource) string {

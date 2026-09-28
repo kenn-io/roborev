@@ -602,7 +602,7 @@ func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *t
 	assert.Equal(t, 1, stats.PulledResponses)
 	assert.Equal(t, int64(4), wakes.Load(), "commit, job, review, and response each wake after commit")
 
-	document, err := targetDB.GetSearchDocument(t.Context(), review.UUID.String())
+	document, err := feedDocument(targetDB, review.UUID.String())
 	require.NoError(t, err)
 	require.NotNil(t, document)
 	assert.Equal(t, "PostgreSQL pulled semantic history", document.StructuredOutput["summary"])

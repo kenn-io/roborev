@@ -245,7 +245,7 @@ func TestServiceHybridGroupsPanelMembersBeforeFusionAndFiltersMembers(t *testing
 	assert.InDelta(t, 2.0/61.0, hit.Score, 1e-12)
 }
 
-func TestServiceHydrationRepeatsCanonicalLivenessFiltersAndContentHash(t *testing.T) {
+func TestServicePageDropsReviewsThatNoLongerMatchCanonically(t *testing.T) {
 	ctx := context.Background()
 	cutoff := time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC)
 	base := queryTestDocument(1, "group", "needle", queryDocOptions{
@@ -278,11 +278,6 @@ func TestServiceHydrationRepeatsCanonicalLivenessFiltersAndContentHash(t *testin
 			source.Verdict = "fail"
 			store.docs[base.DocKey] = source
 		},
-		"response changed content": func(store *serviceStore) {
-			source := store.docs[base.DocKey]
-			source.Responses = []storage.Response{{Responder: "reviewer", Response: "new response"}}
-			store.docs[base.DocKey] = source
-		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -304,7 +299,7 @@ func TestServiceHydrationRepeatsCanonicalLivenessFiltersAndContentHash(t *testin
 	}
 }
 
-func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
+func TestServiceKeepsPanelAlternateWhenTopCandidateWasDeleted(t *testing.T) {
 	ctx := context.Background()
 	panel := "00000000-0000-4000-8000-000000009999"
 	older := queryTestDocument(1, panel, "older panel member", queryDocOptions{})
@@ -315,9 +310,7 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
 		_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{older, newer}, nil)
 		require.NoError(t, err)
 		store := newServiceStore(older, newer)
-		stale := store.docs[newer.DocKey]
-		stale.Output = "canonical content changed"
-		store.docs[newer.DocKey] = stale
+		delete(store.docs, newer.DocKey)
 		service := NewService(store, index, nil,
 			&serviceRuntime{health: HealthSnapshot{MirrorComplete: true, VectorState: "unconfigured"}})
 
@@ -337,9 +330,7 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
 			newer.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
 		})
 		store := newServiceStore(older, newer)
-		stale := store.docs[newer.DocKey]
-		stale.Output = "canonical content changed"
-		store.docs[newer.DocKey] = stale
+		delete(store.docs, newer.DocKey)
 		service := NewService(store, index,
 			&serviceEmbedder{space: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
 
@@ -350,32 +341,6 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateIsStale(t *testing.T) {
 		require.Len(t, result.Hits, 1)
 		assert.Equal(t, older.Source.ReviewID, result.Hits[0].ReviewID)
 	})
-}
-
-func TestServiceRejectsStaleLexicalIdentifiersDuringHydration(t *testing.T) {
-	ctx := context.Background()
-	doc := queryTestDocument(1, "group", "unchanged review content", queryDocOptions{
-		branch: "old-branch",
-	})
-	index := openQueryTestIndex(t)
-	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
-	require.NoError(t, err)
-	store := newServiceStore(doc)
-	updated := store.docs[doc.DocKey]
-	updated.Branch = "new-branch"
-	store.docs[doc.DocKey] = updated
-	canonical := searchdoc.Render(updated)
-	require.Equal(t, doc.ContentHash, canonical.ContentHash)
-	require.NotEqual(t, doc.Identifiers, canonical.Identifiers)
-	runtime := &serviceRuntime{health: HealthSnapshot{MirrorComplete: true, VectorState: "unconfigured"}}
-	service := NewService(store, index, nil, runtime)
-
-	result, err := service.Search(ctx, SearchParams{
-		Query: "old-branch", Mode: ModeLexical, Limit: 10,
-	})
-	require.NoError(t, err)
-	assert.Empty(t, result.Hits)
-	assert.Equal(t, 1, runtime.wakes)
 }
 
 func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *testing.T) {
@@ -414,7 +379,7 @@ func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *t
 	assert.True(t, auto.Partial)
 }
 
-func TestServiceSemanticRefillsAfterCanonicalSuppression(t *testing.T) {
+func TestServiceSemanticRefillsAfterCanonicalDeletions(t *testing.T) {
 	ctx := context.Background()
 	index := openQueryTestIndex(t)
 	target := candidateTarget(1)
@@ -438,9 +403,7 @@ func TestServiceSemanticRefillsAfterCanonicalSuppression(t *testing.T) {
 	seedActiveGeneration(t, index, model, vectors)
 	store := newServiceStore(all...)
 	for _, doc := range stale {
-		source := store.docs[doc.DocKey]
-		source.Output = "canonical content changed"
-		store.docs[doc.DocKey] = source
+		delete(store.docs, doc.DocKey)
 	}
 	runtime := activeServiceRuntime(model)
 	service := NewService(store, index,
@@ -452,7 +415,7 @@ func TestServiceSemanticRefillsAfterCanonicalSuppression(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Hits, 1)
 	assert.Equal(t, fresh.Source.ReviewID, result.Hits[0].ReviewID)
-	assert.GreaterOrEqual(t, runtime.wakes, target)
+	assert.Positive(t, runtime.wakes, "deleted reviews still in the sidecar wake the reconciler")
 }
 
 func TestServiceFullPageAtSemanticCeilingIsPartialButNotBounded(t *testing.T) {
@@ -518,44 +481,11 @@ func TestServiceQueryEmbeddingHasIndependentThreeSecondTimeout(t *testing.T) {
 	})
 }
 
-func TestHybridLegRunnerStartsLexicalAndSemanticConcurrently(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		lexicalStarted := make(chan struct{})
-		semanticStarted := make(chan struct{})
-
-		lexical, semantic, lexicalErr, semanticErr := runHybridLegs(ctx,
-			func(ctx context.Context) ([]rankedCandidate, error) {
-				close(lexicalStarted)
-				select {
-				case <-semanticStarted:
-					return []rankedCandidate{{DocKey: "lexical"}}, nil
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			},
-			func(ctx context.Context) (semanticLegResult, error) {
-				close(semanticStarted)
-				select {
-				case <-lexicalStarted:
-					return semanticLegResult{Candidates: []rankedCandidate{{DocKey: "semantic"}}}, nil
-				case <-ctx.Done():
-					return semanticLegResult{}, ctx.Err()
-				}
-			})
-
-		require.NoError(t, lexicalErr)
-		require.NoError(t, semanticErr)
-		assert.Equal(t, "lexical", lexical[0].DocKey)
-		assert.Equal(t, "semantic", semantic.Candidates[0].DocKey)
-	})
-}
-
 type serviceStore struct {
-	mu    sync.Mutex
-	docs  map[string]storage.SearchReviewSource
-	repos map[int64]*storage.Repo
+	mu      sync.Mutex
+	docs    map[string]storage.SearchReviewSource
+	repos   map[int64]*storage.Repo
+	lookups int
 }
 
 func newServiceStore(docs ...searchdoc.Document) *serviceStore {
@@ -570,15 +500,17 @@ func newServiceStore(docs ...searchdoc.Document) *serviceStore {
 	return store
 }
 
-func (s *serviceStore) GetSearchDocument(_ context.Context, key string) (*storage.SearchReviewSource, error) {
+func (s *serviceStore) GetSearchReviews(_ context.Context, keys []string) (map[string]storage.SearchReviewSource, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, ok := s.docs[key]
-	if !ok {
-		return nil, sql.ErrNoRows
+	s.lookups++
+	found := make(map[string]storage.SearchReviewSource, len(keys))
+	for _, key := range keys {
+		if doc, ok := s.docs[key]; ok {
+			found[key] = doc
+		}
 	}
-	copy := doc
-	return &copy, nil
+	return found, nil
 }
 
 func (s *serviceStore) GetRepoByID(id int64) (*storage.Repo, error) {
@@ -668,9 +600,9 @@ func seedActiveGeneration(
 	require.NoError(t, index.ActivateGeneration(ctx, key))
 }
 
-// A candidate carries the revision its score was computed from. Advancing the
-// mirror and canonical store afterwards must not let new content inherit it.
-func TestSemanticCandidatesRejectRevisionChangedAfterVectorQuery(t *testing.T) {
+// A semantic score belongs to the content it was computed from. Once the
+// mirror moves to new content, the old vectors must not score it.
+func TestSemanticLegIgnoresVectorsForReplacedContent(t *testing.T) {
 	for _, reembed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reembed=%t", reembed), func(t *testing.T) {
 			ctx := context.Background()
@@ -682,20 +614,16 @@ func TestSemanticCandidatesRejectRevisionChangedAfterVectorQuery(t *testing.T) {
 			seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{
 				original.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
 			})
-			store := newServiceStore(original)
-			service := NewService(store, index, nil, nil)
 			serving, ok, err := index.ServingGeneration(ctx, model)
 			require.NoError(t, err)
 			require.True(t, ok)
-			candidates, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 50, SearchFilters{})
+			before, err := flatten(index.SearchSemantic(ctx, serving.Key, vector.Vector{1, 0}, 50, SearchFilters{}))
 			require.NoError(t, err)
-			require.Len(t, candidates, 1)
-			assert.Equal(t, original.ContentHash, candidates[0].ContentHash)
-			require.InDelta(t, 1, candidates[0].Score, 0.0001)
+			require.Len(t, before, 1)
+			require.InDelta(t, 1, before[0].Score, 0.0001)
 
 			updated := queryTestDocument(1, "group", "replacement unrelated content", queryDocOptions{})
 			require.NotEqual(t, original.ContentHash, updated.ContentHash)
-			store.docs[updated.DocKey] = updated.Source
 			_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
 			require.NoError(t, err)
 			if reembed {
@@ -706,13 +634,83 @@ func TestSemanticCandidatesRejectRevisionChangedAfterVectorQuery(t *testing.T) {
 					[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{0, 1}}}))
 			}
 
-			hydrated, err := service.hydrate(ctx, candidates, SearchFilters{})
+			after, err := flatten(index.SearchSemantic(ctx, serving.Key, vector.Vector{1, 0}, 50, SearchFilters{}))
 			require.NoError(t, err)
-			assert.Empty(t, service.toHits(hydrated, 10),
-				"replacement content must not inherit the original vector's score")
-			fresh, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 50, SearchFilters{})
+			assert.Empty(t, after, "replacement content must not inherit the original vector's score")
+		})
+	}
+}
+
+func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *testing.T) {
+	ctx := context.Background()
+	index := openQueryTestIndex(t)
+	older := queryTestDocument(1, "older-group", "lexical needle only", queryDocOptions{
+		finished: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC),
+	})
+	newer := queryTestDocument(2, "newer-group", "unrelated wording", queryDocOptions{
+		finished: time.Date(2026, 9, 15, 13, 0, 0, 0, time.UTC),
+	})
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{older, newer}, nil)
+	require.NoError(t, err)
+	model := testSpace("ties", 2)
+	seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{
+		older.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{0, 1}}},
+		newer.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+	})
+	store := newServiceStore(older, newer)
+	service := NewService(store, index,
+		&serviceEmbedder{space: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
+
+	result, err := service.Search(ctx, SearchParams{Query: "needle", Mode: ModeHybrid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, result.Hits, 2)
+	assert.Equal(t, newer.Source.ReviewID, result.Hits[0].ReviewID, "equal scores rank the newer review first")
+	assert.Equal(t, []string{MatchSemantic}, result.Hits[0].MatchedIn)
+	assert.Equal(t, older.Source.ReviewID, result.Hits[1].ReviewID)
+	assert.Equal(t, []string{MatchLexical}, result.Hits[1].MatchedIn)
+	assert.InDelta(t, result.Hits[0].Score, result.Hits[1].Score, 1e-15)
+	assert.Contains(t, result.Hits[1].Excerpt, "<mark>needle</mark>")
+	assert.Equal(t, 1, store.lookups, "one canonical query loads the whole page")
+}
+
+func TestServiceSinceFilterIsExactWithinOneSecondOnBothLegs(t *testing.T) {
+	ctx := context.Background()
+	index := openQueryTestIndex(t)
+	second := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	// RFC3339Nano stores these as "...12:00:00Z" and "...12:00:00.9Z"; as
+	// text the later one sorts first.
+	before := queryTestDocument(1, "before", "needle", queryDocOptions{finished: second})
+	after := queryTestDocument(2, "after", "needle", queryDocOptions{finished: second.Add(900 * time.Millisecond)})
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{before, after}, nil)
+	require.NoError(t, err)
+	model := testSpace("since", 2)
+	seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{
+		before.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+		after.DocKey:  {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+	})
+	service := NewService(newServiceStore(before, after), index,
+		&serviceEmbedder{space: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
+	since := second.Add(500 * time.Millisecond)
+
+	filters := SearchFilters{Since: &since}
+	lexicalMembers, err := flatten(index.SearchLexical(ctx, "needle", filters, 10))
+	require.NoError(t, err)
+	require.Len(t, lexicalMembers, 1, "the lexical leg filters in SQL")
+	assert.Equal(t, after.DocKey, lexicalMembers[0].DocKey)
+	serving, ok, err := index.ServingGeneration(ctx, model)
+	require.NoError(t, err)
+	require.True(t, ok)
+	semanticMembers, err := flatten(index.SearchSemantic(ctx, serving.Key, vector.Vector{1, 0}, 10, filters))
+	require.NoError(t, err)
+	require.Len(t, semanticMembers, 1, "the semantic leg filters in SQL")
+	assert.Equal(t, after.DocKey, semanticMembers[0].DocKey)
+
+	for _, mode := range []SearchMode{ModeLexical, ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			result, err := service.Search(ctx, SearchParams{Query: "needle", Mode: mode, Limit: 10, Since: &since})
 			require.NoError(t, err)
-			assert.Empty(t, fresh, "stale vectors never score the replacement content")
+			require.Len(t, result.Hits, 1)
+			assert.Equal(t, after.Source.ReviewID, result.Hits[0].ReviewID)
 		})
 	}
 }

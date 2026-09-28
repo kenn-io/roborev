@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 )
 
 const searchFeedSelect = `
@@ -104,27 +106,67 @@ func (db *DB) ListSearchDocuments(ctx context.Context, afterReviewID int64, limi
 	return sources, nil
 }
 
-// GetSearchDocument resolves an eligible review by its UUID document key or
-// by the database-local key used for legacy reviews without UUIDs.
-func (db *DB) GetSearchDocument(ctx context.Context, docKey string) (*SearchReviewSource, error) {
-	row := db.QueryRowContext(ctx, searchFeedSelect+`
-		WHERE CASE
-			WHEN COALESCE(CAST(rv.uuid AS TEXT), '') != '' THEN CAST(rv.uuid AS TEXT)
-			ELSE 'local:' || rv.id
-		END = ?
-		`+searchFeedEligibility, docKey)
-	source, job, verdictBool, err := scanSearchReviewSource(row)
-	if err != nil {
-		return nil, err
+// SearchDocumentKey is the search document key for a review: its UUID, or a
+// database-local key for legacy reviews without one.
+func SearchDocumentKey(reviewID int64, reviewUUID string) string {
+	if reviewUUID != "" {
+		return reviewUUID
 	}
-	if !eligibleSearchReview(job, source) {
-		return nil, sql.ErrNoRows
+	return "local:" + strconv.FormatInt(reviewID, 10)
+}
+
+// GetSearchReviews returns the eligible reviews among docKeys, keyed by
+// document key. Missing keys were deleted or are no longer eligible. Responses
+// are not attached; search pages only need review metadata.
+func (db *DB) GetSearchReviews(ctx context.Context, docKeys []string) (map[string]SearchReviewSource, error) {
+	var uuids, ids []any
+	for _, key := range docKeys {
+		if local, ok := strings.CutPrefix(key, "local:"); ok {
+			id, err := strconv.ParseInt(local, 10, 64)
+			if err != nil {
+				continue
+			}
+			ids = append(ids, id)
+			continue
+		}
+		uuids = append(uuids, key)
 	}
-	if err := db.attachSearchResponses(&source, job); err != nil {
-		return nil, err
+	result := make(map[string]SearchReviewSource, len(docKeys))
+	for _, lookup := range []struct {
+		column string
+		values []any
+	}{{column: "rv.uuid", values: uuids}, {column: "rv.id", values: ids}} {
+		if len(lookup.values) == 0 {
+			continue
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(lookup.values)), ",")
+		rows, err := db.QueryContext(ctx, searchFeedSelect+`
+			WHERE `+lookup.column+` IN (`+placeholders+`)
+			`+searchFeedEligibility, lookup.values...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			source, job, verdictBool, err := scanSearchReviewSource(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if !eligibleSearchReview(job, source) {
+				continue
+			}
+			source.Verdict = searchVerdict(job, verdictBool, source.Output)
+			result[SearchDocumentKey(source.ReviewID, source.ReviewUUID)] = source
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 	}
-	source.Verdict = searchVerdict(job, verdictBool, source.Output)
-	return &source, nil
+	return result, nil
 }
 
 func scanSearchReviewSource(scanner sqlScanner) (SearchReviewSource, ReviewJob, sql.NullInt64, error) {

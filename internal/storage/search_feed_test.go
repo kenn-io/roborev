@@ -133,7 +133,7 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 			(12, ?, 'second', 'second response', '00000000-0000-4000-8000-000000000012', '2026-09-15T12:00:00Z')`, jobID, jobID, jobID)
 	require.NoError(t, err)
 
-	source, err := db.GetSearchDocument(context.Background(), "00000000-0000-4000-8000-000000000101")
+	source, err := feedDocument(db, "00000000-0000-4000-8000-000000000101")
 	require.NoError(t, err)
 	require.Len(t, source.Responses, 3)
 	for _, response := range source.Responses {
@@ -153,7 +153,7 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 		status:  JobStatusDone,
 		output:  "ordinary review",
 	})
-	ordinary, err := db.GetSearchDocument(context.Background(), "00000000-0000-4000-8000-000000000102")
+	ordinary, err := feedDocument(db, "00000000-0000-4000-8000-000000000102")
 	require.NoError(t, err)
 	require.Len(t, ordinary.Responses, 1)
 	require.NotNil(t, ordinary.Responses[0].UUID)
@@ -184,7 +184,7 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 	_, err = db.Exec(`UPDATE repos SET root_path = 'excluded-repository-path', identity = 'excluded-remote-identity' WHERE id = ?`, repoID)
 	require.NoError(t, err)
 
-	source, err := db.GetSearchDocument(context.Background(), "00000000-0000-4000-8000-000000000101")
+	source, err := feedDocument(db, "00000000-0000-4000-8000-000000000101")
 	require.NoError(t, err)
 	encoded, err := json.Marshal(source)
 	require.NoError(t, err)
@@ -206,14 +206,28 @@ func TestSearchDocumentLookupSupportsUUIDAndLegacyLocalKey(t *testing.T) {
 	modernID := seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "modern"})
 	legacyID := seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{jobType: "", status: JobStatusDone, output: "legacy", legacy: true})
 
-	modern, err := db.GetSearchDocument(context.Background(), "00000000-0000-4000-8000-000000000101")
+	legacyKey := fmt.Sprintf("local:%d", legacyID)
+	found, err := db.GetSearchReviews(context.Background(), []string{
+		"00000000-0000-4000-8000-000000000101", legacyKey, "missing", "local:999999",
+	})
 	require.NoError(t, err)
-	assert.Equal(t, modernID, modern.ReviewID)
-	legacy, err := db.GetSearchDocument(context.Background(), fmt.Sprintf("local:%d", legacyID))
-	require.NoError(t, err)
-	assert.Equal(t, legacyID, legacy.ReviewID)
-	_, err = db.GetSearchDocument(context.Background(), "missing")
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	require.Len(t, found, 2)
+	assert.Equal(t, modernID, found["00000000-0000-4000-8000-000000000101"].ReviewID)
+	assert.Equal(t, legacyID, found[legacyKey].ReviewID)
+}
+
+// feedDocument returns the search feed's source for one document key.
+func feedDocument(db *DB, key string) (*SearchReviewSource, error) {
+	sources, err := db.ListSearchDocuments(context.Background(), 0, 1000)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sources {
+		if SearchDocumentKey(sources[i].ReviewID, sources[i].ReviewUUID) == key {
+			return &sources[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 
 func seedSearchFeedBase(t *testing.T, db *DB) (int64, int64) {
