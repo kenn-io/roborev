@@ -124,12 +124,13 @@ generation is not activated until all current documents have been handled.
 During this initial backfill, `auto` uses lexical search and the health and
 coverage fields report progress.
 
-Changing the model, dimensions, input type mode, content recipe, or
-`fingerprint_salt` starts a replacement generation. Roborev keeps the old
-generation on disk during the build but does not query vectors from an
-incompatible generation. `auto` therefore degrades to lexical search until the
-replacement activates. Explicit semantic and hybrid requests remain unavailable
-during that window.
+Changing the model, dimensions, endpoint, input type mode, content recipe, or
+`fingerprint_salt` starts a replacement generation. Upgrading Roborev with the
+same settings keeps serving and filling the existing generation, so an upgrade
+does not re-embed stored reviews. Roborev keeps the old generation on disk
+during the build but does not query vectors from an incompatible generation.
+`auto` therefore degrades to lexical search until the replacement activates.
+Explicit semantic and hybrid requests remain unavailable during that window.
 
 Search rehydrates every candidate from the canonical review database before
 returning it. If a review changed after the sidecar was updated, Roborev drops
@@ -204,9 +205,11 @@ means a key resolved, not that the provider has accepted it. A 401 or 403 sets
 `embedding authentication rejected (401)`. A successful embedding request clears
 the rejection; lexical scans and existing vectors do not.
 
-An HTTP endpoint carrying a bearer token is rejected by default. Set
-`trust_private_network = true` only for an HTTP service on a private network
-whose transport boundary you trust. HTTPS endpoints need no override.
+Plain HTTP is accepted only for loopback endpoints by default. Set
+`trust_private_network = true` only for an HTTP service at a private,
+link-local, or carrier-grade NAT IP address whose transport boundary you trust.
+Host names still require HTTPS because a name can resolve to a public address.
+HTTPS endpoints need no override.
 
 ## Privacy boundary
 

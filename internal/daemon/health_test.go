@@ -14,11 +14,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/kit/vector"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -45,14 +46,16 @@ func (s *replacementHealthStore) ListSearchDocuments(
 }
 
 type replacementHealthEmbedder struct {
-	model   vector.Generation
+	space   embedmodel.Descriptor
 	calls   int
 	blocked chan struct{}
 }
 
-func (e *replacementHealthEmbedder) Embed(
-	ctx context.Context, _ embedding.InputKind, texts []string,
-) ([][]float32, error) {
+func (e *replacementHealthEmbedder) EncodeFunc(embedconfig.Role) vector.EncodeFunc {
+	return e.embed
+}
+
+func (e *replacementHealthEmbedder) embed(ctx context.Context, texts []string) ([][]float32, error) {
 	e.calls++
 	if e.calls == 2 {
 		close(e.blocked)
@@ -66,8 +69,15 @@ func (e *replacementHealthEmbedder) Embed(
 	return result, nil
 }
 
-func (e *replacementHealthEmbedder) Generation() vector.Generation { return e.model }
-func (e *replacementHealthEmbedder) BatchSize() int                { return 1 }
+func (e *replacementHealthEmbedder) Space() embedmodel.Descriptor { return e.space }
+func (e *replacementHealthEmbedder) BatchSize() int               { return 1 }
+
+func cosineSpace(model string, dims int) embedmodel.Descriptor {
+	return embedmodel.Descriptor{Model: embedconfig.Model{
+		Name: model, Dimensions: dims,
+		Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationL2,
+	}}
+}
 
 // setupTestServer creates a temporary DB and Server, handling cleanup automatically.
 func setupTestServer(t *testing.T) *Server {
@@ -349,8 +359,7 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 	}
 	_, err = index.RefreshMirrorPage(ctx, docs, nil)
 	require.NoError(t, err)
-	activeModel := vector.Generation{Model: "active", Dimensions: 2}
-	activeKey, err := index.EnsureGeneration(ctx, activeModel)
+	activeKey, err := index.ResolveGeneration(ctx, cosineSpace("active", 2))
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, activeKey, len(docs))
 	require.NoError(t, err)
@@ -362,7 +371,7 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 	require.NoError(t, index.ActivateGeneration(ctx, activeKey))
 
 	embedder := &replacementHealthEmbedder{
-		model:   vector.Generation{Model: "replacement", Dimensions: 2},
+		space:   cosineSpace("replacement", 2),
 		blocked: make(chan struct{}),
 	}
 	reconciler := searchindex.NewReconciler(
@@ -386,7 +395,7 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 	health := decodeHealthStatus(t, response)
 	require.NotNil(t, health.Search)
 	assert.Equal(t, searchindex.VectorReplacing, health.Search.VectorState)
-	assert.Equal(t, activeModel.Fingerprint(), health.Search.ActiveGeneration)
+	assert.Equal(t, activeKey, health.Search.ActiveGeneration)
 
 	cancel()
 	assert.ErrorIs(t, <-done, context.Canceled)

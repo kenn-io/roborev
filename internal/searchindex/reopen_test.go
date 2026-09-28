@@ -22,8 +22,10 @@ func TestReopenPreservesExistingGenerationAndVectors(t *testing.T) {
 	doc := testDocument(1, "durable semantic content")
 	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
-	model := vector.Generation{Model: "durability-test", Dimensions: 2}
-	key, err := index.EnsureGeneration(ctx, model)
+	space := testSpace("durability-test", 2)
+	model, err := space.Generation()
+	require.NoError(t, err)
+	key, err := index.ResolveGeneration(ctx, space)
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, key, 1)
 	require.NoError(t, err)
@@ -43,11 +45,14 @@ func TestReopenPreservesExistingGenerationAndVectors(t *testing.T) {
 	assert.Equal(t, GenerationInfo{
 		Key:         key,
 		Fingerprint: model.Fingerprint(),
-		Dimensions:  model.Dimensions,
+		Dimension:   model.Dimensions,
 		State:       sqlitevec.StateActive,
 	}, active)
-	hits, err := index.QueryGeneration(ctx, key, vector.Vector{1, 0}, 10)
+	resolved, err := index.ResolveGeneration(ctx, space)
+	require.NoError(t, err)
+	assert.Equal(t, key, resolved)
+	hits, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, 10, SearchFilters{})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
-	assert.Equal(t, doc.DocKey, hits[0].Doc)
+	assert.Equal(t, doc.DocKey, hits[0].DocKey)
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -125,14 +124,22 @@ func deterministicAxis(text string) []float32 {
 	}
 }
 
-func newIntegrationEmbeddingClient(t *testing.T, endpoint, model, apiKey string) *embedding.Client {
+func newIntegrationEmbeddingClient(t *testing.T, endpoint, model, apiKey string) *searchindex.Embeddings {
 	t.Helper()
-	client, err := embedding.New(embedding.Config{
+	client, err := searchindex.NewEmbeddings(searchindex.EmbeddingSettings{
 		BaseURL: endpoint, Model: model, APIKey: apiKey, Dims: 3,
-		BatchSize: 8, InputTypeMode: "retrieval",
+		BatchSize: 8, InputTypeMode: "retrieval", RecipeVersion: searchdoc.RecipeVersion,
 	})
 	require.NoError(t, err)
 	return client
+}
+
+// servesGeneration reports whether the active generation belongs to client.
+func servesGeneration(t *testing.T, index *searchindex.Index, client *searchindex.Embeddings) bool {
+	t.Helper()
+	_, serving, err := index.ServingGeneration(t.Context(), client.Space())
+	require.NoError(t, err)
+	return serving
 }
 
 func runSearchReconciler(t *testing.T, reconciler *searchindex.Reconciler) (context.CancelFunc, <-chan error) {
@@ -209,7 +216,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 	serviceA := searchindex.NewService(db, index, clientA, reconcilerA)
 	cancelA, doneA := runSearchReconciler(t, reconcilerA)
 	waitForSearch(t, "initial vector generation", func() bool {
-		return reconcilerA.Health().ActiveGeneration == clientA.Generation().Fingerprint()
+		return servesGeneration(t, index, clientA)
 	})
 
 	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
@@ -341,7 +348,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 	case <-time.After(5 * time.Second):
 	}
 	require.True(t, replacementStarted, "replacement generation did not begin")
-	available, err := index.GenerationAvailable(ctx, clientA.Generation().Fingerprint())
+	_, available, err := index.ServingGeneration(ctx, clientA.Space())
 	require.NoError(t, err)
 	assert.True(t, available, "old active generation stays available during replacement")
 	auto, err := serviceB.Search(ctx, searchindex.SearchParams{
@@ -352,7 +359,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 	assert.True(t, auto.Degraded)
 	close(fakeB.release)
 	waitForSearch(t, "replacement generation cutover", func() bool {
-		return reconcilerB.Health().ActiveGeneration == clientB.Generation().Fingerprint()
+		return servesGeneration(t, index, clientB)
 	})
 	replaced, err := serviceB.Search(ctx, searchindex.SearchParams{
 		Query: "edited concept", Mode: searchindex.ModeSemantic, Limit: 10,

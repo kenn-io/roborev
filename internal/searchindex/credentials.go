@@ -2,11 +2,10 @@ package searchindex
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 
-	"go.kenn.io/roborev/internal/embedding"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/vector"
 )
 
 type embeddingObserver interface {
@@ -18,17 +17,19 @@ type observedEmbedder struct {
 	observer embeddingObserver
 }
 
-func (e observedEmbedder) Embed(ctx context.Context, kind embedding.InputKind, texts []string) ([][]float32, error) {
-	vectors, err := e.Embedder.Embed(ctx, kind, texts)
-	if len(texts) > 0 {
-		e.observer.ObserveEmbeddingResult(err)
+func (e observedEmbedder) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
+	encode := e.Embedder.EncodeFunc(role)
+	return func(ctx context.Context, texts []string) ([][]float32, error) {
+		vectors, err := encode(ctx, texts)
+		if len(texts) > 0 {
+			e.observer.ObserveEmbeddingResult(err)
+		}
+		return vectors, err
 	}
-	return vectors, err
 }
 
 func authenticationReason(err error) string {
-	if apiErr, ok := errors.AsType[*embedding.APIError](err); ok &&
-		(apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+	if apiErr, ok := embeddingAPIError(err); ok && apiErr.CredentialsRejected() {
 		return fmt.Sprintf("embedding authentication rejected (%d)", apiErr.StatusCode)
 	}
 	return ""

@@ -148,7 +148,6 @@ func NewService(store canonicalSearchStore, index *Index, embedder Embedder, run
 
 type semanticLegResult struct {
 	Candidates     []rankedCandidate
-	Probe          *vector.Hit[string]
 	Query          vector.Vector
 	GenerationKey  string
 	Deep           bool
@@ -250,7 +249,10 @@ func (service *Service) Search(ctx context.Context, params SearchParams) (Search
 		if bounded && params.Mode != ModeAuto {
 			return SearchResult{}, &ModeError{Status: 503, Reason: ReasonSemanticCeiling}
 		}
-		merged := mergeGroupRRF(lexical, semantic.Candidates, params.Limit)
+		merged, err := mergeGroupRRF(lexical, semantic.Candidates, params.Limit)
+		if err != nil {
+			return SearchResult{}, err
+		}
 		preferLexicalExcerpts(merged, lexical)
 		result.Hits = service.toHits(merged, params.Limit)
 		result.Partial = result.Partial || semantic.CeilingReached
@@ -316,7 +318,7 @@ func (service *Service) resolveMode(ctx context.Context, requested SearchMode) (
 		}
 		return "", false, "", &ModeError{Status: 400, Reason: ReasonEmbeddingsUnconfigured}
 	}
-	available, err := service.index.GenerationAvailable(ctx, service.embedder.Generation().Fingerprint())
+	_, available, err := service.index.ServingGeneration(ctx, service.embedder.Space())
 	if err != nil {
 		if requested == ModeAuto {
 			return ModeLexical, true, service.semanticReason(err), nil
@@ -348,12 +350,15 @@ func (service *Service) searchSemantic(
 		return semanticLegResult{}, fmt.Errorf("query embedding returned %d vectors", len(encoded))
 	}
 	queryVector := encoded[0]
-	key := service.embedder.Generation().Fingerprint()
-	raw, err := service.index.QueryGeneration(ctx, key, queryVector, target)
+	serving, ok, err := service.index.ServingGeneration(ctx, service.embedder.Space())
 	if err != nil {
 		return semanticLegResult{}, err
 	}
-	candidates, err := service.index.semanticCandidates(ctx, raw, filters)
+	if !ok {
+		return semanticLegResult{}, &ModeError{Status: 503, Reason: ReasonSemanticUnavailable}
+	}
+	key := serving.Key
+	candidates, err := service.index.SemanticCandidates(ctx, key, queryVector, target, filters)
 	if err != nil {
 		return semanticLegResult{}, err
 	}
@@ -376,17 +381,17 @@ func candidateGroupCount(candidates []rankedCandidate) int {
 func (service *Service) searchSemanticDeep(
 	ctx context.Context, key string, query vector.Vector, filters SearchFilters,
 ) (semanticLegResult, error) {
-	raw, probe, err := service.index.QueryWithProbe(ctx, key, query, semanticDeepLimit)
+	probeScore, hasProbe, err := service.index.SemanticProbe(ctx, key, query, semanticDeepLimit)
 	if err != nil {
 		return semanticLegResult{}, err
 	}
-	candidates, err := service.index.semanticCandidates(ctx, raw, filters)
+	candidates, err := service.index.SemanticCandidates(ctx, key, query, semanticDeepLimit, filters)
 	if err != nil {
 		return semanticLegResult{}, err
 	}
 	return semanticLegResult{
-		Candidates: candidates, Probe: probe, Query: query, GenerationKey: key,
-		Deep: true, CeilingReached: semanticCeilingReached(probe),
+		Candidates: candidates, Query: query, GenerationKey: key,
+		Deep: true, CeilingReached: semanticCeilingReached(probeScore, hasProbe),
 	}, nil
 }
 
@@ -568,8 +573,8 @@ func (service *Service) toHits(candidates []rankedCandidate, limit int) []Search
 	return hits
 }
 
-func semanticCeilingReached(probe *vector.Hit[string]) bool {
-	return probe != nil && float64(probe.Score) >= semanticCosineFloor
+func semanticCeilingReached(probeScore float32, hasProbe bool) bool {
+	return hasProbe && float64(probeScore) >= semanticCosineFloor
 }
 
 func semanticPageBounded(resultCount, requestedLimit int, ceilingReached bool) bool {
@@ -705,13 +710,13 @@ func (service *Service) coverage(ctx context.Context, health HealthSnapshot) Sea
 		coverage.EmbeddingBacklog = 0
 		return coverage
 	}
-	available, err := service.index.GenerationAvailable(ctx, service.embedder.Generation().Fingerprint())
+	_, available, err := service.index.ServingGeneration(ctx, service.embedder.Space())
 	if err == nil && available {
 		coverage.VectorState = VectorActive
 		return coverage
 	}
-	active, hasActive, activeErr := service.index.ActiveGeneration(ctx)
-	if activeErr == nil && hasActive && active.Fingerprint != service.embedder.Generation().Fingerprint() {
+	_, hasActive, activeErr := service.index.ActiveGeneration(ctx)
+	if err == nil && activeErr == nil && hasActive {
 		coverage.VectorState = VectorReplacing
 		return coverage
 	}

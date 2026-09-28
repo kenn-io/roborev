@@ -16,7 +16,8 @@ func TestMergeGroupRRFFusesDifferentPanelMembersOnce(t *testing.T) {
 	semanticMember.MatchedIn = []string{MatchSemantic}
 	semanticMember.Excerpt = "semantic excerpt"
 
-	merged := mergeGroupRRF([]rankedCandidate{lexicalMember}, []rankedCandidate{semanticMember}, 10)
+	merged, err := mergeGroupRRF([]rankedCandidate{lexicalMember}, []rankedCandidate{semanticMember}, 10)
+	require.NoError(t, err)
 	require.Len(t, merged, 1)
 	assert.Equal(t, lexicalMember.DocKey, merged[0].DocKey, "equal ranks prefer the lexical member")
 	assert.Equal(t, lexicalMember.JobID, merged[0].JobID)
@@ -32,11 +33,12 @@ func TestMergeGroupRRFKeepsOneContributionPerLegAndUsesBetterLegRank(t *testing.
 	semanticPanel := rrfCandidate("semantic-panel", "panel", 4, 1)
 	semanticPanel.Excerpt = "semantic winner"
 
-	merged := mergeGroupRRF(
+	merged, err := mergeGroupRRF(
 		[]rankedCandidate{lexicalFirst, lexicalPanel, duplicatePanel},
 		[]rankedCandidate{semanticPanel},
 		10,
 	)
+	require.NoError(t, err)
 	require.Len(t, merged, 2)
 	panel := candidateForGroup(t, merged, "panel")
 	assert.Equal(t, semanticPanel.DocKey, panel.DocKey)
@@ -59,7 +61,8 @@ func TestMergeGroupRRFBreaksFinalTiesByRecencyJobAndDocumentKey(t *testing.T) {
 	newerHighJobA.FinishedAt = when
 	newerHighJobA.JobID = 50
 
-	merged := mergeGroupRRF([]rankedCandidate{older, newerLowJob, newerHighJobZ, newerHighJobA}, nil, 10)
+	merged, err := mergeGroupRRF([]rankedCandidate{older, newerLowJob, newerHighJobZ, newerHighJobA}, nil, 10)
+	require.NoError(t, err)
 	require.Len(t, merged, 4)
 	assert.Equal(t, []string{"a-doc", "z-doc", "newer-low-job", "older"}, candidateDocKeys(merged))
 }
@@ -88,7 +91,8 @@ func TestMergeGroupRRFUsesStableMatchedInOrderIncludingIdentifiers(t *testing.T)
 	semantic := rrfCandidate("semantic", "panel", 2, 1)
 	semantic.MatchedIn = []string{MatchSemantic}
 
-	merged := mergeGroupRRF([]rankedCandidate{lexical}, []rankedCandidate{semantic}, 1)
+	merged, err := mergeGroupRRF([]rankedCandidate{lexical}, []rankedCandidate{semantic}, 1)
+	require.NoError(t, err)
 	require.Len(t, merged, 1)
 	assert.Equal(t, []string{MatchIdentifier, MatchLexical, MatchSemantic}, merged[0].MatchedIn)
 }

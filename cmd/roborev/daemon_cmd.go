@@ -16,7 +16,6 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -70,7 +69,7 @@ func newDaemonSearch(
 		if err != nil {
 			return nil, err
 		}
-		client, err := embedding.New(embedding.Config{
+		client, err := searchindex.NewEmbeddings(searchindex.EmbeddingSettings{
 			BaseURL: embeddings.BaseURL, Model: embeddings.Model, APIKey: credential.Key,
 			Salt: embeddings.FingerprintSalt, RecipeVersion: searchdoc.RecipeVersion,
 			Dims: embeddings.Dims, BatchSize: embeddings.BatchSize,

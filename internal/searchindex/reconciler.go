@@ -10,7 +10,6 @@ import (
 
 	"go.kenn.io/kit/vector"
 
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -28,13 +27,6 @@ const (
 
 type searchDocumentStore interface {
 	ListSearchDocuments(context.Context, int64, int) ([]storage.SearchReviewSource, error)
-}
-
-// Embedder is the storage-free document embedding contract.
-type Embedder interface {
-	Embed(context.Context, embedding.InputKind, []string) ([][]float32, error)
-	Generation() vector.Generation
-	BatchSize() int
 }
 
 // ReconcilerConfig bounds each background reconciliation turn.
@@ -86,7 +78,6 @@ func NewReconciler(store searchDocumentStore, index *Index, embedder Embedder, c
 	if embedder != nil {
 		state.Credential = "ok"
 		state.VectorState = "building"
-		state.Generation = embedder.Generation().Fingerprint()
 	}
 	r := &Reconciler{
 		store: store, index: index, embedder: embedder, config: config,
@@ -143,6 +134,9 @@ func (r *Reconciler) Health() HealthSnapshot {
 
 // Run reconciles immediately on startup, then on wakes and safety sweeps.
 func (r *Reconciler) Run(ctx context.Context) error {
+	if r.embedder != nil {
+		r.notePlannedGeneration(ctx)
+	}
 	for {
 		more, err := r.reconcileTurn(ctx)
 		if err != nil {
@@ -250,8 +244,7 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 }
 
 func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
-	model := r.embedder.Generation()
-	key, err := r.index.EnsureGeneration(ctx, model)
+	key, err := r.index.ResolveGeneration(ctx, r.embedder.Space())
 	if err != nil {
 		return false, err
 	}
@@ -265,7 +258,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 	}
 	activeGeneration := ""
 	if hasActive {
-		activeGeneration = activeInfo.Fingerprint
+		activeGeneration = activeInfo.Key
 	}
 	r.beginGeneration(key, counts, activeGeneration)
 	if counts.Backlog == 0 {
@@ -397,15 +390,31 @@ func setGenerationAvailability(health *HealthSnapshot, key, activeGeneration str
 	health.ActiveGeneration = activeGeneration
 }
 
+// notePlannedGeneration reports the generation the next fill will target
+// before the first fill turn runs, so health can show a pending replacement.
+func (r *Reconciler) notePlannedGeneration(ctx context.Context) {
+	key, _, _, err := r.index.plannedGeneration(ctx, r.embedder.Space())
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.health.Generation == "" {
+		r.health.Generation = key
+	}
+}
+
 func (r *Reconciler) recordError(err error) {
 	category, status := errorCategory(err)
 	matchingActive := false
 	activeGeneration := ""
 	if r.embedder != nil && r.index != nil {
+		r.notePlannedGeneration(context.Background())
 		active, hasActive, activeErr := r.index.ActiveGeneration(context.Background())
 		if activeErr == nil && hasActive {
-			activeGeneration = active.Fingerprint
-			matchingActive = activeGeneration == r.embedder.Generation().Fingerprint()
+			activeGeneration = active.Key
+			matchingActive, activeErr = r.embedder.Space().Matches(active.Fingerprint)
+			matchingActive = matchingActive && activeErr == nil
 		}
 	}
 	r.mu.Lock()
@@ -429,7 +438,7 @@ func (r *Reconciler) recordError(err error) {
 }
 
 func errorCategory(err error) (string, int) {
-	if apiErr, ok := errors.AsType[*embedding.APIError](err); ok {
+	if apiErr, ok := embeddingAPIError(err); ok {
 		switch apiErr.StatusCode {
 		case http.StatusBadRequest:
 			return "request", apiErr.StatusCode
@@ -453,11 +462,11 @@ func errorCategory(err error) (string, int) {
 }
 
 func (r *Reconciler) backoffFor(err error) time.Duration {
-	if apiErr, ok := errors.AsType[*embedding.APIError](err); ok {
+	if apiErr, ok := embeddingAPIError(err); ok {
 		if apiErr.RetryAfter > 0 {
 			return apiErr.RetryAfter
 		}
-		if apiErr.Definitive() {
+		if embeddingDefinitive(apiErr) {
 			return r.config.MaxBackoff
 		}
 	}

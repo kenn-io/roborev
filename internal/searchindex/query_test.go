@@ -146,14 +146,14 @@ func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
 	assert.Equal(t, wanted.DocKey, hits[0].DocKey)
 }
 
-func TestQueryWithProbeReturnsOneHitBeyondTheDeepCeiling(t *testing.T) {
+func TestSemanticProbeReportsTheRawNeighborBeyondTheDeepCeiling(t *testing.T) {
 	ctx := context.Background()
 	index := openQueryTestIndex(t)
 	doc := queryTestDocument(1, "probe-group", "semantic chunks", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
-	model := vector.Generation{Model: "probe", Dimensions: 2}
-	key, err := index.EnsureGeneration(ctx, model)
+	model := testSpace("probe", 2)
+	key, err := index.ResolveGeneration(ctx, model)
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, key, 1)
 	require.NoError(t, err)
@@ -165,27 +165,29 @@ func TestQueryWithProbeReturnsOneHitBeyondTheDeepCeiling(t *testing.T) {
 	require.NoError(t, index.SaveGenerationVectors(ctx, key, pending[0], vectors))
 	require.NoError(t, index.ActivateGeneration(ctx, key))
 
-	hits, probe, err := index.QueryWithProbe(ctx, key, vector.Vector{1, 0}, semanticDeepLimit)
+	probeScore, hasProbe, err := index.SemanticProbe(ctx, key, vector.Vector{1, 0}, semanticDeepLimit)
 	require.NoError(t, err)
-	assert.Len(t, hits, semanticDeepLimit)
-	require.NotNil(t, probe)
-	assert.InDelta(t, 1, probe.Score, 0.0001)
-	hitChunks := make([]int, len(hits))
-	for i, hit := range hits {
-		hitChunks[i] = hit.ChunkIndex
-	}
-	assert.NotContains(t, hitChunks, probe.ChunkIndex)
+	require.True(t, hasProbe)
+	assert.InDelta(t, 1, probeScore, 0.0001)
+	candidates, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1, "chunks roll up to their document")
+	assert.Equal(t, doc.DocKey, candidates[0].DocKey)
+
+	_, hasProbe, err = index.SemanticProbe(ctx, key, vector.Vector{1, 0}, len(vectors))
+	require.NoError(t, err)
+	assert.False(t, hasProbe, "no raw neighbor exists beyond the stored chunks")
 }
 
-func TestQueryWithProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
+func TestSemanticProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
 	ctx := context.Background()
 	index := openQueryTestIndex(t)
 	stale := queryTestDocument(1, "stale", "stale raw chunks", queryDocOptions{})
 	fresh := queryTestDocument(2, "fresh", "fresh result beyond ceiling", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{stale, fresh}, nil)
 	require.NoError(t, err)
-	model := vector.Generation{Model: "raw-probe", Dimensions: 2}
-	key, err := index.EnsureGeneration(ctx, model)
+	model := testSpace("raw-probe", 2)
+	key, err := index.ResolveGeneration(ctx, model)
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, key, 2)
 	require.NoError(t, err)
@@ -209,17 +211,19 @@ func TestQueryWithProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
 	stale = searchdoc.Render(stale.Source)
 	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{stale}, nil)
 	require.NoError(t, err)
-	beyond, err := index.QueryGeneration(ctx, key, vector.Vector{1, 0}, semanticDeepLimit+2)
+	beyond, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit+2, SearchFilters{})
 	require.NoError(t, err)
 	require.Len(t, beyond, 1, "the fresh above-floor hit exists just beyond the stale raw window")
-	assert.Equal(t, fresh.DocKey, beyond[0].Doc)
-	assert.GreaterOrEqual(t, float64(beyond[0].Score), semanticCosineFloor)
+	assert.Equal(t, fresh.DocKey, beyond[0].DocKey)
+	assert.GreaterOrEqual(t, beyond[0].Score, semanticCosineFloor)
 
-	hits, probe, err := index.QueryWithProbe(ctx, key, vector.Vector{1, 0}, semanticDeepLimit)
+	hits, err := index.SemanticCandidates(ctx, key, vector.Vector{1, 0}, semanticDeepLimit, SearchFilters{})
 	require.NoError(t, err)
 	assert.Empty(t, hits, "stale raw hits must not become candidates")
-	require.NotNil(t, probe, "freshness joins must not erase the raw hit at the ceiling probe")
-	assert.GreaterOrEqual(t, float64(probe.Score), semanticCosineFloor)
+	probeScore, hasProbe, err := index.SemanticProbe(ctx, key, vector.Vector{1, 0}, semanticDeepLimit)
+	require.NoError(t, err)
+	require.True(t, hasProbe, "freshness joins must not erase the raw hit at the ceiling probe")
+	assert.GreaterOrEqual(t, float64(probeScore), semanticCosineFloor)
 }
 
 func openQueryTestIndex(t *testing.T) *Index {
@@ -274,4 +278,36 @@ func queryTestDocument(id int64, group, output string, options queryDocOptions) 
 		Verdict: options.verdict, Closed: options.closed, FinishedAt: options.finished,
 		Output: output,
 	})
+}
+
+func TestSemanticCandidatesApplyFiltersAfterTheCandidateWindow(t *testing.T) {
+	ctx := context.Background()
+	index := openQueryTestIndex(t)
+	nearest := queryTestDocument(1, "closed-group", "closed nearest", queryDocOptions{closed: true})
+	open := queryTestDocument(2, "open-group", "open next", queryDocOptions{})
+	otherRepo := queryTestDocument(3, "other-group", "other repo", queryDocOptions{repoID: 9})
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{nearest, open, otherRepo}, nil)
+	require.NoError(t, err)
+	space := testSpace("filters", 2)
+	seedActiveGeneration(t, index, space, map[string][]vector.ChunkVector{
+		nearest.DocKey:   {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+		open.DocKey:      {{ChunkIndex: 0, Vector: vector.Vector{0.9, 0.1}}},
+		otherRepo.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{0.8, 0.2}}},
+	})
+	serving, ok, err := index.ServingGeneration(ctx, space)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	candidates, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 3,
+		SearchFilters{RepoID: 7, State: StateOpen})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, open.DocKey, candidates[0].DocKey)
+	assert.Equal(t, open.ContentHash, candidates[0].ContentHash)
+	assert.Equal(t, 1, candidates[0].Rank)
+
+	windowed, err := index.SemanticCandidates(ctx, serving.Key, vector.Vector{1, 0}, 1,
+		SearchFilters{RepoID: 7, State: StateOpen})
+	require.NoError(t, err)
+	assert.Empty(t, windowed, "filters run after the raw candidate window, not before it")
 }

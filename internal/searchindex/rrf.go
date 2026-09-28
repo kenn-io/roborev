@@ -1,6 +1,11 @@
 package searchindex
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+
+	"go.kenn.io/kit/search/rrf"
+)
 
 const reciprocalRankConstant = 60
 
@@ -86,42 +91,52 @@ func compareLegCandidates(left, right rankedCandidate) int {
 	return compareCandidateTie(left, right)
 }
 
-func mergeGroupRRF(lexical, semantic []rankedCandidate, limit int) []rankedCandidate {
+const (
+	legLexical  = "lexical"
+	legSemantic = "semantic"
+)
+
+// mergeGroupRRF fuses already-hydrated legs. Each leg ranks a panel group
+// once, the group's representative is the member from its best-ranked leg
+// (lexical on a tie), and equal scores keep the canonical tie order.
+func mergeGroupRRF(lexical, semantic []rankedCandidate, limit int) ([]rankedCandidate, error) {
 	lexical = groupLegCandidates(lexical)
 	semantic = groupLegCandidates(semantic)
-	type fusedGroup struct {
-		candidate rankedCandidate
-		score     float64
-		matches   []string
-		bestRank  int
-		lexical   bool
+	members := map[string]map[string]rankedCandidate{
+		legLexical:  make(map[string]rankedCandidate, len(lexical)),
+		legSemantic: make(map[string]rankedCandidate, len(semantic)),
 	}
-	groups := make(map[string]fusedGroup, len(lexical)+len(semantic))
-	add := func(candidates []rankedCandidate, lexicalLeg bool) {
-		for _, candidate := range candidates {
-			group := groups[candidate.GroupKey]
-			group.score += 1 / float64(reciprocalRankConstant+candidate.Rank)
-			group.matches = append(group.matches, candidate.MatchedIn...)
-			if group.bestRank == 0 || candidate.Rank < group.bestRank ||
-				(candidate.Rank == group.bestRank && lexicalLeg && !group.lexical) {
-				group.candidate = candidate
-				group.bestRank = candidate.Rank
-				group.lexical = lexicalLeg
-			}
-			groups[candidate.GroupKey] = group
+	leg := func(name string, candidates []rankedCandidate) rrf.GroupLeg[string, string] {
+		groups := make([]rrf.Group[string, string], len(candidates))
+		for i, candidate := range candidates {
+			members[name][candidate.DocKey] = candidate
+			groups[i] = rrf.Group[string, string]{Key: candidate.GroupKey, Members: []string{candidate.DocKey}}
 		}
+		return rrf.GroupLeg[string, string]{Name: name, Weight: 1, Groups: groups}
 	}
-	add(lexical, true)
-	add(semantic, false)
+	fused, err := rrf.FuseGroups(reciprocalRankConstant, []rrf.GroupLeg[string, string]{
+		leg(legLexical, lexical), leg(legSemantic, semantic),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fuse search legs: %w", err)
+	}
 
-	merged := make([]rankedCandidate, 0, len(groups))
-	for _, group := range groups {
-		candidate := group.candidate
-		candidate.Score = group.score
-		candidate.MatchedIn = stableMatches(group.matches)
-		merged = append(merged, candidate)
+	merged := make([]rankedCandidate, 0, len(fused))
+	for _, hit := range fused {
+		var representative rankedCandidate
+		var matches []string
+		for _, alternate := range hit.Alternates {
+			candidate := members[alternate.Leg][alternate.Member]
+			matches = append(matches, candidate.MatchedIn...)
+			if representative.DocKey == "" || candidate.Rank < representative.Rank {
+				representative = candidate
+			}
+		}
+		representative.Score = hit.Score
+		representative.MatchedIn = stableMatches(matches)
+		merged = append(merged, representative)
 	}
-	slices.SortFunc(merged, func(left, right rankedCandidate) int {
+	slices.SortStableFunc(merged, func(left, right rankedCandidate) int {
 		if left.Score != right.Score {
 			if left.Score > right.Score {
 				return -1
@@ -136,7 +151,7 @@ func mergeGroupRRF(lexical, semantic []rankedCandidate, limit int) []rankedCandi
 	for i := range merged {
 		merged[i].Rank = i + 1
 	}
-	return merged
+	return merged, nil
 }
 
 func stableMatches(matches []string) []string {

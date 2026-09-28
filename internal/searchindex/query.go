@@ -3,15 +3,16 @@ package searchindex
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 
+	"go.kenn.io/kit/search/lexical"
+	"go.kenn.io/kit/search/sqlquery"
 	"go.kenn.io/kit/vector"
+	"go.kenn.io/kit/vector/sqlitevec"
 )
 
 const (
@@ -65,16 +66,17 @@ func candidateTarget(limit int) int {
 	return min(max(limit*3, 50), 200)
 }
 
+// literalFTSQuery quotes every word so FTS5 syntax in the query stays literal.
+// A query with no letter or digit has no unicode61 token and returns "".
 func literalFTSQuery(query string) string {
-	words := strings.Fields(strings.TrimSpace(query))
-	if !slices.ContainsFunc(words, containsSearchToken) {
+	if !slices.ContainsFunc(strings.Fields(query), containsSearchToken) {
 		return ""
 	}
-	quoted := make([]string, 0, len(words))
-	for _, word := range words {
-		quoted = append(quoted, `"`+strings.ReplaceAll(word, `"`, `""`)+`"`)
+	prepared, err := lexical.Literal().PrepareLiteral(query)
+	if err != nil {
+		return ""
 	}
-	return strings.Join(quoted, " ")
+	return prepared.Match
 }
 
 func containsSearchToken(value string) bool {
@@ -396,107 +398,73 @@ func parseCandidateTime(value string) time.Time {
 	return parsed
 }
 
-// QueryWithProbe returns fresh hits from kit's KNN plus, when present, the raw
-// neighbor beyond that ceiling. The probe is observed before freshness joins
-// that may suppress candidate rows; sqlite-vec must apply LIMIT before those
-// joins, so this extra read is local SQL rather than a kit Search flow.
-func (index *Index) QueryWithProbe(
-	ctx context.Context, key string, query vector.Vector, limit int,
-) ([]semanticHit, *vector.Hit[string], error) {
-	if limit <= 0 {
-		return nil, nil, nil
-	}
-	probe, err := index.queryRawProbe(ctx, key, query, limit)
-	if err != nil {
-		return nil, nil, err
-	}
-	hits, err := index.QueryGeneration(ctx, key, query, limit)
-	if err != nil {
-		return nil, nil, err
-	}
-	return hits, probe, nil
+var semanticSourceColumns = []sqlquery.Column{
+	{Name: "review_id", As: "review_id"},
+	{Name: "review_uuid", As: "review_uuid"},
+	{Name: "job_id", As: "job_id"},
+	{Name: "job_uuid", As: "job_uuid"},
+	{Name: "group_key", As: "group_key"},
+	{Name: "repo_id", As: "repo_id"},
+	{Name: "repo_name", As: "repo_name"},
+	{Name: "branch", As: "branch"},
+	{Name: "git_ref", As: "git_ref"},
+	{Name: "commit_sha", As: "commit_sha"},
+	{Name: "finished_at", As: "finished_at"},
+	{Name: "verdict", As: "verdict"},
+	{Name: "closed", As: "closed"},
+	{Name: "panel_role", As: "panel_role"},
+	{Name: "content", As: "content"},
 }
 
-func (index *Index) queryRawProbe(
-	ctx context.Context, key string, query vector.Vector, limit int,
-) (*vector.Hit[string], error) {
-	var ordinal int64
-	var dimensions int
-	err := index.db.QueryRowContext(ctx, `
-		SELECT ordinal, dimension
-		  FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal, &dimensions)
-	if err != nil {
-		return nil, fmt.Errorf("find raw semantic generation: %w", err)
-	}
-	if len(query) != dimensions {
-		return nil, fmt.Errorf("query has %d dimensions, generation expects %d", len(query), dimensions)
-	}
-	encoded, err := json.Marshal(query)
-	if err != nil {
-		return nil, fmt.Errorf("serialize raw semantic query: %w", err)
-	}
-	statement := fmt.Sprintf(`
-		SELECT distance FROM review_vectors_v%d
-		 WHERE embedding MATCH vec_f32(?)
-		 ORDER BY distance LIMIT ?`, ordinal)
-	rows, err := index.db.QueryContext(ctx, statement, string(encoded), limit+1)
-	if err != nil {
-		return nil, fmt.Errorf("query raw semantic probe: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	position := 0
-	for rows.Next() {
-		var distance float64
-		if err := rows.Scan(&distance); err != nil {
-			return nil, fmt.Errorf("scan raw semantic probe: %w", err)
-		}
-		if position == limit {
-			return &vector.Hit[string]{ChunkIndex: -1, Score: float32(1 - distance)}, nil
-		}
-		position++
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan raw semantic probe: %w", err)
-	}
-	return nil, nil
+// semanticChunk is one current chunk row from kit's candidate query. Revision
+// comes from the same statement as the distance, so a later mirror update
+// cannot inherit this score.
+type semanticChunk struct {
+	hit       vector.Hit[string]
+	candidate rankedCandidate
 }
 
-func semanticHitVectors(hits []semanticHit) []vector.Hit[string] {
-	out := make([]vector.Hit[string], len(hits))
-	for i, hit := range hits {
-		out[i] = hit.Hit
-	}
-	return out
-}
-
-func (index *Index) semanticCandidates(
-	ctx context.Context, hits []semanticHit, filters SearchFilters,
+// SemanticCandidates runs a bounded KNN search over key's current chunks and
+// returns per-document candidates ranked with their panel groups. Filters
+// apply after the candidate window, like freshness.
+func (index *Index) SemanticCandidates(
+	ctx context.Context, key string, query vector.Vector, limit int, filters SearchFilters,
 ) ([]rankedCandidate, error) {
-	rolled, err := vector.RollupByDocument(semanticHitVectors(hits))
+	if limit <= 0 {
+		return nil, nil
+	}
+	statement, err := index.vectors.BuildCandidateQuery(ctx, index.db, key, query, sqlitevec.CandidateQuery{
+		CandidateLimit:  limit,
+		ExtraSourceCols: semanticSourceColumns,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build semantic candidate query: %w", err)
+	}
+	chunks, err := statement.All(ctx, index.db, scanSemanticChunk)
+	if err != nil {
+		return nil, fmt.Errorf("query semantic candidates: %w", err)
+	}
+	hits := make([]vector.Hit[string], len(chunks))
+	byDocument := make(map[string]rankedCandidate, len(chunks))
+	for i, chunk := range chunks {
+		hits[i] = chunk.hit
+		if _, found := byDocument[chunk.hit.Doc]; !found {
+			byDocument[chunk.hit.Doc] = chunk.candidate
+		}
+	}
+	rolled, err := vector.RollupByDocument(hits)
 	if err != nil {
 		return nil, fmt.Errorf("roll up semantic hits: %w", err)
-	}
-	best := make(map[string]semanticHit, len(hits))
-	for _, hit := range hits {
-		current, found := best[hit.Doc]
-		if !found || hit.Score > current.Score {
-			best[hit.Doc] = hit
-		}
 	}
 	candidates := make([]rankedCandidate, 0, len(rolled))
 	for _, hit := range rolled {
 		if float64(hit.Score) < semanticCosineFloor {
 			continue
 		}
-		snapshot := best[hit.Doc]
-		candidate, found, err := index.readCandidate(ctx, hit.Doc)
-		if err != nil {
-			return nil, err
-		}
-		if !found || candidate.ContentHash != snapshot.ContentHash || !candidateMatchesFilters(candidate, filters) {
+		candidate := byDocument[hit.Doc]
+		if !candidateMatchesFilters(candidate, filters) {
 			continue
 		}
-		candidate.ContentHash = snapshot.ContentHash
 		candidate.Score = float64(hit.Score)
 		candidate.ChunkIndex = hit.ChunkIndex
 		candidate.MatchedIn = []string{MatchSemantic}
@@ -513,25 +481,51 @@ func (index *Index) semanticCandidates(
 	}), nil
 }
 
-func (index *Index) readCandidate(ctx context.Context, docKey string) (rankedCandidate, bool, error) {
-	row := index.db.QueryRowContext(ctx, `
-		SELECT doc_key, review_id, COALESCE(review_uuid, ''),
-		       job_id, COALESCE(job_uuid, ''), group_key,
-		       repo_id, repo_name, COALESCE(branch, ''), git_ref,
-		       COALESCE(commit_sha, ''), COALESCE(finished_at, ''),
-		       COALESCE(verdict, ''), closed, COALESCE(panel_role, ''),
-		       content, content_hash, ''
-		  FROM review_mirror WHERE doc_key = ?`, docKey)
-	candidate, finishedAt, closed, err := scanCandidateBase(row, nil)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return rankedCandidate{}, false, nil
-		}
-		return rankedCandidate{}, false, fmt.Errorf("read semantic review candidate: %w", err)
+func scanSemanticChunk(rows *sql.Rows) (semanticChunk, error) {
+	var chunk semanticChunk
+	var revision sql.NullString
+	var distance float64
+	var reviewUUID, jobUUID, branch, commitSHA, finishedAt, verdict, panelRole sql.NullString
+	var closed int
+	candidate := &chunk.candidate
+	if err := rows.Scan(
+		&candidate.DocKey, &candidate.ChunkIndex, &revision, &distance,
+		&candidate.ReviewID, &reviewUUID, &candidate.JobID, &jobUUID, &candidate.GroupKey,
+		&candidate.RepoID, &candidate.RepoName, &branch, &candidate.GitRef, &commitSHA,
+		&finishedAt, &verdict, &closed, &panelRole, &candidate.Content,
+	); err != nil {
+		return semanticChunk{}, err
 	}
-	candidate.FinishedAt = parseCandidateTime(finishedAt)
+	score, err := sqlitevec.ScoreFromDistance(distance)
+	if err != nil {
+		return semanticChunk{}, err
+	}
+	candidate.ReviewUUID = reviewUUID.String
+	candidate.JobUUID = jobUUID.String
+	candidate.Branch = branch.String
+	candidate.CommitSHA = commitSHA.String
+	candidate.FinishedAt = parseCandidateTime(finishedAt.String)
+	candidate.Verdict = verdict.String
 	candidate.Closed = closed != 0
-	return candidate, true, nil
+	candidate.PanelRole = panelRole.String
+	candidate.ContentHash = revision.String
+	chunk.hit = vector.Hit[string]{
+		Doc: candidate.DocKey, ChunkIndex: candidate.ChunkIndex, Revision: revision.String, Score: score,
+	}
+	return chunk, nil
+}
+
+// SemanticProbe reports the similarity of the first raw neighbor beyond limit.
+// The raw window is counted before freshness joins, so stale vectors still
+// occupy it.
+func (index *Index) SemanticProbe(
+	ctx context.Context, key string, query vector.Vector, limit int,
+) (float32, bool, error) {
+	window, err := index.vectors.QueryGenerationWindow(ctx, key, query, limit)
+	if err != nil {
+		return 0, false, fmt.Errorf("probe semantic candidate window: %w", err)
+	}
+	return window.ProbeScore, window.HasProbe, nil
 }
 
 func candidateMatchesFilters(candidate rankedCandidate, filters SearchFilters) bool {

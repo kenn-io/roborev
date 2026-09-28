@@ -11,9 +11,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/vector"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 
-	"go.kenn.io/roborev/internal/embedding"
+	"go.kenn.io/roborev/internal/searchdoc"
 )
 
 func TestCredentialObservationRecovery(t *testing.T) {
@@ -31,11 +32,14 @@ func TestCredentialObservationRecovery(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 			}))
 			defer server.Close()
-			client, err := embedding.New(embedding.Config{BaseURL: server.URL, Model: "test", Dims: 2, APIKey: "example-key", TrustPrivateNetwork: true})
+			client, err := NewEmbeddings(EmbeddingSettings{
+				BaseURL: server.URL, Model: "test", Dims: 2, APIKey: "example-key", TrustPrivateNetwork: true,
+				RecipeVersion: searchdoc.RecipeVersion,
+			})
 			require.NoError(t, err)
 			index := openGenerationTestIndex(t)
 			r := NewReconciler(&reconcilerStore{}, index, client, ReconcilerConfig{CredentialSource: "inline"})
-			_, err = r.embedder.Embed(t.Context(), embedding.InputDocument, []string{"document"})
+			_, err = r.embedder.EncodeFunc(embedconfig.RoleDocument)(t.Context(), []string{"document"})
 			require.Error(t, err)
 			assert.Equal(t, "rejected", r.Health().Credential)
 			assert.Equal(t, "authentication", r.Health().LastError)
@@ -46,14 +50,14 @@ func TestCredentialObservationRecovery(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "rejected", r.Health().Credential)
 			assert.Equal(t, status, r.Health().LastErrorStatus)
-			_, err = r.embedder.Embed(t.Context(), embedding.InputDocument, nil)
+			_, err = r.embedder.EncodeFunc(embedconfig.RoleDocument)(t.Context(), nil)
 			require.NoError(t, err)
 			assert.Equal(t, "rejected", r.Health().Credential)
 			assert.Equal(t, status, r.Health().LastErrorStatus)
 			assert.Equal(t, int32(1), requests.Load())
 			response.Store(200)
 			service := NewService(nil, index, client, r)
-			_, err = service.embedder.Embed(t.Context(), embedding.InputQuery, []string{"query"})
+			_, err = service.embedder.EncodeFunc(embedconfig.RoleQuery)(t.Context(), []string{"query"})
 			require.NoError(t, err)
 			assert.Equal(t, "ok", r.Health().Credential)
 			assert.Empty(t, r.Health().CredentialReason)
@@ -66,13 +70,13 @@ func TestCredentialObservationRecovery(t *testing.T) {
 
 func TestCredentialDelayedDocumentErrorAfterQueryRecovery(t *testing.T) {
 	index := openGenerationTestIndex(t)
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "test", Dimensions: 2}, batchSize: 1}
+	embedder := &reconcilerEmbedder{space: testSpace("test", 2), batchSize: 1}
 	r := NewReconciler(&reconcilerStore{}, index, embedder, ReconcilerConfig{CredentialSource: "inline"})
 	delayed := make(chan error, 1)
 	resume := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
-		err := &embedding.APIError{StatusCode: 401}
+		err := &embedclient.APIError{StatusCode: 401}
 		r.ObserveEmbeddingResult(err)
 		delayed <- err
 		<-resume
@@ -103,7 +107,7 @@ func TestCredentialMissingConfigurationHealth(t *testing.T) {
 
 func TestCredentialAuthenticationEvidenceSurvivesUnrelatedErrors(t *testing.T) {
 	r := NewReconciler(&reconcilerStore{}, openGenerationTestIndex(t), nil, ReconcilerConfig{CredentialSource: "inline"})
-	r.ObserveEmbeddingResult(&embedding.APIError{StatusCode: 401})
+	r.ObserveEmbeddingResult(&embedclient.APIError{StatusCode: 401})
 	r.recordError(errors.New("synthetic mirror failure"))
 	_, err := r.refreshMirror(t.Context())
 	require.NoError(t, err)

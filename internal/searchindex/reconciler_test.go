@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,9 +16,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/kit/vector"
+	"go.kenn.io/kit/vector/sqlitevec"
 
-	"go.kenn.io/roborev/internal/embedding"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -60,27 +64,31 @@ func (s *reconcilerStore) callCount() int {
 }
 
 type reconcilerEmbedder struct {
-	model     vector.Generation
+	space     embedmodel.Descriptor
 	batchSize int
 	mu        sync.Mutex
 	calls     [][]string
 	embed     func(context.Context, []string) ([][]float32, error)
 }
 
-var _ Embedder = (*embedding.Client)(nil)
-
-func TestEmbeddingClientSatisfiesReconcilerBatchContract(t *testing.T) {
-	client, err := embedding.New(embedding.Config{
+func TestEmbeddingsReportConfiguredBatchSize(t *testing.T) {
+	client, err := NewEmbeddings(EmbeddingSettings{
 		BaseURL: "http://127.0.0.1:9", Model: "model", Dims: 2, BatchSize: 7,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 7, client.BatchSize())
 }
 
-func (e *reconcilerEmbedder) Embed(ctx context.Context, kind embedding.InputKind, texts []string) ([][]float32, error) {
-	if kind != embedding.InputDocument {
-		return nil, fmt.Errorf("unexpected input kind %q", kind)
+func (e *reconcilerEmbedder) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
+	return func(ctx context.Context, texts []string) ([][]float32, error) {
+		if role != embedconfig.RoleDocument {
+			return nil, fmt.Errorf("unexpected role %q", role)
+		}
+		return e.embedDocuments(ctx, texts)
 	}
+}
+
+func (e *reconcilerEmbedder) embedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
 	e.mu.Lock()
 	e.calls = append(e.calls, append([]string(nil), texts...))
 	e.mu.Unlock()
@@ -89,14 +97,14 @@ func (e *reconcilerEmbedder) Embed(ctx context.Context, kind embedding.InputKind
 	}
 	result := make([][]float32, len(texts))
 	for i := range result {
-		result[i] = make([]float32, e.model.Dimensions)
+		result[i] = make([]float32, e.space.Model.Dimensions)
 		result[i][0] = 1
 	}
 	return result, nil
 }
 
-func (e *reconcilerEmbedder) Generation() vector.Generation { return e.model }
-func (e *reconcilerEmbedder) BatchSize() int                { return e.batchSize }
+func (e *reconcilerEmbedder) Space() embedmodel.Descriptor { return e.space }
+func (e *reconcilerEmbedder) BatchSize() int               { return e.batchSize }
 func (e *reconcilerEmbedder) callCount() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -148,7 +156,7 @@ func TestReconcilerRefreshesMirrorBeforeEachFourBatchFillTurn(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(8)}
 	embedder := &reconcilerEmbedder{
-		model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1,
+		space: testSpace("model", 2), batchSize: 1,
 	}
 	embedder.embed = func(_ context.Context, texts []string) ([][]float32, error) {
 		assert.GreaterOrEqual(t, store.callCount(), 1,
@@ -170,7 +178,7 @@ func TestReconcilerRefreshesMirrorBeforeEachFourBatchFillTurn(t *testing.T) {
 	assert.GreaterOrEqual(t, store.callCount(), 2,
 		"the next bounded vector turn must refresh mirror work again")
 	assert.Equal(t, 8, embedder.callCount())
-	assert.Equal(t, embedder.model.Fingerprint(), r.Health().ActiveGeneration)
+	assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
 	assert.Equal(t, int64(0), r.Health().EmbeddingBacklog)
 }
 
@@ -179,14 +187,14 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(1)}
 	embedder := &reconcilerEmbedder{
-		model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1,
+		space: testSpace("model", 2), batchSize: 1,
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
 	more, err := r.reconcileTurn(ctx)
 	require.NoError(t, err)
 	assert.False(t, more)
-	key := embedder.model.Fingerprint()
+	key := kitKey(t, embedder.space)
 	assert.Equal(t, key, r.Health().ActiveGeneration)
 
 	store.mu.Lock()
@@ -200,12 +208,12 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	assert.Equal(t, key, health.ActiveGeneration)
 	assert.Equal(t, int64(5), health.Embedded)
 	assert.Equal(t, int64(2), health.EmbeddingBacklog)
-	available, err := index.GenerationAvailable(ctx, key)
+	_, available, err := index.ServingGeneration(ctx, embedder.space)
 	require.NoError(t, err)
 	assert.True(t, available)
 
-	embedder.model = vector.Generation{Model: "replacement", Dimensions: 2}
-	replacement := embedder.model.Fingerprint()
+	embedder.space = testSpace("replacement", 2)
+	replacement := kitKey(t, embedder.space)
 	more, err = r.reconcileTurn(ctx)
 	require.NoError(t, err)
 	assert.True(t, more)
@@ -213,9 +221,10 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	assert.Equal(t, "building", health.VectorState)
 	assert.Equal(t, key, health.ActiveGeneration)
 	assert.Equal(t, int64(3), health.EmbeddingBacklog)
-	available, err = index.GenerationAvailable(ctx, replacement)
+	_, available, err = index.ServingGeneration(ctx, embedder.space)
 	require.NoError(t, err)
 	assert.False(t, available)
+	assert.Equal(t, replacement, health.Generation)
 }
 
 func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
@@ -225,8 +234,8 @@ func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 	}))
 	defer server.Close()
-	client, err := embedding.New(embedding.Config{
-		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1,
+	client, err := NewEmbeddings(EmbeddingSettings{
+		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1, RecipeVersion: searchdoc.RecipeVersion,
 	})
 	require.NoError(t, err)
 	index := openGenerationTestIndex(t)
@@ -241,14 +250,14 @@ func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 	assert.False(t, more)
 	assert.Equal(t, int64(wantProviderCalls), providerCalls.Load())
 	assert.Equal(t, int64(0), r.Health().EmbeddingBacklog)
-	assert.Equal(t, client.Generation().Fingerprint(), r.Health().ActiveGeneration)
+	assert.Equal(t, kitKey(t, client.Space()), r.Health().ActiveGeneration)
 }
 
 func TestReconcilerAttachesFillDeadlineToProviderContext(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		index := openGenerationTestIndex(t)
 		store := &reconcilerStore{sources: makeSearchSources(1)}
-		embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+		embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 		embedder.embed = func(ctx context.Context, _ []string) ([][]float32, error) {
 			_, ok := ctx.Deadline()
 			require.True(t, ok)
@@ -269,9 +278,9 @@ func TestReconcilerHonorsRetryAfterAndUsesFixedDefinitiveErrors(t *testing.T) {
 		MinBackoff: time.Second, MaxBackoff: 5 * time.Minute,
 	})
 
-	transient := &embedding.APIError{StatusCode: http.StatusTooManyRequests, RetryAfter: 17 * time.Second}
+	transient := &embedclient.APIError{StatusCode: http.StatusTooManyRequests, RetryAfter: 17 * time.Second}
 	assert.Equal(t, 17*time.Second, r.backoffFor(transient))
-	definitive := &embedding.APIError{StatusCode: http.StatusUnauthorized}
+	definitive := &embedclient.APIError{StatusCode: http.StatusUnauthorized}
 	assert.Equal(t, 5*time.Minute, r.backoffFor(definitive))
 
 	r.ObserveEmbeddingResult(definitive)
@@ -290,12 +299,12 @@ func TestReconcilerWakeDoesNotBypassProviderBackoff(t *testing.T) {
 	}{
 		{
 			name:   "retry after",
-			first:  &embedding.APIError{StatusCode: http.StatusTooManyRequests, RetryAfter: 80 * time.Millisecond},
+			first:  &embedclient.APIError{StatusCode: http.StatusTooManyRequests, RetryAfter: 80 * time.Millisecond},
 			config: ReconcilerConfig{MinBackoff: time.Millisecond, MaxBackoff: 100 * time.Millisecond},
 		},
 		{
 			name:   "definitive",
-			first:  &embedding.APIError{StatusCode: http.StatusUnauthorized},
+			first:  &embedclient.APIError{StatusCode: http.StatusUnauthorized},
 			config: ReconcilerConfig{MinBackoff: time.Millisecond, MaxBackoff: 80 * time.Millisecond},
 		},
 	}
@@ -306,7 +315,7 @@ func TestReconcilerWakeDoesNotBypassProviderBackoff(t *testing.T) {
 				store := &reconcilerStore{sources: makeSearchSources(1)}
 				firstCall := make(chan struct{})
 				var count atomic.Int64
-				embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+				embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 				embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
 					if count.Add(1) == 1 {
 						close(firstCall)
@@ -342,7 +351,7 @@ func TestReconcilerRequestDeadlineRetriesUntilParentCancellation(t *testing.T) {
 		store := &reconcilerStore{sources: makeSearchSources(1)}
 		second := make(chan struct{})
 		var calls atomic.Int64
-		embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+		embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 		embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
 			if calls.Add(1) == 1 {
 				return nil, fmt.Errorf("embedding request failed: %w", context.DeadlineExceeded)
@@ -374,7 +383,7 @@ func TestReconcilerRejectsEmbedderCardinalityMismatchWithoutPanic(t *testing.T) 
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			index := openGenerationTestIndex(t)
-			embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+			embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 			embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
 				return tt.vectors, nil
 			}
@@ -393,12 +402,12 @@ func TestReconcilerRejectsEmbedderCardinalityMismatchWithoutPanic(t *testing.T) 
 func TestReconcilerSkipsOnlyProvenContentSpecific400(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(1)}
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 	embedder.embed = func(_ context.Context, texts []string) ([][]float32, error) {
 		if texts[0] == benignChunkText(texts[0]) {
 			return [][]float32{{1, 0}}, nil
 		}
-		return nil, &embedding.APIError{StatusCode: http.StatusBadRequest}
+		return nil, &embedclient.APIError{StatusCode: http.StatusBadRequest}
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
@@ -407,8 +416,8 @@ func TestReconcilerSkipsOnlyProvenContentSpecific400(t *testing.T) {
 	health := r.Health()
 	assert.Equal(t, int64(1), health.Skipped)
 	assert.Equal(t, int64(0), health.EmbeddingBacklog)
-	assert.Equal(t, embedder.model.Fingerprint(), health.ActiveGeneration)
-	assert.Equal(t, 0, generationVectorCount(t, index, embedder.model.Fingerprint()))
+	assert.Equal(t, kitKey(t, embedder.space), health.ActiveGeneration)
+	assert.Equal(t, 0, generationVectorCount(t, index, kitKey(t, embedder.space)))
 }
 
 func TestReconcilerDoesNotSkipAuthenticationOrUnproven400(t *testing.T) {
@@ -416,9 +425,9 @@ func TestReconcilerDoesNotSkipAuthenticationOrUnproven400(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			index := openGenerationTestIndex(t)
 			store := &reconcilerStore{sources: makeSearchSources(1)}
-			embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+			embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 			embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
-				return nil, &embedding.APIError{StatusCode: status}
+				return nil, &embedclient.APIError{StatusCode: status}
 			}
 			r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
@@ -434,7 +443,7 @@ func TestReconcilerHealthIsImmutableAndReportsProgressRateETA(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(2)}
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{Now: func() time.Time { return now }, MaxFillBatches: 1})
 
 	_, err := r.reconcileTurn(context.Background())
@@ -461,7 +470,7 @@ func TestReconcilerCancellationInterruptsProviderCall(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(1)}
 	started := make(chan struct{})
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 	embedder.embed = func(ctx context.Context, _ []string) ([][]float32, error) {
 		close(started)
 		<-ctx.Done()
@@ -493,8 +502,8 @@ func TestReconcilerErrorsPreserveMatchingActiveGeneration(t *testing.T) {
 	doc := searchdoc.Render(sources[0])
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
-	embedder := &reconcilerEmbedder{model: vector.Generation{Model: "model", Dimensions: 2}, batchSize: 1}
-	key, err := index.EnsureGeneration(ctx, embedder.model)
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
+	key, err := index.ResolveGeneration(ctx, embedder.space)
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, key, 1)
 	require.NoError(t, err)
@@ -519,12 +528,12 @@ func TestReconcilerErrorsPreserveDifferentActiveGenerationIdentity(t *testing.T)
 	doc := searchdoc.Render(sources[0])
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
-	activeModel := vector.Generation{Model: "active", Dimensions: 2}
+	activeModel := testSpace("active", 2)
 	seedActiveGeneration(t, index, activeModel, map[string][]vector.ChunkVector{
 		doc.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
 	})
 	replacement := &reconcilerEmbedder{
-		model: vector.Generation{Model: "replacement", Dimensions: 2}, batchSize: 1,
+		space: testSpace("replacement", 2), batchSize: 1,
 	}
 	r := NewReconciler(
 		&reconcilerStore{err: errors.New("canonical read unavailable")},
@@ -538,8 +547,8 @@ func TestReconcilerErrorsPreserveDifferentActiveGenerationIdentity(t *testing.T)
 	r.recordError(err)
 	health := r.Health()
 	assert.Equal(t, "error", health.VectorState)
-	assert.Equal(t, replacement.model.Fingerprint(), health.Generation)
-	assert.Equal(t, activeModel.Fingerprint(), health.ActiveGeneration)
+	assert.Equal(t, kitKey(t, replacement.space), health.Generation)
+	assert.Equal(t, kitKey(t, activeModel), health.ActiveGeneration)
 }
 
 func makeSearchSources(count int) []storage.SearchReviewSource {
@@ -555,4 +564,66 @@ func makeSearchSources(count int) []storage.SearchReviewSource {
 		}
 	}
 	return result
+}
+
+func kitKey(t *testing.T, space embedmodel.Descriptor) string {
+	t.Helper()
+	generation, err := space.Generation()
+	require.NoError(t, err)
+	return generation.Fingerprint()
+}
+
+func TestReconcilerFillsGenerationStoredByEarlierReleaseInPlace(t *testing.T) {
+	ctx := context.Background()
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
+	}))
+	defer server.Close()
+	settings := EmbeddingSettings{
+		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1, RecipeVersion: searchdoc.RecipeVersion,
+	}
+	client, err := NewEmbeddings(settings)
+	require.NoError(t, err)
+
+	index := openGenerationTestIndex(t)
+	sources := makeSearchSources(2)
+	first := searchdoc.Render(sources[0])
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{first}, nil)
+	require.NoError(t, err)
+	legacy := vector.Generation{Model: settings.Model, Dimensions: settings.Dims, Params: map[string]string{
+		"endpoint": server.URL, "input_type_mode": "none", "recipe": strconv.Itoa(searchdoc.RecipeVersion),
+	}}
+	key := legacy.Fingerprint()
+	require.NoError(t, index.vectors.EnsureGeneration(ctx, key, legacy, sqlitevec.StateBuilding))
+	pending, err := index.PendingGeneration(ctx, key, 1)
+	require.NoError(t, err)
+	require.NoError(t, index.SaveGenerationVectors(ctx, key, pending[0],
+		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
+	require.NoError(t, index.ActivateGeneration(ctx, key))
+
+	store := &reconcilerStore{sources: sources[:1]}
+	r := NewReconciler(store, index, client, ReconcilerConfig{})
+	more, err := r.reconcileTurn(ctx)
+	require.NoError(t, err)
+	assert.False(t, more)
+	assert.Zero(t, requests.Load(), "an already embedded corpus is not re-embedded")
+	assert.Equal(t, key, r.Health().ActiveGeneration)
+	assert.Equal(t, "ready", r.Health().VectorState)
+
+	store.mu.Lock()
+	store.sources = sources
+	store.mu.Unlock()
+	more, err = r.reconcileTurn(ctx)
+	require.NoError(t, err)
+	assert.False(t, more)
+	assert.Equal(t, int64(1), requests.Load(), "only the new review is embedded")
+	counts, err := index.GenerationCounts(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, GenerationCounts{Embedded: 2}, counts)
+	generations, err := index.vectors.Generations(ctx)
+	require.NoError(t, err)
+	require.Len(t, generations, 1)
+	assert.Equal(t, key, generations[0].Key)
 }
