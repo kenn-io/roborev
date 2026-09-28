@@ -153,14 +153,43 @@ const reciprocalRankConstant = 60
 // page shows the first one that is still a live, matching canonical review.
 type pageGroup struct {
 	Members []legMember
-	// Fused groups carry their reciprocal-rank score and the evidence from
-	// every leg. A single-leg group reports its member's own score.
-	Fused   bool
-	Score   float64
-	Matches []string
+	// Fused groups report reciprocal-rank evidence from their legs. Score is
+	// the fused score before canonical loading; the page recomputes it from
+	// legs that found a live review. A single-leg group reports its member's
+	// own score.
+	Fused bool
+	Score float64
+	Legs  []fusedLeg
 	// LexicalExcerpts holds FTS snippets by document key, preferred over a
 	// semantic chunk excerpt for a document both legs found.
 	LexicalExcerpts map[string]string
+}
+
+// fusedLeg is one leg's contribution to a fused group and the members that
+// leg found, best first.
+type fusedLeg struct {
+	Name    string
+	Term    float64
+	Members []legMember
+}
+
+// liveEvidence sums the legs that found at least one live member and collects
+// the evidence of each such leg's best live member. A deleted or filtered-out
+// review contributes nothing.
+func (group pageGroup) liveEvidence(live func(legMember) bool) (float64, []string) {
+	var score float64
+	var matches []string
+	for _, leg := range group.Legs {
+		for _, member := range leg.Members {
+			if !live(member) {
+				continue
+			}
+			score += leg.Term
+			matches = append(matches, member.MatchedIn()...)
+			break
+		}
+	}
+	return score, stableMatches(matches)
 }
 
 // semanticQuery is the encoded query and the generation that serves it.
@@ -472,8 +501,10 @@ func (service *Service) fuse(
 // group best goes first, lexical on a tie, each leg keeping its own order.
 func fusedPageGroup(hit rrf.GroupHit[string, legMember]) pageGroup {
 	legRank := make(map[string]int, len(hit.Contributions))
+	legTerm := make(map[string]float64, len(hit.Contributions))
 	for _, contribution := range hit.Contributions {
 		legRank[contribution.Leg] = contribution.Rank
+		legTerm[contribution.Leg] = contribution.Term
 	}
 	legs := []string{MatchLexical, MatchSemantic}
 	if rank, ok := legRank[MatchSemantic]; ok {
@@ -482,24 +513,22 @@ func fusedPageGroup(hit rrf.GroupHit[string, legMember]) pageGroup {
 		}
 	}
 	group := pageGroup{Fused: true, Score: hit.Score, LexicalExcerpts: map[string]string{}}
-	var matches []string
 	for _, leg := range legs {
-		first := true
+		fused := fusedLeg{Name: leg, Term: legTerm[leg]}
 		for _, alternate := range hit.Alternates {
 			if alternate.Leg != leg {
 				continue
 			}
+			fused.Members = append(fused.Members, alternate.Member)
 			group.Members = append(group.Members, alternate.Member)
-			if first {
-				matches = append(matches, alternate.Member.MatchedIn()...)
-				first = false
-			}
 			if leg == MatchLexical {
 				group.LexicalExcerpts[alternate.Member.DocKey] = alternate.Member.Excerpt
 			}
 		}
+		if len(fused.Members) > 0 {
+			group.Legs = append(group.Legs, fused)
+		}
 	}
-	group.Matches = stableMatches(matches)
 	return group
 }
 
@@ -534,19 +563,27 @@ func stableMatches(matches []string) []string {
 	return ordered
 }
 
-// page loads up to limit hits from the canonical store in group order. A group
-// shows its first member that is still a live review matching filters; when
-// none is, the sidecar is behind reviews.db and the reconciler is woken.
+// page loads up to limit hits from the canonical store in group order. A
+// deleted review, or one that no longer matches filters, is never returned and
+// contributes nothing: each group shows its first live member, and a fused
+// group's score and evidence come only from legs that found a live member.
+// Fused pages are re-ordered by those scores. Any dropped review means the
+// sidecar is behind reviews.db, so the reconciler is woken.
 func (service *Service) page(
 	ctx context.Context, groups []pageGroup, filters SearchFilters, limit int,
 ) ([]SearchHit, error) {
-	hits := make([]SearchHit, 0, min(limit, len(groups)))
+	type rankedHit struct {
+		hit    SearchHit
+		member legMember
+	}
+	var ranked []rankedHit
+	fused := false
 	repoPaths := map[int64]string{}
 	stale := false
 	// Load groups in candidate-target batches: stale groups are rare, so the
 	// first batch usually fills the page with one canonical query.
 	batchSize := candidateTarget(limit)
-	for next := 0; next < len(groups) && len(hits) < limit; {
+	for next := 0; next < len(groups) && len(ranked) < limit; {
 		batch := groups[next:min(next+batchSize, len(groups))]
 		next += len(batch)
 		var keys []string
@@ -559,6 +596,10 @@ func (service *Service) page(
 		if err != nil {
 			return nil, fmt.Errorf("load search reviews: %w", err)
 		}
+		live := func(member legMember) bool {
+			source, ok := sources[member.DocKey]
+			return ok && sourceMatchesFilters(source, filters)
+		}
 		type choice struct {
 			group  pageGroup
 			member legMember
@@ -569,12 +610,11 @@ func (service *Service) page(
 		for _, group := range batch {
 			found := false
 			for _, member := range group.Members {
-				source, ok := sources[member.DocKey]
-				if !ok || !sourceMatchesFilters(source, filters) {
+				if !live(member) {
 					stale = true
 					continue
 				}
-				chosen = append(chosen, choice{group: group, member: member, source: source})
+				chosen = append(chosen, choice{group: group, member: member, source: sources[member.DocKey]})
 				if _, lexical := group.LexicalExcerpts[member.DocKey]; member.Semantic && !lexical {
 					chunkDocs = append(chunkDocs, member.DocKey)
 				}
@@ -590,9 +630,6 @@ func (service *Service) page(
 			return nil, err
 		}
 		for _, item := range chosen {
-			if len(hits) == limit {
-				break
-			}
 			repoPath, ok := repoPaths[item.source.RepoID]
 			if !ok {
 				repo, err := service.store.GetRepoByID(item.source.RepoID)
@@ -606,11 +643,31 @@ func (service *Service) page(
 				repoPath = repo.RootPath
 				repoPaths[item.source.RepoID] = repoPath
 			}
-			hits = append(hits, searchHit(item.group, item.member, item.source, repoPath, contents))
+			hit := searchHit(item.group, item.member, item.source, repoPath, contents)
+			if item.group.Fused {
+				fused = true
+				hit.Score, hit.MatchedIn = item.group.liveEvidence(live)
+			}
+			ranked = append(ranked, rankedHit{hit: hit, member: item.member})
 		}
 	}
 	if stale {
 		service.wake()
+	}
+	if fused {
+		slices.SortStableFunc(ranked, func(left, right rankedHit) int {
+			if left.hit.Score != right.hit.Score {
+				if left.hit.Score > right.hit.Score {
+					return -1
+				}
+				return 1
+			}
+			return compareMemberTie(left.member, right.member)
+		})
+	}
+	hits := make([]SearchHit, 0, min(limit, len(ranked)))
+	for _, item := range ranked[:min(limit, len(ranked))] {
+		hits = append(hits, item.hit)
 	}
 	return hits, nil
 }
@@ -628,10 +685,6 @@ func searchHit(
 		ReviewType: source.ReviewType, PanelRole: source.PanelRole,
 		Agent: source.Agent, Verdict: source.Verdict, Closed: source.Closed,
 		FinishedAt: source.FinishedAt, Score: member.Score, MatchedIn: member.MatchedIn(),
-	}
-	if group.Fused {
-		hit.Score = group.Score
-		hit.MatchedIn = group.Matches
 	}
 	switch excerpt, lexical := group.LexicalExcerpts[member.DocKey]; {
 	case lexical && excerpt != "":

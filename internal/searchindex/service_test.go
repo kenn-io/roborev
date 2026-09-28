@@ -744,3 +744,40 @@ func TestServiceCredentialRejectedReasonAndRecovery(t *testing.T) {
 	assert.Empty(t, r.Health().CredentialReason)
 	assert.Empty(t, r.Health().LastError)
 }
+
+func TestServiceHybridDeletedReviewContributesNoEvidence(t *testing.T) {
+	ctx := context.Background()
+	index := openQueryTestIndex(t)
+	panel := "00000000-0000-4000-8000-000000009999"
+	deleted := queryTestDocument(1, panel, "needle needle needle", queryDocOptions{})
+	survivor := queryTestDocument(2, panel, "unrelated wording", queryDocOptions{})
+	other := queryTestDocument(3, "other-group", "needle among other words here", queryDocOptions{})
+	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{deleted, survivor, other}, nil)
+	require.NoError(t, err)
+	model := testSpace("deleted-evidence", 2)
+	seedActiveGeneration(t, index, model, map[string][]vector.ChunkVector{
+		deleted.DocKey:  {{ChunkIndex: 0, Vector: vector.Vector{0, 1}}},
+		survivor.DocKey: {{ChunkIndex: 0, Vector: vector.Vector{0.8, 0.6}}},
+		other.DocKey:    {{ChunkIndex: 0, Vector: vector.Vector{1, 0}}},
+	})
+	store := newServiceStore(deleted, survivor, other)
+	delete(store.docs, deleted.DocKey)
+	runtime := activeServiceRuntime(model)
+	service := NewService(store, index, &serviceEmbedder{space: model, query: vector.Vector{1, 0}}, runtime)
+
+	result, err := service.Search(ctx, SearchParams{Query: "needle", Mode: ModeHybrid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, result.Hits, 2)
+	// Before the deletion both groups scored 1/61 + 1/62. The panel's lexical
+	// evidence came only from the deleted review, so it drops to 1/62.
+	assert.Equal(t, other.Source.ReviewID, result.Hits[0].ReviewID)
+	assert.Equal(t, []string{MatchLexical, MatchSemantic}, result.Hits[0].MatchedIn)
+	assert.InDelta(t, 1.0/61.0+1.0/62.0, result.Hits[0].Score, 1e-12)
+	assert.Equal(t, survivor.Source.ReviewID, result.Hits[1].ReviewID)
+	assert.Equal(t, []string{MatchSemantic}, result.Hits[1].MatchedIn)
+	assert.InDelta(t, 1.0/62.0, result.Hits[1].Score, 1e-12)
+	for _, hit := range result.Hits {
+		assert.NotEqual(t, deleted.Source.ReviewID, hit.ReviewID)
+	}
+	assert.Positive(t, runtime.wakes)
+}
