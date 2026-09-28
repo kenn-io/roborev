@@ -1069,25 +1069,16 @@ func TestControlSocketRoundtrip(t *testing.T) {
 
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 
-	// Provide a pipe for stdin so the program doesn't block on TTY.
-	r, w, _ := os.Pipe()
+	// Commands arrive through the control socket, so no terminal reader is needed.
 	p := tea.NewProgram(m,
 		tea.WithoutRenderer(),
-		tea.WithInput(r),
+		tea.WithInput(nil),
 	)
 	runDone := make(chan struct{})
 	go func() { _, _ = p.Run(); close(runDone) }()
 	t.Cleanup(func() {
-		// Close the write end first so bubbletea's readLoop sees EOF,
-		// then Kill and wait for Run to return.
-		w.Close()
 		p.Kill()
 		<-runDone
-		// Deliberately do not close the read end. Bubbletea's input
-		// read goroutine (via cancelreader) may still call os.File.Fd()
-		// on r after Run returns, and on macOS the kqueue cancelreader
-		// races with os.File.Close(). The OS reclaims the fd at process
-		// exit; leaking it for this short-lived test is harmless.
 	})
 
 	// Wait for the first Update, the signal Run uses before it starts
