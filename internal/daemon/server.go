@@ -4185,7 +4185,7 @@ func (s *Server) humaStreamEvents(
 		defer s.broadcaster.Unsubscribe(subID)
 		flusher.Flush()
 
-		encoder := jsontext.NewEncoder(writer)
+		encoder := jsontext.NewEncoder(writer, responseJSONOptions)
 		for {
 			select {
 			case <-hctx.Context().Done():
@@ -4226,7 +4226,7 @@ func parseHumaJobID(ctx huma.Context, value, missingMessage string) (int64, bool
 func writeHumaJSON(ctx huma.Context, status int, v any) {
 	ctx.SetHeader("Content-Type", "application/json")
 	ctx.SetStatus(status)
-	if err := json.MarshalWrite(ctx.BodyWriter(), v); err != nil {
+	if err := json.MarshalWrite(ctx.BodyWriter(), v, responseJSONOptions); err != nil {
 		_, _ = io.WriteString(
 			ctx.BodyWriter(),
 			fmt.Sprintf(`{"error":"failed to write JSON response: %v"}`, err),
@@ -4235,7 +4235,7 @@ func writeHumaJSON(ctx huma.Context, status int, v any) {
 }
 
 func writeHumaNDJSON(writer io.Writer, v any) bool {
-	line, err := json.Marshal(v)
+	line, err := json.Marshal(v, responseJSONOptions)
 	if err != nil {
 		return false
 	}

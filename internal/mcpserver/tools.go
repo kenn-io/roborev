@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -265,7 +266,8 @@ func (s *Server) callSearchTool(ctx context.Context, req *mcp.CallToolRequest) (
 	if err != nil {
 		return toolErrorResult(err)
 	}
-	content, err := json.Marshal(output)
+	// Review text can hold invalid UTF-8; replace it rather than fail.
+	content, err := json.Marshal(output, jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal MCP search output: %w", err)
 	}

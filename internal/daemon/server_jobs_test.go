@@ -3343,3 +3343,21 @@ func TestHandleListJobsByIDWithArchivedReview(t *testing.T) {
 	assert.Equal(t, job.ID, response.Jobs[0].ID)
 	assert.NotContains(t, w.Body.String(), "Legacy review")
 }
+
+func TestListJobsReplacesInvalidUTF8(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	// Prompts can carry raw bytes from binary files in a diff.
+	_, err = db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "dirty",
+		Agent:  "test",
+		Prompt: "binary \xff\xfe tail",
+	})
+	require.NoError(t, err)
+
+	resp := fetchJobs(t, server, "")
+	require.Len(t, resp.Jobs, 1)
+	assert.Equal(t, "binary �� tail", resp.Jobs[0].Prompt)
+}

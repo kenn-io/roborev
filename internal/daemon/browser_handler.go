@@ -563,7 +563,7 @@ func writeBrowserJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.WriteHeader(status)
-	_ = json.MarshalWrite(w, value)
+	_ = json.MarshalWrite(w, value, responseJSONOptions)
 }
 
 func writeBrowserError(w http.ResponseWriter, status int, code string) {

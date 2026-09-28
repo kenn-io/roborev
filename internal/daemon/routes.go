@@ -36,12 +36,7 @@ func humaConfig(title string) huma.Config {
 	})
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
-			return json.MarshalWrite(
-				w,
-				value,
-				json.FormatNilSliceAsNull(false),
-				jsontext.EscapeForHTML(false),
-			)
+			return json.MarshalWrite(w, value, responseJSONOptions)
 		},
 		Unmarshal: func(data []byte, value any) error {
 			return json.Unmarshal(data, value)
@@ -53,6 +48,16 @@ func humaConfig(title string) huma.Config {
 	}
 	return cfg
 }
+
+// responseJSONOptions configures every JSON body the daemon writes to clients.
+// Stored prompts and outputs can hold raw bytes from binary files in a diff.
+// JSON v2 rejects invalid UTF-8 by default, which fails the response partway
+// through, so replace those bytes with U+FFFD as encoding/json v1 did.
+var responseJSONOptions = json.JoinOptions(
+	json.FormatNilSliceAsNull(false),
+	jsontext.EscapeForHTML(false),
+	jsontext.AllowInvalidUTF8(true),
+)
 
 // registerHumaAPI creates a Huma API on the given mux and registers
 // all typed endpoints. The returned huma.API can be used to serve
