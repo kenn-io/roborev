@@ -54,6 +54,10 @@ Current date: GOLDEN_DATE (UTC)
 
 The following are reviews of recent commits in this repository. Use them as context
 to understand ongoing work and to check if the current commit addresses previous feedback.
+Issues they raised may have been fixed since those reviews. Do not re-raise a
+previous finding unless it persists in the current code, and do not ask to undo a
+change made to address earlier feedback. Do report genuine problems in the code as
+it now stands, including ones introduced by such a change.
 
 **Important:** Reviews may include responses from developers. Pay attention to these responses -
 they may indicate known issues that should be ignored, explain why certain patterns exist,

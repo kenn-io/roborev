@@ -262,6 +262,44 @@ func TestGoldenPrompt_SingleWithPreviousReviews(t *testing.T) {
 	assertGolden(t, scrubDynamic(prompt), "single_with_previous_reviews.golden")
 }
 
+// TestSinglePromptPreviousReviewsCarrySuppressionInstruction reproduces
+// issue #1031: a single-commit review whose parent commit has stored
+// findings — the roborev fix loop shape — receives those findings as
+// context, but the previous_reviews section must also tell the reviewer
+// to judge them against the current code, so a review of a fix commit
+// neither re-raises the resolved finding nor asks to undo the fix,
+// while still reporting genuine problems the fix itself introduced.
+func TestSinglePromptPreviousReviewsCarrySuppressionInstruction(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	parent := r.commitFile("handler.go",
+		"func handle() error {\n\tif err := doWork(); err != nil {\n\t\t_ = err\n\t}\n\treturn nil\n}\n",
+		"add handler")
+	target := r.commitFile("handler.go",
+		"func handle() error {\n\treturn doWork()\n}\n",
+		"return the error from doWork")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, parent, "test",
+		"**Problem**: handle() swallows the error returned by doWork().\n\nVerdict: FAIL")
+
+	b := NewBuilder(db)
+	prompt, err := b.ForRepo(r.dir, repo.ID).Build(target, 1, "test", "", "")
+	require.NoError(t, err)
+
+	// The parent finding itself is context for the review of the fix commit.
+	assert.Contains(t, prompt, "swallows the error returned by doWork()")
+
+	// The reviewer must be told to re-raise a previous finding only when it
+	// persists in the current code, and not to undo the fix that resolved it.
+	assert.Contains(t, prompt, "unless it persists in the current code")
+	assert.Contains(t, prompt, "do not ask to undo")
+	// Suppression must not silence real problems in the fixed code.
+	assert.Contains(t, prompt, "introduced by such a change")
+}
+
 // TestGoldenPrompt_PreviousReviewsWithComments exercises the review_comments
 // rendering path. Prior versions trimmed the separator after a comment block,
 // causing the next `--- Review ... ---` header to butt against the last
