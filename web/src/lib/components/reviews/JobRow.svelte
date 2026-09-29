@@ -85,7 +85,7 @@
   }}
 >
   <td class="col-id">
-    <span class="mono">{job.id}</span>
+    <span class="job-id">{job.id}</span>
   </td>
   <td class="col-ref" class:tree-cell={expandable || member}>
     <span class="ref-line" class:ref-line--member={member}>
@@ -114,7 +114,7 @@
           {#if job.branch}
             <span class="branch-name">{job.branch}</span>
           {/if}
-          <span class="git-ref mono" title={job.git_ref}>
+          <span class="git-ref" title={job.git_ref}>
             {shortRef(job.git_ref)}
           </span>
         </span>
@@ -145,10 +145,10 @@
     <VerdictBadge verdict={job.verdict} />
   </td>
   <td class="col-closed">{closedLabel(job)}</td>
-  <td class="col-elapsed mono">
+  <td class="col-elapsed">
     {formatElapsed(job)}
   </td>
-  <td class="col-cost mono">
+  <td class="col-cost">
     {formatCost(job)}
   </td>
   <td class="col-type">{job.job_type}</td>
@@ -160,46 +160,48 @@
 <style>
   .job-row {
     cursor: pointer;
-    border-bottom: 1px solid var(--border-muted);
-    transition: background 0.1s;
+    transition: background var(--transition-fast);
   }
 
   .job-row:hover {
     background: var(--bg-surface-hover);
   }
 
+  .job-row:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
+
   .job-row.highlighted {
-    background: color-mix(in srgb, var(--accent-blue) 4%, var(--bg-surface));
-    outline: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
-    outline-offset: -1px;
+    background: color-mix(in srgb, var(--accent-blue) 5%, var(--bg-surface));
+    box-shadow: inset 2px 0 0
+      color-mix(in srgb, var(--accent-blue) 55%, transparent);
   }
 
   .job-row.selected {
-    background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
-  .job-row.member td {
+  .job-row.member:not(.selected, .highlighted, :hover) {
     background: var(--bg-inset);
   }
 
   .job-row td {
-    padding: 6px 10px;
-    font-size: var(--font-size-sm);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-muted);
     color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
     vertical-align: middle;
     white-space: nowrap;
   }
 
-  .mono {
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-  }
-
-  .col-id {
+  .job-row td.col-id {
     width: 60px;
+    padding-left: 16px;
     color: var(--text-muted);
     text-align: right;
-    white-space: nowrap;
   }
 
   .chevron {
@@ -207,20 +209,19 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    transition:
-      transform 0.1s,
-      background 0.1s,
-      color 0.1s;
-    vertical-align: middle;
-    margin-right: 2px;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
     padding: 0;
     border: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
+    color: var(--text-muted);
     cursor: pointer;
+    transition:
+      transform var(--transition-fast),
+      background var(--transition-fast),
+      color var(--transition-fast);
   }
 
   .chevron:hover {
@@ -230,122 +231,109 @@
 
   .chevron.open {
     transform: rotate(90deg);
-    color: var(--accent-blue);
+    color: var(--text-primary);
   }
 
   .col-ref {
-    min-width: 160px;
-    max-width: 300px;
+    min-width: 200px;
+    max-width: 380px;
     white-space: normal;
   }
 
   .ref-line {
     display: flex;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--space-3);
     min-width: 0;
   }
 
   .tree-cell .ref-line--member {
-    padding-left: 18px;
+    padding-left: 20px;
   }
 
   .tree-spacer {
-    flex: 0 0 14px;
-    width: 14px;
-    height: 14px;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
   }
 
   .ref-stack {
-    display: block;
+    display: grid;
+    gap: 2px;
     min-width: 0;
   }
 
   .ref-group {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: baseline;
+    gap: var(--space-3);
+    min-width: 0;
     flex-wrap: wrap;
   }
 
   .repo-name {
     font-weight: 500;
-    font-size: var(--font-size-sm);
   }
 
   .branch-name {
-    color: var(--accent-purple);
-    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+  }
+
+  .branch-name::before {
+    margin-right: var(--space-3);
+    color: var(--text-muted);
+    content: "/";
   }
 
   .git-ref {
     color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
   }
 
   .commit-subject {
-    display: block;
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
     overflow: hidden;
+    max-width: 360px;
+    color: var(--text-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 280px;
   }
 
   .member-name {
-    display: block;
-    font-size: var(--font-size-xs);
-    color: var(--accent-blue);
+    color: var(--text-primary);
     font-weight: 500;
   }
 
   .panel-status {
-    display: block;
+    color: var(--text-muted);
     font-size: var(--font-size-xs);
-    color: var(--text-secondary);
   }
 
   .col-agent {
-    max-width: 100px;
+    max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .col-review-type {
-    width: 110px;
     max-width: 160px;
     overflow: hidden;
+    color: var(--text-secondary);
     text-overflow: ellipsis;
-    color: var(--text-secondary);
   }
 
-  .col-status {
-    width: 90px;
-  }
-
-  .col-verdict {
-    width: 70px;
-  }
-
-  .col-elapsed {
-    width: 80px;
-    color: var(--text-secondary);
-    text-align: right;
-  }
-
-  .col-cost {
-    width: 72px;
-    color: var(--text-secondary);
-    text-align: right;
-  }
-
+  .col-closed,
   .col-type {
-    width: 80px;
     color: var(--text-secondary);
+  }
+
+  .col-elapsed,
+  .col-cost {
+    color: var(--text-secondary);
+    text-align: right;
   }
 
   .col-queued {
-    width: 80px;
     color: var(--text-muted);
     text-align: right;
   }

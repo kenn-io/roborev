@@ -1,72 +1,60 @@
 <script lang="ts">
-  import { EmptyState } from "@kenn-io/kit-ui";
+  import { EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
+  import type { SortColumn } from "../../stores/roborev/jobs.svelte";
   import { isPanelParent } from "../../utils/roborev-panel";
   import JobRow from "./JobRow.svelte";
 
   const stores = getReviewStores();
   const jobsStore = stores.roborevJobs;
 
-  type SortColumn =
-    | "id"
-    | "status"
-    | "verdict"
-    | "agent"
-    | "review_type"
-    | "elapsed"
-    | "cost"
-    | "job_type"
-    | "enqueued_at";
-
   interface ColumnDef {
     key: SortColumn;
     label: string;
-    sortable: boolean;
+    numeric?: boolean;
   }
 
   const columns: ColumnDef[] = [
-    { key: "id", label: "ID", sortable: true },
-    {
-      key: "id",
-      label: "Repo / Branch / Ref",
-      sortable: false,
-    },
-    { key: "agent", label: "Agent", sortable: true },
-    { key: "review_type", label: "Review Type", sortable: true },
-    { key: "status", label: "Status", sortable: true },
-    { key: "verdict", label: "Verdict", sortable: true },
-    { key: "id", label: "Closed", sortable: false },
-    {
-      key: "elapsed",
-      label: "Elapsed",
-      sortable: true,
-    },
-    {
-      key: "cost",
-      label: "Cost",
-      sortable: true,
-    },
-    {
-      key: "job_type",
-      label: "Job Type",
-      sortable: true,
-    },
-    {
-      key: "enqueued_at",
-      label: "Queued",
-      sortable: true,
-    },
+    { key: "id", label: "ID", numeric: true },
+    { key: "repo", label: "Commit" },
+    { key: "agent", label: "Agent" },
+    { key: "review_type", label: "Review type" },
+    { key: "status", label: "Status" },
+    { key: "verdict", label: "Verdict" },
+    { key: "closed", label: "Closed" },
+    { key: "elapsed", label: "Elapsed", numeric: true },
+    { key: "cost", label: "Cost", numeric: true },
+    { key: "job_type", label: "Job type" },
+    { key: "enqueued_at", label: "Queued", numeric: true },
   ];
 
-  function sortIndicator(col: ColumnDef): string {
-    if (!col.sortable) return "";
-    if (jobsStore?.getSortColumn() !== col.key) return "";
-    return jobsStore?.getSortDirection() === "asc" ? " \u2191" : " \u2193";
-  }
+  const sortLabels: Record<SortColumn, string> = {
+    id: "ID",
+    repo: "commit",
+    closed: "closed state",
+    status: "status",
+    verdict: "verdict",
+    agent: "agent",
+    review_type: "review type",
+    elapsed: "elapsed time",
+    cost: "cost",
+    job_type: "job type",
+    enqueued_at: "queue time",
+  };
 
-  function handleHeaderClick(col: ColumnDef): void {
-    if (!col.sortable || !jobsStore?.canSortJobs()) return;
-    jobsStore?.setSortColumn(col.key);
+  const partialSort = $derived(
+    jobsStore !== undefined &&
+      !jobsStore.areAllJobsLoaded() &&
+      !(
+        jobsStore.getSortColumn() === "enqueued_at" &&
+        jobsStore.getSortDirection() === "desc"
+      ),
+  );
+
+  function sortDirection(col: ColumnDef) {
+    return jobsStore?.getSortColumn() === col.key
+      ? jobsStore.getSortDirection()
+      : null;
   }
 </script>
 
@@ -76,17 +64,15 @@
   <table class="job-table">
     <thead>
       <tr>
-        {#each columns as col (col.label)}
-          <th
-            class:sortable={col.sortable && jobsStore?.canSortJobs()}
-            aria-disabled={col.sortable && !jobsStore?.canSortJobs()}
-            title={col.sortable && !jobsStore?.canSortJobs()
-              ? "Load all results to sort this column"
-              : undefined}
-            onclick={() => handleHeaderClick(col)}
-          >
-            {col.label}{sortIndicator(col)}
-          </th>
+        {#each columns as col (col.key)}
+          <TableHeaderCell
+            label={col.label}
+            numeric={col.numeric ?? false}
+            sortable
+            sortDirection={sortDirection(col)}
+            onsort={() => jobsStore?.setSortColumn(col.key)}
+            class={`th-${col.key}`}
+          />
         {/each}
       </tr>
     </thead>
@@ -173,15 +159,24 @@
     <EmptyState title="No jobs found" />
   {/if}
 
-  {#if jobsStore?.getHasMore()}
-    <div class="load-more">
-      <button
-        class="load-more-btn"
-        disabled={jobsStore.isLoading()}
-        onclick={() => jobsStore.loadMore()}
-      >
-        Load more
-      </button>
+  {#if jobsStore?.getHasMore() || partialSort}
+    <div class="table-footer">
+      {#if partialSort && jobsStore}
+        <span class="sort-scope" role="status">
+          Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
+          {jobsStore.getJobs().length} most recent jobs. Load more to include older
+          jobs.
+        </span>
+      {/if}
+      {#if jobsStore?.getHasMore()}
+        <button
+          class="load-more-btn"
+          disabled={jobsStore.isLoading()}
+          onclick={() => jobsStore.loadMore()}
+        >
+          Load more
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -192,6 +187,7 @@
      hiding the native bars would drop the horizontal affordance, and a
      nested x-scroller would detach the sticky thead from the scrollport. */
   .table-wrapper {
+    background: var(--bg-surface);
     overflow: auto;
     flex: 1;
     min-height: 0;
@@ -209,32 +205,18 @@
     z-index: 1;
   }
 
-  th {
-    padding: 6px 10px;
-    font-size: var(--font-size-xs);
-    font-weight: 600;
+  .job-table :global(.kit-th) {
+    padding: 8px 12px;
+    background: var(--bg-surface);
     color: var(--text-muted);
-    text-align: left;
-    background: var(--bg-inset);
-    border-bottom: 1px solid var(--border-default);
-    white-space: nowrap;
-    user-select: none;
+    font-weight: 500;
+    box-shadow: inset 0 -1px 0 var(--border-default);
+    border-bottom: 0;
+    vertical-align: middle;
   }
 
-  th.sortable {
-    cursor: pointer;
-  }
-
-  th.sortable:hover {
-    color: var(--text-primary);
-  }
-
-  .job-table :global(tbody tr:nth-child(even)) {
-    background: var(--bg-inset);
-  }
-
-  .job-table :global(tbody tr:nth-child(even):hover) {
-    background: var(--bg-surface-hover);
+  .job-table :global(.kit-th.th-id) {
+    padding-left: 16px;
   }
 
   .loading-bar {
@@ -273,20 +255,27 @@
     cursor: pointer;
   }
 
-  .load-more {
-    padding: 8px 12px;
-    text-align: center;
+  .table-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-6);
+    padding: 10px 16px;
     border-top: 1px solid var(--border-muted);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .load-more-btn {
-    padding: 4px 16px;
+    padding: 4px 14px;
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--bg-surface);
     color: var(--text-primary);
     font-size: var(--font-size-sm);
+    font-weight: 500;
     cursor: pointer;
+    transition: background var(--transition-fast);
   }
 
   .load-more-btn:hover {
@@ -294,7 +283,7 @@
   }
 
   .load-more-btn:disabled {
-    opacity: 0.5;
+    opacity: var(--opacity-disabled);
     cursor: default;
   }
 </style>

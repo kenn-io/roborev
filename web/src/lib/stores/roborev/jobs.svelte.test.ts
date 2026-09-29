@@ -290,13 +290,13 @@ describe("createJobsStore cost sorting", () => {
     store.setSortColumn("cost");
 
     expect(store.getSortColumn()).toBe("cost");
-    expect(store.getSortDirection()).toBe("asc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([8, 5, 6, 2]);
+    expect(store.getSortDirection()).toBe("desc");
+    expect(store.getJobs().map((job) => job.id)).toEqual([2, 6, 8, 5]);
 
     store.setSortColumn("cost");
 
-    expect(store.getSortDirection()).toBe("desc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([2, 6, 8, 5]);
+    expect(store.getSortDirection()).toBe("asc");
+    expect(store.getJobs().map((job) => job.id)).toEqual([8, 5, 6, 2]);
   });
 });
 
@@ -361,13 +361,13 @@ describe("createJobsStore elapsed sorting", () => {
     store.setSortColumn("elapsed");
 
     expect(store.getSortColumn()).toBe("elapsed");
-    expect(store.getSortDirection()).toBe("asc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([5, 6, 2, 8]);
+    expect(store.getSortDirection()).toBe("desc");
+    expect(store.getJobs().map((job) => job.id)).toEqual([8, 2, 6, 5]);
 
     store.setSortColumn("elapsed");
 
-    expect(store.getSortDirection()).toBe("desc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([8, 2, 6, 5]);
+    expect(store.getSortDirection()).toBe("asc");
+    expect(store.getJobs().map((job) => job.id)).toEqual([5, 6, 2, 8]);
   });
 });
 
@@ -1191,8 +1191,11 @@ describe("createJobsStore pagination", () => {
 
     expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
     expect(store.getSortColumn()).toBe("enqueued_at");
-    expect(store.canSortJobs()).toBe(false);
+    expect(store.areAllJobsLoaded()).toBe(false);
     store.setSortColumn("id");
+    expect(store.getJobs().map((job) => job.id)).toEqual([100, 1]);
+    store.setSortColumn("enqueued_at");
+    expect(store.getSortDirection()).toBe("desc");
     expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
 
     await loadMoreJobs(store);
@@ -1622,7 +1625,8 @@ describe("createJobsStore panel expansion", () => {
     await loadJobs(store);
 
     store.setSortColumn("cost");
-
+    expect(store.getJobs().map((j) => j.id)).toEqual([10, 20]);
+    store.setSortColumn("cost");
     expect(store.getJobs().map((j) => j.id)).toEqual([20, 10]);
   });
 

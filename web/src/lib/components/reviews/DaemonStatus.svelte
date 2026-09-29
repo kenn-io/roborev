@@ -74,28 +74,32 @@
   .daemon-status {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
+    gap: var(--space-5);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-muted);
     font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-surface);
+    font-variant-numeric: tabular-nums;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .conn-indicator {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-3);
+    color: var(--text-secondary);
     font-weight: 500;
   }
 
-  .conn-dot {
+  .conn-dot,
+  .count::before {
     width: 6px;
     height: 6px;
-    border-radius: 50%;
-    background: var(--review-failed);
     flex-shrink: 0;
+    border-radius: var(--radius-dot, 50%);
+    background: var(--review-failed);
   }
 
   .connected .conn-dot {
@@ -105,8 +109,8 @@
   .separator {
     width: 1px;
     height: 12px;
-    background: var(--border-muted);
     flex-shrink: 0;
+    background: var(--border-default);
   }
 
   .status-item {
@@ -115,24 +119,31 @@
 
   .status-counts {
     display: flex;
-    gap: 8px;
+    gap: var(--space-6);
   }
 
   .count {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
     white-space: nowrap;
   }
 
-  .count-queued {
-    color: var(--review-queued);
+  .count::before {
+    content: "";
   }
-  .count-running {
-    color: var(--review-running);
+
+  .count-queued::before {
+    background: var(--review-queued);
   }
-  .count-done {
-    color: var(--review-done);
+  .count-running::before {
+    background: var(--review-running);
   }
-  .count-failed {
-    color: var(--review-failed);
+  .count-done::before {
+    background: var(--review-done);
+  }
+  .count-failed::before {
+    background: var(--review-failed);
   }
 
   .retry-btn {

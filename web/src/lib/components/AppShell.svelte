@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { IconButton, TopBar, type TopBarTab } from "@kenn-io/kit-ui";
+  import {
+    IconButton,
+    ThemeToggle,
+    TopBar,
+    type TopBarTab,
+  } from "@kenn-io/kit-ui";
   import BookOpenIcon from "@lucide/svelte/icons/book-open";
   import { Effect } from "effect";
   import { onDestroy } from "svelte";
@@ -16,6 +21,7 @@
   import { provideReviewStores } from "../stores/context";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
+  import BrandMark from "./BrandMark.svelte";
   import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
 
   interface Props {
@@ -131,11 +137,13 @@
     ariaLabel="Application"
   >
     {#snippet left()}
-      <a class="brand" href={appPath("/reviews")} onclick={navigateReviews}
-        >Roborev</a
-      >
+      <a class="brand" href={appPath("/reviews")} onclick={navigateReviews}>
+        <BrandMark />
+        Roborev
+      </a>
     {/snippet}
     {#snippet right()}
+      <ThemeToggle />
       <IconButton ariaLabel="Release notes" onclick={openReleaseNotes}>
         <BookOpenIcon size="16" strokeWidth="2" aria-hidden="true" />
       </IconButton>
@@ -172,6 +180,8 @@
 
 <style>
   .app-shell {
+    --header-height: 48px;
+
     display: flex;
     width: 100%;
     min-height: 0;
@@ -185,10 +195,11 @@
   .brand {
     display: inline-flex;
     align-items: center;
+    gap: var(--space-4);
+    margin-right: var(--space-4);
     color: var(--text-primary);
-    font-size: var(--font-size-md);
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
     text-decoration: none;
     white-space: nowrap;
   }

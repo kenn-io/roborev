@@ -117,35 +117,33 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".count-done")).toContainText("0 done");
 
     await selectStatus(page, "All statuses");
-    const idHeader = page.locator("th", { hasText: "ID" });
-    await expect(idHeader).toHaveAttribute("aria-disabled", "true");
+    const firstId = async () =>
+      Number(
+        (await page.locator(".col-id .job-id").first().textContent())?.trim(),
+      );
+    const idHeader = page.getByRole("columnheader", { name: "ID" });
+    const newestFirst = await firstId();
+    await idHeader.getByRole("button").click();
+    await expect(idHeader).toHaveAttribute("aria-sort", "descending");
+    await expect(page.locator(".sort-scope")).toContainText(
+      "Sorted by ID across the 50 most recent jobs",
+    );
+    await idHeader.getByRole("button").click();
+    await expect(idHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(await firstId()).toBeLessThan(newestFirst);
+
     await page.locator(".load-more-btn").click();
     await expect(page.locator(".load-more-btn")).toBeHidden();
+    await expect(page.locator(".sort-scope")).toBeHidden();
+    expect(await firstId()).toBe(1);
+
     const closedHeader = page.getByRole("columnheader", {
       name: "Closed",
       exact: true,
     });
-    const firstBeforeClosedClick = await page
-      .locator(".col-id .mono")
-      .first()
-      .textContent();
-    await closedHeader.click();
-    await closedHeader.click();
-    await expect(closedHeader).not.toHaveClass(/sortable/);
-    await expect(closedHeader).not.toContainText(/↑|↓/);
-    await expect(page.locator(".col-id .mono").first()).toHaveText(
-      firstBeforeClosedClick?.trim() ?? "",
-    );
-    await expect(idHeader).not.toHaveAttribute("aria-disabled", "true");
-    const firstBefore = Number(
-      (await page.locator(".col-id .mono").first().textContent())?.trim(),
-    );
-    await idHeader.click();
-    await idHeader.click();
-    const firstAfter = Number(
-      (await page.locator(".col-id .mono").first().textContent())?.trim(),
-    );
-    expect(firstAfter).toBeLessThan(firstBefore);
+    await closedHeader.getByRole("button").click();
+    await expect(closedHeader).toHaveAttribute("aria-sort", "ascending");
+    await expect(idHeader).not.toHaveAttribute("aria-sort");
   });
 
   test("filters by project, ref, and closed state", async ({ page }) => {
@@ -506,7 +504,7 @@ test.describe.serial("native review workspace", () => {
     const highlighted = page.locator(".job-row.highlighted");
     await expect(highlighted).toHaveCount(1);
     const id = (
-      await highlighted.locator(".col-id .mono").textContent()
+      await highlighted.locator(".col-id .job-id").textContent()
     )?.trim();
 
     await page.getByRole("button", { name: "Release notes" }).click();
@@ -516,7 +514,7 @@ test.describe.serial("native review workspace", () => {
     await expect(page.getByText("No published releases found.")).toBeVisible();
     expect(releaseRequests).toBe(1);
     await page.keyboard.press("j");
-    await expect(highlighted.locator(".col-id .mono")).toHaveText(id ?? "");
+    await expect(highlighted.locator(".col-id .job-id")).toHaveText(id ?? "");
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Release notes" }).click();

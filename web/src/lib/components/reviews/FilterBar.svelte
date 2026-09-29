@@ -4,7 +4,13 @@
   import { getAppRuntime } from "../../runtime/context";
   import type { AppExecution } from "../../runtime/runtime";
   import { getReviewStores } from "../../stores/context";
-  import { Checkbox, FilterDropdown, SearchInput } from "@kenn-io/kit-ui";
+  import {
+    Checkbox,
+    FilterDropdown,
+    IconButton,
+    SearchInput,
+  } from "@kenn-io/kit-ui";
+  import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import RepoTreePicker from "./RepoTreePicker.svelte";
 
   interface Props {
@@ -137,17 +143,22 @@
     {disabled}
   />
 
-  <button class="help-btn" title="Keyboard shortcuts" onclick={onHelpClick}>
-    ?
-  </button>
+  <IconButton
+    class="help-btn"
+    ariaLabel="Keyboard shortcuts"
+    title="Keyboard shortcuts (?)"
+    onclick={onHelpClick}
+  >
+    <KeyboardIcon size="16" strokeWidth="2" aria-hidden="true" />
+  </IconButton>
 </div>
 
 <style>
   .filter-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-4);
+    padding: 10px 16px;
     border-bottom: 1px solid var(--border-muted);
     background: var(--bg-surface);
     flex-shrink: 0;
@@ -155,9 +166,9 @@
   }
 
   .search-wrap {
-    min-width: 140px;
+    min-width: 160px;
     flex: 1;
-    max-width: 220px;
+    max-width: 280px;
   }
 
   :global(.filter-checkbox) {
@@ -170,26 +181,8 @@
     color: var(--text-secondary);
   }
 
-  .help-btn {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    font-weight: 600;
-    cursor: pointer;
-    flex-shrink: 0;
+  :global(.help-btn) {
     margin-left: auto;
-  }
-
-  .help-btn:hover {
-    background: var(--bg-surface-hover);
-    color: var(--text-primary);
   }
 
   .filter-disabled {

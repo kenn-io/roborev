@@ -68,7 +68,6 @@ describe("App", () => {
     render(App);
 
     expect(screen.getByText("Checking browser session…")).toBeInTheDocument();
-    expect(document.documentElement).toHaveClass("dark");
   });
 
   test("renders token login when remote authentication is required", async () => {

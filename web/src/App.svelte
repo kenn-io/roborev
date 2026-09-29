@@ -8,6 +8,7 @@
     type SessionCapabilities,
   } from "./lib/api/session";
   import AppShell from "./lib/components/AppShell.svelte";
+  import BrandMark from "./lib/components/BrandMark.svelte";
 
   type ViewState = "checking" | "login" | "authenticated" | "error";
 
@@ -25,7 +26,6 @@
   };
 
   onMount(() => {
-    document.documentElement.classList.add("dark");
     const handleSessionLost = () => void checkSession();
     globalThis.addEventListener(sessionLostEvent, handleSessionLost);
     void checkSession();
@@ -114,12 +114,12 @@
 <main class:application={view === "authenticated"}>
   {#if view === "checking"}
     <section class="card status" aria-live="polite">
-      <p class="eyebrow">Roborev</p>
-      <p>Checking browser session…</p>
+      <p class="brand-lockup"><BrandMark />Roborev</p>
+      <p class="muted">Checking browser session…</p>
     </section>
   {:else if view === "login"}
     <section class="card login-card">
-      <p class="eyebrow">Roborev web</p>
+      <p class="brand-lockup"><BrandMark />Roborev</p>
       <h1>Connect to Roborev</h1>
       <p class="muted">
         Enter the browser access token configured for this daemon. It is
@@ -154,9 +154,9 @@
     <AppShell {capabilities} />
   {:else}
     <section class="card status" role="alert">
-      <p class="eyebrow">Connection problem</p>
+      <p class="brand-lockup"><BrandMark />Roborev</p>
       <h1>Roborev is unavailable</h1>
-      <p>{errorMessage}</p>
+      <p class="muted">{errorMessage}</p>
       <button type="button" onclick={checkSession}>Retry</button>
     </section>
   {/if}

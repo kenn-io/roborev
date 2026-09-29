@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 export function jobRow(page: Page, id: number) {
   return page.locator(".job-row").filter({
-    has: page.locator(".col-id .mono", { hasText: new RegExp(`^${id}$`) }),
+    has: page.locator(".col-id .job-id", { hasText: new RegExp(`^${id}$`) }),
   });
 }
 
