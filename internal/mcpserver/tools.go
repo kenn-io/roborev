@@ -568,10 +568,14 @@ func privateSearchError(err error) error {
 		}
 		return NewError(ErrorCodeInvalidArgument, "search request is invalid")
 	case ErrorCodeUnavailable:
+		if strings.HasPrefix(backendErr.Message, "no embedding API key (") {
+			return NewError(ErrorCodeUnavailable, "no embedding API key")
+		}
 		switch backendErr.Message {
 		case "embeddings are not configured", "semantic search is unavailable",
 			"semantic candidate ceiling exhausted", "review search is unavailable",
-			"roborev daemon is unavailable":
+			"roborev daemon is unavailable", "no embedding API key",
+			"embedding authentication rejected (401)", "embedding authentication rejected (403)":
 			return NewError(ErrorCodeUnavailable, backendErr.Message)
 		default:
 			return NewError(ErrorCodeUnavailable, "review search is unavailable")

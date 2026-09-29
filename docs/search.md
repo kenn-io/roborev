@@ -265,3 +265,7 @@ same response fields. Use `auto` for ordinary discovery, `lexical` for exact
 paths, identifiers, or quoted errors, and `semantic` when wording-independent
 retrieval is specifically needed. Then call `roborev_get_review` with the
 returned `job_id` and fetch responses only when needed.
+
+Missing or rejected embedding credentials produce an `unavailable` MCP error
+with `no embedding API key` or `embedding authentication rejected (401/403)`.
+MCP errors omit credential-source details and unrecognized provider messages.

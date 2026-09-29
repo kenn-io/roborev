@@ -307,7 +307,7 @@ func searchHTTPStatusError(resp *http.Response, mode string) error {
 	case http.StatusBadGateway, http.StatusGatewayTimeout:
 		return NewError(ErrorCodeUnavailable, "roborev daemon is unavailable")
 	case http.StatusServiceUnavailable:
-		return NewError(ErrorCodeUnavailable, "review search is unavailable")
+		return privateSearchError(NewError(ErrorCodeUnavailable, reason))
 	default:
 		if mode == "semantic" || mode == "hybrid" {
 			return NewError(ErrorCodeUnavailable, "review search is unavailable")

@@ -162,11 +162,11 @@ func (b mcpBackend) Search(
 	result, err := b.server.search.Search(ctx, params)
 	if err != nil {
 		if modeErr, ok := errors.AsType[*searchindex.ModeError](err); ok {
-			switch modeErr.Reason {
-			case searchindex.ReasonEmbeddingsUnconfigured:
+			switch modeErr.Status {
+			case http.StatusBadRequest:
 				return storage.SearchResponse{}, mcpserver.NewError(
 					mcpserver.ErrorCodeInvalidArgument, modeErr.Reason)
-			case searchindex.ReasonSemanticUnavailable, searchindex.ReasonSemanticCeiling:
+			case http.StatusServiceUnavailable:
 				return storage.SearchResponse{}, mcpserver.NewError(
 					mcpserver.ErrorCodeUnavailable, modeErr.Reason)
 			}

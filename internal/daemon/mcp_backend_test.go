@@ -340,6 +340,55 @@ func TestMCPBackendSearchReturnsStablePrivateErrors(t *testing.T) {
 	}
 }
 
+func TestMCPSearchCredentialErrorsThroughBothBackends(t *testing.T) {
+	for _, backend := range []string{"http", "stdio-backend"} {
+		for _, tc := range []struct {
+			name, mode, reason, want string
+		}{
+			{"missing", "semantic", "no embedding API key (env EXAMPLE_KEY is unset or empty)", "unavailable: no embedding API key"},
+			{"unauthorized", "semantic", "embedding authentication rejected (401)", "unavailable: embedding authentication rejected (401)"},
+			{"forbidden", "hybrid", "embedding authentication rejected (403)", "unavailable: embedding authentication rejected (403)"},
+			{"unknown", "hybrid", "https://provider.invalid provider-secret", "unavailable: review search is unavailable"},
+		} {
+			t.Run(backend+"/"+tc.name, func(t *testing.T) {
+				server, _ := newMCPTestServer(t, true)
+				server.search = &recordingReviewSearcher{err: &searchindex.ModeError{
+					Status: http.StatusServiceUnavailable, Reason: tc.reason,
+				}}
+				api := httptest.NewServer(server.httpServer.Handler)
+				t.Cleanup(api.Close)
+				endpoint := api.URL + mcpserver.HTTPPath
+				if backend == "stdio-backend" {
+					bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test")
+					httpBridge := httptest.NewServer(bridge.HTTPHandler())
+					t.Cleanup(httpBridge.Close)
+					endpoint = httpBridge.URL + mcpserver.HTTPPath
+				}
+				client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+				session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{
+					Endpoint: endpoint, DisableStandaloneSSE: true,
+				}, nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = session.Close() })
+				result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+					Name: "roborev_search_reviews", Arguments: map[string]any{"query": "needle", "mode": tc.mode},
+				})
+				require.NoError(t, err)
+				require.True(t, result.IsError)
+				require.Len(t, result.Content, 1)
+				content, ok := result.Content[0].(*mcp.TextContent)
+				require.True(t, ok)
+				var failure struct {
+					Error mcpserver.Error `json:"error"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(content.Text), &failure))
+				assert.Equal(t, mcpserver.ErrorCodeUnavailable, failure.Error.Code)
+				assert.Equal(t, tc.want, failure.Error.Message)
+			})
+		}
+	}
+}
+
 func TestReviewBrowserURLsInAPIResponses(t *testing.T) {
 	server, db := newMCPTestServer(t, false)
 	job := seedCompletedReview(t, db, filepath.ToSlash(t.TempDir()))
