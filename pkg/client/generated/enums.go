@@ -250,3 +250,23 @@ func (g GetSummaryQueryAll) Validate() error {
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid GetSummaryQueryAll value, got: %v", g))
 	}
 }
+
+// GetWebAnalyticsQuerySplit Add one time series per agent, model, project, or source
+type GetWebAnalyticsQuerySplit string
+
+const (
+	Agent   GetWebAnalyticsQuerySplit = "agent"
+	Model   GetWebAnalyticsQuerySplit = "model"
+	Project GetWebAnalyticsQuerySplit = "project"
+	Source  GetWebAnalyticsQuerySplit = "source"
+)
+
+// Validate checks if the GetWebAnalyticsQuerySplit value is valid
+func (g GetWebAnalyticsQuerySplit) Validate() error {
+	switch g {
+	case Agent, Model, Project, Source:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid GetWebAnalyticsQuerySplit value, got: %v", g))
+	}
+}

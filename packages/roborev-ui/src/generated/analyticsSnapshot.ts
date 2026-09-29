@@ -5,6 +5,7 @@ import type { AnalyticsDimensionRow } from "./analyticsDimensionRow";
 import type { AnalyticsFilterOptions } from "./analyticsFilterOptions";
 import type { AnalyticsFilters } from "./analyticsFilters";
 import type { AnalyticsProjectRow } from "./analyticsProjectRow";
+import type { AnalyticsSplitSeries } from "./analyticsSplitSeries";
 import type { AnalyticsSummary } from "./analyticsSummary";
 import type { AnalyticsTimeBucket } from "./analyticsTimeBucket";
 
@@ -18,6 +19,7 @@ export interface AnalyticsSnapshot {
   projects: AnalyticsProjectRow[];
   schema_version: number;
   sources: AnalyticsDimensionRow[];
+  split_series: AnalyticsSplitSeries[];
   summary: AnalyticsSummary;
   time_series: AnalyticsTimeBucket[];
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -20,6 +21,17 @@ const (
 	AnalyticsBucketMonth AnalyticsBucket = "month"
 )
 
+// AnalyticsSplit names the dimension that breaks the time series into one
+// series per value.
+type AnalyticsSplit string
+
+const (
+	AnalyticsSplitAgent   AnalyticsSplit = "agent"
+	AnalyticsSplitModel   AnalyticsSplit = "model"
+	AnalyticsSplitProject AnalyticsSplit = "project"
+	AnalyticsSplitSource  AnalyticsSplit = "source"
+)
+
 type AnalyticsOptions struct {
 	Since    time.Time
 	Until    time.Time
@@ -28,6 +40,8 @@ type AnalyticsOptions struct {
 	Agents   []string
 	Models   []string
 	Bucket   AnalyticsBucket
+	// Split, when set, adds one time series per value of that dimension.
+	Split AnalyticsSplit
 }
 
 type AnalyticsFilters struct {
@@ -38,6 +52,7 @@ type AnalyticsFilters struct {
 	Agents   []string        `json:"agents"`
 	Models   []string        `json:"models"`
 	Bucket   AnalyticsBucket `json:"bucket"`
+	Split    AnalyticsSplit  `json:"split,omitempty"`
 }
 
 type AnalyticsReviewStats struct {
@@ -102,6 +117,15 @@ type AnalyticsDimensionRow struct {
 	AnalyticsSummary
 }
 
+// AnalyticsSplitSeries is the time series for one value of the split
+// dimension. Rows are attributed by their own agent, model, project, or
+// source, so logical reviews and attempts each count under their own value.
+type AnalyticsSplitSeries struct {
+	Value      string                `json:"value"`
+	Summary    AnalyticsSummary      `json:"summary"`
+	TimeSeries []AnalyticsTimeBucket `json:"time_series"`
+}
+
 type AnalyticsFilterOptions struct {
 	Projects []string `json:"projects"`
 	Sources  []string `json:"sources"`
@@ -118,6 +142,7 @@ type AnalyticsSnapshot struct {
 	Sources       []AnalyticsDimensionRow `json:"sources"`
 	Agents        []AnalyticsDimensionRow `json:"agents"`
 	Models        []AnalyticsDimensionRow `json:"models"`
+	SplitSeries   []AnalyticsSplitSeries  `json:"split_series"`
 	Options       AnalyticsFilterOptions  `json:"options"`
 }
 
@@ -151,6 +176,9 @@ type analyticsAccumulator struct {
 func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
 	if !validAnalyticsBucket(opts.Bucket) {
 		return nil, fmt.Errorf("invalid analytics bucket %q", opts.Bucket)
+	}
+	if opts.Split != "" && !ValidAnalyticsSplit(opts.Split) {
+		return nil, fmt.Errorf("invalid analytics split %q", opts.Split)
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -232,7 +260,7 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	filters := AnalyticsFilters{
 		Until: opts.Until.UTC(), Projects: sortedUnique(opts.Projects),
 		Sources: sortedUnique(opts.Sources), Agents: sortedUnique(opts.Agents),
-		Models: sortedUnique(opts.Models), Bucket: opts.Bucket,
+		Models: sortedUnique(opts.Models), Bucket: opts.Bucket, Split: opts.Split,
 	}
 	if !opts.Since.IsZero() {
 		since := opts.Since.UTC()
@@ -242,7 +270,8 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		SchemaVersion: AnalyticsSchemaVersion, Filters: filters,
 		Projects: []AnalyticsProjectRow{},
 		Sources:  []AnalyticsDimensionRow{}, Agents: []AnalyticsDimensionRow{},
-		Models: []AnalyticsDimensionRow{}, Options: AnalyticsFilterOptions{
+		Models: []AnalyticsDimensionRow{}, SplitSeries: []AnalyticsSplitSeries{},
+		Options: AnalyticsFilterOptions{
 			Projects: []string{}, Sources: []string{}, Agents: []string{}, Models: []string{},
 		},
 	}
@@ -252,6 +281,8 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	agents := map[string]*analyticsAccumulator{}
 	models := map[string]*analyticsAccumulator{}
 	buckets := map[time.Time]*analyticsAccumulator{}
+	splitTotals := map[string]*analyticsAccumulator{}
+	splitBuckets := map[string]map[time.Time]*analyticsAccumulator{}
 
 	for _, row := range rows {
 		logicalReview := isLogicalReview(row)
@@ -261,16 +292,29 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		}
 		project := analyticsAccumulatorFor(projects, row.project)
 		source := analyticsAccumulatorFor(sources, row.source)
-		bucket := analyticsAccumulatorForTime(buckets, analyticsBucketStart(row.finishedAt, opts.Bucket))
+		bucketStart := analyticsBucketStart(row.finishedAt, opts.Bucket)
+		bucket := analyticsAccumulatorForTime(buckets, bucketStart)
+		reviewAccs := []*analyticsAccumulator{total, project, source, bucket}
+		attemptAccs := []*analyticsAccumulator{total, project, source, bucket}
+		if opts.Split != "" {
+			key := analyticsSplitValue(row, opts.Split)
+			if splitBuckets[key] == nil {
+				splitBuckets[key] = map[time.Time]*analyticsAccumulator{}
+			}
+			splitTotal := analyticsAccumulatorFor(splitTotals, key)
+			splitBucket := analyticsAccumulatorForTime(splitBuckets[key], bucketStart)
+			reviewAccs = append(reviewAccs, splitTotal, splitBucket)
+			attemptAccs = append(attemptAccs, splitTotal, splitBucket)
+		}
 		if logicalReview {
-			for _, acc := range []*analyticsAccumulator{total, project, source, bucket} {
+			for _, acc := range reviewAccs {
 				acc.addReview(row)
 			}
 		}
 		if eligibleAttempt {
-			agent := analyticsAccumulatorFor(agents, row.agent)
-			model := analyticsAccumulatorFor(models, row.model)
-			for _, acc := range []*analyticsAccumulator{total, project, source, agent, model, bucket} {
+			attemptAccs = append(attemptAccs,
+				analyticsAccumulatorFor(agents, row.agent), analyticsAccumulatorFor(models, row.model))
+			for _, acc := range attemptAccs {
 				acc.addAttempt(row)
 			}
 		}
@@ -289,11 +333,24 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	snapshot.Sources = finishAnalyticsDimensions(sources)
 	snapshot.Agents = finishAnalyticsDimensions(agents)
 	snapshot.Models = finishAnalyticsDimensions(models)
-	starts := make([]time.Time, 0, len(buckets))
-	for start := range buckets {
-		starts = append(starts, start)
+	seriesStart, seriesUntil := analyticsSeriesBounds(buckets, opts)
+	snapshot.TimeSeries = analyticsTimeSeries(buckets, seriesStart, seriesUntil, opts.Bucket)
+	for _, row := range finishAnalyticsDimensions(splitTotals) {
+		snapshot.SplitSeries = append(snapshot.SplitSeries, AnalyticsSplitSeries{
+			Value: row.Value, Summary: row.AnalyticsSummary,
+			TimeSeries: analyticsTimeSeries(splitBuckets[row.Value], seriesStart, seriesUntil, opts.Bucket),
+		})
 	}
-	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	return snapshot, nil
+}
+
+// analyticsSeriesBounds returns the first bucket start and the exclusive end
+// of the time series: the requested window when bounded, otherwise the span
+// of buckets that hold data.
+func analyticsSeriesBounds(
+	buckets map[time.Time]*analyticsAccumulator, opts AnalyticsOptions,
+) (time.Time, time.Time) {
+	starts := slices.SortedFunc(maps.Keys(buckets), time.Time.Compare)
 	seriesStart := time.Time{}
 	if !opts.Since.IsZero() {
 		seriesStart = analyticsBucketStart(opts.Since, opts.Bucket)
@@ -304,21 +361,50 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	if seriesUntil.IsZero() && len(starts) > 0 {
 		seriesUntil = analyticsBucketEnd(starts[len(starts)-1], opts.Bucket)
 	}
-	seriesBuckets := 0
-	for start := seriesStart; !start.IsZero() && start.Before(seriesUntil); start = analyticsBucketEnd(start, opts.Bucket) {
-		seriesBuckets++
-	}
-	snapshot.TimeSeries = make([]AnalyticsTimeBucket, 0, seriesBuckets)
-	for start := seriesStart; !start.IsZero() && start.Before(seriesUntil); start = analyticsBucketEnd(start, opts.Bucket) {
+	return seriesStart, seriesUntil
+}
+
+// analyticsTimeSeries emits one bucket per period in [start, until), filling
+// periods without data with empty summaries.
+func analyticsTimeSeries(
+	buckets map[time.Time]*analyticsAccumulator, start, until time.Time, bucket AnalyticsBucket,
+) []AnalyticsTimeBucket {
+	series := []AnalyticsTimeBucket{}
+	for ; !start.IsZero() && start.Before(until); start = analyticsBucketEnd(start, bucket) {
 		acc := buckets[start]
 		if acc == nil {
 			acc = &analyticsAccumulator{}
 		}
-		snapshot.TimeSeries = append(snapshot.TimeSeries, AnalyticsTimeBucket{
-			Start: start, End: analyticsBucketEnd(start, opts.Bucket), AnalyticsSummary: acc.finish(),
+		series = append(series, AnalyticsTimeBucket{
+			Start: start, End: analyticsBucketEnd(start, bucket), AnalyticsSummary: acc.finish(),
 		})
 	}
-	return snapshot, nil
+	return series
+}
+
+func analyticsSplitValue(row analyticsRow, split AnalyticsSplit) string {
+	switch split {
+	case AnalyticsSplitAgent:
+		return row.agent
+	case AnalyticsSplitModel:
+		return row.model
+	case AnalyticsSplitProject:
+		return row.project
+	case AnalyticsSplitSource:
+		return row.source
+	default:
+		return ""
+	}
+}
+
+// ValidAnalyticsSplit reports whether split names a supported dimension.
+func ValidAnalyticsSplit(split AnalyticsSplit) bool {
+	switch split {
+	case AnalyticsSplitAgent, AnalyticsSplitModel, AnalyticsSplitProject, AnalyticsSplitSource:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *analyticsAccumulator) addReview(row analyticsRow) {

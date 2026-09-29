@@ -493,6 +493,75 @@ func TestGetAnalyticsFiltersPopulationsIndependently(t *testing.T) {
 	assert.Equal(1, exclusive.TimeSeries[1].Reviews.Total)
 }
 
+func TestGetAnalyticsSplitsTimeSeriesByModel(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	base := time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC)
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+
+	seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+		name: "a-first", jobType: JobTypeReview, status: JobStatusDone,
+		agent: "codex", model: "model-a", enqueuedAt: base, startedAt: base,
+		finishedAt: base.Add(30 * time.Minute), verdict: new(0),
+		costJSON: `{"cost_usd":1,"has_cost":true}`,
+	})
+	seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+		name: "a-second", jobType: JobTypeReview, status: JobStatusDone,
+		agent: "codex", model: "model-a", enqueuedAt: base.Add(2 * time.Hour),
+		startedAt: base.Add(2 * time.Hour), finishedAt: base.Add(150 * time.Minute),
+		verdict: new(1), costJSON: `{"cost_usd":2,"has_cost":true}`,
+	})
+	seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+		name: "b-only", jobType: JobTypeReview, status: JobStatusDone,
+		agent: "codex", model: "model-b", enqueuedAt: base.Add(2 * time.Hour),
+		startedAt: base.Add(2 * time.Hour), finishedAt: base.Add(170 * time.Minute),
+		verdict: new(1), costJSON: `{"cost_usd":5,"has_cost":true}`,
+	})
+
+	unsplit, err := db.GetAnalytics(AnalyticsOptions{
+		Since: base, Until: base.Add(3 * time.Hour), Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+	assert.Empty(unsplit.SplitSeries)
+
+	got, err := db.GetAnalytics(AnalyticsOptions{
+		Since: base, Until: base.Add(3 * time.Hour), Bucket: AnalyticsBucketHour,
+		Split: AnalyticsSplitModel,
+	})
+	require.NoError(t, err)
+	assert.Equal(AnalyticsSplitModel, got.Filters.Split)
+	require.Len(t, got.SplitSeries, 2)
+	modelA, modelB := got.SplitSeries[0], got.SplitSeries[1]
+	assert.Equal("model-a", modelA.Value, "series with more reviews sort first")
+	assert.Equal(2, modelA.Summary.Reviews.Total)
+	assert.InDelta(0.5, modelA.Summary.Verdicts.FailureRate, 0.0001)
+	assert.InDelta(3, modelA.Summary.Cost.TotalUSD, 0.0001)
+	assert.Equal("model-b", modelB.Value)
+	assert.InDelta(5, modelB.Summary.Cost.TotalUSD, 0.0001)
+
+	require.Len(t, modelA.TimeSeries, len(got.TimeSeries), "split series share the total's buckets")
+	require.Len(t, modelB.TimeSeries, len(got.TimeSeries))
+	for i, bucket := range got.TimeSeries {
+		assert.Equal(bucket.Start, modelA.TimeSeries[i].Start)
+		assert.Equal(bucket.Reviews.Total,
+			modelA.TimeSeries[i].Reviews.Total+modelB.TimeSeries[i].Reviews.Total)
+	}
+	assert.Equal([]int{1, 0, 1}, []int{
+		modelA.TimeSeries[0].Reviews.Total, modelA.TimeSeries[1].Reviews.Total,
+		modelA.TimeSeries[2].Reviews.Total,
+	})
+	assert.Equal(0, modelB.TimeSeries[0].Reviews.Total)
+	assert.InDelta(5, modelB.TimeSeries[2].Cost.TotalUSD, 0.0001)
+
+	_, err = db.GetAnalytics(AnalyticsOptions{
+		Since: base, Until: base.Add(3 * time.Hour), Bucket: AnalyticsBucketHour,
+		Split: "repository",
+	})
+	require.Error(t, err)
+}
+
 type analyticsJobSeed struct {
 	name       string
 	jobType    string

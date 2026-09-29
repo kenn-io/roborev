@@ -268,6 +268,7 @@ type AnalyticsFilters struct {
 	Projects []string   `json:"projects" validate:"required"`
 	Since    *time.Time `json:"since,omitempty"`
 	Sources  []string   `json:"sources" validate:"required"`
+	Split    *string    `json:"split,omitempty"`
 	Until    time.Time  `json:"until" validate:"required"`
 }
 
@@ -347,6 +348,7 @@ type AnalyticsSnapshot struct {
 	Projects      []AnalyticsProjectRow   `json:"projects" validate:"required"`
 	SchemaVersion int64                   `json:"schema_version"`
 	Sources       []AnalyticsDimensionRow `json:"sources" validate:"required"`
+	SplitSeries   []AnalyticsSplitSeries  `json:"split_series" validate:"required"`
 	Summary       AnalyticsSummary        `json:"summary"`
 	TimeSeries    []AnalyticsTimeBucket   `json:"time_series" validate:"required"`
 }
@@ -391,6 +393,13 @@ func (a AnalyticsSnapshot) Validate() error {
 			}
 		}
 	}
+	for i, item := range a.SplitSeries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SplitSeries[%d]", i), err)
+			}
+		}
+	}
 	if v, ok := any(a.Summary).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Summary", err)
@@ -402,6 +411,35 @@ func (a AnalyticsSnapshot) Validate() error {
 				errors = errors.Append(fmt.Sprintf("TimeSeries[%d]", i), err)
 			}
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsSplitSeries struct {
+	Summary    AnalyticsSummary      `json:"summary"`
+	TimeSeries []AnalyticsTimeBucket `json:"time_series" validate:"required"`
+	Value      string                `json:"value" validate:"required"`
+}
+
+func (a AnalyticsSplitSeries) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Summary).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Summary", err)
+		}
+	}
+	for i, item := range a.TimeSeries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("TimeSeries[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
 	}
 	if len(errors) == 0 {
 		return nil

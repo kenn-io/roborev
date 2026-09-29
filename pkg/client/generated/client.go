@@ -3242,6 +3242,7 @@ func (c *Client) GetWebAnalytics(ctx context.Context, options *GetWebAnalyticsRe
 		"bucket": {Style: "form", Explode: &[]bool{false}[0]},
 		"model":  {Style: "form", Explode: &[]bool{false}[0]},
 		"since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"split":  {Style: "form", Explode: &[]bool{false}[0]},
 		"until":  {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{

@@ -78,6 +78,8 @@ func TestWebAnalyticsRejectsInvalidBoundsAndBucket(t *testing.T) {
 		response := serveHuma(t, server, http.MethodGet, "/api/ui/analytics?"+query, nil)
 		assert.Equal(t, http.StatusBadRequest, response.Code, query)
 	}
+	response := serveHuma(t, server, http.MethodGet, "/api/ui/analytics?split=repository", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, response.Code, "split is schema-validated")
 }
 
 func TestWebAnalyticsAcceptsLongHourlyRange(t *testing.T) {

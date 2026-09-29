@@ -411,6 +411,24 @@ type GetWebAnalyticsQuery struct {
 
 	// Bucket UTC time bucket: hour, day, week, or month
 	Bucket *string `json:"bucket,omitempty"`
+
+	// Split Add one time series per agent, model, project, or source
+	Split *GetWebAnalyticsQuerySplit `json:"split,omitempty"`
+}
+
+func (g GetWebAnalyticsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.Split != nil {
+		if v, ok := any(g.Split).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Split", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type GetReviewProjectionQuery struct {

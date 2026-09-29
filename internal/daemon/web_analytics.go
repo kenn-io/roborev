@@ -18,6 +18,7 @@ type WebAnalyticsInput struct {
 	Agent   string   `query:"agent" doc:"Exact agent filter for attempt metrics"`
 	Model   string   `query:"model" doc:"Exact model filter for attempt metrics"`
 	Bucket  string   `query:"bucket" doc:"UTC time bucket: hour, day, week, or month"`
+	Split   string   `query:"split" enum:"agent,model,project,source" doc:"Add one time series per agent, model, project, or source"`
 }
 
 type WebAnalyticsOutput struct {
@@ -58,6 +59,7 @@ func (s *Server) humaGetWebAnalytics(
 	}
 	opts := storage.AnalyticsOptions{
 		Since: since, Until: until, Projects: input.Project, Sources: input.Source, Bucket: bucket,
+		Split: storage.AnalyticsSplit(input.Split),
 	}
 	if input.Agent != "" {
 		opts.Agents = []string{input.Agent}

@@ -54,6 +54,7 @@ function snapshot(total: number): AnalyticsSnapshot {
     sources: [],
     agents: [],
     models: [],
+    split_series: [],
     options: { projects: [], sources: [], agents: [], models: [] },
   };
 }

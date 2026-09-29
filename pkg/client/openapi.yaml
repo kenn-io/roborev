@@ -393,6 +393,8 @@ components:
           items:
             type: string
           type: array
+        split:
+          type: string
         until:
           format: date-time
           type: string
@@ -514,6 +516,10 @@ components:
           items:
             $ref: "#/components/schemas/AnalyticsDimensionRow"
           type: array
+        split_series:
+          items:
+            $ref: "#/components/schemas/AnalyticsSplitSeries"
+          type: array
         summary:
           $ref: "#/components/schemas/AnalyticsSummary"
         time_series:
@@ -529,7 +535,24 @@ components:
         - sources
         - agents
         - models
+        - split_series
         - options
+      type: object
+    AnalyticsSplitSeries:
+      additionalProperties: false
+      properties:
+        summary:
+          $ref: "#/components/schemas/AnalyticsSummary"
+        time_series:
+          items:
+            $ref: "#/components/schemas/AnalyticsTimeBucket"
+          type: array
+        value:
+          type: string
+      required:
+        - value
+        - summary
+        - time_series
       type: object
     AnalyticsSummary:
       additionalProperties: false
@@ -5694,6 +5717,18 @@ paths:
           name: bucket
           schema:
             description: "UTC time bucket: hour, day, week, or month"
+            type: string
+        - description: Add one time series per agent, model, project, or source
+          explode: false
+          in: query
+          name: split
+          schema:
+            description: Add one time series per agent, model, project, or source
+            enum:
+              - agent
+              - model
+              - project
+              - source
             type: string
       responses:
         "200":

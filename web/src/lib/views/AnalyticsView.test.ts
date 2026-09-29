@@ -76,6 +76,7 @@ function makeSnapshot(
     sources: [{ value: "ci", ...summary }],
     agents: [{ value: "agent-a", ...summary }],
     models: [{ value: "model-a", ...summary }],
+    split_series: [],
     options: {
       projects: ["project-a"],
       sources: ["ci"],

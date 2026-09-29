@@ -9,5 +9,6 @@ export interface AnalyticsFilters {
   projects: string[];
   since?: string;
   sources: string[];
+  split?: string;
   until: string;
 }
