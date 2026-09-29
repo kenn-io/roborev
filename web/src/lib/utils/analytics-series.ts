@@ -5,8 +5,8 @@ import type {
 } from "../api/generated/models";
 
 // The categorical chart palette has eight slots (--series-1..8 in
-// palette.css). Past eight values, the first seven keep their own color and
-// the rest fold into one neutral "Other" group.
+// palette.css). The first eight values keep their own color, and the rest
+// fold into one "Other" group drawn in the neutral --series-other.
 const PALETTE_SLOTS = 8;
 
 export const OTHER_KEY = "\u0000other";
@@ -46,17 +46,17 @@ export function seriesGroups(
       },
     ];
   }
-  const namedCount =
-    split.length <= PALETTE_SLOTS ? split.length : PALETTE_SLOTS - 1;
-  const groups: SeriesGroup[] = split.slice(0, namedCount).map((series, i) => ({
-    key: series.value,
-    label: labelFor(series.value),
-    color: `var(--series-${i + 1})`,
-    summary: series.summary,
-    buckets: series.time_series ?? [],
-    members: 1,
-  }));
-  const rest = split.slice(namedCount);
+  const groups: SeriesGroup[] = split
+    .slice(0, PALETTE_SLOTS)
+    .map((series, i) => ({
+      key: series.value,
+      label: labelFor(series.value),
+      color: `var(--series-${i + 1})`,
+      summary: series.summary,
+      buckets: series.time_series ?? [],
+      members: 1,
+    }));
+  const rest = split.slice(PALETTE_SLOTS);
   if (rest.length > 0) {
     groups.push({
       key: OTHER_KEY,

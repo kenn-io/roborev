@@ -91,22 +91,24 @@ describe("seriesGroups", () => {
     expect(groups[7]?.color).toBe("var(--series-8)");
   });
 
-  it("folds values past the seventh into one Other group", () => {
-    const values = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+  it("folds values past the eighth into one Other group", () => {
+    const values = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
     const groups = seriesGroups(snapshot(values), (value) => value);
 
-    expect(groups).toHaveLength(8);
-    const other = groups[7];
+    expect(groups).toHaveLength(9);
+    expect(groups[7]?.key).toBe("h");
+    expect(groups[7]?.color).toBe("var(--series-8)");
+    const other = groups[8];
     expect(other?.key).toBe(OTHER_KEY);
     expect(other?.label).toBe("Other (2)");
     expect(other?.color).toBe("var(--series-other)");
     expect(other?.members).toBe(2);
-    // h has 13 reviews and i has 12; each has one failed verdict and $2.
+    // i has 12 reviews and j has 11; each has one failed verdict and $2.
     const bucket = other?.buckets[0];
-    expect(bucket?.reviews.total).toBe(25);
-    expect(bucket?.verdicts.failure_rate).toBeCloseTo(2 / 25);
+    expect(bucket?.reviews.total).toBe(23);
+    expect(bucket?.verdicts.failure_rate).toBeCloseTo(2 / 23);
     expect(bucket?.cost.total_usd).toBe(4);
-    expect(other?.summary.reviews.total).toBe(25);
+    expect(other?.summary.reviews.total).toBe(23);
     // Percentiles cannot be combined, so the folded latency is unknown.
     expect(bucket && reviewLatency(bucket, "p50_secs")).toBeNull();
   });
