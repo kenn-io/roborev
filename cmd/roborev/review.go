@@ -213,12 +213,17 @@ Examples:
 					// "--branch reviews all commits since trunk".
 					upstream, uerr := git.GetUpstream(root, targetRef)
 					if missing, ok := errors.AsType[*git.UpstreamMissingError](uerr); ok {
-						return fmt.Errorf("%w (or pass --base <ref>)", missing)
-					}
-					if uerr != nil {
+						// A missing PR head or feature counterpart cannot be the
+						// trunk base. Fall back to the default branch, just as we
+						// do for a resolved non-trunk upstream. A missing trunk-
+						// shaped upstream (e.g. upstream/main) must fail closed:
+						// origin/main might point to a different commit.
+						if git.UpstreamIsTrunk(root, targetRef) {
+							return fmt.Errorf("%w (or pass --base <ref>)", missing)
+						}
+					} else if uerr != nil {
 						return fmt.Errorf("resolve upstream for %s: %w (pass --base <ref> to skip)", targetRef, uerr)
-					}
-					if upstream != "" && git.UpstreamIsTrunk(root, targetRef) {
+					} else if upstream != "" && git.UpstreamIsTrunk(root, targetRef) {
 						base = upstream
 					}
 				}

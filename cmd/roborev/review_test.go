@@ -570,6 +570,76 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 }
 
+func TestReviewBranchMissingUpstream(t *testing.T) {
+	newFeatureRepo := func(t *testing.T, remote, merge string) (*TestGitRepo, *http.ServeMux, string) {
+		t.Helper()
+		repo, mux := setupTestEnvironment(t)
+		mainSHA := repo.CommitFile("main.txt", "main", "initial")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", mainSHA)
+		repo.SetRemoteHead("origin", "main")
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		repo.SetBranchConfig("feature", "remote", remote)
+		repo.SetBranchConfig("feature", "merge", merge)
+		return repo, mux, mainSHA
+	}
+
+	t.Run("PR head missing in linked worktree falls back to default branch", func(t *testing.T) {
+		repo, mux, mainSHA := newFeatureRepo(t, "origin", "refs/pull/123/head")
+		reqCh := mockEnqueue(t, mux)
+		worktree := filepath.Join(t.TempDir(), "checkout")
+		repo.Run("checkout", "main")
+		repo.Run("worktree", "add", worktree, "feature")
+
+		_, _, err := executeReviewCmd("--repo", worktree, "--branch", "--quiet")
+		require.NoError(t, err)
+		assert.Equal(t, mainSHA+"..HEAD", (<-reqCh).GitRef)
+	})
+
+	t.Run("missing feature counterpart falls back to default branch", func(t *testing.T) {
+		repo, mux, mainSHA := newFeatureRepo(t, "origin", "refs/heads/feature")
+		reqCh := mockEnqueue(t, mux)
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
+		require.NoError(t, err)
+		assert.Equal(t, mainSHA+"..HEAD", (<-reqCh).GitRef)
+	})
+
+	t.Run("missing trunk upstream still fails closed", func(t *testing.T) {
+		repo, _, _ := newFeatureRepo(t, "upstream", "refs/heads/main")
+		repo.AddRemote("upstream", "/dev/null")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
+		require.ErrorContains(t, err, `upstream "upstream/main" for HEAD does not resolve locally`)
+	})
+
+	t.Run("explicit base overrides missing PR upstream", func(t *testing.T) {
+		repo, mux, _ := newFeatureRepo(t, "origin", "refs/pull/123/head")
+		reqCh := mockEnqueue(t, mux)
+		developSHA := repo.Run("rev-parse", "HEAD")
+		repo.SetRef("refs/remotes/origin/develop", developSHA)
+		repo.Run("commit", "--allow-empty", "-m", "second feature commit")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--base", "origin/develop", "--quiet")
+		require.NoError(t, err)
+		assert.Equal(t, developSHA+"..HEAD", (<-reqCh).GitRef)
+	})
+
+	t.Run("configured base overrides missing PR upstream", func(t *testing.T) {
+		repo, mux, _ := newFeatureRepo(t, "origin", "refs/pull/123/head")
+		reqCh := mockEnqueue(t, mux)
+		developSHA := repo.Run("rev-parse", "HEAD")
+		repo.SetRef("refs/remotes/origin/develop", developSHA)
+		repo.Run("commit", "--allow-empty", "-m", "second feature commit")
+		repo.SetBranchConfig("feature", "base", "origin/develop")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
+		require.NoError(t, err)
+		assert.Equal(t, developSHA+"..HEAD", (<-reqCh).GitRef)
+	})
+}
+
 func TestReviewFastFlag(t *testing.T) {
 	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)

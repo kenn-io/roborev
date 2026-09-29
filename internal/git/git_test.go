@@ -2128,6 +2128,28 @@ func TestUpstreamIsTrunk(t *testing.T) {
 		assert.True(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
 	})
 
+	t.Run("missing trunk ref remains a trunk candidate without a configured remote", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.SetHeadBranch("main")
+		repo.CommitFile("initial.txt", "initial", "initial")
+		repo.CheckoutNewBranch("feature")
+		// The remote may have been removed as well as the tracking ref.
+		repo.SetBranchUpstream("feature", "upstream", "main")
+
+		assert.True(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
+	})
+
+	t.Run("missing PR head is not a trunk candidate", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.SetHeadBranch("main")
+		repo.CommitFile("initial.txt", "initial", "initial")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchUpstream("feature", "origin", "feature")
+		repo.Run("config", "branch.feature.merge", "refs/pull/123/head")
+
+		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
+	})
+
 	t.Run("returns false when no upstream is configured", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"))

@@ -17,6 +17,14 @@ Reviews are enqueued and run in the background. Open `roborev tui` to browse
 results as they complete. This is the recommended workflow for pre-merge reviews
 of entire feature branches.
 
+For branch reviews, `--base` takes precedence over `branch.<name>.base`, then a
+trunk-tracking upstream. Otherwise roborev uses the default branch
+(`origin/HEAD`, then local `main` or `master`). If a PR checkout tracks a
+missing PR-head ref or a missing feature-branch ref, the default-branch fallback
+still applies. If the missing upstream could be trunk (for example,
+`upstream/main`), roborev stops rather than silently choosing a different base.
+Pass `--base` when the PR actually targets a non-default branch.
+
 ### Reviewing a Different Branch
 
 By default `--branch` reviews the current branch. You can specify a branch name

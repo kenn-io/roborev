@@ -759,10 +759,10 @@ func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 // repository's trunk. Only remote-tracking upstreams can be trunk: a
 // local-branch upstream (configured via branch.<name>.remote = ".") is
 // rejected even if its short name coincidentally matches the default
-// branch. For unambiguous remote-tracking upstreams, the branch part
-// after stripping the configured remote prefix must exactly match the
-// branch part of GetDefaultBranch. Returns false if ref has no upstream
-// configured or the default branch cannot be detected.
+// branch. For remote-tracking upstreams, the configured merge branch must
+// exactly match the branch part of GetDefaultBranch. This comparison works
+// even if the upstream ref or remote has gone missing. Returns false if ref
+// has no upstream configured or the default branch cannot be detected.
 func UpstreamIsTrunk(repoPath, ref string) bool {
 	cfg, ok := readUpstreamConfig(repoPath, ref)
 	if !ok {
@@ -775,7 +775,7 @@ func UpstreamIsTrunk(repoPath, ref string) bool {
 	if err != nil {
 		return false
 	}
-	return stripRemotePrefix(repoPath, cfg.short) == stripRemotePrefix(repoPath, defaultBranch)
+	return cfg.mergeBranch == strings.TrimPrefix(defaultBranch, "origin/")
 }
 
 // stripRemotePrefix removes the longest configured-remote prefix from ref.
@@ -2272,8 +2272,8 @@ func GetDefaultBranch(repoPath string) (string, error) {
 
 // UpstreamMissingError reports that a branch's @{upstream} is configured but
 // the referenced ref does not resolve locally (e.g., the remote-tracking ref
-// has not been fetched or was deleted). Callers should surface this to the
-// user instead of silently falling back to a different base branch, which
+// has not been fetched or was deleted). Callers selecting a base must not
+// fall back to another branch when this upstream could be trunk: the fallback
 // could select the wrong commit range in fork workflows.
 type UpstreamMissingError struct {
 	Ref      string // The branch whose upstream was resolved (e.g., "HEAD" or "feature").
@@ -2287,9 +2287,9 @@ func (e *UpstreamMissingError) Error() string {
 // GetUpstream returns the upstream tracking branch for a ref (e.g., "upstream/main").
 // Returns ("", nil) when no @{upstream} is configured, so callers can fall back
 // to a default base. Returns ("", *UpstreamMissingError) when @{upstream} is
-// configured but the referenced ref does not resolve locally — callers should
-// surface this instead of falling back, because the fallback target may select
-// the wrong commit range. Passing an empty ref is equivalent to HEAD.
+// configured but the referenced ref does not resolve locally. Callers choosing
+// a base should only fall back if the configured upstream cannot be trunk.
+// Passing an empty ref is equivalent to HEAD.
 func GetUpstream(repoPath, ref string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
@@ -2337,8 +2337,9 @@ func GetUpstream(repoPath, ref string) (string, error) {
 // upstreamConfig captures the resolved short name and fully-qualified ref
 // implied by branch.<name>.remote and branch.<name>.merge.
 type upstreamConfig struct {
-	short     string // e.g. "upstream/main" or "main" for local tracking
-	qualified string // e.g. "refs/remotes/upstream/main" or "refs/heads/main"
+	short       string // e.g. "upstream/main" or "main" for local tracking
+	qualified   string // e.g. "refs/remotes/upstream/main" or "refs/heads/main"
+	mergeBranch string // configured branch name without refs/heads/, if present
 }
 
 // readUpstreamConfig returns the upstream configuration for a ref. Returns
@@ -2359,16 +2360,18 @@ func readUpstreamConfig(repoPath, ref string) (upstreamConfig, bool) {
 	if remote == "." {
 		// Local-branch tracking writes the target verbatim.
 		return upstreamConfig{
-			short:     mergeBranch,
-			qualified: "refs/heads/" + mergeBranch,
+			short:       mergeBranch,
+			qualified:   "refs/heads/" + mergeBranch,
+			mergeBranch: mergeBranch,
 		}, true
 	}
 	if remoteValueIsURL(repoPath, remote) {
 		return upstreamConfig{}, false
 	}
 	return upstreamConfig{
-		short:     remote + "/" + mergeBranch,
-		qualified: "refs/remotes/" + remote + "/" + mergeBranch,
+		short:       remote + "/" + mergeBranch,
+		qualified:   "refs/remotes/" + remote + "/" + mergeBranch,
+		mergeBranch: mergeBranch,
 	}, true
 }
 
