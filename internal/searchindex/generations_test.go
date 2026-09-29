@@ -65,9 +65,9 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
 
-	settings := EmbeddingSettings{
+	settings := embedconfig.Embedder{
 		BaseURL: "https://api.voyageai.com/v1", Model: "voyage-4-large", Dims: 2,
-		RecipeVersion: searchdoc.RecipeVersion, InputTypeMode: "retrieval",
+		InputTypeMode: "retrieval",
 	}
 	// This is exactly how the pre-kit client keyed and fingerprinted the
 	// generation: the key and the stored fingerprint are both its legacy form.
@@ -82,7 +82,7 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
 	require.NoError(t, index.ActivateGeneration(ctx, key))
 
-	embeddings, err := NewEmbeddings(settings)
+	embeddings, err := NewEmbeddings(settings, "", searchdoc.RecipeVersion)
 	require.NoError(t, err)
 	resolved, err := index.ResolveGeneration(ctx, embeddings.Space())
 	require.NoError(t, err)
@@ -107,26 +107,26 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 func TestLegacyFingerprintMatchesEarlierReleases(t *testing.T) {
 	// Fingerprints computed by the pre-kit embedding client for these settings.
 	tests := []struct {
-		settings EmbeddingSettings
+		settings embedconfig.Embedder
 		want     string
 	}{
 		{
-			settings: EmbeddingSettings{
+			settings: embedconfig.Embedder{
 				BaseURL: "https://api.voyageai.com/v1", Model: "voyage-4-large", Dims: 1024,
-				RecipeVersion: 2, InputTypeMode: "retrieval",
+				InputTypeMode: "retrieval",
 			},
 			want: "28b082fb2ca22d4d",
 		},
 		{
-			settings: EmbeddingSettings{
+			settings: embedconfig.Embedder{
 				BaseURL: "http://127.0.0.1:11434/v1/", Model: "nomic", Dims: 768,
-				RecipeVersion: 2, Salt: "s1",
+				FingerprintSalt: "s1",
 			},
 			want: "ad50719e7306a26f",
 		},
 	}
 	for _, tt := range tests {
-		embeddings, err := NewEmbeddings(tt.settings)
+		embeddings, err := NewEmbeddings(tt.settings, "", 2)
 		require.NoError(t, err)
 		assert.Equal(t, []string{tt.want}, embeddings.Space().Legacy)
 		matches, err := embeddings.Space().Matches(tt.want)
@@ -138,9 +138,9 @@ func TestLegacyFingerprintMatchesEarlierReleases(t *testing.T) {
 func TestNewGenerationsUseKitIdentity(t *testing.T) {
 	ctx := context.Background()
 	index := openGenerationTestIndex(t)
-	embeddings, err := NewEmbeddings(EmbeddingSettings{
-		BaseURL: "https://example.test/v1", Model: "model", Dims: 2, RecipeVersion: 2,
-	})
+	embeddings, err := NewEmbeddings(embedconfig.Embedder{
+		BaseURL: "https://example.test/v1", Model: "model", Dims: 2,
+	}, "", 2)
 	require.NoError(t, err)
 	key, err := index.ResolveGeneration(ctx, embeddings.Space())
 	require.NoError(t, err)
@@ -151,26 +151,32 @@ func TestNewGenerationsUseKitIdentity(t *testing.T) {
 }
 
 func TestGenerationIdentitySeparatesVectorSpaceInputs(t *testing.T) {
-	base := EmbeddingSettings{
-		BaseURL: "http://127.0.0.1:9/v1", Model: "embed-large", Dims: 1024,
-		RecipeVersion: 3, InputTypeMode: "none",
+	type input struct {
+		config embedconfig.Embedder
+		recipe int
 	}
-	variants := []func(*EmbeddingSettings){
-		func(*EmbeddingSettings) {},
-		func(s *EmbeddingSettings) { s.Model = "embed-other" },
-		func(s *EmbeddingSettings) { s.Dims = 768 },
-		func(s *EmbeddingSettings) { s.RecipeVersion = 4 },
-		func(s *EmbeddingSettings) { s.InputTypeMode = "retrieval" },
-		func(s *EmbeddingSettings) { s.Salt = "deployment-v2" },
-		func(s *EmbeddingSettings) { s.BaseURL = "http://127.0.0.1:10/v1" },
-		func(s *EmbeddingSettings) { s.BaseURL = "http://127.0.0.1:9/v2" },
+	base := input{
+		config: embedconfig.Embedder{
+			BaseURL: "http://127.0.0.1:9/v1", Model: "embed-large", Dims: 1024, InputTypeMode: "none",
+		},
+		recipe: 3,
+	}
+	variants := []func(*input){
+		func(*input) {},
+		func(in *input) { in.config.Model = "embed-other" },
+		func(in *input) { in.config.Dims = 768 },
+		func(in *input) { in.recipe = 4 },
+		func(in *input) { in.config.InputTypeMode = "retrieval" },
+		func(in *input) { in.config.FingerprintSalt = "deployment-v2" },
+		func(in *input) { in.config.BaseURL = "http://127.0.0.1:10/v1" },
+		func(in *input) { in.config.BaseURL = "http://127.0.0.1:9/v2" },
 	}
 	legacy := map[string]struct{}{}
 	kit := map[string]struct{}{}
 	for _, variant := range variants {
-		settings := base
-		variant(&settings)
-		embeddings, err := NewEmbeddings(settings)
+		in := base
+		variant(&in)
+		embeddings, err := NewEmbeddings(in.config, "", in.recipe)
 		require.NoError(t, err)
 		legacy[embeddings.Space().Legacy[0]] = struct{}{}
 		generation, err := embeddings.Space().Generation()
@@ -180,11 +186,11 @@ func TestGenerationIdentitySeparatesVectorSpaceInputs(t *testing.T) {
 	assert.Len(t, legacy, len(variants))
 	assert.Len(t, kit, len(variants))
 
-	withSecret, err := NewEmbeddings(withSettings(base, func(s *EmbeddingSettings) { s.APIKey = "secret" }))
+	secret, err := NewEmbeddings(base.config, "secret", base.recipe)
 	require.NoError(t, err)
-	plain, err := NewEmbeddings(base)
+	plain, err := NewEmbeddings(base.config, "", base.recipe)
 	require.NoError(t, err)
-	assert.Equal(t, plain.Space().Legacy, withSecret.Space().Legacy)
+	assert.Equal(t, plain.Space().Legacy, secret.Space().Legacy)
 }
 
 func TestGenerationCutoverReclaimsRetiredVectorTables(t *testing.T) {
@@ -313,11 +319,6 @@ func testSpace(model string, dims int) embedmodel.Descriptor {
 		Name: model, Dimensions: dims,
 		Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationL2,
 	}}
-}
-
-func withSettings(settings EmbeddingSettings, change func(*EmbeddingSettings)) EmbeddingSettings {
-	change(&settings)
-	return settings
 }
 
 func openGenerationTestIndex(t *testing.T) *Index {

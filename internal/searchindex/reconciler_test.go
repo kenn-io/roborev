@@ -72,11 +72,17 @@ type reconcilerEmbedder struct {
 }
 
 func TestEmbeddingsReportConfiguredBatchSize(t *testing.T) {
-	client, err := NewEmbeddings(EmbeddingSettings{
+	client, err := NewEmbeddings(embedconfig.Embedder{
 		BaseURL: "http://127.0.0.1:9", Model: "model", Dims: 2, BatchSize: 7,
-	})
+	}, "", searchdoc.RecipeVersion)
 	require.NoError(t, err)
-	assert.Equal(t, 7, client.BatchSize())
+	assert.Equal(t, 7, client.Batch().Items)
+
+	defaulted, err := NewEmbeddings(embedconfig.Embedder{
+		BaseURL: "http://127.0.0.1:9", Model: "model", Dims: 2,
+	}, "", searchdoc.RecipeVersion)
+	require.NoError(t, err)
+	assert.Equal(t, embedconfig.DefaultBatchItems, defaulted.Batch().Items)
 }
 
 func (e *reconcilerEmbedder) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
@@ -104,7 +110,11 @@ func (e *reconcilerEmbedder) embedDocuments(ctx context.Context, texts []string)
 }
 
 func (e *reconcilerEmbedder) Space() embedmodel.Descriptor { return e.space }
-func (e *reconcilerEmbedder) BatchSize() int               { return e.batchSize }
+
+func (e *reconcilerEmbedder) Batch() embedconfig.Batch {
+	return embedconfig.Batch{Items: e.batchSize}
+}
+
 func (e *reconcilerEmbedder) callCount() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -234,9 +244,9 @@ func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 	}))
 	defer server.Close()
-	client, err := NewEmbeddings(EmbeddingSettings{
-		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1, RecipeVersion: searchdoc.RecipeVersion,
-	})
+	client, err := NewEmbeddings(embedconfig.Embedder{
+		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1,
+	}, "", searchdoc.RecipeVersion)
 	require.NoError(t, err)
 	index := openGenerationTestIndex(t)
 	sources := makeSearchSources(1)
@@ -581,10 +591,10 @@ func TestReconcilerFillsGenerationStoredByEarlierReleaseInPlace(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 	}))
 	defer server.Close()
-	settings := EmbeddingSettings{
-		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1, RecipeVersion: searchdoc.RecipeVersion,
+	settings := embedconfig.Embedder{
+		BaseURL: server.URL, Model: "model", Dims: 2, BatchSize: 1,
 	}
-	client, err := NewEmbeddings(settings)
+	client, err := NewEmbeddings(settings, "", searchdoc.RecipeVersion)
 	require.NoError(t, err)
 
 	index := openGenerationTestIndex(t)

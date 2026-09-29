@@ -572,7 +572,7 @@ func (e *serviceEmbedder) embedQuery(ctx context.Context, texts []string) ([][]f
 }
 
 func (e *serviceEmbedder) Space() embedmodel.Descriptor { return e.space }
-func (e *serviceEmbedder) BatchSize() int               { return 64 }
+func (e *serviceEmbedder) Batch() embedconfig.Batch     { return embedconfig.Batch{Items: 64} }
 
 func activeServiceRuntime(model embedmodel.Descriptor) *serviceRuntime {
 	generation, _ := model.Generation()

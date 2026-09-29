@@ -63,26 +63,22 @@ func newDaemonSearch(
 
 	var embedder searchindex.Embedder
 	reconcilerConfig := searchindex.ReconcilerConfig{}
-	embeddings := cfg.Search.Embeddings
-	if embeddings != nil && strings.TrimSpace(embeddings.BaseURL) != "" {
-		credential, err := embeddings.ResolveCredential()
+	if embeddings := cfg.Search.Embeddings; embeddings != nil && embeddings.Enabled() {
+		credential, err := embeddings.ResolveAPIKey()
 		if err != nil {
 			return nil, err
 		}
-		client, err := searchindex.NewEmbeddings(searchindex.EmbeddingSettings{
-			BaseURL: embeddings.BaseURL, Model: embeddings.Model, APIKey: credential.Key,
-			Salt: embeddings.FingerprintSalt, RecipeVersion: searchdoc.RecipeVersion,
-			Dims: embeddings.Dims, BatchSize: embeddings.BatchSize,
-			Timeout:             time.Duration(embeddings.TimeoutSeconds) * time.Second,
-			InputTypeMode:       embeddings.InputTypeMode,
-			TrustPrivateNetwork: embeddings.TrustPrivateNetwork,
-		})
+		client, err := searchindex.NewEmbeddings(*embeddings, credential.Value, searchdoc.RecipeVersion)
 		if err != nil {
 			return nil, err
 		}
+		// A configured key that is unavailable leaves search lexical-only and
+		// reports why; an endpoint with no key configured is called without
+		// authentication.
 		reconcilerConfig.CredentialSource = credential.Source
-		reconcilerConfig.CredentialReason = credential.Reason
-		if credential.Key != "" {
+		if credential.Reason != "" {
+			reconcilerConfig.CredentialReason = "no embedding API key (" + credential.Reason + ")"
+		} else {
 			embedder = client
 		}
 	}

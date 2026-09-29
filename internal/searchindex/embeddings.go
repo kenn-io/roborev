@@ -2,12 +2,9 @@ package searchindex
 
 import (
 	"errors"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
@@ -21,80 +18,52 @@ type Embedder interface {
 	// Space identifies the vector space, including the fingerprints of
 	// generations that earlier releases stored for the same configuration.
 	Space() embedmodel.Descriptor
-	BatchSize() int
-}
-
-// EmbeddingSettings is the daemon's resolved embedding configuration.
-type EmbeddingSettings struct {
-	BaseURL             string
-	Model               string
-	APIKey              string
-	Salt                string
-	RecipeVersion       int
-	Dims                int
-	BatchSize           int
-	Timeout             time.Duration
-	InputTypeMode       string
-	TrustPrivateNetwork bool
+	Batch() embedconfig.Batch
 }
 
 // Embeddings is the kit embedding client bound to its vector-space identity.
 type Embeddings struct {
-	client    *embedclient.Client
-	space     embedmodel.Descriptor
-	batchSize int
+	client *embedclient.Client
+	space  embedmodel.Descriptor
+	batch  embedconfig.Batch
 }
 
-// NewEmbeddings validates settings and constructs an origin-pinned client.
-// Client retries stay off; the reconciler owns backoff between turns.
-func NewEmbeddings(settings EmbeddingSettings) (*Embeddings, error) {
-	if err := checkPlaintextHost(settings.BaseURL, settings.TrustPrivateNetwork); err != nil {
+// NewEmbeddings builds the client from kit's standard embedder settings and
+// the resolved API key. recipeVersion identifies how review documents are
+// rendered. Client retries stay off; the reconciler owns backoff between
+// turns.
+func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int) (*Embeddings, error) {
+	parts, err := config.Parts()
+	if err != nil {
 		return nil, err
 	}
-	space := embedmodel.Descriptor{
-		Model: embedconfig.Model{
-			Name:          settings.Model,
-			Revision:      settings.Salt,
-			Dimensions:    settings.Dims,
-			Metric:        embedconfig.MetricCosine,
-			Normalization: embedconfig.NormalizationL2,
-		},
-		Roles: embedconfig.Roles{
-			// The rendered review document is the document formatter, so a
-			// recipe change starts a new generation.
-			DocumentFormatter: "roborev.searchdoc/v" + strconv.Itoa(settings.RecipeVersion),
-			InputType:         embedconfig.InputType(settings.InputTypeMode),
-		},
-		Deployment: embedconfig.Deployment{
-			BaseURL:             settings.BaseURL,
-			PinEndpoint:         true,
-			TrustPrivateNetwork: settings.TrustPrivateNetwork,
-		},
-	}
+	// Vectors are keyed by endpoint, and the rendered review document is the
+	// document formatter, so changing either starts a new generation.
+	parts.Deployment.PinEndpoint = true
+	parts.Roles.DocumentFormatter = "roborev.searchdoc/v" + strconv.Itoa(recipeVersion)
 	client, err := embedclient.New(embedclient.Options{
-		Model:      space.Model,
-		Roles:      space.Roles,
-		Deployment: space.Deployment,
-		Batch:      embedconfig.Batch{Items: settings.BatchSize},
-		Transport:  embedconfig.Transport{Timeout: settings.Timeout},
-		APIKey:     settings.APIKey,
+		Model:      parts.Model,
+		Roles:      parts.Roles,
+		Deployment: parts.Deployment,
+		Batch:      parts.Batch,
+		Transport:  parts.Transport,
+		APIKey:     apiKey,
 	})
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := legacyFingerprint(settings)
+	legacy, err := legacyFingerprint(config, recipeVersion)
 	if err != nil {
 		return nil, err
 	}
-	space.Legacy = []string{legacy}
+	space := embedmodel.Descriptor{
+		Model: parts.Model, Roles: parts.Roles, Deployment: parts.Deployment,
+		Legacy: []string{legacy},
+	}
 	if err := space.Validate(); err != nil {
 		return nil, err
 	}
-	batchSize := settings.BatchSize
-	if batchSize <= 0 {
-		batchSize = embedconfig.DefaultBatchItems
-	}
-	return &Embeddings{client: client, space: space, batchSize: batchSize}, nil
+	return &Embeddings{client: client, space: space, batch: parts.Batch}, nil
 }
 
 // EncodeFunc sends texts for role unchanged.
@@ -105,47 +74,29 @@ func (e *Embeddings) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
 // Space returns the vector-space descriptor.
 func (e *Embeddings) Space() embedmodel.Descriptor { return e.space }
 
-// BatchSize returns the maximum number of inputs sent in one provider request.
-func (e *Embeddings) BatchSize() int { return e.batchSize }
+// Batch returns the per-request input limits.
+func (e *Embeddings) Batch() embedconfig.Batch { return e.batch }
 
 // legacyFingerprint is the generation fingerprint that releases before the
 // kit client stored. Existing vectors keep serving under it.
-func legacyFingerprint(settings EmbeddingSettings) (string, error) {
-	endpoint, err := embedconfig.CanonicalEndpoint(settings.BaseURL, settings.TrustPrivateNetwork)
+func legacyFingerprint(config embedconfig.Embedder, recipeVersion int) (string, error) {
+	endpoint, err := embedconfig.CanonicalEndpoint(config.BaseURL, config.TrustPrivateNetwork)
 	if err != nil {
 		return "", err
 	}
-	mode := settings.InputTypeMode
+	mode := strings.TrimSpace(config.InputTypeMode)
 	if mode == "" {
 		mode = string(embedconfig.InputTypeNone)
 	}
 	params := map[string]string{
 		"endpoint":        endpoint,
 		"input_type_mode": mode,
-		"recipe":          strconv.Itoa(settings.RecipeVersion),
+		"recipe":          strconv.Itoa(recipeVersion),
 	}
-	if settings.Salt != "" {
-		params["salt"] = settings.Salt
+	if config.FingerprintSalt != "" {
+		params["salt"] = config.FingerprintSalt
 	}
-	return vector.Generation{Model: settings.Model, Dimensions: settings.Dims, Params: params}.Fingerprint(), nil
-}
-
-// checkPlaintextHost keeps trust_private_network limited to IP literals.
-// Kit's policy also admits host names under that setting, and a name can
-// resolve to a public address.
-func checkPlaintextHost(baseURL string, trustPrivateNetwork bool) error {
-	if !trustPrivateNetwork {
-		return nil
-	}
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || !strings.EqualFold(parsed.Scheme, "http") {
-		return nil
-	}
-	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil {
-		return nil
-	}
-	return errors.New("embedding: plaintext HTTP endpoint requires loopback or trusted private network address")
+	return vector.Generation{Model: config.Model, Dimensions: config.Dims, Params: params}.Fingerprint(), nil
 }
 
 // embeddingAPIError returns the provider status error carried by err.

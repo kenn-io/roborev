@@ -40,14 +40,17 @@ func (index *Index) Fill(
 	store vector.Store[string, string],
 	key string,
 	enc vector.EncodeFunc,
-	batchSize int,
+	batch embedconfig.Batch,
 	onDocument func(bool),
 ) (vector.FillStats, error) {
 	if store == nil {
 		store = index.vectors
 	}
 	split := vector.SplitOptions{MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap}
-	batchOptions := []vector.BatchOption{vector.WithBatchSize(batchSize)}
+	batchOptions := []vector.BatchOption{vector.WithBatchSize(batch.Items)}
+	if batch.MaxTokens > 0 {
+		batchOptions = append(batchOptions, vector.WithBatchTokenBudget(batch.MaxTokens, batch.InputTokenUpperBound))
+	}
 	progress := progressStore{Store: store, onDocument: onDocument}
 	return vector.Fill(ctx, progress, key, enc,
 		vector.WithFillSplit[string](split),

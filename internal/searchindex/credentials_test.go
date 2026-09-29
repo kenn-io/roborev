@@ -32,10 +32,9 @@ func TestCredentialObservationRecovery(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 			}))
 			defer server.Close()
-			client, err := NewEmbeddings(EmbeddingSettings{
-				BaseURL: server.URL, Model: "test", Dims: 2, APIKey: "example-key", TrustPrivateNetwork: true,
-				RecipeVersion: searchdoc.RecipeVersion,
-			})
+			client, err := NewEmbeddings(embedconfig.Embedder{
+				BaseURL: server.URL, Model: "test", Dims: 2, TrustPrivateNetwork: true,
+			}, "example-key", searchdoc.RecipeVersion)
 			require.NoError(t, err)
 			index := openGenerationTestIndex(t)
 			r := NewReconciler(&reconcilerStore{}, index, client, ReconcilerConfig{CredentialSource: "inline"})

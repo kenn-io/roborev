@@ -628,7 +628,7 @@ func (c *Config) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
-	if err := validateEmbeddingConfig(c.Search.Embeddings); err != nil {
+	if err := validateSearchConfig(c.Search); err != nil {
 		return err
 	}
 	reasoning := []namedConfigValue{
@@ -1001,7 +1001,7 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return err
 	}
-	if err := normalizeSearchConfig(&cfg.Search); err != nil {
+	if err := validateSearchConfig(cfg.Search); err != nil {
 		return err
 	}
 	return normalizeWebConfig(&cfg.Web)

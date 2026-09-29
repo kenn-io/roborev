@@ -1063,7 +1063,7 @@ embedding provider. Semantic and hybrid search use an optional global-only
 base_url = "https://api.voyageai.com/v1"
 model = "voyage-4-large"
 dims = 1024
-api_key_env = "VOYAGE_API_KEY"
+api_key = "env:VOYAGE_API_KEY"
 input_type_mode = "retrieval"
 batch_size = 64
 timeout_seconds = 30
@@ -1074,21 +1074,27 @@ timeout_seconds = 30
 | `base_url` | - | OpenAI-compatible endpoint base; Roborev appends `/embeddings` unless the path already ends with it. Must not contain credentials, a query, or a fragment |
 | `model` | - | Provider model identifier |
 | `dims` | - | Required positive response dimension |
-| `api_key` | - | Inline bearer credential; choose only one key source |
-| `api_key_env` | - | Environment variable containing the bearer credential |
-| `api_key_file` | - | Private key file read at daemon start; supports `~/` and trims trailing newlines |
+| `api_key` | - | Where the bearer key comes from: `env:NAME`, `file:PATH`, or the key itself |
 | `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
 | `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
-| `batch_size` | `64` | Maximum documents per provider request |
+| `batch_size` | `32` | Maximum inputs per provider request |
+| `model_context_tokens` | - | Most tokens one input can hold; set together with `max_batch_tokens` to batch by tokens |
+| `max_batch_tokens` | - | Provider's aggregate input-token cap per request; set together with `model_context_tokens` |
 | `timeout_seconds` | `30` | Provider request timeout in seconds |
-| `trust_private_network` | `false` | Allow plain HTTP to a private, link-local, or carrier-grade NAT IP address; host names still require HTTPS |
+| `trust_private_network` | `false` | Allow plain HTTP to a private-network endpoint (a private, link-local, or carrier-grade NAT address, or a host name) |
 
-`base_url`, `model`, and `dims` must be configured together. Choose only one of
-`api_key`, `api_key_file`, and `api_key_env`; multiple sources are a config
-error. On Unix, key files must not grant group or world access (`chmod 600`). If
-the selected source is missing, empty, unreadable, or has insecure permissions,
-the daemon starts normally with semantic search disabled and makes no embedding
-requests. Reviews and lexical search continue without startup warnings.
+These are the standard embedding keys shared by Kenn tools, so the same block
+works in any of them. `base_url`, `model`, and `dims` must be configured
+together.
+
+`api_key` names where the key comes from: `env:NAME` reads an environment
+variable, `file:PATH` reads a private file (a leading `~/` is your home
+directory), and any other value is the key itself. Leave it unset for an
+endpoint that needs no key. A key file must be a regular file you own with mode
+`0600`; symlinks are refused. If the configured source is missing, empty,
+unreadable, or insecure, the daemon starts normally with semantic search
+disabled and makes no embedding requests. Reviews and lexical search continue
+without startup warnings.
 
 The Search section of `roborev daemon status` and `GET /api/health` reports
 `credential` (`missing`, `rejected`, or `ok`), `credential_source` (never the
@@ -1096,8 +1102,8 @@ key), and a readable `credential_reason` when unavailable. `auto` search
 includes the reason when falling back to lexical; explicit semantic/hybrid modes
 fail with it. Provider rejection (401/403) clears after a successful embedding
 request. A service-started daemon may not inherit shell variables; prefer
-`api_key_file` for that setup. Embedding settings require a daemon restart and
-cannot be overridden in `.roborev.toml`.
+`api_key = "file:..."` for that setup. Embedding settings require a daemon
+restart and cannot be overridden in `.roborev.toml`.
 
 For Voyage, this release supports the default 1,024-dimensional output from
 `voyage-4-large`. Roborev validates `dims` but does not send Voyage's
@@ -1403,7 +1409,7 @@ systemctl --user enable --now roborev
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
 | `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous daemon telemetry |
 | `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
-| `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key_env` |
+| `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key = "env:VOYAGE_API_KEY"` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ### Telemetry

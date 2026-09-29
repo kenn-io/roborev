@@ -12,11 +12,18 @@ All notable changes to roborev, grouped by minor release.
 - Missing embedding credentials no longer prevent the daemon from starting.
     Reviews and lexical search continue without startup warnings. Search and
     status explain missing keys and provider rejection, and health exposes
-    credential state without the key. `search.embeddings.api_key_file` reads a
-    private key file at startup. See [search credentials](/docs/search/).
+    credential state without the key. `search.embeddings.api_key` can name a
+    private key file with `file:PATH`. See [search credentials](/docs/search/).
 
 **Improvements**
 
+- Behavior change: `[search.embeddings]` now uses the standard embedding keys
+    shared by Kenn tools. `api_key` names where the key comes from: `env:NAME`,
+    `file:PATH`, or the key itself. Replace `api_key_env = "NAME"` with
+    `api_key = "env:NAME"`. `batch_size` now defaults to 32,
+    `model_context_tokens` and `max_batch_tokens` batch requests by tokens, and
+    `trust_private_network` also allows a private host name. Existing search
+    indexes are kept; nothing is re-embedded.
 - Behavior change: the TUI now opens filtered to the current repository and
     branch when you start it inside a git checkout, including linked worktrees.
     Before, it showed every repository unless you opted in. Press `Esc` to clear

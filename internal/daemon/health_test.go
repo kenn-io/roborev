@@ -70,7 +70,7 @@ func (e *replacementHealthEmbedder) embed(ctx context.Context, texts []string) (
 }
 
 func (e *replacementHealthEmbedder) Space() embedmodel.Descriptor { return e.space }
-func (e *replacementHealthEmbedder) BatchSize() int               { return 1 }
+func (e *replacementHealthEmbedder) Batch() embedconfig.Batch     { return embedconfig.Batch{Items: 1} }
 
 func cosineSpace(model string, dims int) embedmodel.Descriptor {
 	return embedmodel.Descriptor{Model: embedconfig.Model{

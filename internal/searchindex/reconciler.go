@@ -276,7 +276,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		&turnLimitedStore{Store: r.index.vectors, remaining: r.config.MaxFillBatches},
 		key,
 		encodeDocuments(r.embedder),
-		max(r.embedder.BatchSize(), 1),
+		r.embedder.Batch(),
 		nil,
 	)
 	countsAfter, countErr := r.index.GenerationCounts(ctx, key)

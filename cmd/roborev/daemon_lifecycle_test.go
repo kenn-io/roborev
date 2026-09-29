@@ -20,6 +20,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/safefileio"
+	"go.kenn.io/kit/secretref"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -439,14 +442,14 @@ func TestDaemonSearchClosesSidecarOnConstructionFailures(t *testing.T) {
 		{
 			name: "partial config",
 			configure: func(cfg *config.Config) {
-				cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: "https://embeddings.example"}
+				cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://embeddings.example"}
 			},
-			wantError: "base_url, model, and dims",
+			wantError: "search.embeddings: embed base_url, model, and positive dims",
 		},
 		{
 			name: "invalid embedding client",
 			configure: func(cfg *config.Config) {
-				cfg.Search.Embeddings = &config.EmbeddingConfig{
+				cfg.Search.Embeddings = &embedconfig.Embedder{
 					BaseURL: "file:///tmp/provider", Model: "model", Dims: 2,
 				}
 			},
@@ -561,7 +564,7 @@ func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
 	cfg := config.DefaultConfig()
-	cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: provider.URL, Model: "test", Dims: 2, APIKeyEnv: "ROBOREV_TEST_EMBEDDING_KEY", TrustPrivateNetwork: true}
+	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: "env:ROBOREV_TEST_EMBEDDING_KEY", TrustPrivateNetwork: true}
 	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, search.Close()) })
@@ -601,21 +604,28 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 		mode                               os.FileMode
 	}{
 		{"private", "example-key\n", "ok", "", 0o600},
-		{"empty", "\n", "missing", "key file is empty", 0o600},
-		{"insecure", "example-key", "missing", "permissions", 0o644},
+		{"empty", "\n", "missing", "file is empty", 0o600},
+		{"insecure", "example-key", "missing", "must be private", 0o644},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if runtime.GOOS == "windows" && tc.name == "insecure" {
 				t.Skip("Unix permissions")
 			}
 			path := filepath.Join(t.TempDir(), "embedding.key")
-			require.NoError(t, os.WriteFile(path, []byte(tc.contents), tc.mode))
+			file, err := safefileio.CreatePrivateFile(path)
+			require.NoError(t, err)
+			_, err = file.WriteString(tc.contents)
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			if tc.mode != 0o600 {
+				require.NoError(t, os.Chmod(path, tc.mode))
+			}
 			dbPath := filepath.Join(t.TempDir(), "reviews.db")
 			db, err := storage.Open(dbPath)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			cfg := config.DefaultConfig()
-			cfg.Search.Embeddings = &config.EmbeddingConfig{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKeyFile: path}
+			cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKey: secretref.Ref("file:" + path)}
 			search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, search.Close()) })
