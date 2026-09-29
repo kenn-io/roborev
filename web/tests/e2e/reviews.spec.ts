@@ -234,7 +234,7 @@ test.describe.serial("native review workspace", () => {
       page.getByText("No issues found after consolidated review."),
     ).toBeVisible();
     await expect(
-      page.locator(".col-type", { hasText: "compact" }),
+      page.locator(".col-review-type", { hasText: "compact" }),
     ).toBeVisible();
 
     await openReview(page, 52);

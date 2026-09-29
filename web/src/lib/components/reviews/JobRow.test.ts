@@ -42,7 +42,7 @@ describe("JobRow", () => {
     expect(screen.getByText("~$0.42")).toBeTruthy();
   });
 
-  it("renders review type separately from job type", () => {
+  it("shows only the review type for standard review jobs", () => {
     const view = render(JobRow, {
       props: {
         job: { ...makeJob(), review_type: "project-conventions" },
@@ -53,10 +53,41 @@ describe("JobRow", () => {
     });
 
     expect(view.container.querySelector(".col-review-type")).toHaveTextContent(
-      "project-conventions",
+      /^project-conventions$/,
     );
-    expect(view.container.querySelector(".col-type")).toHaveTextContent(
-      "review",
+  });
+
+  it("names other job types beside the review type", () => {
+    const view = render(JobRow, {
+      props: {
+        job: { ...makeJob(), job_type: "range", review_type: "security" },
+        selected: false,
+        highlighted: false,
+        onclick: () => {},
+      },
+    });
+
+    const cell = view.container.querySelector(".col-review-type");
+    expect(cell).toHaveTextContent(/^rangesecurity$/);
+    expect(cell).toHaveAttribute("title", "range · security");
+  });
+
+  it("shows the model beside the agent", () => {
+    const view = render(JobRow, {
+      props: {
+        job: { ...makeJob(), agent: "codex", model: "gpt-5.5" },
+        selected: false,
+        highlighted: false,
+        onclick: () => {},
+      },
+    });
+
+    expect(view.container.querySelector(".col-agent")).toHaveAttribute(
+      "title",
+      "codex · gpt-5.5",
+    );
+    expect(view.container.querySelector(".col-agent .model")).toHaveTextContent(
+      "gpt-5.5",
     );
   });
 

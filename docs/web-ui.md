@@ -67,11 +67,15 @@ order. Numeric and time columns sort largest or newest first. Sorting reorders
 the jobs already loaded in the browser. While older jobs remain unloaded, a note
 under the table says so; **Load more** still fetches the next page in queue
 order and adds it to the sorted list. Panel reviews appear as a synthesis row
-that can be expanded to show its individual reviewers. The Review Type column
+that can be expanded to show its individual reviewers. Each row fits on one
+line: the commit column shows the repository, branch, short ref, and commit
+subject, and the Agent column shows the model beside the agent. The Type column
 identifies standard reviews as `default` and shows the configured name for
 specialized or custom reviews. The detail drawer repeats that value in its
 header. Panel synthesis rows show `panel`, while expanded panel members show
-their configured review types.
+their configured review types. Jobs other than single-commit reviews and panel
+syntheses name their job type first, such as `range · security` or
+`compact · default`.
 
 Select a row to open its detail drawer without leaving the queue. The drawer
 provides:

@@ -75,9 +75,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-5);
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--border-default);
-    background: var(--bg-primary);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-variant-numeric: tabular-nums;

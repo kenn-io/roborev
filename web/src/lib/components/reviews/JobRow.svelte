@@ -6,7 +6,11 @@
     panelElapsedStart,
     panelStatusLabel,
   } from "../../utils/roborev-panel";
-  import { reviewTypeLabel } from "../../utils/roborev-review-type";
+  import {
+    displayedJobType,
+    reviewTypeColumnLabel,
+    reviewTypeLabel,
+  } from "../../utils/roborev-review-type";
   import { formatRelativeTime } from "@kenn-io/kit-ui";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
@@ -36,6 +40,8 @@
 
   const panelStatus = $derived(panelStatusLabel(job));
   const reviewType = $derived(reviewTypeLabel(job.review_type, job.panel_role));
+  const jobType = $derived(displayedJobType(job.job_type));
+  const typeLabel = $derived(reviewTypeColumnLabel(job));
 
   function formatElapsed(j: ReviewJob): string {
     const startedAt = panelElapsedStart(j, members);
@@ -106,38 +112,37 @@
       {:else if member}
         <span class="tree-spacer" aria-hidden="true"></span>
       {/if}
-      <span class="ref-stack">
-        <span class="ref-group">
-          {#if job.repo_name}
-            <span class="repo-name">{job.repo_name}</span>
-          {/if}
-          {#if job.branch}
-            <span class="branch-name" title={job.branch}>{job.branch}</span>
-          {/if}
-          <span class="git-ref" title={job.git_ref}>
-            {shortRef(job.git_ref)}
-          </span>
+      {#if member && job.panel_member_name}
+        <span class="member-name"
+          >{job.panel_member_name}{job.non_voting ? " (non-voting)" : ""}</span
+        >
+      {/if}
+      {#if job.repo_name}
+        <span class="repo-name">{job.repo_name}</span>
+      {/if}
+      {#if job.branch}
+        <span class="branch-name" title={job.branch}>{job.branch}</span>
+      {/if}
+      <span class="git-ref" title={job.git_ref}>{shortRef(job.git_ref)}</span>
+      {#if job.commit_subject}
+        <span class="commit-subject" title={job.commit_subject}>
+          {job.commit_subject}
         </span>
-        {#if job.commit_subject}
-          <span class="commit-subject" title={job.commit_subject}>
-            {job.commit_subject}
-          </span>
-        {/if}
-        {#if member && job.panel_member_name}
-          <span class="member-name"
-            >{job.panel_member_name}{job.non_voting
-              ? " (non-voting)"
-              : ""}</span
-          >
-        {/if}
-        {#if panelStatus}
-          <span class="panel-status">{panelStatus}</span>
-        {/if}
-      </span>
+      {/if}
+      {#if panelStatus}
+        <span class="panel-status">{panelStatus}</span>
+      {/if}
     </span>
   </td>
-  <td class="col-agent">{job.agent}</td>
-  <td class="col-review-type" title={reviewType}>{reviewType}</td>
+  <td
+    class="col-agent"
+    title={job.model ? `${job.agent} · ${job.model}` : job.agent}
+  >
+    {job.agent}{#if job.model}<span class="model">{job.model}</span>{/if}
+  </td>
+  <td class="col-review-type" title={typeLabel}>
+    {#if jobType}<span class="job-type">{jobType}</span>{/if}{reviewType}
+  </td>
   <td class="col-status">
     <StatusBadge status={job.status} />
   </td>
@@ -151,7 +156,6 @@
   <td class="col-cost">
     {formatCost(job)}
   </td>
-  <td class="col-type">{job.job_type}</td>
   <td class="col-queued" title={job.enqueued_at}>
     {formatRelativeTime(job.enqueued_at)}
   </td>
@@ -188,20 +192,41 @@
   }
 
   .job-row td {
-    padding: 8px 12px;
+    padding: 5px 10px;
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-primary);
     font-size: var(--font-size-sm);
     font-variant-numeric: tabular-nums;
+    line-height: 1.4;
     vertical-align: middle;
     white-space: nowrap;
   }
 
   .job-row td.col-id {
-    width: 60px;
-    padding-left: 16px;
+    width: 1%;
+    padding-left: 14px;
     color: var(--text-muted);
     text-align: right;
+  }
+
+  /* The commit cell takes the width the fixed-content columns leave, and
+     its subject truncates instead of widening the table. */
+  .job-row td.col-ref {
+    width: 100%;
+    min-width: 280px;
+    max-width: 0;
+  }
+
+  .ref-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .tree-cell .ref-line--member {
+    padding-left: 20px;
   }
 
   .chevron {
@@ -211,7 +236,6 @@
     flex-shrink: 0;
     width: 16px;
     height: 16px;
-    margin-top: 1px;
     padding: 0;
     border: 0;
     border-radius: var(--radius-sm);
@@ -234,57 +258,25 @@
     color: var(--text-primary);
   }
 
-  .col-ref {
-    min-width: 200px;
-    max-width: 380px;
-    white-space: normal;
-  }
-
-  .ref-line {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-
-  .tree-cell .ref-line--member {
-    padding-left: 20px;
-  }
-
   .tree-spacer {
     flex: 0 0 16px;
     width: 16px;
     height: 16px;
   }
 
-  .ref-stack {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .ref-group {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-width: 0;
-    white-space: nowrap;
-  }
-
-  .repo-name {
+  .repo-name,
+  .member-name {
+    flex-shrink: 0;
     font-weight: 500;
   }
 
   .branch-name {
     overflow: hidden;
     min-width: 0;
+    max-width: 16rem;
+    flex-shrink: 1;
     color: var(--text-secondary);
     text-overflow: ellipsis;
-  }
-
-  .repo-name,
-  .git-ref {
-    flex-shrink: 0;
   }
 
   .branch-name::before {
@@ -294,44 +286,48 @@
   }
 
   .git-ref {
+    flex-shrink: 0;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
   }
 
+  /* The subject gives up width before the branch does. */
   .commit-subject {
     overflow: hidden;
-    max-width: 360px;
+    min-width: 4rem;
+    flex: 1 6 auto;
     color: var(--text-secondary);
     text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .member-name {
-    color: var(--text-primary);
-    font-weight: 500;
   }
 
   .panel-status {
+    flex-shrink: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
 
-  .col-agent {
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .model,
+  .job-type {
+    color: var(--text-muted);
   }
 
-  .col-review-type {
-    max-width: 160px;
-    overflow: hidden;
-    color: var(--text-secondary);
-    text-overflow: ellipsis;
+  .model::before {
+    margin: 0 var(--space-2);
+    content: "·";
   }
 
-  .col-closed,
-  .col-type {
+  .job-type::after {
+    margin: 0 var(--space-2);
+    content: "·";
+  }
+
+  .col-verdict :global(.verdict) {
+    vertical-align: middle;
+  }
+
+  .col-review-type,
+  .col-closed {
     color: var(--text-secondary);
   }
 

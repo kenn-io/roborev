@@ -4,20 +4,13 @@
   import { getAppRuntime } from "../../runtime/context";
   import type { AppExecution } from "../../runtime/runtime";
   import { getReviewStores } from "../../stores/context";
-  import {
-    Checkbox,
-    FilterDropdown,
-    IconButton,
-    SearchInput,
-  } from "@kenn-io/kit-ui";
-  import KeyboardIcon from "@lucide/svelte/icons/keyboard";
+  import { Checkbox, FilterDropdown, SearchInput } from "@kenn-io/kit-ui";
   import RepoTreePicker from "./RepoTreePicker.svelte";
 
   interface Props {
-    onHelpClick?: () => void;
     disabled?: boolean;
   }
-  let { onHelpClick, disabled = false }: Props = $props();
+  let { disabled = false }: Props = $props();
 
   const stores = getReviewStores();
   const jobsStore = stores.roborevJobs;
@@ -142,15 +135,6 @@
     onchange={onShowAutoDesignChange}
     {disabled}
   />
-
-  <IconButton
-    class="help-btn"
-    ariaLabel="Keyboard shortcuts"
-    title="Keyboard shortcuts (?)"
-    onclick={onHelpClick}
-  >
-    <KeyboardIcon size="16" strokeWidth="2" aria-hidden="true" />
-  </IconButton>
 </div>
 
 <style>
@@ -158,10 +142,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-4);
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-surface);
-    flex-shrink: 0;
     flex-wrap: wrap;
   }
 
@@ -179,10 +159,6 @@
 
   :global(.filter-checkbox .kit-checkbox__label) {
     color: var(--text-secondary);
-  }
-
-  :global(.help-btn) {
-    margin-left: auto;
   }
 
   .filter-disabled {

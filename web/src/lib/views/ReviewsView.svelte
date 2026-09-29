@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { EmptyState } from "@kenn-io/kit-ui";
+  import { EmptyState, IconButton } from "@kenn-io/kit-ui";
+  import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import { getStackDepth } from "../keyboard/modal-stack.svelte";
   import { getAppRuntime } from "../runtime/context";
   import { getReviewStores } from "../stores/context";
@@ -291,11 +292,15 @@
     </EmptyState>
   {:else}
     <div class="reviews-header">
-      <FilterBar
-        onHelpClick={() => (helpOpen = true)}
-        disabled={!stores.roborevDaemon.isAvailable()}
-      />
+      <FilterBar disabled={!stores.roborevDaemon.isAvailable()} />
       <DaemonStatus />
+      <IconButton
+        ariaLabel="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        onclick={() => (helpOpen = true)}
+      >
+        <KeyboardIcon size="16" strokeWidth="2" aria-hidden="true" />
+      </IconButton>
     </div>
     <div class="reviews-body">
       <div class="reviews-table">
@@ -318,7 +323,18 @@
   }
 
   .reviews-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4) var(--space-7);
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
     flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .reviews-header > :global(.daemon-status) {
+    margin-left: auto;
   }
 
   .reviews-body {

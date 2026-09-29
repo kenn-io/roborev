@@ -17,7 +17,7 @@ import {
   panelCostUsd,
   panelElapsedStart,
 } from "../../utils/roborev-panel";
-import { reviewTypeLabel } from "../../utils/roborev-review-type";
+import { reviewTypeColumnLabel } from "../../utils/roborev-review-type";
 import {
   makeRoborevOwner,
   RoborevMutationError,
@@ -68,7 +68,6 @@ export type SortColumn =
   | "review_type"
   | "elapsed"
   | "cost"
-  | "job_type"
   | "enqueued_at";
 type SortDirection = "asc" | "desc";
 type StringFilterKey = "repo" | "branch" | "status" | "search" | "jobType";
@@ -298,13 +297,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
       case "agent":
         return job.agent;
       case "review_type":
-        return reviewTypeLabel(job.review_type, job.panel_role);
+        return reviewTypeColumnLabel(job);
       case "elapsed":
         return getElapsedSeconds(job);
       case "cost":
         return panelCostUsd(job, getPanelMembersForJob(job)) ?? -1;
-      case "job_type":
-        return job.job_type;
       case "enqueued_at":
         return job.enqueued_at;
       default:

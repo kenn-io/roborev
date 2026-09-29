@@ -18,13 +18,12 @@
     { key: "id", label: "ID", numeric: true },
     { key: "repo", label: "Commit" },
     { key: "agent", label: "Agent" },
-    { key: "review_type", label: "Review type" },
+    { key: "review_type", label: "Type" },
     { key: "status", label: "Status" },
     { key: "verdict", label: "Verdict" },
     { key: "closed", label: "Closed" },
     { key: "elapsed", label: "Elapsed", numeric: true },
     { key: "cost", label: "Cost", numeric: true },
-    { key: "job_type", label: "Job type" },
     { key: "enqueued_at", label: "Queued", numeric: true },
   ];
 
@@ -35,10 +34,9 @@
     status: "status",
     verdict: "verdict",
     agent: "agent",
-    review_type: "review type",
+    review_type: "type",
     elapsed: "elapsed time",
     cost: "cost",
-    job_type: "job type",
     enqueued_at: "queue time",
   };
 
@@ -206,7 +204,7 @@
   }
 
   .job-table :global(.kit-th) {
-    padding: 8px 12px;
+    padding: 6px 10px;
     background: var(--bg-surface);
     color: var(--text-muted);
     font-weight: 500;
@@ -216,7 +214,7 @@
   }
 
   .job-table :global(.kit-th.th-id) {
-    padding-left: 16px;
+    padding-left: 14px;
   }
 
   .loading-bar {
