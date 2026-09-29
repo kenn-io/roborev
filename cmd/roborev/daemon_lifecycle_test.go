@@ -564,7 +564,7 @@ func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
 	cfg := config.DefaultConfig()
-	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: "env:ROBOREV_TEST_EMBEDDING_KEY", TrustPrivateNetwork: true}
+	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: secretref.Ref{Env: "ROBOREV_TEST_EMBEDDING_KEY"}, TrustPrivateNetwork: true}
 	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, search.Close()) })
@@ -625,7 +625,7 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			cfg := config.DefaultConfig()
-			cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKey: secretref.Ref("file:" + path)}
+			cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKey: secretref.Ref{File: path}}
 			search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, search.Close()) })

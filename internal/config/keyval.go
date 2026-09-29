@@ -50,7 +50,20 @@ func structType(t reflect.Type) (reflect.Type, bool) {
 			t = t.Elem()
 		}
 	}
-	return t, t.Kind() == reflect.Struct
+	return t, t.Kind() == reflect.Struct && !isSelfEncoded(t)
+}
+
+// tomlValueMarshaler is a type that writes itself as one TOML value, such as
+// a secret that is either a string or a table. Config keys treat it as a
+// single value rather than a table of nested keys.
+type tomlValueMarshaler interface {
+	MarshalTOML() ([]byte, error)
+}
+
+var tomlValueMarshalerType = reflect.TypeFor[tomlValueMarshaler]()
+
+func isSelfEncoded(t reflect.Type) bool {
+	return t.Implements(tomlValueMarshalerType) || reflect.PointerTo(t).Implements(tomlValueMarshalerType)
 }
 
 // isInlineEmbeddedStructField identifies anonymous embedded structs that are
@@ -115,7 +128,7 @@ func hasLeafConfigKey(v reflect.Value, key string) bool {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	return t.Kind() != reflect.Struct
+	return t.Kind() != reflect.Struct || isSelfEncoded(t)
 }
 
 // MaskValue returns a masked version of a sensitive value, showing only the last 4 chars.
@@ -406,7 +419,7 @@ func nestedStructValue(fieldVal reflect.Value, initPointers bool) (reflect.Value
 		}
 		fieldVal = fieldVal.Elem()
 	}
-	if fieldVal.Kind() != reflect.Struct {
+	if fieldVal.Kind() != reflect.Struct || isSelfEncoded(fieldVal.Type()) {
 		return reflect.Value{}, false
 	}
 	return fieldVal, true
@@ -546,6 +559,15 @@ func setACPMapFieldByTOMLKey(fieldVal reflect.Value, key, value string) error {
 
 // formatValue converts a reflect.Value to its string representation
 func formatValue(v reflect.Value) string {
+	if v.CanInterface() {
+		if marshaler, ok := reflect.TypeAssert[tomlValueMarshaler](v); ok {
+			encoded, err := marshaler.MarshalTOML()
+			if err != nil {
+				return ""
+			}
+			return string(encoded)
+		}
+	}
 	switch v.Kind() {
 	case reflect.String:
 		return v.String()
@@ -739,6 +761,9 @@ func compareKeys(a, b reflect.Value) int {
 
 // setFieldValue sets a reflect.Value from a string, handling type conversion
 func setFieldValue(field reflect.Value, value string) error {
+	if isSelfEncoded(field.Type()) {
+		return setSelfEncodedValue(field, value)
+	}
 	switch field.Kind() {
 	case reflect.String:
 		field.SetString(value)
@@ -785,6 +810,24 @@ func setFieldValue(field reflect.Value, value string) error {
 	return nil
 }
 
+// setSelfEncodedValue decodes value as a TOML value when it is written as
+// one: an inline table or a quoted string. Any other input is taken as a
+// plain string, so a bare token needs no quoting.
+func setSelfEncodedValue(field reflect.Value, value string) error {
+	holder := reflect.New(reflect.StructOf([]reflect.StructField{{
+		Name: "V", Type: field.Type(), Tag: `toml:"v"`,
+	}}))
+	document := "v = " + value
+	if trimmed := strings.TrimSpace(value); !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, `"`) {
+		document = "v = " + strconv.Quote(value)
+	}
+	if _, err := toml.Decode(document, holder.Interface()); err != nil {
+		return fmt.Errorf("invalid value: %w", err)
+	}
+	field.Set(holder.Elem().Field(0))
+	return nil
+}
+
 // listFields returns key-value pairs for all non-zero fields in a struct.
 func listFields(v reflect.Value, prefix string) []KeyValue {
 	return flattenStruct(v, prefix, false)
@@ -825,6 +868,13 @@ func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue 
 		fullKey := tagKey
 		if prefix != "" {
 			fullKey = prefix + "." + tagKey
+		}
+
+		if isSelfEncoded(fieldVal.Type()) {
+			if includeZero || !fieldVal.IsZero() {
+				result = append(result, KeyValue{Key: fullKey, Value: formatValue(fieldVal)})
+			}
+			continue
 		}
 
 		// Recurse into nested structs

@@ -162,7 +162,7 @@ export VOYAGE_API_KEY="..."
 base_url = "https://api.voyageai.com/v1"
 model = "voyage-4-large"
 dims = 1024
-api_key = "env:VOYAGE_API_KEY"
+api_key = { env = "VOYAGE_API_KEY" }
 input_type_mode = "retrieval"
 batch_size = 32
 timeout_seconds = 30
@@ -177,13 +177,14 @@ This release supports Voyage's default 1,024-dimensional output for
 Voyage's provider-specific `output_dimension` parameter. Non-default Voyage
 dimensions are outside this release.
 
-`api_key` says where the key comes from: `env:NAME` for an environment variable,
-`file:PATH` for a key file, or the key itself. A daemon started by a service or
-autostart may not inherit your shell's environment. For those setups, a private
-key file avoids relying on an exported variable:
+`api_key` is the key itself as a string, or a table naming its source:
+`{ env = "NAME" }` for an environment variable or `{ file = "PATH" }` for a key
+file. A daemon started by a service or autostart may not inherit your shell's
+environment. For those setups, a private key file avoids relying on an exported
+variable:
 
 ```toml
-api_key = "file:~/.config/roborev/embedding.key"
+api_key = { file = "~/.config/roborev/embedding.key" }
 ```
 
 The daemon reads the file at startup, expands `~/`, and removes trailing newline
