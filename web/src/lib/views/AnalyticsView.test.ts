@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnalyticsSnapshot } from "../api/generated/models";
@@ -15,6 +21,7 @@ const filters: AnalyticsFilters = {
   agent: "",
   model: "",
   bucket: "auto",
+  split: "",
 };
 
 function makeSnapshot(
@@ -118,17 +125,64 @@ describe("AnalyticsView", () => {
     ).toBeTruthy();
     expect(screen.getAllByText("22%").length).toBeGreaterThan(1);
     expect(
-      screen.getAllByText("2 failed verdicts of 9 rated reviews").length,
-    ).toBeGreaterThan(1);
+      screen.getByText("2 failed verdicts of 9 rated reviews"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("img", {
+        name: "7 passed, 1 failed and addressed, 1 failed and open",
+      }),
+    ).toBeTruthy();
     expect(
       screen.getByText("1 run error · 1 canceled · 1 skipped"),
     ).toBeTruthy();
     expect(screen.getAllByText("Estimated cost").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Pricing coverage").length).toBeGreaterThan(0);
     expect(screen.getByText("2 of 4 eligible attempts priced")).toBeTruthy();
     expect(screen.getByText("Estimated cost is a lower bound")).toBeTruthy();
-    expect(screen.getByRole("cell", { name: "project-a" })).toBeTruthy();
+    const table = screen.getByRole("table", { name: "Project analytics" });
+    expect(table.textContent).toContain("project-a");
     expect(screen.getByRole("row", { name: /project-a 12 22%/ })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Chart series" })).toBeNull();
+  });
+
+  it("splits charts and the breakdown table by the chosen dimension", async () => {
+    const snapshot = makeSnapshot();
+    snapshot.filters.split = "model";
+    const fast = structuredClone(snapshot.summary);
+    fast.reviews.total = 3;
+    snapshot.split_series = [
+      {
+        value: "model-large",
+        summary: snapshot.summary,
+        time_series: snapshot.time_series ?? [],
+      },
+      {
+        value: "",
+        summary: fast,
+        time_series: [{ ...snapshot.time_series![0]!, ...fast }],
+      },
+    ];
+    const store = storeFor(snapshot);
+    render(AnalyticsView, { store });
+
+    const legend = screen.getByRole("group", { name: "Chart series" });
+    const large = within(legend).getByRole("button", {
+      name: "model-large 12",
+    });
+    expect(legend.textContent).toContain("Default model");
+    expect(
+      screen.getByRole("button", {
+        name: "Jul 31: model-large 12, Default model 3",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Model analytics" })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /Default model 3/ })).toBeTruthy();
+
+    await fireEvent.click(large);
+    expect(large).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Jul 31: 3" })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Agent" }));
+    expect(store.setFilters).toHaveBeenCalledWith({ split: "agent" });
   });
 
   it("formats automatic time buckets from the server-selected bucket", () => {

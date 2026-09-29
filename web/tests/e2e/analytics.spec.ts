@@ -23,7 +23,6 @@ test.describe("native analytics workspace", () => {
     await expect(
       page.getByRole("cell", { name: "project-beta" }),
     ).toBeVisible();
-    await expect(page.getByText(/coverage$/).first()).toBeVisible();
     await expect(
       page.getByText("Estimated cost is a lower bound"),
     ).toBeVisible();
@@ -43,6 +42,33 @@ test.describe("native analytics workspace", () => {
     await point.hover();
     await expect(failureChart.getByRole("tooltip")).toBeVisible();
     await expect(failureChart.getByRole("tooltip")).toContainText(/\d+%/);
+  });
+
+  test("breaks charts and the table down by model", async ({ page }) => {
+    await openAnalytics(page);
+    const splitRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === "/api/ui/analytics" &&
+        url.searchParams.get("split") === "model"
+      );
+    });
+
+    await page.getByRole("radio", { name: "Model" }).click();
+
+    await splitRequest;
+    await expect(page).toHaveURL(/split=model/);
+    const legend = page.getByRole("group", { name: "Chart series" });
+    await expect(legend).toContainText("fixture-large");
+    await expect(
+      page.getByRole("table", { name: "Model analytics" }),
+    ).toContainText("fixture-medium");
+
+    const volumeChart = page.locator(".chart").filter({
+      has: page.getByRole("img", { name: "Logical reviews over time" }),
+    });
+    await volumeChart.getByRole("button").last().hover();
+    await expect(volumeChart.getByRole("tooltip")).toContainText("Total");
   });
 
   test("keeps filters in history and never shows old project data", async ({

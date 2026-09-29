@@ -22,7 +22,7 @@ export async function openAnalytics(
 ): Promise<void> {
   await page.goto(path);
   const workspace = page.getByRole("heading", {
-    name: "Project review health",
+    name: "Review analytics",
   });
   await authenticateIfNeeded(page, workspace);
   await expect(

@@ -112,7 +112,7 @@ describe("App", () => {
     );
     await fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
     expect(
-      screen.getByRole("heading", { name: "Project review health" }),
+      screen.getByRole("heading", { name: "Review analytics" }),
     ).toBeInTheDocument();
     expect(location.pathname).toBe("/analytics");
     expect(token).toHaveValue("");

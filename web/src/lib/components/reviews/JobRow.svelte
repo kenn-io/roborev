@@ -112,7 +112,7 @@
             <span class="repo-name">{job.repo_name}</span>
           {/if}
           {#if job.branch}
-            <span class="branch-name">{job.branch}</span>
+            <span class="branch-name" title={job.branch}>{job.branch}</span>
           {/if}
           <span class="git-ref" title={job.git_ref}>
             {shortRef(job.git_ref)}
@@ -268,7 +268,7 @@
     align-items: baseline;
     gap: var(--space-3);
     min-width: 0;
-    flex-wrap: wrap;
+    white-space: nowrap;
   }
 
   .repo-name {
@@ -276,7 +276,15 @@
   }
 
   .branch-name {
+    overflow: hidden;
+    min-width: 0;
     color: var(--text-secondary);
+    text-overflow: ellipsis;
+  }
+
+  .repo-name,
+  .git-ref {
+    flex-shrink: 0;
   }
 
   .branch-name::before {

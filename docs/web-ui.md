@@ -40,6 +40,9 @@ The application has two workspaces:
 - **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
     from the daemon's SQLite history.
 
+The theme button in the application header switches between light, dark, and the
+operating system's setting. The browser remembers the choice.
+
 Use the book icon in the application header to read recent Roborev release
 notes. Select a version from the list to view its rendered Markdown without
 leaving the application. The daemon shares the same SQLite-backed release-note
@@ -59,11 +62,14 @@ repository and branch picker, status filter, ref search, and closed-review
 toggle to narrow the list. The Closed column shows `yes` for a closed review,
 `no` for an open review, and `--` when no closed state is available. Panel
 member rows show `--` because the synthesis row owns the panel's closed state.
-The Closed column does not participate in sorting. Sortable columns can be
-sorted after all matching rows are loaded. Panel reviews appear as a synthesis
-row that can be expanded to show its individual reviewers. The Review Type
-column identifies standard reviews as `default` and shows the configured name
-for specialized or custom reviews. The detail drawer repeats that value in its
+Select a column header to sort by that column; select it again to reverse the
+order. Numeric and time columns sort largest or newest first. Sorting reorders
+the jobs already loaded in the browser. While older jobs remain unloaded, a note
+under the table says so; **Load more** still fetches the next page in queue
+order and adds it to the sorted list. Panel reviews appear as a synthesis row
+that can be expanded to show its individual reviewers. The Review Type column
+identifies standard reviews as `default` and shows the configured name for
+specialized or custom reviews. The detail drawer repeats that value in its
 header. Panel synthesis rows show `panel`, while expanded panel members show
 their configured review types.
 
@@ -113,8 +119,24 @@ a different daemon.
 
 Open **Analytics** in the application shell, or navigate directly to
 `/analytics` (below `web.base_path` when configured). Filters are encoded in the
-URL, so a time range and project, source, agent, model, or bucket selection can
-be bookmarked and shared with another user of the same daemon.
+URL, so a time range and project, source, agent, model, bucket, or breakdown
+selection can be bookmarked and shared with another user of the same daemon.
+
+Use **Break down by** to split the charts and the table below them by agent,
+model, project, or source. Volume and cost become stacked bars, and failure rate
+and latency show one line per value. The first eight values have their own
+colors; past eight, the smaller values are combined as **Other**. The latency
+chart omits **Other** because percentiles cannot be combined. Select a legend
+entry to hide or show that value, or hover over it to highlight its series. The
+table lists every value with its reviews, failure rate, median latency, agent
+runs, estimated cost, and pricing coverage. Select a column header to sort it.
+Without a breakdown, the table lists projects.
+
+Each logical review and agent attempt counts under its own agent, model,
+project, or source. Charts leave a gap for a period with no rated or finished
+reviews instead of plotting zero. The final period is drawn faded or dashed
+while it is still in progress. Use the percentile control on the latency chart
+to switch between p50, p90, and p99.
 
 Project analytics use the display names shown elsewhere in Roborev. Repositories
 with the same display name are intentionally grouped together.
@@ -145,9 +167,10 @@ The headline values have these meanings:
     attempts. When coverage is incomplete, estimated cost is a lower bound.
     Retries clear the prior job's token-usage data, so historical retried work
     can also be undercounted.
-- **Outcomes** partition verdicts into pass, fail-open, and fail-addressed.
-    Addressed means the review's mutable `closed` state is true. Historical
-    outcome mixes can therefore change when a user closes or reopens a review.
+- **Outcomes** partition verdicts into pass, fail-open, and fail-addressed. The
+    failure-rate card shows them as a bar. Addressed means the review's mutable
+    `closed` state is true. Historical outcome mixes can therefore change when a
+    user closes or reopens a review.
 
 Agent and model filters apply to attempt metrics. Logical-review metrics retain
 their review-based population rather than silently changing meaning.

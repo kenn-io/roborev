@@ -109,10 +109,30 @@ describe("analytics store URL filters", () => {
       agent: "",
       model: "",
       bucket: "day",
+      split: "",
     });
     expect(location.search).toBe(
       "?range=7d&project=alpha&project=zeta&source=ci&bucket=day",
     );
+    store.dispose();
+  });
+
+  it("carries a supported split into the URL and request", async () => {
+    history.replaceState(null, "", "/analytics?split=repository");
+    const loader = vi.fn<AnalyticsLoader>().mockResolvedValue(snapshot(1));
+    const store = createAnalyticsStore({ loader });
+    expect(store.getFilters().split).toBe("");
+
+    await store.setFilters({ split: "model" });
+
+    expect(new URLSearchParams(location.search).get("split")).toBe("model");
+    expect(loader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ split: "model" }),
+      expect.any(AbortSignal),
+    );
+    await store.setFilters({ split: "" });
+    expect(new URLSearchParams(location.search).has("split")).toBe(false);
+    expect(loader.mock.lastCall?.[0]).not.toHaveProperty("split");
     store.dispose();
   });
 

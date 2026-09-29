@@ -1,8 +1,9 @@
 import { appPath } from "../base-path";
 import { normalizeRoborevHTTPError, RoborevHTTPError } from "../api/client";
-import type {
-  AnalyticsSnapshot,
-  GetWebAnalyticsParams,
+import {
+  GetWebAnalyticsSplit,
+  type AnalyticsSnapshot,
+  type GetWebAnalyticsParams,
 } from "../api/generated/models";
 import { getWebAnalytics } from "../api/generated/web-ui/web-ui";
 
@@ -15,6 +16,7 @@ export type AnalyticsLoader = (
 
 export type AnalyticsRange = "24h" | "7d" | "30d" | "90d" | "1y" | "all";
 export type AnalyticsBucket = "auto" | "hour" | "day" | "week" | "month";
+export type AnalyticsSplit = "" | GetWebAnalyticsSplit;
 
 export interface AnalyticsFilters {
   range: AnalyticsRange;
@@ -23,6 +25,7 @@ export interface AnalyticsFilters {
   agent: string;
   model: string;
   bucket: AnalyticsBucket;
+  split: AnalyticsSplit;
 }
 
 interface AnalyticsStoreOptions {
@@ -53,6 +56,7 @@ const VALID_BUCKETS = new Set<AnalyticsBucket>([
   "week",
   "month",
 ]);
+const VALID_SPLITS = new Set<string>(Object.values(GetWebAnalyticsSplit));
 const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
   hour: 0,
   day: 1,
@@ -194,6 +198,7 @@ export function readAnalyticsFilters(search: string): AnalyticsFilters {
     bucket: VALID_BUCKETS.has(bucketValue as AnalyticsBucket)
       ? (bucketValue as AnalyticsBucket)
       : "auto",
+    split: (params.get("split") ?? "") as AnalyticsSplit,
   });
 }
 
@@ -212,6 +217,7 @@ function normalizeAnalyticsFilters(
     agent: filters.agent.trim(),
     model: filters.model.trim(),
     bucket: compatibleAnalyticsBucket(range, bucket),
+    split: VALID_SPLITS.has(filters.split) ? filters.split : "",
   };
 }
 
@@ -240,6 +246,7 @@ function writeAnalyticsFilters(
   if (filters.agent !== "") params.set("agent", filters.agent);
   if (filters.model !== "") params.set("model", filters.model);
   if (filters.bucket !== "auto") params.set("bucket", filters.bucket);
+  if (filters.split !== "") params.set("split", filters.split);
   const target = `${appPath("/analytics")}?${params.toString()}`;
   if (replace) globalThis.history.replaceState(null, "", target);
   else globalThis.history.pushState(null, "", target);
@@ -263,6 +270,7 @@ function analyticsRequestQuery(
   if (filters.agent !== "") query.agent = filters.agent;
   if (filters.model !== "") query.model = filters.model;
   if (filters.bucket !== "auto") query.bucket = filters.bucket;
+  if (filters.split !== "") query.split = filters.split;
   return query;
 }
 
