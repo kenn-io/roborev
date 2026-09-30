@@ -872,6 +872,7 @@ func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 // processes when superseding stale batches.
 func (s *Server) SetCIPoller(cp *CIPoller) {
 	s.ciPoller = cp
+	cp.errorLog = s.errorLog
 	cp.jobCancelFn = func(jobID int64) {
 		s.workerPool.CancelJob(jobID)
 	}
@@ -3660,6 +3661,18 @@ func (s *Server) humaGetHealth(
 			Name:    "sync",
 			Healthy: syncHealthy,
 			Message: syncMessage,
+		})
+	}
+
+	if s.ciPoller != nil {
+		ciHealthy, ciMessage := s.ciPoller.HealthCheck()
+		if !ciHealthy {
+			allHealthy = false
+		}
+		components = append(components, storage.ComponentHealth{
+			Name:    "ci",
+			Healthy: ciHealthy,
+			Message: ciMessage,
 		})
 	}
 

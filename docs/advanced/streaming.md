@@ -56,6 +56,34 @@ their worker still has time remaining. The deadline includes repository, global,
 and panel-member timeout settings resolved when the attempt starts;
 configuration reloads do not change it during that attempt.
 
+### CI health
+
+When CI polling is enabled, `/api/health` includes a `ci` component. The
+component and overall `healthy` field become false when polling stops,
+repository discovery fails, or a repository cannot list its pull requests or
+queue a review, including a deferred retry. An HTTP 200 response alone does not
+indicate healthy polling.
+
+Polling continues for other pull requests and repositories after a failure. Each
+repository stays unhealthy until its next successful poll or until a successful
+discovery removes it from the configured set. Discovery failures remain
+unhealthy even when polling can use cached or partial repository lists.
+Successful discovery clears the discovery failure.
+
+A failed retry enqueue stays unhealthy during retry backoff. It clears when the
+PR queues successfully, closes, receives a configured skip label, or the
+obsolete retry is removed after its head changes.
+
+CI failures also appear in `recent_errors` with a repository or discovery
+summary. Detailed errors remain in the daemon log. Recovery preserves the error
+history; use the component and overall `healthy` fields for current health.
+These checks report observed failures and stopped polling, without imposing a
+poll-duration limit.
+
+CI fetches prune obsolete remote-tracking refs before updating them. This lets
+polling recover when a remote branch changes between names such as `feature` and
+`feature/update` without a conflicting stale ref blocking new reviews.
+
 ## Public Go Client
 
 External Go integrations can import the public daemon client:

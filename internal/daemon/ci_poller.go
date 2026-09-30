@@ -112,6 +112,7 @@ type CIPoller struct {
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
 
 	repoResolver *RepoResolver
+	errorLog     *ErrorLog
 
 	// Discord quota dedupe is owned by the single CI event listener goroutine.
 	// Add locking before calling it from concurrent goroutines.
@@ -135,6 +136,12 @@ type CIPoller struct {
 	stopping       bool
 	pollStopping   bool
 	eventsStopping bool
+	pollErrors     map[ciPollTarget]string // guarded by mu
+}
+
+type ciPollTarget struct {
+	repo     string // empty means repository discovery
+	prNumber int    // nonzero means a failed retry enqueue, retained during backoff
 }
 
 type ciRepoConfigSource = config.RepoConfigSource
@@ -156,6 +163,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		discordQuotaDedupe: make(map[string]time.Time),
 		discordNowFn:       time.Now,
 		nowFn:              time.Now,
+		pollErrors:         make(map[ciPollTarget]string),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -337,7 +345,38 @@ func (p *CIPoller) HealthCheck() (bool, string) {
 	if !p.running {
 		return false, "not running"
 	}
+	if len(p.pollErrors) > 0 {
+		messages := make([]string, 0, len(p.pollErrors))
+		for _, message := range p.pollErrors {
+			messages = append(messages, message)
+		}
+		slices.Sort(messages)
+		return false, strings.Join(messages, "; ")
+	}
 	return true, "running"
+}
+
+// recordPollResult retains failures until the same repository succeeds. Keep
+// subprocess and provider diagnostics in the daemon log, not the health API.
+func (p *CIPoller) recordPollResult(repo string, prNumber int, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	target := ciPollTarget{repo: repo, prNumber: prNumber}
+	if err == nil {
+		delete(p.pollErrors, target)
+		return
+	}
+	message := "repository discovery failed"
+	if repo != "" {
+		message = "polling failed for " + repo
+	}
+	if prNumber != 0 {
+		message = fmt.Sprintf("retry enqueue failed for %s#%d", repo, prNumber)
+	}
+	p.pollErrors[target] = message
+	if p.errorLog != nil {
+		p.errorLog.LogError("ci", message+"; see daemon log for details", 0)
+	}
 }
 
 func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interval time.Duration) {
@@ -370,17 +409,31 @@ func (p *CIPoller) poll(ctx context.Context) {
 	repos, err := p.repoResolver.Resolve(ctx, &cfg.CI, func(owner string) string {
 		return p.githubTokenForRepo(owner + "/_") // githubTokenForRepo only uses the owner part
 	})
+	p.recordPollResult("", 0, err)
 	if err != nil {
-		log.Printf("CI poller: repo resolver error: %v (falling back to exact entries)", err)
-		repos = applyExclusions(ExactReposOnly(cfg.CI.Repos), cfg.CI.ExcludeRepos)
-		if maxRepos := cfg.CI.ResolvedMaxRepos(); len(repos) > maxRepos {
-			sort.Strings(repos)
-			repos = repos[:maxRepos]
+		log.Printf("CI poller: repo resolver error: %v (using available repositories)", err)
+		if repos == nil {
+			repos = applyExclusions(ExactReposOnly(cfg.CI.Repos), cfg.CI.ExcludeRepos)
+			if maxRepos := cfg.CI.ResolvedMaxRepos(); len(repos) > maxRepos {
+				sort.Strings(repos)
+				repos = repos[:maxRepos]
+			}
 		}
+	} else {
+		// Only a complete discovery can confirm a failed repository was removed.
+		p.mu.Lock()
+		for target := range p.pollErrors {
+			if !slices.Contains(repos, target.repo) {
+				delete(p.pollErrors, target)
+			}
+		}
+		p.mu.Unlock()
 	}
 
 	for _, ghRepo := range repos {
-		if err := p.pollRepo(ctx, ghRepo, cfg); err != nil {
+		err := p.pollRepo(ctx, ghRepo, cfg)
+		p.recordPollResult(ghRepo, 0, err)
+		if err != nil {
 			log.Printf("CI poller: error polling %s: %v", ghRepo, err)
 		}
 	}
@@ -405,9 +458,11 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	p.cleanupClosedPRPanels(ctx, ghRepo, openPRs)
 	p.expireTimedOutPanels(ghRepo, cfg)
 
+	var processingErrors []error
 	for _, pr := range prs {
 		if err := p.processPR(ctx, ghRepo, pr, cfg); err != nil {
 			log.Printf("CI poller: error processing %s#%d: %v", ghRepo, pr.Number, err)
+			processingErrors = append(processingErrors, fmt.Errorf("PR #%d: %w", pr.Number, err))
 		}
 	}
 
@@ -430,7 +485,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	// run that just went terminal this poll gets its recovery pass on the next one
 	// (never mid-enqueue); the posting CAS keeps it idempotent with the event path.
 	p.reconcilePanelPosting(ctx, ghRepo)
-	return nil
+	return errors.Join(processingErrors...)
 }
 
 func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
@@ -498,7 +553,15 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 // deferred attempt), so the two paths build identical runs. The attempt row is
 // reserved atomically inside CreateCIPanelRun; the sweep's already-claimed
 // (pending) attempt is left intact by that idempotent reserve.
-func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
+func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) (enqueueErr error) {
+	// A successful enqueue, including a newer head, resolves a prior failed
+	// retry. Merely skipping this PR while its retry is deferred does not.
+	defer func() {
+		if enqueueErr == nil {
+			p.recordPollResult(ghRepo, pr.Number, nil)
+		}
+	}()
+
 	// Find local repo matching this GitHub repo (auto-clones if needed).
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
@@ -654,6 +717,7 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 }
 
 func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) {
+	p.recordPollResult(ghRepo, pr.Number, nil)
 	description := fmt.Sprintf("Review skipped: label %s", label)
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
@@ -1976,7 +2040,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
 	unlock := lockGitMetadata(repoPath)
 	defer unlock()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet")
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet", "--prune")
 	procutil.HideConsole(cmd)
 	if env != nil {
 		cmd.Env = env
@@ -2750,6 +2814,8 @@ func (p *CIPoller) retryDueReviewAttempt(
 		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
 			log.Printf("CI poller: error deleting stale deferred attempt for %s#%d@%s after PR advanced to %s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), gitpkg.ShortSHA(pr.HeadRefOid), err)
+		} else {
+			p.recordPollResult(ghRepo, attempt.PRNumber, nil)
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
@@ -2778,6 +2844,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 		// (Task 10) re-arms such rows for a later sweep.
 		log.Printf("CI poller: error re-enqueuing panel run for %s#%d@%s: %v",
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		p.recordPollResult(ghRepo, attempt.PRNumber, err)
 		return false
 	}
 	nextAttemptAt := "<nil>"
@@ -2903,6 +2970,7 @@ func (p *CIPoller) deleteClosedPRAttempts(ghRepo string, prNumber int) {
 		log.Printf("CI poller: error deleting attempts for closed PR %s#%d: %v", ghRepo, prNumber, err)
 		return
 	}
+	p.recordPollResult(ghRepo, prNumber, nil)
 	if n > 0 {
 		log.Printf("CI poller: deleted %d review attempt(s) for closed PR %s#%d", n, ghRepo, prNumber)
 	}

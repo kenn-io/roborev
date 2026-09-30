@@ -28,6 +28,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		listReposFn func(context.Context, string, string) ([]string, error)
 		canonicalFn func(context.Context, string, string) (string, error)
 		ci          *config.CIConfig
+		wantErr     error
 		wantRepos   []string                   // expected repos (sorted); nil means don't check
 		checkExtra  func(*testing.T, []string) // optional extra assertions
 	}{
@@ -226,7 +227,8 @@ func TestRepoResolver_Matching(t *testing.T) {
 			},
 		},
 		{
-			name: "API failure falls back to exact entries",
+			name:    "API failure falls back to exact entries",
+			wantErr: errRepoDiscoveryIncomplete,
 			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
 				return nil, fmt.Errorf("network error")
 			},
@@ -242,7 +244,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 			r := &RepoResolver{listReposFn: tt.listReposFn, canonicalRepoFn: tt.canonicalFn}
 
 			repos, err := r.Resolve(context.Background(), tt.ci, nil)
-			require.NoError(t, err)
+			require.ErrorIs(t, err, tt.wantErr)
 
 			if tt.wantRepos != nil {
 				assert.Equal(t, tt.wantRepos, repos)
@@ -394,13 +396,13 @@ func TestRepoResolver_APIFailureFallback(t *testing.T) {
 	ctx := context.Background()
 
 	repos, err := r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
 	assert.Equal(t, []string{"acme/explicit-repo"}, repos, "expected only explicit repo on API failure")
 	require.Equal(t, 1, calls)
 
 	// Degraded results must NOT be cached — next call should retry the API
 	repos2, err := r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
 	assert.Equal(t, 2, calls, "expected degraded result to NOT be cached")
 	assert.Equal(t, []string{"acme/explicit-repo"}, repos2)
 }
@@ -460,7 +462,7 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 
 	// Second call fails API but should return stale cache
 	repos2, err := r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
 	assert.Len(t, repos2, 2, "expected stale cache (2 repos) on degraded")
 }
 

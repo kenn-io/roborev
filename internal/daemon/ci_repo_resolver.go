@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path"
@@ -17,6 +18,8 @@ import (
 // repoRefreshInterval is the fixed interval between wildcard repo
 // re-discovery calls to the GitHub API.
 const repoRefreshInterval = time.Hour
+
+var errRepoDiscoveryIncomplete = errors.New("repository discovery incomplete")
 
 // RepoResolver expands wildcard patterns in CI repo config into concrete
 // "owner/repo" entries by querying the GitHub API. Results
@@ -51,6 +54,8 @@ type githubTokenFn func(owner string) string
 // Resolve returns the list of concrete "owner/repo" entries to poll.
 // It uses a cached result when the TTL has not expired and the config
 // has not changed, otherwise it re-expands wildcard patterns.
+// A discovery failure returns available repositories along with an error, so
+// polling can continue without reporting the incomplete discovery as healthy.
 func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, error) {
 	key := r.buildCacheKey(ci)
 	ttl := repoRefreshInterval
@@ -78,7 +83,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 			copy(stale, r.cached)
 			r.mu.Unlock()
 			log.Printf("CI repo resolver: API degraded, using stale cache (%d repos)", len(stale))
-			return stale, nil
+			return stale, errRepoDiscoveryIncomplete
 		}
 		r.mu.Unlock()
 		// No stale cache for this key — return partial result.
@@ -93,6 +98,9 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 
 	result := make([]string, len(repos))
 	copy(result, repos)
+	if degraded {
+		return result, errRepoDiscoveryIncomplete
+	}
 	return result, nil
 }
 
