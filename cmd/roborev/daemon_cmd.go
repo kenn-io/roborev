@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/secretref"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -64,20 +65,19 @@ func newDaemonSearch(
 	var embedder searchindex.Embedder
 	reconcilerConfig := searchindex.ReconcilerConfig{}
 	if embeddings := cfg.Search.Embeddings; embeddings != nil && embeddings.Enabled() {
-		credential, err := embeddings.ResolveAPIKey()
-		if err != nil {
-			return nil, err
-		}
+		// Config loading already rejected a malformed key, so an error here
+		// means the configured source has no key. Search then stays
+		// lexical-only and reports why; an endpoint with no key configured is
+		// called without authentication.
+		credential, credentialErr := embeddings.ResolveAPIKey()
 		client, err := searchindex.NewEmbeddings(*embeddings, credential.Value, searchdoc.RecipeVersion)
 		if err != nil {
 			return nil, err
 		}
-		// A configured key that is unavailable leaves search lexical-only and
-		// reports why; an endpoint with no key configured is called without
-		// authentication.
-		reconcilerConfig.CredentialSource = credential.Source
-		if credential.Reason != "" {
-			reconcilerConfig.CredentialReason = "no embedding API key (" + credential.Reason + ")"
+		reconcilerConfig.CredentialSource = embeddingKeySource(embeddings.APIKey)
+		if credentialErr != nil {
+			reconcilerConfig.CredentialReason = "no embedding API key (" +
+				strings.TrimPrefix(credentialErr.Error(), "embed api_key: secretref: ") + ")"
 		} else {
 			embedder = client
 		}
@@ -88,6 +88,21 @@ func newDaemonSearch(
 	return &daemonSearch{
 		path: path, index: index, service: service, reconciler: reconciler,
 	}, nil
+}
+
+// embeddingKeySource names where the embedding key comes from, without the
+// key itself: "inline", "env:NAME", "file:PATH", or "" when none is set.
+func embeddingKeySource(ref secretref.Ref) string {
+	switch {
+	case ref.Env != "":
+		return "env:" + strings.TrimSpace(ref.Env)
+	case ref.File != "":
+		return "file:" + strings.TrimSpace(ref.File)
+	case ref.Value != "":
+		return "inline"
+	default:
+		return ""
+	}
 }
 
 func (s *daemonSearch) Close() error {
