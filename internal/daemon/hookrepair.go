@@ -42,7 +42,7 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	if !insideGitDir {
 		// The hooks directory or a hook symlink points outside Git metadata,
 		// or a symlink cannot be resolved. Leave user-managed files alone.
-		for _, warning := range readOnlyHookWarnings(ctx, root, binaryPath) {
+		for _, warning := range ReadOnlyHookWarnings(ctx, root, binaryPath) {
 			log.Print(warning)
 		}
 		return
@@ -58,10 +58,12 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	}
 }
 
-// readOnlyHookWarnings collects diagnostics for repos whose hooks directory
-// the daemon must not write: outdated version markers, hooks baked with a
-// binary other than binaryPath, and missing companion hooks.
-func readOnlyHookWarnings(ctx context.Context, root, binaryPath string) []string {
+// ReadOnlyHookWarnings collects hook diagnostics without writing anything:
+// outdated version markers, hooks baked with a binary other than binaryPath,
+// and missing companion hooks. The daemon logs them for repos whose hooks
+// directory it must not write; the doctor command reports them for the
+// current repo.
+func ReadOnlyHookWarnings(ctx context.Context, root, binaryPath string) []string {
 	var warnings []string
 	if githook.NeedsUpgrade(ctx, root, "post-commit", githook.PostCommitVersionMarker) {
 		warnings = append(warnings,

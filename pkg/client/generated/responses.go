@@ -52,6 +52,10 @@ type GetCostResponse = CostAggregate
 
 type GetCostErrorResponse = ErrorModel
 
+type DoctorAgentsResponse = DoctorAgentsOutputBody
+
+type DoctorAgentsErrorResponse = ErrorModel
+
 type EnqueueJobResponse struct {
 	EnqueueJob_Response_OneOf *EnqueueJob_Response_OneOf `json:"-"`
 }
@@ -440,6 +444,13 @@ type GetCostResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCostResponse
+}
+
+type DoctorAgentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DoctorAgentsResponse
 }
 
 type EnqueueJobResp struct {
@@ -1010,6 +1021,21 @@ func (c *RawClient) GetCostRaw(ctx context.Context, options *GetCostRequestOptio
 	}
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/cost",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) DoctorAgentsRaw(ctx context.Context, options *DoctorAgentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &DoctorAgentsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/doctor/agents",
 		Method:     "GET",
 		Options:    options,
 	}, reqEditors...)

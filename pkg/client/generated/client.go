@@ -71,6 +71,10 @@ type ClientInterface interface {
 	GetCost(ctx context.Context, options *GetCostRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCostResponse, error)
 	GetCostWithResponse(ctx context.Context, options *GetCostRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCostResp, error)
 
+	// DoctorAgents Report agent availability as the daemon sees it
+	DoctorAgents(ctx context.Context, options *DoctorAgentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DoctorAgentsResponse, error)
+	DoctorAgentsWithResponse(ctx context.Context, options *DoctorAgentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DoctorAgentsResp, error)
+
 	// EnqueueJob Enqueue a daemon job
 	EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResponseJSON, error)
 	EnqueueJobWithResponse(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResp, error)
@@ -939,6 +943,74 @@ func (c *Client) GetCost(ctx context.Context, options *GetCostRequestOptions, re
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/cost")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DoctorAgents Report agent availability as the daemon sees it
+func (c *Client) DoctorAgents(ctx context.Context, options *DoctorAgentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DoctorAgentsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"repo": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/doctor/agents",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DoctorAgentsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DoctorAgentsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DoctorAgentsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(DoctorAgentsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "DoctorAgentsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/doctor/agents")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -1,0 +1,364 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
+)
+
+// fakeDoctorDaemon serves canned daemon responses. A nil ping means the
+// daemon is down.
+type fakeDoctorDaemon struct {
+	ping   *daemon.PingInfo
+	agents *doctorDaemonAgents
+	jobs   []storage.ReviewJob
+}
+
+func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
+	if f.ping == nil {
+		return nil, errors.New("connection refused")
+	}
+	return f.ping, nil
+}
+
+func (f fakeDoctorDaemon) Agents(context.Context, string) (*doctorDaemonAgents, error) {
+	return f.agents, nil
+}
+
+func (f fakeDoctorDaemon) Status(context.Context) (*storage.DaemonStatus, error) {
+	return &storage.DaemonStatus{}, nil
+}
+
+func (f fakeDoctorDaemon) Health(context.Context) (*storage.HealthStatus, error) {
+	return &storage.HealthStatus{Healthy: true}, nil
+}
+
+func (f fakeDoctorDaemon) FailedJobs(context.Context) ([]storage.ReviewJob, error) {
+	return f.jobs, nil
+}
+
+func (f fakeDoctorDaemon) RepoTracked(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func findDoctorCheck(t *testing.T, checks []doctorCheck, id string) doctorCheck {
+	t.Helper()
+	idx := slices.IndexFunc(checks, func(c doctorCheck) bool { return c.ID == id })
+	require.GreaterOrEqual(t, idx, 0, "no check %q in %+v", id, checks)
+	return checks[idx]
+}
+
+// writeFakeAgentBinary puts an executable named name in a fresh directory
+// and returns that directory, for use as PATH.
+func writeFakeAgentBinary(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return dir
+}
+
+func TestDoctorAgentsDaemonPathMismatch(t *testing.T) {
+	t.Setenv("PATH", writeFakeAgentBinary(t, "claude"))
+
+	env := &doctorEnv{
+		ctx:    t.Context(),
+		global: &config.Config{DefaultAgent: "claude-code"},
+		ping:   &daemon.PingInfo{OK: true},
+		daemonAgents: &doctorDaemonAgents{
+			PathEnv: "/usr/bin:/bin",
+			Agents: []agent.Diagnosis{
+				{Name: "claude-code", Command: "claude", Error: `agent "claude-code" unavailable`},
+				{Name: "codex", Command: "codex", Error: `agent "codex" unavailable`},
+			},
+		},
+	}
+	checks := checkDoctorAgents(env)
+
+	assert := assert.New(t)
+	installed := findDoctorCheck(t, checks, "agents.installed")
+	assert.Equal(doctorFail, installed.Status)
+	assert.Contains(installed.Summary, "the daemon")
+
+	mismatch := findDoctorCheck(t, checks, "agents.daemon_path")
+	assert.Equal(doctorWarn, mismatch.Status)
+	require.Len(t, mismatch.Details, 2)
+	assert.Contains(mismatch.Details[0], "claude-code: found at ")
+	assert.Equal("daemon PATH: /usr/bin:/bin", mismatch.Details[1])
+
+	review := findDoctorCheck(t, checks, "agents.review")
+	assert.Equal(doctorFail, review.Status)
+	assert.Contains(review.Fix, "roborev daemon restart")
+
+	// The review agent is already reported; the configured-agents check must
+	// not repeat it.
+	assert.False(slices.ContainsFunc(checks, func(c doctorCheck) bool { return c.ID == "agents.configured" }), "%+v", checks)
+}
+
+func TestDoctorAgentsBackupFallback(t *testing.T) {
+	t.Setenv("PATH", writeFakeAgentBinary(t, "gemini"))
+
+	env := &doctorEnv{
+		ctx:    t.Context(),
+		global: &config.Config{DefaultAgent: "codex", ReviewBackupAgent: "gemini", CodexCmd: "codex"},
+	}
+	review, _ := checkDoctorReviewAgent(env)
+	assert.Equal(t, doctorWarn, review.Status)
+	assert.Contains(t, review.Summary, "backup agent gemini")
+}
+
+const securityPanelRepoConfig = `
+[review]
+hook_review_panel = "guard"
+
+[review.subagents.sec]
+agent = "codex"
+review_type = "security"
+
+[review.panels.guard]
+members = ["sec"]
+`
+
+func TestDoctorGuidelines(t *testing.T) {
+	tests := []struct {
+		name       string
+		files      map[string]string
+		globalCfg  string
+		remote     string
+		wantStatus doctorStatus
+		wantInSum  string
+	}{
+		{
+			name:       "security panel without guidelines is critical",
+			files:      map[string]string{".roborev.toml": securityPanelRepoConfig},
+			wantStatus: doctorFail,
+			wantInSum:  "security reviews are enabled",
+		},
+		{
+			name: "security panel with guidelines that skip security",
+			files: map[string]string{
+				".roborev.toml": securityPanelRepoConfig,
+				"REVIEW.md":     "Prefer small functions.\n",
+			},
+			wantStatus: doctorWarn,
+			wantInSum:  "do not describe security",
+		},
+		{
+			name: "security panel with a threat model",
+			files: map[string]string{
+				".roborev.toml": securityPanelRepoConfig,
+				"REVIEW.md":     "## Threat model\nRequest bodies are untrusted.\n",
+			},
+			wantStatus: doctorOK,
+		},
+		{
+			name:       "CI poller covering the origin runs security by default",
+			files:      map[string]string{"main.go": "package main\n"},
+			globalCfg:  "[ci]\nenabled = true\nrepos = [\"acme/*\"]\n",
+			remote:     "git@github.com:acme/api.git",
+			wantStatus: doctorFail,
+			wantInSum:  "security reviews are enabled",
+		},
+		{
+			name:       "CI poller that does not cover the origin",
+			files:      map[string]string{"main.go": "package main\n"},
+			globalCfg:  "[ci]\nenabled = true\nrepos = [\"other/*\"]\n",
+			remote:     "git@github.com:acme/api.git",
+			wantStatus: doctorWarn,
+			wantInSum:  "no review guidelines",
+		},
+		{
+			name:       "no security reviews and no guidelines",
+			files:      map[string]string{"main.go": "package main\n"},
+			wantStatus: doctorWarn,
+			wantInSum:  "no review guidelines",
+		},
+		{
+			name:       "guidelines without security reviews",
+			files:      map[string]string{"REVIEW.md": "Prefer small functions.\n"},
+			wantStatus: doctorOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Setenv("ROBOREV_DATA_DIR", dataDir)
+			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(tt.globalCfg), 0o600))
+
+			repo := testutil.NewTestRepo(t)
+			for name, content := range tt.files {
+				repo.CommitFile(name, content, "add "+name)
+			}
+			if tt.remote != "" {
+				repo.Run("remote", "add", "origin", tt.remote)
+			}
+
+			env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
+			require.NoError(t, env.globalErr)
+			require.NoError(t, env.repoErr)
+			got := findDoctorCheck(t, checkDoctorGuidelines(env), "repo.guidelines")
+			assert.Equal(t, tt.wantStatus, got.Status, "%+v", got)
+			assert.Contains(t, got.Summary, tt.wantInSum)
+		})
+	}
+}
+
+func TestDoctorFailedJobs(t *testing.T) {
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-time.Hour)
+	old := now.Add(-8 * 24 * time.Hour)
+	job := func(agentName, errMsg string, finished time.Time) storage.ReviewJob {
+		return storage.ReviewJob{Agent: agentName, Error: errMsg, FinishedAt: &finished}
+	}
+
+	tests := []struct {
+		name       string
+		jobs       []storage.ReviewJob
+		wantStatus doctorStatus
+		wantFirst  string
+	}{
+		{
+			name: "repeated failures for one agent warn",
+			jobs: []storage.ReviewJob{
+				job("codex", "quota exceeded\nretry later", recent),
+				job("codex", "quota exceeded", recent),
+				job("codex", "timeout", recent),
+				job("gemini", "auth expired", recent),
+				job("codex", "quota exceeded", old),
+			},
+			wantStatus: doctorWarn,
+			wantFirst:  "codex: 3 failures; most common (2x): quota exceeded",
+		},
+		{
+			name:       "occasional failures are informational",
+			jobs:       []storage.ReviewJob{job("gemini", "auth expired", recent)},
+			wantStatus: doctorInfo,
+			wantFirst:  "gemini: 1 failure; most common (1x): auth expired",
+		},
+		{
+			name:       "only old failures",
+			jobs:       []storage.ReviewJob{job("codex", "boom", old)},
+			wantStatus: doctorOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := &doctorEnv{
+				ctx:    t.Context(),
+				now:    now,
+				ping:   &daemon.PingInfo{OK: true},
+				daemon: fakeDoctorDaemon{ping: &daemon.PingInfo{OK: true}, jobs: tt.jobs},
+			}
+			got := findDoctorCheck(t, checkDoctorFailedJobs(env), "jobs.failed")
+			assert.Equal(t, tt.wantStatus, got.Status)
+			if tt.wantFirst != "" {
+				require.NotEmpty(t, got.Details)
+				assert.Equal(t, tt.wantFirst, got.Details[0])
+			}
+		})
+	}
+}
+
+func TestDoctorEnqueueFailures(t *testing.T) {
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	ts := func(ago time.Duration) string { return now.Add(-ago).Format(time.RFC3339) }
+	entry := func(ago time.Duration, repo, outcome, msg string) string {
+		data, err := json.Marshal(postCommitLogEntry{TS: ts(ago), Repo: repo, Outcome: outcome, Message: msg})
+		require.NoError(t, err)
+		return string(data) + "\n"
+	}
+
+	tests := []struct {
+		name       string
+		log        string
+		wantStatus doctorStatus
+		wantDetail string
+	}{
+		{
+			name: "latest commit in this repo was not queued",
+			log: entry(10*24*time.Hour, "/repo", "fail", "old failure") +
+				entry(2*time.Hour, "/repo", "ok", "enqueued job 1") +
+				"not json\n" +
+				entry(time.Hour, "/repo", "fail", "daemon not running"),
+			wantStatus: doctorWarn,
+			wantDetail: "the most recent commit in this repository was not queued",
+		},
+		{
+			name: "one failure elsewhere is informational",
+			log: entry(time.Hour, "/other", "fail", "daemon not running") +
+				entry(time.Minute, "/repo", "ok", "enqueued job 2"),
+			wantStatus: doctorInfo,
+			wantDetail: "most common (1x): daemon not running",
+		},
+		{
+			name:       "no recent failures",
+			log:        entry(time.Hour, "/repo", "ok", "enqueued job 3"),
+			wantStatus: doctorOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "post-commit.log")
+			require.NoError(t, os.WriteFile(path, []byte(tt.log), 0o600))
+			env := &doctorEnv{now: now, repoPath: "/repo", postCommitLog: path}
+			got := findDoctorCheck(t, checkDoctorEnqueueFailures(env), "jobs.enqueue_failures")
+			assert.Equal(t, tt.wantStatus, got.Status)
+			if tt.wantDetail != "" {
+				assert.Contains(t, got.Details, tt.wantDetail)
+			}
+		})
+	}
+}
+
+func TestDoctorCommandJSONFailsOnBrokenConfig(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("default_agent = [\n"), 0o600))
+
+	// Point at a port nothing listens on so the doctor never reaches a real
+	// daemon.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	patchServerAddr(t, addr)
+
+	cmd := doctorCmd()
+	cmd.SilenceUsage = true // the root command sets this in production
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--json", "--repo", t.TempDir()})
+	err = cmd.Execute()
+
+	exitErr, ok := errors.AsType[*exitError](err)
+	require.True(t, ok, "want exitError, got %v", err)
+	assert.Equal(t, 1, exitErr.code)
+
+	var report doctorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	assert.Equal(t, doctorFail, findDoctorCheck(t, report.Checks, "config.global").Status)
+	assert.Equal(t, doctorWarn, findDoctorCheck(t, report.Checks, "daemon.running").Status)
+	assert.Positive(t, report.Summary.Fail)
+}

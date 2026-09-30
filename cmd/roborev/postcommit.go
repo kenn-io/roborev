@@ -335,16 +335,19 @@ func enqueueCmd() *cobra.Command {
 	return cmd
 }
 
+// postCommitLogPath returns the JSONL file hookLog appends to.
+func postCommitLogPath() string {
+	if hookLogPath != "" {
+		return hookLogPath
+	}
+	return filepath.Join(config.DataDir(), "post-commit.log")
+}
+
 // hookLog appends a single JSONL entry to the post-commit log.
 // Best-effort: errors are silently ignored so the hook never
 // blocks a commit.
 func hookLog(repo, outcome, message string) {
-	logPath := hookLogPath
-	if logPath == "" {
-		logPath = filepath.Join(
-			config.DataDir(), "post-commit.log",
-		)
-	}
+	logPath := postCommitLogPath()
 
 	entry := struct {
 		TS      string `json:"ts"`

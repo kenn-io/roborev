@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
@@ -810,4 +811,22 @@ type BackfillTokensOutput struct {
 // StreamEventsInput holds query parameters for GET /api/stream/events.
 type StreamEventsInput struct {
 	Repo string `query:"repo" doc:"Filter events by repo root path"`
+}
+
+// -- GET /api/doctor/agents --
+
+// DoctorAgentsInput holds query parameters for the daemon's agent diagnosis.
+type DoctorAgentsInput struct {
+	Repo string `query:"repo" doc:"Repository root whose .roborev.toml supplies ACP agents and overrides"`
+}
+
+// DoctorAgentsOutput is the response for GET /api/doctor/agents. It reports
+// agent availability as the daemon process sees it, which can differ from a
+// user's shell when the daemon started with a different PATH.
+type DoctorAgentsOutput struct {
+	Body struct {
+		PathEnv         string            `json:"path_env" doc:"PATH environment variable of the daemon process"`
+		Agents          []agent.Diagnosis `json:"agents"`
+		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; agents were resolved from global config only"`
+	}
 }

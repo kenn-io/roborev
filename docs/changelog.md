@@ -23,6 +23,14 @@ All notable changes to roborev, grouped by minor release.
     repeated web, TUI and CLI opens on the same day count once. Commands the
     bundled agent skills run carry `--from-skill` so they are not counted. See
     [Telemetry](/docs/configuration/#telemetry).
+- `roborev doctor` diagnoses setup problems and suggests fixes. It checks config
+    files (including misspelled keys roborev ignores), the daemon, agents,
+    recent failed reviews and post-commit queueing failures, git hooks, and
+    review guidelines for the current repository. It compares the agents your
+    shell can run with the agents the daemon can run, so a daemon started with a
+    different `PATH` is easy to spot. When security reviews are enabled and the
+    repository has no review guidelines or threat model, doctor reports a
+    failure. `--json` prints the report for scripts and agents.
 
 **Improvements**
 

@@ -56,6 +56,11 @@ func (g GetCostQuery) Validate() error {
 	return errors
 }
 
+type DoctorAgentsQuery struct {
+	// Repo Repository root whose .roborev.toml supplies ACP agents and overrides
+	Repo *string `json:"repo,omitempty"`
+}
+
 type ExportCiCostsQuery struct {
 	// Format Output format; only json is supported
 	Format *string `json:"format,omitempty"`

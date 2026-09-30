@@ -5,6 +5,8 @@ import type {
   ActivityOutputBody,
   CostAggregate,
   DaemonStatus,
+  DoctorAgentsOutputBody,
+  DoctorAgentsParams,
   GetCostParams,
   GetSummaryParams,
   HealthStatus,
@@ -113,6 +115,35 @@ export const getCost = async (
   options?: RequestInit,
 ): Promise<CostAggregate> => {
   return roborevFetch<CostAggregate>(getGetCostUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDoctorAgentsUrl = (params?: DoctorAgentsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/doctor/agents?${stringifiedParams}`
+    : `/api/doctor/agents`;
+};
+
+/**
+ * @summary Report agent availability as the daemon sees it
+ */
+export const doctorAgents = async (
+  params?: DoctorAgentsParams,
+  options?: RequestInit,
+): Promise<DoctorAgentsOutputBody> => {
+  return roborevFetch<DoctorAgentsOutputBody>(getDoctorAgentsUrl(params), {
     ...options,
     method: "GET",
   });

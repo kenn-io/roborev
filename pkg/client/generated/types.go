@@ -774,6 +774,48 @@ func (d DeleteRepoInputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type Diagnosis struct {
+	Available bool    `json:"available"`
+	Command   *string `json:"command,omitempty"`
+	ErrorData *string `json:"error,omitempty"`
+	Name      string  `json:"name" validate:"required"`
+	Path      *string `json:"path,omitempty"`
+}
+
+func (d Diagnosis) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorAgentsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string     `json:"$schema,omitempty"`
+	Agents []Diagnosis `json:"agents" validate:"required"`
+
+	// PathEnv PATH environment variable of the daemon process
+	PathEnv string `json:"path_env" validate:"required"`
+
+	// RepoConfigError Why the repository config could not be loaded; agents were resolved from global config only
+	RepoConfigError *string `json:"repo_config_error,omitempty"`
+}
+
+func (d DoctorAgentsOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Agents {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.PathEnv, "required"); err != nil {
+		errors = errors.Append("PathEnv", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type DurationStats struct {
 	QueueP50Secs  float64 `json:"queue_p50_secs"`
 	QueueP90Secs  float64 `json:"queue_p90_secs"`

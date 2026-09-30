@@ -1015,6 +1015,47 @@ components:
         - repo_id
         - cascade
       type: object
+    Diagnosis:
+      additionalProperties: false
+      properties:
+        available:
+          type: boolean
+        command:
+          type: string
+        error:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+      required:
+        - name
+        - available
+      type: object
+    DoctorAgentsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/DoctorAgentsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        agents:
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
+        path_env:
+          description: PATH environment variable of the daemon process
+          type: string
+        repo_config_error:
+          description: Why the repository config could not be loaded; agents were resolved from global config only
+          type: string
+      required:
+        - path_env
+        - agents
+      type: object
     DurationStats:
       additionalProperties: false
       properties:
@@ -4818,6 +4859,33 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Get aggregate review cost
+      tags:
+        - daemon
+  /api/doctor/agents:
+    get:
+      operationId: doctor-agents
+      parameters:
+        - description: Repository root whose .roborev.toml supplies ACP agents and overrides
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Repository root whose .roborev.toml supplies ACP agents and overrides
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorAgentsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Report agent availability as the daemon sees it
       tags:
         - daemon
   /api/enqueue:

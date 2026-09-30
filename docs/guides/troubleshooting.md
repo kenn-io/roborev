@@ -3,6 +3,22 @@ title: Troubleshooting
 description: Diagnose and fix common roborev issues
 ---
 
+## Start with roborev doctor
+
+Run `roborev doctor` in the repository that has the problem. It checks config,
+the daemon, agents, recent failures, git hooks, and review guidelines, and
+prints a fix for each problem it finds. It only reads state, so it is safe to
+run at any time. Use `roborev doctor --json` to hand the report to an agent.
+
+A common cause of failed reviews is a daemon that cannot find an agent your
+shell can run. This happens when the daemon started from a login item, a service
+manager, or a shell with a different `PATH`. Doctor lists those agents under
+`agents.daemon_path`; run `roborev daemon restart` from a shell where the agent
+works.
+
+See [Diagnosing Setup](/docs/commands/#diagnosing-setup) for the full list of
+checks.
+
 ## Missing or unstructured reviews after upgrade
 
 Version 0.68.0 archived historical reviews that it could not convert to JSON,
