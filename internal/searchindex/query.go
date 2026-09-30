@@ -43,7 +43,8 @@ type legMember struct {
 	Semantic   bool
 	Excerpt    string
 	// FinishedKey and JobID break score ties: newer, then higher job, then key.
-	FinishedKey string
+	// FinishedKey is Unix seconds.
+	FinishedKey float64
 	JobID       int64
 }
 
@@ -91,19 +92,11 @@ func containsSearchToken(value string) bool {
 	}) >= 0
 }
 
-// sortableTime turns a stored RFC3339Nano UTC timestamp into fixed-width text
-// that sorts in time order. RFC3339Nano drops trailing zeros, so the raw text
-// misorders times within one second. A missing time sorts oldest.
-func sortableTime(expression string) string {
-	value := "COALESCE(" + expression + ", '')"
-	return "(substr(" + value + ", 1, 19) || substr(CASE WHEN substr(" + value + ", 20, 1) = '.' " +
-		"THEN substr(" + value + ", 21, length(" + value + ") - 21) ELSE '' END || '000000000', 1, 9))"
-}
-
-// sortableTimeKey formats t the way sortableTime formats a stored time.
-func sortableTimeKey(t time.Time) string {
-	t = t.UTC()
-	return t.Format("2006-01-02T15:04:05") + fmt.Sprintf("%09d", t.Nanosecond())
+// finishedTime is the numeric finish time of a stored review: Unix seconds
+// with millisecond precision, from SQLite's own parser. A missing time is 0,
+// so it sorts oldest.
+func finishedTime(expression string) string {
+	return "COALESCE(unixepoch(" + expression + ", 'subsec'), 0)"
 }
 
 // filterPredicate restricts a leg's source rows, aliased d, to filters.
@@ -119,8 +112,8 @@ func filterPredicate(filters SearchFilters) sqlquery.Predicate {
 		args = append(args, filters.Branch)
 	}
 	if filters.Since != nil {
-		clauses = append(clauses, sortableTime("d.finished_at")+" >= ?")
-		args = append(args, sortableTimeKey(*filters.Since))
+		clauses = append(clauses, "unixepoch(d.finished_at, 'subsec') >= unixepoch(?, 'subsec')")
+		args = append(args, filters.Since.UTC().Format(time.RFC3339Nano))
 	}
 	if filters.Verdict != "" {
 		clauses = append(clauses, "d.verdict = ?")
@@ -196,7 +189,7 @@ func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit i
 		keys AS (SELECT doc_key FROM fts UNION SELECT doc_key FROM ident),
 		matches AS MATERIALIZED (
 			SELECT d.doc_key, d.group_key, d.job_id,
-			       ` + sortableTime("d.finished_at") + ` AS finished_key,
+			       ` + finishedTime("d.finished_at") + ` AS finished_key,
 			       ident.doc_key IS NOT NULL AS identifier,
 			       fts.doc_key IS NOT NULL AS lexical,
 			       CASE WHEN ident.doc_key IS NOT NULL THEN 1.0 ELSE fts.score END AS score,
@@ -281,7 +274,7 @@ func (index *Index) semanticLeg(
 		WITH chunks AS MATERIALIZED (` + candidates.SQL + `),
 		best AS MATERIALIZED (
 			SELECT doc_key, group_key, job_id, chunk_index, distance,
-			       ` + sortableTime("finished_at") + ` AS finished_key,
+			       ` + finishedTime("finished_at") + ` AS finished_key,
 			       row_number() OVER (PARTITION BY doc_key ORDER BY distance, chunk_index) AS chunk_rank
 			  FROM chunks
 		),

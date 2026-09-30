@@ -541,8 +541,11 @@ func singleLegPage(groups []legGroup) []pageGroup {
 }
 
 func compareMemberTie(left, right legMember) int {
-	if comparison := strings.Compare(right.FinishedKey, left.FinishedKey); comparison != 0 {
-		return comparison
+	if left.FinishedKey != right.FinishedKey {
+		if left.FinishedKey > right.FinishedKey {
+			return -1
+		}
+		return 1
 	}
 	if left.JobID != right.JobID {
 		if left.JobID > right.JobID {
