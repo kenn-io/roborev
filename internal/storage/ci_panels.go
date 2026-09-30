@@ -435,12 +435,34 @@ func (db *DB) MarkPanelsAllowStalePost(githubRepo string, prNumber int, newHeadS
 }
 
 // GetActivePanelsForPR returns the un-posted, non-retired panel runs for a
-// (github_repo, pr_number). Used by the supersede and closed-PR cleanup sweeps
-// to find every still-active run for a PR (across HEAD SHAs).
+// (github_repo, pr_number), across HEAD SHAs. Used by the supersede sweep.
 func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
 	rows, err := db.Query(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
 		WHERE github_repo = ? AND pr_number = ? AND posted_at IS NULL AND retired_at IS NULL`,
+		githubRepo, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var panels []CIPanel
+	for rows.Next() {
+		panel, err := scanCIPanel(rows)
+		if err != nil {
+			return nil, err
+		}
+		panels = append(panels, *panel)
+	}
+	return panels, rows.Err()
+}
+
+// GetUnpostedPanelsForPR includes retired runs so closed-PR cleanup can retry
+// failed cancellations or mapping deletions after retirement.
+func (db *DB) GetUnpostedPanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
+	rows, err := db.Query(`SELECT `+ciPanelColumns+`
+		FROM ci_pr_panels
+		WHERE github_repo = ? AND pr_number = ? AND posted_at IS NULL`,
 		githubRepo, prNumber)
 	if err != nil {
 		return nil, err
@@ -526,12 +548,12 @@ func (db *DB) GetUnpostedTerminalPanels(githubRepo string) ([]CIPanel, error) {
 
 // GetPendingPanelPRs returns the distinct (github_repo, pr_number) pairs that
 // have an un-posted panel run, so the poll loop can check whether those PRs are
-// still open (closed-PR cleanup). Mirrors GetPendingBatchPRs. F13.
+// still open (closed-PR cleanup). Includes retired runs with unfinished cleanup.
 func (db *DB) GetPendingPanelPRs(githubRepo string) ([]PanelPRRef, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT github_repo, pr_number
 		FROM ci_pr_panels
-		WHERE github_repo = ? AND posted_at IS NULL AND retired_at IS NULL`, githubRepo)
+		WHERE github_repo = ? AND posted_at IS NULL`, githubRepo)
 	if err != nil {
 		return nil, err
 	}

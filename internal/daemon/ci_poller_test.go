@@ -4659,11 +4659,9 @@ func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
 	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
 }
 
-// TestClosedPRCleansUpDeferredAttempt covers the closed-PR cleanup gap Task 10
-// closes: a DEFERRED attempt whose panel was RETIRED has no active panel, so it
-// is invisible to the panel-driven sweep (GetPendingPanelPRs). When its PR
-// closes, the attempt-PR sweep must still delete the attempt so a reopen at the
-// same HEAD gets a fresh review.
+// TestClosedPRCleansUpDeferredAttempt verifies that closing a PR removes its
+// deferred attempt even after the panel was retired, so a reopen at the same
+// HEAD gets a fresh review.
 func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -4690,14 +4688,9 @@ func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
 	require.NotNil(t, attempt)
 	require.Equal(t, "deferred", attempt.State, "attempt deferred with no active panel")
 
-	// The retired panel must NOT appear in the panel-driven closed-PR sweep set.
-	panelRefs, err := h.DB.GetPendingPanelPRs("acme/api")
-	require.NoError(t, err)
-	assert.Empty(panelRefs, "retired panel is invisible to the panel-PR sweep")
-
 	// PR 5 has closed: absent from openPRs and the PR-open check returns false.
 	h.Poller.isPROpenFn = func(string, int) bool { return false }
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]bool{})
+	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]bool{}))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)

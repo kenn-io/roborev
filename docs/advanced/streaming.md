@@ -62,7 +62,9 @@ When CI polling is enabled, `/api/health` includes a `ci` component. The
 component and overall `healthy` field become false when polling stops,
 repository discovery fails, or a repository cannot list its pull requests or
 queue a review, including a deferred retry. Failures to list, check, claim, or
-remove retries also make CI unhealthy. An HTTP 200 response alone does not
+remove retries, clean up closed pull requests, or re-arm stuck attempts also
+make CI unhealthy. Failed cleanup remains eligible for another poll, including
+when only part of a panel was canceled. An HTTP 200 response alone does not
 indicate healthy polling.
 
 Polling continues for other pull requests and repositories after a failure. Each
@@ -71,12 +73,15 @@ discovery removes it from the configured set. Discovery failures remain
 unhealthy even when polling can use cached or partial repository lists.
 Successful discovery clears the discovery failure.
 
-A failed retry stays unhealthy during retry backoff. It clears when the PR
-queues successfully, a later poll confirms its review is active or complete, the
-PR closes, or the obsolete retry is removed after its head changes. Adding a
-configured skip label removes a deferred retry and its health error on the next
-poll, without waiting for backoff to expire. Active and completed reviews are
-left unchanged.
+A failed retry stays unhealthy during retry backoff. Its error belongs to that
+commit: it clears when that review queues successfully, a later poll confirms it
+is active or complete, or its attempt is removed. A successful review of a newer
+commit does not clear an older retry's error. Closed-PR cleanup and removal of
+obsolete retries clear their errors only after they succeed. An intentionally
+empty review matrix removes a claimed retry instead of re-arming disabled work.
+Adding a configured skip label removes a deferred retry and its health error on
+the next poll, without waiting for backoff to expire. Active and completed
+reviews are left unchanged.
 
 CI failures also appear in `recent_errors` with a repository or discovery
 summary. Detailed errors remain in the daemon log. Recovery preserves the error
