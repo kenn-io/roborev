@@ -69,12 +69,14 @@ func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 		return err == nil && len(matches) > 0
 	}), "v0.56 daemon never published legacy runtime. Output:\n%s", legacyOutput.String())
 
-	startCtx, cancelStart := context.WithTimeout(context.Background(), 45*time.Second)
+	// Let the CLI report its readiness timeout before the test kills it.
+	startCtx, cancelStart := context.WithTimeout(context.Background(), daemonStartTimeout+30*time.Second)
 	defer cancelStart()
 	startCmd := exec.CommandContext(startCtx, currentBin, "--verbose", "daemon", "start")
 	startCmd.Dir = "."
 	startCmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+dataDir)
 	startOut, startErr := startCmd.CombinedOutput()
+	require.NoError(t, startCtx.Err(), "startup command exceeded the test deadline: %s", startOut)
 	require.Error(t, startErr)
 	assert.Contains(t, string(startOut), "failed to start daemon: context deadline exceeded")
 
