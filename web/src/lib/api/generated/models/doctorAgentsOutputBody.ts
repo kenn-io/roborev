@@ -6,9 +6,14 @@ import type { Diagnosis } from "./diagnosis";
 export interface DoctorAgentsOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Every agent the daemon knows */
   agents: Diagnosis[];
+  /** CLI tools that configured kata and beads hooks run, resolved on the daemon PATH */
+  hook_tools: Diagnosis[];
   /** PATH environment variable of the daemon process */
   path_env: string;
-  /** Why the repository config could not be loaded; agents were resolved from global config only */
+  /** Why the repository config could not be loaded; results use global config only */
   repo_config_error?: string;
+  /** The requested agent names, resolved by the daemon; unknown names report an error */
+  requested: Diagnosis[];
 }

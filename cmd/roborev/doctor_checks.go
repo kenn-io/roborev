@@ -81,9 +81,45 @@ func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctor
 	}
 	env.ping, env.pingErr = d.Ping()
 	if env.pingErr == nil {
-		env.daemonAgents, env.daemonAgentsErr = d.Agents(ctx, repoPath)
+		env.daemonAgents, env.daemonAgentsErr = d.Agents(ctx, repoPath, doctorAgentNames(env))
 	}
 	return env
+}
+
+// doctorAgentNames lists the agent names the doctor asks the daemon to
+// resolve: the review agent and its backup, then every agent named in config.
+func doctorAgentNames(env *doctorEnv) []string {
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" && name != "test" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if res, err := env.reviewWorkflow(); err == nil {
+		add(res.PreferredAgent)
+		add(res.BackupAgent)
+	}
+	for _, ref := range config.AgentReferences(env.global) {
+		add(ref.Name)
+	}
+	if env.repoCfg != nil {
+		for _, ref := range config.AgentReferences(env.repoCfg) {
+			add(ref.Name)
+		}
+	}
+	return names
+}
+
+// reviewWorkflow resolves the agent and backup that ordinary reviews use.
+func (env *doctorEnv) reviewWorkflow() (agent.WorkflowConfig, error) {
+	reasoning, err := config.ResolveReviewReasoningFromConfig("", env.repoCfg, env.global)
+	if err != nil {
+		reasoning = ""
+	}
+	return agent.ResolveWorkflowConfigFromConfig("", env.repoCfg, env.global, "review", reasoning)
 }
 
 func (env *doctorEnv) daemonUp() bool { return env.pingErr == nil }
@@ -228,9 +264,8 @@ func checkDoctorRepoConfig(env *doctorEnv) []doctorCheck {
 	return out
 }
 
-// checkDoctorDefaultBranchConfig reports a .roborev.toml on the default
-// branch that does not parse. Reviews read guidelines from the default
-// branch, and a broken file there drops every repo guideline silently.
+// checkDoctorDefaultBranchConfig checks .roborev.toml on the default branch,
+// which is where reviews read repository config and guidelines from.
 func checkDoctorDefaultBranchConfig(env *doctorEnv) (doctorCheck, bool) {
 	if env.repoBranch == "" {
 		return doctorCheck{}, false
@@ -239,12 +274,18 @@ func checkDoctorDefaultBranchConfig(env *doctorEnv) (doctorCheck, bool) {
 	if err == nil {
 		return doctorCheck{}, false
 	}
-	return doctorCheck{
-		ID: "config.repo_default_branch", Category: "config", Status: doctorFail,
-		Summary: fmt.Sprintf(".roborev.toml on %s does not load; reviews run without any repository guidelines", env.repoBranch),
-		Details: []string{err.Error()},
-		Fix:     fmt.Sprintf("fix .roborev.toml and merge the fix into %s", env.repoBranch),
-	}, true
+	c := doctorCheck{ID: "config.repo_default_branch", Category: "config", Details: []string{err.Error()}}
+	if config.IsConfigParseError(err) || config.IsExperimentConfigError(err) {
+		c.Status = doctorFail
+		c.Summary = fmt.Sprintf(".roborev.toml on %s is invalid", env.repoBranch)
+		c.Details = append(c.Details, "reviews read repository config from this branch")
+		c.Fix = fmt.Sprintf("fix .roborev.toml and merge the fix into %s", env.repoBranch)
+		return c, true
+	}
+	c.Status = doctorWarn
+	c.Summary = fmt.Sprintf("could not read .roborev.toml from %s", env.repoBranch)
+	c.Fix = "check that the repository is readable with 'git show " + env.repoBranch + ":.roborev.toml'"
+	return c, true
 }
 
 // --- Daemon ---
@@ -337,17 +378,21 @@ type agentView struct {
 }
 
 func (env *doctorEnv) viewAgent(name string) agentView {
+	name = strings.TrimSpace(name)
 	if env.daemonAgents != nil {
-		want := doctorAgentKey(name)
-		for _, d := range env.daemonAgents.Agents {
-			if doctorAgentKey(d.Name) == want {
+		for _, d := range env.daemonAgents.Requested {
+			if d.Name == name {
 				return agentView{diag: d, daemon: true}
 			}
 		}
-		// The daemon does not know this name. Fall through so the local
-		// resolution produces the precise error (unknown agent, bad ACP).
+		// Every name the checks look up was sent to the daemon. A daemon
+		// that answered without it predates per-name resolution.
+		return agentView{daemon: true, diag: agent.Diagnosis{
+			Name:  name,
+			Error: "the daemon did not resolve this agent; restart it so it runs this version of roborev",
+		}}
 	}
-	return agentView{diag: agent.Diagnose(env.repoCfg, name, env.global), daemon: env.daemonAgents != nil}
+	return agentView{diag: agent.Diagnose(env.repoCfg, name, env.global)}
 }
 
 func doctorAgentKey(name string) string {
@@ -371,6 +416,15 @@ func checkDoctorAgents(env *doctorEnv) []doctorCheck {
 			Summary: "could not ask the daemon which agents it can run; showing this shell's view",
 			Details: []string{env.daemonAgentsErr.Error()},
 			Fix:     "if the daemon is older than this CLI, run 'roborev daemon restart'",
+		})
+	}
+
+	if env.daemonAgents != nil && env.daemonAgents.RepoConfigError != "" {
+		out = append(out, doctorCheck{
+			ID: "agents.daemon_repo_config", Category: "agents", Status: doctorWarn,
+			Summary: "the daemon could not load this repository's .roborev.toml; agent results use global config only",
+			Details: []string{env.daemonAgents.RepoConfigError},
+			Fix:     "fix .roborev.toml; if 'roborev config validate' passes, run 'roborev daemon restart'",
 		})
 	}
 
@@ -454,11 +508,7 @@ func checkDoctorPathMismatch(env *doctorEnv, local []agent.Diagnosis) []doctorCh
 func checkDoctorReviewAgent(env *doctorEnv) (doctorCheck, map[string]bool) {
 	c := doctorCheck{ID: "agents.review", Category: "agents"}
 	reported := map[string]bool{}
-	reasoning, err := config.ResolveReviewReasoningFromConfig("", env.repoCfg, env.global)
-	if err != nil {
-		reasoning = ""
-	}
-	res, err := agent.ResolveWorkflowConfigFromConfig("", env.repoCfg, env.global, "review", reasoning)
+	res, err := env.reviewWorkflow()
 	if err != nil {
 		c.Status = doctorFail
 		c.Summary = "cannot resolve which agent runs reviews"
@@ -570,14 +620,14 @@ func checkDoctorFailedJobs(env *doctorEnv) []doctorCheck {
 	if !env.daemonUp() {
 		return nil
 	}
-	jobs, err := env.daemon.FailedJobs(env.ctx)
+	cutoff := env.now.Add(-doctorRecentWindow)
+	jobs, err := env.daemon.FailedJobs(env.ctx, cutoff)
 	if err != nil {
 		return []doctorCheck{{
 			ID: "jobs.failed", Category: "jobs", Status: doctorWarn,
 			Summary: "could not list failed jobs", Details: []string{err.Error()},
 		}}
 	}
-	cutoff := env.now.Add(-doctorRecentWindow)
 	type group struct {
 		count  int
 		errors map[string]int
@@ -585,11 +635,7 @@ func checkDoctorFailedJobs(env *doctorEnv) []doctorCheck {
 	groups := map[string]*group{}
 	total := 0
 	for _, j := range jobs {
-		when := j.EnqueuedAt
-		if j.FinishedAt != nil {
-			when = *j.FinishedAt
-		}
-		if when.Before(cutoff) {
+		if j.EnqueuedAt.Before(cutoff) {
 			continue
 		}
 		total++
@@ -818,12 +864,16 @@ func checkDoctorSnapshotDir(env *doctorEnv) []doctorCheck {
 			Fix:     "set snapshot_dir in .roborev.toml to a relative path outside .git, or remove it",
 		}}
 	}
-	rel, _ := filepath.Rel(env.repoPath, dir)
-	if tracked, err := git.HasTrackedFilesUnder(env.repoPath, dir); err == nil && tracked {
+	err = git.ValidateRepoLocalPathNoSymlinks(env.repoPath, dir)
+	if err == nil {
+		err = git.EnsureNoTrackedFilesUnder(env.repoPath, dir)
+	}
+	if err != nil {
 		return []doctorCheck{{
 			ID: "repo.snapshot_dir", Category: "repo", Status: doctorFail,
-			Summary: fmt.Sprintf("snapshot directory %s contains tracked files; roborev will not write snapshots there", rel),
-			Fix:     "point snapshot_dir at an unused directory, or untrack the files",
+			Summary: "reviews cannot write snapshots to snapshot_dir; reviews of large diffs will fail",
+			Details: []string{err.Error()},
+			Fix:     "point snapshot_dir at an unused directory inside the repository that is not a symlink and has no tracked files",
 		}}
 	}
 	return nil
@@ -976,6 +1026,30 @@ var doctorHookEvents = []string{
 	"review.closed", "review.reopened", "review.commented", "review.remapped",
 }
 
+// doctorHookTools maps a [[hooks]] type to the CLI the daemon runs for it.
+var doctorHookTools = map[string]string{"kata": "kata", "beads": "bd"}
+
+// hookToolProblem reports why the daemon cannot run a hook tool, or "" when
+// it can. The daemon runs hooks, so its answer wins; the shell is only a
+// fallback when the daemon cannot be asked.
+func (env *doctorEnv) hookToolProblem(tool string) string {
+	if env.daemonAgents != nil {
+		for _, d := range env.daemonAgents.HookTools {
+			if d.Name == tool {
+				if d.Available {
+					return ""
+				}
+				return fmt.Sprintf("the %s CLI is not on the daemon's PATH", tool)
+			}
+		}
+		return fmt.Sprintf("the daemon did not report the %s CLI; restart it so it runs this version of roborev", tool)
+	}
+	if _, err := exec.LookPath(tool); err != nil {
+		return fmt.Sprintf("the %s CLI is not on this shell's PATH (the daemon could not be asked)", tool)
+	}
+	return ""
+}
+
 func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 	var out []doctorCheck
 
@@ -994,13 +1068,9 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 			if strings.TrimSpace(h.URL) == "" {
 				hookProblems = append(hookProblems, label+": webhook has no url, so it is skipped")
 			}
-		case "kata":
-			if _, err := exec.LookPath("kata"); err != nil {
-				hookProblems = append(hookProblems, label+": the kata CLI is not on PATH")
-			}
-		case "beads":
-			if _, err := exec.LookPath("bd"); err != nil {
-				hookProblems = append(hookProblems, label+": the bd CLI is not on PATH")
+		case "kata", "beads":
+			if problem := env.hookToolProblem(doctorHookTools[h.Type]); problem != "" {
+				hookProblems = append(hookProblems, label+": "+problem)
 			}
 		case "", "command":
 			if strings.TrimSpace(h.Command) == "" {

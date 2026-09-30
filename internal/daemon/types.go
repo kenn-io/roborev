@@ -817,16 +817,19 @@ type StreamEventsInput struct {
 
 // DoctorAgentsInput holds query parameters for the daemon's agent diagnosis.
 type DoctorAgentsInput struct {
-	Repo string `query:"repo" doc:"Repository root whose .roborev.toml supplies ACP agents and overrides"`
+	Repo  string   `query:"repo" doc:"Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks"`
+	Agent []string `query:"agent,explode" doc:"Agent names to resolve exactly as the daemon would (repeatable)"`
 }
 
 // DoctorAgentsOutput is the response for GET /api/doctor/agents. It reports
-// agent availability as the daemon process sees it, which can differ from a
-// user's shell when the daemon started with a different PATH.
+// agent and hook-tool availability as the daemon process sees it, which can
+// differ from a user's shell when the daemon started with a different PATH.
 type DoctorAgentsOutput struct {
 	Body struct {
 		PathEnv         string            `json:"path_env" doc:"PATH environment variable of the daemon process"`
-		Agents          []agent.Diagnosis `json:"agents"`
-		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; agents were resolved from global config only"`
+		Agents          []agent.Diagnosis `json:"agents" doc:"Every agent the daemon knows"`
+		Requested       []agent.Diagnosis `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
+		HookTools       []agent.Diagnosis `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
 	}
 }

@@ -4,7 +4,11 @@
 
 export type DoctorAgentsParams = {
   /**
-   * Repository root whose .roborev.toml supplies ACP agents and overrides
+   * Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
    */
   repo?: string;
+  /**
+   * Agent names to resolve exactly as the daemon would (repeatable)
+   */
+  agent?: string[];
 };

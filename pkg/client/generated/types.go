@@ -788,14 +788,22 @@ func (d Diagnosis) Validate() error {
 
 type DoctorAgentsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string     `json:"$schema,omitempty"`
+	Schema *string `json:"$schema,omitempty"`
+
+	// Agents Every agent the daemon knows
 	Agents []Diagnosis `json:"agents" validate:"required"`
+
+	// HookTools CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+	HookTools []Diagnosis `json:"hook_tools" validate:"required"`
 
 	// PathEnv PATH environment variable of the daemon process
 	PathEnv string `json:"path_env" validate:"required"`
 
-	// RepoConfigError Why the repository config could not be loaded; agents were resolved from global config only
+	// RepoConfigError Why the repository config could not be loaded; results use global config only
 	RepoConfigError *string `json:"repo_config_error,omitempty"`
+
+	// Requested The requested agent names, resolved by the daemon; unknown names report an error
+	Requested []Diagnosis `json:"requested" validate:"required"`
 }
 
 func (d DoctorAgentsOutputBody) Validate() error {
@@ -807,8 +815,22 @@ func (d DoctorAgentsOutputBody) Validate() error {
 			}
 		}
 	}
+	for i, item := range d.HookTools {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("HookTools[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.PathEnv, "required"); err != nil {
 		errors = errors.Append("PathEnv", err)
+	}
+	for i, item := range d.Requested {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil

@@ -1043,6 +1043,12 @@ components:
           readOnly: true
           type: string
         agents:
+          description: Every agent the daemon knows
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
+        hook_tools:
+          description: CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
@@ -1050,11 +1056,18 @@ components:
           description: PATH environment variable of the daemon process
           type: string
         repo_config_error:
-          description: Why the repository config could not be loaded; agents were resolved from global config only
+          description: Why the repository config could not be loaded; results use global config only
           type: string
+        requested:
+          description: The requested agent names, resolved by the daemon; unknown names report an error
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
       required:
         - path_env
         - agents
+        - requested
+        - hook_tools
       type: object
     DurationStats:
       additionalProperties: false
@@ -4865,13 +4878,22 @@ paths:
     get:
       operationId: doctor-agents
       parameters:
-        - description: Repository root whose .roborev.toml supplies ACP agents and overrides
+        - description: Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
           explode: false
           in: query
           name: repo
           schema:
-            description: Repository root whose .roborev.toml supplies ACP agents and overrides
+            description: Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
             type: string
+        - description: Agent names to resolve exactly as the daemon would (repeatable)
+          explode: true
+          in: query
+          name: agent
+          schema:
+            description: Agent names to resolve exactly as the daemon would (repeatable)
+            items:
+              type: string
+            type: array
       responses:
         "200":
           content:

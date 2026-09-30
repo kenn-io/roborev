@@ -6,10 +6,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +41,7 @@ func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
 	return f.ping, nil
 }
 
-func (f fakeDoctorDaemon) Agents(context.Context, string) (*doctorDaemonAgents, error) {
+func (f fakeDoctorDaemon) Agents(context.Context, string, []string) (*doctorDaemonAgents, error) {
 	return f.agents, nil
 }
 
@@ -50,7 +53,7 @@ func (f fakeDoctorDaemon) Health(context.Context) (*storage.HealthStatus, error)
 	return &storage.HealthStatus{Healthy: true}, nil
 }
 
-func (f fakeDoctorDaemon) FailedJobs(context.Context) ([]storage.ReviewJob, error) {
+func (f fakeDoctorDaemon) FailedJobs(context.Context, time.Time) ([]storage.ReviewJob, error) {
 	return f.jobs, nil
 }
 
@@ -93,6 +96,9 @@ func TestDoctorAgentsDaemonPathMismatch(t *testing.T) {
 				{Name: "claude-code", Command: "claude", Error: `agent "claude-code" unavailable`},
 				{Name: "codex", Command: "codex", Error: `agent "codex" unavailable`},
 			},
+			Requested: []agent.Diagnosis{
+				{Name: "claude-code", Command: "claude", Error: `agent "claude-code" unavailable`},
+			},
 		},
 	}
 	checks := checkDoctorAgents(env)
@@ -115,6 +121,41 @@ func TestDoctorAgentsDaemonPathMismatch(t *testing.T) {
 	// The review agent is already reported; the configured-agents check must
 	// not repeat it.
 	assert.False(slices.ContainsFunc(checks, func(c doctorCheck) bool { return c.ID == "agents.configured" }), "%+v", checks)
+}
+
+func TestDoctorAgentsTrustsDaemonOverShell(t *testing.T) {
+	// The shell can run claude, but a daemon that did not resolve the name
+	// (for example an older daemon that predates the agent) must not be
+	// reported as able to run it.
+	t.Setenv("PATH", writeFakeAgentBinary(t, "claude"))
+	env := &doctorEnv{
+		ctx:          t.Context(),
+		global:       &config.Config{DefaultAgent: "claude-code"},
+		ping:         &daemon.PingInfo{OK: true},
+		daemonAgents: &doctorDaemonAgents{},
+	}
+	review, _ := checkDoctorReviewAgent(env)
+	assert.Equal(t, doctorFail, review.Status)
+	assert.Contains(t, review.Details[0], "did not resolve this agent")
+}
+
+func TestDoctorHookToolsUseDaemonView(t *testing.T) {
+	t.Setenv("PATH", writeFakeAgentBinary(t, "kata"))
+	hooks := []config.HookConfig{{Event: "review.failed", Type: "kata"}}
+	env := &doctorEnv{
+		ctx:    t.Context(),
+		global: &config.Config{Hooks: hooks},
+		ping:   &daemon.PingInfo{OK: true},
+		daemonAgents: &doctorDaemonAgents{HookTools: []agent.Diagnosis{
+			{Name: "kata", Command: "kata", Error: "not found"},
+		}},
+	}
+	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.hooks")
+	assert.Equal(t, doctorWarn, got.Status)
+	assert.Equal(t, []string{`hook 1 (event "review.failed"): the kata CLI is not on the daemon's PATH`}, got.Details)
+
+	env.daemonAgents.HookTools[0] = agent.Diagnosis{Name: "kata", Available: true}
+	assert.Empty(t, checkDoctorIntegrations(env))
 }
 
 func TestDoctorAgentsBackupFallback(t *testing.T) {
@@ -229,8 +270,8 @@ func TestDoctorFailedJobs(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	recent := now.Add(-time.Hour)
 	old := now.Add(-8 * 24 * time.Hour)
-	job := func(agentName, errMsg string, finished time.Time) storage.ReviewJob {
-		return storage.ReviewJob{Agent: agentName, Error: errMsg, FinishedAt: &finished}
+	job := func(agentName, errMsg string, enqueued time.Time) storage.ReviewJob {
+		return storage.ReviewJob{Agent: agentName, Error: errMsg, EnqueuedAt: enqueued}
 	}
 
 	tests := []struct {
@@ -361,4 +402,68 @@ func TestDoctorCommandJSONFailsOnBrokenConfig(t *testing.T) {
 	assert.Equal(t, doctorFail, findDoctorCheck(t, report.Checks, "config.global").Status)
 	assert.Equal(t, doctorWarn, findDoctorCheck(t, report.Checks, "daemon.running").Status)
 	assert.Positive(t, report.Summary.Fail)
+}
+
+func TestLiveDoctorDaemonFailedJobsPagesToCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	recent := cutoff.Add(time.Hour)
+	jobs := func(n int, at time.Time) []storage.ReviewJob {
+		out := make([]storage.ReviewJob, n)
+		for i := range out {
+			out[i] = storage.ReviewJob{Agent: "codex", EnqueuedAt: at}
+		}
+		return out
+	}
+	pages := map[string]map[string]any{
+		"":   {"jobs": jobs(doctorFailedJobPage, recent), "has_more": true, "next_cursor": "c1"},
+		"c1": {"jobs": append(jobs(50, recent), jobs(1, cutoff.Add(-time.Hour))...), "has_more": true, "next_cursor": "c2"},
+	}
+	var requested []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cursor := r.URL.Query().Get("cursor")
+		requested = append(requested, cursor)
+		page, ok := pages[cursor]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		assert.NoError(t, json.MarshalWrite(w, page))
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := newDoctorDaemon(mustParseEndpoint(t, srv.URL)).FailedJobs(t.Context(), cutoff)
+	require.NoError(t, err)
+	assert.Len(t, got, doctorFailedJobPage+50)
+	assert.Equal(t, []string{"", "c1"}, requested, "paging stops at the first job older than the cutoff")
+}
+
+func TestDoctorSnapshotDirSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs extra privileges on Windows")
+	}
+	repo := testutil.NewTestRepo(t)
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(repo.Root, ".roborev")))
+
+	env := &doctorEnv{repoPath: repo.Root}
+	got := findDoctorCheck(t, checkDoctorSnapshotDir(env), "repo.snapshot_dir")
+	assert.Equal(t, doctorFail, got.Status)
+	require.Len(t, got.Details, 1)
+	assert.Contains(t, got.Details[0], "must not contain symlinks")
+}
+
+func TestDoctorDefaultBranchConfig(t *testing.T) {
+	repo := testutil.NewTestRepo(t)
+	repo.CommitFile(".roborev.toml", "agent = [\n", "broken config")
+	branch := strings.TrimSpace(repo.Run("branch", "--show-current"))
+
+	env := &doctorEnv{repoPath: repo.Root, repoBranch: branch}
+	got, ok := checkDoctorDefaultBranchConfig(env)
+	require.True(t, ok)
+	assert.Equal(t, doctorFail, got.Status)
+	assert.Equal(t, ".roborev.toml on "+branch+" is invalid", got.Summary)
+
+	env.repoBranch = "no-such-branch"
+	got, ok = checkDoctorDefaultBranchConfig(env)
+	require.True(t, ok)
+	assert.Equal(t, doctorWarn, got.Status)
 }

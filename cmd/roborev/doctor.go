@@ -59,10 +59,13 @@ type doctorReport struct {
 	Summary doctorSummary `json:"summary"`
 }
 
-// doctorDaemonAgents is the daemon's view of agent availability.
+// doctorDaemonAgents is the daemon's view of agent and hook-tool
+// availability.
 type doctorDaemonAgents struct {
 	PathEnv         string            `json:"path_env"`
 	Agents          []agent.Diagnosis `json:"agents"`
+	Requested       []agent.Diagnosis `json:"requested"`
+	HookTools       []agent.Diagnosis `json:"hook_tools"`
 	RepoConfigError string            `json:"repo_config_error,omitempty"`
 }
 
@@ -70,10 +73,10 @@ type doctorDaemonAgents struct {
 // calls may start, restart, or register anything.
 type doctorDaemon interface {
 	Ping() (*daemon.PingInfo, error)
-	Agents(ctx context.Context, repo string) (*doctorDaemonAgents, error)
+	Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error)
 	Status(ctx context.Context) (*storage.DaemonStatus, error)
 	Health(ctx context.Context) (*storage.HealthStatus, error)
-	FailedJobs(ctx context.Context) ([]storage.ReviewJob, error)
+	FailedJobs(ctx context.Context, since time.Time) ([]storage.ReviewJob, error)
 	RepoTracked(ctx context.Context, repo string) (bool, error)
 }
 
@@ -266,10 +269,13 @@ func decodeDoctorResponse(resp *http.Response, err error, into any) error {
 	return json.UnmarshalRead(resp.Body, into)
 }
 
-func (d liveDoctorDaemon) Agents(ctx context.Context, repo string) (*doctorDaemonAgents, error) {
+func (d liveDoctorDaemon) Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error) {
 	opts := &generated.DoctorAgentsRequestOptions{Query: &generated.DoctorAgentsQuery{}}
 	if repo != "" {
 		opts.Query.Repo = new(repo)
+	}
+	if len(names) > 0 {
+		opts.Query.Agent = names
 	}
 	resp, err := d.client().DoctorAgentsRaw(ctx, opts)
 	var out doctorDaemonAgents
@@ -297,25 +303,45 @@ func (d liveDoctorDaemon) Health(ctx context.Context) (*storage.HealthStatus, er
 	return &out, nil
 }
 
-// doctorFailedJobLimit bounds the failed-job scan to recent history; the
-// check only looks at the last week, and the list is newest first.
-const doctorFailedJobLimit = 200
+// doctorFailedJobPage is the page size for the failed-job scan.
+const doctorFailedJobPage = 100
 
-func (d liveDoctorDaemon) FailedJobs(ctx context.Context) ([]storage.ReviewJob, error) {
-	resp, err := d.client().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{
-		Query: &generated.ListJobsQuery{
-			Status:     new("failed"),
-			Limit:      new(int64(doctorFailedJobLimit)),
-			OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
-		},
-	})
-	var out struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
+// FailedJobs returns failed jobs enqueued at or after since. The jobs API
+// lists newest first, so paging stops at the first page that reaches back
+// past since.
+func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]storage.ReviewJob, error) {
+	var all []storage.ReviewJob
+	var cursor *string
+	for {
+		resp, err := d.client().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{
+			Query: &generated.ListJobsQuery{
+				Status:     new("failed"),
+				Limit:      new(int64(doctorFailedJobPage)),
+				OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
+				Cursor:     cursor,
+			},
+		})
+		var page struct {
+			Jobs       []storage.ReviewJob `json:"jobs"`
+			HasMore    bool                `json:"has_more"`
+			NextCursor *string             `json:"next_cursor"`
+		}
+		if err := decodeDoctorResponse(resp, err, &page); err != nil {
+			return nil, err
+		}
+		reachedCutoff := false
+		for _, j := range page.Jobs {
+			if j.EnqueuedAt.Before(since) {
+				reachedCutoff = true
+				break
+			}
+			all = append(all, j)
+		}
+		if reachedCutoff || !page.HasMore || page.NextCursor == nil {
+			return all, nil
+		}
+		cursor = page.NextCursor
 	}
-	if err := decodeDoctorResponse(resp, err, &out); err != nil {
-		return nil, err
-	}
-	return out.Jobs, nil
 }
 
 func (d liveDoctorDaemon) RepoTracked(ctx context.Context, repo string) (bool, error) {
