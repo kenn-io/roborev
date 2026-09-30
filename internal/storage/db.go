@@ -1496,6 +1496,10 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	if err := db.migrateRepoNames(); err != nil {
+		return fmt.Errorf("migrate repository names: %w", err)
+	}
+
 	return nil
 }
 
@@ -2506,5 +2510,55 @@ func (db *DB) migrateReviewJobsConstraintsForAutoDesign() error {
 		}
 	}
 
+	return tx.Commit()
+}
+
+// migrateRepoNames replaces the old directory-based defaults once. Keep custom
+// names and all checkout paths, including paths that no longer exist on disk.
+func (db *DB) migrateRepoNames() error {
+	const stateKey = "repo_names_from_identity"
+	done, err := db.GetSyncState(stateKey)
+	if err != nil || done == "done" {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT id, root_path, name, identity FROM repos
+		WHERE identity IS NOT NULL AND identity != ''`)
+	if err != nil {
+		return err
+	}
+	var repos []Repo
+	for rows.Next() {
+		var repo Repo
+		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &repo.Identity); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if repo.Name == filepath.Base(normalizeStoredRepoPath(repo.RootPath)) {
+			repos = append(repos, repo)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, repo := range repos {
+		name := ExtractRepoNameFromIdentity(repo.Identity)
+		if name != repo.Name {
+			if _, err := tx.Exec("UPDATE repos SET name = ? WHERE id = ?", name, repo.ID); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec("INSERT INTO sync_state (key, value) VALUES (?, 'done')", stateKey); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

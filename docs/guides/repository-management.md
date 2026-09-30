@@ -34,7 +34,7 @@ roborev repo merge source target      # Merge reviews into another repo
 ### Rename for Clarity
 
 The rename command is useful when you want a friendlier display name than the
-directory name:
+repository name:
 
 ```bash
 roborev repo rename my-project-v2 "My Project"
@@ -110,7 +110,17 @@ roborev automatically creates a repository entry when you:
 1. Queue a review for a commit in a new repo
 1. Run any roborev command in an untracked repo
 
-The default display name is the directory name. You can customize this with:
+The default display name comes from the stored repository identity, usually its
+Git remote URL. Checkouts of `https://example.com/team/my-project.git` display
+as `my-project`, regardless of their directory names. Repositories without an
+identity use their directory name.
+
+Existing directory-based default names are corrected when the database opens.
+Custom names are preserved. This changes names only; stored repository paths and
+review associations stay the same. The checkout does not need to exist on disk
+for its name to be corrected.
+
+You can customize the TUI display name with:
 
 ```toml
 # .roborev.toml in your repo

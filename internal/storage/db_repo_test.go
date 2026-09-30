@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,29 @@ func TestRepoOperations(t *testing.T) {
 	require.NoError(t, err, "GetOrCreateRepo (second call) failed: %v")
 
 	assert.Equal(t, repo2.ID, repo.ID)
+}
+
+func TestRepoNameFromIdentity(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, tc := range []struct{ label, identity, want string }{
+		{"https", "https://example.com/team/project-a.git", "project-a"},
+		{"ssh", "git@example.com:team/project-a.git", "project-a"},
+		{"local", "local:///src/worktree-local", "worktree-local"},
+		{"no identity", "", "worktree-no-identity"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "worktree-"+strings.ReplaceAll(tc.label, " ", "-"))
+			repo, err := db.GetOrCreateRepo(root, tc.identity)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, repo.Name)
+			assert.Equal(t, filepath.ToSlash(root), repo.RootPath)
+			stored, err := db.GetRepoByID(repo.ID)
+			require.NoError(t, err)
+			assert.Equal(t, repo.Name, stored.Name)
+		})
+	}
 }
 
 func TestCommitOperations(t *testing.T) {
@@ -246,6 +271,7 @@ func TestRepoIdentity(t *testing.T) {
 	})
 
 	t.Run("backfills identity when not set", func(t *testing.T) {
+		assert := assert.New(t)
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -253,13 +279,28 @@ func TestRepoIdentity(t *testing.T) {
 		repo1, err := db.GetOrCreateRepo("/tmp/backfill-test")
 		require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-		assert.Empty(t, repo1.Identity)
+		assert.Empty(repo1.Identity)
 
 		// Call again with identity - should backfill
 		repo2, err := db.GetOrCreateRepo("/tmp/backfill-test", "git@github.com:test/backfill.git")
 		require.NoError(t, err, "GetOrCreateRepo with identity failed: %v")
 
-		assert.Equal(t, "git@github.com:test/backfill.git", repo2.Identity)
+		assert.Equal("git@github.com:test/backfill.git", repo2.Identity)
+		assert.Equal("backfill", repo2.Name)
+		assert.Equal(repo1.RootPath, repo2.RootPath)
+	})
+
+	t.Run("preserves custom name when backfilling identity", func(t *testing.T) {
+		db := openTestDB(t)
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		root := filepath.Join(t.TempDir(), "worktree-a")
+		_, err := db.GetOrCreateRepo(root)
+		require.NoError(t, err)
+		_, err = db.RenameRepo(root, "Custom Project")
+		require.NoError(t, err)
+		repo, err := db.GetOrCreateRepo(root, "https://example.com/team/project-a.git")
+		require.NoError(t, err)
+		assert.Equal(t, "Custom Project", repo.Name)
 	})
 
 	t.Run("does not overwrite existing identity", func(t *testing.T) {

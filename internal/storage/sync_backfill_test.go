@@ -41,6 +41,33 @@ func TestBackfillSourceMachineID(t *testing.T) {
 		"Expected source_machine_id %q, got %q", machineID, newSourceMachineID)
 }
 
+func TestBackfillRepoIdentities_UpdatesDefaultNames(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, custom := range []bool{false, true} {
+		root := filepath.Join(t.TempDir(), "feature-checkout")
+		require.NoError(t, exec.Command("git", "init", root).Run())
+		require.NoError(t, exec.Command("git", "-C", root, "remote", "add", "origin", "https://example.com/team/project-a.git").Run())
+		repo, err := db.GetOrCreateRepo(root)
+		require.NoError(t, err)
+		want := "project-a"
+		if custom {
+			want = "Custom Project"
+			_, err = db.RenameRepo(root, want)
+			require.NoError(t, err)
+		}
+		count, err := db.BackfillRepoIdentities()
+		require.NoError(t, err)
+		assert.Equal(1, count)
+		got, err := db.GetRepoByID(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(want, got.Name)
+		assert.Equal(filepath.ToSlash(root), got.RootPath)
+	}
+}
+
 func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

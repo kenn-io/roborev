@@ -1379,3 +1379,59 @@ func TestPatchIDMigration(t *testing.T) {
 		}, "expected patch_id column to exist, got count=%d", count)
 	}
 }
+
+func TestRepoNameMigration(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	dbPath := ""
+	require.NoError(t, db.QueryRow("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath))
+	// Seed the names stored by released versions, without requiring any checkout.
+	_, err := db.Exec("DELETE FROM sync_state WHERE key = 'repo_names_from_identity'")
+	require.NoError(t, err)
+	fixtures := []struct{ root, name, identity, want string }{
+		{"/missing/worktree-a", "worktree-a", "https://example.com/team/project-a.git", "project-a"},
+		{"/missing/worktree-b", "worktree-b", "git@example.com:team/project-a.git", "project-a"},
+		{"/missing/custom", "Custom Project", "https://example.com/team/project-a.git", "Custom Project"},
+		{"/missing/local", "local", "local:///missing/local", "local"},
+		{"/missing/no-identity", "no-identity", "", "no-identity"},
+	}
+	var jobIDs []int64
+	for _, f := range fixtures {
+		result, err := db.Exec("INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)", f.root, f.name, f.identity)
+		require.NoError(t, err)
+		id, err := result.LastInsertId()
+		require.NoError(t, err)
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: id, GitRef: "abc123", Agent: "test"})
+		require.NoError(t, err)
+		jobIDs = append(jobIDs, job.ID)
+	}
+	require.NoError(t, db.Close())
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	for i, f := range fixtures {
+		repo, err := db.GetRepoByPath(f.root)
+		require.NoError(t, err)
+		assert.Equal(f.want, repo.Name)
+		assert.Equal(f.root, repo.RootPath)
+		assert.Equal(f.identity, repo.Identity)
+		job, err := db.GetJobByID(jobIDs[i])
+		require.NoError(t, err)
+		assert.Equal(f.want, job.RepoName)
+		assert.Equal(f.root, job.RepoPath)
+	}
+	repos, count, err := db.ListReposWithReviewCounts()
+	require.NoError(t, err)
+	assert.Len(repos, len(fixtures))
+	assert.Equal(len(fixtures), count)
+	// A later explicit rename must survive subsequent database opens.
+	_, err = db.RenameRepo(fixtures[0].root, fixtures[0].name)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetRepoByPath(fixtures[0].root)
+	require.NoError(t, err)
+	assert.Equal(fixtures[0].name, repo.Name)
+}

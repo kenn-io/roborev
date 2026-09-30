@@ -71,6 +71,12 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		repoIdentity = identity[0]
 	}
 
+	basename := filepath.Base(absPath)
+	name := basename
+	if repoIdentity != "" {
+		name = ExtractRepoNameFromIdentity(repoIdentity)
+	}
+
 	// Try to find existing by path
 	var repo Repo
 	var createdAt string
@@ -83,11 +89,15 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 
 		// Update identity if provided and not already set
 		if repoIdentity != "" && repo.Identity == "" {
-			_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, repo.ID)
+			_, err = db.Exec(`UPDATE repos SET identity = ?,
+				name = CASE WHEN name = ? THEN ? ELSE name END WHERE id = ?`, repoIdentity, basename, name, repo.ID)
 			if err != nil {
 				return nil, fmt.Errorf("update identity: %w", err)
 			}
 			repo.Identity = repoIdentity
+			if repo.Name == basename {
+				repo.Name = name
+			}
 		}
 		return &repo, nil
 	}
@@ -97,7 +107,6 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 
 	// Create new — use INSERT OR IGNORE to handle concurrent inserts on the
 	// same root_path (UNIQUE constraint). If the row already exists, re-read it.
-	name := filepath.Base(absPath)
 	if repoIdentity != "" {
 		_, err = db.Exec(`INSERT OR IGNORE INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, absPath, name, repoIdentity)
 	} else {
@@ -122,11 +131,15 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 
 	// Update identity if provided and not already set
 	if repoIdentity != "" && created.Identity == "" {
-		_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, created.ID)
+		_, err = db.Exec(`UPDATE repos SET identity = ?,
+				name = CASE WHEN name = ? THEN ? ELSE name END WHERE id = ?`, repoIdentity, basename, name, created.ID)
 		if err != nil {
 			return nil, fmt.Errorf("update identity: %w", err)
 		}
 		created.Identity = repoIdentity
+		if created.Name == basename {
+			created.Name = name
+		}
 	}
 
 	return &created, nil

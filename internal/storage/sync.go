@@ -269,7 +269,7 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 			continue
 		}
 
-		if err := db.SetRepoIdentity(r.id, identity); err != nil {
+		if _, err := db.GetOrCreateRepo(r.path, identity); err != nil {
 			// May fail due to duplicate identity - skip
 			continue
 		}
