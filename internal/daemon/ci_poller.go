@@ -497,21 +497,30 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	return errors.Join(processingErrors...)
 }
 
-// reconcileRetryHealth checks failed attempts even after the PR advances to a
-// newer head. Worker events may have completed or removed the older attempt
-// since the last poll, so its absence from the retry sweep is not a failure.
+// reconcileRetryHealth restores persisted failures after restart and checks
+// failed attempts even after the PR advances to a newer head. Worker events may
+// have completed or removed an attempt since the last poll.
 func (p *CIPoller) reconcileRetryHealth(ghRepo string) error {
+	attempts, err := p.db.GetFailedReviewAttempts(ghRepo)
+	if err != nil {
+		return err
+	}
+	// The value records whether health already reports this failure, so repeated
+	// polls during backoff do not append duplicate entries to the error history.
+	targets := make(map[ciPollTarget]bool)
+	for _, attempt := range attempts {
+		targets[ciPollTarget{repo: ghRepo, prNumber: attempt.PRNumber, headSHA: attempt.HeadSHA}] = false
+	}
 	p.mu.Lock()
-	var targets []ciPollTarget
 	for target := range p.pollErrors {
 		if target.repo == ghRepo && target.prNumber != 0 {
-			targets = append(targets, target)
+			targets[target] = true
 		}
 	}
 	p.mu.Unlock()
 
 	var lookupErrors []error
-	for _, target := range targets {
+	for target, reported := range targets {
 		attempt, err := p.db.GetReviewAttempt(ghRepo, target.prNumber, target.headSHA)
 		if err != nil {
 			lookupErrors = append(lookupErrors, fmt.Errorf("check failed retry for PR #%d: %w", target.prNumber, err))
@@ -525,6 +534,8 @@ func (p *CIPoller) reconcileRetryHealth(ghRepo string) error {
 			p.recordPollResult(ghRepo, target.prNumber, target.headSHA, nil)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			lookupErrors = append(lookupErrors, fmt.Errorf("check failed retry panel for PR #%d: %w", target.prNumber, err))
+		} else if !reported && (attempt.LastErrorClass != "" || attempt.LastErrorExcerpt != "") {
+			p.recordPollResult(ghRepo, target.prNumber, target.headSHA, errors.New("review attempt failed"))
 		}
 	}
 	return errors.Join(lookupErrors...)

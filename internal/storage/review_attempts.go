@@ -352,6 +352,29 @@ func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
 	return attempts, rows.Err()
 }
 
+// GetFailedReviewAttempts returns non-terminal attempts with a recorded failure,
+// including attempts whose retry backoff has not elapsed yet.
+func (db *DB) GetFailedReviewAttempts(repo string) ([]ReviewAttempt, error) {
+	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
+		FROM ci_pr_review_attempts
+		WHERE github_repo = ? AND state IN ('pending', 'deferred')
+		  AND (last_error_class != '' OR last_error_excerpt != '')`, repo)
+	if err != nil {
+		return nil, fmt.Errorf("get failed review attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var attempts []ReviewAttempt
+	for rows.Next() {
+		a, err := scanReviewAttempt(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan failed review attempt: %w", err)
+		}
+		attempts = append(attempts, *a)
+	}
+	return attempts, rows.Err()
+}
+
 // GetDueReviewAttempts returns the deferred attempts whose next_attempt_at is
 // due (<= now) — the retry sweep's candidate set. The due comparison uses
 // SQLite datetime() arithmetic on both sides, mirroring GetTimedOutPanels, so

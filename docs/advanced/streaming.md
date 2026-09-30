@@ -73,15 +73,16 @@ discovery removes it from the configured set. Discovery failures remain
 unhealthy even when polling can use cached or partial repository lists.
 Successful discovery clears the discovery failure.
 
-A failed retry stays unhealthy during retry backoff. Its error belongs to that
-commit: it clears when that review queues successfully, a later poll confirms it
-is active or complete, or its attempt is removed. A successful review of a newer
-commit does not clear an older retry's error. Closed-PR cleanup and removal of
-obsolete retries clear their errors only after they succeed. An intentionally
-empty review matrix removes a claimed retry instead of re-arming disabled work.
-Adding a configured skip label removes a deferred retry and its health error on
-the next poll, without waiting for backoff to expire. Active and completed
-reviews are left unchanged.
+A failed retry stays unhealthy during retry backoff. Polling restores recorded
+failures after a restart, including while retries are still in backoff. Each
+error belongs to that commit: it clears when that review queues successfully, a
+later poll confirms it is active or complete, or its attempt is removed. A
+successful review of a newer commit does not clear an older retry's error.
+Closed-PR cleanup and removal of obsolete retries clear their errors only after
+they succeed. An intentionally empty review matrix removes a claimed retry
+instead of re-arming disabled work. Adding a configured skip label removes a
+deferred retry and its health error on the next poll, without waiting for
+backoff to expire. Active and completed reviews are left unchanged.
 
 CI failures also appear in `recent_errors` with a repository or discovery
 summary. Detailed errors remain in the daemon log. Recovery preserves the error
