@@ -180,7 +180,7 @@ jobs:
           - os: ubuntu-latest
             runner: namespace-profile-linux-8cpu
           - os: macos-latest
-            runner: macos-latest
+            runner: namespace-profile-mac-6cpu
           - os: windows-latest
             runner: namespace-profile-windows-4cpu
     runs-on: ${{ matrix.runner }}
@@ -194,10 +194,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
-          cache: ${{ runner.os == 'macOS' }}
+          cache: false
 
       - name: Configure Namespace Go cache
-        if: runner.os != 'macOS'
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9  # v1
         with:
           cache: go

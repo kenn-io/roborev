@@ -1,8 +1,7 @@
 name: CI
 
-# The PR dispatcher always calls the main-pinned workflow. That workflow
-# independently routes same-repository Linux jobs to the managed public fleet
-# and fork jobs to GitHub-hosted runners.
+# The PR dispatcher always calls the main-pinned workflow, which uses public
+# Namespace profiles with Restricted access. See AGENTS.md for access controls.
 on:
   pull_request:
     branches: [main]

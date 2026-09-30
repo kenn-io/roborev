@@ -277,6 +277,11 @@ Test conventions:
 
 ## Workflow + Commits
 
+CI uses public Namespace profiles with Restricted access, which disables
+workload access to Namespace features and APIs. GitHub fork approvals,
+workflow token permissions, and secrets are separate controls. Restricted
+access does not determine fork-job eligibility or network and cache settings.
+
 - For multi-step tasks (for example: implement + commit + PR), complete the full requested sequence without stopping partway.
 - Commit after completing each piece of work; do not wait to be asked.
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
