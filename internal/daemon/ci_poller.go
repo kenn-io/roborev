@@ -141,7 +141,7 @@ type CIPoller struct {
 
 type ciPollTarget struct {
 	repo     string // empty means repository discovery
-	prNumber int    // nonzero means a failed retry enqueue, retained during backoff
+	prNumber int    // nonzero means a failed retry operation, retained during backoff
 }
 
 type ciRepoConfigSource = config.RepoConfigSource
@@ -371,7 +371,7 @@ func (p *CIPoller) recordPollResult(repo string, prNumber int, err error) {
 		message = "polling failed for " + repo
 	}
 	if prNumber != 0 {
-		message = fmt.Sprintf("retry enqueue failed for %s#%d", repo, prNumber)
+		message = fmt.Sprintf("retry failed for %s#%d", repo, prNumber)
 	}
 	p.pollErrors[target] = message
 	if p.errorLog != nil {
@@ -478,7 +478,9 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	// retired it). Placed after processPR so the normal poll handles new HEADs
 	// first; the ClaimDueReviewAttempt CAS guarantees only one sweep re-enqueues
 	// a given attempt.
-	p.retryDueReviewAttempts(ctx, ghRepo, prs, cfg)
+	if err := p.retryDueReviewAttempts(ctx, ghRepo, prs, cfg); err != nil {
+		processingErrors = append(processingErrors, err)
+	}
 
 	// Dropped-event / crash recovery (spec §10): post any run whose synthesis
 	// went terminal but whose posting event was lost. Placed after processPR so a
@@ -489,6 +491,21 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 }
 
 func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
+	// Skip a deferred retry immediately, even during backoff. Active and
+	// completed reviews still belong to the normal deduplication gate below.
+	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
+		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
+		if err != nil {
+			return fmt.Errorf("check skipped review attempt: %w", err)
+		}
+		if attempt != nil && attempt.State == "deferred" {
+			if err := p.db.DeleteReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
+				return fmt.Errorf("delete skipped review attempt: %w", err)
+			}
+			p.skipLabeledPR(ghRepo, pr, label)
+			return nil
+		}
+	}
 	// Skip if this HEAD already has a panel run.
 	reviewed, err := p.alreadyReviewedPR(ghRepo, pr)
 	if err != nil {
@@ -774,14 +791,22 @@ func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
 		return false, fmt.Errorf("check review attempt: %w", err)
 	}
 	if attempt != nil {
-		return true, nil
+		switch attempt.State {
+		case "done":
+			p.recordPollResult(ghRepo, pr.Number, nil)
+			return true, nil
+		case "deferred":
+			return true, nil
+		}
 	}
 	if _, err := p.db.GetActiveCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid); err == nil {
+		// A panel may have committed even if enqueue's post-commit read failed.
+		p.recordPollResult(ghRepo, pr.Number, nil)
 		return true, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("check CI panel: %w", err)
 	}
-	return false, nil
+	return attempt != nil, nil
 }
 
 // markPanelsForStalePost flags a PR's still-active panel runs to post despite
@@ -2770,15 +2795,14 @@ func parseBatchReviewTime(value string) (time.Time, bool) {
 // shared enqueuePanelRun core to create a new panel run for the same repo/pr/sha.
 // The new run flows through the same finalize path: success posts and marks the
 // attempt done, another outage defers again with the next backoff.
-func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, prs []ghPR, cfg *config.Config) {
+func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, prs []ghPR, cfg *config.Config) error {
 	now := time.Now()
 	due, err := p.db.GetDueReviewAttempts(ghRepo, now)
 	if err != nil {
-		log.Printf("CI poller: error listing due review attempts for %s: %v", ghRepo, err)
-		return
+		return fmt.Errorf("list due review attempts: %w", err)
 	}
 	if len(due) == 0 {
-		return
+		return nil
 	}
 	openByNumber := make(map[int]ghPR, len(prs))
 	for _, pr := range prs {
@@ -2793,6 +2817,7 @@ func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, pr
 	if retried > 0 {
 		log.Printf("CI poller: re-enqueued %d due review attempt(s) for %s", retried, ghRepo)
 	}
+	return nil
 }
 
 // retryDueReviewAttempt re-enqueues one due deferred attempt and reports whether
@@ -2814,6 +2839,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
 			log.Printf("CI poller: error deleting stale deferred attempt for %s#%d@%s after PR advanced to %s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), gitpkg.ShortSHA(pr.HeadRefOid), err)
+			p.recordPollResult(ghRepo, attempt.PRNumber, err)
 		} else {
 			p.recordPollResult(ghRepo, attempt.PRNumber, nil)
 		}
@@ -2823,6 +2849,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
 			log.Printf("CI poller: error deleting deferred attempt skipped by label for %s#%d@%s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+			p.recordPollResult(ghRepo, attempt.PRNumber, err)
 			return false
 		}
 		p.skipLabeledPR(ghRepo, pr, label)
@@ -2832,6 +2859,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 	if err != nil {
 		log.Printf("CI poller: error claiming due review attempt for %s#%d@%s: %v",
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		p.recordPollResult(ghRepo, attempt.PRNumber, err)
 		return false
 	}
 	if !claimed {
@@ -2876,6 +2904,7 @@ func (p *CIPoller) retryAttemptPR(
 	if err != nil {
 		log.Printf("CI poller: error checking due review attempt PR %s#%d@%s: %v",
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		p.recordPollResult(ghRepo, attempt.PRNumber, err)
 		return ghPR{}, false
 	}
 	if !target.Open {
@@ -2888,6 +2917,7 @@ func (p *CIPoller) retryAttemptPR(
 	if headSHA == "" || baseRefName == "" {
 		log.Printf("CI poller: due review attempt PR %s#%d@%s direct lookup missing refs, leaving deferred",
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA))
+		p.recordPollResult(ghRepo, attempt.PRNumber, errors.New("PR lookup missing refs"))
 		return ghPR{}, false
 	}
 	return ghPR{
@@ -2968,6 +2998,7 @@ func (p *CIPoller) deleteClosedPRAttempts(ghRepo string, prNumber int) {
 	n, err := p.db.DeleteReviewAttemptsForPR(ghRepo, prNumber)
 	if err != nil {
 		log.Printf("CI poller: error deleting attempts for closed PR %s#%d: %v", ghRepo, prNumber, err)
+		p.recordPollResult(ghRepo, prNumber, err)
 		return
 	}
 	p.recordPollResult(ghRepo, prNumber, nil)

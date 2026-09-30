@@ -107,7 +107,7 @@ func TestHealthCIPollerPRFailureContinuesPolling(t *testing.T) {
 }
 
 func TestHealthCIPollerRetryFailure(t *testing.T) {
-	for _, recovery := range []string{"retry", "new head", "reviewed head", "closed", "skipped"} {
+	for _, recovery := range []string{"retry", "new head", "reviewed head", "active", "done", "closed", "skipped"} {
 		t.Run(recovery, func(t *testing.T) {
 			h, server := newCIHealthHarness(t)
 			h.stubProcessPRGit()
@@ -138,7 +138,7 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 			assert.Equal(t, 1, fetches)
 			assert.False(t, health.Healthy)
 			assert.Contains(t, health.Components, storage.ComponentHealth{
-				Name: "ci", Healthy: false, Message: "retry enqueue failed for acme/api#1",
+				Name: "ci", Healthy: false, Message: "retry failed for acme/api#1",
 			})
 
 			// Reconciliation defers the stranded attempt; skipping it during backoff
@@ -148,6 +148,7 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 			assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 
 			h.Poller.gitFetchFn = func(context.Context, string, []string) error { return nil }
+			skipped := h.CaptureSkippedChecks()
 			switch recovery {
 			case "new head":
 				pr.HeadRefOid = "head-b"
@@ -156,6 +157,20 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 				_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, now)
 				require.NoError(t, err)
 				require.NoError(t, h.DB.MarkReviewAttemptDone("acme/api", pr.Number, pr.HeadRefOid))
+			case "active", "done":
+				h.Cfg.CI.SkipLabels = []string{"skip-review"}
+				pr.Labels = []string{"skip-review"}
+				// The retry was committed, but its caller did not observe success.
+				opts := storage.EnqueueOpts{RepoID: h.Repo.ID, GitRef: "base..head-a", Agent: "test"}
+				created, _, _, err := h.DB.CreateCIPanelRun("acme/api", pr.Number, pr.HeadRefOid,
+					[]storage.EnqueueOpts{opts}, opts)
+				require.NoError(t, err)
+				require.True(t, created)
+				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET state = 'pending', next_attempt_at = NULL`)
+				require.NoError(t, err)
+				if recovery == "done" {
+					require.NoError(t, h.DB.MarkReviewAttemptDone("acme/api", pr.Number, pr.HeadRefOid))
+				}
 			case "closed":
 				h.Poller.isPROpenFn = func(string, int) bool { return false }
 				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
@@ -163,13 +178,91 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}
 			}
-			_, err = h.DB.MakeTransientReviewAttemptsDue(time.Now())
-			require.NoError(t, err)
+			if recovery == "retry" {
+				_, err = h.DB.MakeTransientReviewAttemptsDue(time.Now())
+				require.NoError(t, err)
+			}
 			h.Poller.poll(context.Background())
 			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			if recovery == "skipped" {
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				assert.Nil(t, attempt)
+			}
+			if recovery == "active" || recovery == "done" {
+				assert.True(t, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+				assert.Empty(t, *skipped, "skip labels leave active and completed reviews unchanged")
+			}
 			if recovery == "retry" || recovery == "new head" {
 				assert.True(t, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
 			}
+		})
+	}
+}
+
+func TestHealthCIPollerRetrySweepFailures(t *testing.T) {
+	for _, failure := range []string{"list", "lookup", "missing refs", "claim", "delete stale", "delete skipped", "delete closed"} {
+		t.Run(failure, func(t *testing.T) {
+			h, server := newCIHealthHarness(t)
+			h.stubProcessPRGit()
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
+			_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, time.Now())
+			require.NoError(t, err)
+			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
+				"transient", "provider unavailable", nil, time.Now().Add(-time.Minute), false))
+			// The ordinary list can omit a PR; the retry sweep checks it directly.
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+			target := panelPostTarget{Open: true, HeadSHA: pr.HeadRefOid, BaseRefName: pr.BaseRefName}
+			var lookupErr error
+			h.Poller.prPostTargetFn = func(_ context.Context, repo string, number int) (panelPostTarget, error) {
+				require.Equal(t, "acme/api", repo)
+				require.Equal(t, pr.Number, number)
+				return target, lookupErr
+			}
+			switch failure {
+			case "list":
+				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET last_panel_run_uuid = 'invalid'`)
+			case "lookup":
+				lookupErr = errors.New("provider unavailable")
+			case "missing refs":
+				target.HeadSHA = ""
+			case "claim":
+				_, err = h.DB.Exec(`CREATE TRIGGER fail_retry BEFORE UPDATE ON ci_pr_review_attempts
+					BEGIN SELECT RAISE(FAIL, 'claim unavailable'); END`)
+			case "delete stale", "delete skipped", "delete closed":
+				_, err = h.DB.Exec(`CREATE TRIGGER fail_retry BEFORE DELETE ON ci_pr_review_attempts
+					BEGIN SELECT RAISE(FAIL, 'delete unavailable'); END`)
+				switch failure {
+				case "delete stale":
+					target.HeadSHA = "head-b"
+				case "delete skipped":
+					h.Cfg.CI.SkipLabels = []string{"skip-review"}
+					target.Labels = []string{"skip-review"}
+				case "delete closed":
+					target.Open = false
+				}
+			}
+			require.NoError(t, err)
+			h.Poller.poll(context.Background())
+			health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+			assert.False(t, health.Healthy)
+			require.NotEmpty(t, health.RecentErrors)
+			assert.Equal(t, "ci", health.RecentErrors[0].Component)
+
+			// Repair the dependency, then let the real sweep enqueue or clean up.
+			_, err = h.DB.Exec(`DROP TRIGGER IF EXISTS fail_retry`)
+			require.NoError(t, err)
+			_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET last_panel_run_uuid = ''`)
+			require.NoError(t, err)
+			lookupErr = nil
+			if failure == "missing refs" {
+				target.HeadSHA = pr.HeadRefOid
+			}
+			h.Poller.poll(context.Background())
+			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 		})
 	}
 }

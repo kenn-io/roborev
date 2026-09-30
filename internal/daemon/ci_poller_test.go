@@ -967,7 +967,7 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retry sweep re-enqueues a fresh panel run for the same (repo, pr, sha).
-	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg)
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
 	require.NoError(t, err)
@@ -4718,8 +4718,8 @@ func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, oldSHA,
 		"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
-	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
-		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg)
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg))
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, oldSHA)
 	require.NoError(t, err)
@@ -4751,8 +4751,8 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 		return panelPostTarget{Open: true, HeadSHA: headSHA, HeadRefName: "feature/retry", BaseRefName: baseBranch}, nil
 	}
 
-	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
-		[]ghPR{{Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg)
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg))
 
 	assert.Equal([]int{prNum}, lookedUp, "missing PR is checked directly before skipping")
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
@@ -4804,8 +4804,8 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 			Labels: []string{"Skip-Review"},
 		}, nil
 	}
-	h.Poller.retryDueReviewAttempts(
-		context.Background(), "acme/api", nil, h.Cfg)
+	require.NoError(t, h.Poller.retryDueReviewAttempts(
+		context.Background(), "acme/api", nil, h.Cfg))
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)
