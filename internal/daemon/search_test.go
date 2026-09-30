@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -50,6 +51,7 @@ type recordingSearchReconciler struct {
 	started chan struct{}
 	stopped chan struct{}
 	wakes   chan struct{}
+	jobs    chan int64
 	health  searchindex.HealthSnapshot
 }
 
@@ -80,6 +82,8 @@ func (r *countingSearchReconciler) Run(ctx context.Context) error {
 
 func (r *countingSearchReconciler) Wake() {}
 
+func (r *countingSearchReconciler) WakeJob(int64) {}
+
 func (r *countingSearchReconciler) Health() searchindex.HealthSnapshot {
 	return searchindex.HealthSnapshot{}
 }
@@ -108,6 +112,7 @@ func newRecordingSearchReconciler() *recordingSearchReconciler {
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 		wakes:   make(chan struct{}, 8),
+		jobs:    make(chan int64, 8),
 	}
 }
 
@@ -120,6 +125,10 @@ func (r *recordingSearchReconciler) Run(ctx context.Context) error {
 
 func (r *recordingSearchReconciler) Wake() {
 	r.wakes <- struct{}{}
+}
+
+func (r *recordingSearchReconciler) WakeJob(jobID int64) {
+	r.jobs <- jobID
 }
 
 func (r *recordingSearchReconciler) Health() searchindex.HealthSnapshot {
@@ -392,49 +401,34 @@ func TestSearchEndpointMapsSanitizedModeErrors(t *testing.T) {
 }
 
 func TestSearchReconcilerLifecycleAndEventWakes(t *testing.T) {
-	server := setupTestServer(t)
-	reconciler := newRecordingSearchReconciler()
-	server.searchReconciler = reconciler
-	initialSubscribers := server.broadcaster.SubscriberCount()
+	synctest.Test(t, func(t *testing.T) {
+		server := setupTestServer(t)
+		reconciler := newRecordingSearchReconciler()
+		server.searchReconciler = reconciler
+		initialSubscribers := server.broadcaster.SubscriberCount()
+		server.startSearch(t.Context())
+		synctest.Wait()
+		assert.Equal(t, initialSubscribers+1, server.broadcaster.SubscriberCount())
 
-	server.startSearch(t.Context())
-	require.Eventually(t, func() bool {
-		select {
-		case <-reconciler.started:
-			return true
-		default:
-			return false
+		for _, eventType := range []string{
+			"review.completed", "review.closed", "review.reopened", "review.commented",
+		} {
+			server.broadcaster.Broadcast(Event{Type: eventType, JobID: 7})
 		}
-	}, time.Second, time.Millisecond)
-	assert.Equal(t, initialSubscribers+1, server.broadcaster.SubscriberCount())
-
-	for _, eventType := range []string{
-		"review.completed", "review.closed", "review.reopened", "review.remapped", "review.commented",
-	} {
-		server.broadcaster.Broadcast(Event{Type: eventType})
-	}
-	server.broadcaster.Broadcast(Event{Type: "review.started"})
-
-	for range 5 {
-		select {
-		case <-reconciler.wakes:
-		case <-time.After(time.Second):
-			require.FailNow(t, "expected search reconciler wake")
+		// Legacy commit comments and remaps affect more than one job.
+		server.broadcaster.Broadcast(Event{Type: "review.commented", SHA: "abc123"})
+		server.broadcaster.Broadcast(Event{Type: "review.remapped"})
+		server.broadcaster.Broadcast(Event{Type: "review.started", JobID: 7})
+		synctest.Wait()
+		require.Len(t, reconciler.jobs, 4)
+		for range 4 {
+			assert.Equal(t, int64(7), <-reconciler.jobs)
 		}
-	}
-	select {
-	case <-reconciler.wakes:
-		require.FailNow(t, "unexpected wake for unrelated event")
-	case <-time.After(10 * time.Millisecond):
-	}
+		assert.Len(t, reconciler.wakes, 2)
 
-	server.stopSearch()
-	select {
-	case <-reconciler.stopped:
-	case <-time.After(time.Second):
-		require.FailNow(t, "search reconciler did not stop")
-	}
-	assert.Equal(t, initialSubscribers, server.broadcaster.SubscriberCount())
+		server.stopSearch()
+		assert.Equal(t, initialSubscribers, server.broadcaster.SubscriberCount())
+	})
 }
 
 func TestSearchLifecycleIgnoresRepeatedStartAndJoinsRepeatedStop(t *testing.T) {
@@ -552,5 +546,7 @@ func TestRerunWakesSearchReconcilerToDropTheDeletedReview(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Len(t, reconciler.wakes, 1)
+	require.Len(t, reconciler.jobs, 1)
+	assert.Equal(t, job.ID, <-reconciler.jobs)
+	assert.Empty(t, reconciler.wakes)
 }

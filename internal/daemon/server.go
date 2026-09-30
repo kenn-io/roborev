@@ -2472,7 +2472,7 @@ func (s *Server) humaRerunJob(
 		// A rerun deletes the job's review, so search must drop it now rather
 		// than at the next safety sweep.
 		if s.searchReconciler != nil {
-			s.searchReconciler.Wake()
+			s.searchReconciler.WakeJob(input.Body.JobID)
 		}
 	}
 

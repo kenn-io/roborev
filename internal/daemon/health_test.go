@@ -30,6 +30,15 @@ type replacementHealthStore struct {
 	sources []storage.SearchReviewSource
 }
 
+func (s *replacementHealthStore) GetSearchDocumentForJob(_ context.Context, jobID int64) (*storage.SearchReviewSource, error) {
+	for _, source := range s.sources {
+		if source.JobID == jobID {
+			return &source, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *replacementHealthStore) ListSearchDocuments(
 	_ context.Context, after int64, limit int,
 ) ([]storage.SearchReviewSource, error) {

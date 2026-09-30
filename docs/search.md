@@ -113,11 +113,15 @@ exact size is not yet known.
 
 ## Freshness and backfill
 
-The daemon reconciles search data in the background at startup, after review and
-response changes, after rows are pulled from PostgreSQL sync, and during a
-periodic safety sweep. Existing completed reviews are included in the first
-mirror scan. Reviews synchronized from PostgreSQL are indexed locally after
-normal sync convergence; PostgreSQL does not store search vectors.
+The daemon scans existing reviews at startup and every five minutes. Completing,
+closing, reopening, commenting on, or rerunning a job refreshes only that job's
+search document. Repeated updates to the same job coalesce. Embedding backfill
+continues without rereading unchanged review history between batches.
+
+Changes that span multiple jobs, such as commit-level comments and repository
+remaps, still request a full scan. The periodic sweep also picks up missed
+events and reviews pulled from PostgreSQL sync. Job updates do not postpone that
+sweep. PostgreSQL does not store search vectors.
 
 Lexical rows become available as mirror pages commit. A first embedding
 generation is not activated until all current documents have been handled.

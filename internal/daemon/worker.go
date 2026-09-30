@@ -2186,7 +2186,17 @@ func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error 
 		if err := wp.db.MarkReviewClosedByJobID(srcJobID, true); err != nil {
 			log.Printf("[%s] Failed to mark job %d as closed: %v", workerID, srcJobID, err)
 			failedIDs = append(failedIDs, srcJobID)
+			continue
 		}
+		source, err := wp.db.GetJobByID(srcJobID)
+		if err != nil {
+			log.Printf("[%s] Load closed compact source job %d: %v", workerID, srcJobID, err)
+		}
+		event := eventForJob("review.closed", source, srcJobID)
+		// Notify search and other subscribers without adding hook execution
+		// to automatic compaction bookkeeping.
+		event.SuppressHooks = true
+		wp.broadcaster.Broadcast(event)
 	}
 
 	successCount := len(metadata.SourceJobIDs) - len(failedIDs)

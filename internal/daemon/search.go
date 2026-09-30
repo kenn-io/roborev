@@ -35,6 +35,7 @@ type reviewSearcher interface {
 type searchReconciler interface {
 	Run(context.Context) error
 	Wake()
+	WakeJob(int64)
 	Health() searchindex.HealthSnapshot
 }
 
@@ -74,7 +75,11 @@ func (s *Server) startSearch(ctx context.Context) {
 					return
 				}
 				if isSearchWakeEvent(event.Type) {
-					s.searchReconciler.Wake()
+					if event.JobID > 0 {
+						s.searchReconciler.WakeJob(event.JobID)
+					} else {
+						s.searchReconciler.Wake()
+					}
 				}
 			}
 		}

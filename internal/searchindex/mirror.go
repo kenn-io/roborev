@@ -172,7 +172,11 @@ func nullable(value string) any {
 // DeleteMissing removes documents absent from the canonical feed, including
 // vector rows and stamps from every generation.
 func (index *Index) DeleteMissing(ctx context.Context, seen map[string]struct{}) (int, error) {
-	rows, err := index.db.QueryContext(ctx, `SELECT doc_key FROM review_mirror ORDER BY doc_key`)
+	return index.deleteMissing(ctx, seen, `SELECT doc_key FROM review_mirror ORDER BY doc_key`)
+}
+
+func (index *Index) deleteMissing(ctx context.Context, seen map[string]struct{}, query string, args ...any) (int, error) {
+	rows, err := index.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("list mirrored documents: %w", err)
 	}

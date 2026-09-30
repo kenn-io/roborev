@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -104,6 +105,27 @@ func (db *DB) ListSearchDocuments(ctx context.Context, afterReviewID int64, limi
 		}
 	}
 	return sources, nil
+}
+
+// GetSearchDocumentForJob returns the job's complete search document, or nil
+// when its review has been deleted or is no longer eligible for search.
+func (db *DB) GetSearchDocumentForJob(ctx context.Context, jobID int64) (*SearchReviewSource, error) {
+	source, job, verdict, err := scanSearchReviewSource(db.QueryRowContext(ctx,
+		searchFeedSelect+` WHERE j.id = ? `+searchFeedEligibility, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !eligibleSearchReview(job, source) {
+		return nil, nil
+	}
+	if err := db.attachSearchResponses(&source, job); err != nil {
+		return nil, err
+	}
+	source.Verdict = searchVerdict(job, verdict, source.Output)
+	return &source, nil
 }
 
 // SearchDocumentKey is the search document key for a review: its UUID, or a

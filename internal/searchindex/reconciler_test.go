@@ -63,6 +63,20 @@ func (s *reconcilerStore) callCount() int {
 	return len(s.calls)
 }
 
+func (s *reconcilerStore) GetSearchDocumentForJob(_ context.Context, jobID int64) (*storage.SearchReviewSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return nil, s.err
+	}
+	for _, source := range s.sources {
+		if source.JobID == jobID {
+			return &source, nil
+		}
+	}
+	return nil, nil
+}
+
 type reconcilerEmbedder struct {
 	space     embedmodel.Descriptor
 	batchSize int
@@ -162,7 +176,7 @@ func TestReconcilerMirrorPagesAreCappedAt500(t *testing.T) {
 	assert.Zero(t, *r.Health().MirrorBacklog)
 }
 
-func TestReconcilerRefreshesMirrorBeforeEachFourBatchFillTurn(t *testing.T) {
+func TestReconcilerDoesNotRescanHistoryBetweenFillTurns(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(8)}
 	embedder := &reconcilerEmbedder{
@@ -185,8 +199,8 @@ func TestReconcilerRefreshesMirrorBeforeEachFourBatchFillTurn(t *testing.T) {
 
 	_, err = r.reconcileTurn(context.Background())
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, store.callCount(), 2,
-		"the next bounded vector turn must refresh mirror work again")
+	assert.Equal(t, 1, store.callCount(),
+		"continuing vector backfill must not reread unchanged review history")
 	assert.Equal(t, 8, embedder.callCount())
 	assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
 	assert.Equal(t, int64(0), r.Health().EmbeddingBacklog)
@@ -210,6 +224,7 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	store.mu.Lock()
 	store.sources = makeSearchSources(7)
 	store.mu.Unlock()
+	r.Wake()
 	more, err = r.reconcileTurn(ctx)
 	require.NoError(t, err)
 	assert.True(t, more)
@@ -625,6 +640,7 @@ func TestReconcilerFillsGenerationStoredByEarlierReleaseInPlace(t *testing.T) {
 	store.mu.Lock()
 	store.sources = sources
 	store.mu.Unlock()
+	r.WakeJob(sources[1].JobID)
 	more, err = r.reconcileTurn(ctx)
 	require.NoError(t, err)
 	assert.False(t, more)

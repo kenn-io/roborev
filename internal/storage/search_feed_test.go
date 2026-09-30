@@ -51,7 +51,17 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 		{jobType: JobTypeReview, status: JobStatusDone, output: ""},
 	}
 	for i, fixture := range fixtures {
-		seedSearchFeedReview(t, db, repoID, commitID, i+1, fixture)
+		reviewID := seedSearchFeedReview(t, db, repoID, commitID, i+1, fixture)
+		var jobID int64
+		require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+		source, err := db.GetSearchDocumentForJob(t.Context(), jobID)
+		require.NoError(t, err)
+		if i < 7 {
+			require.NotNil(t, source)
+			assert.Equal(t, fixture.output, source.Output)
+		} else {
+			assert.Nil(t, source)
+		}
 	}
 
 	first, err := db.ListSearchDocuments(context.Background(), 0, 3)
@@ -158,6 +168,22 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 	require.Len(t, ordinary.Responses, 1)
 	require.NotNil(t, ordinary.Responses[0].UUID)
 	assert.Equal(t, "must stay out", ordinary.Responses[0].Response)
+
+	// Incremental refreshes must attach the same complete, ordered comments.
+	got, err := db.GetSearchDocumentForJob(t.Context(), jobID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, source.Responses, got.Responses)
+	got, err = db.GetSearchDocumentForJob(t.Context(), ordinary.JobID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, ordinary.Responses, got.Responses)
+
+	_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	require.NoError(t, err)
+	got, err = db.GetSearchDocumentForJob(t.Context(), jobID)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
