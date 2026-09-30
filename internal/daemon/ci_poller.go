@@ -531,6 +531,11 @@ func (p *CIPoller) reconcileRetryHealth(ghRepo string) error {
 }
 
 func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
+	// Retry unfinished cancellation before any gate can skip this PR. Active
+	// panels remain subject to the normal enqueue and quiet-hours decisions.
+	if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, false); err != nil {
+		return err
+	}
 	// Skip a deferred retry immediately, even during backoff. Active and
 	// completed reviews still belong to the normal deduplication gate below.
 	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
@@ -581,7 +586,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if dec.quietOnly {
 			p.markPanelsForStalePost(ghRepo, pr)
 		} else {
-			p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
+			if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
+				return err
+			}
 		}
 		p.postDeferredStatus(ghRepo, pr, dec.nextEligible)
 		return nil
@@ -642,7 +649,9 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	// fetch/merge-base so a transient clone/fetch failure never cancels the prior
 	// run. Throttled rapid re-pushes supersede before returning above, without
 	// enqueuing a replacement run.
-	p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
+	if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
+		return false, err
+	}
 
 	prDiscussionContext, err := p.buildPRDiscussionContext(ctx, ghRepo, pr.Number)
 	if err != nil {
@@ -2643,53 +2652,50 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 	return state, desc
 }
 
-// supersedePriorPanels cancels every still-active panel run for a PR at a HEAD
-// other than newHeadSHA and retires its mapping, so a fresh push abandons the
-// stale run before its replacement enqueues (spec §10). The retired mapping is
-// non-postable but remains as throttle memory for rapid re-pushes.
-// alreadyReviewedPR already excluded the same HEAD, so the SHA guard is
-// defensive. Best-effort: per-row errors are logged and the sweep continues. The
-// whole run is being abandoned, so the synthesis parent is canceled
-// (parent-first) — unlike the timeout sweep, which keeps the synthesis to post
-// partial results.
-func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA string) {
-	rows, err := p.db.GetActivePanelsForPR(ghRepo, prNumber)
+// supersedePriorPanels finishes cancellation of retired runs. With includeActive,
+// it also retires and cancels active runs for older heads before their replacement
+// enqueues. Mappings remain non-postable throttle memory, and failures remain
+// eligible for later polls. Current-head attempts retain their retry backoff.
+func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA string, includeActive bool) error {
+	rows, err := p.db.GetUnpostedPanelsForPR(ghRepo, prNumber)
 	if err != nil {
-		log.Printf("CI poller: error listing active panels for %s#%d: %v", ghRepo, prNumber, err)
-		return
+		return fmt.Errorf("list panels for supersede cleanup: %w", err)
 	}
-	superseded := 0
+	var cleanupErrors []error
 	for i := range rows {
 		row := &rows[i]
-		if row.HeadSHA == newHeadSHA {
+		if row.RetiredAt == nil && (!includeActive || row.HeadSHA == newHeadSHA) {
 			continue
 		}
 		synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
 		if err != nil {
-			log.Printf("CI poller: supersede: get synthesis for %s: %v", row.PanelRunUUID, err)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: get synthesis for %s: %w", row.PanelRunUUID, err))
 			continue
 		}
 		if err := p.db.MarkPanelRetired(row.ID); err != nil {
-			log.Printf("CI poller: supersede: retire mapping %s: %v", row.PanelRunUUID, err)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: retire mapping %s: %w", row.PanelRunUUID, err))
 			continue
-		}
-		if err := p.db.DeleteReviewAttempt(ghRepo, prNumber, row.HeadSHA); err != nil {
-			log.Printf("CI poller: supersede: delete review attempt for %s#%d@%s: %v",
-				ghRepo, prNumber, gitpkg.ShortSHA(row.HeadSHA), err)
-		} else {
-			p.recordPollResult(ghRepo, prNumber, row.HeadSHA, nil)
 		}
 		canceled, err := cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
 		p.broadcastCanceledJobs(canceled)
 		if err != nil {
-			log.Printf("CI poller: supersede: cancel run %s: %v", row.PanelRunUUID, err)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: cancel run %s: %w", row.PanelRunUUID, err))
+			continue
 		}
-		superseded++
+		if row.HeadSHA != newHeadSHA {
+			if err := p.db.DeleteReviewAttempt(ghRepo, prNumber, row.HeadSHA); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: delete attempt for PR #%d@%s: %w",
+					prNumber, gitpkg.ShortSHA(row.HeadSHA), err))
+				continue
+			}
+			p.recordPollResult(ghRepo, prNumber, row.HeadSHA, nil)
+		}
+		if len(canceled) > 0 {
+			log.Printf("CI poller: canceled superseded panel run for %s#%d@%s",
+				ghRepo, prNumber, gitpkg.ShortSHA(row.HeadSHA))
+		}
 	}
-	if superseded > 0 {
-		log.Printf("CI poller: superseded %d prior panel run(s) for %s#%d (new HEAD %s)",
-			superseded, ghRepo, prNumber, gitpkg.ShortSHA(newHeadSHA))
-	}
+	return errors.Join(cleanupErrors...)
 }
 
 // expireTimedOutPanels tags-and-cancels running members that have exceeded the
@@ -2987,10 +2993,9 @@ func (p *CIPoller) retryAttemptPR(
 // cleanupClosedPRPanels cancels and removes every still-active panel run AND
 // every non-terminal review attempt whose PR has closed/merged (spec §10, F13,
 // Task 10). It unions two PR sets: the panel-PR set (un-posted active runs) and
-// the attempt-PR set (pending/deferred attempts). A DEFERRED attempt whose panel
-// was retired has no active panel, so it is invisible to the panel-PR set —
-// enumerating non-terminal attempts catches it so a reopen at the same HEAD gets
-// a fresh review. Each PR is open-checked at most once (the union dedups), so a
+// the attempt-PR set (pending/deferred attempts). The panel set includes retired
+// runs with unfinished cleanup; the attempt set also covers attempts with no
+// panel mapping. Each PR is open-checked at most once (the union dedups), so a
 // PR present in both sets never double-calls the GitHub API. For each PR absent
 // from the open list AND confirmed closed by callPanelPostTarget (PR state can change
 // during a poll) it cancels the run parent-first, deletes its mapping, and

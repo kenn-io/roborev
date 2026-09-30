@@ -435,7 +435,7 @@ func (db *DB) MarkPanelsAllowStalePost(githubRepo string, prNumber int, newHeadS
 }
 
 // GetActivePanelsForPR returns the un-posted, non-retired panel runs for a
-// (github_repo, pr_number), across HEAD SHAs. Used by the supersede sweep.
+// (github_repo, pr_number), across HEAD SHAs.
 func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
 	rows, err := db.Query(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
@@ -457,8 +457,8 @@ func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, 
 	return panels, rows.Err()
 }
 
-// GetUnpostedPanelsForPR includes retired runs so closed-PR cleanup can retry
-// failed cancellations or mapping deletions after retirement.
+// GetUnpostedPanelsForPR includes retired runs so cleanup can retry failed
+// cancellations or mapping deletions after retirement.
 func (db *DB) GetUnpostedPanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
 	rows, err := db.Query(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels

@@ -121,7 +121,7 @@ func TestSupersedePriorPanels(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, attempt, "panel run reserves an attempt row")
 
-	h.Poller.supersedePriorPanels("acme/api", 7, "newsha")
+	require.NoError(t, h.Poller.supersedePriorPanels("acme/api", 7, "newsha", true))
 
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "old synthesis canceled")
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID), "old member canceled")

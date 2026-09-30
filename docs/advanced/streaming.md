@@ -62,10 +62,10 @@ When CI polling is enabled, `/api/health` includes a `ci` component. The
 component and overall `healthy` field become false when polling stops,
 repository discovery fails, or a repository cannot list its pull requests or
 queue a review, including a deferred retry. Failures to list, check, claim, or
-remove retries, clean up closed pull requests, or re-arm stuck attempts also
-make CI unhealthy. Failed cleanup remains eligible for another poll, including
-when only part of a panel was canceled. An HTTP 200 response alone does not
-indicate healthy polling.
+remove retries, cancel superseded reviews, clean up closed pull requests, or
+re-arm stuck attempts also make CI unhealthy. Failed cleanup remains eligible
+for another poll, including when only part of a panel was canceled. An HTTP 200
+response alone does not indicate healthy polling.
 
 Polling continues for other pull requests and repositories after a failure. Each
 repository stays unhealthy until its next successful poll or until a successful

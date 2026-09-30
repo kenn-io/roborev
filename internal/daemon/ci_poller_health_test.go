@@ -391,6 +391,95 @@ func TestHealthCIPollerClosedPRCleanupFailure(t *testing.T) {
 	}
 }
 
+func TestHealthCIPollerSupersededCleanupFailure(t *testing.T) {
+	for _, failure := range []string{"parent cancellation", "member cancellation", "attempt deletion"} {
+		t.Run(failure, func(t *testing.T) {
+			assert := assert.New(t)
+			h, server := newCIHealthHarness(t)
+			h.stubProcessPRGit()
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			oldPanel, oldSynth, oldMembers := h.seedBlockedPanelRun(t, "acme/api", 1, "head-old", "base..head-old",
+				[]jobSpec{{Agent: "test", ReviewType: "review"}})
+			pr := ghPR{Number: 1, HeadRefOid: "head-new", BaseRefName: "main"}
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+			h.Poller.jobCancelFn = func(id int64) {
+				h.Poller.handleReviewCanceled(Event{Type: "review.canceled", JobID: id})
+			}
+			var trigger string
+			switch failure {
+			case "parent cancellation":
+				trigger = `CREATE TRIGGER fail_supersede BEFORE UPDATE OF status ON review_jobs
+					WHEN OLD.panel_role = 'synthesis' AND NEW.status = 'canceled'
+					BEGIN SELECT RAISE(FAIL, 'cancel unavailable'); END`
+			case "member cancellation":
+				trigger = `CREATE TRIGGER fail_supersede BEFORE UPDATE OF status ON review_jobs
+					WHEN OLD.panel_role = 'member' AND NEW.status = 'canceled'
+					BEGIN SELECT RAISE(FAIL, 'cancel unavailable'); END`
+			case "attempt deletion":
+				trigger = `CREATE TRIGGER fail_supersede BEFORE DELETE ON ci_pr_review_attempts
+					BEGIN SELECT RAISE(FAIL, 'delete unavailable'); END`
+			}
+			_, err := h.DB.Exec(trigger)
+			require.NoError(t, err)
+			require.Error(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+
+			// A replacement may already have been queued by another poller. Its
+			// deduplication gate must not hide unfinished cleanup of the old run.
+			_, newSynth, newMembers := h.seedBlockedPanelRun(t, "acme/api", 1, pr.HeadRefOid, "base..head-new",
+				[]jobSpec{{Agent: "test", ReviewType: "review"}})
+			for range 2 {
+				h.Poller.poll(context.Background())
+				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			}
+			if failure == "parent cancellation" {
+				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, oldSynth.ID))
+				assert.True(h.synthBlocked(t, oldSynth.PanelRunUUID), "failed parent cancellation must not release synthesis")
+			}
+			if failure != "attempt deletion" {
+				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, oldMembers[0].ID))
+			}
+			assert.True(h.panelRetiredAt(t, oldPanel.ID), "unfinished cleanup must remain non-postable")
+
+			_, err = h.DB.Exec(`DROP TRIGGER fail_supersede`)
+			require.NoError(t, err)
+			h.Poller.poll(context.Background())
+			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, oldSynth.ID))
+			assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, oldMembers[0].ID))
+			assert.Equal(storage.JobStatusQueued, h.jobStatus(t, newSynth.ID))
+			assert.Equal(storage.JobStatusQueued, h.jobStatus(t, newMembers[0].ID))
+			attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-old")
+			require.NoError(t, err)
+			assert.Nil(attempt)
+			panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-old")
+			require.NoError(t, err)
+			assert.Equal(oldPanel.CreatedAt, panel.CreatedAt, "cleanup retains the throttle clock")
+		})
+	}
+}
+
+func TestHealthCIPollerRetiredCurrentRetryKeepsBackoff(t *testing.T) {
+	h, server := newCIHealthHarness(t)
+	h.Cfg.CI.Repos = []string{"acme/api"}
+	pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
+	panel, synth, _ := h.seedBlockedPanelRun(t, "acme/api", pr.Number, pr.HeadRefOid, "base..head-a",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: "provider unavailable"}})
+	h.markJobFailed(t, synth.ID, "provider unavailable")
+	require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
+	nextAt := time.Now().Add(time.Hour).Truncate(time.Second)
+	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
+		"transient", "provider unavailable", &panel.PanelRunUUID, nextAt, false))
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+	h.Poller.poll(context.Background())
+	assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+	attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal(t, "deferred", attempt.State)
+	require.NotNil(t, attempt.NextAttemptAt)
+	assert.True(t, nextAt.Equal(*attempt.NextAttemptAt), "current-head backoff must survive retired-panel cleanup")
+}
+
 func TestHealthCIPollerStuckAttemptFailure(t *testing.T) {
 	for _, failure := range []string{"list", "rearm"} {
 		t.Run(failure, func(t *testing.T) {
