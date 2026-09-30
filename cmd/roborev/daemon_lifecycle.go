@@ -48,8 +48,10 @@ var (
 	probeDaemonForEnsure  = probeDaemonWithRetry
 
 	// daemonStartTimeout bounds how long startDaemon waits for a spawned
-	// daemon to become ready.
-	daemonStartTimeout          = 15 * time.Second
+	// daemon to become ready. Database initialization can exceed the former
+	// 15-second budget (SQLite alone permits a 30-second busy wait). Match the
+	// slow-start budget in TestDaemonLifecycleEndToEnd.
+	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
 	listAllRuntimes             = daemon.ListAllRuntimes

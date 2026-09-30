@@ -1301,6 +1301,10 @@ needs it, and stays running in the background. This is sufficient for most
 users. If you want the daemon to survive reboots, restart on failure, or be
 managed alongside other system services, set up a system service.
 
+Daemon startup waits up to two minutes for database migrations and readiness. If
+startup times out, the child process may still be initializing. Check
+`logs/daemon.stderr.log` under the roborev data directory before retrying.
+
 !!! warning "Use `--no-daemon` with system services"
 
     If you manage the daemon with systemd or launchd, use `roborev init --no-daemon`

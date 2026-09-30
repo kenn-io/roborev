@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -404,6 +405,37 @@ func TestDiscoverDaemonForStartHonorsCanceledContext(t *testing.T) {
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, ready)
+}
+
+func TestStartDaemonWaitsForDatabaseInitialization(t *testing.T) {
+	testenv.SetDataDir(t)
+	origGet := getAnyRunningDaemonForStart
+	origStart := startDaemonDetached
+	t.Cleanup(func() {
+		getAnyRunningDaemonForStart = origGet
+		startDaemonDetached = origStart
+	})
+
+	synctest.Test(t, func(t *testing.T) {
+		var readyAt time.Time
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if readyAt.IsZero() || time.Now().Before(readyAt) {
+				return nil, os.ErrNotExist
+			}
+			return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+		}
+		spawnCalls := 0
+		startDaemonDetached = func(context.Context, detachedDaemonOptions) error {
+			spawnCalls++
+			// storage.Open permits a 30-second SQLite busy wait before it
+			// finishes migrations and the daemon can publish its runtime.
+			readyAt = time.Now().Add(30 * time.Second)
+			return nil
+		}
+
+		require.NoError(t, startDaemon())
+		assert.Equal(t, 1, spawnCalls)
+	})
 }
 
 func TestDaemonSearchOpensDerivedSidecarWithoutEmbeddingsAndClosesIt(t *testing.T) {
