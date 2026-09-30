@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -407,35 +408,84 @@ func TestDiscoverDaemonForStartHonorsCanceledContext(t *testing.T) {
 	assert.False(t, ready)
 }
 
-func TestStartDaemonWaitsForDatabaseInitialization(t *testing.T) {
-	testenv.SetDataDir(t)
-	origGet := getAnyRunningDaemonForStart
-	origStart := startDaemonDetached
-	t.Cleanup(func() {
-		getAnyRunningDaemonForStart = origGet
-		startDaemonDetached = origStart
-	})
+func TestStartDaemonReportsStartupProgress(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		readyAfter  time.Duration
+		startupLog  string
+		wantMessage string
+		wantTimeout bool
+	}{
+		{name: "fast startup", readyAfter: time.Second},
+		{
+			name: "database initialization", readyAfter: 30 * time.Second,
+			startupLog:  "Opening database\nRestoring archived reviews\n",
+			wantMessage: "Restoring archived reviews",
+		},
+		{
+			name: "startup failure", readyAfter: 3 * time.Minute,
+			startupLog:  "Opening database\nError: invalid daemon configuration\n",
+			wantMessage: "Error: invalid daemon configuration", wantTimeout: true,
+		},
+		{name: "timeout without new logs", readyAfter: 3 * time.Minute, wantTimeout: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := testenv.SetDataDir(t)
+			logPath := filepath.Join(dataDir, "logs", "daemon.stderr.log")
+			require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+			require.NoError(t, os.WriteFile(logPath, []byte("Error: previous startup failure\n"), 0o600))
+			origGet, origStart, origOut := getAnyRunningDaemonForStart, startDaemonDetached, lifecycleOut
+			t.Cleanup(func() {
+				getAnyRunningDaemonForStart, startDaemonDetached, lifecycleOut = origGet, origStart, origOut
+			})
 
-	synctest.Test(t, func(t *testing.T) {
-		var readyAt time.Time
-		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-			if readyAt.IsZero() || time.Now().Before(readyAt) {
-				return nil, os.ErrNotExist
-			}
-			return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
-		}
-		spawnCalls := 0
-		startDaemonDetached = func(context.Context, detachedDaemonOptions) error {
-			spawnCalls++
-			// storage.Open permits a 30-second SQLite busy wait before it
-			// finishes migrations and the daemon can publish its runtime.
-			readyAt = time.Now().Add(30 * time.Second)
-			return nil
-		}
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				var progress bytes.Buffer
+				lifecycleOut = &progress
+				var readyAt time.Time
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+					if readyAt.IsZero() || time.Now().Before(readyAt) {
+						return nil, os.ErrNotExist
+					}
+					return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+				}
+				spawnCalls := 0
+				startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
+					spawnCalls++
+					// Database initialization may consume SQLite's 30-second busy
+					// wait before the daemon can publish its runtime.
+					readyAt = time.Now().Add(tc.readyAfter)
+					_, err := io.WriteString(opts.Stderr, tc.startupLog)
+					return err
+				}
 
-		require.NoError(t, startDaemon())
-		assert.Equal(t, 1, spawnCalls)
-	})
+				err := startDaemon()
+				if tc.wantTimeout {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+					assert.Contains(err.Error(), "2m0s")
+					assert.Contains(err.Error(), logPath)
+					assert.NotContains(err.Error(), "previous startup failure")
+					if tc.wantMessage != "" {
+						assert.Contains(err.Error(), tc.wantMessage)
+					}
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Equal(1, spawnCalls)
+				if tc.readyAfter == time.Second {
+					assert.Empty(progress.String())
+				} else {
+					assert.Contains(progress.String(), "Still waiting for daemon startup")
+					assert.Contains(progress.String(), logPath)
+					assert.NotContains(progress.String(), "previous startup failure")
+					if tc.wantMessage != "" {
+						assert.Contains(progress.String(), tc.wantMessage)
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestDaemonSearchOpensDerivedSidecarWithoutEmbeddingsAndClosesIt(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,9 +26,8 @@ import (
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
-// lifecycleOut receives daemon start/restart notices. Commands whose stdout is
-// a protocol stream (roborev mcp serve) point it at stderr.
-var lifecycleOut io.Writer = os.Stdout
+// lifecycleOut keeps daemon diagnostics separate from command and protocol output.
+var lifecycleOut io.Writer = os.Stderr
 
 var (
 	// Polling intervals for waitForJob - exposed for testing
@@ -318,6 +318,8 @@ func startDaemon() error {
 		}
 	}
 
+	var startupLogPath string
+	var startupLogOffset int64
 	manager := kitdaemon.Manager{
 		Store:    daemon.RuntimeStore(),
 		Discover: daemon.DiscoverOptions(1 * time.Second),
@@ -339,6 +341,10 @@ func startDaemon() error {
 				return err
 			}
 			defer closeLogs()
+			startupLogOffset, err = stderr.Seek(0, io.SeekEnd)
+			if err != nil {
+				return fmt.Errorf("locate daemon startup log: %w", err)
+			}
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
 				Args:            []string{"daemon", "run"},
@@ -349,6 +355,10 @@ func startDaemon() error {
 			}); err != nil {
 				return err
 			}
+			startupLogPath = stderr.Name()
+			started := time.Now()
+			progress := time.NewTicker(15 * time.Second)
+			defer progress.Stop()
 
 			for {
 				ready, err := discoverDaemonForStart(ctx)
@@ -361,6 +371,10 @@ func startDaemon() error {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-progress.C:
+					fmt.Fprintf(lifecycleOut, "Still waiting for daemon startup (%s elapsed; timeout %s).%s\n",
+						time.Since(started).Round(time.Second), daemonStartTimeout,
+						daemonStartupLogSummary(startupLogPath, startupLogOffset))
 				case <-time.After(50 * time.Millisecond):
 				}
 			}
@@ -370,9 +384,34 @@ func startDaemon() error {
 		if errors.Is(err, errDaemonReady) {
 			return nil
 		}
+		if errors.Is(err, context.DeadlineExceeded) && startupLogPath != "" {
+			return fmt.Errorf("failed to start daemon: %w\nDaemon did not become ready within %s; it may still be initializing.%s",
+				err, daemonStartTimeout, daemonStartupLogSummary(startupLogPath, startupLogOffset))
+		}
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 	return nil
+}
+
+// daemonStartupLogSummary excludes log entries from earlier startup attempts.
+func daemonStartupLogSummary(path string, offset int64) string {
+	summary := "\nStartup log: " + path
+	file, err := os.Open(path)
+	if err != nil {
+		return summary
+	}
+	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return summary
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return summary
+	}
+	if last := strings.TrimSpace(string(data)); last != "" {
+		summary += "\nLatest startup message: " + last[strings.LastIndexByte(last, '\n')+1:]
+	}
+	return summary
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {

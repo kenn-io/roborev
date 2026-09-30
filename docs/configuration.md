@@ -1301,9 +1301,12 @@ needs it, and stays running in the background. This is sufficient for most
 users. If you want the daemon to survive reboots, restart on failure, or be
 managed alongside other system services, set up a system service.
 
-Daemon startup waits up to two minutes for database migrations and readiness. If
-startup times out, the child process may still be initializing. Check
-`logs/daemon.stderr.log` under the roborev data directory before retrying.
+Daemon startup waits up to two minutes for database migrations and readiness.
+While waiting, the CLI reports elapsed time, the startup log path, and the
+latest log message from the current attempt every 15 seconds. These notices go
+to stderr. If startup times out, the error includes the log path and latest
+message; the child process may still be initializing. Check that log before
+retrying.
 
 !!! warning "Use `--no-daemon` with system services"
 
