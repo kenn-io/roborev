@@ -123,7 +123,8 @@ continues without rereading unchanged review history between batches.
 Changes that span multiple jobs, such as commit-level comments and repository
 remaps, still request a full scan. The periodic sweep also picks up missed
 events and reviews pulled from PostgreSQL sync. Job updates do not postpone that
-sweep. PostgreSQL does not store search vectors.
+sweep. Synced reviews can import vectors from another machine; see
+[Shared vectors across synced machines](#shared-vectors-across-synced-machines).
 
 Lexical rows become available as mirror pages commit. A first embedding
 generation is not activated until all current documents have been handled.
@@ -151,6 +152,28 @@ backlog, vector state, embedded and pending counts, skipped documents, rate,
 ETA, credential availability, and the latest sanitized provider error when
 available. The same data is available in the `search` object from
 `GET /api/health`.
+
+## Shared vectors across synced machines
+
+When a daemon has both `[search.embeddings]` and `[sync]` enabled, it shares
+review-search vectors with the other daemons on the same PostgreSQL database.
+There is no setting.
+
+- Before embedding a review, the daemon looks up the review's UUID and the
+    SHA-256 of the exact text it would embed in PostgreSQL. On a match it
+    imports the vectors and makes no provider call.
+- After embedding a review, the daemon publishes its vectors. A daemon only
+    publishes vectors for a review that sync has already stored in PostgreSQL. A
+    review embedded before sync pushes it is published right after the push.
+- Only daemons with the same `base_url`, `model`, `dims`, `input_type_mode`, and
+    `fingerprint_salt` share vectors. Other daemons embed for themselves.
+- Sharing is best effort. If PostgreSQL is unreachable, a stored vector is
+    unusable, or the review text differs between machines, the daemon embeds the
+    review itself. Search queries never contact PostgreSQL.
+
+Vectors are stored in the `review_search_vectors` table. Deleting a review from
+PostgreSQL deletes its vectors. A database role without `CREATE` privilege keeps
+syncing without shared vectors.
 
 ## Configure Voyage embeddings
 
@@ -246,6 +269,9 @@ quote code, paths, URLs, logs, or other sensitive text. Roborev does not redact
 those quotations before sending them to the provider. Review the provider's
 retention and privacy terms before enabling hosted embeddings.
 
+With sync enabled, vectors of synced reviews are also stored in PostgreSQL. They
+are derived from review text that sync already stores there.
+
 Lexical-only operation keeps search local and makes no embedding network call.
 
 ## Storage and recovery
@@ -253,7 +279,9 @@ Lexical-only operation keeps search local and makes no embedding network call.
 Search data is derived local state in `reviews.search.db`, next to the canonical
 `reviews.db`. It contains the text mirror, FTS index, and local vector
 generations. It is not synchronized to PostgreSQL and is never the source of
-truth for review content or liveness.
+truth for review content or liveness. Synced daemons share vectors separately;
+see
+[Shared vectors across synced machines](#shared-vectors-across-synced-machines).
 
 On a schema mismatch or structural corruption, the daemon removes and rebuilds
 the search sidecar and its SQLite journal files. The canonical `reviews.db` is

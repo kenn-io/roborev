@@ -342,6 +342,8 @@ func daemonRunCmd() *cobra.Command {
 
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
 				syncWorker.SetAfterPullWrite(search.reconciler.Wake)
+				search.reconciler.ShareVectors(syncWorker)
+				syncWorker.SetAfterReviewPush(search.reconciler.ReviewsPushed)
 				if err := syncWorker.Start(); err != nil {
 					log.Printf("Warning: failed to start sync worker: %v", err)
 				} else {

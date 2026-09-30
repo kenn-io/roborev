@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ type SyncWorker struct {
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterPullWrite  func()
+	afterReviewPush func([]string)
 }
 
 // SetAfterPullWrite registers a callback for successfully committed local
@@ -44,6 +46,57 @@ func (w *SyncWorker) notifyAfterPullWrite() {
 	if fn != nil {
 		fn()
 	}
+}
+
+// SetAfterReviewPush registers a callback that receives the UUIDs of reviews
+// this worker has just pushed to PostgreSQL.
+func (w *SyncWorker) SetAfterReviewPush(fn func(reviewUUIDs []string)) {
+	w.mu.Lock()
+	w.afterReviewPush = fn
+	w.mu.Unlock()
+}
+
+func (w *SyncWorker) notifyAfterReviewPush(reviewUUIDs []string) {
+	w.mu.Lock()
+	fn := w.afterReviewPush
+	w.mu.Unlock()
+	if fn != nil && len(reviewUUIDs) > 0 {
+		fn(reviewUUIDs)
+	}
+}
+
+// errSyncDisconnected reports that the worker has no PostgreSQL connection.
+var errSyncDisconnected = errors.New("sync database not connected")
+
+func (w *SyncWorker) currentPool() (*PgPool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.pgPool == nil {
+		return nil, errSyncDisconnected
+	}
+	return w.pgPool, nil
+}
+
+// LookupSearchVectors reads shared review-search vectors from the sync database.
+func (w *SyncWorker) LookupSearchVectors(
+	ctx context.Context, space string, keys []SearchVectorKey,
+) (map[SearchVectorKey][]SearchVectorChunk, error) {
+	pool, err := w.currentPool()
+	if err != nil {
+		return nil, err
+	}
+	return pool.LookupSearchVectors(ctx, space, keys)
+}
+
+// PublishSearchVectors shares one review's search vectors through the sync database.
+func (w *SyncWorker) PublishSearchVectors(
+	ctx context.Context, space string, key SearchVectorKey, chunks []SearchVectorChunk,
+) (bool, error) {
+	pool, err := w.currentPool()
+	if err != nil {
+		return false, err
+	}
+	return pool.PublishSearchVectors(ctx, space, key, chunks)
 }
 
 // NewSyncWorker creates a new sync worker
@@ -711,9 +764,11 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		// Only mark successfully synced reviews
 		var syncedReviewIDs []int64
+		var syncedReviewUUIDs []string
 		for i, ok := range success {
 			if ok {
 				syncedReviewIDs = append(syncedReviewIDs, reviews[i].ID)
+				syncedReviewUUIDs = append(syncedReviewUUIDs, reviews[i].UUID.String()) //nolint:forbidigo // search sidecar keys reviews by TEXT UUID
 				stats.Reviews++
 			}
 		}
@@ -722,6 +777,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
 			}
 		}
+		w.notifyAfterReviewPush(syncedReviewUUIDs)
 	}
 
 	// Push comments - batch operation

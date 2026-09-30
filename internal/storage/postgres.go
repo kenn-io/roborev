@@ -526,6 +526,8 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		}
 	}
 
+	p.ensureSearchVectorsSchema(ctx)
+
 	if err := p.migrateLegacyReviews(ctx); err != nil {
 		return err
 	}

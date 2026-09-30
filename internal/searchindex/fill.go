@@ -7,6 +7,9 @@ import (
 	"go.kenn.io/kit/vector"
 )
 
+// searchSplit windows review documents into embedding chunks.
+var searchSplit = vector.SplitOptions{MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap}
+
 func encodeDocuments(embedder Embedder) vector.EncodeFunc {
 	return embedder.EncodeFunc(embedconfig.RoleDocument)
 }
@@ -44,7 +47,7 @@ func (index *Index) Fill(
 	if store == nil {
 		store = index.vectors
 	}
-	split := vector.SplitOptions{MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap}
+	split := searchSplit
 	batchOptions := []vector.BatchOption{vector.WithBatchSize(batch.Items)}
 	if batch.MaxTokens > 0 {
 		batchOptions = append(batchOptions, vector.WithBatchTokenBudget(batch.MaxTokens, batch.InputTokenUpperBound))

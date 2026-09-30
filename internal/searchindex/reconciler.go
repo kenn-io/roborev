@@ -64,6 +64,8 @@ type Reconciler struct {
 	generationStarted  time.Time
 	generationBaseline int64
 	failures           int
+	shared             SharedVectors
+	pushed             map[string]struct{}
 }
 
 // NewReconciler constructs a bounded, wake-coalescing reconciler.
@@ -339,6 +341,17 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	var store vector.Store[string, string] = r.index.vectors
+	if shared := r.sharedVectors(); shared != nil {
+		space, err := sharedSpace(r.embedder.Space())
+		if err != nil {
+			return false, err
+		}
+		if err := r.publishPushed(ctx, shared, space, key); err != nil {
+			return false, err
+		}
+		store = newSharingStore(store, r.index, shared, space)
+	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {
 		return false, err
@@ -364,7 +377,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 	defer cancel()
 	_, err = r.index.Fill(
 		fillCtx,
-		&turnLimitedStore{Store: r.index.vectors, remaining: r.config.MaxFillBatches},
+		&turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches},
 		key,
 		encodeDocuments(r.embedder),
 		r.embedder.Batch(),

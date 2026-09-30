@@ -29,6 +29,11 @@ filters, search credentials, and Agent Hook reminders.
 
 **Improvements**
 
+- Daemons that sync through PostgreSQL now share review-search vectors. A daemon
+    imports vectors another machine already computed for the same review text
+    instead of sending that text to its embedding provider again. There is no
+    setting. See
+    [shared vectors](/docs/search/#shared-vectors-across-synced-machines).
 - Open the TUI directly to the current repository and branch, including in
     linked worktrees. Press `Esc` to clear the filters. The settings are now
     `filter_repo` and `filter_branch` under `[tui]`; the old `auto_filter_repo`
@@ -133,6 +138,7 @@ Thanks to everyone who contributed to this release:
     [#1270](https://github.com/kenn-io/roborev/pull/1270), reduced search work
     in [#1276](https://github.com/kenn-io/roborev/pull/1276), and improved CI
     recovery, health checks, and daemon startup diagnostics.
+
 
 ## 0.69.0
 

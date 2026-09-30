@@ -60,6 +60,8 @@ roborev sync now       # Trigger immediate sync
 - Completed jobs (done, failed, canceled)
 - Reviews with closed/open state
 - Responses/notes
+- Review-search vectors, when `[search.embeddings]` is configured. See
+    [shared vectors](/docs/search/#shared-vectors-across-synced-machines).
 
 Jobs in `queued` or `running` states remain local-only until they complete.
 
