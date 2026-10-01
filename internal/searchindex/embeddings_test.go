@@ -16,26 +16,37 @@ import (
 )
 
 func TestEmbeddingsProviderErrorsAreClassifiedWithoutClientRetries(t *testing.T) {
+	secret := `{"error":"provider-secret-detail"}`
 	tests := []struct {
-		status     int
-		badRequest bool
-		definitive bool
+		name          string
+		status        int
+		body          string
+		inputRejected bool
+		definitive    bool
 	}{
-		{status: http.StatusBadRequest, badRequest: true, definitive: true},
-		{status: http.StatusUnauthorized, definitive: true},
-		{status: http.StatusForbidden, definitive: true},
-		{status: http.StatusNotFound, definitive: true},
-		{status: http.StatusTooManyRequests},
-		{status: http.StatusServiceUnavailable},
+		{
+			name: "input too long", status: http.StatusBadRequest, inputRejected: true, definitive: true,
+			body: `{"error":{"message":"input is too long for the context length (provider-secret-detail)","code":"context_length_exceeded"}}`,
+		},
+		{
+			name: "unsupported dimensions", status: http.StatusBadRequest, definitive: true,
+			body: `{"error":{"message":"dimensions 2 is not supported (provider-secret-detail)"}}`,
+		},
+		{name: "unclassified bad request", status: http.StatusBadRequest, body: secret, definitive: true},
+		{name: "unauthorized", status: http.StatusUnauthorized, body: secret, definitive: true},
+		{name: "forbidden", status: http.StatusForbidden, body: secret, definitive: true},
+		{name: "not found", status: http.StatusNotFound, body: secret, definitive: true},
+		{name: "rate limited", status: http.StatusTooManyRequests, body: secret},
+		{name: "unavailable", status: http.StatusServiceUnavailable, body: secret},
 	}
 	for _, tt := range tests {
-		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
 				w.Header().Set("Retry-After", "7")
 				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(`{"error":"provider-secret-detail"}`))
+				_, _ = w.Write([]byte(tt.body))
 			}))
 			defer server.Close()
 			embeddings, err := NewEmbeddings(embedconfig.Embedder{BaseURL: server.URL, Model: "embed-large", Dims: 2}, "", searchdoc.RecipeVersion)
@@ -50,7 +61,7 @@ func TestEmbeddingsProviderErrorsAreClassifiedWithoutClientRetries(t *testing.T)
 			assert.Equal(t, tt.status, apiErr.StatusCode)
 			assert.Equal(t, 7*time.Second, apiErr.RetryAfter)
 			assert.Equal(t, tt.definitive, embeddingDefinitive(apiErr))
-			assert.Equal(t, tt.badRequest, isEmbeddingBadRequest(err))
+			assert.Equal(t, tt.inputRejected, isEmbeddingInputRejected(err))
 		})
 	}
 }

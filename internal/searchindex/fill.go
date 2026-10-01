@@ -2,8 +2,6 @@ package searchindex
 
 import (
 	"context"
-	"strings"
-	"unicode/utf8"
 
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/vector"
@@ -55,49 +53,17 @@ func (index *Index) Fill(
 	return vector.Fill(ctx, progress, key, enc,
 		vector.WithFillSplit[string](split),
 		vector.WithFillBatch[string](batchOptions...),
-		vector.WithFillBatchErrorIsolation[string](isEmbeddingBadRequest),
-		vector.WithFillEncodeError[string](func(doc string, err error) bool {
-			if !isEmbeddingBadRequest(err) {
-				return false
-			}
-			return index.contentSpecific400(ctx, doc, enc, split, batchOptions)
-		}),
+		vector.WithFillBatchErrorIsolation[string](isEmbeddingInputRejected),
+		vector.WithFillEncodeError[string](func(_ string, err error) bool { return isEmbeddingInputRejected(err) }),
 	)
 }
 
-func isEmbeddingBadRequest(err error) bool {
+// isEmbeddingInputRejected reports a provider refusal of one input, such as
+// text over the model's context limit or content refused by policy. Fill
+// skips and stamps only those documents. Kit classifies the provider's error
+// body, so a request-wide 400 (unknown model, unsupported dimensions, or an
+// unrecognized message) is not an input rejection and aborts the fill.
+func isEmbeddingInputRejected(err error) bool {
 	apiErr, ok := embeddingAPIError(err)
 	return ok && apiErr.InputRejected()
-}
-
-// contentSpecific400 reports whether a 400 is provably the document's content.
-// It rebuilds the document's request shape with benign text; success means the
-// endpoint accepts that shape, so poison-skip is safe. Any replay failure keeps
-// the document pending by aborting the fill.
-func (index *Index) contentSpecific400(
-	ctx context.Context, doc string, enc vector.EncodeFunc, split vector.SplitOptions, batchOptions []vector.BatchOption,
-) bool {
-	content, err := index.mirrorContent(ctx, doc)
-	if err != nil {
-		return false
-	}
-	chunks := vector.Split(content, split)
-	for i := range chunks {
-		chunks[i].Text = benignChunkText(chunks[i].Text)
-	}
-	_, err = vector.EncodeBatched(ctx, enc, chunks, batchOptions...)
-	return err == nil
-}
-
-func (index *Index) mirrorContent(ctx context.Context, doc string) (string, error) {
-	var content string
-	if err := index.db.QueryRowContext(ctx,
-		`SELECT content FROM review_mirror WHERE doc_key = ?`, doc).Scan(&content); err != nil {
-		return "", err
-	}
-	return content, nil
-}
-
-func benignChunkText(text string) string {
-	return strings.Repeat("a", utf8.RuneCountInString(text))
 }

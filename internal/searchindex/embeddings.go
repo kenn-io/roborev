@@ -105,9 +105,13 @@ func embeddingAPIError(err error) (*embedclient.APIError, bool) {
 }
 
 // embeddingDefinitive reports a provider rejection that retrying cannot fix
-// without operator action or different input.
+// without operator action or different input. Kit classifies a wrong route
+// (404), an unknown model, or unsupported dimensions as an invalid request.
+// A 400 Kit cannot classify is still a refused request, so it waits the full
+// backoff instead of retrying quickly.
 func embeddingDefinitive(apiErr *embedclient.APIError) bool {
-	return apiErr.InputRejected() || apiErr.CredentialsRejected() || apiErr.StatusCode == http.StatusNotFound
+	return apiErr.InputRejected() || apiErr.CredentialsRejected() ||
+		apiErr.Reason == embedclient.ReasonInvalidRequest || apiErr.StatusCode == http.StatusBadRequest
 }
 
 var _ Embedder = (*Embeddings)(nil)

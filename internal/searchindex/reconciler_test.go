@@ -424,15 +424,21 @@ func TestReconcilerRejectsEmbedderCardinalityMismatchWithoutPanic(t *testing.T) 
 	}
 }
 
-func TestReconcilerSkipsOnlyProvenContentSpecific400(t *testing.T) {
+func TestReconcilerSkipsOnlyTheDocumentWithRejectedInput(t *testing.T) {
 	index := openGenerationTestIndex(t)
-	store := &reconcilerStore{sources: makeSearchSources(1)}
-	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
+	store := &reconcilerStore{sources: makeSearchSources(2)}
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 2}
 	embedder.embed = func(_ context.Context, texts []string) ([][]float32, error) {
-		if texts[0] == benignChunkText(texts[0]) {
-			return [][]float32{{1, 0}}, nil
+		for _, text := range texts {
+			if strings.Contains(text, "review output 1") {
+				return nil, &embedclient.APIError{StatusCode: http.StatusBadRequest, Reason: embedclient.ReasonInputTooLong}
+			}
 		}
-		return nil, &embedclient.APIError{StatusCode: http.StatusBadRequest}
+		result := make([][]float32, len(texts))
+		for i := range result {
+			result[i] = []float32{1, 0}
+		}
+		return result, nil
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
@@ -440,19 +446,31 @@ func TestReconcilerSkipsOnlyProvenContentSpecific400(t *testing.T) {
 	require.NoError(t, err)
 	health := r.Health()
 	assert.Equal(t, int64(1), health.Skipped)
+	assert.Equal(t, int64(1), health.Embedded)
 	assert.Equal(t, int64(0), health.EmbeddingBacklog)
 	assert.Equal(t, kitKey(t, embedder.space), health.ActiveGeneration)
-	assert.Equal(t, 0, generationVectorCount(t, index, kitKey(t, embedder.space)))
+	assert.Equal(t, 1, generationVectorCount(t, index, kitKey(t, embedder.space)))
 }
 
-func TestReconcilerDoesNotSkipAuthenticationOrUnproven400(t *testing.T) {
-	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+func TestReconcilerDoesNotSkipRequestWideOrAuthenticationFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		failure *embedclient.APIError
+	}{
+		{name: "unclassified 400", failure: &embedclient.APIError{StatusCode: http.StatusBadRequest}},
+		{name: "invalid request 400", failure: &embedclient.APIError{
+			StatusCode: http.StatusBadRequest, Reason: embedclient.ReasonInvalidRequest,
+		}},
+		{name: "unauthorized", failure: &embedclient.APIError{
+			StatusCode: http.StatusUnauthorized, Reason: embedclient.ReasonCredentials,
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			index := openGenerationTestIndex(t)
 			store := &reconcilerStore{sources: makeSearchSources(1)}
 			embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 			embedder.embed = func(_ context.Context, _ []string) ([][]float32, error) {
-				return nil, &embedclient.APIError{StatusCode: status}
+				return nil, tt.failure
 			}
 			r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
