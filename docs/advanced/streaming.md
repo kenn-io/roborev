@@ -85,8 +85,9 @@ deferred retry and its health error on the next poll, without waiting for
 backoff to expire. Active and completed reviews are left unchanged.
 
 Cleanup also removes stored review state for numbers GitHub confirms are
-ordinary issues. A pull-request lookup returning 404 is insufficient: failed
-verification retains the records and keeps CI unhealthy.
+ordinary issues. This verification requires access to GitHub's issue endpoint. A
+pull-request lookup returning 404 is insufficient: failed verification retains
+the records and keeps CI unhealthy.
 
 CI failures also appear in `recent_errors` with a repository or discovery
 summary. Detailed errors remain in the daemon log. Recovery preserves the error
