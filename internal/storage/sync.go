@@ -53,6 +53,14 @@ func (db *DB) SetSyncState(key, value string) error {
 // GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.
 // Empty stored values are treated as missing and replaced.
 func (db *DB) GetOrCreateSyncStateValue(key string, create func() (string, error)) (string, error) {
+	return db.GetOrCreateSyncStateValueWith(key, create, nil)
+}
+
+// GetOrCreateSyncStateValueWith returns key's value, creating it when absent
+// or empty. Only the caller that creates the value also writes extra, in the
+// same transaction, so a crash or a concurrent caller never leaves the value
+// without its extra entries or overwrites them later.
+func (db *DB) GetOrCreateSyncStateValueWith(key string, create func() (string, error), extra map[string]string) (string, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return "", errors.New("sync state key is required")
@@ -78,26 +86,43 @@ func (db *DB) GetOrCreateSyncStateValue(key string, create func() (string, error
 		return "", errors.New("created sync state value is required")
 	}
 
-	if value == "" {
-		_, err = db.Exec(`
-			INSERT OR IGNORE INTO sync_state (key, value) VALUES (?, ?)
-		`, key, created)
-	} else {
-		_, err = db.Exec(`UPDATE sync_state SET value = ? WHERE key = ?`, created, key)
+	tx, err := db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin sync state %s: %w", key, err)
 	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The write comes first so the transaction takes SQLite's write lock up
+	// front instead of upgrading from a read. A blank row is replaced only if
+	// it still holds the blank value read above, so a concurrent creation wins.
+	result, err := tx.Exec(`
+		INSERT INTO sync_state (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		WHERE sync_state.value = ?
+	`, key, created, value)
 	if err != nil {
 		return "", fmt.Errorf("create sync state %s: %w", key, err)
 	}
-
-	value, err = db.GetSyncState(key)
+	inserted, err := result.RowsAffected()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create sync state %s: %w", key, err)
 	}
-	if strings.TrimSpace(value) == "" {
-		if err := db.SetSyncState(key, created); err != nil {
-			return "", err
+	if inserted == 1 {
+		for extraKey, extraValue := range extra {
+			if _, err := tx.Exec(`
+				INSERT INTO sync_state (key, value) VALUES (?, ?)
+				ON CONFLICT(key) DO UPDATE SET value = excluded.value
+			`, extraKey, extraValue); err != nil {
+				return "", fmt.Errorf("set sync state %s: %w", extraKey, err)
+			}
 		}
-		return created, nil
+	}
+
+	if err := tx.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, key).Scan(&value); err != nil {
+		return "", fmt.Errorf("get sync state %s: %w", key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit sync state %s: %w", key, err)
 	}
 	return value, nil
 }

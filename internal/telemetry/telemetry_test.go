@@ -1,11 +1,16 @@
 package telemetry
 
 import (
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kittelemetry "go.kenn.io/kit/telemetry"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
@@ -33,17 +38,20 @@ func TestNewReporterDisabledByEnvDoesNotCreateInstallID(t *testing.T) {
 	value, err := database.GetSyncState(installIDMetadataKey)
 	require.NoError(err)
 	assert.Empty(value)
+	installedAt, err := database.GetSyncState(installedAtKey)
+	require.NoError(err)
+	assert.Empty(installedAt)
 }
 
-func TestLoadOrCreateInstallIDIsStableAndAnonymous(t *testing.T) {
+func TestLoadOrCreateInstallIsStableAndAnonymous(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
 	database := openTestDB(t)
 
-	first, err := loadOrCreateInstallID(database)
+	first, _, err := loadOrCreateInstall(database)
 	require.NoError(err)
-	second, err := loadOrCreateInstallID(database)
+	second, _, err := loadOrCreateInstall(database)
 	require.NoError(err)
 
 	assert.Len(first, 32)
@@ -52,6 +60,55 @@ func TestLoadOrCreateInstallIDIsStableAndAnonymous(t *testing.T) {
 	stored, err := database.GetSyncState(installIDMetadataKey)
 	require.NoError(err)
 	assert.Equal(first, stored)
+}
+
+func TestLoadOrCreateInstallRecordsCreationTimeForNewID(t *testing.T) {
+	require := require.New(t)
+
+	database := openTestDB(t)
+
+	before := time.Now()
+	_, installedAt, err := loadOrCreateInstall(database)
+	require.NoError(err)
+
+	assert.WithinRange(t, installedAt, before.Add(-time.Second), time.Now().Add(time.Second))
+}
+
+func TestLoadOrCreateInstallTreatsExistingIDWithoutTimeAsEstablished(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	database := openTestDB(t)
+	require.NoError(database.SetSyncState(installIDMetadataKey, "existing-install-id"))
+
+	id, installedAt, err := loadOrCreateInstall(database)
+	require.NoError(err)
+
+	assert.Equal("existing-install-id", id)
+	assert.True(installedAt.IsZero())
+	stored, err := database.GetSyncState(installedAtKey)
+	require.NoError(err)
+	assert.Empty(stored)
+}
+
+func TestLoadOrCreateInstallKeepsCreationTimeAcrossRestart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	database, dir := testutil.OpenTestDBWithDir(t)
+	firstID, firstInstalledAt, err := loadOrCreateInstall(database)
+	require.NoError(err)
+	require.NoError(database.Close())
+
+	reopened, err := storage.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(reopened.Close()) })
+	secondID, secondInstalledAt, err := loadOrCreateInstall(reopened)
+	require.NoError(err)
+
+	assert.Equal(firstID, secondID)
+	assert.Equal(firstInstalledAt, secondInstalledAt)
+	assert.False(secondInstalledAt.IsZero())
 }
 
 func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {

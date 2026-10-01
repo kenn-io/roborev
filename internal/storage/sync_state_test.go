@@ -167,6 +167,52 @@ func TestGetOrCreateSyncStateValue(t *testing.T) {
 	assert.Equal(1, createCalls)
 }
 
+func TestGetOrCreateSyncStateValueWithWritesExtraOnlyOnCreate(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	first, err := db.GetOrCreateSyncStateValueWith("test_key", func() (string, error) {
+		return "first_value", nil
+	}, map[string]string{"test_key_extra": "first_extra"})
+	require.NoError(err)
+	second, err := db.GetOrCreateSyncStateValueWith("test_key", func() (string, error) {
+		return "second_value", nil
+	}, map[string]string{"test_key_extra": "second_extra"})
+	require.NoError(err)
+
+	assert.Equal("first_value", first)
+	assert.Equal(first, second)
+	extra, err := db.GetSyncState("test_key_extra")
+	require.NoError(err)
+	assert.Equal("first_extra", extra)
+
+	require.NoError(db.SetSyncState("existing_key", "existing_value"))
+	existing, err := db.GetOrCreateSyncStateValueWith("existing_key", func() (string, error) {
+		return "new_value", nil
+	}, map[string]string{"existing_key_extra": "new_extra"})
+	require.NoError(err)
+
+	assert.Equal("existing_value", existing)
+	missing, err := db.GetSyncState("existing_key_extra")
+	require.NoError(err)
+	assert.Empty(missing)
+
+	require.NoError(db.SetSyncState("blank_key", "\t\n"))
+	replaced, err := db.GetOrCreateSyncStateValueWith("blank_key", func() (string, error) {
+		return "replacement_value", nil
+	}, map[string]string{"blank_key_extra": "replacement_extra"})
+	require.NoError(err)
+
+	assert.Equal("replacement_value", replaced)
+	replacedExtra, err := db.GetSyncState("blank_key_extra")
+	require.NoError(err)
+	assert.Equal("replacement_extra", replacedExtra)
+}
+
 func TestSyncWorker_StartStopStart(t *testing.T) {
 	t.Parallel()
 	// This test verifies that SyncWorker can be started, stopped, and restarted

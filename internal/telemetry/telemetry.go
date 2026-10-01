@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	kittelemetry "go.kenn.io/kit/telemetry"
 
@@ -16,6 +18,7 @@ const (
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
 	GenericEnabledEnv    = kittelemetry.GenericTelemetryEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
+	installedAtKey       = "telemetry.installed_at"
 	postHogAPIKey        = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
 
 	EventDaemonStarted = "daemon_started"
@@ -45,7 +48,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, errors.New("telemetry database is required")
 	}
 
-	distinctID, err := loadOrCreateInstallID(opts.Database)
+	distinctID, installedAt, err := loadOrCreateInstall(opts.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +58,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
 		DistinctID:  distinctID,
+		InstalledAt: installedAt,
 		Version:     opts.Version,
 		Source:      "daemon",
 	}, allowedEventOptions()...)
@@ -88,8 +92,30 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 	}
 }
 
-func loadOrCreateInstallID(database *storage.DB) (string, error) {
-	return database.GetOrCreateSyncStateValue(installIDMetadataKey, randomInstallID)
+// loadOrCreateInstall returns the install ID and when it was created. An ID
+// created before roborev recorded that time returns a zero time, so the
+// install keeps reporting as an established one.
+func loadOrCreateInstall(database *storage.DB) (string, time.Time, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	id, err := database.GetOrCreateSyncStateValueWith(installIDMetadataKey, randomInstallID,
+		map[string]string{installedAtKey: now})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	stored, err := database.GetSyncState(installedAtKey)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if strings.TrimSpace(stored) == "" {
+		return id, time.Time{}, nil
+	}
+	installedAt, err := time.Parse(time.RFC3339Nano, stored)
+	if err != nil {
+		log.Printf("Warning: telemetry install time unreadable, treating install as established: %v", err)
+		return id, time.Time{}, nil
+	}
+	return id, installedAt, nil
 }
 
 func randomInstallID() (string, error) {
