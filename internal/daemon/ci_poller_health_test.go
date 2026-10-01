@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -390,6 +392,69 @@ func TestHealthCIPollerRetrySweepFailures(t *testing.T) {
 			}
 			h.Poller.poll(context.Background())
 			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+		})
+	}
+}
+
+func TestHealthCIPollerCleanupNonPullRequestTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		issueStatus int
+		issueBody   string
+		wantCleanup bool
+	}{
+		{"ordinary issue", http.StatusOK, `{"number":1,"state":"open"}`, true},
+		{"actual pull request", http.StatusOK, `{"number":1,"state":"open","pull_request":{"url":"https://api.github.com/repos/acme/api/pulls/1"}}`, false},
+		{"missing issue", http.StatusNotFound, `{"message":"Not Found"}`, false},
+		{"inaccessible issue", http.StatusForbidden, `{"message":"Resource not accessible by integration"}`, false},
+		{"issue lookup unavailable", http.StatusBadGateway, `{"message":"Unavailable"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h, server := newCIHealthHarness(t)
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 1, "head-a", "base..head-a",
+				[]jobSpec{{Agent: "test", ReviewType: "review"}})
+			require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
+			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 1, "head-a",
+				"genuine", "review failed", &panel.PanelRunUUID, time.Now().Add(time.Hour), true))
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(http.MethodGet, r.Method, "cleanup must not publish to an issue")
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v3/repos/acme/api/pulls/1":
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"message":"Not Found"}`)
+				case "/api/v3/repos/acme/api/issues/1":
+					w.WriteHeader(tc.issueStatus)
+					fmt.Fprint(w, tc.issueBody)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer api.Close()
+			h.Poller.githubAPIURL = api.URL + "/api/v3"
+			h.Poller.prPostTargetFn = nil
+			h.Poller.isPROpenFn = nil
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+			for range 2 {
+				h.Poller.poll(context.Background())
+				assert.Equal(tc.wantCleanup, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			}
+			attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
+			require.NoError(t, err)
+			_, panelErr := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
+			if tc.wantCleanup {
+				assert.Nil(attempt, "confirmed issue must no longer reserve a review attempt")
+				require.ErrorIs(t, panelErr, sql.ErrNoRows)
+				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID))
+				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID))
+			} else {
+				assert.NotNil(attempt, "ambiguous access failure must retain the attempt")
+				require.NoError(t, panelErr)
+				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, synth.ID))
+				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, members[0].ID))
+			}
 		})
 	}
 }

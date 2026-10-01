@@ -84,6 +84,10 @@ instead of re-arming disabled work. Adding a configured skip label removes a
 deferred retry and its health error on the next poll, without waiting for
 backoff to expire. Active and completed reviews are left unchanged.
 
+Cleanup also removes stored review state for numbers GitHub confirms are
+ordinary issues. A pull-request lookup returning 404 is insufficient: failed
+verification retains the records and keeps CI unhealthy.
+
 CI failures also appear in `recent_errors` with a repository or discovery
 summary. Detailed errors remain in the daemon log. Recovery preserves the error
 history; use the component and overall `healthy` fields for current health.

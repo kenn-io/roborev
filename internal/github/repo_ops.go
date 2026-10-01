@@ -96,6 +96,20 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 	}, nil
 }
 
+// IsIssue reports whether the number identifies an ordinary issue rather than
+// a pull request. GitHub's issue endpoint returns both kinds of records.
+func (c *Client) IsIssue(ctx context.Context, ghRepo string, number int) (bool, error) {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return false, err
+	}
+	issue, _, err := c.api.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		return false, fmt.Errorf("get issue: %w", err)
+	}
+	return !issue.IsPullRequest(), nil
+}
+
 func pullRequestLabelNames(labels []*googlegithub.Label) []string {
 	names := make([]string, 0, len(labels))
 	for _, label := range labels {

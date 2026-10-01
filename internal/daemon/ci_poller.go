@@ -3436,6 +3436,20 @@ func (p *CIPoller) panelPostTarget(
 	}
 	pr, err := client.GetPullRequest(ctx, ghRepo, prNumber)
 	if err != nil {
+		// A PR 404 can mean lost access, so it alone cannot justify deleting
+		// stored review state. A successful issue lookup can prove this number
+		// was never a PR and let the normal cleanup paths retire its reviews.
+		if responseErr, ok := errors.AsType[*googlegithub.ErrorResponse](err); ok &&
+			responseErr.Response != nil && responseErr.Response.StatusCode == http.StatusNotFound {
+			issue, issueErr := client.IsIssue(ctx, ghRepo, prNumber)
+			if issueErr != nil {
+				return panelPostTarget{}, errors.Join(err, issueErr)
+			}
+			if issue {
+				log.Printf("CI poller: %s#%d is an issue, retiring its review state", ghRepo, prNumber)
+				return panelPostTarget{Open: false}, nil
+			}
+		}
 		return panelPostTarget{}, err
 	}
 	return panelPostTarget{
