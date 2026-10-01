@@ -130,6 +130,20 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.70.0
+
+Check these settings when updating from 0.69.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| TUI startup filters | Replace the top-level `auto_filter_repo` and `auto_filter_branch` settings with `filter_repo` and `filter_branch` under `[tui]`. Both filters now default to `true`. To keep an unfiltered view, set both to `false`. See [TUI filtering](/docs/integrations/tui/#filtering). |
+| Semantic search | Under `[search.embeddings]`, replace `api_key_env = "NAME"` with `api_key = { env = "NAME" }`, then restart the daemon. Key strings and private key files are also supported. See [embedding credentials](/docs/search/#embedding-credentials). |
+| Agent Hook reminders | Add project review guidance on the default branch if the repository has none. Global guidelines alone no longer enable reminders. See [the guidance requirement](/docs/agent-hook/#review-guidelines-are-required). |
+
+Reviews and keyword search keep working if a configured embedding key is
+missing. Local embedding servers that need no authentication can leave `api_key`
+unset.
+
 ### Upgrading to 0.68.1
 
 Version 0.68.1 restores historical reviews archived by 0.68.0. Reviews that

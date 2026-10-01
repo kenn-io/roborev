@@ -75,6 +75,7 @@ tmp_config_base=""
   tar \
     --exclude './.venv' \
     --exclude './.vercel' \
+    --exclude './.gitignore' \
     --exclude './.env*.local' \
     --exclude './site' \
     --exclude './zensical-public-docs.*' \

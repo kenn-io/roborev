@@ -3,9 +3,9 @@ title: Browser UI
 description: Browse reviews and analyze project review health in the native Roborev web application
 ---
 
-Roborev includes a browser application in its release packages. It is served by
-the same daemon that owns the review queue and SQLite database, on a separate
-browser-only listener.
+Browse reviews, follow the live queue, and compare review performance in your
+browser. Roborev release packages include the web UI, served by the same daemon
+that runs your reviews.
 
 <figure class="hero-shot" data-lightbox>
   <img src="/docs/assets/generated/web-ui.png" alt="Roborev browser application showing the review queue and an open review" loading="eager">
@@ -62,20 +62,24 @@ repository and branch picker, status filter, ref search, and closed-review
 toggle to narrow the list. The Closed column shows `yes` for a closed review,
 `no` for an open review, and `--` when no closed state is available. Panel
 member rows show `--` because the synthesis row owns the panel's closed state.
+
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. Sorting reorders
 the jobs already loaded in the browser. While older jobs remain unloaded, a note
 under the table says so; **Load more** still fetches the next page in queue
-order and adds it to the sorted list. Panel reviews appear as a synthesis row
-that can be expanded to show its individual reviewers. Each row fits on one
-line: the commit column shows the repository, branch, short ref, and commit
-subject, and the Agent column shows the model beside the agent. The Type column
-identifies standard reviews as `default` and shows the configured name for
-specialized or custom reviews. The detail drawer repeats that value in its
-header. Panel synthesis rows show `panel`, while expanded panel members show
-their configured review types. Jobs other than single-commit reviews and panel
-syntheses name their job type first, such as `range · security` or
-`compact · default`.
+order and adds it to the sorted list.
+
+Each row fits on one line: the commit column shows the repository, branch, short
+ref, and commit subject, and the Agent column shows the model beside the agent.
+Panel reviews appear as a synthesis row that can be expanded to show its
+individual reviewers.
+
+The Type column identifies standard reviews as `default` and shows the
+configured name for specialized or custom reviews. The detail drawer repeats
+that value in its header. Panel synthesis rows show `panel`, while expanded
+panel members show their configured review types. Jobs other than single-commit
+reviews and panel syntheses name their job type first, such as
+`range · security` or `compact · default`.
 
 Select a row to open its detail drawer without leaving the queue. The drawer
 provides:
@@ -126,21 +130,25 @@ Open **Analytics** in the application shell, or navigate directly to
 URL, so a time range and project, source, agent, model, bucket, or breakdown
 selection can be bookmarked and shared with another user of the same daemon.
 
-Use **Break down by** to split the charts and the table below them by agent,
-model, project, or source. Volume and cost become stacked bars, and failure rate
-and latency show one line per value. The first eight values have their own
-colors; past eight, the smaller values are combined as **Other**. The latency
-chart omits **Other** because percentiles cannot be combined. Select a legend
-entry to hide or show that value, or hover over it to highlight its series. The
-table lists every value with its reviews, failure rate, median latency, agent
-runs, estimated cost, and pricing coverage. Select a column header to sort it.
-Without a breakdown, the table lists projects.
+Use **Break down by** to compare review volume, cost, failure rate, and latency
+by agent, model, project, or source. Volume and cost become stacked bars, and
+failure rate and latency show one line per value. The first eight values have
+their own colors; past eight, the smaller values are combined as **Other**. The
+latency chart omits **Other** because percentiles cannot be combined. Select a
+legend entry to hide or show that value, or hover over it to highlight its
+series.
+
+The table below the charts lists every value with its reviews, failure rate,
+median latency, agent runs, estimated cost, and pricing coverage. Select a
+column header to sort it. Without a breakdown, the table lists projects.
 
 Each logical review and agent attempt counts under its own agent, model,
 project, or source. Charts leave a gap for a period with no rated or finished
 reviews instead of plotting zero. The final period is drawn faded or dashed
 while it is still in progress. Use the percentile control on the latency chart
-to switch between p50, p90, and p99.
+to switch between p50, p90, and p99. The p50 value is the median review time;
+p90 and p99 show the time within which 90% and 99% of reviews finish, helping
+you see how long slower reviews take.
 
 Project analytics use the display names shown elsewhere in Roborev. Repositories
 with the same display name are intentionally grouped together.

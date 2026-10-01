@@ -1065,7 +1065,7 @@ model = "voyage-4-large"
 dims = 1024
 api_key = { env = "VOYAGE_API_KEY" }
 input_type_mode = "retrieval"
-batch_size = 64
+batch_size = 32
 timeout_seconds = 30
 ```
 
@@ -1086,6 +1086,11 @@ timeout_seconds = 30
 These are the standard embedding keys shared by Kenn tools, so the same block
 works in any of them. `base_url`, `model`, and `dims` must be configured
 together.
+
+When upgrading to 0.70.0, replace `api_key_env = "NAME"` with
+`api_key = { env = "NAME" }`. See
+[embedding credentials](/docs/search/#embedding-credentials) for setup and
+troubleshooting.
 
 `api_key` is the key itself as a string, or a table naming its source:
 `{ env = "NAME" }` reads an environment variable and `{ file = "PATH" }` reads a

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-09-30
 title: Review History Search
 description: Search completed reviews by keyword, meaning, repository, branch, time, verdict, and state
 ---
@@ -8,9 +8,11 @@ Roborev can search completed review history across every repository in the local
 review database. Search is available through the CLI, the daemon HTTP API, and
 the read-only MCP server.
 
-Lexical search works without an embedding provider or a network request.
-Semantic and hybrid search are optional. They use a local derived index and an
-OpenAI-compatible embeddings endpoint.
+Keyword search (called **lexical** search in the CLI) works without setup or a
+network request. **Semantic** search finds reviews by meaning, and **hybrid**
+search combines both methods. These optional modes use an embedding provider,
+which converts text into numbers for comparison, through an OpenAI-compatible
+endpoint.
 
 ## Search from the CLI
 
@@ -181,6 +183,12 @@ This release supports Voyage's default 1,024-dimensional output for
 Voyage's provider-specific `output_dimension` parameter. Non-default Voyage
 dimensions are outside this release.
 
+## Embedding credentials
+
+Configure credentials under `[search.embeddings]` in `~/.roborev/config.toml`.
+Starting with 0.70.0, replace `api_key_env = "NAME"` with
+`api_key = { env = "NAME" }`.
+
 `api_key` is the key itself as a string, or a table naming its source:
 `{ env = "NAME" }` for an environment variable or `{ file = "PATH" }` for a key
 file. A daemon started by a service or autostart may not inherit your shell's
@@ -196,18 +204,22 @@ characters. The file must be a regular file you own with mode `0600`; symlinks
 are refused. Missing, empty, unreadable, or insecure key files disable semantic
 search; restart after changing the file or environment.
 
-If no key resolves, the daemon starts normally, makes no embedding requests, and
-keeps reviews and lexical search running. This replaces the previous startup
-failure: reviews must not depend on an optional search credential. There is no
-startup warning. `auto` search falls back to lexical results with
-`Degraded: no embedding API key` and a source-specific reason. Explicit semantic
-and hybrid modes return the same readable reason as a service-unavailable error.
-An unconfigured lexical-only setup remains silent.
+If a configured key source is missing or cannot be read, the daemon starts
+normally and keeps reviews and keyword search running. It makes no embedding
+requests and emits no startup warning. `auto` search falls back to lexical
+results with `Degraded: no embedding API key` and a source-specific reason.
+Explicit semantic and hybrid modes return that reason as a service-unavailable
+error.
+
+For a local embedding server that needs no authentication, leave `api_key`
+unset. Roborev then sends embedding requests without an authorization header.
+This differs from configuring a key source whose value is missing. Restart the
+daemon after changing embedding settings or credentials.
 
 Health reports `credential` as `missing`, `rejected`, or `ok`, plus
 `credential_source` (`inline`, `env:NAME`, or `file:<configured path>`) and
 `credential_reason` when unavailable. These fields never contain the key. `ok`
-means a key resolved, not that the provider has accepted it. A 401 or 403 sets
+does not prove that the provider has accepted a request. A 401 or 403 sets
 `rejected`, and search explains, for example,
 `embedding authentication rejected (401)`. A successful embedding request clears
 the rejection; lexical scans and existing vectors do not.

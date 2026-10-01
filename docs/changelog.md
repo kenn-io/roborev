@@ -5,38 +5,134 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.70.0
 
-**Bug fixes**
+<small>2026-09-30</small>
 
-- Missing embedding credentials no longer prevent the daemon from starting.
-    Reviews and lexical search continue without startup warnings. Search and
-    status explain missing keys and provider rejection, and health exposes
-    credential state without the key. `search.embeddings.api_key` can read a
-    private key file with `{ file = "PATH" }`. See
-    [search credentials](/docs/search/).
+Compare review performance across agents and models, use light mode in the
+browser, and search large review histories with less CPU use. Before updating,
+check the [0.70.0 upgrade steps](/docs/installation/#upgrading-to-0700) for TUI
+filters, search credentials, and Agent Hook reminders.
+
+**New features**
+
+- Compare web analytics by agent, model, project, or source with **Break down
+    by**. Choose p50, p90, or p99 for latency, and hide or highlight individual
+    chart series. See [Analytics](/docs/web-ui/#analytics).
+- Use light mode in the web UI. It follows your system setting by default, and
+    the header toggle remembers your preference. See
+    [Browser UI](/docs/web-ui/).
+- Set up roborev with your coding agent using the
+    [agent-assisted setup guide](/docs/agent-setup/). The guide covers hooks,
+    skills, and review guidelines, and tells the agent to ask before each
+    change.
 
 **Improvements**
 
-- Behavior change: `[search.embeddings]` now uses the standard embedding keys
-    shared by Kenn tools. `api_key` is the key itself, or a table naming its
-    source: `{ env = "NAME" }` or `{ file = "PATH" }`. Replace
-    `api_key_env = "NAME"` with `api_key = { env = "NAME" }`. `batch_size` now
-    defaults to 32, `model_context_tokens` and `max_batch_tokens` batch requests
-    by tokens, and `trust_private_network` also allows a private host name.
-    Existing search indexes are kept; nothing is re-embedded.
-- Behavior change: the TUI now opens filtered to the current repository and
-    branch when you start it inside a git checkout, including linked worktrees.
-    Before, it showed every repository unless you opted in. Press `Esc` to clear
-    the filters. Outside a git checkout, the TUI still shows every repository.
-    See [TUI filtering](/docs/integrations/tui/#filtering).
-- Behavior change: the startup filter settings moved to a `[tui]` section as
-    `filter_repo` and `filter_branch`. roborev now ignores the old top-level
-    `auto_filter_repo` and `auto_filter_branch` keys and removes them the next
-    time it saves the config. Older versions wrote `auto_filter_repo = false`
-    and `auto_filter_branch = false` into most configs, so keeping those keys
-    would have left the filters off. To keep the old unfiltered view, set
-    `filter_repo = false` and `filter_branch = false` under `[tui]`.
+- Open the TUI directly to the current repository and branch, including in
+    linked worktrees. Press `Esc` to clear the filters. The settings are now
+    `filter_repo` and `filter_branch` under `[tui]`; the old `auto_filter_repo`
+    and `auto_filter_branch` keys no longer apply. Set either new key to `false`
+    to disable that filter. See
+    [TUI filtering](/docs/integrations/tui/#filtering).
+- Agent Hook reminders now require project review guidance. Add
+    `review_guidelines` in `.roborev.toml` on the default branch, or use
+    `REVIEW.md` when that setting is unset. Global guidelines alone do not
+    enable reminders. See
+    [the guidance requirement](/docs/agent-hook/#review-guidelines-are-required).
+- Configure semantic search, which finds reviews by meaning, with a key string,
+    an environment variable, or a private key file. Under `[search.embeddings]`,
+    replace `api_key_env = "NAME"` with `api_key = { env = "NAME" }`. Local
+    servers can receive requests without authentication when no key is
+    configured. Existing embeddings are kept. See
+    [search credentials](/docs/search/#embedding-credentials).
+- Search uses less CPU on large review histories. Review events update only
+    affected reviews, and embedding backfill avoids repeated scans of unchanged
+    history. See [search freshness](/docs/search/#freshness-and-backfill).
+- Review instructions require evidence for findings, check dependency behavior
+    against pinned versions, and match severity to plausible triggers. They also
+    tell reviewers to respect prior developer responses unless a code change
+    invalidates them.
+- See more reviews at once in the web table. Each row shows the model beside the
+    agent, and the commit cell includes the repository, branch, ref, and
+    subject. See [Reviews Workspace](/docs/web-ui/#reviews-workspace).
+- Read GitHub review comments with less repetition. Reviewers appear once in the
+    footer, and each finding separates the problem from its suggested fix.
+- Follow slow daemon starts without opening the logs yourself. Start and restart
+    allow up to two minutes for readiness and report progress every 15 seconds,
+    including the startup log path and latest message. See
+    [daemon startup](/docs/configuration/#persistent-daemon).
+
+**Bug fixes**
+
+- Sort any column in the web review table without loading the entire history.
+    Sorting applies to loaded rows; a note identifies when older jobs remain
+    unloaded.
+- Analytics charts show gaps when failure-rate or latency data is missing
+    instead of plotting zero. The unfinished final period is faded or dashed.
+- Reviews of fix commits receive instructions to suppress resolved findings and
+    avoid asking users to undo fixes made for earlier feedback. Reviewers must
+    still report problems that remain or were introduced by a fix.
+- Reviews and keyword search continue when configured embedding credentials are
+    missing. Status and health explain missing or rejected credentials.
+- Deleted reviews no longer appear in search results or affect their scores.
+    Reruns refresh the search index immediately.
+- CI reviews find older pull requests in repositories with more than 100 open
+    PRs. Wildcard discovery skips repositories that explicitly disable pull
+    requests.
+- CI reviews continue after a branch such as `feature` is replaced by nested
+    branches such as `feature/login`. Retries honor skip labels, and cleanup
+    retries unfinished work for closed or superseded reviews.
+- CI polling and recovery failures mark application health as unhealthy while
+    unaffected reviews continue. Recorded retry failures remain visible after
+    restart until recovery or removal.
+- Health checks respect each active review's configured deadline, including
+    repository and panel overrides. Reviews allowed to run longer than 30
+    minutes are no longer flagged as stuck at that point.
+- `roborev list` and `roborev show` can display reviews whose stored prompts
+    contain invalid UTF-8 text. Responses replace malformed bytes without
+    changing the stored text.
+- PostgreSQL sync accepts review text containing invalid UTF-8 or NUL bytes.
+    Existing pending reviews retry automatically.
+- `review --branch` uses the detected default branch when a PR-head or
+    feature-branch upstream is missing locally. Explicit base settings still
+    take precedence; missing trunk upstreams still produce an error. See
+    [branch reviews](/docs/guides/reviewing-code/#feature-branches).
+- Linked worktrees use their own branch's tracked hooks when `core.hooksPath`
+    names a relative directory tracked in Git. See
+    [hook maintenance](/docs/guides/repository-management/#git-hook-maintenance).
+- Claude Code weekly-limit errors trigger quota handling. Reviews move to a
+    configured backup instead of retrying the same agent during cooldown.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Chris K Wensel](https://github.com/cwensel) reduced search CPU use and sped
+    up comment lookups in [#1261](https://github.com/kenn-io/roborev/pull/1261)
+    and [#1262](https://github.com/kenn-io/roborev/pull/1262).
+- [Marius van Niekerk](https://github.com/mariusvniekerk) improved review
+    instructions, setup, TUI filters, search configuration, GitHub comments,
+    worktree hooks, and text handling. See
+    [#1037](https://github.com/kenn-io/roborev/pull/1037),
+    [#1246](https://github.com/kenn-io/roborev/pull/1246), and
+    [#1267](https://github.com/kenn-io/roborev/pull/1267).
+- [Oliver Mannion](https://github.com/tekumara) fixed branch reviews with
+    missing upstream refs in
+    [#1269](https://github.com/kenn-io/roborev/pull/1269).
+- [Rod Boev](https://github.com/rodboev) fixed Claude Code weekly-limit handling
+    in [#1252](https://github.com/kenn-io/roborev/pull/1252) and improved test
+    isolation, parallel tests, and Windows lint coverage.
+- [Rusty Shackleford](https://github.com/salmonumbrella) kept reviews running
+    without search credentials in
+    [#1264](https://github.com/kenn-io/roborev/pull/1264) and fixed PostgreSQL
+    text sync in [#1234](https://github.com/kenn-io/roborev/pull/1234).
+- [subaru-ye](https://github.com/subaru-ye) added instructions to suppress
+    resolved findings in [#1271](https://github.com/kenn-io/roborev/pull/1271).
+- [Wes McKinney](https://github.com/wesm) added the web UI improvements in
+    [#1270](https://github.com/kenn-io/roborev/pull/1270), reduced search work
+    in [#1276](https://github.com/kenn-io/roborev/pull/1276), and improved CI
+    recovery, health checks, and daemon startup diagnostics.
 
 ## 0.69.0
 
