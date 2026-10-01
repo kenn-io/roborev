@@ -66,7 +66,9 @@ func TestRetryOnSQLiteBusySucceedsAfterContention(t *testing.T) {
 	require.NotNil(t, job)
 	assert.Equal(t, int64(7), job.ID)
 	assert.Equal(t, 3, n)
-	assert.Equal(t, []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}, sleeps)
+	assert.True(t, len(sleeps) == 2 &&
+		sleeps[0] >= 25*time.Millisecond && sleeps[0] <= 75*time.Millisecond &&
+		sleeps[1] >= 50*time.Millisecond && sleeps[1] <= 150*time.Millisecond, "retry delays outside jitter bounds: %v", sleeps)
 }
 
 func TestRetryOnSQLiteBusyDoesNotRetryPermanentErrors(t *testing.T) {

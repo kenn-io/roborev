@@ -45,7 +45,6 @@ func startSSESubscription(
 	policy.InitialInterval = time.Second
 	policy.MaxInterval = 30 * time.Second
 	policy.Multiplier = 2
-	policy.RandomizationFactor = 0
 	_, _ = backoff.Retry(ctx, func() (struct{}, error) {
 		connected, err := sseReadLoop(ctx, endpoint, sseCh)
 		// A stream that read events starts a fresh failure sequence.

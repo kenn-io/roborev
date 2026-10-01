@@ -55,7 +55,6 @@ func retryOnSQLiteBusy[T any](
 	policy.InitialInterval = initialInterval
 	policy.MaxInterval = time.Duration(1<<63 - 1)
 	policy.Multiplier = 2
-	policy.RandomizationFactor = 0
 	v, err := backoff.Retry(ctx, func() (T, error) {
 		if err := ctx.Err(); err != nil {
 			return zero, backoff.Permanent(err)

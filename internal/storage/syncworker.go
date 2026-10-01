@@ -369,7 +369,6 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 		policy.InitialInterval = time.Second
 		policy.MaxInterval = 5 * time.Minute
 		policy.Multiplier = 2
-		policy.RandomizationFactor = 0
 		newConn, err := backoff.Retry(ctx, func() (bool, error) {
 			select {
 			case <-stopCh:
