@@ -68,7 +68,7 @@ func TestRepositoryNamesGroupWorktreesWithoutDisplayOverride(t *testing.T) {
 		job, err = db.GetJobByID(job.ID)
 		require.NoError(t, err)
 		jobs = append(jobs, *job)
-		paths = append(paths, path)
+		paths = append(paths, repo.RootPath)
 	}
 	repos, _, err := db.ListReposWithReviewCounts()
 	require.NoError(t, err)

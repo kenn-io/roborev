@@ -1389,12 +1389,13 @@ func TestRepoNameMigration(t *testing.T) {
 	// Seed the names stored by released versions, without requiring any checkout.
 	_, err := db.Exec("DELETE FROM sync_state WHERE key = 'repo_names_from_identity'")
 	require.NoError(t, err)
+	root := filepath.ToSlash(t.TempDir())
 	fixtures := []struct{ root, name, identity, want string }{
-		{"/missing/worktree-a", "worktree-a", "https://example.com/team/project-a.git", "project-a"},
-		{"/missing/worktree-b", "worktree-b", "git@example.com:team/project-a.git", "project-a"},
-		{"/missing/custom", "Custom Project", "https://example.com/team/project-a.git", "Custom Project"},
-		{"/missing/local", "local", "local:///missing/local", "local"},
-		{"/missing/no-identity", "no-identity", "", "no-identity"},
+		{root + "/worktree-a", "worktree-a", "https://example.com/team/project-a.git", "project-a"},
+		{root + "/worktree-b", "worktree-b", "git@example.com:team/project-a.git", "project-a"},
+		{root + "/custom", "Custom Project", "https://example.com/team/project-a.git", "Custom Project"},
+		{root + "/local", "local", "local://" + root + "/local", "local"},
+		{root + "/no-identity", "no-identity", "", "no-identity"},
 	}
 	var jobIDs []int64
 	for _, f := range fixtures {
@@ -1409,6 +1410,7 @@ func TestRepoNameMigration(t *testing.T) {
 	require.NoError(t, db.Close())
 	db, err = Open(dbPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for i, f := range fixtures {
 		repo, err := db.GetRepoByPath(f.root)
 		require.NoError(t, err)
@@ -1430,7 +1432,6 @@ func TestRepoNameMigration(t *testing.T) {
 	require.NoError(t, db.Close())
 	db, err = Open(dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo, err := db.GetRepoByPath(fixtures[0].root)
 	require.NoError(t, err)
 	assert.Equal(fixtures[0].name, repo.Name)
