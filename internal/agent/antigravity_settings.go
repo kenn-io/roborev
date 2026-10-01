@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-
 	"go.kenn.io/kit/pathresolve"
 )
 

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
 	"go.kenn.io/kit/pathresolve"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
 	"go.kenn.io/roborev/internal/update"

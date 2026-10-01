@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/kit/selfupdate"
 
-	"go.kenn.io/kit/pathresolve"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/version"
 )

@@ -10,7 +10,6 @@ import (
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
-
 	"go.kenn.io/kit/pathresolve"
 )
 
