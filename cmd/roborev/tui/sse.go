@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
@@ -26,51 +27,44 @@ func startSSESubscription(
 	sseCh chan<- struct{},
 	stopCh <-chan struct{},
 ) {
-	const maxBackoff = 30 * time.Second
-	backoff := time.Second
-
-	for {
-		connected, err := sseReadLoop(endpoint, sseCh, stopCh)
-		if err == nil {
-			return
-		}
-
-		// Reset backoff after a connection that successfully read events,
-		// since the next failure is likely a fresh problem (daemon restart).
-		if connected {
-			backoff = time.Second
-		}
-
-		select {
-		case <-stopCh:
-			return
-		case <-time.After(backoff):
-		}
-
-		backoff = min(backoff*2, maxBackoff)
-	}
-}
-
-// sseReadLoop connects to the event stream and reads NDJSON lines until
-// the connection drops or stopCh fires. Returns (false, nil) when stopCh
-// is closed, (connected, err) on connection/decode failure. connected is
-// true if at least one event was successfully read.
-func sseReadLoop(
-	endpoint daemon.DaemonEndpoint,
-	sseCh chan<- struct{},
-	stopCh <-chan struct{},
-) (connected bool, err error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	cancelDone := make(chan struct{})
 	go func() {
+		defer close(cancelDone)
 		select {
 		case <-stopCh:
 			cancel()
 		case <-ctx.Done():
 		}
 	}()
+	defer func() {
+		cancel()
+		<-cancelDone
+	}()
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = time.Second
+	policy.MaxInterval = 30 * time.Second
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 0
+	_, _ = backoff.Retry(ctx, func() (struct{}, error) {
+		connected, err := sseReadLoop(ctx, endpoint, sseCh)
+		// A stream that read events starts a fresh failure sequence.
+		if connected {
+			policy.Reset()
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+}
 
+// sseReadLoop connects to the event stream and reads NDJSON lines until
+// the connection drops or ctx ends. Returns (connected, nil) when ctx
+// ends, (connected, err) on connection/decode failure. connected is
+// true if at least one event was successfully read.
+func sseReadLoop(
+	ctx context.Context,
+	endpoint daemon.DaemonEndpoint,
+	sseCh chan<- struct{},
+) (connected bool, err error) {
 	resp, err := endpoint.APIClient(0).StreamEventsRaw(ctx, nil)
 	if err != nil {
 		return false, err
@@ -86,7 +80,7 @@ func sseReadLoop(
 		var event daemon.Event
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			select {
-			case <-stopCh:
+			case <-ctx.Done():
 				return connected, nil
 			default:
 				return connected, err

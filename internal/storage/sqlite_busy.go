@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -44,21 +45,20 @@ func retryOnSQLiteBusy[T any](
 	ctx context.Context,
 	attempts int,
 	attemptTimeout time.Duration,
-	backoff time.Duration,
-	sleep func(context.Context, time.Duration) error,
+	initialInterval time.Duration,
+	notify backoff.Notify,
 	fn func(context.Context) (T, error),
 ) (T, error) {
 	var zero T
-	if attempts < 1 {
-		attempts = 1
-	}
-	if sleep == nil {
-		sleep = waitForSQLiteBusyRetry
-	}
-	var lastErr error
-	for i := 0; i < attempts; i++ {
+	attempts = max(attempts, 1)
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = initialInterval
+	policy.MaxInterval = time.Duration(1<<63 - 1)
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 0
+	v, err := backoff.Retry(ctx, func() (T, error) {
 		if err := ctx.Err(); err != nil {
-			return zero, err
+			return zero, backoff.Permanent(err)
 		}
 		attemptCtx := ctx
 		cancel := func() {}
@@ -75,28 +75,23 @@ func retryOnSQLiteBusy[T any](
 			err = errors.Join(errSQLiteBusyAttemptTimeout, err)
 		}
 		if !IsSQLiteBusy(err) && !attemptTimedOut {
-			return v, err
+			return v, backoff.Permanent(err)
 		}
 		if err := ctx.Err(); err != nil {
-			return zero, err
+			return zero, backoff.Permanent(err)
 		}
-		lastErr = err
-		if i+1 < attempts {
-			if err := sleep(ctx, backoff<<i); err != nil {
-				return zero, err
-			}
-		}
+		return zero, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(uint(attempts)), backoff.WithMaxElapsedTime(0),
+		backoff.WithNotify(notify))
+	if err == nil {
+		return v, nil
 	}
-	return zero, lastErr
-}
-
-func waitForSQLiteBusyRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return v, retryErr.LastErr
 	}
+	if !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return zero, ctx.Err()
+	}
+	return zero, retryErr.LastErr
 }

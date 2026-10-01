@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -348,32 +350,40 @@ type pushPullStats struct {
 func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout time.Duration, skipInitialSync bool) {
 	defer close(doneCh)
 
-	// Initial connection attempt with backoff
-	backoff := time.Second
-	maxBackoff := 5 * time.Minute
-
-	for {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelDone := make(chan struct{})
+	go func() {
+		defer close(cancelDone)
 		select {
 		case <-stopCh:
-			return
-		default:
+			cancel()
+		case <-ctx.Done():
 		}
-
-		// Try to connect
-		newConn, err := w.connect(connectTimeout)
-		if err != nil {
-			log.Printf("Sync: connection failed: %v (retry in %v)", err, backoff)
+	}()
+	defer func() {
+		cancel()
+		<-cancelDone
+	}()
+	for {
+		policy := backoff.NewExponentialBackOff()
+		policy.InitialInterval = time.Second
+		policy.MaxInterval = 5 * time.Minute
+		policy.Multiplier = 2
+		policy.RandomizationFactor = 0
+		newConn, err := backoff.Retry(ctx, func() (bool, error) {
 			select {
 			case <-stopCh:
-				return
-			case <-time.After(backoff):
+				return false, backoff.Permanent(context.Canceled)
+			default:
 			}
-			backoff = min(backoff*2, maxBackoff)
-			continue
+			return w.connect(connectTimeout)
+		}, backoff.WithBackOff(policy), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0),
+			backoff.WithNotify(func(err error, delay time.Duration) {
+				log.Printf("Sync: connection failed: %v (retry in %v)", err, delay)
+			}))
+		if err != nil {
+			return
 		}
-
-		// Connected - reset backoff
-		backoff = time.Second
 		if newConn {
 			log.Printf("Sync: connected to PostgreSQL")
 		}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -72,16 +73,18 @@ func NewHTTPClient(ep DaemonEndpoint) *HTTPClient {
 
 // NewHTTPClientFromRuntime creates an HTTP client using daemon runtime info
 func NewHTTPClientFromRuntime() (*HTTPClient, error) {
-	var lastErr error
-	for range 5 {
+	client, err := backoff.Retry(context.Background(), func() (*HTTPClient, error) {
 		info, err := GetAnyRunningDaemon()
-		if err == nil {
-			return NewHTTPClient(info.Endpoint()), nil
+		if err != nil {
+			return nil, err
 		}
-		lastErr = err
-		time.Sleep(100 * time.Millisecond)
+		return NewHTTPClient(info.Endpoint()), nil
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(100*time.Millisecond)),
+		backoff.WithMaxTries(5), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return nil, fmt.Errorf("daemon not running: %w", backoff.AsRetryError(err).LastErr)
 	}
-	return nil, fmt.Errorf("daemon not running: %w", lastErr)
+	return client, nil
 }
 
 // SetPollInterval sets the polling interval for WaitForReview

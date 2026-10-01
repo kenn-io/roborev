@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/secretref"
 
@@ -419,12 +420,11 @@ func daemonRunCmd() *cobra.Command {
 }
 
 func stopDaemonWithRetry(stop func() error, retryDelay time.Duration) {
-	for {
-		if err := stop(); err != nil {
+	_, _ = backoff.Retry(context.Background(), func() (struct{}, error) {
+		return struct{}{}, stop()
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(retryDelay)),
+		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0),
+		backoff.WithNotify(func(err error, _ time.Duration) {
 			log.Printf("Prepare daemon shutdown failed; retrying: %v", err)
-			time.Sleep(retryDelay)
-			continue
-		}
-		return
-	}
+		}))
 }

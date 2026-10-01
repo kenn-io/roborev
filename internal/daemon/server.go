@@ -19,6 +19,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
@@ -751,20 +752,18 @@ func (s *Server) clearShutdownDrain(ctx context.Context) error {
 	if !draining {
 		return nil
 	}
-	var lastErr error
-	for {
-		if err := s.db.SetShutdownDrainingContext(ctx, false); err == nil {
-			return nil
-		} else {
-			lastErr = err
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		return struct{}{}, s.db.SetShutdownDrainingContext(ctx, false)
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(shutdownCleanupRetryInterval)),
+		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0),
+		backoff.WithNotify(func(err error, _ time.Duration) {
 			log.Printf("Clear shutdown drain state failed; retrying: %v", err)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("clear shutdown drain state: %w", errors.Join(lastErr, ctx.Err()))
-		case <-time.After(shutdownCleanupRetryInterval):
-		}
+		}))
+	if err != nil {
+		return fmt.Errorf("clear shutdown drain state: %w",
+			errors.Join(backoff.AsRetryError(err).LastErr, ctx.Err()))
 	}
+	return nil
 }
 
 // Close shuts down the server and releases its resources.

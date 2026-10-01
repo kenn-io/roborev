@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
@@ -104,18 +105,14 @@ type detachedDaemonOptions struct {
 // probeDaemonWithRetry probes ep several times before reporting failure, so
 // transient unresponsiveness does not escalate into a daemon restart.
 func probeDaemonWithRetry(ep daemon.DaemonEndpoint, timeout time.Duration) (*daemon.PingInfo, error) {
-	var lastErr error
-	for attempt := range ensureProbeAttempts {
-		if attempt > 0 {
-			time.Sleep(ensureProbeRetryDelay)
-		}
-		probe, err := daemon.ProbeDaemon(ep, timeout)
-		if err == nil {
-			return probe, nil
-		}
-		lastErr = err
+	probe, err := backoff.Retry(context.Background(), func() (*daemon.PingInfo, error) {
+		return daemon.ProbeDaemon(ep, timeout)
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(ensureProbeRetryDelay)),
+		backoff.WithMaxTries(uint(ensureProbeAttempts)), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return nil, backoff.AsRetryError(err).LastErr
 	}
-	return nil, lastErr
+	return probe, nil
 }
 
 // ErrJobNotFound indicates a job ID was not found during polling
@@ -487,26 +484,18 @@ func restartDaemon() error {
 	// Checkpoint WAL to ensure clean state for new daemon
 	// Retry a few times in case daemon hasn't fully released the DB
 	if dbPath := storage.DefaultDBPath(); dbPath != "" {
-		var lastErr error
-		for range 3 {
+		_, err := backoff.Retry(context.Background(), func() (struct{}, error) {
 			db, err := storage.Open(dbPath)
 			if err != nil {
-				lastErr = err
-				time.Sleep(200 * time.Millisecond)
-				continue
+				return struct{}{}, err
 			}
-			if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-				lastErr = err
-				db.Close()
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
+			_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 			db.Close()
-			lastErr = nil
-			break
-		}
-		if lastErr != nil && verbose {
-			fmt.Fprintf(lifecycleOut, "Warning: WAL checkpoint failed: %v\n", lastErr)
+			return struct{}{}, err
+		}, backoff.WithBackOff(backoff.NewConstantBackOff(200*time.Millisecond)),
+			backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(0))
+		if err != nil && verbose {
+			fmt.Fprintf(lifecycleOut, "Warning: WAL checkpoint failed: %v\n", backoff.AsRetryError(err).LastErr)
 		}
 	}
 

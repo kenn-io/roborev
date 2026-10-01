@@ -16,6 +16,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -713,45 +714,34 @@ func (wp *WorkerPool) worker(id int) {
 		default:
 		}
 
-		paused, err := wp.db.IsQueuePaused()
+		job, err := backoff.Retry(wp.stopCtx, func() (*storage.ReviewJob, error) {
+			if err := wp.stopCtx.Err(); err != nil {
+				return nil, backoff.Permanent(err)
+			}
+			paused, err := wp.db.IsQueuePaused()
+			if err != nil {
+				log.Printf("[%s] Error checking queue pause state: %v", workerID, err)
+				if wp.errorLog != nil {
+					wp.errorLog.LogError("worker", fmt.Sprintf("check queue pause state: %v", err), 0)
+				}
+				return nil, err
+			}
+			if paused {
+				return nil, nil
+			}
+			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			if err != nil {
+				wp.noteClaimError(workerID, err)
+			}
+			return job, err
+		}, backoff.WithBackOff(backoff.NewConstantBackOff(5*time.Second)),
+			backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
 		if err != nil {
-			log.Printf("[%s] Error checking queue pause state: %v", workerID, err)
-			if wp.errorLog != nil {
-				wp.errorLog.LogError("worker", fmt.Sprintf("check queue pause state: %v", err), 0)
-			}
-			select {
-			case <-wp.stopCh:
-				log.Printf("[%s] Shutting down", workerID)
-				return
-			case <-time.After(5 * time.Second):
-			}
-			continue
+			log.Printf("[%s] Shutting down", workerID)
+			return
 		}
-		if paused {
-			select {
-			case <-wp.stopCh:
-				log.Printf("[%s] Shutting down", workerID)
-				return
-			case <-time.After(2 * time.Second):
-			}
-			continue
-		}
-
-		// Try to claim a job
-		job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
-		if err != nil {
-			wp.noteClaimError(workerID, err)
-			select {
-			case <-wp.stopCh:
-				log.Printf("[%s] Shutting down", workerID)
-				return
-			case <-time.After(5 * time.Second):
-			}
-			continue
-		}
-
 		if job == nil {
-			// No jobs available, wait and retry
+			// Queue paused or no job available: poll again rather than retry a failure.
 			select {
 			case <-wp.stopCh:
 				log.Printf("[%s] Shutting down", workerID)
@@ -2157,19 +2147,12 @@ func (wp *WorkerPool) logJobFailed(
 func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error {
 	// Read metadata file, retrying briefly in case the CLI hasn't finished
 	// writing it yet (the file is written after enqueue returns the job ID).
-	var metadata *CompactMetadata
-	var err error
-	for attempt := range 3 {
-		metadata, err = ReadCompactMetadata(jobID)
-		if err == nil {
-			break
-		}
-		if attempt < 2 {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
+	metadata, err := backoff.Retry(context.Background(), func() (*CompactMetadata, error) {
+		return ReadCompactMetadata(jobID)
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(500*time.Millisecond)),
+		backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(0))
 	if err != nil {
-		log.Printf("[%s] No compact metadata found for job %d after retries: %v", workerID, jobID, err)
+		log.Printf("[%s] No compact metadata found for job %d after retries: %v", workerID, jobID, backoff.AsRetryError(err).LastErr)
 		return nil
 	}
 

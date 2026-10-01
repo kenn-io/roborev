@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
@@ -498,20 +499,20 @@ func ProbeDaemonAlive(ep DaemonEndpoint) (bool, error) {
 		return false, nil
 	}
 
-	var lastErr error
-	for attempt := range 2 {
-		if attempt > 0 {
-			time.Sleep(200 * time.Millisecond)
-		}
+	alive, err := backoff.Retry(context.Background(), func() (bool, error) {
 		if _, err := probeRuntimeEndpoint(context.Background(), ep); err == nil {
 			return true, nil
 		} else if IsDaemonAccessDenied(err) {
-			return false, fmt.Errorf("%w at %s: %w", ErrDaemonAccessDenied, ep, err)
+			return false, backoff.Permanent(fmt.Errorf("%w at %s: %w", ErrDaemonAccessDenied, ep, err))
 		} else {
-			lastErr = err
+			return false, err
 		}
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(200*time.Millisecond)),
+		backoff.WithMaxTries(2), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return false, backoff.AsRetryError(err).LastErr
 	}
-	return false, lastErr
+	return alive, nil
 }
 
 // IsDaemonAlive checks if a daemon at the given endpoint is actually responding.
@@ -654,9 +655,9 @@ func requestGracefulDaemonShutdown(
 	confirmedDead func() bool,
 ) bool {
 	client := ep.APIClient(0)
-	for {
+	accepted, err := backoff.Retry(ctx, func() (bool, error) {
 		if confirmedDead() {
-			return true
+			return true, nil
 		}
 		resp, err := client.ShutdownRaw(ctx)
 		if err == nil {
@@ -664,22 +665,21 @@ func requestGracefulDaemonShutdown(
 				resp.StatusCode < http.StatusMultipleChoices
 			retryable := resp.StatusCode >= http.StatusInternalServerError
 			resp.Body.Close()
-			if accepted {
-				return true
+			if accepted || !retryable {
+				return accepted, nil
 			}
-			if !retryable {
-				return false
-			}
+			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
 		}
 		if confirmedDead() {
-			return true
+			return true, nil
 		}
-		select {
-		case <-ctx.Done():
-			return confirmedDead()
-		case <-time.After(shutdownCleanupRetryInterval):
-		}
+		return false, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(shutdownCleanupRetryInterval)),
+		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return confirmedDead()
 	}
+	return accepted
 }
 
 func waitForGracefulDaemonExit(
