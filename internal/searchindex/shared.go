@@ -2,8 +2,6 @@ package searchindex
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"slices"
@@ -91,9 +89,23 @@ func sharedSpace(space embedmodel.Descriptor) (string, error) {
 	return generation.Fingerprint(), nil
 }
 
-func sharedKey(reviewUUID, content string) storage.SearchVectorKey {
-	sum := sha256.Sum256([]byte(content))
-	return storage.SearchVectorKey{ReviewUUID: reviewUUID, ContentSHA256: hex.EncodeToString(sum[:])}
+// sharedKey keys shared rows by the mirror's content_hash, the SHA-256 of the
+// exact text that was embedded.
+func sharedKey(reviewUUID, contentHash string) storage.SearchVectorKey {
+	return storage.SearchVectorKey{ReviewUUID: reviewUUID, ContentSHA256: contentHash}
+}
+
+// pendingContentHash returns the content_hash a pending document was read
+// with. The vector store reads it as the document's revision.
+func pendingContentHash(doc vector.Pending[string]) string {
+	switch revision := doc.Revision.(type) {
+	case string:
+		return revision
+	case []byte:
+		return string(revision)
+	default:
+		return ""
+	}
 }
 
 // publishPushed publishes the current vectors of pushed reviews. Reviews not
@@ -185,10 +197,11 @@ func (s *sharingStore) importShared(
 	keys := make([]storage.SearchVectorKey, 0, len(reviewUUIDs))
 	for _, doc := range pending {
 		reviewUUID, ok := reviewUUIDs[doc.Doc]
-		if !ok {
+		contentHash := pendingContentHash(doc)
+		if !ok || contentHash == "" {
 			continue
 		}
-		key := sharedKey(reviewUUID, doc.Content)
+		key := sharedKey(reviewUUID, contentHash)
 		s.keys[doc.Doc] = key
 		keys = append(keys, key)
 	}
@@ -307,18 +320,18 @@ func (index *Index) coveredSharedDocuments(
 		args[i] = reviewUUID
 	}
 	rows, err := snapshot.CoveredDocs(ctx, sqlitevec.DocQuery{
-		Columns: []string{"review_uuid", "content"},
+		Columns: []string{"review_uuid", "content_hash"},
 		Where:   "d.review_uuid IN (" + placeholders(len(reviewUUIDs)) + ")",
 		Args:    args,
 	})
 	if err != nil {
 		return nil, err
 	}
-	type coveredDoc struct{ docKey, reviewUUID, content string }
+	type coveredDoc struct{ docKey, reviewUUID, contentHash string }
 	var covered []coveredDoc
 	for rows.Next() {
 		var doc coveredDoc
-		if err := rows.Scan(&doc.docKey, &doc.reviewUUID, &doc.content); err != nil {
+		if err := rows.Scan(&doc.docKey, &doc.reviewUUID, &doc.contentHash); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan covered search document: %w", err)
 		}
@@ -338,7 +351,7 @@ func (index *Index) coveredSharedDocuments(
 		if len(vectors) == 0 {
 			continue
 		}
-		docs = append(docs, sharedDocument{key: sharedKey(doc.reviewUUID, doc.content), chunks: sharedChunks(vectors)})
+		docs = append(docs, sharedDocument{key: sharedKey(doc.reviewUUID, doc.contentHash), chunks: sharedChunks(vectors)})
 	}
 	return docs, nil
 }
