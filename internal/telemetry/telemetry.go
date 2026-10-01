@@ -93,8 +93,8 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 }
 
 // loadOrCreateInstall returns the install ID and when it was created. An ID
-// created before roborev recorded that time returns a zero time, so the
-// install keeps reporting as an established one.
+// created before roborev recorded that time returns a zero time, so its
+// events carry no install age.
 func loadOrCreateInstall(database *storage.DB) (string, time.Time, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id, err := database.GetOrCreateSyncStateValueWith(installIDMetadataKey, randomInstallID,
@@ -112,7 +112,7 @@ func loadOrCreateInstall(database *storage.DB) (string, time.Time, error) {
 	}
 	installedAt, err := time.Parse(time.RFC3339Nano, stored)
 	if err != nil {
-		log.Printf("Warning: telemetry install time unreadable, treating install as established: %v", err)
+		log.Printf("Warning: telemetry install time unreadable, sending events without an install age: %v", err)
 		return id, time.Time{}, nil
 	}
 	return id, installedAt, nil

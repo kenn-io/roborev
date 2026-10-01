@@ -458,8 +458,8 @@ and `daemon_active` with repo count, review count, sync enabled, CI
 enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
 ID.
-A new install holds its events for its first 24 hours and sends them once it is
-a day old, so short-lived installs such as test sandboxes send nothing.
+Each event also carries `install_age_hours`, the whole hours since the install
+was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider
 tokens, usernames, or IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED=0` to
 disable it. `TELEMETRY_ENABLED=0` is also honored. Telemetry is always disabled

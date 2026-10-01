@@ -74,7 +74,7 @@ func TestLoadOrCreateInstallRecordsCreationTimeForNewID(t *testing.T) {
 	assert.WithinRange(t, installedAt, before.Add(-time.Second), time.Now().Add(time.Second))
 }
 
-func TestLoadOrCreateInstallTreatsExistingIDWithoutTimeAsEstablished(t *testing.T) {
+func TestLoadOrCreateInstallLeavesExistingIDWithoutTimeUnaged(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
