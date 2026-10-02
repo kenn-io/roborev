@@ -459,8 +459,8 @@ func checkDoctorAgents(env *doctorEnv) []doctorCheck {
 	}
 
 	out = append(out, checkDoctorPathMismatch(env, local)...)
-	review, reported := checkDoctorReviewAgent(env)
-	out = append(out, review)
+	review, reported := checkDoctorReviewAgents(env)
+	out = append(out, review...)
 	out = append(out, checkDoctorConfiguredAgents(env, reported)...)
 	return out
 }
@@ -500,6 +500,105 @@ func checkDoctorPathMismatch(env *doctorEnv, local []agent.Diagnosis) []doctorCh
 	}}
 }
 
+// checkDoctorReviewAgents checks what runs post-commit and manual reviews: a
+// selected review panel, or the single review agent when no panel is
+// selected for that kind of review.
+func checkDoctorReviewAgents(env *doctorEnv) ([]doctorCheck, map[string]bool) {
+	var panels []daemon.DoctorPanel
+	if env.daemonAgents != nil {
+		panels = env.daemonAgents.Panels
+	} else {
+		panels = daemon.ResolveDoctorPanels(env.repoPath, env.repoCfg, env.global)
+	}
+	covered := map[string]bool{}
+	var out []doctorCheck
+	reported := map[string]bool{}
+	for _, p := range panels {
+		for _, use := range p.UsedFor {
+			covered[use] = true
+		}
+		check, names := checkDoctorPanel(env, p)
+		out = append(out, check)
+		for name := range names {
+			reported[name] = true
+		}
+	}
+	if covered["post_commit"] && covered["manual"] {
+		return out, reported
+	}
+	single, names := checkDoctorReviewAgent(env)
+	// The single-agent summaries start with "reviews"; name which reviews
+	// they cover when a panel handles the other kind.
+	switch {
+	case covered["post_commit"]:
+		single.Summary = "manual " + single.Summary
+	case covered["manual"]:
+		single.Summary = "post-commit " + single.Summary
+	}
+	for name := range names {
+		reported[name] = true
+	}
+	return append([]doctorCheck{single}, out...), reported
+}
+
+var doctorPanelUses = map[string]string{"post_commit": "post-commit reviews", "manual": "manual reviews"}
+
+// checkDoctorPanel reports whether a selected panel can be queued and
+// finished. The daemon selects every member's agent when it queues the
+// panel and rejects the whole review if any member has none, even a member
+// marked allow_failure; allow_failure only covers a member that fails while
+// running. The synthesis agent runs strictly: its configured agent or backup.
+func checkDoctorPanel(env *doctorEnv, p daemon.DoctorPanel) (doctorCheck, map[string]bool) {
+	var uses []string
+	for _, u := range p.UsedFor {
+		uses = append(uses, doctorPanelUses[u])
+	}
+	label := fmt.Sprintf("panel %q (%s)", p.Name, strings.Join(uses, " and "))
+	c := doctorCheck{ID: "agents.review_panel", Category: "agents"}
+	reported := map[string]bool{}
+	merged := config.MergeReviewConfigFromConfig(env.repoCfg, env.global)
+
+	if p.Error != "" {
+		c.Status = doctorFail
+		c.Summary = label + " cannot be resolved; those reviews will fail"
+		c.Details = []string{p.Error}
+		c.Fix = "fix the panel definition under [review.panels] and [review.subagents]"
+		return c, reported
+	}
+	var problems, agents []string
+	for _, m := range p.Members {
+		if m.Error != "" {
+			problems = append(problems, fmt.Sprintf("member %s: %s", m.Name, doctorFirstLine(m.Error)))
+			if name := merged.Subagents[m.Name].Agent; name != "" {
+				reported[doctorAgentKey(name)] = true
+			}
+			continue
+		}
+		agents = append(agents, fmt.Sprintf("%s uses %s", m.Name, m.Agent))
+	}
+	if !p.Synthesis.Available {
+		problems = append(problems, fmt.Sprintf("synthesis agent %s: %s", p.Synthesis.Name, doctorFirstLine(p.Synthesis.Error)))
+		reported[doctorAgentKey(p.Synthesis.Name)] = true
+		if spec, ok := merged.Panels[p.Name]; ok && spec.SynthesisBackupAgent != "" {
+			reported[doctorAgentKey(spec.SynthesisBackupAgent)] = true
+		}
+	}
+	if len(problems) == 0 {
+		c.Status = doctorOK
+		c.Summary = fmt.Sprintf("%s: %s; synthesis uses %s", label, strings.Join(agents, ", "), p.Synthesis.Name)
+		return c, reported
+	}
+	c.Status = doctorFail
+	c.Summary = label + " will fail: some of its agents are not available"
+	c.Details = append(problems,
+		"the daemon rejects the whole panel review when any member has no agent, even a member marked allow_failure")
+	c.Fix = "install the agent, give the member a backup_agent, or remove the member from the panel"
+	if env.daemonAgents != nil {
+		c.Fix += "; if the agent works in this shell, run 'roborev daemon restart' from it"
+	}
+	return c, reported
+}
+
 // checkDoctorReviewAgent checks the agent that ordinary reviews resolve to.
 // Review resolution is strict: it tries the preferred agent and configured
 // backups, then fails the job, so an unavailable agent fails every review.
@@ -511,7 +610,7 @@ func checkDoctorReviewAgent(env *doctorEnv) (doctorCheck, map[string]bool) {
 	res, err := env.reviewWorkflow()
 	if err != nil {
 		c.Status = doctorFail
-		c.Summary = "cannot resolve which agent runs reviews"
+		c.Summary = "reviews have no resolvable agent"
 		c.Details = []string{err.Error()}
 		c.Fix = "check the agent settings in your config"
 		return c, reported

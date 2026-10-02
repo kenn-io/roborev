@@ -448,3 +448,55 @@ func TestDoctorDefaultBranchConfig(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, doctorWarn, got.Status)
 }
+
+func TestDoctorReviewPanels(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	okPanel := daemon.DoctorPanel{
+		Name: "guard", UsedFor: []string{"post_commit", "manual"},
+		Members:   []daemon.DoctorPanelMember{{Name: "sec", Agent: "claude-code"}},
+		Synthesis: agent.Diagnosis{Name: "claude-code", Available: true},
+	}
+
+	t.Run("a working panel for every review replaces the single-agent check", func(t *testing.T) {
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{DefaultAgent: "codex"},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{okPanel}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, "agents.review_panel", checks[0].ID)
+		assert.Equal(t, doctorOK, checks[0].Status)
+	})
+
+	t.Run("the single agent still covers reviews without a panel", func(t *testing.T) {
+		post := okPanel
+		post.UsedFor = []string{"post_commit"}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{DefaultAgent: "codex"},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{post}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		single := findDoctorCheck(t, checks, "agents.review")
+		assert.Equal(t, doctorFail, single.Status)
+		assert.Equal(t, "manual reviews will fail: agent codex is not available", single.Summary)
+	})
+
+	t.Run("a member without an agent fails the panel", func(t *testing.T) {
+		broken := okPanel
+		broken.Members = []daemon.DoctorPanelMember{
+			{Name: "sec", Agent: "claude-code"},
+			{Name: "style", Error: `agent "gemini" unavailable`},
+		}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{broken}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, doctorFail, checks[0].Status)
+		assert.Contains(t, checks[0].Details, `member style: agent "gemini" unavailable`)
+	})
+}

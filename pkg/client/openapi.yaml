@@ -1052,6 +1052,11 @@ components:
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
+        panels:
+          description: Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
+          items:
+            $ref: "#/components/schemas/DoctorPanel"
+          type: array
         path_env:
           description: PATH environment variable of the daemon process
           type: string
@@ -1068,6 +1073,45 @@ components:
         - agents
         - requested
         - hook_tools
+        - panels
+      type: object
+    DoctorPanel:
+      additionalProperties: false
+      properties:
+        error:
+          description: Why the panel itself cannot be resolved
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/DoctorPanelMember"
+          type: array
+        name:
+          type: string
+        synthesis:
+          $ref: "#/components/schemas/Diagnosis"
+          description: The agent that combines member results
+        used_for:
+          description: "Which reviews select this panel: post_commit, manual, or both"
+          items:
+            type: string
+          type: array
+      required:
+        - name
+        - used_for
+        - members
+        - synthesis
+      type: object
+    DoctorPanelMember:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        error:
+          type: string
+        name:
+          type: string
+      required:
+        - name
       type: object
     DurationStats:
       additionalProperties: false
