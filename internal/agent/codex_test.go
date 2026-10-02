@@ -584,6 +584,17 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			wantErr:          errCodexStreamFailed,
 			finalMessageOnly: true,
 		},
+		{
+			name: "FinalMessageOnlyIgnoresLateUpdateToEarlierMessage",
+			input: buildStream(
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				`{"type":"item.updated","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first, then the tests."}}`,
+				`{"type":"turn.completed","usage":{}}`,
+			),
+			want:             `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
+			finalMessageOnly: true,
+		},
 	}
 
 	for _, tt := range tests {

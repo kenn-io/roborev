@@ -711,7 +711,6 @@ func codexFailureEventError(ev codexEvent) error {
 func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOnly bool) (string, error) {
 	var validEventsParsed bool
 	agentMessages := newTrailingReviewText()
-	var lastAgentMessage string
 	var streamFailure error
 
 	err := scanStreamJSONLines(r, sw, func(line string) error {
@@ -728,7 +727,6 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 					// The persisted review is defined as the assistant text
 					// after the last tool event in the stream.
 					agentMessages.ResetAfterTool()
-					lastAgentMessage = ""
 				}
 
 				// Collect agent_message text from completed/updated items.
@@ -737,7 +735,6 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 				if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
 					ev.Item.Type == "agent_message" && ev.Item.Text != "" {
 					agentMessages.AddWithID(ev.Item.ID, ev.Item.Text)
-					lastAgentMessage = ev.Item.Text
 				}
 			}
 		}
@@ -756,7 +753,7 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 	}
 
 	if finalMessageOnly {
-		return lastAgentMessage, nil
+		return agentMessages.Last(), nil
 	}
 
 	if result := agentMessages.Join("\n"); result != "" {

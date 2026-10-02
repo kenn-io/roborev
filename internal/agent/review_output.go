@@ -48,3 +48,12 @@ func (t *trailingReviewText) ResetAfterTool() {
 func (t *trailingReviewText) Join(sep string) string {
 	return strings.Join(t.parts, sep)
 }
+
+// Last returns the final message in first-seen order, so a late update to an
+// earlier message cannot displace it.
+func (t *trailingReviewText) Last() string {
+	if len(t.parts) == 0 {
+		return ""
+	}
+	return t.parts[len(t.parts)-1]
+}
