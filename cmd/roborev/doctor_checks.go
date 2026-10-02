@@ -654,7 +654,7 @@ func checkDoctorFailedJobs(env *doctorEnv) []doctorCheck {
 	if total == 0 {
 		return []doctorCheck{{
 			ID: "jobs.failed", Category: "jobs", Status: doctorOK,
-			Summary: "no failed jobs in the last 7 days",
+			Summary: "no failed jobs queued in the last 7 days",
 		}}
 	}
 	names := make([]string, 0, len(groups))
@@ -679,7 +679,7 @@ func checkDoctorFailedJobs(env *doctorEnv) []doctorCheck {
 	}
 	return []doctorCheck{{
 		ID: "jobs.failed", Category: "jobs", Status: status,
-		Summary: fmt.Sprintf("%s in the last 7 days", plural(total, "failed job")),
+		Summary: fmt.Sprintf("%s queued in the last 7 days", plural(total, "failed job")),
 		Details: details,
 		Fix:     "inspect one with 'roborev show <job-id>'; repeated agent errors usually mean a missing agent, expired auth, or quota limits",
 	}}
@@ -944,9 +944,9 @@ func mentionsAny(text string, terms []string) bool {
 	return false
 }
 
-// securityReviewSources lists the settings that run security reviews for the
-// current repository: panels selected for manual or post-commit reviews, and
-// the CI poller when its repo patterns cover this repository's origin.
+// securityReviewSources lists the review panels that run security reviews
+// for the current repository: the panel for manual reviews and the panel for
+// post-commit reviews.
 func securityReviewSources(env *doctorEnv) []string {
 	var sources []string
 	merged := config.MergeReviewConfigFromConfig(env.repoCfg, env.global)
@@ -957,41 +957,6 @@ func securityReviewSources(env *doctorEnv) []string {
 		if sel.name != "" && panelHasSecurityMember(env, merged, sel.name) {
 			sources = append(sources, fmt.Sprintf("%s = %q includes a security reviewer", sel.key, sel.name))
 		}
-	}
-
-	ci := env.global.CI
-	if !ci.Enabled {
-		return sources
-	}
-	identity := config.RemoteIdentity(git.GetRemoteURL(env.repoPath, ""))
-	_, ownerRepo, ok := strings.Cut(identity, "/")
-	if !ok || !ci.CIPollsRepo(ownerRepo) {
-		return sources
-	}
-	panel := ci.Panel
-	if env.repoCfg != nil && env.repoCfg.CI.Panel != "" {
-		panel = env.repoCfg.CI.Panel
-	}
-	if panel != "" {
-		if panelHasSecurityMember(env, merged, panel) {
-			sources = append(sources, fmt.Sprintf("CI poller reviews %s PRs with panel %q, which includes a security reviewer", ownerRepo, panel))
-		}
-		return sources
-	}
-	reviews := ci.Reviews
-	if env.repoCfg != nil && len(env.repoCfg.CI.Reviews) > 0 {
-		reviews = env.repoCfg.CI.Reviews
-	}
-	var types []string
-	if len(reviews) > 0 {
-		for _, ts := range reviews {
-			types = append(types, ts...)
-		}
-	} else {
-		types = config.ResolveCIReviewTypes("", env.repoCfg, env.global)
-	}
-	if slices.ContainsFunc(types, func(t string) bool { return isSecurityReviewType(env, t) }) {
-		sources = append(sources, fmt.Sprintf("CI poller runs security reviews on %s PRs (ci.review_types defaults to security)", ownerRepo))
 	}
 	return sources
 }

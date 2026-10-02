@@ -187,7 +187,6 @@ func TestDoctorGuidelines(t *testing.T) {
 		name       string
 		files      map[string]string
 		globalCfg  string
-		remote     string
 		wantStatus doctorStatus
 		wantInSum  string
 	}{
@@ -215,22 +214,6 @@ func TestDoctorGuidelines(t *testing.T) {
 			wantStatus: doctorOK,
 		},
 		{
-			name:       "CI poller covering the origin runs security by default",
-			files:      map[string]string{"main.go": "package main\n"},
-			globalCfg:  "[ci]\nenabled = true\nrepos = [\"acme/*\"]\n",
-			remote:     "git@github.com:acme/api.git",
-			wantStatus: doctorFail,
-			wantInSum:  "security reviews are enabled",
-		},
-		{
-			name:       "CI poller that does not cover the origin",
-			files:      map[string]string{"main.go": "package main\n"},
-			globalCfg:  "[ci]\nenabled = true\nrepos = [\"other/*\"]\n",
-			remote:     "git@github.com:acme/api.git",
-			wantStatus: doctorWarn,
-			wantInSum:  "no review guidelines",
-		},
-		{
 			name:       "no security reviews and no guidelines",
 			files:      map[string]string{"main.go": "package main\n"},
 			wantStatus: doctorWarn,
@@ -251,9 +234,6 @@ func TestDoctorGuidelines(t *testing.T) {
 			repo := testutil.NewTestRepo(t)
 			for name, content := range tt.files {
 				repo.CommitFile(name, content, "add "+name)
-			}
-			if tt.remote != "" {
-				repo.Run("remote", "add", "origin", tt.remote)
 			}
 
 			env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})

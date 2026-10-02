@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -61,27 +60,4 @@ func unknownKeys(path string, into any) ([]string, error) {
 	}
 	slices.Sort(keys)
 	return keys, nil
-}
-
-// RemoteIdentity normalizes a git remote URL to "host/owner/repo" so SSH and
-// HTTPS remotes for the same repository compare equal. It returns "" when the
-// remote cannot be parsed.
-func RemoteIdentity(remote string) string {
-	return projectRemoteIdentity(remote)
-}
-
-// CIPollsRepo reports whether the CI poller's repo patterns cover the GitHub
-// repository "owner/repo". It applies ci.repos and ci.exclude_repos glob
-// patterns only; it cannot know whether the repository exists on GitHub.
-func (c *CIConfig) CIPollsRepo(ownerRepo string) bool {
-	ownerRepo = strings.ToLower(ownerRepo)
-	matches := func(patterns []string) bool {
-		for _, pattern := range patterns {
-			if ok, err := path.Match(strings.ToLower(strings.TrimSpace(pattern)), ownerRepo); err == nil && ok {
-				return true
-			}
-		}
-		return false
-	}
-	return matches(c.Repos) && !matches(c.ExcludeRepos)
 }

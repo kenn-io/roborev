@@ -1168,7 +1168,7 @@ hooks, or edits config.
 | Configuration | Global and repo config load and validate; unknown (usually misspelled) keys; `.roborev.toml` on the default branch parses |
 | Daemon | Running, same version as the CLI, queue not paused, healthy components, recent daemon errors |
 | Agents | Agents the daemon can run; agents found in your shell but not on the daemon's `PATH`; the agent reviews resolve to and its backup, and every agent named in config, as resolved by the daemon itself |
-| Recent failures | Failed jobs in the last 7 days grouped by agent; post-commit hook runs that failed to queue a review |
+| Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
 | Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, `[ci]` problems such as an unreadable GitHub App key |
@@ -1176,13 +1176,11 @@ hooks, or edits config.
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.
 
-Security reviews count as enabled for a repository when a panel selected by
-`review.default_panel` or `review.hook_review_panel` has a security member, or
-when the CI poller is enabled, its `ci.repos` patterns match the repository's
-`origin` remote, and its review types include `security` (the default). In that
-case, missing review guidelines are a failure: security reviewers need a threat
-model to judge what is trusted. Without security reviews, missing guidelines are
-a warning.
+Security reviews count as enabled for a repository when the panel selected by
+`review.default_panel` or `review.hook_review_panel` has a member with
+`review_type = "security"`. In that case, missing review guidelines are a
+failure: security reviewers need a threat model to judge what is trusted.
+Without security reviews, missing guidelines are a warning.
 
 With `--json`, the report has this shape. Check IDs are stable.
 

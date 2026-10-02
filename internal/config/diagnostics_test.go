@@ -79,23 +79,3 @@ func TestAgentReferences(t *testing.T) {
 		{Key: "review.subagents.sec.agent", Name: "pi"},
 	}, refs)
 }
-
-func TestCIPollsRepo(t *testing.T) {
-	ci := CIConfig{
-		Repos:        []string{"acme/api", "Other/*"},
-		ExcludeRepos: []string{"other/private-*"},
-	}
-	tests := []struct {
-		repo string
-		want bool
-	}{
-		{"acme/api", true},
-		{"ACME/API", true},
-		{"acme/web", false},
-		{"other/tools", true},
-		{"other/private-keys", false},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, ci.CIPollsRepo(tt.repo), tt.repo)
-	}
-}
