@@ -215,42 +215,38 @@ func TestCommandIsUsableCursorCandidate_FailClosedOnUnknown(t *testing.T) {
 }
 
 func TestIdentityProbe_OrphanPipeBounded(t *testing.T) {
-	// Regression for WaitDelay == 0: killing the parent while a descendant
-	// keeps stdout/stderr open must not leave CombinedOutput blocked forever.
+	// A descendant holding output pipes must trigger WaitDelay after the parent exits.
 	if runtime.GOOS == "windows" {
 		t.Skip("orphan pipe fixture uses a Unix process tree")
 	}
 	clearIdentityProbeCache()
-	prevTimeout := identityProbeTimeout
 	prevWait := identityProbeWaitDelay
-	identityProbeTimeout = 80 * time.Millisecond
 	identityProbeWaitDelay = 50 * time.Millisecond
 	t.Cleanup(func() {
-		identityProbeTimeout = prevTimeout
 		identityProbeWaitDelay = prevWait
 	})
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hang-orphan")
-	// Parent sleeps forever; background child inherits pipes. When the
-	// context kills the shell, the orphan may keep pipes open — WaitDelay
-	// must still unstick Wait.
+	fifo := path + ".pipe"
+	require.NoError(t, exec.Command("mkfifo", fifo).Run())
+	hold, err := os.OpenFile(fifo, os.O_RDWR, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, hold.Close()) })
+	// Open before forking so cleanup releases even a child that has not run yet.
 	script := "#!/bin/sh\n" +
 		"case \"$1\" in *etxtbsy*) exit 0;; esac\n" +
-		"(sleep 60) &\n" +
-		"sleep 60\n"
+		"exec 3< \"$0.pipe\"\n" +
+		"cat <&3 &\n" +
+		"echo 'grok 1.0'\n" +
+		"exit 0\n"
 	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
 
-	start := time.Now()
-	id := resolveCommandIdentity(path)
-	elapsed := time.Since(start)
-
-	assert.Equal(t, identityUnknown, id)
+	out, err := runIdentityProbe(t.Context(), path, "--version")
+	require.ErrorIs(t, err, exec.ErrWaitDelay)
+	assert.Contains(t, string(out), "grok 1.0")
+	assert.Equal(t, identityUnknown, resolveCommandIdentity(path))
 	assert.False(t, commandIsUsableCursorCandidate(path))
-	// Bound: timeout + WaitDelay + small scheduling margin (not 60s sleep).
-	maxWait := identityProbeTimeout + identityProbeWaitDelay + 500*time.Millisecond
-	assert.Less(t, elapsed, maxWait,
-		"probe must return within timeout+WaitDelay (got %v, max %v)", elapsed, maxWait)
 }
 
 func TestIdentityProbe_OversizeOutputUnknown(t *testing.T) {
