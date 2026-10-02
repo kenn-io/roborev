@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -159,6 +160,42 @@ func TestHealthCIPollerReviewRecovery(t *testing.T) {
 	assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 }
 
+func TestHealthCIPollerFirstAttemptWithoutOutput(t *testing.T) {
+	assert := assert.New(t)
+	h, server := newCIHealthHarness(t)
+	h.stubProcessPRGit()
+	h.Cfg.CI.Repos = []string{"acme/api"}
+	h.Cfg.CI.Agents = []string{"test"}
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+	h.Poller.poll(context.Background())
+	assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+
+	panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
+	require.NoError(t, err)
+	for _, member := range h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid) {
+		h.markJobCanceled(t, member.ID, review.TimeoutErrorPrefix+"review deadline reached")
+	}
+	require.NotNil(t, panel.SynthesisJobID)
+	h.markJobFailed(t, *panel.SynthesisJobID, "synthesis released after all members timed out")
+	h.Poller.handleReviewFailed(ciEvent(*panel.SynthesisJobID, "review.failed"))
+	h.Poller.poll(context.Background())
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal(1, attempt.Attempt)
+	assert.Equal("done", attempt.State)
+	assert.Empty(attempt.LastErrorClass)
+	assert.Empty(attempt.LastErrorExcerpt)
+	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.False(health.Healthy)
+	assert.Contains(health.Components, storage.ComponentHealth{
+		Name: "ci", Healthy: false, Message: "review failed for acme/api#1",
+	})
+}
+
 func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 	for _, recovery := range []string{"closed", "new head", "skipped"} {
 		t.Run(recovery, func(t *testing.T) {
@@ -209,14 +246,25 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 				h.Poller.poll(context.Background())
 				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 					"failed check publishing must retain the failure for the next poll")
+				h.CaptureSkippedChecks()
+				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+					return errors.New("status publishing unavailable")
+				}
+				h.Poller.poll(context.Background())
+				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+					"failed status publishing must retain the failure for the next poll")
 			}
 			skipped := h.CaptureSkippedChecks()
+			statuses := h.CaptureCommitStatuses()
 			h.Poller.poll(context.Background())
 			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 				"a failed review no longer needed by the PR must not hold health unhealthy")
 			if recovery == "skipped" {
 				assert.Contains(*skipped, capturedSkippedCheck{
 					Repo: "acme/api", SHA: "head-a", Summary: "Review skipped: label skip-review",
+				})
+				assert.Contains(*statuses, capturedStatus{
+					Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review skipped: label skip-review",
 				})
 			}
 
@@ -270,7 +318,7 @@ func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 			assert.Equal(t, 1, fetches)
 			assert.False(t, health.Healthy)
 			assert.Contains(t, health.Components, storage.ComponentHealth{
-				Name: "ci", Healthy: false, Message: "retry failed for acme/api#1",
+				Name: "ci", Healthy: false, Message: "review failed for acme/api#1",
 			})
 
 			// Reconciliation defers the stranded attempt; skipping it during backoff
@@ -375,7 +423,7 @@ func TestHealthCIPollerStartRestoresRetryHealth(t *testing.T) {
 		health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 		assert.False(health.Healthy)
 		assert.Contains(health.Components, storage.ComponentHealth{
-			Name: "ci", Healthy: false, Message: "retry failed for acme/api#1",
+			Name: "ci", Healthy: false, Message: "review failed for acme/api#1",
 		})
 		require.Len(t, health.RecentErrors, 1, "only configured repositories contribute retry health")
 		attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)

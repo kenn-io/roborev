@@ -78,6 +78,8 @@ running. Polling restores these failures after a restart. Recovery requires a
 posted review with usable output; exhausting retries or abandoning delivery does
 not restore health. Ordinary queued reviews with no previous failure are
 healthy. An enqueue error alone can clear once polling confirms an active panel.
+A first attempt that finishes without usable output also makes CI unhealthy,
+including when every reviewer times out.
 
 Each error belongs to that commit. A successful review of another commit does
 not clear an older retry's error until the obsolete attempt is removed.
@@ -85,9 +87,15 @@ Closed-PR cleanup and removal of obsolete retries clear their errors only after
 they succeed. An intentionally empty review matrix removes a claimed retry
 instead of re-arming disabled work. Adding a configured skip label removes a
 deferred retry and its health error on the next poll, without waiting for
-backoff to expire. Terminal failures also clear when the PR closes, advances to
-a new commit, or gets a skip label. Skipping publishes the skipped check before
+backoff to expire.
+
+Terminal failures do not expire: one unresolved PR keeps overall health
+unhealthy until the PR closes, advances to a new commit, or gets a skip label.
+To acknowledge a failure after retries stop, add a configured skip label. This
+waives review while the label remains. Skipping publishes the skipped check and
+sets the commit status to success with a "Review skipped" description before
 clearing the failure; a publishing error leaves the failure for the next poll.
+
 Cleanup also retires the failed panel, allowing a fresh review if the PR reopens
 or the skip label is removed at the same commit. Active and successfully posted
 reviews are left unchanged.

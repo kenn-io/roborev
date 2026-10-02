@@ -869,7 +869,10 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
-	assert.Empty(t, *statuses)
+	assert.Equal(t, []capturedStatus{{
+		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
+		Desc: "Review skipped: label Do Not Review",
+	}}, *statuses)
 	assert.Equal(t, []capturedSkippedCheck{{
 		Repo: "acme/api", SHA: "skipped-head-sha",
 		Summary: "Review skipped: label Do Not Review",
@@ -4804,7 +4807,10 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, attempt)
 	assert.False(t, h.hasPanel(t, "acme/api", prNum, headSHA))
-	assert.Empty(t, *statuses)
+	assert.Equal(t, []capturedStatus{{
+		Repo: "acme/api", SHA: headSHA, State: "success",
+		Desc: "Review skipped: label Skip-Review",
+	}}, *statuses)
 	assert.Equal(t, []capturedSkippedCheck{{
 		Repo: "acme/api", SHA: headSHA,
 		Summary: "Review skipped: label Skip-Review",

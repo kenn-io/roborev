@@ -372,7 +372,7 @@ func (p *CIPoller) recordPollResult(repo string, prNumber int, headSHA string, e
 		message = "polling failed for " + repo
 	}
 	if prNumber != 0 {
-		message = fmt.Sprintf("retry failed for %s#%d", repo, prNumber)
+		message = fmt.Sprintf("review failed for %s#%d", repo, prNumber)
 	}
 	p.pollErrors[target] = message
 	if p.errorLog != nil {
@@ -824,6 +824,10 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) error {
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
 		return fmt.Errorf("set skipped check: %w", err)
+	}
+	// A skipped check does not replace an existing error or pending commit status.
+	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "success", description); err != nil {
+		return fmt.Errorf("set skipped commit status: %w", err)
 	}
 	if err := p.db.DeleteReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
 		return fmt.Errorf("delete skipped review attempt: %w", err)
