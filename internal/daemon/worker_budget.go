@@ -39,7 +39,7 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 	model := ""
 	// A backup model is paired deliberately with that adapter. All other
 	// substitutions keep the selected adapter's own default model/provider.
-	resolution, err := agent.ResolveWorkflowConfigFromConfig("", repoCfg, cfg, failoverWorkflow(job), job.Reasoning)
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(job.Agent, repoCfg, cfg, failoverWorkflow(job), job.Reasoning)
 	if err == nil {
 		if job.BackupAgent != "" {
 			if resolution.AgentMatches(selected.Name(), job.BackupAgent) {

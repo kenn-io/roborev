@@ -1097,7 +1097,13 @@ func (db *DB) migrate() error {
 		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN budget_routing_locked INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add budget_routing_locked column: %w", err)
 		}
-		for _, column := range []string{"budget_original_agent", "budget_original_backup_agent", "budget_original_backup_model"} {
+	}
+	for _, column := range []string{"budget_original_agent", "budget_original_backup_agent", "budget_original_backup_model"} {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, column).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column: %w", column, err)
+		}
+		if count == 0 {
 			if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
 				return fmt.Errorf("add %s column: %w", column, err)
 			}

@@ -596,6 +596,38 @@ func TestCommentsForCommitUseCommitIDIndex(t *testing.T) {
 	}
 }
 
+func TestBudgetMigrationResumesColumnAdditions(t *testing.T) {
+	t.Parallel()
+	columns := []string{"budget_original_agent", "budget_original_backup_agent", "budget_original_backup_model"}
+	for i, firstMissing := range columns {
+		t.Run(firstMissing, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "reviews.db")
+			db, err := Open(dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { db.Close() })
+			repo := createRepo(t, db, "/tmp/budget-migration-repo")
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "codex"})
+			require.NoError(t, err)
+
+			// Reproduce a startup interrupted after the lock column and any
+			// preceding original-agent columns have committed.
+			for _, column := range columns[i:] {
+				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN ` + column)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Close())
+
+			reopened, err := Open(dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { reopened.Close() })
+			got, err := reopened.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "codex", got.Agent)
+			assert.Equal(t, JobStatusQueued, got.Status)
+		})
+	}
+}
+
 func TestMigrationAddsSessionIDColumn(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

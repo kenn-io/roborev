@@ -89,6 +89,12 @@ func TestProcessJobBudgetSelection(t *testing.T) {
 			c.DefaultBackupModel = "paired-model"
 			return ""
 		}},
+		{name: "explicit agent uses backup model when defaults match", want: "gemini", wantModel: "paired-model", setup: func(c *config.Config) string {
+			c.DefaultAgent = "gemini"
+			c.DefaultBackupAgent = "gemini"
+			c.DefaultBackupModel = "paired-model"
+			return ""
+		}},
 		{name: "disabled", disabled: true, want: "codex"},
 		{name: "explicit model", mutate: func(j *storage.ReviewJob) { j.RequestedModel = "pinned" }, want: "codex"},
 		{name: "explicit provider", mutate: func(j *storage.ReviewJob) { j.RequestedProvider = "pinned" }, want: "codex"},
