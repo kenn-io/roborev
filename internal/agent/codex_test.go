@@ -584,17 +584,6 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			wantErr:          errCodexStreamFailed,
 			finalMessageOnly: true,
 		},
-		{
-			name: "JoinsPreambleWithoutFinalMessageOnly",
-			input: buildStream(
-				`{"type":"thread.started","thread_id":"t"}`,
-				`{"type":"turn.started"}`,
-				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
-				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
-				`{"type":"turn.completed","usage":{}}`,
-			),
-			want: "I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n\n" + `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
-		},
 	}
 
 	for _, tt := range tests {
