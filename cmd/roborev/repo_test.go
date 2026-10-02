@@ -157,7 +157,7 @@ func TestRepoCommandsUseDaemonAPI(t *testing.T) {
 							assert.Equal(t, map[string]any{"identifier": "source", "name": "friendly", "by_path": false}, body)
 							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": source}))
 						case "/api/repos/move":
-							assert.Equal(t, map[string]any{"repo_id": float64(11), "path": newPath, "identity": "local://" + newPath}, body)
+							assert.Equal(t, map[string]any{"repo_id": float64(11), "path": newPath, "identity": "local://" + filepath.FromSlash(newPath)}, body)
 							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": source}))
 						case "/api/repos/delete":
 							assert.Equal(t, map[string]any{"repo_id": float64(11), "cascade": true}, body)
