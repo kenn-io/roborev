@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +23,7 @@ func TestDaemonRunAppliesInitialPauseBeforeWorkers(t *testing.T) {
 			openDaemonSearchIndex = func(context.Context, string) (*searchindex.Index, error) { return nil, stop }
 			t.Cleanup(func() { openDaemonSearchIndex = original })
 			cmd := daemonRunCmd()
-			cmd.SetArgs([]string{"--db", storage.DefaultDBPath(), "--config", filepath.Join(t.TempDir(), "config.toml"), "--queue-paused=" + map[bool]string{true: "true", false: "false"}[paused]})
+			cmd.SetArgs([]string{"--db", storage.DefaultDBPath(), "--queue-paused=" + map[bool]string{true: "true", false: "false"}[paused]})
 			require.ErrorIs(t, cmd.Execute(), stop)
 			db, err := storage.OpenReadOnly(storage.DefaultDBPath())
 			require.NoError(t, err)
