@@ -3,7 +3,10 @@ package daemon
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,31 +20,37 @@ import (
 
 func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 	for _, tc := range []struct {
-		name, browserToken, loginToken, wrongToken string
-		local, forwarded                           bool
+		name, browserToken, loginToken, wrongToken, publicOrigin string
+		local, forwarded                                         bool
 	}{
-		{"shared key", "", "test-shared-key", "wrong-key", true, false},
-		{"explicit browser token", testBrowserAuthToken, testBrowserAuthToken, "test-shared-key", false, false},
-		{"forwarded shared key", "", "test-shared-key", "wrong-key", false, true},
+		{"shared key", "", "test-shared-key", "wrong-key", "", true, false},
+		{"explicit browser token", testBrowserAuthToken, testBrowserAuthToken, "test-shared-key", "", false, false},
+		{"forwarded shared key", "", "test-shared-key", "wrong-key", "", false, true},
+		{"public origin shared key", "", "test-shared-key", "wrong-key", "https://reviews.example.com", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := assert.New(t)
-			s := newAuthTestServer(t, "test-shared-key")
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			contents := fmt.Sprintf("auth_key = \"test-shared-key\"\n[web]\nlisten = \"127.0.0.1:0\"\nauth_token = %q\npublic_origin = %q\n", tc.browserToken, tc.publicOrigin)
+			require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+			cfg, err := config.LoadGlobalFrom(configPath)
+			require.NoError(t, err)
+			s := newAuthTestServer(t, cfg.AuthKey)
 			marker := filepath.Join(t.TempDir(), "comment-hook")
 			s.configWatcher.Config().Hooks = []config.HookConfig{{Event: "review.commented", Command: touchCmd(marker)}}
 			s.allowWebCompilationStub = true
-			cfg := config.DefaultConfig()
-			cfg.Web.Listen = "127.0.0.1:0"
-			cfg.Web.AuthToken = tc.browserToken
 			runtime, err := s.startBrowserServer(cfg.Web)
 			require.NoError(t, err)
 			base := "http://" + runtime.Address
+			origin, err := url.Parse(runtime.Origin)
+			require.NoError(t, err)
 			request := func(path, body string) *http.Response {
 				t.Helper()
 				req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewBufferString(body))
 				require.NoError(t, err)
+				req.Host = origin.Host
 				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Origin", base)
+				req.Header.Set("Origin", runtime.Origin)
 				req.Header.Set("Sec-Fetch-Site", "same-origin")
 				req.Header.Set("Sec-Fetch-Mode", "cors")
 				req.Header.Set("Sec-Fetch-Dest", "empty")
@@ -65,6 +74,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			for _, path := range []string{"/api/status", "/api/ping"} {
 				req, err := http.NewRequest(http.MethodGet, base+path, nil)
 				require.NoError(t, err)
+				req.Host = origin.Host
 				require.Len(t, login.Cookies(), 1)
 				req.AddCookie(login.Cookies()[0])
 				req.Header.Set(WebSessionHeader, credentials.Session)
@@ -79,8 +89,9 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			require.NoError(t, err)
 			req, err := http.NewRequest(http.MethodPost, base+"/api/comment", bytes.NewReader(body))
 			require.NoError(t, err)
+			req.Host = origin.Host
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Origin", base)
+			req.Header.Set("Origin", runtime.Origin)
 			req.AddCookie(login.Cookies()[0])
 			req.Header.Set(WebSessionHeader, credentials.Session)
 			req.Header.Set(WebCSRFHeader, credentials.CSRF)

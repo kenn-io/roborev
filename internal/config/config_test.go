@@ -5372,6 +5372,9 @@ func TestWebConfigNormalization(t *testing.T) {
 	}{
 		{name: "loopback defaults", contents: "[web]\nlisten = \"127.0.0.1:0\"\n"},
 		{name: "canonical public origin", contents: "[web]\npublic_origin = \"HTTPS://REVIEWS.EXAMPLE.COM:443\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "shared key public origin", contents: "auth_key = \"test-shared-key\"\n[web]\npublic_origin = \"https://reviews.example.com\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "reject shared key remote HTTP", contents: "auth_key = \"test-shared-key\"\n[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
+		{name: "reject shared key remote bind", contents: "auth_key = \"test-shared-key\"\n[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "loopback"},
 		{name: "proxy authentication", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_mode = \"proxy\"\n", wantOrigin: "https://reviews.example.com", wantAuthMode: WebAuthModeProxy},
 		{name: "reject unknown auth mode", contents: "[web]\nauth_mode = \"trusted\"\n", wantErr: "auth mode"},
 		{name: "reject proxy mode without origin", contents: "[web]\nauth_mode = \"proxy\"\n", wantErr: "public origin"},

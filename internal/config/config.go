@@ -1012,10 +1012,10 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := validateSearchConfig(cfg.Search); err != nil {
 		return err
 	}
-	return normalizeWebConfig(&cfg.Web)
+	return normalizeWebConfig(&cfg.Web, cfg.AuthKey)
 }
 
-func normalizeWebConfig(web *WebConfig) error {
+func normalizeWebConfig(web *WebConfig, authKey string) error {
 	if !web.Enabled {
 		return nil
 	}
@@ -1066,8 +1066,8 @@ func normalizeWebConfig(web *WebConfig) error {
 		if web.AuthMode == WebAuthModeProxy && parsedOrigin.Scheme != "https" {
 			return fmt.Errorf("web proxy auth mode requires an HTTPS public origin")
 		}
-		if web.AuthMode == "" && !isLoopbackHost(parsedOrigin.Hostname()) && resolvedToken == "" {
-			return fmt.Errorf("web auth token is required for a non-loopback public origin")
+		if web.AuthMode == "" && !isLoopbackHost(parsedOrigin.Hostname()) && resolvedToken == "" && authKey == "" {
+			return fmt.Errorf("web auth token or auth_key is required for a non-loopback public origin")
 		}
 	}
 	return nil

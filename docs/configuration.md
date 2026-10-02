@@ -1304,6 +1304,10 @@ optionally followed by one terminal newline. It is mutually exclusive with
 `auth_token` and is read when the daemon starts, so the token bytes do not need
 to be stored in the configuration file.
 
+If global `auth_key` is set, you can omit both browser token settings and use
+that key at login, including through an HTTPS `public_origin`. A configured
+browser token takes precedence over the shared key for browser login.
+
 To use the reverse proxy or private network as the admission boundary instead,
 configure proxy authentication and omit both token settings:
 
