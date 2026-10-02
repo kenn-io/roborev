@@ -2,6 +2,7 @@ import { roborevFetch } from "../api/generated-fetch";
 
 const telemetryEventsPath = "/api/telemetry/events";
 let lastReportedDay = "";
+let loadReported = false;
 
 function reportAppOpened(): void {
   const day = new Date().toISOString().slice(0, 10);
@@ -14,9 +15,13 @@ function reportAppOpened(): void {
   }).catch(() => undefined);
 }
 
-/** Reports app_opened now and on the first window focus of each later UTC day; returns a cleanup. */
+/** Reports app_opened on the page's first shell mount and on the first window focus of each later UTC day; returns a cleanup. */
 export function setupAppOpenedReporting(): () => void {
-  reportAppOpened();
+  // A remount after session recovery is not a load, so an unattended tab stays uncounted until it gains focus.
+  if (!loadReported) {
+    loadReported = true;
+    reportAppOpened();
+  }
   globalThis.addEventListener("focus", reportAppOpened);
   return () => globalThis.removeEventListener("focus", reportAppOpened);
 }

@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
+
+const appOpened = vi.hoisted(() => ({
+  setupAppOpenedReporting: vi.fn(() => () => undefined),
+}));
+// The helper reports once per page load, so the shell's call is what this file checks; its request is tested beside it.
+vi.mock("./lib/utils/app-opened", () => appOpened);
 
 const credentials = {
   session: "tab-session",
@@ -120,50 +126,25 @@ describe("App", () => {
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
   });
 
-  test("reports app_opened only after login renders the review workspace", async () => {
-    // A day no earlier test reached, so the module-level once-a-day guard is clear without reloading Svelte.
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2030-01-15T12:00:00Z"));
-    onTestFinished(() => {
-      vi.useRealTimers();
-    });
-    const telemetryRequests = (calls: unknown[][]): Request[] =>
-      calls
-        .map(([input]) => input)
-        .filter(
-          (input): input is Request =>
-            input instanceof Request &&
-            input.method === "POST" &&
-            new URL(input.url).pathname === "/api/telemetry/events",
-        );
+  test("starts app_opened reporting only after login renders the review workspace", async () => {
+    appOpened.setupAppOpenedReporting.mockClear();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(401))
       .mockResolvedValueOnce(response(200, credentials))
-      .mockImplementation((input: RequestInfo | URL) => {
-        const url = new URL(
-          input instanceof Request ? input.url : input,
-          location.origin,
-        );
-        if (url.pathname === "/api/telemetry/events") {
-          return response(202, { status: "queued" });
-        }
-        return applicationResponse(input);
-      });
+      .mockImplementation(applicationResponse);
     vi.stubGlobal("fetch", fetchMock);
     render(App);
 
     const token = await screen.findByLabelText("Daemon token");
-    expect(telemetryRequests(fetchMock.mock.calls)).toHaveLength(0);
+    expect(appOpened.setupAppOpenedReporting).not.toHaveBeenCalled();
     await fireEvent.input(token, { target: { value: "one-time-secret" } });
     await fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(
       await screen.findByRole("region", { name: "Review jobs" }),
     ).toBeInTheDocument();
-    const reported = telemetryRequests(fetchMock.mock.calls);
-    expect(reported).toHaveLength(1);
-    expect(reported[0]!.headers.get("X-Roborev-CSRF")).toBe("csrf-value");
+    expect(appOpened.setupAppOpenedReporting).toHaveBeenCalledTimes(1);
   });
 
   test("starts loading review jobs before the first daemon status response", async () => {

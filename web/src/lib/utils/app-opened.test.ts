@@ -105,6 +105,18 @@ describe("setupAppOpenedReporting", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  test("sends nothing when the shell remounts on a later day without focus", async () => {
+    setup()();
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    setup();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test("resolves the configured base path", async () => {
     const meta = document.createElement("meta");
     meta.name = "roborev-base-path";
