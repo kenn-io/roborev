@@ -13,6 +13,7 @@ import (
 // recovery. Fresh explicit-agent-only jobs opt into the global budget policy.
 func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string, job *storage.ReviewJob, cfg *config.Config) (agent.Agent, bool) {
 	if wp.budgetRouter == nil || cfg == nil || !cfg.Budget.Enabled ||
+		!hasBudgetPrice(job.Agent, cfg.Budget.AgentCosts) ||
 		agent.CanonicalName(job.Agent) == "test" ||
 		job.FrozenExperimentPlan != nil || job.BudgetRoutingLocked || job.RetryCount != 0 || job.SessionID != "" ||
 		job.RequestedModel != "" || job.RequestedProvider != "" || job.PanelRole != "" ||

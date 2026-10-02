@@ -178,3 +178,30 @@ func TestBudgetSpendIncludesPaidSkippedAttempts(t *testing.T) {
 	assert.Equal(t, 1, spend.JobsWithCost)
 	assert.Equal(t, 1, spend.JobsTotal)
 }
+
+func TestBudgetSpendCountsHistoricalUnpricedInvocations(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/budget-historical-repo")
+	day := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	for _, usage := range []string{
+		`{"has_cost":true,"cost_usd":0.25}`,
+		`{"has_cost":true}`,
+		`{"cache_creation_tokens":8192}`,
+		"", `{}`, `broken`,
+	} {
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE review_jobs SET status='done',started_at='2026-01-02T10:00:00Z',
+			finished_at='2026-01-02T11:00:00Z',agent_invoked=0,token_usage=? WHERE id=?`, usage, job.ID)
+		require.NoError(t, err)
+	}
+	spend, err := db.GetBudgetSpend(day)
+	require.NoError(t, err)
+	assert.Equal(3, spend.JobsTotal, "usage proves invocation even when the marker is absent")
+	assert.Equal(1, spend.JobsWithCost)
+	assert.InDelta(0.25, spend.TotalUSD, 1e-9)
+	assert.False(spend.Complete, "unknown costs leave coverage incomplete")
+}

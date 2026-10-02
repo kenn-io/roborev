@@ -236,9 +236,33 @@ func TestBudgetRoutingRerunRestoresAgent(t *testing.T) {
 	}
 }
 
+func TestBudgetRoutingUnpricedTaskIgnoresMalformedRepoConfig(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+	cfg, _ := configureUnpricedBudgetRouting(t, tc)
+	delete(cfg.Budget.AgentCosts, "codex")
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: "run:task", Agent: "codex",
+		Prompt: "Do the task", JobType: storage.JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("invalid = ["), 0o600))
+
+	tc.Pool.processJob(testWorkerID, claimed)
+	got := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Equal(t, "codex", got.Agent)
+	assert.False(t, got.BudgetRoutingLocked)
+	assert.Zero(t, got.RetryCount)
+}
+
 func TestBudgetRoutingErrorsPreserveAgentAndIsolateLog(t *testing.T) {
 	for _, failure := range []string{"repo config", "persist selection"} {
 		t.Run(failure, func(t *testing.T) {
+			setupTestEnv(t)
 			assert := assert.New(t)
 			tc := newWorkerTestContext(t, 1)
 			configureUnpricedBudgetRouting(t, tc)
@@ -296,9 +320,10 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		costs config.BudgetAgentCosts
+		want  string
 	}{
-		{name: "keep capable configured agent", costs: config.BudgetAgentCosts{"codex": 15, "gemini": 5}},
-		{name: "preserve ordinary resolution when no candidate qualifies", costs: config.BudgetAgentCosts{"gemini": 5}},
+		{name: "keep capable configured agent", costs: config.BudgetAgentCosts{"codex": 15, "gemini": 5}, want: "codex"},
+		{name: "leave unpriced agent to ordinary resolution", costs: config.BudgetAgentCosts{"gemini": 5}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := newWorkerTestContext(t, 1)
@@ -318,8 +343,12 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 			job.ReviewType = "custom"
 			selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
 			require.True(t, proceed)
-			require.NotNil(t, selected)
-			assert.Equal(t, "codex", selected.Name())
+			if tc.want == "" {
+				assert.Nil(t, selected)
+			} else {
+				require.NotNil(t, selected)
+				assert.Equal(t, tc.want, selected.Name())
+			}
 			assert.Equal(t, "codex", job.Agent)
 			assert.False(t, job.BudgetRoutingLocked)
 		})

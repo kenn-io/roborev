@@ -71,9 +71,7 @@ func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.Repo
 	}
 	canonical := agent.CanonicalName(configuredAgent)
 	names := slices.Sorted(maps.Keys(cfg.Budget.AgentCosts))
-	if !slices.ContainsFunc(names, func(name string) bool {
-		return agent.CanonicalName(name) == canonical
-	}) {
+	if !hasBudgetPrice(configuredAgent, cfg.Budget.AgentCosts) {
 		// Without a price for the configured choice, substitution cannot
 		// establish a cost saving, even after the soft cap is reached.
 		return preferred()
@@ -132,6 +130,16 @@ func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.Repo
 		return preferred()
 	}
 	return best, nil
+}
+
+func hasBudgetPrice(name string, costs config.BudgetAgentCosts) bool {
+	canonical := agent.CanonicalName(name)
+	for candidate := range costs {
+		if agent.CanonicalName(candidate) == canonical {
+			return true
+		}
+	}
+	return false
 }
 
 // budgetBoundaryReached tolerates floating-point accumulation error without

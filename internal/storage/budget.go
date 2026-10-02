@@ -13,11 +13,10 @@ import (
 func (db *DB) GetBudgetSpend(day time.Time) (CostAggregate, error) {
 	day = day.UTC()
 	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
-	rows, err := db.Query(`SELECT COALESCE(token_usage, ''), agent_invoked
-  FROM review_jobs
-  WHERE status IN ('done','failed','skipped','canceled','applied','rebased')
-   AND started_at IS NOT NULL
-   AND datetime(finished_at) >= datetime(?) AND datetime(finished_at) < datetime(?)`,
+	rows, err := db.Query(`SELECT COALESCE(j.token_usage, '')
+  FROM review_jobs j
+  WHERE `+costEligible+`
+   AND datetime(j.finished_at) >= datetime(?) AND datetime(j.finished_at) < datetime(?)`,
 		start.Format(time.RFC3339), start.AddDate(0, 0, 1).Format(time.RFC3339))
 	if err != nil {
 		return CostAggregate{}, err
@@ -26,14 +25,10 @@ func (db *DB) GetBudgetSpend(day time.Time) (CostAggregate, error) {
 	var result CostAggregate
 	for rows.Next() {
 		var raw string
-		var invoked bool
-		if err := rows.Scan(&raw, &invoked); err != nil {
+		if err := rows.Scan(&raw); err != nil {
 			return CostAggregate{}, err
 		}
 		usage := tokens.ParseJSON(raw)
-		if !invoked && (usage == nil || !usage.HasUsageData()) {
-			continue
-		}
 		result.JobsTotal++
 		if usage == nil || !usage.HasCost || usage.CostUSD < 0 || math.IsNaN(usage.CostUSD) || math.IsInf(usage.CostUSD, 0) {
 			continue
