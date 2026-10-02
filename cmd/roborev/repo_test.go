@@ -93,6 +93,12 @@ func TestResolveRepoIdentifier(t *testing.T) {
 				want:  root,
 			},
 			{
+				name:  "bare relative directory",
+				dir:   root,
+				input: "sub",
+				want:  root,
+			},
+			{
 				name:  "absolute path",
 				dir:   root,
 				input: subDir,
@@ -267,9 +273,7 @@ func TestRepoCommandsSendResolvedPathKind(t *testing.T) {
 	for _, action := range []string{"show", "rename"} {
 		t.Run(action, func(t *testing.T) {
 			root := newTestGitRepo(t).Dir
-			subdir := filepath.Join(root, "subdir")
-			require.NoError(t, os.Mkdir(subdir, 0o755))
-			chdir(t, subdir)
+			chdir(t, filepath.Dir(root))
 			var calls int
 			NewMockDaemon(t, MockRefineHooks{
 				OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
@@ -293,7 +297,7 @@ func TestRepoCommandsSendResolvedPathKind(t *testing.T) {
 				},
 			})
 			command := repoCmd()
-			args := []string{action, "."}
+			args := []string{action, filepath.Base(root)}
 			if action == "rename" {
 				args = append(args, "friendly")
 			}

@@ -34,21 +34,12 @@ func resolveRepoIdentifier(ctx context.Context, identifier string) string {
 		return resolvePathToGitRoot(ctx, identifier)
 	}
 
-	// For identifiers containing path separators (/ or \), check if they exist on disk.
-	// This allows names like "org/project" to be treated as names, not paths.
-	// Since explicit path prefixes (./, ../, absolute) are handled above, these are
-	// ambiguous - only treat as path if the path actually exists and is accessible.
-	if strings.ContainsAny(identifier, "/\\") {
-		if _, err := os.Stat(identifier); err == nil {
-			// Path exists on disk, treat as path
-			return resolvePathToGitRoot(ctx, identifier)
-		}
-		// Path doesn't exist or isn't accessible (permission denied, etc.)
-		// Treat as a name since user didn't use explicit path syntax
-		return identifier
+	// Existing relative paths take precedence over display names. Resolve them
+	// here so the daemon does not interpret them relative to its own directory.
+	if _, err := os.Stat(identifier); err == nil {
+		return resolvePathToGitRoot(ctx, identifier)
 	}
 
-	// No path separators, treat as a name
 	return identifier
 }
 
