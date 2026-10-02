@@ -537,47 +537,49 @@ type preparedJobCheckout struct {
 	// agentRepoPath is the checkout used as the agent cwd.
 	agentRepoPath string
 	// snapshotTarget controls where oversized diff snapshot files are written.
-	// CI writes them into the exact agent checkout while resolving snapshot_dir
-	// from the trusted prompt checkout.
+	// Isolated jobs write them into the exact agent checkout while resolving
+	// snapshot_dir from the trusted prompt checkout.
 	snapshotTarget prompt.SnapshotTarget
 	// eventWorktreePath is the caller-provided worktree path safe to expose
-	// to event consumers and hooks. Internal CI checkouts must stay private.
+	// to event consumers and hooks. Internal checkouts must stay private.
 	eventWorktreePath string
 	cleanup           func()
 }
 
 func (wp *WorkerPool) prepareJobCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
+	cfg *config.Config,
 ) (preparedJobCheckout, error) {
 	requiresCIWorktree, err := wp.jobRequiresCIExactCheckout(job)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
+	checkout := preparedJobCheckout{promptRepoPath: job.RepoPath}
 	if !requiresCIWorktree {
 		repoPath := resolveEffectiveRepoPath(workerID, job)
-		eventWorktreePath := ""
+		checkout.promptRepoPath = repoPath
+		checkout.agentRepoPath = repoPath
 		if job.WorktreePath != "" && repoPath == job.WorktreePath {
-			eventWorktreePath = job.WorktreePath
+			checkout.eventWorktreePath = job.WorktreePath
 		}
-		return preparedJobCheckout{
-			promptRepoPath:    repoPath,
-			agentRepoPath:     repoPath,
-			eventWorktreePath: eventWorktreePath,
-		}, nil
+		// Dirty panels have synthesis jobs with a "dirty" ref, even though
+		// IsDirtyJob only identifies the member jobs themselves.
+		committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
+			!job.IsDirtyJob() && job.GitRef != "dirty"
+		if !committedReview || !config.ResolveIsolateReviews(repoPath, cfg) {
+			return checkout, nil
+		}
 	}
-	agentRepoPath, cleanup, err := wp.createCIExactCheckout(ctx, workerID, job)
+	agentRepoPath, cleanup, err := wp.createExactCheckout(ctx, workerID, job)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
-	return preparedJobCheckout{
-		promptRepoPath: job.RepoPath,
-		agentRepoPath:  agentRepoPath,
-		snapshotTarget: prompt.SnapshotTarget{
-			RepoPath:       agentRepoPath,
-			ConfigRepoPath: job.RepoPath,
-		},
-		cleanup: cleanup,
-	}, nil
+	checkout.agentRepoPath = agentRepoPath
+	checkout.snapshotTarget = prompt.SnapshotTarget{
+		RepoPath: agentRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+	}
+	checkout.cleanup = cleanup
+	return checkout, nil
 }
 
 func (wp *WorkerPool) promptBuilderForJob(
@@ -658,16 +660,22 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	return true, nil
 }
 
-func (wp *WorkerPool) createCIExactCheckout(
+// createExactCheckout shares the CI checkout lifecycle, including its on-disk
+// directory and marker format so startup cleanup handles all detached reviews.
+func (wp *WorkerPool) createExactCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) (string, func(), error) {
 	headRef := strings.TrimSpace(headOf(job.GitRef))
 	if headRef == "" {
-		return "", nil, fmt.Errorf("CI job %d has empty checkout ref", job.ID)
+		return "", nil, fmt.Errorf("job %d has empty checkout ref", job.ID)
+	}
+	commonDir, err := gitpkg.ResolveGitCommonDir(job.RepoPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve review repository: %w", err)
 	}
 	parentDir := ciWorktreeRepoDir(job.RepoPath)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
-		return "", nil, fmt.Errorf("create CI worktree parent: %w", err)
+		return "", nil, fmt.Errorf("create review worktree parent: %w", err)
 	}
 	unlock := lockGitMetadata(job.RepoPath)
 	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, gitworktree.Options{
@@ -677,23 +685,26 @@ func (wp *WorkerPool) createCIExactCheckout(
 		PullLFS:        true,
 	})
 	if createErr == nil {
-		createErr = writeCIWorktreeMarker(wt.Dir, job.RepoPath)
+		// Bare-backed repositories may be registered at a disposable checkout.
+		// Cleanup must still reach Git after that checkout has been removed.
+		wt.Repo = commonDir
+		createErr = writeCIWorktreeMarker(wt.Dir, commonDir)
 		if createErr != nil {
 			_ = wt.Close(context.Background())
-			createErr = fmt.Errorf("write CI worktree marker: %w", createErr)
+			createErr = fmt.Errorf("write review worktree marker: %w", createErr)
 		}
 	}
 	unlock()
 	if createErr != nil {
 		return "", nil, createErr
 	}
-	log.Printf("[%s] CI job %d: running agent in exact checkout %s (%s)",
+	log.Printf("[%s] Job %d: running agent in exact checkout %s (%s)",
 		workerID, job.ID, wt.Dir, gitpkg.ShortRef(headRef))
 	cleanup := func() {
 		unlock := lockGitMetadata(job.RepoPath)
 		defer unlock()
 		if err := wt.Close(context.Background()); err != nil {
-			log.Printf("[%s] Warning: remove CI worktree for job %d: %v",
+			log.Printf("[%s] Warning: remove review worktree for job %d: %v",
 				workerID, job.ID, err)
 		}
 	}
@@ -891,11 +902,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Resolve checkouts for this job. CI panel jobs run agents in a detached
-	// worktree at the reviewed head; prompt-side config stays tied to the
-	// trusted shared clone, while snapshots are written where the agent can read
-	// them.
-	checkout, err := wp.prepareJobCheckout(ctx, workerID, job)
+	// CI panel jobs and opted-in local reviews run in detached worktrees.
+	// Prompt config stays tied to the source checkout, while snapshots are
+	// written where the agent can read them.
+	checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
 	if checkout.cleanup != nil {
 		defer checkout.cleanup()
 	}

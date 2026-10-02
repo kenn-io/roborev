@@ -384,18 +384,16 @@ func (wp *WorkerPool) runSynthesisAgent(
 	})
 	agentOutput = sessionWriter
 
+	cfg := wp.cfgGetter.Config()
 	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
 		ConfigRepoPath: resolveEffectiveRepoPath(workerID, job),
-		GlobalConfig:   wp.cfgGetter.Config(),
+		GlobalConfig:   cfg,
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
 		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
-		// Use the ordinary review execution checkout: a panel enqueued from a
-		// linked worktree must synthesize against that worktree, and CI panels
-		// get a detached checkout at the reviewed head instead of the stale
-		// shared clone.
+		// Synthesis follows the same isolation policy as its member reviews.
 		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
-			checkout, err := wp.prepareJobCheckout(ctx, workerID, job)
+			checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
 			return reviewpkg.SynthesisCheckout{
 				RepoPath: checkout.agentRepoPath,
 				GitRef:   job.GitRef,

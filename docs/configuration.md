@@ -250,6 +250,7 @@ max_chars = 50000
 | `model` | string | Model to use (overrides global `default_model`) |
 | `display_name` | string | Custom name shown in TUI |
 | `review_context_count` | int | Number of recent reviews to include as context |
+| `isolate_reviews` | bool | Run committed reviews in daemon-owned detached checkouts. Overrides the global setting; see [Isolated Review Checkouts](#isolated-review-checkouts) |
 | `excluded_branches` | array | Branches to skip automatic reviews on |
 | `excluded_branch_patterns` | array | Whole-name branch globs to skip automatic post-commit reviews on |
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
@@ -970,6 +971,56 @@ you only want to focus on reviews that found issues.
 The option works in both global config (`~/.roborev/config.toml`) and per-repo
 config (`.roborev.toml`). Per-repo settings override the global value.
 
+## Isolated Review Checkouts
+
+By default, the daemon runs local review agents in the checkout that queued the
+review. If a worktree manager checks for processes inside a linked worktree, it
+may refuse to remove that worktree until the review finishes.
+
+Enable `isolate_reviews` to run agents in temporary detached checkouts owned by
+the daemon:
+
+```bash
+roborev config set isolate_reviews true --global
+```
+
+You can also set `isolate_reviews = true` in `.roborev.toml`. A repository value
+overrides the global setting, including an explicit `false`. The default is
+`false`, and changes apply to subsequent job attempts.
+
+- Commit reviews, range reviews, and their panel synthesis jobs use a checkout
+    at the reviewed commit (the head of the range). This includes post-commit
+    reviews.
+- Agents and temporary prompt files use the daemon-owned checkout. The original
+    linked worktree can be removed while the agent runs. The detached checkout
+    still shares the repository's Git objects; keep that object store available.
+- The job keeps its original repository, branch, and worktree identity. Internal
+    checkout paths are not substituted into events or filtering.
+- Review configuration still comes from the source checkout. If that checkout is
+    already gone when an attempt starts, the daemon uses the main repository's
+    configuration. Prefer a global setting or configuration available in the
+    main repository when using disposable worktrees.
+- Each attempt gets its own checkout, removed after success, failure, or
+    cancellation. Daemon startup cleans up checkouts left by an interrupted
+    daemon.
+
+Queued jobs and retries still need the repository path recorded on the job. For
+a worktree linked to a main checkout, keep that main checkout available. For a
+worktree created from a bare repository, roborev registers the linked checkout
+itself as the repository path. Removing it lets the current agent finish, but
+prevents queued jobs and retries from starting, even if the bare repository
+remains available.
+
+Isolated agents see committed files, without the source checkout's local edits,
+untracked files, or ignored build artifacts. Creating the checkout adds disk use
+and setup time; submodules and Git LFS files are prepared as for CI reviews.
+Checkout failures follow the normal job retry policy without falling back to
+running the agent in the source worktree.
+
+Dirty reviews and their synthesis jobs continue to use the source checkout.
+Tasks, compact jobs, and background fixes keep their existing behavior. CI
+reviews already use detached checkouts and do not depend on this setting.
+
 ## Global Configuration
 
 Create `~/.roborev/config.toml` to set system-wide defaults.
@@ -1012,6 +1063,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
+| `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |

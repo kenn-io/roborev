@@ -814,7 +814,7 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	headSHA := repo.CommitFile("marker.txt", "head\n", "head")
 
 	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
-	worktreeDir, normalCleanup, err := pool.createCIExactCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
+	worktreeDir, normalCleanup, err := pool.createExactCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
 		ID:       42,
 		RepoPath: repo.Path(),
 		GitRef:   headSHA,

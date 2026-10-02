@@ -1187,63 +1187,77 @@ func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 }
 
 // TestSynthesisRunsAgainstWorktree verifies the synthesis agent runs against the
-// reviewed checkout: a panel whose synthesis carries a worktree path must hand
-// that worktree, not the main repo, to the agent.
+// reviewed checkout: synthesis uses the source worktree by default and a
+// daemon-owned checkout when isolation is enabled.
 func TestSynthesisRunsAgainstWorktree(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	tc := newWorkerTestContext(t, 1)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	for _, isolated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("isolated=%t", isolated), func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
 
-	worktreePath := filepath.Join(t.TempDir(), "wt")
-	out, err := exec.Command(
-		"git", "-C", tc.TmpDir, "worktree", "add", "--detach", worktreePath, "HEAD",
-	).CombinedOutput()
-	require.NoError(t, err, "git worktree add failed: %s", out)
+			worktreePath := filepath.Join(t.TempDir(), "wt")
+			out, err := exec.Command(
+				"git", "-C", tc.TmpDir, "worktree", "add", "--detach", worktreePath, "HEAD",
+			).CombinedOutput()
+			require.NoError(t, err, "git worktree add failed: %s", out)
 
-	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".roborev.toml"), []byte("max_prompt_size = 4096\nsnapshot_dir = \".review-inputs\"\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".roborev.toml"), []byte(fmt.Sprintf("isolate_reviews = %t\nmax_prompt_size = 4096\nsnapshot_dir = \".review-inputs\"\n", isolated)), 0o600))
 
-	const memberAgent = "panel-wt-member"
-	registerPassingAgent(t, memberAgent)
+			const memberAgent = "panel-wt-member"
+			registerPassingAgent(t, memberAgent)
 
-	var capturedPath string
-	const synthAgent = "synth-wt"
-	agent.RegisterForTest(t, &agent.FakeAgent{
-		NameStr: synthAgent,
-		ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
-			capturedPath = repoPath
-			assert.Contains(prompt, "Read the complete task prompt")
-			files, err := filepath.Glob(filepath.Join(worktreePath, ".review-inputs", "*", "prompt.md"))
+			var capturedPath string
+			const synthAgent = "synth-wt"
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: synthAgent,
+				ReviewFn: func(_ context.Context, repoPath, _, prompt string, _ io.Writer) (string, error) {
+					capturedPath = repoPath
+					if isolated {
+						require.NotEqual(t, worktreePath, repoPath)
+						tc.GitRepo.Run("worktree", "remove", "--force", worktreePath)
+					}
+					assert.Contains(prompt, "Read the complete task prompt")
+					files, err := filepath.Glob(filepath.Join(repoPath, ".review-inputs", "*", "prompt.md"))
+					require.NoError(t, err)
+					require.Len(t, files, 1)
+					for _, file := range files {
+						content, err := os.ReadFile(file)
+						require.NoError(t, err)
+						assert.Contains(string(content), strings.TrimSpace(strings.Repeat("finding ", 1000)))
+					}
+					return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+				},
+			})
+
+			runUUID, members, _ := enqueuePanelRun(t, tc, "wt-panel", []memberSpec{
+				{name: "m0", agent: memberAgent},
+				{name: "m1", agent: memberAgent},
+			})
+			setSynthesisAgent(t, tc, runUUID, synthAgent)
+			_, err = tc.DB.Exec(
+				"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+				worktreePath, runUUID,
+			)
 			require.NoError(t, err)
-			require.Len(t, files, 1)
-			for _, file := range files {
-				content, err := os.ReadFile(file)
-				require.NoError(t, err)
-				assert.Contains(string(content), strings.TrimSpace(strings.Repeat("finding ", 1000)))
+
+			completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
+			completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
+
+			synth := releaseAndClaimSynthesis(t, tc, runUUID)
+			require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+			if isolated {
+				require.NotEmpty(t, capturedPath)
+				assert.NotEqual(worktreePath, capturedPath)
+				assert.NoDirExists(capturedPath)
+			} else {
+				assert.Equal(worktreePath, capturedPath)
 			}
-			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
-		},
-	})
-
-	runUUID, members, _ := enqueuePanelRun(t, tc, "wt-panel", []memberSpec{
-		{name: "m0", agent: memberAgent},
-		{name: "m1", agent: memberAgent},
-	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		worktreePath, runUUID,
-	)
-	require.NoError(t, err)
-
-	completeMember(t, tc, members[0].ID, memberAgent, "Finding A "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
-	completeMember(t, tc, members[1].ID, memberAgent, "Finding B "+strings.TrimSpace(strings.Repeat("finding ", 1000)))
-
-	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
-
-	assert.Equal(worktreePath, capturedPath,
-		"synthesis agent must run against the reviewed worktree, not the main repo")
+		})
+	}
 }
 
 func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {

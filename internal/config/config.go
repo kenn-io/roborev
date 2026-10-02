@@ -204,6 +204,7 @@ type Config struct {
 	DefaultBackupAgent         string                          `toml:"default_backup_agent"`
 	DefaultBackupModel         string                          `toml:"default_backup_model"`
 	JobTimeoutMinutes          int                             `toml:"job_timeout_minutes"`
+	IsolateReviews             bool                            `toml:"isolate_reviews" comment:"Run committed reviews in daemon-owned detached checkouts."`
 	HookTimeoutSeconds         int                             `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
 	AgentQuotaCooldown         string                          `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
 	ReviewReasoning            string                          `toml:"review_reasoning" comment:"Default reasoning for reviews. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
@@ -664,6 +665,7 @@ type RepoConfig struct {
 	ReviewMDFallback                *bool                           `toml:"review_md_fallback" comment:"Use REVIEW.md when review_guidelines is empty or unset."`
 	ReviewGuidelinesSupersedeGlobal bool                            `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
 	JobTimeoutMinutes               int                             `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
+	IsolateReviews                  *bool                           `toml:"isolate_reviews" comment:"Run committed reviews in daemon-owned detached checkouts for this repo."`
 	HookTimeoutSeconds              int                             `toml:"hook_timeout_seconds" comment:"Override the post-commit hook request timeout (in seconds) for this repo. Useful for large repos where the enqueue handler's git calls are slow. 0 or negative inherits the global / platform default."`
 	ExcludedBranches                []string                        `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
 	ExcludedBranchPatterns          []string                        `toml:"excluded_branch_patterns" comment:"Branch glob patterns that should be skipped for automatic post-commit review in this repo."`
@@ -1744,6 +1746,20 @@ func ResolveAgentQuotaCooldown(globalCfg *Config) time.Duration {
 		return DefaultAgentQuotaCooldown
 	}
 	return d
+}
+
+// ResolveIsolateReviews returns whether committed reviews use daemon-owned
+// checkouts. Per-repo config overrides global; isolation is off by default.
+func ResolveIsolateReviews(repoPath string, globalCfg *Config) bool {
+	var repoVal *bool
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = repoCfg.IsolateReviews
+	}
+	var globalVal bool
+	if globalCfg != nil {
+		globalVal = globalCfg.IsolateReviews
+	}
+	return resolveBool(globalVal, repoVal)
 }
 
 // ResolveAutoClosePassingReviews returns whether passing reviews should
