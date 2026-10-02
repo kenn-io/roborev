@@ -18,7 +18,6 @@ import (
 	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -43,9 +42,9 @@ const (
 	WebDisabledReasonMissingAssets = "missing-web-assets"
 )
 
-// ErrDaemonAccessDenied means a daemon could not be authenticated or local
+// ErrDaemonAccessDenied means the daemon rejected authentication or local
 // permissions prevented every usable endpoint from being probed.
-var ErrDaemonAccessDenied = auth.ErrUnverifiedServer
+var ErrDaemonAccessDenied = errors.New("daemon access denied")
 
 var probeRuntimeEndpoint = probeRuntimeRecord
 

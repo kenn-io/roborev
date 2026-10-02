@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -32,8 +33,9 @@ func TestAuthStartupAndBothListeners(t *testing.T) {
 	writeAuthClientConfig(t, "different-client-key")
 	for _, endpoint := range info.Endpoints() {
 		resp, err := endpoint.HTTPClient(time.Second).Get(endpoint.BaseURL() + "/api/ping")
-		assert.Nil(t, resp)
-		require.ErrorIs(t, err, ErrDaemonAccessDenied)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 		writeAuthClientConfig(t, "test-shared-key")
 		ping, err := ProbeDaemon(endpoint, time.Second)
 		require.NoError(t, err)

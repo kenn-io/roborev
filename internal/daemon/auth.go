@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
@@ -30,15 +29,6 @@ func withAuthentication(next http.Handler, key string) http.Handler {
 		if !authorized {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			if r.Method == http.MethodGet && r.URL.Path == "/api/ping" {
-				nonces := r.Header.Values("X-Roborev-Auth-Nonce")
-				if len(nonces) == 1 {
-					nonce, err := hex.DecodeString(nonces[0])
-					if err == nil && len(nonce) != 0 {
-						w.Header().Set("X-Roborev-Auth-Proof", hex.EncodeToString(auth.ServerProof(key, nonce)))
-					}
-				}
-			}
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.MarshalWrite(w, ErrorResponse{Error: "daemon authentication required"})
 			return

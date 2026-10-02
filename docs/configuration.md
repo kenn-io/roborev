@@ -274,16 +274,14 @@ curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
 `ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
 override. Missing or incorrect credentials return HTTP 401. Query-string keys
 are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
-Native Go clients verify a fresh HMAC server challenge before sending the key.
-They scope keys to their configured endpoint and do not follow redirects.
+Roborev clients scope keys to their configured endpoint and do not follow
+redirects.
 
 This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
-not encrypt traffic. The native challenge proves key possession but does not
-protect against an active localhost TCP impersonator that relays the challenge
-and captures the Bearer key. Custom clients and browser login send the key over
-HTTP directly. Use protected Unix sockets on shared machines where that threat
-matters. This does not isolate processes that already run as the daemon owner's
-account or can read its config.
+not encrypt or authenticate the listening process. A process impersonating a
+localhost TCP endpoint can capture a Bearer key; use protected Unix sockets on
+shared machines where that threat matters. It does not isolate processes that
+already run as the daemon owner's account or can read its config.
 
 ## Per-Repository Configuration
 

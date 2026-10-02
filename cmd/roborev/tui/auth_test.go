@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -21,13 +19,6 @@ func TestAuthTUIQueriesAndStreaming(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/ping" && r.Header.Get("Authorization") == "" {
-			nonce, err := hex.DecodeString(r.Header.Get("X-Roborev-Auth-Nonce"))
-			assert.NoError(t, err)
-			w.Header().Set("X-Roborev-Auth-Proof", hex.EncodeToString(auth.ServerProof("test-shared-key", nonce)))
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
 		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return

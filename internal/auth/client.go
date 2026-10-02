@@ -2,11 +2,7 @@
 package auth
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -15,16 +11,9 @@ import (
 // ErrUnexpectedOrigin reports a request outside the configured daemon origin.
 var ErrUnexpectedOrigin = errors.New("daemon client request must use its configured origin")
 
-// ErrUnverifiedServer reports that a daemon did not prove possession of the
-// configured shared key before the client sent it.
-var ErrUnverifiedServer = errors.New("daemon access denied")
-
-const serverProofDomain = "roborev-daemon-auth-v1:server:"
-
-// HTTPClient clones client, verifies server possession of a request-time key,
-// then attaches that key only to baseURL's origin. Redirects are returned to
-// callers without forwarding API bodies or credentials. The caller's client
-// and requests are never mutated.
+// HTTPClient clones client and attaches a request-time key only to baseURL's
+// origin. Redirects are returned to callers without forwarding API bodies or
+// credentials. The caller's client and requests are never mutated.
 func HTTPClient(baseURL string, client *http.Client, key func() (string, error)) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
@@ -61,56 +50,9 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := ValidateKey(key); err != nil {
 		return nil, err
 	}
-	if err := t.verifyServer(r, key); err != nil {
-		return nil, err
-	}
 	clone := r.Clone(r.Context())
 	clone.Header.Set("Authorization", "Bearer "+key)
 	return t.base.RoundTrip(clone)
-}
-
-func (t *transport) verifyServer(r *http.Request, key string) error {
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		return ErrUnverifiedServer
-	}
-	challengeURL := *t.origin
-	challengeURL.Path = "/api/ping"
-	challengeURL.RawPath = ""
-	challengeURL.RawQuery = ""
-	challengeURL.Fragment = ""
-	challenge, err := http.NewRequestWithContext(r.Context(), http.MethodGet, challengeURL.String(), nil)
-	if err != nil {
-		return ErrUnverifiedServer
-	}
-	challenge.Header.Set("X-Roborev-Auth-Nonce", hex.EncodeToString(nonce))
-	response, err := t.base.RoundTrip(challenge)
-	if err != nil {
-		return err
-	}
-	if response.Body != nil {
-		defer response.Body.Close()
-	}
-	if response.StatusCode != http.StatusUnauthorized {
-		return ErrUnverifiedServer
-	}
-	proofs := response.Header.Values("X-Roborev-Auth-Proof")
-	if len(proofs) != 1 {
-		return ErrUnverifiedServer
-	}
-	proof, err := hex.DecodeString(proofs[0])
-	if err != nil || !hmac.Equal(proof, ServerProof(key, nonce)) {
-		return ErrUnverifiedServer
-	}
-	return nil
-}
-
-// ServerProof returns the keyed proof for a fresh client challenge nonce.
-func ServerProof(key string, nonce []byte) []byte {
-	mac := hmac.New(sha256.New, []byte(key))
-	_, _ = mac.Write([]byte(serverProofDomain))
-	_, _ = mac.Write(nonce)
-	return mac.Sum(nil)
 }
 
 // ValidateKey checks Bearer token syntax without exposing the key in errors.

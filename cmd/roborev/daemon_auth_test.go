@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 )
@@ -52,9 +50,6 @@ func TestAuthCLIJobLookup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if writeTestAuthChallenge(w, r, "test-shared-key") {
-			return
-		}
 		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -73,7 +68,7 @@ func TestAuthCLIJobLookup(t *testing.T) {
 	assert.EqualValues(t, 23, job.ID)
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "wrong-key"`), 0o600))
 	_, err = findJobForCommit(t.TempDir(), "abc123")
-	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+	require.ErrorContains(t, err, "401 Unauthorized")
 }
 
 func TestAuthExplicitURLHelpers(t *testing.T) {
@@ -86,9 +81,6 @@ func TestAuthExplicitURLHelpers(t *testing.T) {
 	})
 	fixDaemonRecoveryWait = 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if writeTestAuthChallenge(w, r, "test-shared-key") {
-			return
-		}
 		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -309,9 +301,6 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if writeTestAuthChallenge(w, r, "test-shared-key") {
-						return
-					}
 					if r.URL.Path == tc.path && (!tc.legacy || r.URL.Query().Get("commit_id") != "") {
 						w.WriteHeader(http.StatusUnauthorized)
 						return
@@ -350,9 +339,6 @@ func TestAuthStartUsesAuthenticatedDiscovery(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if writeTestAuthChallenge(w, r, "test-shared-key") {
-			return
-		}
 		assert.Equal(t, "Bearer test-shared-key", r.Header.Get("Authorization"))
 		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 	}))
@@ -361,26 +347,7 @@ func TestAuthStartUsesAuthenticatedDiscovery(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, daemon.WriteRuntime(ep, nil, "test-version", nil))
 	require.NoError(t, startDaemon())
-	assert.EqualValues(t, 2, requests.Load())
-}
-
-func writeTestAuthChallenge(w http.ResponseWriter, r *http.Request, key string) bool {
-	nonces := r.Header.Values("X-Roborev-Auth-Nonce")
-	if len(nonces) == 0 {
-		return false
-	}
-	if len(nonces) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
-		return true
-	}
-	nonce, err := hex.DecodeString(nonces[0])
-	if err != nil || len(nonce) == 0 {
-		w.WriteHeader(http.StatusUnauthorized)
-		return true
-	}
-	w.Header().Set("X-Roborev-Auth-Proof", hex.EncodeToString(auth.ServerProof(key, nonce)))
-	w.WriteHeader(http.StatusUnauthorized)
-	return true
+	assert.EqualValues(t, 1, requests.Load())
 }
 
 func TestAuthStatusReportsConfigFailure(t *testing.T) {

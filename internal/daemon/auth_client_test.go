@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -54,8 +52,9 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	assert.True(t, ping.OK)
 	writeAuthClientConfig(t, "wrong-key")
 	resp, err = client.Do(req)
-	assert.Nil(t, resp)
-	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	_, err = ProbeDaemon(ep, time.Second)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrDaemonAccessDenied)
@@ -78,8 +77,9 @@ func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	resp, err = client.Post(origin.URL, "application/json", strings.NewReader(`{"secret":"review"}`))
-	assert.Nil(t, resp)
-	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusTemporaryRedirect, resp.StatusCode)
 	assert.Zero(t, received)
 }
 
@@ -189,14 +189,6 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				if r.URL.Path == "/api/ping" && r.Header.Get("Authorization") == "" {
-					assert.Empty(t, r.Header.Get("Authorization"))
-					nonce, err := hex.DecodeString(r.Header.Get("X-Roborev-Auth-Nonce"))
-					assert.NoError(t, err)
-					w.Header().Set("X-Roborev-Auth-Proof", hex.EncodeToString(auth.ServerProof("test-shared-key", nonce)))
-					w.WriteHeader(http.StatusUnauthorized)
-					return
-				}
 				assert.Equal(t, "Bearer test-shared-key", r.Header.Get("Authorization"))
 				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 			}))
@@ -220,7 +212,7 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 			_, err = GetAnyRunningDaemonContext(t.Context())
 			if state == "live" {
 				require.NoError(t, err)
-				assert.EqualValues(t, 2, requests.Load())
+				assert.EqualValues(t, 1, requests.Load())
 				return
 			}
 			require.ErrorIs(t, err, os.ErrNotExist)

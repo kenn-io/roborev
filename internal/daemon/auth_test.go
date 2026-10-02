@@ -2,9 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,24 +88,6 @@ func TestAuthBearerCredentials(t *testing.T) {
 			assert.Equal(t, tc.want, w.Code)
 		})
 	}
-}
-
-func TestAuthChallengeProvesServerKey(t *testing.T) {
-	const key = "test-shared-key"
-	s := newAuthTestServer(t, key)
-	r := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
-	const nonce = "synthetic-client-nonce"
-	r.Header.Set("X-Roborev-Auth-Nonce", hex.EncodeToString([]byte(nonce)))
-	w := httptest.NewRecorder()
-	s.httpServer.Handler.ServeHTTP(w, r)
-
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-	proof, err := hex.DecodeString(w.Header().Get("X-Roborev-Auth-Proof"))
-	require.NoError(t, err)
-	mac := hmac.New(sha256.New, []byte(key))
-	_, _ = mac.Write([]byte("roborev-daemon-auth-v1:server:"))
-	_, _ = mac.Write([]byte(nonce))
-	assert.True(t, hmac.Equal(proof, mac.Sum(nil)))
 }
 
 func TestAuthDisabledAndPinnedAcrossReload(t *testing.T) {
