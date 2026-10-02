@@ -1,0 +1,161 @@
+package daemon
+
+import (
+	"bytes"
+	"encoding/json/v2"
+	"net/http"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+)
+
+func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
+	for _, tc := range []struct {
+		name, browserToken, loginToken, wrongToken string
+		local, forwarded                           bool
+	}{
+		{"shared key", "", "test-shared-key", "wrong-key", true, false},
+		{"explicit browser token", testBrowserAuthToken, testBrowserAuthToken, "test-shared-key", false, false},
+		{"forwarded shared key", "", "test-shared-key", "wrong-key", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := assert.New(t)
+			s := newAuthTestServer(t, "test-shared-key")
+			marker := filepath.Join(t.TempDir(), "comment-hook")
+			s.configWatcher.Config().Hooks = []config.HookConfig{{Event: "review.commented", Command: touchCmd(marker)}}
+			s.allowWebCompilationStub = true
+			cfg := config.DefaultConfig()
+			cfg.Web.Listen = "127.0.0.1:0"
+			cfg.Web.AuthToken = tc.browserToken
+			runtime, err := s.startBrowserServer(cfg.Web)
+			require.NoError(t, err)
+			base := "http://" + runtime.Address
+			request := func(path, body string) *http.Response {
+				t.Helper()
+				req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewBufferString(body))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Origin", base)
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+				req.Header.Set("Sec-Fetch-Mode", "cors")
+				req.Header.Set("Sec-Fetch-Dest", "empty")
+				if tc.forwarded {
+					req.Header.Set("X-Forwarded-For", "192.0.2.1")
+				}
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = resp.Body.Close() })
+				return resp
+			}
+			bootstrap := request("/api/ui/session/bootstrap", "{}")
+			a.Equal(http.StatusUnauthorized, bootstrap.StatusCode)
+			wrong := request("/api/ui/session/login", `{"token":"`+tc.wrongToken+`"}`)
+			a.Equal(http.StatusUnauthorized, wrong.StatusCode)
+			login := request("/api/ui/session/login", `{"token":"`+tc.loginToken+`"}`)
+			require.Equal(t, http.StatusOK, login.StatusCode)
+			var credentials WebSessionCredentials
+			require.NoError(t, json.UnmarshalRead(login.Body, &credentials))
+			a.Equal(WebSessionCapabilities{CancelAnyJob: tc.local, CancelReviewJob: true, RerunJob: tc.local}, credentials.Capabilities)
+			for _, path := range []string{"/api/status", "/api/ping"} {
+				req, err := http.NewRequest(http.MethodGet, base+path, nil)
+				require.NoError(t, err)
+				require.Len(t, login.Cookies(), 1)
+				req.AddCookie(login.Cookies()[0])
+				req.Header.Set(WebSessionHeader, credentials.Session)
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				resp.Body.Close()
+				a.Equal(http.StatusOK, resp.StatusCode, path)
+			}
+			job := createTestJob(t, s.db, t.TempDir(), "abc123", "test")
+			_, events := s.broadcaster.Subscribe("")
+			body, err := json.Marshal(AddCommentRequest{JobID: job.ID, Commenter: "reviewer", Comment: "Review note"})
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodPost, base+"/api/comment", bytes.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", base)
+			req.AddCookie(login.Cookies()[0])
+			req.Header.Set(WebSessionHeader, credentials.Session)
+			req.Header.Set(WebCSRFHeader, credentials.CSRF)
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			resp.Body.Close()
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			var source string
+			require.NoError(t, s.db.QueryRow(`SELECT source FROM responses WHERE job_id = ?`, job.ID).Scan(&source))
+			wantSource := storage.ResponseSourceRemoteBrowser
+			if tc.local {
+				wantSource = storage.ResponseSourceLocal
+			}
+			a.Equal(wantSource, source)
+			s.hookRunner.WaitUntilIdle()
+			if tc.local {
+				a.FileExists(marker)
+			} else {
+				a.NoFileExists(marker)
+			}
+			var event Event
+			received := false
+			select {
+			case event = <-events:
+				received = true
+			case <-time.After(5 * time.Second):
+			}
+			require.True(t, received, "comment event was not broadcast")
+			a.Equal(!tc.local, event.SuppressHooks)
+		})
+	}
+}
+
+func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
+	a := assert.New(t)
+	s := newAuthTestServer(t, "test-shared-key")
+	s.allowWebCompilationStub = true
+	cfg := config.DefaultConfig()
+	cfg.Web.Listen = "127.0.0.1:0"
+	cfg.Web.PublicOrigin = "https://reviews.example.com"
+	cfg.Web.AuthMode = config.WebAuthModeProxy
+	runtime, err := s.startBrowserServer(cfg.Web)
+	require.NoError(t, err)
+	base := "http://" + runtime.Address
+	bootstrap := func(key string) *http.Response {
+		t.Helper()
+		req := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+		req.URL.Scheme = "http"
+		req.URL.Host = runtime.Address
+		req.RequestURI = ""
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+	for _, key := range []string{"", "wrong-key"} {
+		resp := bootstrap(key)
+		a.Equal(http.StatusUnauthorized, resp.StatusCode)
+		a.Empty(resp.Cookies())
+	}
+	login := bootstrap("test-shared-key")
+	require.Equal(t, http.StatusOK, login.StatusCode)
+	var credentials WebSessionCredentials
+	require.NoError(t, json.UnmarshalRead(login.Body, &credentials))
+	req, err := http.NewRequest(http.MethodGet, base+"/api/status", nil)
+	require.NoError(t, err)
+	req.Host = "reviews.example.com"
+	require.Len(t, login.Cookies(), 1)
+	req.AddCookie(login.Cookies()[0])
+	req.Header.Set(WebSessionHeader, credentials.Session)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	a.Equal(http.StatusOK, resp.StatusCode)
+}

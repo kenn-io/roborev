@@ -60,6 +60,13 @@ func (s *Server) newBrowserHandler(
 	sessions *BrowserSessionManager,
 	basePath string,
 ) (http.Handler, error) {
+	var sessionHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		handleBrowserSession(w, request, policy, sessions)
+	})
+	if policy.authentication == "proxy" {
+		// Forwarding headers are not proof of proxy identity on a shared host.
+		sessionHandler = withAuthentication(sessionHandler, s.authKey)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if err := policy.ValidateHost(request); err != nil {
 			writeBrowserError(w, http.StatusBadRequest, "invalid_host")
@@ -85,7 +92,7 @@ func (s *Server) newBrowserHandler(
 			request.URL.RawPath = ""
 		}
 		if strings.HasPrefix(request.URL.Path, "/api/ui/session") {
-			handleBrowserSession(w, request, policy, sessions)
+			sessionHandler.ServeHTTP(w, request)
 			return
 		}
 		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/debug/") || isBrowserOpenAPIPath(request.URL.Path) {
@@ -93,6 +100,12 @@ func (s *Server) newBrowserHandler(
 			if !found {
 				http.NotFound(w, request)
 				return
+			}
+			// A keyed daemon also accepts verified browser sessions for ping.
+			if route == publicRoute && s.authKey != "" {
+				if _, _, _, err := authenticateBrowserRequest(request, sessions); err == nil {
+					route = authenticatedRoute
+				}
 			}
 			if route == publicRoute {
 				core.ServeHTTP(w, request)
@@ -423,7 +436,11 @@ func handleBrowserSession(w http.ResponseWriter, request *http.Request, policy B
 		if !readBrowserJSON(w, request, &login) {
 			return
 		}
-		credentials, err := sessions.Login(login.Token)
+		principal := BrowserPrincipal{}
+		if sessions.authKeyLogin && policy.allowsLocalRequest(request) {
+			principal.Local = true
+		}
+		credentials, err := sessions.login(login.Token, principal)
 		if err != nil {
 			if limited, ok := errors.AsType[*WebLoginRateLimitError](err); ok {
 				seconds := max(1, int((limited.RetryAfter+time.Second-1)/time.Second))

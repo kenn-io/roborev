@@ -384,7 +384,7 @@ func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	api := newDaemonReviewAPI(addr, getDaemonHTTPClient(5*time.Second))
+	api := newDaemonReviewAPI(addr, getDaemonHTTPClientForURL(addr, 5*time.Second))
 	review, err := api.getReview(ctx, jobID, "result")
 	if errors.Is(err, errReviewNotFound) {
 		return fmt.Errorf("no result found for job %d", jobID)

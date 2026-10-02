@@ -9,13 +9,14 @@ import (
 	"io"
 	"time"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
 
 // waitForJobCompletion polls a job until it completes, streaming output if provided.
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
-	api := newDaemonReviewAPI(serverAddr, getDaemonHTTPClient(30*time.Second))
+	api := newDaemonReviewAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second))
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 	lastOutputLen := 0
@@ -31,7 +32,7 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		job, err := api.getJob(ctx, jobID)
 		if err != nil {
-			if errors.Is(err, ErrJobNotFound) {
+			if errors.Is(err, ErrJobNotFound) || daemon.IsDaemonAccessError(err) {
 				return nil, err
 			}
 			continue
@@ -67,6 +68,9 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 		// Stream partial output while running
 		if output != nil && job.Status == storage.JobStatusRunning {
 			review, err := api.getReview(ctx, jobID, "review")
+			if daemon.IsDaemonAccessError(err) {
+				return nil, err
+			}
 			if err == nil && len(review.Output) > lastOutputLen {
 				// First output - add newline after waiting dots
 				if lastOutputLen == 0 && waitDots > 0 {

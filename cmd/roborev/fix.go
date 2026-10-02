@@ -16,6 +16,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/autofix"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -798,7 +799,7 @@ func queryOpenJobs(
 			query.Branch = &branch
 			query.BranchIncludeEmpty = new(generated.ListJobsQueryBranchIncludeEmptyTrue)
 		}
-		resp, err := newDaemonAPI(addr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: query})
+		resp, err := newDaemonAPI(addr, getDaemonHTTPClientForURL(addr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: query})
 		if err != nil {
 			return nil, err
 		}
@@ -988,7 +989,7 @@ func runFixList(
 // isConnectionError checks if an error indicates a network/connection failure
 // (as opposed to an application-level error like 404 or invalid response).
 func isConnectionError(err error) bool {
-	if err == nil {
+	if err == nil || daemon.IsDaemonAccessError(err) || errors.Is(err, auth.ErrUnexpectedOrigin) {
 		return false
 	}
 	if _, ok := errors.AsType[*url.Error](err); ok {
@@ -1098,6 +1099,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		commitID, gitRef = job.LegacyCommentLookupTarget()
 	}
 	comments, commentsErr := fetchComments(ctx, addr, jobID, commitID, gitRef)
+	if daemon.IsDaemonAccessError(commentsErr) {
+		return fmt.Errorf("fetch comments: %w", commentsErr)
+	}
 	if commentsErr != nil && !opts.quiet {
 		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
 	}
@@ -1320,6 +1324,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	for _, id := range jobIDs {
 		job, err := fetchJob(ctx, batchAddr, id)
 		if err != nil {
+			if daemon.IsDaemonAccessError(err) {
+				return fmt.Errorf("fetch job %d: %w", id, err)
+			}
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
@@ -1333,6 +1340,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		}
 		review, err := fetchReview(ctx, batchAddr, id)
 		if err != nil {
+			if daemon.IsDaemonAccessError(err) {
+				return fmt.Errorf("fetch review %d: %w", id, err)
+			}
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
@@ -1353,6 +1363,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			batchCommitID, batchGitRef = job.LegacyCommentLookupTarget()
 		}
 		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchCommitID, batchGitRef)
+		if daemon.IsDaemonAccessError(commentsErr) {
+			return fmt.Errorf("fetch comments for job %d: %w", id, commentsErr)
+		}
 		if commentsErr != nil && !opts.quiet {
 			cmd.Printf("Warning: could not fetch comments for job %d: %v\n", id, commentsErr)
 		}
@@ -1658,13 +1671,17 @@ func formatJobIDs(ids []int64) string {
 // fetchJob retrieves a job from the daemon
 func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.ReviewJob, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.ReviewJob, error) {
-		client := getDaemonHTTPClient(30 * time.Second)
+		client := getDaemonHTTPClientForURL(addr, 30*time.Second)
 
 		resp, err := newDaemonAPI(addr, client).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 		if err != nil {
 			return nil, err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -1689,13 +1706,17 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 // fetchReview retrieves the review output for a job
 func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.Review, error) {
-		client := getDaemonHTTPClient(30 * time.Second)
+		client := getDaemonHTTPClientForURL(addr, 30*time.Second)
 
 		resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, &generated.GetReviewRequestOptions{Query: &generated.GetReviewQuery{JobID: &jobID}})
 		if err != nil {
 			return nil, err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -1716,7 +1737,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 // (unambiguous) when available, falls back to SHA for legacy jobs.
 func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
-		client := getDaemonHTTPClient(30 * time.Second)
+		client := getDaemonHTTPClientForURL(addr, 30*time.Second)
 
 		// Fetch by job ID
 		resp, err := newDaemonAPI(addr, client).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
@@ -1724,6 +1745,10 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 			return nil, err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -1750,8 +1775,14 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		}
 		if legacyQuery != nil {
 			legacyResp, err := newDaemonAPI(addr, client).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: legacyQuery})
+			if daemon.IsDaemonAccessError(err) {
+				return nil, err
+			}
 			if err == nil {
 				defer legacyResp.Body.Close()
+				if legacyResp.StatusCode == http.StatusUnauthorized {
+					return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, legacyResp.StatusCode)
+				}
 				if legacyResp.StatusCode == http.StatusOK {
 					var legacyResult struct {
 						Responses []storage.Response `json:"responses"`
@@ -1949,9 +1980,12 @@ func addJobResponse(ctx context.Context, serverAddr string, jobID int64, comment
 
 	currentAddr := serverAddr
 	for attempt := 0; ; attempt++ {
-		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClient(30*time.Second)).AddCommentRaw(ctx, nil, roborevclient.WithBody(reqBody))
+		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClientForURL(currentAddr, 30*time.Second)).AddCommentRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err == nil {
 			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				return fmt.Errorf("%w: check auth_key in the global config", daemon.ErrDaemonAccessDenied)
+			}
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 				body, _ := io.ReadAll(resp.Body)
 				return fmt.Errorf("add response failed: %s", body)
@@ -2000,6 +2034,9 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 		if err == nil && found {
 			return nil
 		}
+		if daemon.IsDaemonAccessError(err) {
+			return err
+		}
 		if isConnectionError(err) {
 			if refreshedAddr, refreshErr := refreshFixDaemonAddr(ctx); refreshErr == nil {
 				currentAddr = refreshedAddr
@@ -2019,6 +2056,9 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	if err == nil && found {
 		return nil
 	}
+	if daemon.IsDaemonAccessError(err) {
+		return err
+	}
 
 	branchName := gitrepo.CurrentBranch(ctx, repoPath)
 
@@ -2029,9 +2069,12 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	})
 
 	for attempt := 0; ; attempt++ {
-		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClient(30*time.Second)).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
+		resp, err := newDaemonAPI(currentAddr, getDaemonHTTPClientForURL(currentAddr, 30*time.Second)).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err == nil {
 			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				return fmt.Errorf("%w: check auth_key in the global config", daemon.ErrDaemonAccessDenied)
+			}
 
 			// 200 (skipped) and 201 (enqueued) are both fine
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -2083,11 +2126,14 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 }
 
 func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return false, nil
 	}
@@ -2103,11 +2149,14 @@ func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, err
 }
 
 func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return false, fmt.Errorf("fetch jobs failed (%d): %s", resp.StatusCode, body)
@@ -2124,11 +2173,14 @@ func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, 
 }
 
 func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, commenter, response string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(30*time.Second)).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return false, fmt.Errorf("fetch comments failed (%d): %s", resp.StatusCode, body)

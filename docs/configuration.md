@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-10-02
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -31,7 +31,7 @@ roborev config get sync.enabled               # nested keys use dot notation
 
 Without `--global` or `--local`, `get` uses merged scope: it checks the repo
 config first, then falls back to global. The raw value is printed to stdout for
-easy piping.
+easy piping, except `auth_key`, which is masked.
 
 ### Set a value
 
@@ -200,6 +200,86 @@ These settings change models and reasoning, not agents or providers. Use a model
 accepted by each affected agent when overriding a mixed-agent panel. Backup
 models retain their existing failover behavior. Settings for other projects are
 unaffected.
+
+## Daemon authentication
+
+Set a shared key in the daemon owner's global config to require authentication
+for all native daemon APIs, including reads, shutdown, streaming, profiling, MCP
+and the OpenAPI document. Authentication is disabled when `auth_key` is empty
+(the default). This key is global-only; repo config cannot override it.
+
+```toml
+# ~/.roborev/config.toml
+# Replace this example with a long random key, such as openssl rand -hex 32.
+auth_key = "replace-with-a-long-random-key"
+```
+
+Keep this file readable only by the account that owns the daemon
+(`chmod 600 ~/.roborev/config.toml` on Unix). Roborev's global config writes use
+`0600`. `roborev config get auth_key --global` and config lists mask the key.
+Invalid keys or malformed config prevent daemon startup. An explicitly supplied
+`daemon run --config` path must exist.
+
+The CLI, hooks and TUI read the key from their global config automatically,
+including for `--server` and Unix sockets. To allow a different account, give it
+the same `auth_key` in its own global config. When the daemon uses a custom
+`--config` file, configure the matching key in each client's usual global config
+too. `ROBOREV_DATA_DIR` changes the global config directory as usual. The key is
+not published in daemon runtime files.
+
+If posting a fix comment or enqueueing its follow-up review returns HTTP 401,
+the CLI reports access denied and directs you to check `auth_key` in the global
+config. It does not retry the write or start daemon recovery.
+
+The browser UI requires this key at login when no explicit `[web]` token or
+trusted proxy authentication is configured. An explicit browser token remains an
+independent login credential. When `auth_key` is enabled with proxy mode, the
+reverse proxy must supply `Authorization: Bearer <key>` to the backend
+`/api/ui/session` endpoints (below `web.base_path`, if configured). Forwarding
+headers alone cannot authenticate the proxy on a shared host. Browser
+authentication keeps its existing session, origin and CSRF checks.
+
+Auth changes require a daemon restart. Stop the daemon while the old key is
+still configured, update the key in the daemon and client config files, then
+start it again:
+
+```bash
+roborev daemon stop
+# Edit auth_key in the daemon and client global config files.
+roborev daemon start
+```
+
+For a service-managed daemon, stop the service, update the configs, then start
+the service. Editing or deleting config while the daemon is running does not
+change its active key. Existing CLI/TUI HTTP clients reread their config for
+later requests, so they use the updated key after restart. If discovery failed
+before a client selected a daemon, restart that client after correcting its
+config so it can discover the endpoint again.
+
+MCP installers do not configure HTTP authentication headers. Use the default
+stdio transport when `auth_key` is set; see
+[MCP Server](/docs/integrations/mcp/).
+
+Custom API clients send the key in an HTTP header:
+
+```bash
+curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
+  http://127.0.0.1:7373/api/status
+```
+
+`ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
+override. Missing or incorrect credentials return HTTP 401. Query-string keys
+are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
+Native Go clients verify a fresh HMAC server challenge before sending the key.
+They scope keys to their configured endpoint and do not follow redirects.
+
+This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
+not encrypt traffic. The native challenge proves key possession but does not
+protect against an active localhost TCP impersonator that relays the challenge
+and captures the Bearer key. Custom clients and browser login send the key over
+HTTP directly. Use protected Unix sockets on shared machines where that threat
+matters. This does not isolate processes that already run as the daemon owner's
+account or can read its config.
 
 ## Per-Repository Configuration
 
@@ -1054,6 +1134,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
+| `auth_key` | string | empty | Shared Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
 | `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
@@ -1240,6 +1321,12 @@ forwarding request shape. Proxy sessions keep the restricted remote-user
 capabilities and all mutation requests still require the tab-scoped CSRF
 credential. Unknown auth modes and proxy configurations containing either token
 setting fail before the listener starts.
+
+When the global `auth_key` is also enabled, configure the proxy to add
+`Authorization: Bearer <key>` to backend requests for `/api/ui/session` and its
+subpaths (including `base_path`, if configured). Those endpoints reject missing
+or incorrect keys. Keep the injected key in the proxy's protected configuration;
+the browser uses its normal session credentials afterward.
 
 The proxy must preserve the public `Host`, set conventional forwarding headers,
 and avoid buffering `/api/stream/events` and streamed `/api/job/output`

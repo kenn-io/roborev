@@ -41,7 +41,7 @@ func (sc *StaticConfig) Config() *config.Config {
 // agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
 // review_context_count.
 //
-// Settings requiring restart: server_addr, max_workers, ci.github_api_url,
+// Settings requiring restart: auth_key, server_addr, max_workers, ci.github_api_url,
 // [web], [sync] section.
 // These are read at startup and the running values are preserved even if the
 // config file changes. CLI flag overrides (--addr, --workers) only apply to

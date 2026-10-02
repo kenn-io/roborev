@@ -20,6 +20,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -86,8 +87,6 @@ var (
 		return sigCh, func() { signal.Stop(sigCh) }
 	}
 )
-
-var errDaemonReady = errors.New("daemon ready")
 
 // ErrDaemonNotRunning indicates no daemon runtime file was found
 var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
@@ -165,14 +164,31 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 	// No explicit flag: discover running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
 		return info.Endpoint()
+	} else if daemon.IsDaemonAccessError(err) {
+		return fallbackDaemonEndpoint().WithAccessError(err)
 	}
 	// Nothing running: use default
 	return fallbackDaemonEndpoint()
 }
 
-// getDaemonHTTPClient returns an HTTP client configured for the daemon endpoint.
-func getDaemonHTTPClient(timeout time.Duration) *http.Client {
-	return getDaemonEndpoint().HTTPClient(timeout)
+// getDaemonHTTPClientForURL pairs address-based helpers with the URL they use.
+// The selected Unix transport and terminal discovery errors stay attached when
+// the URL identifies the selected endpoint. Other loopback TCP URLs get their
+// own scoped client, including URLs chosen after daemon recovery.
+func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Client {
+	ep := getDaemonEndpoint()
+	if baseURL == ep.BaseURL() {
+		return ep.HTTPClient(timeout)
+	}
+	origin, err := url.Parse(baseURL)
+	if err == nil && origin.Scheme == "http" && origin.Host != "" && origin.User == nil {
+		if target, err := daemon.ParseEndpoint(origin.Host); err == nil {
+			return target.HTTPClient(timeout)
+		}
+	}
+	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
+		return "", fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied)
+	})
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -244,15 +260,15 @@ func ensureDaemon() error {
 
 	// First check runtime files for any running daemon
 	info, discoveryErr := getAnyRunningDaemon()
-	if daemon.IsDaemonAccessDenied(discoveryErr) {
+	if daemon.IsDaemonAccessError(discoveryErr) {
 		return discoveryErr
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
 			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
 			if err != nil {
-				if daemon.IsDaemonAccessDenied(err) {
-					return fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, err)
+				if daemon.IsDaemonAccessError(err) {
+					return fmt.Errorf("probe daemon: %w", err)
 				}
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
@@ -298,8 +314,8 @@ func ensureDaemon() error {
 		}
 		return nil
 	}
-	if daemon.IsDaemonAccessDenied(probeErr) {
-		return fmt.Errorf("%w: %w", daemon.ErrDaemonAccessDenied, probeErr)
+	if daemon.IsDaemonAccessError(probeErr) {
+		return fmt.Errorf("probe daemon: %w", probeErr)
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
@@ -318,17 +334,21 @@ func startDaemon() error {
 	var startupLogPath string
 	var startupLogOffset int64
 	manager := kitdaemon.Manager{
-		Store:    daemon.RuntimeStore(),
-		Discover: daemon.DiscoverOptions(1 * time.Second),
-		Start: func(ctx context.Context) error {
-			ready, err := discoverDaemonForStart(ctx)
+		Store: daemon.RuntimeStore(),
+		FindFunc: func(ctx context.Context) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
+			info, err := getAnyRunningDaemonForStart(ctx)
+			if errors.Is(err, os.ErrNotExist) {
+				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+			}
 			if err != nil {
-				return err
+				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
 			}
-			if ready {
-				return errDaemonReady
-			}
-
+			return kitdaemon.RuntimeRecord{
+				PID: info.PID, Network: info.Network, Address: info.Address,
+				Service: info.Service, Version: info.Version,
+			}, kitdaemon.PingInfo{OK: true, PID: info.PID, Service: info.Service, Version: info.Version}, true, nil
+		},
+		Start: func(ctx context.Context) error {
 			exe, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("failed to find executable: %w", err)
@@ -367,7 +387,7 @@ func startDaemon() error {
 					return err
 				}
 				if ready {
-					return errDaemonReady
+					return nil
 				}
 				select {
 				case <-ctx.Done():
@@ -382,9 +402,6 @@ func startDaemon() error {
 		},
 	}
 	if _, _, err := manager.Ensure(context.Background(), daemonStartTimeout); err != nil {
-		if errors.Is(err, errDaemonReady) {
-			return nil
-		}
 		if errors.Is(err, context.DeadlineExceeded) && startupLogPath != "" {
 			return fmt.Errorf("failed to start daemon: %w\nDaemon did not become ready within %s; it may still be initializing.%s",
 				err, daemonStartTimeout, daemonStartupLogSummary(startupLogPath, startupLogOffset))
@@ -470,8 +487,11 @@ func stopDaemon() error {
 			os.Stderr,
 			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
 		)
-		if !daemon.KillDaemon(info) {
-			lastErr = fmt.Errorf("failed to kill daemon (pid %d)", info.PID)
+		if err := daemon.KillDaemon(info); err != nil {
+			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
+			if errors.Is(err, daemon.ErrDaemonAccessDenied) {
+				lastErr = fmt.Errorf("%w; restore the daemon's startup auth_key or stop PID %d manually", lastErr, info.PID)
+			}
 		}
 	}
 

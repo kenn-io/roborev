@@ -9,6 +9,7 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/auth"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -17,8 +18,9 @@ var MaxUnixPathLen = kitdaemon.MaxUnixPathLen
 
 // DaemonEndpoint encapsulates the transport type and address for the daemon.
 type DaemonEndpoint struct {
-	Network string // "tcp" or "unix"
-	Address string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
+	Network   string // "tcp" or "unix"
+	accessErr error  // A terminal discovery error; never persisted.
+	Address   string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
 }
 
 func (e DaemonEndpoint) kitEndpoint() kitdaemon.Endpoint {
@@ -70,6 +72,15 @@ func (e DaemonEndpoint) BaseURL() string {
 
 // HTTPClient returns an http.Client configured for this endpoint's transport.
 func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
+	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) {
+		if e.accessErr != nil {
+			return "", e.accessErr
+		}
+		return loadClientAuthKey()
+	})
+}
+
+func (e DaemonEndpoint) transportClient(timeout time.Duration) *http.Client {
 	return e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
 		Timeout:           timeout,
 		DisableKeepAlives: e.IsUnix(),

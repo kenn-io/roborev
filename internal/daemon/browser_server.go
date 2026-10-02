@@ -29,6 +29,12 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	if err != nil {
 		return nil, err
 	}
+	// An explicit browser token remains an independent login credential.
+	// Proxy sessions authenticate the shared key at the session boundary.
+	sharedKey := ""
+	if authToken == "" && web.AuthMode != config.WebAuthModeProxy {
+		sharedKey = s.authKey
+	}
 	endpoint, err := ResolveBrowserEndpoint(web)
 	if err != nil {
 		return nil, err
@@ -43,6 +49,9 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 		_ = endpoint.Listener.Close()
 		return nil, err
 	}
+	if sharedKey != "" {
+		endpoint.authentication = "token"
+	}
 	policy, err := NewBrowserPolicy(endpoint, s.webDevOrigin)
 	if err != nil {
 		return fail(err)
@@ -54,6 +63,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	sessions, err := NewBrowserSessionManager(BrowserSessionConfig{
 		Origin:     sessionOrigin,
 		AuthToken:  authToken,
+		AuthKey:    sharedKey,
 		AllowLocal: endpoint.authentication == "local",
 		AllowProxy: endpoint.authentication == "proxy",
 		CookiePath: joinBrowserPath(web.BasePath, "/"),
@@ -96,7 +106,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	go func() {
 		serveErrCh <- server.Serve(endpoint.Listener)
 	}()
-	if err := waitForBrowserReady(endpoint, web.BasePath, serveErrCh); err != nil {
+	if err := waitForBrowserReady(endpoint, web.BasePath, serveErrCh, s.authKey); err != nil {
 		cancelRequests()
 		_ = server.Close()
 		return nil, err
@@ -118,8 +128,8 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	}, nil
 }
 
-func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <-chan error) error {
-	client, err := roborevclient.NewWithHTTPClient("http://"+endpoint.DialAddress+basePath, &http.Client{Timeout: 200 * time.Millisecond})
+func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <-chan error, startupKey string) error {
+	client, err := roborevclient.NewWithHTTPClient("http://"+endpoint.DialAddress+basePath, &http.Client{Timeout: 200 * time.Millisecond, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
 	if err != nil {
 		return err
 	}
@@ -135,6 +145,9 @@ func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <
 		}
 		response, err := client.PingRaw(context.Background(), func(_ context.Context, req *http.Request) error {
 			req.Host = endpoint.Address
+			if startupKey != "" {
+				req.Header.Set("Authorization", "Bearer "+startupKey)
+			}
 			return nil
 		})
 		if err == nil {

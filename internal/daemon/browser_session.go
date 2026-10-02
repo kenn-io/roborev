@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/roborev/internal/auth"
 	configpkg "go.kenn.io/roborev/internal/config"
 )
 
@@ -42,6 +43,7 @@ func (e *WebLoginRateLimitError) Is(target error) bool {
 type BrowserSessionConfig struct {
 	Origin     string
 	AuthToken  string
+	AuthKey    string // Fallback native key when no browser-specific token is set.
 	AllowLocal bool
 	AllowProxy bool
 	CookiePath string
@@ -77,8 +79,9 @@ type tabSession struct {
 
 type BrowserSessionManager struct {
 	mu                sync.Mutex
-	authHash          [32]byte
+	authToken         string
 	authSet           bool
+	authKeyLogin      bool
 	allowLocal        bool
 	allowProxy        bool
 	ttl               time.Duration
@@ -106,8 +109,14 @@ func NewBrowserSessionManager(config BrowserSessionConfig) (*BrowserSessionManag
 	if config.CookiePath == "" {
 		config.CookiePath = "/"
 	}
-	if config.AuthToken != "" {
-		if err := configpkg.ValidateWebAuthToken(config.AuthToken); err != nil {
+	token := config.AuthToken
+	if token != "" {
+		if err := configpkg.ValidateWebAuthToken(token); err != nil {
+			return nil, err
+		}
+	} else {
+		token = config.AuthKey
+		if err := configpkg.ValidateAuthKey(token); err != nil {
 			return nil, err
 		}
 	}
@@ -120,30 +129,34 @@ func NewBrowserSessionManager(config BrowserSessionConfig) (*BrowserSessionManag
 		return nil, fmt.Errorf("create browser session instance: %w", err)
 	}
 	return &BrowserSessionManager{
-		authHash:   sha256.Sum256([]byte(config.AuthToken)),
-		authSet:    config.AuthToken != "",
-		allowLocal: config.AllowLocal,
-		allowProxy: config.AllowProxy,
-		ttl:        config.TTL,
-		entropy:    config.Entropy,
-		clock:      config.Clock,
-		cookieName: "roborev_web_" + instance[:16],
-		cookiePath: config.CookiePath,
-		secure:     origin.Scheme == "https",
-		ambient:    make(map[[32]byte]ambientSession),
-		tabs:       make(map[[32]byte]tabSession),
+		authToken:    token,
+		authSet:      token != "",
+		authKeyLogin: config.AuthToken == "" && config.AuthKey != "",
+		allowLocal:   config.AllowLocal,
+		allowProxy:   config.AllowProxy,
+		ttl:          config.TTL,
+		entropy:      config.Entropy,
+		clock:        config.Clock,
+		cookieName:   "roborev_web_" + instance[:16],
+		cookiePath:   config.CookiePath,
+		secure:       origin.Scheme == "https",
+		ambient:      make(map[[32]byte]ambientSession),
+		tabs:         make(map[[32]byte]tabSession),
 	}, nil
 }
 
 func (m *BrowserSessionManager) Login(token string) (SessionCredentials, error) {
+	return m.login(token, BrowserPrincipal{})
+}
+
+func (m *BrowserSessionManager) login(token string, principal BrowserPrincipal) (SessionCredentials, error) {
 	m.mu.Lock()
 	now := m.clock()
-	presented := sha256.Sum256([]byte(token))
-	if m.authSet && subtle.ConstantTimeCompare(presented[:], m.authHash[:]) == 1 {
+	if m.authSet && auth.EqualKey(m.authToken, token) {
 		m.loginFailures = 0
 		m.loginBlockedUntil = time.Time{}
 		m.mu.Unlock()
-		return m.newSession(BrowserPrincipal{})
+		return m.newSession(principal)
 	}
 	if now.Before(m.loginBlockedUntil) {
 		retryAfter := m.loginBlockedUntil.Sub(now)

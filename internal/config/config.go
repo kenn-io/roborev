@@ -192,6 +192,7 @@ type Config struct {
 	project ProjectConfig
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
+	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared Bearer key for daemon API access. Empty disables authentication. Requires daemon restart."`
 	ServerAddr                 string                          `toml:"server_addr"`
 	MaxWorkers                 int                             `toml:"max_workers"`
 	ReviewContextCount         int                             `toml:"review_context_count"`
@@ -550,6 +551,11 @@ func walkAgentReferences(value reflect.Value, path string) error {
 }
 
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
+	if global, ok := cfg.(*Config); ok {
+		if err := ValidateAuthKey(global.AuthKey); err != nil {
+			return err
+		}
+	}
 	if err := validateACPAgentConfigs(acp); err != nil {
 		return err
 	}
@@ -976,12 +982,12 @@ func LoadGlobalFrom(path string) (*Config, error) {
 		return cfg, nil
 	}
 	if err := rejectLegacyACPConfig(path); err != nil {
-		return nil, err
+		return nil, safeGlobalConfigError(path, err)
 	}
 
 	md, err := toml.DecodeFile(path, cfg)
 	if err != nil {
-		return nil, err
+		return nil, safeGlobalConfigError(path, err)
 	}
 
 	// Migrate deprecated config keys

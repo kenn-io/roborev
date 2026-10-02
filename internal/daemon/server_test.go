@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -265,18 +264,9 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 
 func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
 	testenv.SetDataDir(t)
-	require.NoError(t, WriteRuntime(
-		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr},
-		nil,
-		"test-version",
-		nil,
-	))
-
-	origProbe := probeRuntimeEndpoint
-	probeRuntimeEndpoint = func(context.Context, DaemonEndpoint) (*PingInfo, error) {
-		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES}
-	}
-	t.Cleanup(func() { probeRuntimeEndpoint = origProbe })
+	existing := httptest.NewServer(newAuthTestServer(t, "existing-daemon-key").httpServer.Handler)
+	defer existing.Close()
+	require.NoError(t, WriteRuntime(authEndpoint(t, existing.URL), nil, "test-version", nil))
 
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
@@ -295,7 +285,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh)
+	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, "")
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -320,7 +310,7 @@ func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *te
 	serveErrCh := make(chan error, 1)
 	serveErrCh <- http.ErrServerClosed
 
-	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh)
+	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, "")
 	if ready {
 		require.Condition(t, func() bool {
 			return false

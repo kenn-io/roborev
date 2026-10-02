@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -41,9 +43,9 @@ const (
 	WebDisabledReasonMissingAssets = "missing-web-assets"
 )
 
-// ErrDaemonAccessDenied means a daemon runtime was found but local permissions
-// prevented every usable endpoint from being probed.
-var ErrDaemonAccessDenied = errors.New("daemon access denied")
+// ErrDaemonAccessDenied means a daemon could not be authenticated or local
+// permissions prevented every usable endpoint from being probed.
+var ErrDaemonAccessDenied = auth.ErrUnverifiedServer
 
 var probeRuntimeEndpoint = probeRuntimeRecord
 
@@ -62,6 +64,8 @@ type RuntimeInfo struct {
 	WebBasePath       string   `json:"-"`
 	WebCapabilities   []string `json:"-"`
 	WebDisabledReason string   `json:"-"`
+
+	processIdentity kitdaemon.ProcessIdentity
 }
 
 // BrowserRuntimeInfo is the non-secret discovery information published for
@@ -134,20 +138,11 @@ func RuntimeStore() kitdaemon.RuntimeStore {
 	return runtimeStore()
 }
 
-// DiscoverOptions returns the shared kit discovery options for roborev.
-func DiscoverOptions(timeout time.Duration) kitdaemon.DiscoverOptions {
-	return kitdaemon.DiscoverOptions{
-		Probe: kitdaemon.ProbeOptions{
-			ExpectedService: daemonServiceName,
-			Timeout:         timeout,
-		},
-	}
-}
-
 func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 	ep := daemonEndpointFromKit(rec.Endpoint())
 	info := &RuntimeInfo{
 		PID:              rec.PID,
+		processIdentity:  cmp.Or(rec.ProcessIdentityV2, rec.ProcessIdentity),
 		Network:          ep.Network,
 		Address:          ep.Address,
 		Service:          rec.Service,
@@ -361,26 +356,27 @@ func listLegacyRuntimes() []*RuntimeInfo {
 }
 
 func probeRuntimeRecord(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
+	key, err := loadClientAuthKey()
+	if err != nil {
+		return nil, err
+	}
+	return probeRuntimeRecordWithKey(ctx, ep, key)
+}
+
+func probeRuntimeRecordWithKey(ctx context.Context, ep DaemonEndpoint, key string) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	info, err := kitdaemon.Probe(ctx, ep.kitEndpoint(), kitdaemon.ProbeOptions{
-		ExpectedService: daemonServiceName,
-		Timeout:         time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return pingInfoFromKit(info), nil
+	return probeDaemonHTTP(ctx, ep, time.Second, ep.HTTPClientWithAuthKey(time.Second, key))
 }
 
-// IsDaemonAccessDenied reports whether err is roborev's access-denied sentinel
-// or an operating-system permission error from a local endpoint probe.
-func IsDaemonAccessDenied(err error) bool {
-	return errors.Is(err, ErrDaemonAccessDenied) ||
+// IsDaemonAccessError reports credential, configuration, and local permission
+// errors that must not trigger daemon recovery or stale-runtime cleanup.
+func IsDaemonAccessError(err error) bool {
+	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
@@ -397,6 +393,9 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
+		if info.hasStaleProcess() {
+			continue
+		}
 		primary := info.Endpoint()
 		for _, ep := range info.Endpoints() {
 			if err := ctx.Err(); err != nil {
@@ -412,8 +411,8 @@ func discoverRuntimeRecords(
 				}
 				return info, nil
 			}
-			if IsDaemonAccessDenied(err) {
-				deniedErr = fmt.Errorf("%w at %s: %w", ErrDaemonAccessDenied, ep, err)
+			if IsDaemonAccessError(err) {
+				deniedErr = fmt.Errorf("daemon at %s: %w", ep, err)
 			}
 		}
 	}
@@ -426,11 +425,18 @@ func discoverRuntimeRecords(
 // GetAnyRunningDaemonContext returns info about a responsive daemon.
 // Returns os.ErrNotExist if no responsive daemon is found.
 func GetAnyRunningDaemonContext(ctx context.Context) (*RuntimeInfo, error) {
+	if _, err := loadClientAuthKey(); err != nil {
+		return nil, err
+	}
+	return getAnyRunningDaemonContext(ctx, probeRuntimeEndpoint)
+}
+
+func getAnyRunningDaemonContext(ctx context.Context, probe func(context.Context, DaemonEndpoint) (*PingInfo, error)) (*RuntimeInfo, error) {
 	records, err := runtimeStore().List()
 	if err != nil {
 		return nil, err
 	}
-	return discoverRuntimeRecords(ctx, records, probeRuntimeEndpoint)
+	return discoverRuntimeRecords(ctx, records, probe)
 }
 
 // GetAnyRunningDaemon returns info about a responsive daemon.
@@ -447,14 +453,7 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	info, err := kitdaemon.Probe(context.Background(), ep.kitEndpoint(), kitdaemon.ProbeOptions{
-		ExpectedService: daemonServiceName,
-		Timeout:         timeout,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return pingInfoFromKit(info), nil
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
@@ -474,6 +473,9 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrDaemonAccessDenied
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
 	}
@@ -502,8 +504,8 @@ func ProbeDaemonAlive(ep DaemonEndpoint) (bool, error) {
 	alive, err := backoff.Retry(context.Background(), func() (bool, error) {
 		if _, err := probeRuntimeEndpoint(context.Background(), ep); err == nil {
 			return true, nil
-		} else if IsDaemonAccessDenied(err) {
-			return false, backoff.Permanent(fmt.Errorf("%w at %s: %w", ErrDaemonAccessDenied, ep, err))
+		} else if IsDaemonAccessError(err) {
+			return false, backoff.Permanent(fmt.Errorf("daemon at %s: %w", ep, err))
 		} else {
 			return false, err
 		}
@@ -521,14 +523,24 @@ func IsDaemonAlive(ep DaemonEndpoint) bool {
 	return alive
 }
 
+// hasStaleProcess rejects dead or reused PIDs before sending credentials.
+// An unknown identity is not proof of a mismatch; older records may lack it.
+func (r *RuntimeInfo) hasStaleProcess() bool {
+	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
+		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
+}
+
 func probeRuntimeAlive(info *RuntimeInfo) (bool, error) {
+	if info.hasStaleProcess() {
+		return false, nil
+	}
 	var deniedErr error
 	for _, ep := range info.Endpoints() {
 		alive, err := ProbeDaemonAlive(ep)
 		if alive {
 			return true, nil
 		}
-		if IsDaemonAccessDenied(err) {
+		if IsDaemonAccessError(err) {
 			deniedErr = err
 		}
 	}
@@ -584,11 +596,11 @@ func isLoopbackAddr(addr string) bool {
 }
 
 // KillDaemon requests graceful shutdown and waits until the daemon exits.
-// Returns true if the daemon is no longer running.
+// Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
-func KillDaemon(info *RuntimeInfo) bool {
+func KillDaemon(info *RuntimeInfo) error {
 	if info == nil {
-		return true
+		return nil
 	}
 
 	ep := info.Endpoint()
@@ -609,25 +621,26 @@ func KillDaemon(info *RuntimeInfo) bool {
 		if info.PID > 0 {
 			return !isProcessAlive(info.PID)
 		}
-		return !IsDaemonAlive(ep)
+		alive, err := ProbeDaemonAlive(ep)
+		return !alive && !IsDaemonAccessError(err)
 	}
-	if confirmedDead() {
+	if info.hasStaleProcess() || confirmedDead() {
 		removeRuntimeFile()
-		return true
+		return nil
 	}
 	if info.PID > 0 {
 		switch identifyProcess(info.PID) {
 		case processNotRoborev:
 			removeRuntimeFile()
-			return true
+			return nil
 		case processUnknown:
 			ping, err := ProbeDaemon(ep, 2*time.Second)
 			if err != nil {
-				return false
+				return err
 			}
 			if ping.PID != info.PID {
 				removeRuntimeFile()
-				return true
+				return nil
 			}
 		}
 	}
@@ -640,46 +653,53 @@ func KillDaemon(info *RuntimeInfo) bool {
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		if requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead) {
-			waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
-			removeRuntimeFile()
-			return true
+		if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead); err != nil {
+			return err
 		}
+		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
+		removeRuntimeFile()
+		return nil
 	}
-	return false
+	return fmt.Errorf("daemon shutdown was not accepted")
 }
 
 func requestGracefulDaemonShutdown(
 	ctx context.Context,
 	ep DaemonEndpoint,
 	confirmedDead func() bool,
-) bool {
+) error {
 	client := ep.APIClient(0)
-	accepted, err := backoff.Retry(ctx, func() (bool, error) {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
-			return true, nil
+			return struct{}{}, nil
 		}
 		resp, err := client.ShutdownRaw(ctx)
 		if err == nil {
-			accepted := resp.StatusCode >= http.StatusOK &&
-				resp.StatusCode < http.StatusMultipleChoices
-			retryable := resp.StatusCode >= http.StatusInternalServerError
 			resp.Body.Close()
-			if accepted || !retryable {
-				return accepted, nil
+			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+				return struct{}{}, nil
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return struct{}{}, backoff.Permanent(ErrDaemonAccessDenied)
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
+			if resp.StatusCode < http.StatusInternalServerError {
+				return struct{}{}, backoff.Permanent(err)
+			}
 		}
 		if confirmedDead() {
-			return true, nil
+			return struct{}{}, nil
 		}
-		return false, err
+		if IsDaemonAccessError(err) {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(shutdownCleanupRetryInterval)),
 		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
-	if err != nil {
-		return confirmedDead()
+	if err != nil && !confirmedDead() {
+		return backoff.AsRetryError(err).LastErr
 	}
-	return accepted
+	return nil
 }
 
 func waitForGracefulDaemonExit(
@@ -702,11 +722,10 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 	for _, info := range runtimes {
 		ep := info.Endpoint()
 
-		// For Unix sockets, check PID liveness first to avoid slow HTTP probes
-		// against sockets whose owner process is already dead.
-		if ep.IsUnix() && info.PID > 0 && !isProcessAlive(info.PID) {
-			if ep.Address != target.Address {
-				// Clean up non-matching sockets.
+		// Check the recorded process before any endpoint receives credentials.
+		if info.hasStaleProcess() {
+			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.ProcessAlive(info.PID) {
+				// Clean up non-matching sockets only when the PID is dead.
 				os.Remove(ep.Address)
 			}
 			if info.SourcePath != "" {
@@ -722,7 +741,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if alive {
 			continue
 		}
-		if IsDaemonAccessDenied(probeErr) {
+		if IsDaemonAccessError(probeErr) {
 			continue
 		}
 		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
@@ -741,7 +760,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		// Never stop an unresponsive live process during cleanup: it may be
 		// running a review. Records without a PID are safe to remove only when
 		// their endpoint is also confirmed dead.
-		if info.PID <= 0 && KillDaemon(info) {
+		if info.PID <= 0 && KillDaemon(info) == nil {
 			cleaned++
 		}
 	}

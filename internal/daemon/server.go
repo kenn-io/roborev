@@ -44,6 +44,7 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
+	authKey                 string // Immutable startup credential.
 	db                      *storage.DB
 	configWatcher           *ConfigWatcher
 	broadcaster             Broadcaster
@@ -179,6 +180,7 @@ func newServerWithLogs(
 	}
 
 	s := &Server{
+		authKey:            cfg.AuthKey,
 		db:                 db,
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,
@@ -209,7 +211,7 @@ func newServerWithLogs(
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
-		Handler: mux,
+		Handler: withAuthentication(mux, cfg.AuthKey),
 	}
 
 	return s
@@ -254,14 +256,16 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Check if a responsive daemon is still running after cleanup.
-	info, discoveryErr := GetAnyRunningDaemon()
-	if IsDaemonAccessDenied(discoveryErr) {
+	info, discoveryErr := getAnyRunningDaemonContext(ctx, func(ctx context.Context, endpoint DaemonEndpoint) (*PingInfo, error) {
+		return probeRuntimeRecordWithKey(ctx, endpoint, s.authKey)
+	})
+	if IsDaemonAccessError(discoveryErr) {
 		if listener != nil {
 			_ = listener.Close()
 		}
 		return discoveryErr
 	}
-	if discoveryErr == nil && IsDaemonAlive(info.Endpoint()) {
+	if discoveryErr == nil {
 		if listener != nil {
 			_ = listener.Close()
 		}
@@ -341,7 +345,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.workerPool.Start()
 	s.startSearch(ctx)
 
-	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh)
+	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.authKey)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -372,7 +376,7 @@ func (s *Server) Start(ctx context.Context) error {
 				auxServeErrCh <- s.httpServer.Serve(auxListener)
 			}()
 			auxReady, auxExited, readyErr := waitForServerReady(
-				ctx, *candidate, 2*time.Second, auxServeErrCh,
+				ctx, *candidate, 2*time.Second, auxServeErrCh, s.authKey,
 			)
 			if readyErr != nil || !auxReady {
 				_ = auxListener.Close()
@@ -495,7 +499,7 @@ func (s *Server) stopPanelSweep() {
 	}
 }
 
-func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error) (bool, bool, error) {
+func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error, startupKey string) (bool, bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -514,7 +518,8 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 			return false, true, err
 		default:
 		}
-		if _, err := ProbeDaemon(ep, 200*time.Millisecond); err == nil {
+		client := ep.HTTPClientWithAuthKey(200*time.Millisecond, startupKey)
+		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client); err == nil {
 			return true, false, nil
 		} else {
 			lastErr = err

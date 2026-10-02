@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -30,6 +31,10 @@ func (a daemonReviewAPI) getJob(ctx context.Context, jobID int64) (*storage.Revi
 		return nil, fmt.Errorf("fetch job: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -58,6 +63,10 @@ func (a daemonReviewAPI) getReview(ctx context.Context, jobID int64, label strin
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("%w: job %d", errReviewNotFound, jobID)
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("fetch %s (%d): %s", label, resp.StatusCode, body)

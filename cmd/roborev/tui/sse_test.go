@@ -1,18 +1,59 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
+
+func TestSSEReadLoopReturnsAccessDeniedOnUnauthorized(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	connected, err := sseReadLoop(context.Background(), testEndpointFromURL(ts.URL), make(chan struct{}, 1))
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+	assert.False(t, connected)
+}
+
+func TestSSEAccessDeniedDoesNotRetry(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		attempts := 0
+		_, err := backoff.Retry(t.Context(), func() (struct{}, error) {
+			attempts++
+			return struct{}{}, permanentSSEError(daemon.ErrDaemonAccessDenied)
+		}, backoff.WithBackOff(backoff.NewExponentialBackOff()), backoff.WithMaxTries(2), backoff.WithMaxElapsedTime(0))
+		require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+		assert.Equal(t, 1, attempts)
+	})
+}
+
+func TestSSEClientConfigErrorDoesNotRetry(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		attempts := 0
+		_, err := backoff.Retry(t.Context(), func() (struct{}, error) {
+			attempts++
+			return struct{}{}, permanentSSEError(daemon.ErrClientConfig)
+		}, backoff.WithBackOff(backoff.NewExponentialBackOff()), backoff.WithMaxTries(2), backoff.WithMaxElapsedTime(0))
+		require.ErrorIs(t, err, daemon.ErrClientConfig)
+		assert.Equal(t, 1, attempts)
+	})
+}
 
 func TestSSESubscription_ReceivesEvents(t *testing.T) {
 	t.Parallel()

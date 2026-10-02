@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/auth"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -280,12 +283,37 @@ func (state *mockRefineState) handlePing(w http.ResponseWriter, r *http.Request)
 		mockMethodNotAllowed(w)
 		return
 	}
+	if writeMockAuthChallenge(w, r) {
+		return
+	}
 	_ = json.NewEncoder(w).Encode(daemon.PingInfo{
 		OK:      true,
 		Service: "roborev",
 		Version: version.Version,
 		PID:     os.Getpid(),
 	})
+}
+
+func writeMockAuthChallenge(w http.ResponseWriter, r *http.Request) bool {
+	nonces := r.Header.Values("X-Roborev-Auth-Nonce")
+	if len(nonces) == 0 {
+		return false
+	}
+	if len(nonces) != 1 {
+		w.WriteHeader(http.StatusUnauthorized)
+		return true
+	}
+	nonce, err := hex.DecodeString(nonces[0])
+	if err != nil || len(nonce) == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		return true
+	}
+	key, err := config.LoadGlobalAuthKey()
+	if err == nil && key != "" {
+		w.Header().Set("X-Roborev-Auth-Proof", hex.EncodeToString(auth.ServerProof(key, nonce)))
+	}
+	w.WriteHeader(http.StatusUnauthorized)
+	return true
 }
 
 func (state *mockRefineState) handleReview(w http.ResponseWriter, r *http.Request) {

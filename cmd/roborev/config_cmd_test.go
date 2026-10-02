@@ -570,6 +570,19 @@ func TestSetConfigKeyInvalidKey(t *testing.T) {
 	require.Error(t, err, "expected error for invalid key")
 }
 
+func TestSetConfigKeyRejectsInvalidAuthKeyWithoutWriting(t *testing.T) {
+	path := setupConfigFile(t)
+	original := []byte("auth_key = \"synthetic-valid-key\"\n")
+	require.NoError(t, os.WriteFile(path, original, 0o600))
+
+	err := setConfigKey(path, "auth_key", "invalid value", true)
+	require.ErrorContains(t, err, "valid HTTP Bearer token")
+
+	updated, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, updated)
+}
+
 // If command scope validation drifts, users can persist a repo-local policy
 // that Agent Hook and roborev fix will ignore.
 func TestSetConfigKeyFixGuidelinesIsGlobalOnly(t *testing.T) {
@@ -844,4 +857,17 @@ func TestGetValueForScopeMergedRepoOnlyKeyNotSet(t *testing.T) {
 	// "agent" is a repo-only key — should not fall through to global config
 	_, err := getValueForScope(env.Resolver, "agent", scopeMerged)
 	require.ErrorContains(t, err, "not set in local config")
+}
+
+func TestAuthKeyConfigGetMasksCredential(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-secret-abcd"`), 0o600))
+	output := captureOutput(t, func() error {
+		cmd := configGetCmd()
+		cmd.SetArgs([]string{"auth_key", "--global"})
+		err := cmd.Execute()
+		require.NoError(t, err)
+		return err
+	})
+	assert.Equal(t, "****abcd\n", output)
 }

@@ -907,12 +907,15 @@ func markJobClosed(ctx context.Context, serverAddr string, jobID int64) error {
 	})
 
 	_, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (struct{}, error) {
-		resp, err := newDaemonAPI(addr, getDaemonHTTPClient(30*time.Second)).CloseReviewRaw(ctx, nil, roborevclient.WithBody(reqBody))
+		resp, err := newDaemonAPI(addr, getDaemonHTTPClientForURL(addr, 30*time.Second)).CloseReviewRaw(ctx, nil, roborevclient.WithBody(reqBody))
 		if err != nil {
 			return struct{}{}, err
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode == http.StatusUnauthorized {
+			return struct{}{}, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+		}
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			return struct{}{}, fmt.Errorf("close job failed: %s", body)

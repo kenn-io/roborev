@@ -388,6 +388,9 @@ func configGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if config.IsSensitiveKey(args[0]) && val != "" {
+				val = config.MaskValue(val)
+			}
 			fmt.Println(val)
 			return nil
 		},

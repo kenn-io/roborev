@@ -51,8 +51,15 @@ func startSSESubscription(
 		if connected {
 			policy.Reset()
 		}
-		return struct{}{}, err
+		return struct{}{}, permanentSSEError(err)
 	}, backoff.WithBackOff(policy), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+}
+
+func permanentSSEError(err error) error {
+	if daemon.IsDaemonAccessError(err) {
+		return backoff.Permanent(err)
+	}
+	return err
 }
 
 // sseReadLoop connects to the event stream and reads NDJSON lines until
@@ -70,6 +77,9 @@ func sseReadLoop(
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("stream events: %s", resp.Status)
 	}

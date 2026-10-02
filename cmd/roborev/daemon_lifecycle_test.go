@@ -258,7 +258,7 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 	})
 
 	err := ensureDaemon()
-	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+	require.True(t, daemon.IsDaemonAccessError(err))
 	assert.Zero(t, restartCalls)
 	assert.Zero(t, startCalls)
 }
@@ -291,7 +291,7 @@ func TestEnsureDaemonDoesNotColdStartAfterAccessDeniedDefaultProbe(t *testing.T)
 	})
 
 	err := ensureDaemon()
-	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+	require.True(t, daemon.IsDaemonAccessError(err))
 	assert.Zero(t, cleanupCalls)
 	assert.Zero(t, startCalls)
 }
@@ -377,7 +377,7 @@ func TestStartDaemonUsesAlternateAwareDiscoveryWhileWaiting(t *testing.T) {
 	spawnCalls := 0
 	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 		discoveryCalls++
-		if discoveryCalls == 1 {
+		if discoveryCalls <= 2 {
 			return nil, os.ErrNotExist
 		}
 		return &daemon.RuntimeInfo{

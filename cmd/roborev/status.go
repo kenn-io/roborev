@@ -64,7 +64,10 @@ func statusCmd() *cobra.Command {
 
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
-				if errors.Is(err, daemon.ErrDaemonAccessDenied) {
+				if errors.Is(err, daemon.ErrClientConfig) {
+					return err
+				}
+				if daemon.IsDaemonAccessError(err) {
 					message := fmt.Sprintf(
 						"%v; if roborev is running in a sandbox, allow loopback or Unix socket access and retry",
 						err,

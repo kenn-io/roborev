@@ -1238,7 +1238,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 		cancelled: make(chan time.Duration, 1),
 	}
 	orig := hookHTTPClient
-	hookHTTPClient = func(time.Duration) *http.Client {
+	hookHTTPClient = func(daemon.DaemonEndpoint, time.Duration) *http.Client {
 		return &http.Client{
 			Timeout:   50 * time.Millisecond,
 			Transport: rt,

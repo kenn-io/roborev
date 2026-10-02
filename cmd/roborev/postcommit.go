@@ -26,8 +26,8 @@ import (
 // daemon never blocks a commit. The timeout is resolved from config (see
 // config.ResolveHookTimeout). Tests override this variable to inject custom
 // transports.
-var hookHTTPClient = func(timeout time.Duration) *http.Client {
-	return getDaemonHTTPClient(timeout)
+var hookHTTPClient = func(endpoint daemon.DaemonEndpoint, timeout time.Duration) *http.Client {
+	return endpoint.HTTPClient(timeout)
 }
 
 // hookLogPath can be overridden in tests.
@@ -194,7 +194,7 @@ func postCommitCmd() *cobra.Command {
 			timeout := config.ResolveHookTimeout(root, globalCfg)
 
 			ep := getDaemonEndpoint()
-			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
+			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
 					"enqueue request failed: %v", err,

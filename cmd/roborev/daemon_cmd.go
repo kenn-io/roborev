@@ -270,7 +270,13 @@ func daemonRunCmd() *cobra.Command {
 				os.Remove(oldDaemonPath) // Ignore errors silently
 			}
 
-			// Load configuration from specified path
+			// An explicitly selected config must exist; never silently start an
+			// unauthenticated daemon because its credential file is missing.
+			if cmd.Flags().Changed("config") {
+				if _, err := os.Stat(configPath); err != nil {
+					return fmt.Errorf("failed to read daemon config: %w", err)
+				}
+			}
 			cfg, err := config.LoadGlobalFrom(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config from %s: %w", configPath, err)

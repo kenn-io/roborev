@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-10-02
 title: MCP Server
 description: Expose roborev review data to AI agents over the Model Context Protocol using stdio or streamable HTTP
 ---
@@ -32,6 +32,11 @@ the global `--server` flag to target a specific daemon. HTTP installation
 requires `--transport http --url <daemon MCP URL>` and uses the existing daemon
 endpoint. Enable `[mcp]` in that daemon's config as described below.
 Installation does not start or restart the daemon.
+
+When the daemon has `auth_key` set, use the default stdio transport. The HTTP
+installers (`mcp install --transport http` and
+`agent-hook install --mcp-transport http`) do not configure authentication
+headers. Stdio reads the key from the client's global config automatically.
 
 Use `--config` with one `--agent` to select a custom MCP configuration file. The
 installer replaces the `roborev` entry and preserves other settings and servers.
@@ -127,9 +132,13 @@ enabled = true
 ```
 
 With the default `server_addr` the endpoint is `http://127.0.0.1:7373/mcp`. The
-daemon only listens on loopback and applies no additional authentication. When
-the daemon listens on a Unix domain socket, most MCP clients cannot reach it
-over HTTP; use the stdio transport instead.
+daemon only listens on loopback. If global `auth_key` is set, `/mcp` requires
+`Authorization: Bearer <key>` on every request, like the other daemon APIs.
+Without it, clients receive HTTP 401. Use stdio with the installers, or
+configure that header manually in an MCP client that supports it. See
+[Daemon authentication](/docs/configuration/#daemon-authentication) for key
+setup and rotation. When the daemon listens on a Unix domain socket, most MCP
+clients cannot reach it over HTTP; use stdio instead.
 
 ```json
 {

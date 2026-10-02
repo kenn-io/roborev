@@ -594,6 +594,57 @@ func TestAddJobResponse(t *testing.T) {
 	assert.Equal(t, "roborev-fix", gotCommenter)
 }
 
+func TestAddJobResponseReturnsAccessDeniedOnUnauthorized(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+}
+
+func TestPostFixWritesAuthDenialDoesNotAttemptRecovery(t *testing.T) {
+	for _, endpoint := range []string{"/api/comment", "/api/enqueue"} {
+		t.Run(endpoint, func(t *testing.T) {
+			var recoveryAttempted atomic.Bool
+			patchFixDaemonRetryForTest(t, func() error {
+				recoveryAttempted.Store(true)
+				return errors.New("unexpected daemon recovery")
+			})
+
+			var deniedPosts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/jobs":
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
+				case r.Method == http.MethodPost && r.URL.Path == endpoint:
+					deniedPosts.Add(1)
+					w.WriteHeader(http.StatusUnauthorized)
+					writeJSON(w, map[string]string{"error": "unauthorized"})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			var err error
+			if endpoint == "/api/comment" {
+				err = addJobResponse(context.Background(), server.URL, 42, "roborev-fix", "Fix applied")
+			} else {
+				repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+				err = enqueueIfNeeded(context.Background(), server.URL, repo.Dir, repo.Run("rev-parse", "HEAD"))
+			}
+
+			require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+			require.ErrorContains(t, err, "check auth_key in the global config")
+			assert.EqualValues(t, 1, deniedPosts.Load())
+			assert.False(t, recoveryAttempted.Load())
+		})
+	}
+}
+
 func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	var firstPostCount atomic.Int32
 	var recoveryPostCount atomic.Int32
@@ -2404,6 +2455,62 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	require.NoError(t, err, "enqueueIfNeeded: %v")
 
 	assert.EqualValues(t, 0, enqueueCalls.Load())
+}
+
+func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
+	patchFixDaemonRetryForTest(t, nil)
+	enqueueIfNeededProbeAttempts = 3
+
+	var probeCalls atomic.Int32
+	var enqueueCalls atomic.Int32
+	var sleepCalls atomic.Int32
+	fixDaemonSleep = func(time.Duration) { sleepCalls.Add(1) }
+
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	sha := repo.Run("rev-parse", "HEAD")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			probeCalls.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+
+	assert := assert.New(t)
+	assert.Equal(int32(1), probeCalls.Load())
+	assert.Zero(sleepCalls.Load())
+	assert.Zero(enqueueCalls.Load())
+}
+
+func TestVerifyJobForSHAContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	_, err := verifyJobForSHAContext(context.Background(), ts.URL, "synthetic-sha")
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+}
+
+func TestHasJobResponseContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	_, err := hasJobResponseContext(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 }
 
 func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {

@@ -5,6 +5,11 @@ description: Stream review events and integrate with the daemon REST API
 
 ## Daemon API
 
+When global `auth_key` is configured, all API and streaming requests require
+`Authorization: Bearer <key>`. CLI and TUI clients add it automatically. See
+[Daemon authentication](../configuration.md#daemon-authentication) for setup and
+key rotation.
+
 The daemon exposes a REST API on the configured `server_addr`. With the default
 value of `127.0.0.1:7373`, the API is reachable at `http://127.0.0.1:7373`. An
 OpenAPI 3.1.0 spec is available at `/openapi.json` for client generation and

@@ -100,7 +100,11 @@ func (p BrowserPolicy) ValidateOrigin(request *http.Request) error {
 }
 
 func (p BrowserPolicy) AllowsLocalSession(request *http.Request) bool {
-	if p.authentication != "local" || hasForwardingHeader(request.Header) {
+	return p.authentication == "local" && p.allowsLocalRequest(request)
+}
+
+func (p BrowserPolicy) allowsLocalRequest(request *http.Request) bool {
+	if hasForwardingHeader(request.Header) {
 		return false
 	}
 	host, err := normalizeAuthority(request.Host)

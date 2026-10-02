@@ -359,7 +359,7 @@ func TestKillDaemonCleansRuntimeForNonRoborevPIDWithoutShutdown(t *testing.T) {
 
 	result := KillDaemon(info)
 
-	assert.True(t, result)
+	require.NoError(t, result)
 	assert.NoFileExists(t, runtimePath)
 }
 
@@ -661,7 +661,7 @@ func TestRuntimeInfoEndpoints(t *testing.T) {
 func TestDiscoverRuntimeRecords(t *testing.T) {
 	const alternateAddr = "127.0.0.1:7374"
 	record := kitdaemon.RuntimeRecord{
-		PID:     42,
+		PID:     os.Getpid(),
 		Network: "tcp",
 		Address: defaultTestAddr,
 		Metadata: map[string]string{
@@ -689,7 +689,8 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 			return nil, denied
 		})
 
-		require.ErrorIs(t, err, ErrDaemonAccessDenied)
+		require.ErrorIs(t, err, syscall.EPERM)
+		assert.True(t, IsDaemonAccessError(err))
 	})
 
 	t.Run("ordinary failures mean not found", func(t *testing.T) {
@@ -879,7 +880,7 @@ func TestKillDaemonCleansDeadLegacyRuntimeWithoutContactingEndpoint(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 
-	assert.True(KillDaemon(runtimes[0]))
+	require.NoError(t, KillDaemon(runtimes[0]))
 	assert.False(shutdownCalled, "a stale runtime must not stop a replacement endpoint")
 	assert.NoFileExists(legacyPath, "legacy runtime file must be cleaned up")
 }
@@ -900,7 +901,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	})
 	server := httptest.NewServer(mux)
 
-	done := make(chan bool, 1)
+	done := make(chan error, 1)
 	go func() {
 		done <- KillDaemon(&RuntimeInfo{
 			PID:     math.MaxInt32,
@@ -909,7 +910,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 		})
 	}()
 
-	var result bool
+	var result error
 	// Wall-clock wait: daemon process exit and loopback endpoint reuse.
 	completedWhileEndpointAlive := assert.Eventually(t, func() bool {
 		select {
@@ -931,7 +932,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 			}
 		}, 2*time.Second, 10*time.Millisecond)
 	}
-	assert.True(t, result)
+	require.NoError(t, result)
 }
 
 func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *testing.T) {
@@ -955,10 +956,10 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	done := make(chan bool, 1)
+	done := make(chan error, 1)
 	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
 	returnedEarly := false
-	var earlyResult bool
+	var earlyResult error
 	select {
 	case <-received:
 	case earlyResult = <-done:
@@ -967,7 +968,7 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	require.False(t, returnedEarly, "shutdown request returned %v before reaching the daemon", earlyResult)
 	// The daemon accepts only after the request is already waiting on it.
 	acceptShutdown()
-	assert.True(t, <-done)
+	assert.NoError(t, <-done)
 }
 
 func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
@@ -985,7 +986,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	assert.True(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
+	require.NoError(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
 	assert.Equal(t, int32(2), attempts.Load())
 }
 
@@ -1006,7 +1007,7 @@ func TestKillDaemonCleansDeadRuntimeWhenEndpointIsUnavailable(t *testing.T) {
 		SourcePath: runtimePath,
 	})
 
-	assert.True(t, stopped)
+	require.NoError(t, stopped)
 	assert.NoFileExists(t, runtimePath)
 }
 
@@ -1033,7 +1034,7 @@ func TestKillDaemonDoesNotRemoveReusedUnixSocket(t *testing.T) {
 		SourcePath: runtimePath,
 	})
 
-	assert.True(t, stopped)
+	require.NoError(t, stopped)
 	assert.NoFileExists(t, runtimePath)
 	assert.FileExists(t, socketPath)
 }

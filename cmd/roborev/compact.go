@@ -601,12 +601,15 @@ func cancelJob(serverAddr string, jobID int64) error {
 	if err != nil {
 		return fmt.Errorf("marshal cancel request: %w", err)
 	}
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClient(10*time.Second)).CancelJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 10*time.Second)).CancelJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%w: server error (%d)", daemon.ErrDaemonAccessDenied, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("cancel failed: %s", body)
