@@ -326,6 +326,11 @@ default.
 
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
+Set `review_in_worktree = true` per repo or globally to run committed daemon
+reviews in temporary detached checkouts. A linked worktree can then be removed
+while its review runs. Jobs retain their original paths for filtering and
+hooks; dirty reviews and foreground flows keep their current behavior.
+
 See [configuration guide](https://roborev.io/docs/configuration/) for all options.
 
 ### Kata task context
