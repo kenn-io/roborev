@@ -6,24 +6,25 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// navigationPageSize uses the same content area as the active renderer.
-func (m *model) navigationPageSize() int {
+// navigationBounds returns the visible page size and maximum scroll position
+// together, refreshing markdown bounds from the active renderer when needed.
+func (m *model) navigationBounds() (pageSize, maxScroll int) {
 	switch m.currentView {
 	case viewQueue:
 		if m.splitActive() {
-			return m.queuePaneRowCapacity()
+			return m.queuePaneRowCapacity(), 0
 		}
-		return m.queueVisibleRows()
+		return m.queueVisibleRows(), 0
 	case viewReview, viewKindPrompt:
 		if m.currentReview == nil {
-			return max(m.height-10, 1)
+			return max(m.height-10, 1), 0
 		}
 		if m.mdCache == nil {
 			m.mdCache = newMarkdownCache(2)
 		}
 		if m.currentView == viewKindPrompt {
 			_ = m.renderPromptView()
-			return m.mdCache.lastPromptVisibleLines
+			return m.mdCache.lastPromptVisibleLines, m.mdCache.lastPromptMaxScroll
 		}
 		if m.splitActive() {
 			g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(m.splitFooterRows(), m.width)))
@@ -31,43 +32,23 @@ func (m *model) navigationPageSize() int {
 		} else {
 			_ = m.renderReviewView()
 		}
-		return m.mdCache.lastReviewVisibleLines
-	case viewCommitMsg, viewPatch:
-		return max(m.height-4, 1)
+		return m.mdCache.lastReviewVisibleLines, m.mdCache.lastReviewMaxScroll
+	case viewCommitMsg:
+		pageSize = max(m.height-4, 1)
+		return pageSize, max(len(m.commitMsgLines())-pageSize, 0)
+	case viewPatch:
+		pageSize = max(m.height-4, 1)
+		return pageSize, max(len(strings.Split(m.patchText, "\n"))-pageSize, 0)
 	case viewHelp:
-		return max(m.height-3, 5)
+		return max(m.height-3, 5), m.helpMaxScroll()
 	case viewTasks:
 		visible, _, _ := m.tasksVisibleWindow(len(m.fixJobs))
-		return visible
+		return visible, 0
 	case viewLog:
-		return m.logVisibleLines()
-	case viewReleaseNotes:
-		return m.releaseNotesVisibleLines()
+		pageSize = m.logVisibleLines()
+		return pageSize, max(len(m.logLines)-pageSize, 0)
 	}
-	return max(m.height-10, 1)
-}
-
-// navigationMaxScroll is called after navigationPageSize refreshed markdown bounds.
-func (m model) navigationMaxScroll(pageSize int) int {
-	switch m.currentView {
-	case viewReview:
-		if m.currentReview != nil && m.mdCache != nil {
-			return m.mdCache.lastReviewMaxScroll
-		}
-	case viewKindPrompt:
-		if m.currentReview != nil && m.mdCache != nil {
-			return m.mdCache.lastPromptMaxScroll
-		}
-	case viewCommitMsg:
-		return max(len(wrapText(m.commitMsgContent, max(20, min(m.width-4, 100))))-pageSize, 0)
-	case viewHelp:
-		return m.helpMaxScroll()
-	case viewLog:
-		return max(len(m.logLines)-pageSize, 0)
-	case viewPatch:
-		return max(len(strings.Split(m.patchText, "\n"))-pageSize, 0)
-	}
-	return 0
+	return max(m.height-10, 1), 0
 }
 
 func (m model) handleEndKey() (tea.Model, tea.Cmd) {
@@ -83,8 +64,7 @@ func (m model) handleEndKey() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	page := m.navigationPageSize()
-	bottom := m.navigationMaxScroll(page)
+	_, bottom := m.navigationBounds()
 	switch m.currentView {
 	case viewReview:
 		m.reviewScroll = bottom

@@ -5,6 +5,15 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Navigate the TUI with `u`/`d` to page up/down, `g`/`G` to jump to the
+    top/bottom, and `Ctrl-P`/`Ctrl-N` to move up/down. The release-notes
+    shortcut moves from `u` to uppercase `U`. See
+    [TUI keyboard commands](/docs/integrations/tui/#keyboard-commands).
+
 ## 0.70.0
 
 <small>2026-09-30</small>

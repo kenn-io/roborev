@@ -494,6 +494,11 @@ func (m model) renderRespondView() string {
 	return b.String()
 }
 
+func (m model) commitMsgLines() []string {
+	// Wrap text to terminal width minus padding.
+	return wrapText(m.commitMsgContent, max(20, min(m.width-4, 100)))
+}
+
 func (m model) renderCommitMsgView() string {
 	var b strings.Builder
 
@@ -515,9 +520,7 @@ func (m model) renderCommitMsgView() string {
 		return b.String()
 	}
 
-	// Wrap text to terminal width minus padding
-	wrapWidth := max(20, min(m.width-4, 100))
-	lines := wrapText(m.commitMsgContent, wrapWidth)
+	lines := m.commitMsgLines()
 
 	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
 	visibleLines := max(m.height-4, 1)

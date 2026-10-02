@@ -288,12 +288,12 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgup", "u":
 		m.logFollow = false
-		pageSize := m.logVisibleLines()
-		m.logScroll = max(0, min(m.logScroll, m.navigationMaxScroll(pageSize))-pageSize)
+		pageSize, maxScroll := m.navigationBounds()
+		m.logScroll = max(0, min(m.logScroll, maxScroll)-pageSize)
 		return m, tea.ClearScreen
 	case "pgdown", "d":
-		pageSize := m.logVisibleLines()
-		m.logScroll = min(m.navigationMaxScroll(pageSize), m.logScroll+pageSize)
+		pageSize, maxScroll := m.navigationBounds()
+		m.logScroll = min(maxScroll, m.logScroll+pageSize)
 		return m, tea.ClearScreen
 	case "home", "g":
 		m.logFollow = false
@@ -301,8 +301,7 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "end", "G":
 		m.logFollow = true
-		maxScroll := max(len(m.logLines)-m.logVisibleLines(), 0)
-		m.logScroll = maxScroll
+		_, m.logScroll = m.navigationBounds()
 		return m, nil
 	case "left":
 		return m.handlePrevKey()
@@ -440,11 +439,11 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fixSelectedIdx = max(len(m.fixJobs)-1, 0)
 		return m, nil
 	case "pgup", "u":
-		pageSize := m.navigationPageSize()
+		pageSize, _ := m.navigationBounds()
 		m.fixSelectedIdx = max(0, min(m.fixSelectedIdx, max(len(m.fixJobs)-1, 0))-pageSize)
 		return m, nil
 	case "pgdown", "d":
-		pageSize := m.navigationPageSize()
+		pageSize, _ := m.navigationBounds()
 		m.fixSelectedIdx = min(max(len(m.fixJobs)-1, 0), m.fixSelectedIdx+pageSize)
 		return m, nil
 	case "up", "k", "ctrl+p":
@@ -605,20 +604,18 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.patchScroll++
 		return m, nil
 	case "pgup", "u":
-		visibleLines := max(m.height-4, 1)
-		m.patchScroll = max(0, min(m.patchScroll, m.navigationMaxScroll(visibleLines))-visibleLines)
+		pageSize, maxScroll := m.navigationBounds()
+		m.patchScroll = max(0, min(m.patchScroll, maxScroll)-pageSize)
 		return m, tea.ClearScreen
 	case "pgdown", "d":
-		visibleLines := max(m.height-4, 1)
-		m.patchScroll = min(m.navigationMaxScroll(visibleLines), m.patchScroll+visibleLines)
+		pageSize, maxScroll := m.navigationBounds()
+		m.patchScroll = min(maxScroll, m.patchScroll+pageSize)
 		return m, tea.ClearScreen
 	case "home", "g":
 		m.patchScroll = 0
 		return m, nil
 	case "end", "G":
-		lines := strings.Split(m.patchText, "\n")
-		visibleRows := max(m.height-4, 1)
-		m.patchScroll = max(len(lines)-visibleRows, 0)
+		_, m.patchScroll = m.navigationBounds()
 		return m, nil
 	}
 	return m, nil
