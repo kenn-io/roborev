@@ -548,6 +548,10 @@ var doctorPanelUses = map[string]string{"post_commit": "post-commit reviews", "m
 // panel and rejects the whole review if any member has none, even a member
 // marked allow_failure; allow_failure only covers a member that fails while
 // running. The synthesis agent runs strictly: its configured agent or backup.
+//
+// Only the panel as currently configured is checked. Panels change over
+// time, so doctor never compares them with the member settings frozen on
+// earlier panel runs.
 func checkDoctorPanel(env *doctorEnv, p daemon.DoctorPanel) (doctorCheck, map[string]bool) {
 	var uses []string
 	for _, u := range p.UsedFor {
