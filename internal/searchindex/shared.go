@@ -48,11 +48,11 @@ func (r *Reconciler) ReviewsPushed(reviewUUIDs []string) {
 		r.mu.Unlock()
 		return
 	}
-	if r.pushed == nil {
-		r.pushed = make(map[string]struct{})
+	if r.pendingPublish == nil {
+		r.pendingPublish = make(map[string]struct{})
 	}
 	for _, reviewUUID := range reviewUUIDs {
-		r.pushed[reviewUUID] = struct{}{}
+		r.pendingPublish[reviewUUID] = struct{}{}
 	}
 	r.mu.Unlock()
 	r.Wake()
@@ -64,14 +64,14 @@ func (r *Reconciler) sharedVectors() SharedVectors {
 	return r.shared
 }
 
-func (r *Reconciler) takePushed() []string {
+func (r *Reconciler) takePendingPublish() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	reviewUUIDs := make([]string, 0, len(r.pushed))
-	for reviewUUID := range r.pushed {
+	reviewUUIDs := make([]string, 0, len(r.pendingPublish))
+	for reviewUUID := range r.pendingPublish {
 		reviewUUIDs = append(reviewUUIDs, reviewUUID)
 	}
-	r.pushed = nil
+	r.pendingPublish = nil
 	slices.Sort(reviewUUIDs)
 	return reviewUUIDs
 }
@@ -108,15 +108,26 @@ func pendingContentHash(doc vector.Pending[string]) string {
 	}
 }
 
-// publishPushed publishes the current vectors of pushed reviews. Reviews not
-// embedded yet are published by the fill that embeds them.
-func (r *Reconciler) publishPushed(ctx context.Context, shared SharedVectors, space, generation string) error {
-	for batch := range slices.Chunk(r.takePushed(), sharedLookupPage) {
+// publishPending publishes covered reviews discovered by sync or a mirror scan.
+// Matching shared rows are skipped. The next scan retries missing rows.
+func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
+	for batch := range slices.Chunk(r.takePendingPublish(), sharedLookupPage) {
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)
 		if err != nil {
 			return err
 		}
+		keys := make([]storage.SearchVectorKey, len(docs))
+		for i, doc := range docs {
+			keys[i] = doc.key
+		}
+		published, err := shared.LookupSearchVectors(ctx, space, keys)
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		for _, doc := range docs {
+			if _, ok := published[doc.key]; ok {
+				continue
+			}
 			if _, err := shared.PublishSearchVectors(ctx, space, doc.key, doc.chunks); err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}

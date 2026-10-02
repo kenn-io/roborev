@@ -165,6 +165,9 @@ There is no setting.
 - After embedding a review, the daemon publishes its vectors. A daemon only
     publishes vectors for a review that sync has already stored in PostgreSQL. A
     review embedded before sync pushes it is published right after the push.
+- Startup and periodic safety sweeps also publish existing local vectors.
+    Matching shared entries are skipped, and missing entries are retried on the
+    next sweep.
 - Only daemons with the same `base_url`, `model`, `dims`, `input_type_mode`, and
     `fingerprint_salt` share vectors. Other daemons embed for themselves.
 - Sharing is best effort. If PostgreSQL is unreachable, a stored vector is

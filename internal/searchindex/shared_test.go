@@ -6,6 +6,8 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,10 +18,11 @@ import (
 // memorySharedVectors stands in for the sync database: it only accepts
 // vectors for reviews that sync has already pushed.
 type memorySharedVectors struct {
-	mu        sync.Mutex
-	synced    map[string]bool
-	rows      map[string]map[storage.SearchVectorKey][]storage.SearchVectorChunk
-	lookupErr error
+	mu           sync.Mutex
+	synced       map[string]bool
+	rows         map[string]map[storage.SearchVectorKey][]storage.SearchVectorChunk
+	lookupErr    error
+	publishCalls int
 }
 
 func newMemorySharedVectors() *memorySharedVectors {
@@ -51,6 +54,7 @@ func (m *memorySharedVectors) PublishSearchVectors(
 ) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.publishCalls++
 	if !m.synced[key.ReviewUUID] {
 		return false, nil
 	}
@@ -217,4 +221,50 @@ func TestSharedVectorsMissForDifferentText(t *testing.T) {
 	peer.reconcile(t)
 	assert.Equal(t, 1, peer.embeddedTexts())
 	assert.Equal(t, 2, shared.rowCount(), "each exact text is its own row")
+}
+
+func TestSharedVectorsPublishExistingGenerationOnStartup(t *testing.T) {
+	t.Parallel()
+	sources := makeSearchSources(1)
+	origin := newSharingDaemon(t, sources, nil)
+	origin.reconcile(t)
+	shared := newMemorySharedVectors()
+	shared.push(sources[0].ReviewUUID)
+
+	origin.reconciler = NewReconciler(&reconcilerStore{sources: sources}, origin.index,
+		origin.embedder, ReconcilerConfig{})
+	origin.reconciler.ShareVectors(shared)
+	origin.reconcile(t)
+	require.Equal(t, 1, shared.rowCount(), "startup publishes the already-covered review")
+
+	origin.reconciler.Wake()
+	origin.reconcile(t)
+	shared.mu.Lock()
+	calls := shared.publishCalls
+	shared.mu.Unlock()
+	assert.Equal(t, 1, calls, "matching shared content is not uploaded again")
+
+	peer := newSharingDaemon(t, sources, shared)
+	peer.reconcile(t)
+	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
+}
+
+func TestSharedVectorsPublishExistingGenerationOnSweep(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sources := makeSearchSources(1)
+		shared := newMemorySharedVectors()
+		origin := newSharingDaemon(t, sources, shared)
+		origin.reconcile(t)
+		require.Zero(t, shared.rowCount(), "the review has not reached PostgreSQL")
+
+		// The review reaches PostgreSQL without a new local push notification.
+		shared.push(sources[0].ReviewUUID)
+		time.Sleep(defaultSweepInterval)
+		origin.reconcile(t)
+		require.Equal(t, 1, shared.rowCount(), "the sweep publishes the already-covered review")
+
+		peer := newSharingDaemon(t, sources, shared)
+		peer.reconcile(t)
+		assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
+	})
 }

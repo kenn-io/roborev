@@ -39,6 +39,8 @@ func TestIntegration_SyncingDaemonsShareSearchVectors(t *testing.T) { //nolint:p
 	provider := newCountingEmbeddingServer(t)
 	source := startSharingDaemon(t, postgresURL, "vectors-source", provider.URL)
 	target := startSharingDaemon(t, postgresURL, "vectors-target", provider.URL)
+	// Keep the source vectors local until their review has already synced.
+	source.reconciler.ShareVectors(nil)
 
 	_, reviewUUID := completeSearchReview(t, source.db)
 	waitForSearchCondition(t, "source embeds the review", func() bool {
@@ -48,7 +50,8 @@ func TestIntegration_SyncingDaemonsShareSearchVectors(t *testing.T) { //nolint:p
 
 	_, err = source.worker.SyncNow()
 	require.NoError(t, err)
-	waitForSearchCondition(t, "push publishes the source vectors", func() bool {
+	source.reconciler.ShareVectors(source.worker)
+	waitForSearchCondition(t, "reconciliation publishes the existing source vectors", func() bool {
 		return sharedVectorRows(t, pool) == 1
 	})
 

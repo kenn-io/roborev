@@ -65,7 +65,7 @@ type Reconciler struct {
 	generationBaseline int64
 	failures           int
 	shared             SharedVectors
-	pushed             map[string]struct{}
+	pendingPublish     map[string]struct{}
 }
 
 // NewReconciler constructs a bounded, wake-coalescing reconciler.
@@ -264,6 +264,18 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	}
 	now := r.config.Now()
 	r.mu.Lock()
+	// Startup and periodic scans revisit covered reviews, including vectors
+	// whose earlier publication failed or preceded canonical sync.
+	if r.shared != nil && r.embedder != nil {
+		if r.pendingPublish == nil {
+			r.pendingPublish = make(map[string]struct{})
+		}
+		for _, source := range sources {
+			if source.ReviewUUID != "" {
+				r.pendingPublish[source.ReviewUUID] = struct{}{}
+			}
+		}
+	}
 	r.health.Indexed = indexed
 	r.health.MirrorComplete = complete
 	if complete {
@@ -347,7 +359,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := r.publishPushed(ctx, shared, space, key); err != nil {
+		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
 		store = newSharingStore(store, r.index, shared, space)
