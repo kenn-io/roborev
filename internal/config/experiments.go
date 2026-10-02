@@ -129,23 +129,56 @@ func validateMaterializedExperimentConfigs(
 	global *Config, rawRepo map[string]any,
 	definitions map[string]ExperimentDefinition,
 ) error {
+	_, err := materializeExperimentConfigs(global, rawRepo, definitions)
+	return err
+}
+
+// materializeExperimentConfigs builds and validates the effective repository
+// config for each experiment definition, keyed by experiment ID.
+func materializeExperimentConfigs(
+	global *Config, rawRepo map[string]any,
+	definitions map[string]ExperimentDefinition,
+) (map[string]*RepoConfig, error) {
+	effective := make(map[string]*RepoConfig, len(definitions))
 	for _, id := range sortedMapKeys(definitions) {
 		effectiveRaw, err := applyExperimentOverlay(
 			global, rawRepo, definitions[id].Config,
 		)
 		if err != nil {
-			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg, err := decodeExperimentRepoConfig(effectiveRaw)
 		if err != nil {
-			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
 		if err := ValidateEffectiveReviewConfig(global, effectiveCfg); err != nil {
-			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
+		effective[id] = effectiveCfg
 	}
-	return nil
+	return effective, nil
+}
+
+// EnabledExperimentConfigs returns the effective repository config for each
+// enabled experiment, built and validated the same way
+// ValidateExperimentConfigs builds them.
+func EnabledExperimentConfigs(
+	global *Config, repo *RepoConfig, rawRepo map[string]any,
+) (map[string]*RepoConfig, error) {
+	if repo != nil && rawRepo == nil {
+		return nil, markExperimentConfigError(
+			fmt.Errorf("repository config is missing its paired raw representation"),
+		)
+	}
+	definitions, err := mergeExperimentDefinitions(global, repo)
+	if err != nil {
+		return nil, markExperimentConfigError(err)
+	}
+	maps.DeleteFunc(definitions, func(_ string, definition ExperimentDefinition) bool {
+		return !experimentEnabled(definition)
+	})
+	return materializeExperimentConfigs(global, rawRepo, definitions)
 }
 
 // ValidateEffectiveReviewConfig validates review-time settings after merging

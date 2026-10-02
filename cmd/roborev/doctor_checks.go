@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +111,29 @@ func doctorAgentNames(env *doctorEnv) []string {
 			add(ref.Name)
 		}
 	}
+	for _, ref := range env.experimentAgentReferences() {
+		add(ref.Name)
+	}
 	return names
+}
+
+// experimentAgentReferences returns agent names from the effective config of
+// each enabled experiment, keyed "experiments.<id>: <key>". An experiment
+// config that does not load is reported by the config checks, so it
+// contributes no names here.
+func (env *doctorEnv) experimentAgentReferences() []config.AgentReference {
+	configs, err := config.EnabledExperimentConfigs(env.global, env.repoCfg, env.repoRaw)
+	if err != nil {
+		return nil
+	}
+	var refs []config.AgentReference
+	for _, id := range slices.Sorted(maps.Keys(configs)) {
+		for _, ref := range config.AgentReferences(configs[id]) {
+			ref.Key = "experiments." + id + ": " + ref.Key
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 // reviewWorkflow resolves the agent and backup that ordinary reviews use.
@@ -688,6 +711,15 @@ func checkDoctorConfiguredAgents(env *doctorEnv, skip map[string]bool) []doctorC
 	if env.repoCfg != nil {
 		add(".roborev.toml: ", config.AgentReferences(env.repoCfg))
 	}
+	// An experiment's effective config repeats the repository's own agent
+	// names; only names the experiment adds are new.
+	var added []config.AgentReference
+	for _, ref := range env.experimentAgentReferences() {
+		if _, seen := keysByName[ref.Name]; !seen {
+			added = append(added, ref)
+		}
+	}
+	add("", added)
 
 	var problems []string
 	restartHelps := false
