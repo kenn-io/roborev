@@ -92,7 +92,7 @@ func (s *Server) humaGetRepo(_ context.Context, input *GetRepoInput) (*GetRepoOu
 	var repo *storage.Repo
 	var err error
 	if input.ByPath {
-		repo, err = s.db.FindRepo(input.Identifier)
+		repo, err = s.db.GetRepoByPath(input.Identifier)
 	} else {
 		repo, err = s.db.GetRepoByName(input.Identifier)
 	}

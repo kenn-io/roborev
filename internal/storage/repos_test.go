@@ -288,7 +288,7 @@ func TestRenameRepo(t *testing.T) {
 	})
 
 	t.Run("rename by name", func(t *testing.T) {
-		affected, err := db.RenameRepo("new-name", "another-name")
+		affected, err := db.RenameRepoByName("new-name", "another-name")
 		require.NoError(t, err, "RenameRepo failed: %v")
 
 		assert.EqualValues(t, 1, affected)

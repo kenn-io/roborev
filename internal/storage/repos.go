@@ -349,24 +349,17 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 	return result, nil
 }
 
-// RenameRepo updates the display name of a repo identified by its path or current name
-func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
-	// Try to match by root_path first (absolute or relative), then by name
-	absPath, pathErr := normalizeRepoPath(identifier)
-
-	// Try path match first
-	if pathErr == nil {
-		result, err := db.Exec(`UPDATE repos SET name = ? WHERE root_path = ?`, newName, absPath)
-		if err != nil {
-			return 0, err
-		}
-		affected, _ := result.RowsAffected()
-		if affected > 0 {
-			return affected, nil
-		}
+// RenameRepo updates the display name of a repository identified by its path.
+func (db *DB) RenameRepo(rootPath, newName string) (int64, error) {
+	absPath, err := normalizeRepoPath(rootPath)
+	if err != nil {
+		return 0, err
 	}
-
-	return db.RenameRepoByName(identifier, newName)
+	result, err := db.Exec(`UPDATE repos SET name = ? WHERE root_path = ?`, newName, absPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // RenameRepoByName updates every repository with the given display name.
