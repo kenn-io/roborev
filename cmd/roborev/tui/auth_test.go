@@ -17,9 +17,9 @@ import (
 //nolint:paralleltest // This test changes the global config environment.
 func TestAuthTUIQueriesAndStreaming(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
+		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -39,7 +39,7 @@ func TestAuthTUIQueriesAndStreaming(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	assert.True(t, connected)
 	assert.Len(t, events, 1)
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "wrong-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"`), 0o600))
 	assert.IsType(t, statusErrMsg{}, m.fetchStatus()())
 	connected, err = sseReadLoop(context.Background(), testEndpointFromURL(server.URL), events)
 	require.Error(t, err)

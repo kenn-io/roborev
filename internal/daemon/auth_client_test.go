@@ -33,11 +33,11 @@ func writeAuthClientConfig(t *testing.T, key string) {
 
 func TestAuthEndpointClientAndProbe(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	s := newAuthTestServer(t, "test-shared-key")
+	s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	httpServer := httptest.NewServer(s.httpServer.Handler)
 	defer httpServer.Close()
 	ep := authEndpoint(t, httpServer.URL)
-	writeAuthClientConfig(t, "test-shared-key")
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
 	client := ep.HTTPClient(time.Second)
 	req, err := http.NewRequest(http.MethodGet, ep.BaseURL()+"/api/ping", nil)
@@ -50,7 +50,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	ping, err := ProbeDaemon(ep, time.Second)
 	require.NoError(t, err)
 	assert.True(t, ping.OK)
-	writeAuthClientConfig(t, "wrong-key")
+	writeAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
 	resp, err = client.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -64,7 +64,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 
 func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	writeAuthClientConfig(t, "test-shared-key")
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	received := 0
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { received++; w.WriteHeader(http.StatusOK) }))
 	defer target.Close()
@@ -97,7 +97,7 @@ func TestAuthClientConfigFailureIsTerminal(t *testing.T) {
 
 func TestAuthClientLoadsKeyDespiteUnrelatedSemanticConfigError(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	configText := `auth_key = "test-shared-key"
+	configText := `auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 [web]
 enabled = true
 listen = "0.0.0.0:7373"
@@ -106,7 +106,7 @@ listen = "0.0.0.0:7373"
 
 	key, err := loadClientAuthKey()
 	require.NoError(t, err)
-	assert.Equal(t, "test-shared-key", key)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", key)
 }
 
 func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
@@ -116,10 +116,10 @@ func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
 	} {
 		t.Run(setting, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"test-shared-key\"\n"+setting), 0o600))
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"+setting), 0o600))
 			_, err := config.LoadGlobal()
 			require.Error(t, err, "fixture must fail full config validation")
-			s := newAuthTestServer(t, "test-shared-key")
+			s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			server := httptest.NewServer(s.httpServer.Handler)
 			defer server.Close()
 			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Get(server.URL + "/api/ping")
@@ -132,9 +132,10 @@ func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
 
 func TestAuthClientRejectsInvalidKeyConfigBeforeRequest(t *testing.T) {
 	for _, contents := range []string{
+		`auth_key = "a"`,
 		`auth_key = "bad key"`,
-		`auth_key = ["test-shared-key"]`,
-		"auth_key = \"test-shared-key\"\ninvalid = [",
+		`auth_key = ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]`,
+		"auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\ninvalid = [",
 	} {
 		t.Run(contents, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
@@ -149,19 +150,19 @@ func TestAuthClientRejectsInvalidKeyConfigBeforeRequest(t *testing.T) {
 			require.ErrorIs(t, err, ErrClientConfig)
 			assert.Nil(t, resp)
 			assert.Zero(t, requests.Load())
-			assert.NotContains(t, err.Error(), "test-shared-key")
+			assert.NotContains(t, err.Error(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 		})
 	}
 }
 
 func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	writeAuthClientConfig(t, "different-client-key")
-	s := newAuthTestServer(t, "test-shared-key")
+	writeAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
-	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), "test-shared-key")
+	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, err)
 	assert.True(t, ready)
 	assert.False(t, exited)
@@ -169,7 +170,7 @@ func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 
 func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	s := newAuthTestServer(t, "test-shared-key")
+	s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
@@ -185,11 +186,11 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 	for _, state := range []string{"dead", "reused", "live"} {
 		t.Run(state, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			writeAuthClientConfig(t, "test-shared-key")
+			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				assert.Equal(t, "Bearer test-shared-key", r.Header.Get("Authorization"))
+				assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
 				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 			}))
 			defer server.Close()

@@ -30,7 +30,7 @@ func TestAuthShutdownDoesNotRemoveDeniedRuntimeWithoutPID(t *testing.T) {
 
 func TestAuthShutdownReportsDeniedRequest(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	server := httptest.NewServer(newAuthTestServer(t, "test-shared-key").httpServer.Handler)
+	server := httptest.NewServer(newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)

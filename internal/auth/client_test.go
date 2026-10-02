@@ -15,7 +15,7 @@ import (
 func TestHTTPClientScopesCredentialsAndPreservesRequest(t *testing.T) {
 	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
+		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -28,7 +28,7 @@ func TestHTTPClientScopesCredentialsAndPreservesRequest(t *testing.T) {
 	}))
 	defer server.Close()
 	original := server.Client()
-	client := HTTPClient(server.URL, original, func() (string, error) { return "test-shared-key", nil })
+	client := HTTPClient(server.URL, original, func() (string, error) { return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", nil })
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/status", strings.NewReader("synthetic review data"))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer caller-key")
@@ -48,7 +48,7 @@ func TestHTTPClientRefusesRedirectsAndOtherOrigins(t *testing.T) {
 		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
 	}))
 	defer origin.Close()
-	client := HTTPClient(origin.URL, nil, func() (string, error) { return "test-key", nil })
+	client := HTTPClient(origin.URL, nil, func() (string, error) { return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", nil })
 	resp, err := client.Post(origin.URL, "application/json", strings.NewReader(`{"data":"private"}`))
 	require.NoError(t, err)
 	resp.Body.Close()

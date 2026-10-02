@@ -264,7 +264,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 
 func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
 	testenv.SetDataDir(t)
-	existing := httptest.NewServer(newAuthTestServer(t, "existing-daemon-key").httpServer.Handler)
+	existing := httptest.NewServer(newAuthTestServer(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210").httpServer.Handler)
 	defer existing.Close()
 	require.NoError(t, WriteRuntime(authEndpoint(t, existing.URL), nil, "test-version", nil))
 

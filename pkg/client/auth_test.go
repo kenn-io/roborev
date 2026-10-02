@@ -14,7 +14,7 @@ import (
 
 func TestAuthKeyTypedAndRawClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
+		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(401)
 			return
 		}
@@ -26,7 +26,7 @@ func TestAuthKeyTypedAndRawClient(t *testing.T) {
 		_, _ = w.Write([]byte("raw-log"))
 	}))
 	defer server.Close()
-	api, err := NewWithAuthKey(server.URL, "test-shared-key")
+	api, err := NewWithAuthKey(server.URL, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, err)
 	ping, err := api.Ping(context.Background())
 	require.NoError(t, err)
@@ -36,4 +36,9 @@ func TestAuthKeyTypedAndRawClient(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestAuthKeyRejectsShortCredential(t *testing.T) {
+	_, err := NewWithAuthKey("http://127.0.0.1:7373", "a")
+	require.ErrorContains(t, err, "64 lowercase hex characters")
 }

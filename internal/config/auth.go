@@ -10,8 +10,8 @@ import (
 	"go.kenn.io/roborev/internal/auth"
 )
 
-// ValidateAuthKey checks the HTTP Bearer token syntax without including the key
-// in errors. Empty keys preserve unauthenticated local-daemon behavior.
+// ValidateAuthKey checks the shared key format without including the key in
+// errors. Empty keys preserve unauthenticated local-daemon behavior.
 func ValidateAuthKey(key string) error {
 	return auth.ValidateKey(key)
 }

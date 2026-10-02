@@ -3,6 +3,7 @@ package auth
 
 import (
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -55,20 +56,16 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(clone)
 }
 
-// ValidateKey checks Bearer token syntax without exposing the key in errors.
+// ValidateKey requires the lowercase hex representation of a 32-byte key,
+// matching the documented openssl rand -hex 32 generation command. Empty keys
+// disable authentication. Validation cannot establish how a key was generated.
 func ValidateKey(key string) error {
-	padding := false
-	for i := range len(key) {
-		c := key[i]
-		if c == '=' && i > 0 {
-			padding = true
-			continue
-		}
-		valid := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
-		valid = valid || c == '-' || c == '.' || c == '_' || c == '~' || c == '+' || c == '/'
-		if padding || !valid {
-			return errors.New("auth_key must be a valid HTTP Bearer token")
-		}
+	if key == "" {
+		return nil
+	}
+	decoded, err := hex.DecodeString(key)
+	if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != key {
+		return errors.New("auth_key must contain 64 lowercase hex characters; generate a key with openssl rand -hex 32")
 	}
 	return nil
 }

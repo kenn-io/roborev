@@ -27,6 +27,7 @@ func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 	for _, tc := range []struct{ name, contents string }{
 		{"syntax", `auth_key = secret-never-print`},
 		{"invalid key", `auth_key = "bad key"`},
+		{"short key", `auth_key = "a"`},
 		{"missing", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,9 +49,9 @@ func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 
 func TestAuthCLIJobLookup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
+		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -66,14 +67,14 @@ func TestAuthCLIJobLookup(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	assert.EqualValues(t, 23, job.ID)
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "wrong-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"`), 0o600))
 	_, err = findJobForCommit(t.TempDir(), "abc123")
 	require.ErrorContains(t, err, "401 Unauthorized")
 }
 
 func TestAuthExplicitURLHelpers(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 	var recovered atomic.Bool
 	patchFixDaemonRetryForTest(t, func() error {
 		recovered.Store(true)
@@ -81,7 +82,7 @@ func TestAuthExplicitURLHelpers(t *testing.T) {
 	})
 	fixDaemonRecoveryWait = 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-shared-key" {
+		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -262,11 +263,11 @@ func TestAuthFixRecoveryStopsOnAccessErrors(t *testing.T) {
 func TestAuthHookKeepsCapturedEndpoint(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	repo.CommitFile("file.txt", "content", "initial")
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 	var received atomic.Bool
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		received.Store(true)
-		assert.Equal(t, "Bearer test-shared-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":23}`))
 	})
@@ -298,7 +299,7 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == tc.path && (!tc.legacy || r.URL.Query().Get("commit_id") != "") {
@@ -335,11 +336,11 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 
 func TestAuthStartUsesAuthenticatedDiscovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-shared-key"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		assert.Equal(t, "Bearer test-shared-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
 		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 	}))
 	defer server.Close()

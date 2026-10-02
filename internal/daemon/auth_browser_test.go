@@ -23,15 +23,15 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 		name, browserToken, loginToken, wrongToken, publicOrigin string
 		local, forwarded                                         bool
 	}{
-		{"shared key", "", "test-shared-key", "wrong-key", "", true, false},
-		{"explicit browser token", testBrowserAuthToken, testBrowserAuthToken, "test-shared-key", "", false, false},
-		{"forwarded shared key", "", "test-shared-key", "wrong-key", "", false, true},
-		{"public origin shared key", "", "test-shared-key", "wrong-key", "https://reviews.example.com", false, true},
+		{"shared key", "", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "", true, false},
+		{"explicit browser token", testBrowserAuthToken, testBrowserAuthToken, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "", false, false},
+		{"forwarded shared key", "", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "", false, true},
+		{"public origin shared key", "", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "https://reviews.example.com", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := assert.New(t)
 			configPath := filepath.Join(t.TempDir(), "config.toml")
-			contents := fmt.Sprintf("auth_key = \"test-shared-key\"\n[web]\nlisten = \"127.0.0.1:0\"\nauth_token = %q\npublic_origin = %q\n", tc.browserToken, tc.publicOrigin)
+			contents := fmt.Sprintf("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n[web]\nlisten = \"127.0.0.1:0\"\nauth_token = %q\npublic_origin = %q\n", tc.browserToken, tc.publicOrigin)
 			require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
 			cfg, err := config.LoadGlobalFrom(configPath)
 			require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 
 func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
 	a := assert.New(t)
-	s := newAuthTestServer(t, "test-shared-key")
+	s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	s.allowWebCompilationStub = true
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = "127.0.0.1:0"
@@ -150,12 +150,12 @@ func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
 		t.Cleanup(func() { _ = resp.Body.Close() })
 		return resp
 	}
-	for _, key := range []string{"", "wrong-key"} {
+	for _, key := range []string{"", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"} {
 		resp := bootstrap(key)
 		a.Equal(http.StatusUnauthorized, resp.StatusCode)
 		a.Empty(resp.Cookies())
 	}
-	login := bootstrap("test-shared-key")
+	login := bootstrap("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.Equal(t, http.StatusOK, login.StatusCode)
 	var credentials WebSessionCredentials
 	require.NoError(t, json.UnmarshalRead(login.Body, &credentials))

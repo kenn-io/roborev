@@ -208,11 +208,22 @@ for all native daemon APIs, including reads, shutdown, streaming, profiling, MCP
 and the OpenAPI document. Authentication is disabled when `auth_key` is empty
 (the default). This key is global-only; repo config cannot override it.
 
+Generate 32 random bytes encoded as 64 lowercase hex characters:
+
+```bash
+openssl rand -hex 32
+```
+
+Paste the output into the global config:
+
 ```toml
 # ~/.roborev/config.toml
-# Replace this example with a long random key, such as openssl rand -hex 32.
-auth_key = "replace-with-a-long-random-key"
+auth_key = "<paste-generated-key>"
 ```
+
+Nonempty keys must use this format. Short keys and other encodings are rejected.
+Generate a new key rather than padding or repeating a password to fit the
+required length; format validation cannot verify randomness.
 
 Keep this file readable only by the account that owns the daemon
 (`chmod 600 ~/.roborev/config.toml` on Unix). Roborev's global config writes use

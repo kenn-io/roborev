@@ -572,11 +572,11 @@ func TestSetConfigKeyInvalidKey(t *testing.T) {
 
 func TestSetConfigKeyRejectsInvalidAuthKeyWithoutWriting(t *testing.T) {
 	path := setupConfigFile(t)
-	original := []byte("auth_key = \"synthetic-valid-key\"\n")
+	original := []byte("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n")
 	require.NoError(t, os.WriteFile(path, original, 0o600))
 
-	err := setConfigKey(path, "auth_key", "invalid value", true)
-	require.ErrorContains(t, err, "valid HTTP Bearer token")
+	err := setConfigKey(path, "auth_key", "a", true)
+	require.ErrorContains(t, err, "64 lowercase hex characters")
 
 	updated, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -861,7 +861,7 @@ func TestGetValueForScopeMergedRepoOnlyKeyNotSet(t *testing.T) {
 
 func TestAuthKeyConfigGetMasksCredential(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "test-secret-abcd"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ababcd"`), 0o600))
 	output := captureOutput(t, func() error {
 		cmd := configGetCmd()
 		cmd.SetArgs([]string{"auth_key", "--global"})
