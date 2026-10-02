@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -444,6 +445,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		wantErr           error
 		notWantErr        error
 		wantWriterContent string
+		finalMessageOnly  bool
 	}{
 		{
 			name: "AggregatesAgentMessages",
@@ -537,6 +539,62 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			),
 			wantErr: errNoCodexJSON,
 		},
+		{
+			name: "FinalMessageOnlyDropsPreambleWithoutToolEvent",
+			input: buildStream(
+				`{"type":"thread.started","thread_id":"t"}`,
+				`{"type":"turn.started"}`,
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				`{"type":"turn.completed","usage":{}}`,
+			),
+			want:             `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
+			finalMessageOnly: true,
+		},
+		{
+			name: "FinalMessageOnlyDropsSeveralMessages",
+			input: buildStream(
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Repository read commands are blocked by policy, so I can only assess the supplied diff."}}`,
+				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"t\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				jsonTurnCompleted,
+			),
+			want:             `{"schema_version":2,"summary":"t","verdict":"pass","findings":[]}`,
+			finalMessageOnly: true,
+		},
+		{
+			name: "FinalMessageOnlyKeepsToolReset",
+			input: buildStream(
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"draft\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
+				`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
+				jsonTurnCompleted,
+			),
+			want:             "",
+			finalMessageOnly: true,
+		},
+		{
+			name: "FinalMessageOnlyReportsTurnFailure",
+			input: buildStream(
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
+				`{"type":"turn.failed","error":{"message":"something broke"}}`,
+			),
+			wantErr:          errCodexStreamFailed,
+			finalMessageOnly: true,
+		},
+		{
+			name: "JoinsPreambleWithoutFinalMessageOnly",
+			input: buildStream(
+				`{"type":"thread.started","thread_id":"t"}`,
+				`{"type":"turn.started"}`,
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				`{"type":"turn.completed","usage":{}}`,
+			),
+			want: "I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n\n" + `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -544,7 +602,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			var buf strings.Builder
 			w := newSyncWriter(&buf) // Always initialize
 
-			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w)
+			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w, tt.finalMessageOnly)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				assert.Empty(t, result, "parseStreamJSON() result = %q, want empty string on error", result)
@@ -583,6 +641,52 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	received, err := os.ReadFile(mock.StdinFile)
 	require.NoError(t, err)
 	assert.Equal(t, testPrompt, string(received), "prompt not piped correctly via stdin")
+}
+
+func TestCodexReviewWithSchemaUsesFinalAgentMessage(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput: "usage --sandbox",
+		StdoutLines: []string{
+			`{"type":"thread.started","thread_id":"t"}`,
+			`{"type":"turn.started"}`,
+			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+			`{"type":"turn.completed","usage":{}}`,
+		},
+	})
+
+	got, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`, string(got))
+}
+
+func TestCodexReviewWithSchemaRejectsNonJSONFinalMessage(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput: "usage --sandbox",
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Review complete; the JSON above has the findings."}}`,
+			`{"type":"turn.completed","usage":{}}`,
+		},
+	})
+
+	_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	require.EqualError(t, err, "codex structured review output is not a JSON object")
+}
+
+func TestCodexReviewJoinsMessagesWithoutSchema(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput: "usage --sandbox",
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"alpha note"}}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"beta note"}}`,
+			`{"type":"turn.completed","usage":{}}`,
+		},
+	})
+
+	got, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha note\nbeta note", got)
 }
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
