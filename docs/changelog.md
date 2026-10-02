@@ -139,7 +139,6 @@ Thanks to everyone who contributed to this release:
     in [#1276](https://github.com/kenn-io/roborev/pull/1276), and improved CI
     recovery, health checks, and daemon startup diagnostics.
 
-
 ## 0.69.0
 
 <small>2026-09-24</small>
