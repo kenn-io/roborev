@@ -402,6 +402,7 @@ func TestLiveDoctorDaemonFailedJobsPagesToCutoff(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cursor := r.URL.Query().Get("cursor")
 		requested = append(requested, cursor)
+		assert.Equal(t, "true", r.URL.Query().Get("include_panel_members"), "failed panel members must be listed")
 		page, ok := pages[cursor]
 		if !ok {
 			http.NotFound(w, r)

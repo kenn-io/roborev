@@ -117,6 +117,7 @@ export * from "./listJobsBranchIncludeEmpty";
 export * from "./listJobsClosed";
 export * from "./listJobsHideClassifyJobs";
 export * from "./listJobsIncludeFindings";
+export * from "./listJobsIncludePanelMembers";
 export * from "./listJobsOmitPrompt";
 export * from "./listJobsOutputBody";
 export * from "./listJobsParams";

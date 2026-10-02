@@ -97,27 +97,28 @@ type RemapMapping struct {
 //     values like -1 are treated as unlimited, matching legacy)
 //   - Offset: default -1 (negative offsets clamp to 0)
 type ListJobsInput struct {
-	ID                 int64     `query:"id" default:"-1" doc:"Return a single job by ID"`
-	Status             string    `query:"status" doc:"Filter by job status"`
-	Repo               []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
-	GitRef             string    `query:"git_ref" doc:"Filter by git ref"`
-	AnalysisType       string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
-	AnalysisFile       []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
-	Branch             string    `query:"branch" doc:"Filter by branch name"`
-	BranchEmpty        string    `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
-	BranchIncludeEmpty string    `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
-	Closed             string    `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
-	JobType            string    `query:"job_type" doc:"Filter by job type"`
-	ExcludeJobType     string    `query:"exclude_job_type" doc:"Exclude jobs of this type"`
-	HideClassifyJobs   string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
-	PanelRun           uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
-	OmitPrompt         string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
-	IncludeFindings    string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`
-	RepoPrefix         string    `query:"repo_prefix" doc:"Filter repos by path prefix"`
-	Limit              int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
-	Offset             int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
-	Before             int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
-	Cursor             string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
+	ID                  int64     `query:"id" default:"-1" doc:"Return a single job by ID"`
+	Status              string    `query:"status" doc:"Filter by job status"`
+	Repo                []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
+	GitRef              string    `query:"git_ref" doc:"Filter by git ref"`
+	AnalysisType        string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
+	AnalysisFile        []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
+	Branch              string    `query:"branch" doc:"Filter by branch name"`
+	BranchEmpty         string    `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
+	BranchIncludeEmpty  string    `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
+	Closed              string    `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
+	JobType             string    `query:"job_type" doc:"Filter by job type"`
+	ExcludeJobType      string    `query:"exclude_job_type" doc:"Exclude jobs of this type"`
+	HideClassifyJobs    string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
+	PanelRun            uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
+	IncludePanelMembers string    `query:"include_panel_members" doc:"Include individual panel member jobs alongside panel synthesis jobs" enum:"true,false,"`
+	OmitPrompt          string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
+	IncludeFindings     string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`
+	RepoPrefix          string    `query:"repo_prefix" doc:"Filter repos by path prefix"`
+	Limit               int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
+	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
+	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
+	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.

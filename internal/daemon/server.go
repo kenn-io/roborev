@@ -1556,9 +1556,11 @@ func (s *Server) humaListJobs(
 	// excluded so list/wait/fix-discovery resolve to the synthesis parent,
 	// never an individual reviewer — the same caller-driven exclusion
 	// mechanism that fix jobs use via exclude_job_type.
+	// include_panel_members opts back in for callers that need every job
+	// that ran, such as the doctor's failed-job scan.
 	if input.PanelRun != uuid.Nil() {
 		listOpts = append(listOpts, storage.WithPanelRun(input.PanelRun))
-	} else {
+	} else if input.IncludePanelMembers != "true" {
 		listOpts = append(
 			listOpts,
 			storage.WithExcludePanelRole(storage.PanelRoleMember),

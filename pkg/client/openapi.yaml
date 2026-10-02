@@ -5621,6 +5621,17 @@ paths:
           schema:
             description: Return all jobs (members + synthesis) of one panel run
             type: string
+        - description: Include individual panel member jobs alongside panel synthesis jobs
+          explode: false
+          in: query
+          name: include_panel_members
+          schema:
+            description: Include individual panel member jobs alongside panel synthesis jobs
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
         - description: Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
           explode: false
           in: query

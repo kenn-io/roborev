@@ -318,7 +318,10 @@ func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]st
 				Status:     new("failed"),
 				Limit:      new(int64(doctorFailedJobPage)),
 				OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
-				Cursor:     cursor,
+				// Panel members run their own agents; a failing member
+				// inside a panel that still finished is otherwise hidden.
+				IncludePanelMembers: new(generated.ListJobsQueryIncludePanelMembersTrue),
+				Cursor:              cursor,
 			},
 		})
 		var page struct {
