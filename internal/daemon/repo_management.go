@@ -123,7 +123,12 @@ func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*Ren
 	if affected == 0 {
 		return nil, huma.Error404NotFound(fmt.Sprintf("no repository found matching %q", input.Body.Identifier))
 	}
-	repo, err := s.db.GetRepoByName(input.Body.Name)
+	var repo *storage.Repo
+	if input.Body.ByPath {
+		repo, err = s.db.GetRepoByPath(input.Body.Identifier)
+	} else {
+		repo, err = s.db.GetRepoByName(input.Body.Name)
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("get renamed repository: %v", err))
 	}

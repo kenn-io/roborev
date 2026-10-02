@@ -198,6 +198,7 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 }
 
 func TestRepoManagementPathDoesNotFallBackToName(t *testing.T) {
+	assert := assert.New(t)
 	server, db, dir := newTestServer(t)
 	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "tracked"))
 	require.NoError(t, err)
@@ -208,13 +209,23 @@ func TestRepoManagementPathDoesNotFallBackToName(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(untracked), nil)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
-	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+	assert.Equal(http.StatusNotFound, recorder.Code, recorder.Body.String())
 
 	renamed := postRepoManagement(t, server, "rename", map[string]any{
 		"identifier": untracked, "name": "changed", "by_path": true,
 	})
-	assert.Equal(t, http.StatusNotFound, renamed.Code, renamed.Body.String())
+	assert.Equal(http.StatusNotFound, renamed.Code, renamed.Body.String())
 	stored, err := db.GetRepoByID(repo.ID)
 	require.NoError(t, err)
-	assert.Equal(t, untracked, stored.Name)
+	assert.Equal(untracked, stored.Name)
+
+	tracked, err := db.GetOrCreateRepo(filepath.Join(dir, "another"))
+	require.NoError(t, err)
+	renamed = postRepoManagement(t, server, "rename", map[string]any{
+		"identifier": tracked.RootPath, "name": untracked, "by_path": true,
+	})
+	require.Equal(t, http.StatusOK, renamed.Code, renamed.Body.String())
+	var result RenameRepoOutput
+	require.NoError(t, json.Unmarshal(renamed.Body.Bytes(), &result.Body))
+	assert.Equal(tracked.ID, result.Body.Repo.ID)
 }
