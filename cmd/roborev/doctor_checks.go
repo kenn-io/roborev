@@ -341,7 +341,7 @@ func checkDoctorDaemon(env *doctorEnv) []doctorCheck {
 	var unhealthy []string
 	for _, comp := range health.Components {
 		if !comp.Healthy {
-			unhealthy = append(unhealthy, fmt.Sprintf("%s: %s", comp.Name, comp.Message))
+			unhealthy = append(unhealthy, fmt.Sprintf("%s: %s", comp.Name, deref(comp.Message)))
 		}
 	}
 	if len(unhealthy) > 0 {
@@ -351,10 +351,10 @@ func checkDoctorDaemon(env *doctorEnv) []doctorCheck {
 			Fix: "run 'roborev status' for detail; 'roborev daemon restart' clears stuck workers",
 		})
 	}
-	if health.ErrorCount > 0 {
+	if health.ErrorCount24H > 0 {
 		c := doctorCheck{
 			ID: "daemon.errors", Category: "daemon", Status: doctorInfo,
-			Summary: fmt.Sprintf("daemon logged %s in the last 24 hours", plural(health.ErrorCount, "error")),
+			Summary: fmt.Sprintf("daemon logged %s in the last 24 hours", plural(int(health.ErrorCount24H), "error")),
 			Fix:     "run 'roborev log' or read errors.log in the roborev data directory",
 		}
 		for i, e := range health.RecentErrors {
@@ -764,7 +764,7 @@ func checkDoctorFailedJobs(env *doctorEnv) []doctorCheck {
 			groups[name] = g
 		}
 		g.count++
-		g.errors[truncateString(doctorFirstLine(j.Error), 200)]++
+		g.errors[truncateString(doctorFirstLine(deref(j.ErrorData)), 200)]++
 	}
 	if total == 0 {
 		return []doctorCheck{{

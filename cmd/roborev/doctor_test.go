@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 // fakeDoctorDaemon serves canned daemon responses. A nil ping means the
@@ -31,7 +32,7 @@ import (
 type fakeDoctorDaemon struct {
 	ping   *daemon.PingInfo
 	agents *doctorDaemonAgents
-	jobs   []storage.ReviewJob
+	jobs   []generated.ReviewJob
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
@@ -45,15 +46,15 @@ func (f fakeDoctorDaemon) Agents(context.Context, string, []string) (*doctorDaem
 	return f.agents, nil
 }
 
-func (f fakeDoctorDaemon) Status(context.Context) (*storage.DaemonStatus, error) {
-	return &storage.DaemonStatus{}, nil
+func (f fakeDoctorDaemon) Status(context.Context) (*generated.DaemonStatus, error) {
+	return &generated.DaemonStatus{}, nil
 }
 
-func (f fakeDoctorDaemon) Health(context.Context) (*storage.HealthStatus, error) {
-	return &storage.HealthStatus{Healthy: true}, nil
+func (f fakeDoctorDaemon) Health(context.Context) (*generated.HealthStatus, error) {
+	return &generated.HealthStatus{Healthy: true}, nil
 }
 
-func (f fakeDoctorDaemon) FailedJobs(context.Context, time.Time) ([]storage.ReviewJob, error) {
+func (f fakeDoctorDaemon) FailedJobs(context.Context, time.Time) ([]generated.ReviewJob, error) {
 	return f.jobs, nil
 }
 
@@ -262,19 +263,19 @@ func TestDoctorFailedJobs(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	recent := now.Add(-time.Hour)
 	old := now.Add(-8 * 24 * time.Hour)
-	job := func(agentName, errMsg string, enqueued time.Time) storage.ReviewJob {
-		return storage.ReviewJob{Agent: agentName, Error: errMsg, EnqueuedAt: enqueued}
+	job := func(agentName, errMsg string, enqueued time.Time) generated.ReviewJob {
+		return generated.ReviewJob{Agent: agentName, ErrorData: &errMsg, EnqueuedAt: enqueued}
 	}
 
 	tests := []struct {
 		name       string
-		jobs       []storage.ReviewJob
+		jobs       []generated.ReviewJob
 		wantStatus doctorStatus
 		wantFirst  string
 	}{
 		{
 			name: "repeated failures for one agent warn",
-			jobs: []storage.ReviewJob{
+			jobs: []generated.ReviewJob{
 				job("codex", "quota exceeded\nretry later", recent),
 				job("codex", "quota exceeded", recent),
 				job("codex", "timeout", recent),
@@ -286,13 +287,13 @@ func TestDoctorFailedJobs(t *testing.T) {
 		},
 		{
 			name:       "occasional failures are informational",
-			jobs:       []storage.ReviewJob{job("gemini", "auth expired", recent)},
+			jobs:       []generated.ReviewJob{job("gemini", "auth expired", recent)},
 			wantStatus: doctorInfo,
 			wantFirst:  "gemini: 1 failure; most common (1x): auth expired",
 		},
 		{
 			name:       "only old failures",
-			jobs:       []storage.ReviewJob{job("codex", "boom", old)},
+			jobs:       []generated.ReviewJob{job("codex", "boom", old)},
 			wantStatus: doctorOK,
 		},
 	}

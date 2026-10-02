@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +15,6 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/version"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -75,9 +73,9 @@ type doctorDaemonAgents struct {
 type doctorDaemon interface {
 	Ping() (*daemon.PingInfo, error)
 	Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error)
-	Status(ctx context.Context) (*storage.DaemonStatus, error)
-	Health(ctx context.Context) (*storage.HealthStatus, error)
-	FailedJobs(ctx context.Context, since time.Time) ([]storage.ReviewJob, error)
+	Status(ctx context.Context) (*generated.DaemonStatus, error)
+	Health(ctx context.Context) (*generated.HealthStatus, error)
+	FailedJobs(ctx context.Context, since time.Time) ([]generated.ReviewJob, error)
 	RepoTracked(ctx context.Context, repo string) (bool, error)
 }
 
@@ -241,8 +239,9 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// liveDoctorDaemon talks to the daemon at a fixed endpoint without the
-// ensureDaemon start/restart behavior other commands use.
+// liveDoctorDaemon reads the daemon through the generated API client. Unlike
+// other commands it never calls ensureDaemon: diagnosing must not start or
+// restart the daemon, so a daemon that is down is reported, not started.
 type liveDoctorDaemon struct {
 	ep daemon.DaemonEndpoint
 }
@@ -255,53 +254,94 @@ func (d liveDoctorDaemon) Ping() (*daemon.PingInfo, error) {
 	return daemon.ProbeDaemon(d.ep, 2*time.Second)
 }
 
+// client has no total deadline; requests stop when the command's context
+// is canceled.
 func (d liveDoctorDaemon) client() *roborevclient.Client {
-	return d.ep.APIClient(10 * time.Second)
-}
-
-func decodeDoctorResponse(resp *http.Response, err error, into any) error {
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("daemon returned %s", resp.Status)
-	}
-	return json.UnmarshalRead(resp.Body, into)
+	return d.ep.APIClient(0)
 }
 
 func (d liveDoctorDaemon) Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error) {
-	opts := &generated.DoctorAgentsRequestOptions{Query: &generated.DoctorAgentsQuery{}}
+	query := &generated.DoctorAgentsQuery{}
 	if repo != "" {
-		opts.Query.Repo = new(repo)
+		query.Repo = new(repo)
 	}
 	if len(names) > 0 {
-		opts.Query.Agent = names
+		query.Agent = names
 	}
-	resp, err := d.client().DoctorAgentsRaw(ctx, opts)
-	var out doctorDaemonAgents
-	if err := decodeDoctorResponse(resp, err, &out); err != nil {
-		return nil, err
+	resp, err := d.client().DoctorAgents(ctx, &generated.DoctorAgentsRequestOptions{Query: query})
+	if err != nil {
+		return nil, daemonRequestError("ask the daemon about agents", err)
 	}
-	return &out, nil
+	return doctorAgentsFromAPI(resp), nil
 }
 
-func (d liveDoctorDaemon) Status(ctx context.Context) (*storage.DaemonStatus, error) {
-	resp, err := d.client().GetStatusRaw(ctx)
-	var out storage.DaemonStatus
-	if err := decodeDoctorResponse(resp, err, &out); err != nil {
-		return nil, err
+// doctorAgentsFromAPI converts the API response into the agent and panel
+// types the checks share with the local fallback.
+func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgents {
+	out := &doctorDaemonAgents{
+		PathEnv:         resp.PathEnv,
+		Agents:          diagnosesFromAPI(resp.Agents),
+		Requested:       diagnosesFromAPI(resp.Requested),
+		HookTools:       diagnosesFromAPI(resp.HookTools),
+		RepoConfigError: deref(resp.RepoConfigError),
 	}
-	return &out, nil
+	for _, p := range resp.Panels {
+		panel := daemon.DoctorPanel{
+			Name:      p.Name,
+			UsedFor:   p.UsedFor,
+			Error:     deref(p.ErrorData),
+			Synthesis: diagnosisFromAPI(p.Synthesis),
+		}
+		for _, m := range p.Members {
+			panel.Members = append(panel.Members, daemon.DoctorPanelMember{
+				Name: m.Name, Agent: deref(m.Agent), Error: deref(m.ErrorData),
+			})
+		}
+		out.Panels = append(out.Panels, panel)
+	}
+	return out
 }
 
-func (d liveDoctorDaemon) Health(ctx context.Context) (*storage.HealthStatus, error) {
-	resp, err := d.client().GetHealthRaw(ctx)
-	var out storage.HealthStatus
-	if err := decodeDoctorResponse(resp, err, &out); err != nil {
-		return nil, err
+func diagnosesFromAPI(in []generated.Diagnosis) []agent.Diagnosis {
+	out := make([]agent.Diagnosis, 0, len(in))
+	for _, d := range in {
+		out = append(out, diagnosisFromAPI(d))
 	}
-	return &out, nil
+	return out
+}
+
+func diagnosisFromAPI(d generated.Diagnosis) agent.Diagnosis {
+	return agent.Diagnosis{
+		Name:      d.Name,
+		Available: d.Available,
+		Command:   deref(d.Command),
+		Path:      deref(d.Path),
+		Error:     deref(d.ErrorData),
+		Unknown:   d.Unknown != nil && *d.Unknown,
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func (d liveDoctorDaemon) Status(ctx context.Context) (*generated.DaemonStatus, error) {
+	status, err := d.client().GetStatus(ctx)
+	if err != nil {
+		return nil, daemonRequestError("get daemon status", err)
+	}
+	return status, nil
+}
+
+func (d liveDoctorDaemon) Health(ctx context.Context) (*generated.HealthStatus, error) {
+	health, err := d.client().GetHealth(ctx)
+	if err != nil {
+		return nil, daemonRequestError("get daemon health", err)
+	}
+	return health, nil
 }
 
 // doctorFailedJobPage is the page size for the failed-job scan.
@@ -310,11 +350,11 @@ const doctorFailedJobPage = 100
 // FailedJobs returns failed jobs enqueued at or after since. The jobs API
 // lists newest first, so paging stops at the first page that reaches back
 // past since.
-func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]storage.ReviewJob, error) {
-	var all []storage.ReviewJob
+func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]generated.ReviewJob, error) {
+	var all []generated.ReviewJob
 	var cursor *string
 	for {
-		resp, err := d.client().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{
+		page, err := d.client().ListJobs(ctx, &generated.ListJobsRequestOptions{
 			Query: &generated.ListJobsQuery{
 				Status:     new("failed"),
 				Limit:      new(int64(doctorFailedJobPage)),
@@ -325,13 +365,8 @@ func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]st
 				Cursor:              cursor,
 			},
 		})
-		var page struct {
-			Jobs       []storage.ReviewJob `json:"jobs"`
-			HasMore    bool                `json:"has_more"`
-			NextCursor *string             `json:"next_cursor"`
-		}
-		if err := decodeDoctorResponse(resp, err, &page); err != nil {
-			return nil, err
+		if err != nil {
+			return nil, daemonRequestError("list failed jobs", err)
 		}
 		reachedCutoff := false
 		for _, j := range page.Jobs {
@@ -349,14 +384,11 @@ func (d liveDoctorDaemon) FailedJobs(ctx context.Context, since time.Time) ([]st
 }
 
 func (d liveDoctorDaemon) RepoTracked(ctx context.Context, repo string) (bool, error) {
-	resp, err := d.client().ResolveRepoRaw(ctx, &generated.ResolveRepoRequestOptions{
+	resp, err := d.client().ResolveRepo(ctx, &generated.ResolveRepoRequestOptions{
 		Query: &generated.ResolveRepoQuery{Path: new(repo)},
 	})
-	var out struct {
-		Tracked bool `json:"tracked"`
+	if err != nil {
+		return false, daemonRequestError("resolve repository", err)
 	}
-	if err := decodeDoctorResponse(resp, err, &out); err != nil {
-		return false, err
-	}
-	return out.Tracked, nil
+	return resp.Tracked, nil
 }
