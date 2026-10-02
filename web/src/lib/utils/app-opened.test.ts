@@ -158,13 +158,15 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("stops listening after cleanup", async () => {
-    const cleanup = setup();
-    cleanup();
+  test("holds a focus seen while the shell is gone until it returns", async () => {
+    setup()();
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await settle();
-
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    setup();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

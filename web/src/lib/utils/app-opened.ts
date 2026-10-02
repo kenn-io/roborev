@@ -2,7 +2,10 @@ import { roborevFetch } from "../api/generated-fetch";
 
 const telemetryEventsPath = "/api/telemetry/events";
 let lastReportedDay = "";
+let listening = false;
+let shellMounted = false;
 let loadReported = false;
+let focusPending = false;
 
 function reportAppOpened(): void {
   const day = new Date().toISOString().slice(0, 10);
@@ -15,13 +18,25 @@ function reportAppOpened(): void {
   }).catch(() => undefined);
 }
 
+// Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
+function onFocus(): void {
+  if (shellMounted) reportAppOpened();
+  else focusPending = true;
+}
+
 /** Reports app_opened on the page's first shell mount and on the first window focus of each later UTC day; returns a cleanup. */
 export function setupAppOpenedReporting(): () => void {
-  // A remount after session recovery is not a load, so an unattended tab stays uncounted until it gains focus.
-  if (!loadReported) {
-    loadReported = true;
-    reportAppOpened();
+  if (!listening) {
+    listening = true;
+    globalThis.addEventListener("focus", onFocus);
   }
-  globalThis.addEventListener("focus", reportAppOpened);
-  return () => globalThis.removeEventListener("focus", reportAppOpened);
+  shellMounted = true;
+  // A remount after session recovery is not a load, so only a focus seen meanwhile makes it report.
+  const report = !loadReported || focusPending;
+  loadReported = true;
+  focusPending = false;
+  if (report) reportAppOpened();
+  return () => {
+    shellMounted = false;
+  };
 }
