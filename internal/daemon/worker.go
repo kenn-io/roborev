@@ -44,11 +44,12 @@ type runningJobCancellation struct {
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
-	db          *storage.DB
-	cfgGetter   ConfigGetter
-	broadcaster Broadcaster
-	errorLog    *ErrorLog
-	activityLog *ActivityLog
+	db           *storage.DB
+	cfgGetter    ConfigGetter
+	broadcaster  Broadcaster
+	errorLog     *ErrorLog
+	activityLog  *ActivityLog
+	budgetRouter *BudgetRouter
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -119,7 +120,7 @@ type WorkerPool struct {
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
 	stopCtx, stopCancel := context.WithCancel(context.Background())
-	return &WorkerPool{
+	pool := &WorkerPool{
 		db:                           db,
 		cfgGetter:                    cfgGetter,
 		broadcaster:                  broadcaster,
@@ -150,6 +151,8 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenUsageLogScanInterval:    tokenUsageLogScanInterval,
 		tokenUsageLogPageSize:        tokenUsageLogPageSize,
 	}
+	pool.budgetRouter = NewBudgetRouter(db, pool.isAgentCoolingDown)
+	return pool
 }
 
 // Start begins the worker pool. Safe to call multiple times;
@@ -233,13 +236,24 @@ func (wp *WorkerPool) CancelJob(jobID int64) bool {
 	return wp.cancelJob(jobID, false)
 }
 
+func (wp *WorkerPool) invalidateBudgetSpend() {
+	if wp.budgetRouter != nil {
+		wp.budgetRouter.Invalidate()
+	}
+}
+
+func (wp *WorkerPool) cancelAccepted() bool {
+	wp.invalidateBudgetSpend()
+	return true
+}
+
 // cancelJob records whether another layer owns the terminal event. Direct
 // worker-pool callers use CancelJob and leave the event to the worker.
 func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 	if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 		log.Printf("Canceling job %d", jobID)
 		cancel()
-		return true
+		return wp.cancelAccepted()
 	}
 
 	// Job not registered yet - check if it's a valid job before marking pending
@@ -252,7 +266,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 		if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 			log.Printf("Canceling job %d (registered during failed DB check)", jobID)
 			cancel()
-			return true
+			return wp.cancelAccepted()
 		}
 		return false
 	}
@@ -268,7 +282,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 	if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 		log.Printf("Canceling job %d (registered during DB check)", jobID)
 		cancel()
-		return true
+		return wp.cancelAccepted()
 	}
 
 	// Test hook: allows tests to register job between second check and final check
@@ -295,14 +309,14 @@ func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 		wp.runningJobsMu.Unlock()
 		log.Printf("Canceling job %d (registered during second DB check)", jobID)
 		running.cancel()
-		return true
+		return wp.cancelAccepted()
 	}
 
 	// Mark for pending cancellation
 	wp.pendingCancels[jobID] = wp.pendingCancels[jobID] || callerBroadcastsEvent
 	wp.runningJobsMu.Unlock()
 	log.Printf("Job %d not yet registered, marking for pending cancellation", jobID)
-	return true
+	return wp.cancelAccepted()
 }
 
 func (wp *WorkerPool) registeredJobCancel(
@@ -806,19 +820,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		rtTag, job.Agent, gitpkg.ShortRef(job.GitRef))
 	jobStart := time.Now()
 
-	if wp.activityLog != nil {
-		wp.activityLog.Log(
-			"job.started", "worker",
-			fmt.Sprintf("job %d started by %s", job.ID, workerID),
-			map[string]string{
-				"job_id": fmt.Sprintf("%d", job.ID),
-				"worker": workerID,
-				"agent":  job.Agent,
-				"ref":    job.GitRef,
-			},
-		)
-	}
-
 	// Snapshot config once to ensure consistent settings throughout the job.
 	// This prevents mixed settings if config reloads mid-job.
 	cfg := wp.cfgGetter.Config()
@@ -844,12 +845,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	assignment, err := wp.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
 	if err != nil {
+		wp.logJobStarted(workerID, job)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent,
 			fmt.Sprintf("load frozen experiment plan: %v", err))
 		return
 	}
 	if assignment != nil {
 		if err := applyFrozenExperimentSettings(job, assignment); err != nil {
+			wp.logJobStarted(workerID, job)
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent,
 				fmt.Sprintf("load frozen experiment plan: %v", err))
 			return
@@ -862,6 +865,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// quota cooldown must not skip or fail them. Placing this after
 	// registerRunningJob keeps synthesis jobs cancellable.
 	if job.IsSynthesisJob() {
+		wp.logJobStarted(workerID, job)
 		wp.processSynthesisJob(ctx, workerID, job)
 		return
 	}
@@ -871,6 +875,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// classifier row carries its classifier output into the design review once;
 	// every other attempt starts with an empty log.
 	appendJobLog := false
+	logTruncated := false
 	if job.JobType == storage.JobTypeClassify {
 		discardJobLogAppendMarker(job.ID)
 	} else {
@@ -879,10 +884,25 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if !appendJobLog {
 		if err := truncateJobLog(job.ID); err != nil {
 			log.Printf("[%s] Warning: truncate job log for job %d: %v", workerID, job.ID, err)
-		} else if err := RecordJobLogAgent(job.ID, job.Agent); err != nil {
+		} else {
+			logTruncated = true
+		}
+	}
+
+	// Budget selection precedes the cooldown gate and prompt construction so
+	// both use the actual selected agent. Guarded persistence prevents a
+	// canceled or reassigned row from starting an agent.
+	budgetAgent, proceed := wp.selectBudgetJobAgent(ctx, workerID, job, cfg)
+	if !proceed {
+		return
+	}
+
+	if logTruncated {
+		if err := RecordJobLogAgent(job.ID, job.Agent); err != nil {
 			log.Printf("[%s] Warning: record agent for job log %d: %v", workerID, job.ID, err)
 		}
 	}
+	wp.logJobStarted(workerID, job)
 
 	// Skip immediately if the agent is in quota cooldown.
 	// Resolve alias so "claude" checks cooldown for "claude-code".
@@ -1025,10 +1045,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Get the configured job agent. Backup failover is handled explicitly by
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
-	baseAgent, err := resolveReviewJobAgent(job, cfg)
-	if err != nil {
-		log.Printf("[%s] Error getting agent: %v", workerID, err)
-		wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
+	var agentErr error
+	baseAgent := budgetAgent
+	if baseAgent == nil {
+		baseAgent, agentErr = resolveReviewJobAgent(job, cfg)
+	}
+	if agentErr != nil {
+		log.Printf("[%s] Error getting agent: %v", workerID, agentErr)
+		wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent, fmt.Sprintf("get agent: %v", agentErr))
 		return
 	}
 
@@ -1321,6 +1345,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.autoClosePassingReview(workerID, job, verdict)
 
 		wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		wp.invalidateBudgetSpend()
 
 		// Member done — release the panel synthesis once all members are terminal.
 		wp.releaseIfPanelMember(job)
@@ -1364,9 +1389,20 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 	// Once worker_id becomes NULL, a rerun may be claimed and register a new
 	// handler for the same job ID.
 	wp.unregisterRunningJob(jobID)
-	if _, err := wp.db.ReleaseCanceledJob(jobID, workerID); err != nil {
+	released, err := wp.db.ReleaseCanceledJob(jobID, workerID)
+	if err != nil {
 		log.Printf("[%s] Error releasing canceled job %d: %v", workerID, jobID, err)
+	} else if released {
+		wp.invalidateBudgetSpend()
 	}
+}
+
+func (wp *WorkerPool) failJobAndInvalidateBudget(jobID int64, workerID, errorMsg string) (bool, error) {
+	updated, err := wp.db.FailJob(jobID, workerID, errorMsg)
+	if updated {
+		wp.invalidateBudgetSpend()
+	}
+	return updated, err
 }
 
 func (wp *WorkerPool) autoClosePassingReview(
@@ -1556,7 +1592,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries, wp.retryBackoff)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		if updated, fErr := wp.db.FailJob(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
+		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
 			wp.broadcastFailed(job, agentName, errorMsg)
@@ -1591,7 +1627,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 		}
 
 		// No backup or failover failed -- mark as failed
-		if updated, fErr := wp.db.FailJob(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
+		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
 			log.Printf("[%s] Job %d %s %sreview/%s failed after %d retries",
@@ -1635,7 +1671,7 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgentLocked(
 		}
 	}
 
-	if updated, err := wp.db.FailJob(job.ID, workerID, errorMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Job %d %s %sreview/%s failed without retry: %s",
@@ -1874,6 +1910,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 		logUsage,
 		providerUsage,
 	)
+	wp.invalidateBudgetSpend()
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
@@ -2082,7 +2119,7 @@ func (wp *WorkerPool) failJobWithPrefixLocked(
 	agentName, errorMsg, prefix, label string,
 ) {
 	storedMsg := prefixedFailure(prefix, errorMsg)
-	if updated, err := wp.db.FailJob(job.ID, workerID, storedMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, storedMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Job %d skipped (agent %s %s)",
@@ -2211,4 +2248,19 @@ func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error 
 	}
 
 	return nil
+}
+
+func (wp *WorkerPool) logJobStarted(workerID string, job *storage.ReviewJob) {
+	if wp.activityLog != nil {
+		wp.activityLog.Log(
+			"job.started", "worker",
+			fmt.Sprintf("job %d started by %s", job.ID, workerID),
+			map[string]string{
+				"job_id": fmt.Sprintf("%d", job.ID),
+				"worker": workerID,
+				"agent":  job.Agent,
+				"ref":    job.GitRef,
+			},
+		)
+	}
 }

@@ -134,7 +134,7 @@ func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandid
 	if usage == nil {
 		usage = existing
 	}
-	_, _, err = backfill.StoreMergedTokenUsage(
+	_, updated, err := backfill.StoreMergedTokenUsage(
 		wp.db,
 		backfill.CapturedUsage{
 			JobID:             candidate.JobID,
@@ -147,6 +147,10 @@ func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandid
 	)
 	if err != nil {
 		log.Printf("token cost reconciliation: job %d log save: %v", candidate.JobID, err)
+		return
+	}
+	if updated && wp.budgetRouter != nil {
+		wp.budgetRouter.Invalidate()
 	}
 }
 
@@ -287,6 +291,9 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	)
 	if err != nil {
 		return false, err
+	}
+	if updated && wp.budgetRouter != nil {
+		wp.budgetRouter.Invalidate()
 	}
 	return updated, nil
 }

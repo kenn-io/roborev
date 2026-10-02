@@ -871,3 +871,34 @@ func TestAuthKeyConfigGetMasksCredential(t *testing.T) {
 	})
 	assert.Equal(t, "****abcd\n", output)
 }
+
+func TestSetBudgetConfigKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, setConfigKey(path, "budget.daily_limit_cents", "500", true))
+	require.NoError(t, setConfigKey(path, "budget.reserve_floor_cents", "100", true))
+	require.NoError(t, setConfigKey(path, "budget.agent_costs.acp.reviewer", "5", true))
+	require.NoError(t, setConfigKey(path, "budget.enabled", "true", true))
+	require.ErrorContains(t, setConfigKey(path, "budget.agent_costs.codex", "-1", true), "budget")
+	cfg, err := config.LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.Budget.AgentCosts["acp.reviewer"])
+	assert.NotContains(t, cfg.Budget.AgentCosts, "codex")
+	require.NoError(t, setConfigKey(path, "budget.agent_costs.acp.reviewer", "", true))
+	cfg, err = config.LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Budget.AgentCosts)
+	require.Error(t, setConfigKey(path, "budget.enabled", "true", false))
+}
+
+func TestGetBudgetPriceRequiresConfiguredEntry(t *testing.T) {
+	env := setupConfigEnv(t, "[budget.agent_costs]\ncodex = 12\n", "")
+	for _, scope := range []configScope{scopeMerged, scopeGlobal} {
+		got, err := getValueForScope(env.Resolver, "budget.agent_costs.codex", scope)
+		require.NoError(t, err)
+		assert.Equal(t, "12", got)
+		for _, key := range []string{"budget.agent_costs.gemini", "budget.agent_costs.acp.reviewer"} {
+			_, err := getValueForScope(env.Resolver, key, scope)
+			require.ErrorContains(t, err, `key "`+key+`" is not set in global config`)
+		}
+	}
+}

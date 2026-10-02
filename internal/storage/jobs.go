@@ -1477,14 +1477,15 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
-		    agent = CASE WHEN ? THEN ? ELSE agent END,
+		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
+		    agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_agent ELSE agent END,
 		    model = ?, provider = ?,
 		    reasoning = CASE WHEN ? THEN ? ELSE reasoning END,
 		    review_type = CASE WHEN ? THEN ? ELSE review_type END,
 		    min_severity = CASE WHEN ? THEN ? ELSE min_severity END,
-		    backup_agent = CASE WHEN ? THEN ? ELSE backup_agent END,
-		    backup_model = CASE WHEN ? THEN ? ELSE backup_model END,
+		    backup_agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_agent ELSE backup_agent END,
+		    backup_model = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_model ELSE backup_model END,
+		    budget_original_agent = '', budget_original_backup_agent = '', budget_original_backup_model = '',
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -1688,7 +1689,7 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 	}
 	result, err := db.Exec(`
 		UPDATE review_jobs
-		SET agent = ?,
+		SET agent = ?, budget_routing_locked = 1,
 		    model = ?,
 		    retry_count = 0,
 		    status = 'queued',

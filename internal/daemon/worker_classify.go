@@ -271,6 +271,7 @@ func (wp *WorkerPool) applyClassifyVerdictLocked(
 		wp.failClassifyOnDBErrorLocked(workerID, job, "mark classify as skipped", err)
 		return
 	}
+	wp.invalidateBudgetSpend()
 	wp.broadcastClassifyTerminal(job)
 }
 
@@ -318,6 +319,7 @@ func (wp *WorkerPool) completeClassifyAsSkipLocked(
 		wp.failClassifyOnDBErrorLocked(workerID, job, "mark classify as skipped (failure path)", err)
 		return
 	}
+	wp.invalidateBudgetSpend()
 	wp.broadcastClassifyTerminal(job)
 }
 
@@ -330,7 +332,7 @@ func (wp *WorkerPool) failClassifyOnDBErrorLocked(
 	workerID string, job *storage.ReviewJob, op string, dbErr error,
 ) {
 	errMsg := fmt.Sprintf("classify %s: %v", op, dbErr)
-	updated, fErr := wp.db.FailJob(job.ID, workerID, errMsg)
+	updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, errMsg)
 	if fErr != nil {
 		log.Printf("[%s] FailJob for stuck classify %d: %v", workerID, job.ID, fErr)
 		return

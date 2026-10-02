@@ -45,7 +45,8 @@ const jobSelectColumnsBase = `
 		       COALESCE(j.output_prefix, ''), j.parent_job_id, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line,
 		       COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''), j.source_machine_id,
-		       NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0), COALESCE(j.non_voting, 0),
+		       NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0), COALESCE(j.non_voting, 0), j.budget_routing_locked,
+		       j.budget_original_agent, j.budget_original_backup_agent, j.budget_original_backup_model,
 		       r.root_path, r.name, c.subject,
 		       j.dirty_files, j.analysis_type, j.analysis_files, j.analysis_commit_sha, `
 
@@ -78,7 +79,8 @@ func jobScanDestinations(j *ReviewJob, f *reviewJobScanFields) []any {
 		&f.OutputPrefix, &f.ParentJobID, &f.TokenUsage, &f.WorktreePath, &f.CommandLine,
 		&f.MinSeverity, &f.BackupAgent, &f.BackupModel,
 		&f.SkipReason, &f.Source, &f.SourceMachineID,
-		&f.PanelRunUUID, &f.PanelRole, &f.PanelName, &f.PanelMemberName, &f.PanelMemberIndex, &f.PanelMemberConfig, &f.ClaimBlocked, &f.NonVoting,
+		&f.PanelRunUUID, &f.PanelRole, &f.PanelName, &f.PanelMemberName, &f.PanelMemberIndex, &f.PanelMemberConfig, &f.ClaimBlocked, &f.NonVoting, &j.BudgetRoutingLocked,
+		&j.BudgetOriginalAgent, &j.BudgetOriginalBackupAgent, &j.BudgetOriginalBackupModel,
 		&j.RepoPath, &j.RepoName, &f.CommitSubject,
 		&f.DirtyFiles, &f.AnalysisType, &f.AnalysisFiles, &f.AnalysisCommitSHA,
 		&f.Prompt, &f.DiffContent, &f.Patch,

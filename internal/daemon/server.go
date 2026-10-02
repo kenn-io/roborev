@@ -907,6 +907,17 @@ func resolveRerunOpts(
 	assignment *storage.ExperimentAssignmentInput,
 	selectedAgent string,
 ) (storage.ReenqueueOpts, error) {
+	// Budget routing changes the effective execution choice for one retry
+	// chain. Resolve a manual rerun's model and availability from its original
+	// choice, unless the caller selects a different agent.
+	rerunAgent := job.BudgetOriginalAgent
+	if rerunAgent != "" {
+		original := *job
+		job = &original
+		job.Agent = rerunAgent
+		job.BackupAgent = job.BudgetOriginalBackupAgent
+		job.BackupModel = job.BudgetOriginalBackupModel
+	}
 	resolutionPath := job.RepoPath
 	if job.WorktreePath != "" {
 		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
@@ -997,11 +1008,11 @@ func resolveRerunOpts(
 
 	provider := strings.TrimSpace(job.RequestedProvider)
 	if model := strings.TrimSpace(job.RequestedModel); model != "" {
-		return storage.ReenqueueOpts{Model: model, Provider: provider}, nil
+		return storage.ReenqueueOpts{Agent: rerunAgent, Model: model, Provider: provider}, nil
 	}
 
 	model := resolution.ModelForSelectedAgent(job.Agent, "")
-	return storage.ReenqueueOpts{Model: model, Provider: provider}, nil
+	return storage.ReenqueueOpts{Agent: rerunAgent, Model: model, Provider: provider}, nil
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
@@ -2470,7 +2481,7 @@ func (s *Server) humaRerunJob(
 		)
 	}
 	if !replayed {
-		if selectedAgent != "" {
+		if rerunOpts.Agent != "" {
 			job.Agent = rerunOpts.Agent
 		}
 		s.broadcastRerunEnqueued(resultJobID, job.UUID, job)

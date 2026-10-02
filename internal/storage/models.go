@@ -153,6 +153,11 @@ type ReviewJob struct {
 	// session-reuse candidate validation. Dirty jobs keep GitRef="dirty" and
 	// carry their base HEAD through this field.
 	ReusableSessionTarget string `json:"-"`
+
+	BudgetRoutingLocked       bool   `json:"-"` // Local retry/failover scheduling guard
+	BudgetOriginalAgent       string `json:"-"` // Pre-budget choice restored on manual rerun
+	BudgetOriginalBackupAgent string `json:"-"`
+	BudgetOriginalBackupModel string `json:"-"`
 }
 
 // HookBranch returns the branch used for event and hook matching. CI jobs use

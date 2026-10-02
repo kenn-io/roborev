@@ -191,6 +191,12 @@ func LoadRawTOML(path string) (map[string]any, error) {
 // in a raw TOML map (as returned by toml.Decode into map[string]interface{}).
 // This correctly detects explicit false/0 values that IsZero would miss.
 func IsKeyInTOMLFile(raw map[string]any, key string) bool {
+	if name, ok := strings.CutPrefix(key, "budget.agent_costs."); ok {
+		budget, _ := raw["budget"].(map[string]any)
+		costs, _ := budget["agent_costs"].(map[string]any)
+		_, exists := costs[name]
+		return exists
+	}
 	parts := strings.SplitN(key, ".", 2)
 	val, ok := raw[parts[0]]
 	if !ok {
@@ -457,6 +463,13 @@ func findFieldByTOMLKey(v reflect.Value, key string, initPointers bool) (reflect
 
 		// If there's a remaining dot path, recurse into nested struct
 		if len(parts) == 2 {
+			if fieldVal.Type() == reflect.TypeFor[BudgetAgentCosts]() {
+				entry := fieldVal.MapIndex(reflect.ValueOf(parts[1]))
+				if !entry.IsValid() {
+					entry = reflect.New(reflect.TypeFor[int]()).Elem()
+				}
+				return entry, nil
+			}
 			if fieldVal.Type() == reflect.TypeFor[ACPAgentConfigs]() {
 				return findACPMapFieldByTOMLKey(fieldVal, parts[1], initPointers)
 			}
@@ -523,6 +536,21 @@ func setFieldByTOMLKey(v reflect.Value, key, value string) error {
 				return fmt.Errorf("cannot set field for key %q", key)
 			}
 			return setFieldValue(fieldVal, value)
+		}
+		if fieldVal.Type() == reflect.TypeFor[BudgetAgentCosts]() {
+			if value == "" {
+				fieldVal.SetMapIndex(reflect.ValueOf(parts[1]), reflect.Value{})
+				return nil
+			}
+			entry := reflect.New(reflect.TypeFor[int]()).Elem()
+			if err := setFieldValue(entry, value); err != nil {
+				return err
+			}
+			if fieldVal.IsNil() {
+				fieldVal.Set(reflect.MakeMap(fieldVal.Type()))
+			}
+			fieldVal.SetMapIndex(reflect.ValueOf(parts[1]), entry)
+			return nil
 		}
 		if fieldVal.Type() == reflect.TypeFor[ACPAgentConfigs]() {
 			return setACPMapFieldByTOMLKey(fieldVal, parts[1], value)
@@ -873,6 +901,14 @@ func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue 
 		if isSelfEncoded(fieldVal.Type()) {
 			if includeZero || !fieldVal.IsZero() {
 				result = append(result, KeyValue{Key: fullKey, Value: formatValue(fieldVal)})
+			}
+			continue
+		}
+		if fieldVal.Type() == reflect.TypeFor[BudgetAgentCosts]() {
+			keys := fieldVal.MapKeys()
+			sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+			for _, key := range keys {
+				result = append(result, KeyValue{Key: fullKey + "." + key.String(), Value: formatValue(fieldVal.MapIndex(key))})
 			}
 			continue
 		}

@@ -14,6 +14,84 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
 
+## Budget-aware agent routing
+
+A global soft daily budget can route fresh daemon jobs to cheaper agents as
+recorded spend rises. Routing is disabled by default. Add this to your global
+`~/.roborev/config.toml`:
+
+```toml
+[budget]
+enabled = true
+daily_limit_cents = 500
+reserve_floor_cents = 100
+
+[budget.agent_costs]
+claude-code = 15
+codex = 12
+gemini = 5
+```
+
+Prices are positive integer estimates of cents per job. Only listed, installed
+agents participate; command overrides and named ACP agents are supported. If the
+configured agent has no listed price, it keeps ordinary routing, even at the
+cap: the daemon cannot compare its cost with the candidates. Candidates for
+custom review types must support structured review output. Quote ACP identities
+in TOML, for example `"acp.reviewer" = 5`. Aliases are accepted, but listing two
+names for the same agent is an error. The daily limit must be positive when
+enabled, and the reserve must be between zero and the limit.
+
+Below `daily_limit_cents - reserve_floor_cents`, the configured agent runs. At
+that threshold, candidates are scored by quality divided by estimated cost: the
+configured agent gets weight 2 and alternatives get weight 1. At or above the
+daily limit, the cheapest available candidate runs. Ties prefer the configured
+agent, then alphabetical agent name. Agents in quota cooldown are excluded. The
+reserve uses the same weights throughout; scoring does not change gradually as
+spend approaches the cap. The cap never stops jobs; missing cost data,
+unavailable candidates, or a spend-query error preserve ordinary agent
+resolution and quota failover.
+
+Spend uses recorded costs on currently retained terminal job rows completed
+within the UTC calendar day, across all repositories. With PostgreSQL sync, this
+includes other machines' jobs once their costs arrive through sync; it is not a
+per-machine budget. Failed, canceled and skipped jobs contribute when their cost
+was captured or backfilled. Jobs with neither an agent invocation nor recorded
+usage are excluded. Unpriced jobs are unknown rather than free, so measured
+spend may understate usage. Rerunning, retrying, or failing over a job replaces
+its previous attempt telemetry and can reduce measured spend. This is an
+approximate routing budget, not an accounting ledger. Agent prices remain static
+estimates; they are not learned from historical costs.
+
+Fresh review, range, dirty, task/analysis, insights, compact and background fix
+jobs can be routed, including jobs with an explicit `--agent`. Explicit
+model/provider requests, nonempty sessions (including automatic session reuse),
+panel/CI execution choices, requests using the offline `test` agent, frozen
+experiment assignments, retries, quota failover, classification and synthesis
+preserve their selected execution contract. Their recorded costs still
+contribute to spend. Substitutions use the new adapter's default model and
+provider, or a model explicitly paired with the configured backup. When routing
+selects that backup, the original agent becomes the failover target for this
+attempt. A manual rerun on this daemon restores the pre-budget agent and backup
+settings, resolves its model again, and applies the current budget. Selecting an
+agent explicitly for the rerun replaces that original choice. The routing lock
+and original choices are local scheduling state and are not synced to other
+machines.
+
+The daemon applies config reloads to subsequent job decisions. Spend is cached
+for up to 10 seconds, refreshes at UTC midnight, and is invalidated when this
+worker pool records a completed job or new cost data. Concurrent jobs may start
+before another job's cost is available.
+
+You can edit individual prices through the CLI:
+
+```bash
+roborev config set budget.daily_limit_cents 500 --global
+roborev config set budget.agent_costs.codex 12 --global
+roborev config get budget.agent_costs.codex --global
+roborev config set budget.enabled true --global
+roborev config set budget.agent_costs.codex '' --global  # remove a candidate
+```
+
 ## The `config` Command
 
 The `roborev config` command lets you inspect and modify configuration from the

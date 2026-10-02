@@ -1087,6 +1087,23 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Budget selection is local scheduling state, like claim_blocked. It does
+	// not sync to PostgreSQL because it protects this daemon's retry chain.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'budget_routing_locked'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check budget_routing_locked column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN budget_routing_locked INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add budget_routing_locked column: %w", err)
+		}
+		for _, column := range []string{"budget_original_agent", "budget_original_backup_agent", "budget_original_backup_model"} {
+			if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add %s column: %w", column, err)
+			}
+		}
+	}
+
 	// Migration: add panel columns to review_jobs if missing.
 	// Subagent review panels: a panel run is N member jobs + 1 synthesis
 	// job sharing panel_run_uuid. Six columns sync as ordinary job

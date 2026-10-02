@@ -230,7 +230,7 @@ func (wp *WorkerPool) failSynthesisWithoutReviewContext(
 func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 	workerID string, job *storage.ReviewJob, errorMsg string,
 ) {
-	if updated, err := wp.db.FailJob(job.ID, workerID, errorMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing synthesis job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Synthesis job %d failed: %s",
@@ -304,6 +304,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 			workerID, job.ID, j.Status)
 		return
 	}
+	wp.invalidateBudgetSpend()
 	if res.captureUsage {
 		wp.captureTokenUsageForSession(
 			context.Background(), workerID, job, res.capturedSession,

@@ -246,7 +246,7 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 			return "", fmt.Errorf("load global config: %w", err)
 		}
 		parts := strings.SplitN(key, ".", 3)
-		if len(parts) == 3 && parts[0] == "acp" {
+		if (len(parts) == 3 && parts[0] == "acp") || strings.HasPrefix(key, "budget.agent_costs.") {
 			raw, err := config.LoadRawGlobal()
 			if err != nil {
 				return "", fmt.Errorf("load global config: %w", err)

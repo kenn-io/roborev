@@ -387,6 +387,8 @@ type Config struct {
 	// Review-history search configuration
 	Search SearchConfig `toml:"search"`
 
+	Budget BudgetConfig `toml:"budget"`
+
 	// Agent-specific behavior
 	Agent AgentConfig `toml:"agent"`
 
@@ -553,6 +555,9 @@ func walkAgentReferences(value reflect.Value, path string) error {
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if global, ok := cfg.(*Config); ok {
 		if err := ValidateAuthKey(global.AuthKey); err != nil {
+			return err
+		}
+		if err := global.Budget.Validate(); err != nil {
 			return err
 		}
 	}
