@@ -6,7 +6,6 @@ import (
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
-	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -53,15 +52,13 @@ func (m model) moveSelectionToJobID(id int64) model {
 }
 
 func (m model) tasksVisibleWindow(totalJobs int) (int, int, int) {
-	tasksHelpRows := [][]helplayout.HelpItem{
-		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}, {Key: "x", Description: "cancel"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
-	}
-	tasksHelpLines := len(convertAndReflowHelpRows(tasksHelpRows, m.width))
+	tasksHelpLines := len(convertAndReflowHelpRows(taskHelpRows(), m.width))
 	visibleRows := max(m.height-(6+tasksHelpLines), 1)
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {
 		startIdx = m.fixSelectedIdx - visibleRows + 1
 	}
+	startIdx = min(startIdx, max(totalJobs-1, 0))
 	endIdx := min(totalJobs, startIdx+visibleRows)
 	return visibleRows, startIdx, endIdx
 }
@@ -301,12 +298,12 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
-	case "down":
+	case "down", "ctrl+n":
 		if m.colOptionsIdx < len(m.colOptionsList)-1 {
 			m.colOptionsIdx++
 		}
 		return m, nil
-	case "up":
+	case "up", "ctrl+p":
 		if m.colOptionsIdx > 0 {
 			m.colOptionsIdx--
 		}

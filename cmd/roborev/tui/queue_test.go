@@ -1341,7 +1341,7 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
-	m.height = 15
+	m.height = 16 // five visible rows after queue chrome
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),

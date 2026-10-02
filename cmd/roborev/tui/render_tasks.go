@@ -148,6 +148,13 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	return []string{statusLabel, jobID, parentRef, queued, elapsed, branch, repo, refSubject}
 }
 
+func taskHelpRows() [][]helplayout.HelpItem {
+	return [][]helplayout.HelpItem{
+		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}},
+		{{Key: "x", Description: "cancel"}, {Key: "o", Description: "options"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
+	}
+}
+
 func (m model) renderTasksView() string {
 	var b strings.Builder
 
@@ -171,14 +178,8 @@ func (m model) renderTasksView() string {
 		return b.String()
 	}
 
-	// Help row calculation for visible rows
-	tasksHelpRows := [][]helplayout.HelpItem{
-		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}},
-		{{Key: "x", Description: "cancel"}, {Key: "o", Description: "options"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
-	}
-	tasksHelpLines := len(convertAndReflowHelpRows(tasksHelpRows, m.width))
-	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
-	visibleRows = max(visibleRows, 1)
+	helpRows := taskHelpRows()
+	visibleRows, startIdx, endIdx := m.tasksVisibleWindow(len(m.fixJobs))
 
 	// Columns in user-configured order.
 	visCols := m.visibleTaskColumns()
@@ -280,14 +281,6 @@ func (m model) renderTasksView() string {
 			colWidths[c] = 1
 		}
 	}
-
-	// Determine scroll window
-	startIdx := 0
-	if m.fixSelectedIdx >= visibleRows {
-		startIdx = m.fixSelectedIdx - visibleRows + 1
-	}
-	startIdx = min(startIdx, max(len(m.fixJobs)-1, 0))
-	endIdx := min(len(m.fixJobs), startIdx+visibleRows)
 
 	// Build visible rows for the window
 	windowJobs := m.fixJobs[startIdx:endIdx]
@@ -414,7 +407,7 @@ func (m model) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(tasksHelpRows, m.width), helpTableStyles))
+	b.WriteString(helprender.RenderHelpTable(convertAndReflowHelpRows(helpRows, m.width), helpTableStyles))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()

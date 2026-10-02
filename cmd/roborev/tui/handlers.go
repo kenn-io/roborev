@@ -193,21 +193,23 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleQuitKey()
 	case "home", "g":
 		return m.handleHomeKey()
-	case "up":
+	case "end", "G":
+		return m.handleEndKey()
+	case "up", "ctrl+p":
 		return m.handleUpKey()
 	case "j":
 		return m.handlePrevKey()
 	case "left":
 		return m.handleLeftKey()
-	case "down":
+	case "down", "ctrl+n":
 		return m.handleDownKey()
 	case "k":
 		return m.handleNextKey()
 	case "right":
 		return m.handleRightKey()
-	case "pgup":
+	case "pgup", "u":
 		return m.handlePageUpKey()
-	case "pgdown":
+	case "pgdown", "d":
 		return m.handlePageDownKey()
 	case "space":
 		return m.handleToggleExpand()
@@ -235,7 +237,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBranchFilterOpenKey()
 	case "h":
 		return m.handleHideClosedKey()
-	case "u":
+	case "U":
 		m.releaseNotesFromView = m.currentView
 		m.currentView = viewReleaseNotes
 		m.releaseNotesScroll = 0
@@ -843,7 +845,7 @@ func (m model) prevFixLog() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handlePageUpKey() (tea.Model, tea.Cmd) {
-	pageSize := max(1, m.height-10)
+	pageSize := m.navigationPageSize()
 	switch m.currentView {
 	case viewQueue:
 		return m.moveQueueSelection(-pageSize), nil
@@ -859,14 +861,17 @@ func (m model) handlePageUpKey() (tea.Model, tea.Cmd) {
 		}
 		m.promptScroll = max(0, m.promptScroll-pageSize)
 		return m, tea.ClearScreen
+	case viewCommitMsg:
+		m.commitMsgScroll = max(0, min(m.commitMsgScroll, m.navigationMaxScroll(pageSize))-pageSize)
+		return m, tea.ClearScreen
 	case viewHelp:
-		m.helpScroll = max(0, m.helpScroll-pageSize)
+		m.helpScroll = max(0, min(m.helpScroll, m.helpMaxScroll())-pageSize)
 	}
 	return m, nil
 }
 
 func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
-	pageSize := max(1, m.height-10)
+	pageSize := m.navigationPageSize()
 	switch m.currentView {
 	case viewQueue:
 		rows := m.visibleQueueRows()
@@ -891,6 +896,9 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
 			m.promptScroll = m.mdCache.lastPromptMaxScroll
 		}
+		return m, tea.ClearScreen
+	case viewCommitMsg:
+		m.commitMsgScroll = min(m.navigationMaxScroll(pageSize), m.commitMsgScroll+pageSize)
 		return m, tea.ClearScreen
 	case viewHelp:
 		m.helpScroll = min(m.helpScroll+pageSize, m.helpMaxScroll())

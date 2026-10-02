@@ -98,6 +98,7 @@ func (m model) renderReviewPaneBody(innerW, innerH int) []string {
 	maxScroll := max(len(lines)-visible, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastReviewMaxScroll = maxScroll
+		m.mdCache.lastReviewVisibleLines = visible
 	}
 	start := max(min(m.reviewScroll, maxScroll), 0)
 	for i := start; i < min(start+visible, len(lines)); i++ {

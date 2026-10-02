@@ -277,8 +277,9 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			group: "Queue View",
 			keys: []struct{ key, desc string }{
 				{"↑/k, ↓/j", "Navigate jobs"},
-				{"g/Home", "Jump to top"},
-				{"PgUp/PgDn", "Page through list"},
+				{"g/gg/Home", "Jump to top"},
+				{"G/End", "Jump to last loaded job"},
+				{"u/d, PgUp/PgDn", "Page through list"},
 				{"enter", "View review"},
 				{"p", "View prompt"},
 				{"l", "View agent log"},
@@ -312,7 +313,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll content"},
 				{"←/→", "Previous / next review"},
-				{"PgUp/PgDn", "Page through content"},
+				{"u/d, PgUp/PgDn", "Page through content"},
 				{"p", "Switch to prompt view"},
 				{"a", "Toggle closed"},
 				{"c", "Add comment"},
@@ -328,7 +329,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll content"},
 				{"←/→", "Previous / next prompt"},
-				{"PgUp/PgDn", "Page through content"},
+				{"u/d, PgUp/PgDn", "Page through content"},
 				{"i", "Expand/collapse command line"},
 				{"p", "Switch to review / back to queue"},
 				{"esc/q", "Back to queue"},
@@ -339,8 +340,9 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll output"},
 				{"←/→", "Previous / next log"},
-				{"PgUp/PgDn", "Page through output"},
-				{"g", "Toggle follow mode / jump to top"},
+				{"u/d, PgUp/PgDn", "Page through output"},
+				{"g/gg/Home", "Jump to top and pause following"},
+				{"G/End", "Jump to bottom and follow"},
 				{"i", "Expand/collapse command line"},
 				{"x", "Cancel job"},
 				{"esc/q", "Back to queue"},
@@ -350,6 +352,8 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			group: "Tasks View",
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Navigate fix jobs"},
+				{"u/d, PgUp/PgDn", "Page through fix jobs"},
+				{"g/gg/Home, G/End", "Jump to first / last fix job"},
 				{"A", "Apply patch from completed fix"},
 				{"R", "Re-trigger fix (rebase)"},
 				{"l", "View agent log"},
@@ -363,6 +367,9 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: func() []struct{ key, desc string } {
 				keys := []struct{ key, desc string }{
 					{"?", "Toggle this help"},
+					{"Ctrl-P/Ctrl-N", "Move up / down like arrow keys"},
+					{"g/gg/Home, G/End", "Jump to top / bottom of content"},
+					{"U", "Open or refresh release notes"},
 					{"L", "Toggle split layout"},
 				}
 				if !noQuit {

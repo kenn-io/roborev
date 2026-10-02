@@ -87,7 +87,7 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 	expectedMax := max(50-visLines, 0)
 	assert.Equal(t, expectedMax, m3.logScroll)
 
-	m4, _ := pressKeys(m, []rune{'g'})
+	m4, _ := pressKeys(m, []rune{'G'})
 	assert.Equal(t, expectedMax, m4.logScroll)
 
 	mMid := m

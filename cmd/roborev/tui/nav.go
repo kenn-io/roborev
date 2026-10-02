@@ -198,7 +198,7 @@ func (m *model) logHelpRows() [][]helplayout.HelpItem {
 	helpRow := []helplayout.HelpItem{
 		{Key: "↑/↓", Description: "scroll"},
 		{Key: "←/→", Description: "prev/next"},
-		{Key: "g", Description: "toggle top/bottom"},
+		{Key: "g/G", Description: "top/bottom"},
 		{Key: "i", Description: "expand cmd"},
 	}
 	if m.logStreaming {

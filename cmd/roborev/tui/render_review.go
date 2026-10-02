@@ -226,6 +226,7 @@ func (m model) renderReviewView() string {
 	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastReviewMaxScroll = maxScroll
+		m.mdCache.lastReviewVisibleLines = visibleLines
 	}
 	start := max(min(m.reviewScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
@@ -376,6 +377,7 @@ func (m model) renderPromptView() string {
 	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastPromptMaxScroll = maxScroll
+		m.mdCache.lastPromptVisibleLines = visibleLines
 	}
 	start := max(min(m.promptScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))

@@ -44,7 +44,10 @@ jobs and their status.
 
 | Key | Action |
 |-----|--------|
-| `Up`/`k`, `Down`/`j` | Navigate tasks |
+| `Up`/`k`/`Ctrl-P`, `Down`/`j`/`Ctrl-N` | Navigate tasks |
+| `PgUp`/`u`, `PgDn`/`d` | Page through tasks |
+| `Home`, `g` or `gg` | Jump to first task |
+| `End`, `G` | Jump to last task |
 | `Enter` / `l` | View output (live for running, result for done, error for failed) |
 | `p` | View patch diff |
 | `A` | Apply patch to working tree |
