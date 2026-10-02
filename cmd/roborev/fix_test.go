@@ -36,6 +36,7 @@ import (
 func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
 	t.Helper()
 
+	oldServerAddr := serverAddr
 	oldMaxRetries := fixDaemonMaxRetries
 	oldRecoveryWait := fixDaemonRecoveryWait
 	oldRecoveryPoll := fixDaemonRecoveryPoll
@@ -57,6 +58,7 @@ func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
 	enqueueIfNeededProbeDelay = 5 * time.Millisecond
 
 	t.Cleanup(func() {
+		serverAddr = oldServerAddr
 		fixDaemonMaxRetries = oldMaxRetries
 		fixDaemonRecoveryWait = oldRecoveryWait
 		fixDaemonRecoveryPoll = oldRecoveryPoll

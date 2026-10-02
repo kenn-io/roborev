@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/pathresolve"
 )
 
 // lockDaemonDatabase excludes other daemon processes before SQLite is opened
@@ -21,14 +22,14 @@ func lockDaemonDatabase(dbPath string) (*flock.Flock, error) {
 	// Resolve aliases so a symlink cannot give the same database a second owner.
 	var resolved string
 	for {
-		resolved, err = filepath.EvalSymlinks(path)
+		resolved, err = pathresolve.EvalSymlinks(path)
 		if err == nil {
 			break
 		}
 		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("resolve database path: %w", err)
 		}
-		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+		dir, err := pathresolve.EvalSymlinks(filepath.Dir(path))
 		if err != nil {
 			return nil, fmt.Errorf("resolve database directory: %w", err)
 		}

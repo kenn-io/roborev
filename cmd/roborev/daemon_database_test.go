@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/fslink"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -76,4 +77,21 @@ func TestDaemonDatabaseAliasesHaveOneOwner(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDaemonDatabaseDirectoryAliasesHaveOneOwner(t *testing.T) {
+	dir := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	_, err := fslink.LinkDir(dir, alias)
+	require.NoError(t, err)
+
+	owner, err := lockDaemonDatabase(filepath.Join(alias, "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+
+	other, err := lockDaemonDatabase(filepath.Join(dir, "reviews.db"))
+	if other != nil {
+		require.NoError(t, other.Close())
+	}
+	require.ErrorContains(t, err, "already owned by a daemon")
 }

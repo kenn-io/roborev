@@ -1216,8 +1216,12 @@ func ExtractRepoNameFromIdentity(identity string) string {
 		return "unknown"
 	}
 
+	name := identity
+	if strings.HasPrefix(name, "local://") {
+		name = strings.TrimRight(strings.ReplaceAll(name, `\`, "/"), "/")
+	}
 	// Remove trailing .git if present
-	name := strings.TrimSuffix(identity, ".git")
+	name = strings.TrimSuffix(name, ".git")
 
 	// Find the last path component
 	// Handle both SSH (git@host:path) and HTTPS (https://host/path) formats

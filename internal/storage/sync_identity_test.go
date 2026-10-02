@@ -173,6 +173,10 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 		// Local format
 		{"local:my-project", "my-project"},
 		{"local:another-repo", "another-repo"},
+		{`local://C:\work\repo`, "repo"},
+		{`local://C:\work/repo`, "repo"},
+		{`local://C:\work\repo\`, "repo"},
+		{"local:///work/repo", "repo"},
 
 		// Edge cases
 		{"repo.git", "repo"},
