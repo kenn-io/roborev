@@ -1612,21 +1612,7 @@ func (c *Client) ImportLegacyReviewWithResponse(ctx context.Context, options *Im
 	}
 
 	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(ImportLegacyReviewResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "ImportLegacyReviewResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
+	case 204:
 		return out, nil
 	case 500:
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
@@ -2051,21 +2037,7 @@ func (c *Client) DeleteRepoWithResponse(ctx context.Context, options *DeleteRepo
 	}
 
 	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(DeleteRepoResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "DeleteRepoResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
+	case 204:
 		return out, nil
 	case 404:
 		out.ApplicationProblemPlusJSON404 = new(DeleteRepoErrorResponse)
@@ -2262,21 +2234,7 @@ func (c *Client) MoveRepoWithResponse(ctx context.Context, options *MoveRepoRequ
 	}
 
 	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(MoveRepoResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "MoveRepoResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
+	case 204:
 		return out, nil
 	case 404:
 		out.ApplicationProblemPlusJSON404 = new(MoveRepoErrorResponse)

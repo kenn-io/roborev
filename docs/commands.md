@@ -1214,6 +1214,10 @@ easy to review across projects.
 
 These flags work across most commands:
 
+An explicit `--server` selects a daemon you manage. If that daemon is
+unavailable, the command returns an error without starting or restarting a local
+daemon.
+
 | Flag | Description |
 |------|-------------|
 | `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets |

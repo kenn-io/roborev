@@ -208,8 +208,6 @@ type ExportLegacyReviewsResponse = ExportLegacyReviewsOutputBody
 
 type ExportLegacyReviewsErrorResponse = ErrorModel
 
-type ImportLegacyReviewResponse = ImportLegacyReviewOutputBody
-
 type ImportLegacyReviewErrorResponse = ErrorModel
 
 type ScanTokenUsageResponse = ScanTokenUsageReport
@@ -244,8 +242,6 @@ type ListReposResponse = ListReposOutputBody
 
 type ListReposErrorResponse = ErrorModel
 
-type DeleteRepoResponse = DeleteRepoOutputBody
-
 type DeleteRepoErrorResponse = ErrorModel
 
 type DeleteRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
@@ -254,15 +250,13 @@ type DeleteRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
 
 type DeleteRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
-type GetRepoResponse = RepoDetails
+type GetRepoResponse = RepoStats
 
 type GetRepoErrorResponse = ErrorModel
 
 type MergeReposResponse = MergeReposOutputBody
 
 type MergeReposErrorResponse = ErrorModel
-
-type MoveRepoResponse = MoveRepoOutputBody
 
 type MoveRepoErrorResponse = ErrorModel
 
@@ -594,7 +588,6 @@ type ImportLegacyReviewResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
-	JSON200      *ImportLegacyReviewResponse
 }
 
 type ScanTokenUsageResp struct {
@@ -657,7 +650,6 @@ type DeleteRepoResp struct {
 	HTTPResponse                  *http.Response
 	Body                          []byte
 	StatusCode                    int
-	JSON200                       *DeleteRepoResponse
 	ApplicationProblemPlusJSON404 *DeleteRepoErrorResponse
 	ApplicationProblemPlusJSON409 *DeleteRepoErrorResponseApplicationProblemPlusJSON
 	ApplicationProblemPlusJSON422 *DeleteRepoErrorResponseApplicationProblemPlusJSON422
@@ -682,7 +674,6 @@ type MoveRepoResp struct {
 	HTTPResponse                  *http.Response
 	Body                          []byte
 	StatusCode                    int
-	JSON200                       *MoveRepoResponse
 	ApplicationProblemPlusJSON404 *MoveRepoErrorResponse
 	ApplicationProblemPlusJSON409 *MoveRepoErrorResponseApplicationProblemPlusJSON
 	ApplicationProblemPlusJSON422 *MoveRepoErrorResponseApplicationProblemPlusJSON422

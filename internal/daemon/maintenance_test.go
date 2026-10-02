@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -23,48 +23,6 @@ import (
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
-
-func TestBackfillCostFetchConfig(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Cost.Endpoint = "https://usage.example.test/api/v1/sessions/{session_id}/usage"
-	cfg.Cost.Timeout = "250ms"
-
-	got := backfillCostFetchConfig(cfg)
-
-	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", got.Endpoint)
-	assert.Equal(t, 250*time.Millisecond, got.Timeout)
-	assert.True(t, got.RequireCLI)
-}
-
-func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testing.T) {
-	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
-	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
-
-	got := backfill.MergeTokenUsage(existing, fetched)
-
-	assert.Equal(t, int64(28800), got.OutputTokens)
-	assert.Equal(t, int64(118000), got.PeakContextTokens)
-	assert.True(t, got.HasCost)
-	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
-}
-
-func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *testing.T) {
-	existing := `{"input_tokens":79150,"cached_input_tokens":2560,` +
-		`"total_output_tokens":3389,"usage_source":"job_log_turn_completed",` +
-		`"thread_id":"thread-123","event_offset":91}`
-	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
-
-	got := backfill.MergeTokenUsage(existing, fetched)
-
-	assert.Equal(t, int64(79150), got.InputTokens)
-	assert.Equal(t, int64(2560), got.CachedInputTokens)
-	assert.Equal(t, int64(3389), got.OutputTokens)
-	assert.Equal(t, "job_log_turn_completed", got.UsageSource)
-	assert.Equal(t, "thread-123", got.ThreadID)
-	assert.Equal(t, int64(91), got.EventOffset)
-	assert.True(t, got.HasCost)
-	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
-}
 
 func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
 	dataDir := t.TempDir()
@@ -277,6 +235,16 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// Exporting a synthesis must retain the completed member's document.
+	source := testutil.CreateCompletedReview(t, db, repo.ID, "source-head", "test", "Source assessment.")
+	runID := uuid.New()
+	_, err = db.Exec("UPDATE review_jobs SET job_type = 'synthesis', panel_role = 'synthesis', panel_run_uuid = ? WHERE id = ?", runID, prose.ID)
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE review_jobs SET panel_role = 'member', panel_run_uuid = ?, panel_member_index = 0 WHERE id = ?", runID, source.ID)
+	require.NoError(t, err)
+	sourceReview, err := db.GetReviewByJobID(source.ID)
+	require.NoError(t, err)
+
 	response := maintenanceRequest(t, server, "/api/maintenance/legacy/convert", map[string]any{"dry_run": true})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var report storage.LegacyConversionReport
@@ -314,9 +282,19 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 	api, err := roborevclient.NewWithHTTPClient(httpServer.URL, httpServer.Client())
 	require.NoError(t, err)
+	typedExport, err := api.ExportLegacyReviews(t.Context(), &generated.ExportLegacyReviewsRequestOptions{Body: &generated.LegacyMaintenanceTarget{}})
+	require.NoError(t, err)
+	require.Len(t, typedExport.SqliteRecords, 1)
+	require.Len(t, typedExport.SqliteRecords[0].Sources, 1)
+	exportedSource, err := json.Marshal(typedExport.SqliteRecords[0].Sources[0].Document)
+	require.NoError(t, err)
+	storedSource, err := json.Marshal(sourceReview.StructuredOutput)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(storedSource), string(exportedSource))
+
 	_, err = api.ImportLegacyReview(t.Context(), &generated.ImportLegacyReviewRequestOptions{
 		Body: &generated.ImportLegacyReviewInputBody{
-			ID: new(record.ID), Document: jsontext.Value(testutil.ReviewFixtureJSON("Converted review.")),
+			ID: new(record.ID), Document: jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"fail","findings":[{"severity":"medium","problem":"The save routine loses data.","fix":"Use an atomic rename.","location":null,"sources":[1]}]}`),
 		},
 	})
 	require.NoError(t, err)

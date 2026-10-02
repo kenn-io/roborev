@@ -485,16 +485,16 @@ func (db *DB) FindRepo(identifier string) (*Repo, error) {
 
 // RepoStats contains statistics for a single repo
 type RepoStats struct {
-	Repo          *Repo
-	TotalJobs     int
-	QueuedJobs    int
-	RunningJobs   int
-	CompletedJobs int
-	FailedJobs    int
-	PassedReviews int
-	FailedReviews int
-	ClosedReviews int
-	OpenReviews   int
+	Repo          *Repo `json:"repo"`
+	TotalJobs     int   `json:"total_jobs"`
+	QueuedJobs    int   `json:"queued_jobs"`
+	RunningJobs   int   `json:"running_jobs"`
+	CompletedJobs int   `json:"completed_jobs"`
+	FailedJobs    int   `json:"failed_jobs"`
+	PassedReviews int   `json:"passed_reviews"`
+	FailedReviews int   `json:"failed_reviews"`
+	ClosedReviews int   `json:"closed_reviews"`
+	OpenReviews   int   `json:"open_reviews"`
 }
 
 // GetRepoStats returns detailed statistics for a repo

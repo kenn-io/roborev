@@ -44,7 +44,7 @@ func TestPauseCmdPostsQueuePause(t *testing.T) {
 				return false
 			}
 			called = true
-			_ = json.NewEncoder(w).Encode(queuePauseResponse{QueuePaused: true})
+			_ = json.NewEncoder(w).Encode(map[string]bool{"queue_paused": true})
 			return true
 		},
 	})
@@ -67,7 +67,7 @@ func TestUnpauseCmdPostsQueueUnpause(t *testing.T) {
 				return false
 			}
 			called = true
-			_ = json.NewEncoder(w).Encode(queuePauseResponse{QueuePaused: false})
+			_ = json.NewEncoder(w).Encode(map[string]bool{"queue_paused": false})
 			return true
 		},
 	})

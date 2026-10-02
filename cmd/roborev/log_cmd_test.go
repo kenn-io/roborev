@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -190,7 +193,7 @@ func TestRenderJobLogUsesStoredIdentity(t *testing.T) {
 			}
 			var out bytes.Buffer
 			require.NoError(t, renderJobLog(
-				job.ID, &out, true, logTestAPI(t, job),
+				t.Context(), job.ID, &out, true, logTestAPI(t, job),
 			))
 			plain := streamfmt.StripANSI(out.String())
 			for _, want := range tt.want {
@@ -236,7 +239,7 @@ func TestRenderJobLogUsesPersistedLogIdentityAfterCanceledFailover(t *testing.T)
 
 	var out bytes.Buffer
 	require.NoError(t, renderJobLog(
-		job.ID, &out, true, logTestAPI(t, job),
+		t.Context(), job.ID, &out, true, logTestAPI(t, job),
 	))
 	plain := streamfmt.StripANSI(out.String())
 	assert.Contains(t, plain, "prior provider output")
@@ -250,7 +253,7 @@ func TestRenderJobLogOrphanSuggestsRaw(t *testing.T) {
 		daemon.JobLogPath(42), []byte(`{"type":"assistant"}`+"\n"), 0o600,
 	))
 
-	err := renderJobLog(42, io.Discard, true, logTestAPI(t, nil))
+	err := renderJobLog(t.Context(), 42, io.Discard, true, logTestAPI(t, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--raw")
 }
@@ -316,4 +319,60 @@ func logTestAPI(t *testing.T, job *storage.ReviewJob) *roborevclient.Client {
 	}})
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 	return newDaemonAPI(md.Server.URL, getDaemonEndpoint().HTTPClient(5*time.Second))
+}
+
+func TestLogCommandDownloadsWithoutTotalDeadline(t *testing.T) {
+	for _, args := range [][]string{{"42"}, {"--raw", "42"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/ping" {
+						newMockRefineState().handlePing(w, r)
+						return
+					}
+					fmt.Fprint(w, "first line\n")
+					w.(http.Flusher).Flush()
+					time.Sleep(31 * time.Second)
+					fmt.Fprint(w, "last line\n")
+				}))
+				origTransport := http.DefaultTransport
+				http.DefaultTransport = server.Client().Transport
+				t.Cleanup(func() { http.DefaultTransport = origTransport })
+				patchServerAddr(t, "http://127.0.0.1:7373")
+				var out bytes.Buffer
+				command := logCmd()
+				command.SetOut(&out)
+				command.SetArgs(args)
+				command.SilenceUsage = true
+				require.NoError(t, command.Execute())
+				assert.Equal(t, "first line\nlast line\n", out.String())
+			})
+		})
+	}
+}
+
+func TestLogCommandCancelsFormattedDownload(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/ping" {
+				newMockRefineState().handlePing(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}))
+		origTransport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = origTransport })
+		patchServerAddr(t, "http://127.0.0.1:7373")
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		command := logCmd()
+		command.SetContext(ctx)
+		command.SetOut(io.Discard)
+		command.SetArgs([]string{"42"})
+		command.SilenceUsage = true
+		require.ErrorIs(t, command.Execute(), context.DeadlineExceeded)
+	})
 }

@@ -3,7 +3,6 @@
  */
 import type {
   DeleteRepoInputBody,
-  DeleteRepoOutputBody,
   GetRepoParams,
   ListBranchesOutputBody,
   ListBranchesParams,
@@ -12,12 +11,11 @@ import type {
   MergeReposInputBody,
   MergeReposOutputBody,
   MoveRepoInputBody,
-  MoveRepoOutputBody,
   RegisterRepoRequest,
   RenameRepoInputBody,
   RenameRepoOutputBody,
   Repo,
-  RepoDetails,
+  RepoStats,
   ResolveRepoOutputBody,
   ResolveRepoParams,
 } from "../models";
@@ -125,7 +123,7 @@ export const getDeleteRepoUrl = () => {
 export const deleteRepo = async (
   deleteRepoInputBody: NonReadonly<DeleteRepoInputBody>,
   options?: RequestInit,
-): Promise<DeleteRepoOutputBody> => {
+): Promise<void> => {
   const getHeaders = (
     h?: NonNullable<RequestInit["headers"]>,
   ): Record<string, string | readonly string[]> => {
@@ -134,7 +132,7 @@ export const deleteRepo = async (
     if (Array.isArray(h)) return Object.fromEntries(h);
     return h;
   };
-  return roborevFetch<DeleteRepoOutputBody>(getDeleteRepoUrl(), {
+  return roborevFetch<void>(getDeleteRepoUrl(), {
     ...options,
     method: "POST",
     headers: {
@@ -167,8 +165,8 @@ export const getGetRepoUrl = (params: GetRepoParams) => {
 export const getRepo = async (
   params: GetRepoParams,
   options?: RequestInit,
-): Promise<RepoDetails> => {
-  return roborevFetch<RepoDetails>(getGetRepoUrl(params), {
+): Promise<RepoStats> => {
+  return roborevFetch<RepoStats>(getGetRepoUrl(params), {
     ...options,
     method: "GET",
   });
@@ -214,7 +212,7 @@ export const getMoveRepoUrl = () => {
 export const moveRepo = async (
   moveRepoInputBody: NonReadonly<MoveRepoInputBody>,
   options?: RequestInit,
-): Promise<MoveRepoOutputBody> => {
+): Promise<void> => {
   const getHeaders = (
     h?: NonNullable<RequestInit["headers"]>,
   ): Record<string, string | readonly string[]> => {
@@ -223,7 +221,7 @@ export const moveRepo = async (
     if (Array.isArray(h)) return Object.fromEntries(h);
     return h;
   };
-  return roborevFetch<MoveRepoOutputBody>(getMoveRepoUrl(), {
+  return roborevFetch<void>(getMoveRepoUrl(), {
     ...options,
     method: "POST",
     headers: {

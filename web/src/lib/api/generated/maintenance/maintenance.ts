@@ -8,7 +8,6 @@ import type {
   ConvertLegacyReviewsInputBody,
   ExportLegacyReviewsOutputBody,
   ImportLegacyReviewInputBody,
-  ImportLegacyReviewOutputBody,
   LegacyConversionReport,
   LegacyMaintenanceTarget,
   ScanTokenUsageInputBody,
@@ -148,7 +147,7 @@ export const getImportLegacyReviewUrl = () => {
 export const importLegacyReview = async (
   importLegacyReviewInputBody: NonReadonly<ImportLegacyReviewInputBody>,
   options?: RequestInit,
-): Promise<ImportLegacyReviewOutputBody> => {
+): Promise<void> => {
   const getHeaders = (
     h?: NonNullable<RequestInit["headers"]>,
   ): Record<string, string | readonly string[]> => {
@@ -157,18 +156,15 @@ export const importLegacyReview = async (
     if (Array.isArray(h)) return Object.fromEntries(h);
     return h;
   };
-  return roborevFetch<ImportLegacyReviewOutputBody>(
-    getImportLegacyReviewUrl(),
-    {
-      ...options,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(importLegacyReviewInputBody),
+  return roborevFetch<void>(getImportLegacyReviewUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
     },
-  );
+    body: JSON.stringify(importLegacyReviewInputBody),
+  });
 };
 
 export const getScanTokenUsageUrl = () => {

@@ -5,17 +5,16 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"net/http"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"uuid"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
-	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -53,25 +52,11 @@ throughout conversion.`),
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			ep := getDaemonEndpoint()
-			request := daemon.ConvertLegacyReviewsInput{}
-			request.Body.DB, request.Body.PostgresURL, request.Body.DryRun = dbPath, postgresURL, dryRun
-			raw, err := json.Marshal(request.Body)
+			report, err := getDaemonEndpoint().APIClient(0).ConvertLegacyReviews(cmd.Context(), &generated.ConvertLegacyReviewsRequestOptions{
+				Body: &generated.ConvertLegacyReviewsBody{DB: &dbPath, PostgresURL: &postgresURL, DryRun: dryRun},
+			})
 			if err != nil {
-				return err
-			}
-			response, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).ConvertLegacyReviewsRaw(cmd.Context(), nil, roborevclient.WithBody(raw))
-			if err != nil {
-				return err
-			}
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(response.Body)
-				return fmt.Errorf("convert legacy reviews: %s", body)
-			}
-			var report storage.LegacyConversionReport
-			if err := json.UnmarshalRead(response.Body, &report); err != nil {
-				return err
+				return daemonRequestError("convert legacy reviews", err)
 			}
 
 			return writeLegacyConversionReport(cmd.OutOrStdout(), report)
@@ -86,27 +71,15 @@ throughout conversion.`),
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			ep := getDaemonEndpoint()
-			raw, err := json.Marshal(daemon.LegacyMaintenanceTarget{DB: dbPath, PostgresURL: postgresURL})
+			result, err := getDaemonEndpoint().APIClient(0).ExportLegacyReviews(cmd.Context(), &generated.ExportLegacyReviewsRequestOptions{
+				Body: &generated.LegacyMaintenanceTarget{DB: &dbPath, PostgresURL: &postgresURL},
+			})
 			if err != nil {
-				return err
+				return daemonRequestError("export legacy reviews", err)
 			}
-			response, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).ExportLegacyReviewsRaw(cmd.Context(), nil, roborevclient.WithBody(raw))
-			if err != nil {
-				return err
-			}
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(response.Body)
-				return fmt.Errorf("export legacy reviews: %s", body)
-			}
-			var result daemon.ExportLegacyReviewsOutput
-			if err := json.UnmarshalRead(response.Body, &result.Body); err != nil {
-				return err
-			}
-			var records any = result.Body.SQLiteRecords
+			var records any = result.SqliteRecords
 			if postgresURL != "" {
-				records = result.Body.PostgresRecords
+				records = result.PostgresRecords
 			}
 
 			return json.MarshalWrite(cmd.OutOrStdout(), struct {
@@ -131,37 +104,26 @@ throughout conversion.`),
 			if _, err := structuredreview.Decode(raw); err != nil {
 				return err
 			}
-			request := daemon.ImportLegacyReviewInput{}
-			request.Body.DB, request.Body.PostgresURL, request.Body.Document = dbPath, postgresURL, raw
+			request := generated.ImportLegacyReviewBody{DB: &dbPath, PostgresURL: &postgresURL, Document: raw}
 			if postgresURL != "" {
 				id, err := uuid.Parse(args[0]) //nolint:forbidigo // Legacy archive ID CLI text boundary.
 				if err != nil {
 					return fmt.Errorf("invalid legacy review UUID: %w", err)
 				}
-				request.Body.UUID = id
+				request.UUID = &id
 			} else {
 				id, err := strconv.ParseInt(args[0], 10, 64)
 				if err != nil {
 					return fmt.Errorf("invalid legacy review ID: %w", err)
 				}
-				request.Body.ID = id
+				request.ID = &id
 			}
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			ep := getDaemonEndpoint()
-			body, err := json.Marshal(request.Body)
+			_, err = getDaemonEndpoint().APIClient(0).ImportLegacyReview(cmd.Context(), &generated.ImportLegacyReviewRequestOptions{Body: &request})
 			if err != nil {
-				return err
-			}
-			response, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).ImportLegacyReviewRaw(cmd.Context(), nil, roborevclient.WithBody(body))
-			if err != nil {
-				return err
-			}
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				message, _ := io.ReadAll(response.Body)
-				return fmt.Errorf("import legacy review: %s", message)
+				return daemonRequestError("import legacy review", err)
 			}
 
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Converted review restored. The original remains archived.")
@@ -184,7 +146,7 @@ throughout conversion.`),
 	return cmd
 }
 
-func writeLegacyConversionReport(w io.Writer, report storage.LegacyConversionReport) error {
+func writeLegacyConversionReport(w io.Writer, report *generated.ConvertLegacyReviewsResponse) error {
 	converted, left := "Converted and restored", "Left unstructured for export and import"
 	if report.DryRun {
 		converted, left = "Would convert", "Would remain unstructured"
@@ -193,7 +155,7 @@ func writeLegacyConversionReport(w io.Writer, report storage.LegacyConversionRep
 	fmt.Fprintf(&out, "Historical reviews needing conversion: %d\n", report.Unresolved)
 	fmt.Fprintf(&out, "%s: %d\n", converted, report.Converted)
 	fmt.Fprintf(&out, "%s: %d\n", left, report.Unresolved-report.Converted)
-	for _, reason := range report.RefusalReasons() {
+	for _, reason := range slices.Sorted(maps.Keys(report.Refused)) {
 		fmt.Fprintf(&out, "  %s: %d\n", reason, report.Refused[reason])
 	}
 	_, err := io.WriteString(w, out.String())

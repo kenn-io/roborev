@@ -774,12 +774,6 @@ func (d DeleteRepoInputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
-type DeleteRepoOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Deleted bool    `json:"deleted"`
-}
-
 type DurationStats struct {
 	QueueP50Secs  float64 `json:"queue_p50_secs"`
 	QueueP90Secs  float64 `json:"queue_p90_secs"`
@@ -1882,12 +1876,6 @@ func (i ImportLegacyReviewInputBody) Validate() error {
 	return errors
 }
 
-type ImportLegacyReviewOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Success bool    `json:"success"`
-}
-
 type Input struct {
 	Cwd                  *string             `json:"cwd,omitempty"`
 	HookEventName        *string             `json:"hook_event_name,omitempty"`
@@ -2072,14 +2060,28 @@ func (l LegacyReviewDocument_Legacy) Validate() error {
 }
 
 type LegacyReviewSource struct {
-	Agent    string    `json:"agent" validate:"required"`
-	Document *struct{} `json:"document,omitempty"`
-	Markdown *string   `json:"markdown,omitempty"`
-	Number   int64     `json:"number"`
+	Agent    string          `json:"agent" validate:"required"`
+	Document *jsontext.Value `json:"document,omitempty"`
+	Markdown *string         `json:"markdown,omitempty"`
+	Number   int64           `json:"number"`
 }
 
 func (l LegacyReviewSource) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if l.Document != nil {
+		if v, ok := any(l.Document).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Document", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ListBranchesOutputBody struct {
@@ -2250,25 +2252,6 @@ type MoveRepoInputBody struct {
 
 func (m MoveRepoInputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
-}
-
-type MoveRepoOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	Repo   Repo    `json:"repo"`
-}
-
-func (m MoveRepoOutputBody) Validate() error {
-	var errors runtime.ValidationErrors
-	if v, ok := any(m.Repo).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Repo", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
 }
 
 type OverviewStats struct {
@@ -2679,7 +2662,7 @@ func (r Repo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
-type RepoDetails struct {
+type RepoStats struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema        *string `json:"$schema,omitempty"`
 	ClosedReviews int64   `json:"closed_reviews"`
@@ -2694,7 +2677,7 @@ type RepoDetails struct {
 	TotalJobs     int64   `json:"total_jobs"`
 }
 
-func (r RepoDetails) Validate() error {
+func (r RepoStats) Validate() error {
 	var errors runtime.ValidationErrors
 	if v, ok := any(r.Repo).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {

@@ -117,10 +117,10 @@ Git remote URL. Checkouts of `https://example.com/team/my-project.git` display
 as `my-project`, regardless of their directory names. Repositories without an
 identity use their directory name.
 
-Existing directory-based default names are corrected when the database opens.
-Custom names are preserved. This changes names only; stored repository paths and
-review associations stay the same. The checkout does not need to exist on disk
-for its name to be corrected.
+Names that match their checkout directory are corrected when the database opens,
+including names explicitly set to that directory name. Other custom names are
+preserved. Stored repository paths and review associations stay the same. The
+checkout does not need to exist on disk for its name to be corrected.
 
 You can customize the TUI display name with:
 

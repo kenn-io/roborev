@@ -1,15 +1,9 @@
 package main
 
 import (
-	"encoding/json/v2"
-	"fmt"
-	"io"
-	"net/http"
-
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/roborev/internal/daemon"
-	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func backfillTokensCmd() *cobra.Command {
@@ -28,26 +22,13 @@ will be skipped.`,
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			ep := getDaemonEndpoint()
-			request := daemon.ScanTokenUsageInput{}
-			request.Body.DryRun = dryRun
-			body, err := json.Marshal(request.Body)
+			report, err := getDaemonEndpoint().APIClient(0).ScanTokenUsage(cmd.Context(), &generated.ScanTokenUsageRequestOptions{
+				Body: &generated.ScanTokenUsageBody{DryRun: dryRun},
+			})
 			if err != nil {
-				return err
+				return daemonRequestError("backfill tokens", err)
 			}
-			response, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).ScanTokenUsageRaw(cmd.Context(), nil, roborevclient.WithBody(body))
-			if err != nil {
-				return fmt.Errorf("backfill tokens: %w", err)
-			}
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				message, _ := io.ReadAll(response.Body)
-				return fmt.Errorf("backfill tokens: %s", message)
-			}
-			var report daemon.ScanTokenUsageReport
-			if err := json.UnmarshalRead(response.Body, &report); err != nil {
-				return err
-			}
+
 			for _, job := range report.Jobs {
 				cmd.Printf("job %d (%s): %s\n", job.JobID, job.Agent, job.Summary)
 			}

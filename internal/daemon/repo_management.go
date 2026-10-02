@@ -12,25 +12,11 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// RepoDetails includes the stored repository and its review statistics.
-type RepoDetails struct {
-	Repo          *storage.Repo `json:"repo"`
-	TotalJobs     int           `json:"total_jobs"`
-	QueuedJobs    int           `json:"queued_jobs"`
-	RunningJobs   int           `json:"running_jobs"`
-	CompletedJobs int           `json:"completed_jobs"`
-	FailedJobs    int           `json:"failed_jobs"`
-	PassedReviews int           `json:"passed_reviews"`
-	FailedReviews int           `json:"failed_reviews"`
-	ClosedReviews int           `json:"closed_reviews"`
-	OpenReviews   int           `json:"open_reviews"`
-}
-
 type GetRepoInput struct {
 	Identifier string `query:"identifier" required:"true" doc:"Repository path or display name"`
 	ByPath     bool   `query:"by_path" doc:"Identifier was resolved to a filesystem path by the client"`
 }
-type GetRepoOutput struct{ Body RepoDetails }
+type GetRepoOutput struct{ Body *storage.RepoStats }
 
 type RenameRepoInput struct {
 	Body struct {
@@ -52,21 +38,11 @@ type MoveRepoInput struct {
 		Identity string `json:"identity"`
 	}
 }
-type MoveRepoOutput struct {
-	Body struct {
-		Repo *storage.Repo `json:"repo"`
-	}
-}
 
 type DeleteRepoInput struct {
 	Body struct {
 		RepoID  int64 `json:"repo_id" minimum:"1"`
 		Cascade bool  `json:"cascade"`
-	}
-}
-type DeleteRepoOutput struct {
-	Body struct {
-		Deleted bool `json:"deleted"`
 	}
 }
 
@@ -130,12 +106,7 @@ func (s *Server) humaGetRepo(_ context.Context, input *GetRepoInput) (*GetRepoOu
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("get stats: %v", err))
 	}
-	return &GetRepoOutput{Body: RepoDetails{
-		Repo: stats.Repo, TotalJobs: stats.TotalJobs, QueuedJobs: stats.QueuedJobs,
-		RunningJobs: stats.RunningJobs, CompletedJobs: stats.CompletedJobs, FailedJobs: stats.FailedJobs,
-		PassedReviews: stats.PassedReviews, FailedReviews: stats.FailedReviews,
-		ClosedReviews: stats.ClosedReviews, OpenReviews: stats.OpenReviews,
-	}}, nil
+	return &GetRepoOutput{Body: stats}, nil
 }
 
 func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*RenameRepoOutput, error) {
@@ -161,7 +132,7 @@ func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*Ren
 	return output, nil
 }
 
-func (s *Server) humaMoveRepo(_ context.Context, input *MoveRepoInput) (*MoveRepoOutput, error) {
+func (s *Server) humaMoveRepo(_ context.Context, input *MoveRepoInput) (*struct{}, error) {
 	if _, err := s.db.GetRepoByID(input.Body.RepoID); err != nil {
 		return nil, repoManagementError(err)
 	}
@@ -171,25 +142,17 @@ func (s *Server) humaMoveRepo(_ context.Context, input *MoveRepoInput) (*MoveRep
 		}
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("move repo: %v", err))
 	}
-	repo, err := s.db.GetRepoByID(input.Body.RepoID)
-	if err != nil {
-		return nil, repoManagementError(err)
-	}
-	output := &MoveRepoOutput{}
-	output.Body.Repo = repo
-	return output, nil
+	return &struct{}{}, nil
 }
 
-func (s *Server) humaDeleteRepo(_ context.Context, input *DeleteRepoInput) (*DeleteRepoOutput, error) {
+func (s *Server) humaDeleteRepo(_ context.Context, input *DeleteRepoInput) (*struct{}, error) {
 	if err := s.db.DeleteRepo(input.Body.RepoID, input.Body.Cascade); err != nil {
 		if errors.Is(err, storage.ErrRepoHasJobs) {
 			return nil, huma.Error409Conflict("cannot delete repository with existing jobs (use --cascade)")
 		}
 		return nil, repoManagementError(err)
 	}
-	output := &DeleteRepoOutput{}
-	output.Body.Deleted = true
-	return output, nil
+	return &struct{}{}, nil
 }
 
 func (s *Server) humaMergeRepos(_ context.Context, input *MergeReposInput) (*MergeReposOutput, error) {

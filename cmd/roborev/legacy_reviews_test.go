@@ -41,8 +41,7 @@ func TestLegacyReviewCommands(t *testing.T) {
 			assert.Equal(t, "postgres://archive.example.test/reviews", request.Body.PostgresURL)
 			assert.Equal(t, archiveID, request.Body.UUID)
 			assert.JSONEq(t, string(testutil.ReviewFixtureJSON("Converted review.")), string(request.Body.Document))
-			_, err := w.Write([]byte(`{"success":true}`))
-			assert.NoError(t, err)
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			assert.Equal(t, "/api/maintenance/legacy/import", r.URL.Path, "unexpected maintenance endpoint")
 		}

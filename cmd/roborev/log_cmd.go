@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -50,9 +48,9 @@ Examples:
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			api := getDaemonEndpoint().APIClient(30 * time.Second)
+			api := getDaemonEndpoint().APIClient(0)
 			if !rawOutput && !showPath {
-				err := renderJobLog(jobID, cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()), api)
+				err := renderJobLog(cmd.Context(), jobID, cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()), api)
 				if isBrokenPipe(err) {
 					return nil
 				}
@@ -73,11 +71,7 @@ Examples:
 				_, err = fmt.Fprintln(out, resp.Header.Get("X-Log-Path"))
 				return err
 			}
-			if rawOutput {
-				_, err = io.Copy(out, resp.Body)
-			} else {
-				err = renderLogResponse(resp, out, streamfmt.WriterIsTerminal(out))
-			}
+			_, err = io.Copy(out, resp.Body)
 			if isBrokenPipe(err) {
 				return nil
 			}
@@ -97,8 +91,8 @@ Examples:
 	return cmd
 }
 
-func renderJobLog(jobID int64, out io.Writer, isTTY bool, api *roborevclient.Client) error {
-	resp, err := api.GetJobLogRaw(context.Background(), &generated.GetJobLogRequestOptions{Query: &generated.GetJobLogQuery{JobID: new(strconv.FormatInt(jobID, 10))}})
+func renderJobLog(ctx context.Context, jobID int64, out io.Writer, isTTY bool, api *roborevclient.Client) error {
+	resp, err := api.GetJobLogRaw(ctx, &generated.GetJobLogRequestOptions{Query: &generated.GetJobLogQuery{JobID: new(strconv.FormatInt(jobID, 10))}})
 	if err != nil {
 		return fmt.Errorf("fetch job log: %w", err)
 	}
@@ -146,28 +140,13 @@ Examples:
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			body, err := json.Marshal(struct {
-				Days int `json:"days"`
-			}{maxDays})
+			result, err := getDaemonEndpoint().APIClient(0).CleanJobLogs(cmd.Context(), &generated.CleanJobLogsRequestOptions{
+				Body: &generated.CleanJobLogsBody{Days: int64(maxDays)},
+			})
 			if err != nil {
-				return err
+				return daemonRequestError("clean job logs", err)
 			}
-			resp, err := getDaemonEndpoint().APIClient(30*time.Second).CleanJobLogsRaw(cmd.Context(), nil, roborevclient.WithBody(body))
-			if err != nil {
-				return fmt.Errorf("clean job logs: %w", err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("clean job logs: daemon returned %s", resp.Status)
-			}
-			var result struct {
-				Removed int `json:"removed"`
-			}
-			if err := json.UnmarshalRead(resp.Body, &result); err != nil {
-				return err
-			}
-			n := result.Removed
-			fmt.Printf("Removed %d log file(s)\n", n)
+			fmt.Printf("Removed %d log file(s)\n", result.Removed)
 			return nil
 		},
 	}

@@ -273,3 +273,10 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 
 	return result.Responses, nil
 }
+
+func daemonRequestError(action string, err error) error {
+	if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
+		return fmt.Errorf("%s: %s", action, *problem.Detail)
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}

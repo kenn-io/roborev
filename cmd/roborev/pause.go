@@ -2,24 +2,17 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/spf13/cobra"
 )
-
-type queuePauseResponse struct {
-	QueuePaused bool `json:"queue_paused"`
-}
 
 func pauseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pause",
 		Short: "Pause queue processing",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return setQueuePaused(true)
+			return setQueuePaused(cmd.Context(), true)
 		},
 	}
 }
@@ -29,12 +22,12 @@ func unpauseCmd() *cobra.Command {
 		Use:   "unpause",
 		Short: "Resume queue processing",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return setQueuePaused(false)
+			return setQueuePaused(cmd.Context(), false)
 		},
 	}
 }
 
-func setQueuePaused(paused bool) error {
+func setQueuePaused(ctx context.Context, paused bool) error {
 	// For a local daemon, carry the desired pause state into daemon startup so a
 	// cold-started or restarted daemon comes up with the flag already applied,
 	// before its workers can claim jobs. startDaemon passes it to the new
@@ -49,24 +42,14 @@ func setQueuePaused(paused bool) error {
 	}
 
 	ep := getDaemonEndpoint()
-	api := ep.APIClient(2 * time.Second)
-	update := api.UnpauseQueueRaw
+	api := ep.APIClient(0)
+	update := api.UnpauseQueue
 	if paused {
-		update = api.PauseQueueRaw
+		update = api.PauseQueue
 	}
-	resp, err := update(context.Background())
+	result, err := update(ctx)
 	if err != nil {
-		return fmt.Errorf("update queue pause state: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update queue pause state: daemon returned %s", resp.Status)
-	}
-
-	var result queuePauseResponse
-	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
-		return fmt.Errorf("parse queue pause response: %w", err)
+		return daemonRequestError("update queue pause state", err)
 	}
 
 	if result.QueuePaused {

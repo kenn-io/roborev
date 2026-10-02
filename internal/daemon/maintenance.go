@@ -13,7 +13,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/roborev/internal/backfill"
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -94,18 +93,12 @@ type ScanTokenUsageReport struct {
 
 type ScanTokenUsageOutput struct{ Body ScanTokenUsageReport }
 
-func backfillCostFetchConfig(cfg *config.Config) tokens.FetchConfig {
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	return tokens.FetchConfig{Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(), RequireCLI: true}
-}
-
 func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageInput) (*ScanTokenUsageOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	fetchConfig := backfillCostFetchConfig(s.configWatcher.Config())
+	cfg := s.configWatcher.Config()
+	fetchConfig := tokens.FetchConfig{Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(), RequireCLI: true}
 	jobs, err := s.db.ListJobs("", "", 0, 0)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list jobs", err)
@@ -146,9 +139,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		var fetchedUsage *tokens.Usage
 		var fetchErr error
 		if agentsviewCandidates[job.ID] {
-			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			fetchedUsage, fetchErr = tokens.FetchForSessionWithConfig(fetchCtx, job.SessionID, fetchConfig)
-			cancel()
+			fetchedUsage, fetchErr = tokens.FetchForSessionWithConfig(ctx, job.SessionID, fetchConfig)
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -299,13 +290,7 @@ type ImportLegacyReviewInput struct {
 	}
 }
 
-type ImportLegacyReviewOutput struct {
-	Body struct {
-		Success bool `json:"success"`
-	}
-}
-
-func (s *Server) humaImportLegacyReview(ctx context.Context, input *ImportLegacyReviewInput) (*ImportLegacyReviewOutput, error) {
+func (s *Server) humaImportLegacyReview(ctx context.Context, input *ImportLegacyReviewInput) (*struct{}, error) {
 	if err := s.validateLegacyTarget(ctx, input.Body.LegacyMaintenanceTarget); err != nil {
 		return nil, err
 	}
@@ -341,9 +326,7 @@ func (s *Server) humaImportLegacyReview(ctx context.Context, input *ImportLegacy
 		}
 		return nil, huma.Error500InternalServerError("import legacy review", err)
 	}
-	out := &ImportLegacyReviewOutput{}
-	out.Body.Success = true
-	return out, nil
+	return &struct{}{}, nil
 }
 
 type CleanJobLogsInput struct {

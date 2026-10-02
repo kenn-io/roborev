@@ -306,3 +306,33 @@ func TestMergeTokenUsageCarriesCacheCreationTokens(t *testing.T) {
 	require.NotNil(t, merged)
 	assert.Equal(t, int64(8192), merged.CacheCreationTokens)
 }
+
+func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testing.T) {
+	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	got := MergeTokenUsage(existing, fetched)
+
+	assert.Equal(t, int64(28800), got.OutputTokens)
+	assert.Equal(t, int64(118000), got.PeakContextTokens)
+	assert.True(t, got.HasCost)
+	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *testing.T) {
+	existing := `{"input_tokens":79150,"cached_input_tokens":2560,` +
+		`"total_output_tokens":3389,"usage_source":"job_log_turn_completed",` +
+		`"thread_id":"thread-123","event_offset":91}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	got := MergeTokenUsage(existing, fetched)
+
+	assert.Equal(t, int64(79150), got.InputTokens)
+	assert.Equal(t, int64(2560), got.CachedInputTokens)
+	assert.Equal(t, int64(3389), got.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", got.UsageSource)
+	assert.Equal(t, "thread-123", got.ThreadID)
+	assert.Equal(t, int64(91), got.EventOffset)
+	assert.True(t, got.HasCost)
+	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}

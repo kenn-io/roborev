@@ -3,7 +3,7 @@
  */
 import type { Repo } from "./repo";
 
-export interface RepoDetails {
+export interface RepoStats {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   closed_reviews: number;

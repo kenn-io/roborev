@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,12 +35,9 @@ func syncStatusCmd() *cobra.Command {
 				return err
 			}
 			ep := getDaemonEndpoint()
-			status, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).GetSyncStatus(cmd.Context())
+			status, err := ep.APIClient(0).GetSyncStatus(cmd.Context())
 			if err != nil {
-				if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
-					return fmt.Errorf("fetch sync status: %s", *problem.Detail)
-				}
-				return fmt.Errorf("fetch sync status: %w", err)
+				return daemonRequestError("fetch sync status", err)
 			}
 			if !status.Enabled {
 				cmd.Println("Sync: disabled")

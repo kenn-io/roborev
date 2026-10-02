@@ -1015,21 +1015,6 @@ components:
         - repo_id
         - cascade
       type: object
-    DeleteRepoOutputBody:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/DeleteRepoOutputBody.json
-          format: uri
-          readOnly: true
-          type: string
-        deleted:
-          type: boolean
-      required:
-        - deleted
-      type: object
     DurationStats:
       additionalProperties: false
       properties:
@@ -2052,21 +2037,6 @@ components:
       required:
         - document
       type: object
-    ImportLegacyReviewOutputBody:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/ImportLegacyReviewOutputBody.json
-          format: uri
-          readOnly: true
-          type: string
-        success:
-          type: boolean
-      required:
-        - success
-      type: object
     Input:
       additionalProperties: false
       properties:
@@ -2507,21 +2477,6 @@ components:
         - repo_id
         - path
         - identity
-      type: object
-    MoveRepoOutputBody:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/MoveRepoOutputBody.json
-          format: uri
-          readOnly: true
-          type: string
-        repo:
-          $ref: "#/components/schemas/Repo"
-      required:
-        - repo
       type: object
     OverviewStats:
       additionalProperties: false
@@ -3091,13 +3046,13 @@ components:
         - name
         - created_at
       type: object
-    RepoDetails:
+    RepoStats:
       additionalProperties: false
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
           examples:
-            - https://example.com/RepoDetails.json
+            - https://example.com/RepoStats.json
           format: uri
           readOnly: true
           type: string
@@ -5765,12 +5720,8 @@ paths:
               $ref: "#/components/schemas/ImportLegacyReviewInputBody"
         required: true
       responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ImportLegacyReviewOutputBody"
-          description: OK
+        "204":
+          description: No Content
         default:
           content:
             application/problem+json:
@@ -5969,12 +5920,8 @@ paths:
               $ref: "#/components/schemas/DeleteRepoInputBody"
         required: true
       responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteRepoOutputBody"
-          description: OK
+        "204":
+          description: No Content
         "404":
           content:
             application/problem+json:
@@ -6026,7 +5973,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RepoDetails"
+                $ref: "#/components/schemas/RepoStats"
           description: OK
         default:
           content:
@@ -6072,12 +6019,8 @@ paths:
               $ref: "#/components/schemas/MoveRepoInputBody"
         required: true
       responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MoveRepoOutputBody"
-          description: OK
+        "204":
+          description: No Content
         "404":
           content:
             application/problem+json:

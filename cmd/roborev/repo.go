@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -140,7 +139,7 @@ Shows the display name, path, and number of reviews for each repository.`,
 
 			result, err := api.ListRepos(cmd.Context(), &generated.ListReposRequestOptions{})
 			if err != nil {
-				return repoRequestError("list repos", err)
+				return daemonRequestError("list repos", err)
 			}
 
 			repos, total := result.Repos, result.TotalCount
@@ -189,7 +188,7 @@ Examples:
 				Query: &generated.GetRepoQuery{Identifier: identifier, ByPath: new(filepath.IsAbs(identifier))},
 			})
 			if err != nil {
-				return repoRequestError("get repository", err)
+				return daemonRequestError("get repository", err)
 			}
 
 			fmt.Printf("Repository: %s\n", stats.Repo.Name)
@@ -229,8 +228,8 @@ This changes the name stored in the database, which is shown in the TUI
 and CLI output. It does NOT affect the filesystem or git repository.
 
 NOTE: This is different from the display_name setting in .roborev.toml.
-The database name is set once when a repo is first tracked (from the
-directory name). Use this command to change it after the fact.
+The database name defaults to the repository identity, or the directory name
+when no identity is stored. Use this command to change it after the fact.
 
 When to use rename vs move vs merge:
   - Use RENAME when you have ONE repo entry and want a different name
@@ -270,7 +269,7 @@ Examples:
 				Body: &generated.RenameRepoBody{Identifier: identifier, Name: newName, ByPath: filepath.IsAbs(identifier)},
 			})
 			if err != nil {
-				return repoRequestError("rename repo", err)
+				return daemonRequestError("rename repo", err)
 			}
 
 			fmt.Printf("Renamed repository to %q\n", newName)
@@ -340,7 +339,7 @@ Examples:
 				Query: &generated.GetRepoQuery{Identifier: identifier, ByPath: new(filepath.IsAbs(identifier))},
 			})
 			if err != nil {
-				return repoRequestError("get repository", err)
+				return daemonRequestError("get repository", err)
 			}
 			repo := stats.Repo
 
@@ -352,7 +351,7 @@ Examples:
 			if _, err := api.MoveRepo(cmd.Context(), &generated.MoveRepoRequestOptions{
 				Body: &generated.MoveRepoBody{RepoID: repo.ID, Path: newPath, Identity: newIdentity},
 			}); err != nil {
-				return repoRequestError("move repo", err)
+				return daemonRequestError("move repo", err)
 			}
 
 			fmt.Printf("Moved repository %q to %s\n", repo.Name, newPath)
@@ -412,7 +411,7 @@ Examples:
 				Query: &generated.GetRepoQuery{Identifier: identifier, ByPath: new(filepath.IsAbs(identifier))},
 			})
 			if err != nil {
-				return repoRequestError("get repository", err)
+				return daemonRequestError("get repository", err)
 			}
 			repo := stats.Repo
 
@@ -438,7 +437,7 @@ Examples:
 			if _, err := api.DeleteRepo(cmd.Context(), &generated.DeleteRepoRequestOptions{
 				Body: &generated.DeleteRepoBody{RepoID: repo.ID, Cascade: cascade},
 			}); err != nil {
-				return repoRequestError("delete repo", err)
+				return daemonRequestError("delete repo", err)
 			}
 
 			if cascade {
@@ -510,13 +509,13 @@ Examples:
 				Query: &generated.GetRepoQuery{Identifier: sourceIdent, ByPath: new(filepath.IsAbs(sourceIdent))},
 			})
 			if err != nil {
-				return repoRequestError("get source repository", err)
+				return daemonRequestError("get source repository", err)
 			}
 			targetStats, err := api.GetRepo(cmd.Context(), &generated.GetRepoRequestOptions{
 				Query: &generated.GetRepoQuery{Identifier: targetIdent, ByPath: new(filepath.IsAbs(targetIdent))},
 			})
 			if err != nil {
-				return repoRequestError("get target repository", err)
+				return daemonRequestError("get target repository", err)
 			}
 			source, target := sourceStats.Repo, targetStats.Repo
 			if source.ID == target.ID {
@@ -542,7 +541,7 @@ Examples:
 				Body: &generated.MergeReposBody{SourceID: source.ID, TargetID: target.ID},
 			})
 			if err != nil {
-				return repoRequestError("merge repos", err)
+				return daemonRequestError("merge repos", err)
 			}
 
 			fmt.Printf("Merged %d jobs from %q into %q\n", result.Moved, source.Name, target.Name)
@@ -559,12 +558,5 @@ func repoAPIClient() (*roborevclient.Client, error) {
 	if err := ensureDaemon(); err != nil {
 		return nil, fmt.Errorf("daemon not running: %w", err)
 	}
-	return getDaemonEndpoint().APIClient(30 * time.Second), nil
-}
-
-func repoRequestError(action string, err error) error {
-	if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
-		return fmt.Errorf("%s: %s", action, *problem.Detail)
-	}
-	return fmt.Errorf("%s: %w", action, err)
+	return getDaemonEndpoint().APIClient(0), nil
 }

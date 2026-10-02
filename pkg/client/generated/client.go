@@ -148,7 +148,7 @@ type ClientInterface interface {
 	ExportLegacyReviewsWithResponse(ctx context.Context, options *ExportLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportLegacyReviewsResp, error)
 
 	// ImportLegacyReview Restore an archived review from a structured document
-	ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResponse, error)
+	ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	ImportLegacyReviewWithResponse(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResp, error)
 
 	// ScanTokenUsage Recover token usage from daemon job logs and AgentsView
@@ -184,7 +184,7 @@ type ClientInterface interface {
 	ListReposWithResponse(ctx context.Context, options *ListReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListReposResp, error)
 
 	// DeleteRepo Delete a repository and optionally its reviews
-	DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResponse, error)
+	DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	DeleteRepoWithResponse(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResp, error)
 
 	// GetRepo Get repository details and statistics
@@ -196,7 +196,7 @@ type ClientInterface interface {
 	MergeReposWithResponse(ctx context.Context, options *MergeReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeReposResp, error)
 
 	// MoveRepo Update a repository's path and identity
-	MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResponse, error)
+	MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	MoveRepoWithResponse(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResp, error)
 
 	// RegisterRepo Register a repository
@@ -2229,7 +2229,7 @@ func (c *Client) ExportLegacyReviews(ctx context.Context, options *ExportLegacyR
 }
 
 // ImportLegacyReview Restore an archived review from a structured document
-func (c *Client) ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResponse, error) {
+func (c *Client) ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/import",
@@ -2243,9 +2243,9 @@ func (c *Client) ImportLegacyReview(ctx context.Context, options *ImportLegacyRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*ImportLegacyReviewResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != 204 {
 			target := new(ImportLegacyReviewErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2267,22 +2267,7 @@ func (c *Client) ImportLegacyReview(ctx context.Context, options *ImportLegacyRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(ImportLegacyReviewResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "ImportLegacyReviewResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
+		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/legacy/import")
@@ -2800,7 +2785,7 @@ func (c *Client) ListRepos(ctx context.Context, options *ListReposRequestOptions
 }
 
 // DeleteRepo Delete a repository and optionally its reviews
-func (c *Client) DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResponse, error) {
+func (c *Client) DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/delete",
@@ -2814,9 +2799,9 @@ func (c *Client) DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptio
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*DeleteRepoResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != 204 {
 			target := new(DeleteRepoErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -2838,22 +2823,7 @@ func (c *Client) DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptio
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(DeleteRepoResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "DeleteRepoResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
+		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/delete")
@@ -2997,7 +2967,7 @@ func (c *Client) MergeRepos(ctx context.Context, options *MergeReposRequestOptio
 }
 
 // MoveRepo Update a repository's path and identity
-func (c *Client) MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResponse, error) {
+func (c *Client) MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/move",
@@ -3011,9 +2981,9 @@ func (c *Client) MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, 
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*MoveRepoResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != 204 {
 			target := new(MoveRepoErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -3035,22 +3005,7 @@ func (c *Client) MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, 
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(MoveRepoResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "MoveRepoResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
+		return nil, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/move")

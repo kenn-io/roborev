@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func postRepoManagement(t *testing.T, server *Server, action string, body any) *httptest.ResponseRecorder {
@@ -34,7 +36,7 @@ func TestRepoManagementDetailsAndRename(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	var details RepoDetails
+	var details storage.RepoStats
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &details))
 	assert.Equal(t, repo.ID, details.Repo.ID)
 	assert.Equal(t, 1, details.TotalJobs)
@@ -69,7 +71,7 @@ func TestRepoManagementMoveAndConflict(t *testing.T) {
 	moved := postRepoManagement(t, server, "move", map[string]any{
 		"repo_id": repo.ID, "path": path, "identity": "local://moved",
 	})
-	require.Equal(t, http.StatusOK, moved.Code, moved.Body.String())
+	require.Equal(t, http.StatusNoContent, moved.Code, moved.Body.String())
 	stored, err = db.GetRepoByID(repo.ID)
 	require.NoError(t, err)
 	assert.Equal(t, path, stored.RootPath)
@@ -85,7 +87,7 @@ func TestRepoManagementDeleteRequiresCascade(t *testing.T) {
 	_, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	deleted := postRepoManagement(t, server, "delete", map[string]any{"repo_id": job.RepoID, "cascade": true})
-	require.Equal(t, http.StatusOK, deleted.Code, deleted.Body.String())
+	require.Equal(t, http.StatusNoContent, deleted.Code, deleted.Body.String())
 	_, err = db.GetRepoByID(job.RepoID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 	_, err = db.GetJobByID(job.ID)
@@ -154,12 +156,12 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	var details RepoDetails
+	var details storage.RepoStats
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &details))
 	require.Equal(t, namedRepo.ID, details.Repo.ID)
 
 	deleted := postRepoManagement(t, server, "delete", map[string]any{"repo_id": details.Repo.ID, "cascade": false})
-	require.Equal(t, http.StatusOK, deleted.Code, deleted.Body.String())
+	require.Equal(t, http.StatusNoContent, deleted.Code, deleted.Body.String())
 	_, err = db.GetRepoByID(namedRepo.ID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 	storedPathRepo, err := db.GetRepoByID(pathRepo.ID)
@@ -170,7 +172,7 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 	pathRecorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(pathRecorder, pathRequest)
 	require.Equal(t, http.StatusOK, pathRecorder.Code, pathRecorder.Body.String())
-	var pathDetails RepoDetails
+	var pathDetails storage.RepoStats
 	require.NoError(t, json.Unmarshal(pathRecorder.Body.Bytes(), &pathDetails))
 	assert.Equal(t, pathRepo.ID, pathDetails.Repo.ID)
 

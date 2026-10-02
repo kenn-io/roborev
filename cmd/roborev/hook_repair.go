@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -142,7 +141,7 @@ func registeredHookRepos(ctx context.Context) ([]string, error) {
 	if err := ensureDaemon(); err != nil {
 		return nil, err
 	}
-	repos, err := getDaemonEndpoint().APIClient(5*time.Second).ListRepos(ctx, &generated.ListReposRequestOptions{})
+	repos, err := getDaemonEndpoint().APIClient(0).ListRepos(ctx, &generated.ListReposRequestOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list registered repositories: %w", err)
 	}

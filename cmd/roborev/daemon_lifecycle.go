@@ -230,6 +230,16 @@ func registerRepo(repoPath string) error {
 // Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
 // restarting (useful for development with go run).
 func ensureDaemon() error {
+	// An explicit endpoint is caller-managed. The command reports its request
+	// error without discovering, starting, or restarting a local daemon.
+	if serverAddr != "" {
+		ep, err := daemon.ParseEndpoint(serverAddr)
+		if err != nil {
+			return fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
+		}
+		_, err = daemon.ProbeDaemon(ep, 2*time.Second)
+		return err
+	}
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
 	// First check runtime files for any running daemon

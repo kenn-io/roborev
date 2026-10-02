@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,4 +44,36 @@ func TestDaemonRunRejectsOtherOwnerBeforeMigration(t *testing.T) {
 	marker, err := read.GetSyncState("repo_names_from_identity")
 	require.NoError(t, err)
 	require.Empty(t, marker, "rejected startup must not run the pending migration")
+}
+
+func TestDaemonDatabaseAliasesHaveOneOwner(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprint(relative), func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "reviews.db")
+			alias := filepath.Join(dir, "alias.db")
+			destination := target
+			if relative {
+				destination = filepath.Base(target)
+			}
+			if err := os.Symlink(destination, alias); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			owner, err := lockDaemonDatabase(alias)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, owner.Close()) })
+			for _, created := range []bool{false, true} {
+				if created {
+					db, err := storage.Open(alias)
+					require.NoError(t, err)
+					require.NoError(t, db.Close())
+				}
+				other, err := lockDaemonDatabase(target)
+				if other != nil {
+					require.NoError(t, other.Close())
+				}
+				require.ErrorContains(t, err, "already owned by a daemon")
+			}
+		})
+	}
 }

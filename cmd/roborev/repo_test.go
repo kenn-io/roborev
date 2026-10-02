@@ -2,15 +2,21 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/daemon"
 )
 
 func TestResolveRepoIdentifier(t *testing.T) {
@@ -158,10 +164,10 @@ func TestRepoCommandsUseDaemonAPI(t *testing.T) {
 							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": source}))
 						case "/api/repos/move":
 							assert.Equal(t, map[string]any{"repo_id": float64(11), "path": newPath, "identity": "local://" + filepath.FromSlash(newPath)}, body)
-							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": source}))
+							w.WriteHeader(http.StatusNoContent)
 						case "/api/repos/delete":
 							assert.Equal(t, map[string]any{"repo_id": float64(11), "cascade": true}, body)
-							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"deleted": true}))
+							w.WriteHeader(http.StatusNoContent)
 						case "/api/repos/merge":
 							assert.Equal(t, map[string]any{"source_id": float64(11), "target_id": float64(22)}, body)
 							require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"moved": 3}))
@@ -296,4 +302,55 @@ func TestRepoCommandsSendResolvedPathKind(t *testing.T) {
 			assert.Equal(t, 1, calls)
 		})
 	}
+}
+
+func TestRepoCommandExplicitServerDoesNotManageLocalDaemon(t *testing.T) {
+	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+	patchServerAddr(t, "http://127.0.0.1:7373")
+	origGet, origStart, origRestart, origCleanup := getAnyRunningDaemon, startDaemonForEnsure, restartDaemonForEnsure, cleanupZombieDaemons
+	t.Cleanup(func() {
+		getAnyRunningDaemon, startDaemonForEnsure, restartDaemonForEnsure, cleanupZombieDaemons = origGet, origStart, origRestart, origCleanup
+	})
+	var localCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { localCalls++; return nil, ErrDaemonNotRunning }
+	startDaemonForEnsure = func() error { localCalls++; return nil }
+	restartDaemonForEnsure = func() error { localCalls++; return nil }
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { localCalls++; return 0 }
+	command := repoCmd()
+	command.SetArgs([]string{"rename", "project-a", "friendly"})
+	command.SilenceUsage = true
+	require.Error(t, command.Execute())
+	assert.Zero(t, localCalls)
+	command = daemonCmd()
+	command.SetArgs([]string{"start"})
+	command.SilenceUsage = true
+	require.Error(t, command.Execute(), "daemon start must check the selected endpoint")
+	assert.Zero(t, localCalls)
+}
+
+func TestRepoCommandWaitsForMutation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/ping" {
+				newMockRefineState().handlePing(w, r)
+				return
+			}
+			time.Sleep(31 * time.Second)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"repo":{"id":1,"name":"friendly","root_path":"/repo","created_at":"2026-01-01T00:00:00Z"}}`)
+		}))
+		origTransport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = origTransport })
+		patchServerAddr(t, "http://127.0.0.1:7373")
+		command := repoCmd()
+		command.SetArgs([]string{"rename", "project-a", "friendly"})
+		command.SilenceUsage = true
+		require.NoError(t, command.Execute())
+	})
 }
