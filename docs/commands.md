@@ -1167,7 +1167,7 @@ hooks, or edits config.
 |------|--------------------|
 | Configuration | Global and repo config load and validate; unknown (usually misspelled) keys; `.roborev.toml` on the default branch parses |
 | Daemon | Running, same version as the CLI, queue not paused, healthy components, recent daemon errors |
-| Agents | Agents the daemon can run; agents found in your shell but not on the daemon's `PATH`; what runs post-commit and manual reviews (the selected review panel's members and synthesis agent, or the single review agent and its backup); every agent named in config. The daemon resolves each agent itself |
+| Agents | Agents the daemon can run; agents found in your shell but not on the daemon's `PATH`; the review agent and its backup for reviews that no panel runs; every agent named in config. The daemon resolves each agent itself |
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |

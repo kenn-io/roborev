@@ -52,8 +52,6 @@ export * from "./deleteRepoInputBody";
 export * from "./diagnosis";
 export * from "./doctorAgentsOutputBody";
 export * from "./doctorAgentsParams";
-export * from "./doctorPanel";
-export * from "./doctorPanelMember";
 export * from "./durationStats";
 export * from "./enqueueCreatedResponse";
 export * from "./enqueueRequest";

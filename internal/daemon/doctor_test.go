@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 )
 
 func TestDoctorAgentsReportsDaemonView(t *testing.T) {
@@ -68,39 +67,4 @@ func TestDoctorAgentsReportsDaemonView(t *testing.T) {
 	code, out = get(broken)
 	require.Equal(t, http.StatusOK, code)
 	assert.NotEmpty(out.Body.RepoConfigError)
-}
-
-func TestResolveDoctorPanels(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	repo := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(`
-[review]
-hook_review_panel = "guard"
-default_panel = "guard"
-
-[review.subagents.ok]
-agent = "test"
-
-[review.subagents.missing]
-agent = "codex"
-allow_failure = true
-
-[review.panels.guard]
-members = ["ok", "missing"]
-synthesis_agent = "test"
-`), 0o600))
-	repoCfg, err := config.LoadRepoConfig(repo)
-	require.NoError(t, err)
-
-	panels := ResolveDoctorPanels(repo, repoCfg, config.DefaultConfig())
-	require.Len(t, panels, 1)
-	assert := assert.New(t)
-	p := panels[0]
-	assert.Equal("guard", p.Name)
-	assert.Equal([]string{"post_commit", "manual"}, p.UsedFor)
-	assert.Empty(p.Error)
-	require.Len(t, p.Members, 2)
-	assert.Equal("test", p.Members[0].Agent)
-	assert.NotEmpty(p.Members[1].Error, "an explicit agent that is not installed cannot be selected, even with allow_failure")
-	assert.True(p.Synthesis.Available)
 }

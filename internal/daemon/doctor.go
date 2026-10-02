@@ -63,59 +63,5 @@ func (s *Server) humaDoctorAgents(
 		}
 		resp.Body.HookTools = append(resp.Body.HookTools, d)
 	}
-	resp.Body.Panels = ResolveDoctorPanels(repo, repoCfg, cfg)
 	return resp, nil
-}
-
-// ResolveDoctorPanels resolves the panels selected for post-commit and manual
-// reviews with the same member and synthesis resolution the daemon uses when
-// it queues a panel review. Agent lookups use the calling process's PATH, so
-// the daemon's answer is authoritative; the CLI calls this directly only when
-// the daemon cannot be asked.
-func ResolveDoctorPanels(repo string, repoCfg *config.RepoConfig, cfg *config.Config) []DoctorPanel {
-	merged := config.MergeReviewConfigFromConfig(repoCfg, cfg)
-	var panels []DoctorPanel
-	add := func(name, use string) {
-		if name == "" {
-			return
-		}
-		for i := range panels {
-			if panels[i].Name == name {
-				panels[i].UsedFor = append(panels[i].UsedFor, use)
-				return
-			}
-		}
-		panels = append(panels, DoctorPanel{Name: name, UsedFor: []string{use}})
-	}
-	add(merged.HookPanel, "post_commit")
-	add(merged.DefaultPanel, "manual")
-
-	for i := range panels {
-		p := &panels[i]
-		members, synth, err := config.ResolvePanel(p.Name, repo, cfg)
-		if err != nil {
-			p.Error = err.Error()
-			continue
-		}
-		for _, m := range members {
-			dm := DoctorPanelMember{Name: m.Name}
-			selected, _, _, _, err := resolvePanelMemberExecution(m, targetDescriptor{}, repoCfg, cfg)
-			if err != nil {
-				dm.Error = err.Error()
-			} else {
-				dm.Agent = selected
-			}
-			p.Members = append(p.Members, dm)
-		}
-		p.Synthesis = agent.Diagnosis{Name: synth.Agent}
-		if a, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, synth.Agent, cfg, synth.BackupAgent); err != nil {
-			p.Synthesis.Error = err.Error()
-		} else {
-			p.Synthesis.Available = true
-			if ca, ok := a.(agent.CommandAgent); ok {
-				p.Synthesis.Command = ca.CommandName()
-			}
-		}
-	}
-	return panels
 }
