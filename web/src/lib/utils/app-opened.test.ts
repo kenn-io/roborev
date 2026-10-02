@@ -58,7 +58,9 @@ describe("setupAppOpenedReporting", () => {
     const request = fetchMock.mock.calls[0]![0];
     expect(new URL(request.url).pathname).toBe("/api/telemetry/events");
     expect(request.method).toBe("POST");
-    expect(await request.text()).toBe('{"event":"app_opened"}');
+    expect(await request.text()).toBe(
+      '{"event":"app_opened","properties":{"surface":"web"}}',
+    );
     expect(request.headers.get("X-Roborev-Web-Session")).toBe("tab-session");
     expect(request.headers.get("X-Roborev-CSRF")).toBe("csrf-value");
     expect(request.headers.get("Content-Type")).toBe("application/json");

@@ -15,5 +15,8 @@ test("reports app_opened through the daemon when the web UI loads", async ({
 
   expect(response.status()).toBe(202);
   expect(await response.json()).toEqual({ status: "disabled" });
-  expect(response.request().postDataJSON()).toEqual({ event: "app_opened" });
+  expect(response.request().postDataJSON()).toEqual({
+    event: "app_opened",
+    properties: { surface: "web" },
+  });
 });

@@ -13,6 +13,10 @@ All notable changes to roborev, grouped by minor release.
     loads and on the first window focus of each later UTC day.
     `ROBOREV_TELEMETRY_ENABLED=0` turns it off with the daemon events. See
     [Telemetry](/docs/configuration/#telemetry).
+- `roborev tui` reports an anonymous `app_opened` event through the daemon each
+    time it starts, and web and TUI events carry `surface` (`web` or `tui`).
+    `ROBOREV_TELEMETRY_ENABLED=0` turns it off. See
+    [Telemetry](/docs/configuration/#telemetry).
 
 **Improvements**
 

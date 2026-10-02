@@ -25,6 +25,11 @@ const (
 	EventDaemonStarted = "daemon_started"
 	EventDaemonActive  = "daemon_active"
 	EventAppOpened     = "app_opened"
+
+	// PropertySurface names the interface that sent app_opened; values come only from the fixed list below.
+	PropertySurface = "surface"
+	SurfaceWeb      = "web"
+	SurfaceTUI      = "tui"
 )
 
 var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
@@ -97,7 +102,8 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 	return []kittelemetry.PostHogOption{
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
-		kittelemetry.WithAllowedEvent(EventAppOpened),
+		kittelemetry.WithAllowedEvent(EventAppOpened,
+			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI))),
 	}
 }
 

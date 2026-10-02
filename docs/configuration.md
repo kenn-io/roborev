@@ -1590,9 +1590,11 @@ architecture, and an anonymous install ID stored in the local database.
 
 The web UI also reports an anonymous `app_opened` event to the daemon when it
 loads and on the first window focus of each later UTC day, so an open tab counts
-once a day. The daemon sends it with the same install ID, version, OS and
-architecture and no other properties. The browser never contacts PostHog, and
-the same environment variables turn it off.
+once a day. `roborev tui` reports the same event once each time it starts. The
+daemon sends it with the same install ID, version, OS and architecture plus
+`surface`, which is `web` or `tui` and nothing else. The browser and the TUI
+never contact PostHog. The same environment variables turn it off; the daemon
+reads them, and so does the `roborev tui` process.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
@@ -1605,6 +1607,7 @@ environment variable:
 ```bash
 ROBOREV_TELEMETRY_ENABLED=0 roborev daemon run
 TELEMETRY_ENABLED=0 roborev daemon run
+ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ```
 
 Telemetry is disabled in Go test processes.

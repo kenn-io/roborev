@@ -6,10 +6,11 @@ import (
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
-const telemetryEventsPath = "/api/telemetry/events"
+// TelemetryEventsPath is the core-listener route the web UI and the TUI post product events to.
+const TelemetryEventsPath = "/api/telemetry/events"
 
 func (s *Server) registerTelemetryCaptureRoute(mux *http.ServeMux) {
-	mux.HandleFunc(http.MethodPost+" "+telemetryEventsPath, s.handleTelemetryEvent)
+	mux.HandleFunc(http.MethodPost+" "+TelemetryEventsPath, s.handleTelemetryEvent)
 }
 
 // handleTelemetryEvent reads the reporter per request because SetTelemetry runs after route registration.

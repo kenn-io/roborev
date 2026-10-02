@@ -949,6 +949,7 @@ func (m model) Init() tea.Cmd {
 		m.fetchStatus(),
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
+		m.reportAppOpened(),
 	}
 	if autoColorMode() && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
 		// Bubble Tea owns stdin and recognizes late replies alongside user input.

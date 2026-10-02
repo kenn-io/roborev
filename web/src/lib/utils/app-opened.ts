@@ -14,7 +14,10 @@ function reportAppOpened(): void {
   void roborevFetch(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event: "app_opened" }),
+    body: JSON.stringify({
+      event: "app_opened",
+      properties: { surface: "web" },
+    }),
   }).catch(() => undefined);
 }
 

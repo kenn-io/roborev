@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/update"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	daemonclient "go.kenn.io/roborev/pkg/client/generated"
@@ -390,6 +391,34 @@ func (m model) checkForUpdate() tea.Cmd {
 			return updateCheckMsg{} // No update or error
 		}
 		return updateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
+	}
+}
+
+// reportAppOpened tells the daemon the TUI started; its result never reaches Update, so a slow, old or missing daemon changes nothing on screen.
+func (m model) reportAppOpened() tea.Cmd {
+	if !telemetry.EnabledFromEnv() {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"event":      telemetry.EventAppOpened,
+		"properties": map[string]string{telemetry.PropertySurface: telemetry.SurfaceTUI},
+	})
+	if err != nil {
+		return nil
+	}
+	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
+	return func() tea.Msg {
+		req, err := http.NewRequestWithContext(m.apiContext(), http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil
+		}
+		_ = resp.Body.Close()
+		return nil
 	}
 }
 

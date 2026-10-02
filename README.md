@@ -459,9 +459,11 @@ enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
 ID.
 The web UI also reports an `app_opened` event to the daemon when it loads and on
-the first window focus of each later UTC day. The daemon sends it with the same
-install ID and default fields and no other properties; the browser only talks to
-the daemon.
+the first window focus of each later UTC day, and `roborev tui` reports one each
+time it starts. The daemon sends it with the same install ID and default fields
+plus `surface` (`web` or `tui`). The browser and the TUI only talk to the
+daemon, and the TUI sends nothing when either opt-out variable is set in its own
+environment.
 Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider

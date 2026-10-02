@@ -38,7 +38,7 @@ func serveTelemetryCapture(handler http.Handler, request *http.Request) *httptes
 }
 
 func newTelemetryCaptureRequest(method string, body []byte) *http.Request {
-	request := httptest.NewRequest(method, telemetryEventsPath, bytes.NewReader(body))
+	request := httptest.NewRequest(method, TelemetryEventsPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	return request
 }
@@ -63,6 +63,12 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 		{
 			name:       "allowed event",
 			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened"}`)),
+			wantStatus: http.StatusAccepted,
+			wantBody:   `{"status":"disabled"}`,
+		},
+		{
+			name:       "tui body with surface",
+			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"tui"}}`)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
@@ -153,7 +159,7 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 		withSession(request).Header.Set(WebCSRFHeader, credentials.CSRF)
 		return request
 	}
-	foreignOrigin := withCredentials(browserRequest(http.MethodPost, telemetryEventsPath, appOpened))
+	foreignOrigin := withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened))
 	foreignOrigin.Header.Set("Origin", "http://evil.example")
 
 	tests := []struct {
@@ -164,13 +170,13 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 	}{
 		{
 			name:       "no session",
-			request:    browserRequest(http.MethodPost, telemetryEventsPath, appOpened),
+			request:    browserRequest(http.MethodPost, TelemetryEventsPath, appOpened),
 			wantStatus: http.StatusUnauthorized,
 			wantBody:   "web_session_required",
 		},
 		{
 			name:       "session without csrf",
-			request:    withSession(browserRequest(http.MethodPost, telemetryEventsPath, appOpened)),
+			request:    withSession(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened)),
 			wantStatus: http.StatusForbidden,
 			wantBody:   "csrf_invalid",
 		},
@@ -182,19 +188,19 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 		},
 		{
 			name:       "full credentials",
-			request:    withCredentials(browserRequest(http.MethodPost, telemetryEventsPath, appOpened)),
+			request:    withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "unknown event",
-			request:    withCredentials(browserRequest(http.MethodPost, telemetryEventsPath, map[string]string{"event": "search_run"})),
+			request:    withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, map[string]string{"event": "search_run"})),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
 		},
 		{
 			name:       "get is not listed",
-			request:    withCredentials(browserRequest(http.MethodGet, telemetryEventsPath, nil)),
+			request:    withCredentials(browserRequest(http.MethodGet, TelemetryEventsPath, nil)),
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found",
 		},
