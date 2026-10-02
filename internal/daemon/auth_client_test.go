@@ -109,6 +109,51 @@ listen = "0.0.0.0:7373"
 	assert.Equal(t, "test-shared-key", key)
 }
 
+func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
+	for _, setting := range []string{
+		"[web]\nenabled = true\nlisten = \"not-an-address\"",
+		"max_workers = \"not-a-number\"",
+	} {
+		t.Run(setting, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"test-shared-key\"\n"+setting), 0o600))
+			_, err := config.LoadGlobal()
+			require.Error(t, err, "fixture must fail full config validation")
+			s := newAuthTestServer(t, "test-shared-key")
+			server := httptest.NewServer(s.httpServer.Handler)
+			defer server.Close()
+			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Get(server.URL + "/api/ping")
+			require.NoError(t, err)
+			resp.Body.Close()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+}
+
+func TestAuthClientRejectsInvalidKeyConfigBeforeRequest(t *testing.T) {
+	for _, contents := range []string{
+		`auth_key = "bad key"`,
+		`auth_key = ["test-shared-key"]`,
+		"auth_key = \"test-shared-key\"\ninvalid = [",
+	} {
+		t.Run(contents, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(contents), 0o600))
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Get(server.URL + "/api/ping")
+			require.ErrorIs(t, err, ErrClientConfig)
+			assert.Nil(t, resp)
+			assert.Zero(t, requests.Load())
+			assert.NotContains(t, err.Error(), "test-shared-key")
+		})
+	}
+}
+
 func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	writeAuthClientConfig(t, "different-client-key")

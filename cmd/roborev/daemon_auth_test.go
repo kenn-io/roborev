@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -190,6 +191,80 @@ func TestAuthOriginDenialIsNotAConnectionFailure(t *testing.T) {
 	_, err = endpoint.HTTPClient(time.Second).Get("http://127.0.0.1:7374/api/ping")
 	require.Error(t, err)
 	assert.False(t, isConnectionError(err))
+}
+
+func TestAuthEnqueueStopsOnAccessErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		denyAt     int32
+		badConfig  bool
+		wantProbes int32
+		wantPosts  int32
+		wantWaits  int
+	}{
+		{name: "first probe", denyAt: 1, wantProbes: 1},
+		{name: "final probe", denyAt: 2, wantProbes: 2, wantWaits: 1},
+		{name: "enqueue", denyAt: 3, wantProbes: 2, wantPosts: 1, wantWaits: 1},
+		{name: "config", badConfig: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			if tc.badConfig {
+				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = broken-secret`), 0o600))
+			}
+			var recoveries, probes, posts atomic.Int32
+			patchFixDaemonRetryForTest(t, func() error {
+				recoveries.Add(1)
+				return errors.New("unexpected daemon recovery")
+			})
+			waits := 0
+			fixDaemonSleep = func(time.Duration) { waits++ }
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/jobs":
+					if probes.Add(1) == tc.denyAt {
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+					_, _ = w.Write([]byte(`{"jobs":[]}`))
+				case "/api/enqueue":
+					posts.Add(1)
+					w.WriteHeader(http.StatusUnauthorized)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			err := enqueueIfNeeded(t.Context(), server.URL, t.TempDir(), "abc123")
+			wantErr := daemon.ErrDaemonAccessDenied
+			if tc.badConfig {
+				wantErr = daemon.ErrClientConfig
+			}
+			require.ErrorIs(t, err, wantErr)
+			a := assert.New(t)
+			a.Equal(tc.wantProbes, probes.Load())
+			a.Equal(tc.wantPosts, posts.Load())
+			a.Equal(tc.wantWaits, waits)
+			a.Zero(recoveries.Load())
+		})
+	}
+}
+
+func TestAuthFixRecoveryStopsOnAccessErrors(t *testing.T) {
+	for _, accessErr := range []error{daemon.ErrDaemonAccessDenied, daemon.ErrClientConfig} {
+		t.Run(accessErr.Error(), func(t *testing.T) {
+			calls := 0
+			patchFixDaemonRetryForTest(t, func() error {
+				calls++
+				return accessErr
+			})
+			synctest.Test(t, func(t *testing.T) {
+				_, err := recoverFixDaemonAddr(t.Context())
+				require.ErrorIs(t, err, accessErr)
+				assert.Equal(t, 1, calls)
+			})
+		})
+	}
 }
 
 func TestAuthHookKeepsCapturedEndpoint(t *testing.T) {

@@ -256,6 +256,10 @@ later requests, so they use the updated key after restart. If discovery failed
 before a client selected a daemon, restart that client after correcting its
 config so it can discover the endpoint again.
 
+Daemon HTTP clients validate `auth_key` separately from other settings. An
+unrelated invalid setting does not prevent them from using a valid key.
+Malformed TOML or an invalid `auth_key` prevents requests from being sent.
+
 MCP installers do not configure HTTP authentication headers. Use the default
 stdio transport when `auth_key` is set; see
 [MCP Server](/docs/integrations/mcp/).

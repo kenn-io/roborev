@@ -2040,7 +2040,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 		if isConnectionError(err) {
 			if refreshedAddr, refreshErr := refreshFixDaemonAddr(ctx); refreshErr == nil {
 				currentAddr = refreshedAddr
-			} else if shouldStopFixDaemonRetry(ctx) {
+			} else if daemon.IsDaemonAccessError(refreshErr) || shouldStopFixDaemonRetry(ctx) {
 				return refreshErr
 			}
 		}
@@ -2239,6 +2239,8 @@ func waitForFixDaemonRecovery(ctx context.Context) (string, error) {
 		}
 		if err := fixDaemonEnsure(); err == nil {
 			return getDaemonEndpoint().BaseURL(), nil
+		} else if daemon.IsDaemonAccessError(err) {
+			return getDaemonEndpoint().BaseURL(), err
 		} else {
 			lastErr = err
 		}
