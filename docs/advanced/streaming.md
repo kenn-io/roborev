@@ -95,6 +95,7 @@ To acknowledge a failure after retries stop, add a configured skip label. This
 waives review while the label remains. Skipping publishes the skipped check and
 sets the commit status to success with a "Review skipped" description before
 clearing the failure; a publishing error leaves the failure for the next poll.
+Later polls leave an identical skip status unchanged.
 
 Cleanup also retires the failed panel, allowing a fresh review if the PR reopens
 or the skip label is removed at the same commit. Active and successfully posted

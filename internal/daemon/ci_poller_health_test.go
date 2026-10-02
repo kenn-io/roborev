@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	googlegithub "github.com/google/go-github/v91/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -194,6 +196,76 @@ func TestHealthCIPollerFirstAttemptWithoutOutput(t *testing.T) {
 	assert.Contains(health.Components, storage.ComponentHealth{
 		Name: "ci", Healthy: false, Message: "review failed for acme/api#1",
 	})
+}
+
+func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		state       string
+		description string
+		readError   bool
+		wantWrites  int
+	}{
+		{name: "no status", wantWrites: 1},
+		{name: "failed review", state: "error", description: "Review unavailable", wantWrites: 1},
+		{name: "pending review", state: "pending", description: "Review in progress", wantWrites: 1},
+		{name: "already skipped", state: "success", description: "Review skipped: label skip-review"},
+		{name: "changed label", state: "success", description: "Review skipped: label old-label", wantWrites: 1},
+		{name: "lookup failed", readError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h, healthServer := newCIHealthHarness(t)
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			h.Cfg.CI.SkipLabels = []string{"skip-review"}
+			pr := ghPR{Number: 1, HeadRefOid: "head-a", Labels: []string{"skip-review"}}
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+			current := googlegithub.RepoStatus{
+				Context: new("roborev"), State: &tc.state, Description: &tc.description,
+			}
+			var writes []googlegithub.RepoStatus
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-a/status":
+					if tc.readError {
+						http.Error(w, `{"message":"status lookup unavailable"}`, http.StatusBadGateway)
+						return
+					}
+					if r.URL.Query().Get("page") == "" {
+						w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+						fmt.Fprint(w, `{"statuses":[{"context":"build","state":"success","description":"Review skipped: label skip-review"}]}`)
+						return
+					}
+					statuses := []googlegithub.RepoStatus{}
+					if current.GetState() != "" {
+						statuses = append(statuses, current)
+					}
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"statuses": statuses}))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/repos/acme/api/statuses/head-a":
+					assert.NoError(json.NewDecoder(r.Body).Decode(&current))
+					writes = append(writes, current)
+					w.WriteHeader(http.StatusCreated)
+					assert.NoError(json.NewEncoder(w).Encode(current))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(api.Close)
+			h.Poller.githubAPIURL = api.URL + "/api/v3"
+			h.Poller.setCommitStatusFn = nil
+			for range 2 {
+				h.Poller.poll(context.Background())
+				assert.Equal(!tc.readError, decodeHealthStatus(t, executeHealthCheck(healthServer, http.MethodGet)).Healthy)
+			}
+			require.Len(t, writes, tc.wantWrites)
+			for _, status := range writes {
+				assert.Equal("roborev", status.GetContext())
+				assert.Equal("success", status.GetState())
+				assert.Equal("Review skipped: label skip-review", status.GetDescription())
+			}
+		})
+	}
 }
 
 func TestHealthCIPollerExhaustedRetry(t *testing.T) {

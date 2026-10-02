@@ -175,6 +175,35 @@ func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, descri
 	return nil
 }
 
+// EnsureSkippedCommitStatus publishes the skip only when the latest roborev
+// status differs, so polling a labeled PR does not create duplicate statuses.
+func (c *Client) EnsureSkippedCommitStatus(ctx context.Context, ghRepo, sha, description string) error {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return err
+	}
+	opts := &googlegithub.ListOptions{}
+	for {
+		combined, resp, err := c.api.Repositories.GetCombinedStatus(ctx, owner, repo, sha, opts)
+		if err != nil {
+			return fmt.Errorf("get commit statuses: %w", err)
+		}
+		for _, status := range combined.Statuses {
+			if status.GetContext() != "roborev" {
+				continue
+			}
+			if status.GetState() == "success" && status.GetDescription() == description {
+				return nil
+			}
+			return c.SetCommitStatus(ctx, ghRepo, sha, "success", description)
+		}
+		if resp.NextPage == 0 {
+			return c.SetCommitStatus(ctx, ghRepo, sha, "success", description)
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
 // EnsureSkippedCheckRun creates a completed roborev check run with a skipped
 // conclusion unless an equivalent check already exists for the commit.
 func (c *Client) EnsureSkippedCheckRun(ctx context.Context, ghRepo, sha, summary string) error {

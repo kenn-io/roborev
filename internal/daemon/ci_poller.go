@@ -826,7 +826,7 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) error {
 		return fmt.Errorf("set skipped check: %w", err)
 	}
 	// A skipped check does not replace an existing error or pending commit status.
-	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "success", description); err != nil {
+	if err := p.callSetSkippedCommitStatus(ghRepo, pr.HeadRefOid, description); err != nil {
 		return fmt.Errorf("set skipped commit status: %w", err)
 	}
 	if err := p.db.DeleteReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
@@ -3428,6 +3428,20 @@ func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) e
 		return p.setCommitStatusFn(ghRepo, sha, state, description)
 	}
 	return p.setCommitStatus(ghRepo, sha, state, description)
+}
+
+func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) error {
+	if p.setCommitStatusFn != nil {
+		return p.setCommitStatusFn(ghRepo, sha, "success", description)
+	}
+	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
+		return nil
+	}
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return err
+	}
+	return client.EnsureSkippedCommitStatus(context.Background(), ghRepo, sha, description)
 }
 
 func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) error {
