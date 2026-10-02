@@ -62,11 +62,12 @@ type doctorReport struct {
 // doctorDaemonAgents is the daemon's view of agent and hook-tool
 // availability.
 type doctorDaemonAgents struct {
-	PathEnv         string            `json:"path_env"`
-	Agents          []agent.Diagnosis `json:"agents"`
-	Requested       []agent.Diagnosis `json:"requested"`
-	HookTools       []agent.Diagnosis `json:"hook_tools"`
-	RepoConfigError string            `json:"repo_config_error,omitempty"`
+	PathEnv         string               `json:"path_env"`
+	Agents          []agent.Diagnosis    `json:"agents"`
+	Requested       []agent.Diagnosis    `json:"requested"`
+	HookTools       []agent.Diagnosis    `json:"hook_tools"`
+	Panels          []daemon.DoctorPanel `json:"panels"`
+	RepoConfigError string               `json:"repo_config_error,omitempty"`
 }
 
 // doctorDaemon is the read-only daemon surface the doctor uses. None of these

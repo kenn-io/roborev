@@ -797,6 +797,9 @@ type DoctorAgentsOutputBody struct {
 	// HookTools CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
 	HookTools []Diagnosis `json:"hook_tools" validate:"required"`
 
+	// Panels Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
+	Panels []DoctorPanel `json:"panels" validate:"required"`
+
 	// PathEnv PATH environment variable of the daemon process
 	PathEnv string `json:"path_env" validate:"required"`
 
@@ -823,6 +826,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 			}
 		}
 	}
+	for i, item := range d.Panels {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Panels[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.PathEnv, "required"); err != nil {
 		errors = errors.Append("PathEnv", err)
 	}
@@ -837,6 +847,53 @@ func (d DoctorAgentsOutputBody) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type DoctorPanel struct {
+	// ErrorData Why the panel itself cannot be resolved
+	ErrorData *string             `json:"error,omitempty"`
+	Members   []DoctorPanelMember `json:"members" validate:"required"`
+	Name      string              `json:"name" validate:"required"`
+	Synthesis Diagnosis           `json:"synthesis"`
+
+	// UsedFor Which reviews select this panel: post_commit, manual, or both
+	UsedFor []string `json:"used_for" validate:"required"`
+}
+
+func (d DoctorPanel) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if v, ok := any(d.Synthesis).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Synthesis", err)
+		}
+	}
+	if err := typesValidator.Var(d.UsedFor, "required"); err != nil {
+		errors = errors.Append("UsedFor", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DoctorPanelMember struct {
+	Agent     *string `json:"agent,omitempty"`
+	ErrorData *string `json:"error,omitempty"`
+	Name      string  `json:"name" validate:"required"`
+}
+
+func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DurationStats struct {

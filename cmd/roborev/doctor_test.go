@@ -461,23 +461,54 @@ func TestDoctorDefaultBranchConfig(t *testing.T) {
 	assert.Equal(t, doctorWarn, got.Status)
 }
 
-func TestDoctorReviewAgentSkipsPanelReviews(t *testing.T) {
+func TestDoctorReviewPanels(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	withPanels := func(hook, manual string) *doctorEnv {
-		return &doctorEnv{
-			ctx: t.Context(),
-			global: &config.Config{
-				DefaultAgent: "codex",
-				Review:       config.ReviewConfig{HookPanel: hook, DefaultPanel: manual},
-			},
-		}
+	okPanel := daemon.DoctorPanel{
+		Name: "guard", UsedFor: []string{"post_commit", "manual"},
+		Members:   []daemon.DoctorPanelMember{{Name: "sec", Agent: "claude-code"}},
+		Synthesis: agent.Diagnosis{Name: "claude-code", Available: true},
 	}
 
-	checks, _ := checkDoctorReviewAgents(withPanels("guard", "guard"))
-	assert.Empty(t, checks, "panels run every review, so the single agent is not checked")
+	t.Run("a working panel for every review replaces the single-agent check", func(t *testing.T) {
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{DefaultAgent: "codex"},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{okPanel}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, "agents.review_panel", checks[0].ID)
+		assert.Equal(t, doctorOK, checks[0].Status)
+	})
 
-	checks, _ = checkDoctorReviewAgents(withPanels("guard", ""))
-	require.Len(t, checks, 1)
-	assert.Equal(t, doctorFail, checks[0].Status)
-	assert.Equal(t, "manual reviews will fail: agent codex is not available", checks[0].Summary)
+	t.Run("the single agent still covers reviews without a panel", func(t *testing.T) {
+		post := okPanel
+		post.UsedFor = []string{"post_commit"}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{DefaultAgent: "codex"},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{post}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		single := findDoctorCheck(t, checks, "agents.review")
+		assert.Equal(t, doctorFail, single.Status)
+		assert.Equal(t, "manual reviews will fail: agent codex is not available", single.Summary)
+	})
+
+	t.Run("a member without an agent fails the panel", func(t *testing.T) {
+		broken := okPanel
+		broken.Members = []daemon.DoctorPanelMember{
+			{Name: "sec", Agent: "claude-code"},
+			{Name: "style", Error: `agent "gemini" unavailable`},
+		}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{broken}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, doctorFail, checks[0].Status)
+		assert.Contains(t, checks[0].Details, `member style: agent "gemini" unavailable`)
+	})
 }
