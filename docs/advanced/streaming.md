@@ -86,8 +86,11 @@ they succeed. An intentionally empty review matrix removes a claimed retry
 instead of re-arming disabled work. Adding a configured skip label removes a
 deferred retry and its health error on the next poll, without waiting for
 backoff to expire. Terminal failures also clear when the PR closes, advances to
-a new commit, or gets a skip label. Active and successfully posted reviews are
-left unchanged.
+a new commit, or gets a skip label. Skipping publishes the skipped check before
+clearing the failure; a publishing error leaves the failure for the next poll.
+Cleanup also retires the failed panel, allowing a fresh review if the PR reopens
+or the skip label is removed at the same commit. Active and successfully posted
+reviews are left unchanged.
 
 Cleanup also removes stored review state for numbers GitHub confirms are
 ordinary issues. This verification requires access to GitHub's issue endpoint. A

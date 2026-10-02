@@ -168,6 +168,7 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			h.Cfg.CI.Repos = []string{"acme/api"}
 			h.Cfg.CI.Agents = []string{"test"}
 			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.ThrottleInterval = "0"
 			pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
 			comments := h.CaptureComments()
@@ -178,6 +179,8 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			synthID := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "transient")
 			h.Poller.handleReviewFailed(ciEvent(synthID, "review.failed"))
 			h.Poller.poll(context.Background())
+			failedPanel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
+			require.NoError(t, err)
 			assert.Empty(*comments)
 			assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 				"giving up without a review is not recovery")
@@ -185,15 +188,51 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			case "closed":
 				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
 				h.Poller.isPROpenFn = func(string, int) bool { return false }
+				_, err := h.DB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON ci_pr_review_attempts
+					BEGIN SELECT RAISE(FAIL, 'cleanup unavailable'); END`)
+				require.NoError(t, err)
+				h.Poller.poll(context.Background())
+				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+				panel, err := h.DB.GetCIPanelByRunUUID(failedPanel.PanelRunUUID)
+				require.NoError(t, err)
+				assert.Nil(panel.RetiredAt, "failed cleanup must roll back panel retirement")
+				_, err = h.DB.Exec(`DROP TRIGGER fail_cleanup`)
+				require.NoError(t, err)
 			case "new head":
 				pr.HeadRefOid = "head-b"
 			case "skipped":
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}
+				h.Poller.setSkippedCheckFn = func(string, string, string) error {
+					return errors.New("check publishing unavailable")
+				}
+				h.Poller.poll(context.Background())
+				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+					"failed check publishing must retain the failure for the next poll")
 			}
+			skipped := h.CaptureSkippedChecks()
 			h.Poller.poll(context.Background())
 			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 				"a failed review no longer needed by the PR must not hold health unhealthy")
+			if recovery == "skipped" {
+				assert.Contains(*skipped, capturedSkippedCheck{
+					Repo: "acme/api", SHA: "head-a", Summary: "Review skipped: label skip-review",
+				})
+			}
+
+			// Reopen, unskip, or return to the same commit. The failed panel
+			// must not suppress a fresh review of that commit.
+			pr.HeadRefOid = "head-a"
+			pr.Labels = nil
+			h.Poller.isPROpenFn = func(string, int) bool { return true }
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+			h.Poller.poll(context.Background())
+			panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
+			require.NoError(t, err)
+			require.NotEqual(t, failedPanel.PanelRunUUID, panel.PanelRunUUID)
+			synthID = h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "done")
+			h.Poller.handleReviewCompleted(ciEvent(synthID, "review.completed"))
+			assert.Len(*comments, 1, "the reopened review delivers output")
 		})
 	}
 }
