@@ -4,6 +4,14 @@
 
 export type GetJobLogParams = {
   /**
+   * Return the complete raw log, including orphaned logs
+   */
+  raw?: boolean;
+  /**
+   * Return the daemon log path without reading the file
+   */
+  path?: boolean;
+  /**
    * Job ID
    */
   job_id?: string;

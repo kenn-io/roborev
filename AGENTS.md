@@ -57,7 +57,11 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
                       -> SQLite DB <-> Sync worker <-> PostgreSQL (optional)
 ```
 
-- The daemon is the long-lived control plane. Many CLI commands are thin HTTP clients.
+- The daemon exclusively owns the local SQLite database and runs its migrations.
+- Production CLI subcommands must use the generated RoboRev API client for
+  database operations. Direct database opens are allowed only inside `daemon run`;
+  tests may open isolated fixtures. Hold the daemon database ownership lock
+  before opening SQLite until the database is closed.
 - Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.

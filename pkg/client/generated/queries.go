@@ -129,6 +129,12 @@ type ExportReviewsQuery struct {
 }
 
 type GetJobLogQuery struct {
+	// Raw Return the complete raw log, including orphaned logs
+	Raw *bool `json:"raw,omitempty"`
+
+	// Path Return the daemon log path without reading the file
+	Path *bool `json:"path,omitempty"`
+
 	// JobID Job ID
 	JobID *string `json:"job_id,omitempty"`
 
@@ -270,6 +276,18 @@ type ListReposQuery struct {
 
 	// Prefix Filter repos by path prefix
 	Prefix *string `json:"prefix,omitempty"`
+}
+
+type GetRepoQuery struct {
+	// Identifier Repository path or display name
+	Identifier string `json:"identifier" validate:"required"`
+
+	// ByPath Identifier was resolved to a filesystem path by the client
+	ByPath *bool `json:"by_path,omitempty"`
+}
+
+func (g GetRepoQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ResolveRepoQuery struct {

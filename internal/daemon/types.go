@@ -743,12 +743,26 @@ type ShutdownOutput struct {
 	}
 }
 
+// SyncPendingCounts reports the same capped pending queues used by sync status.
+type SyncPendingCounts struct {
+	Jobs     int `json:"jobs"`
+	Reviews  int `json:"reviews"`
+	Comments int `json:"comments"`
+}
+
 // SyncStatusOutput is the response for GET /api/sync/status.
 type SyncStatusOutput struct {
 	Body struct {
-		Enabled   bool   `json:"enabled"`
-		Connected bool   `json:"connected"`
-		Message   string `json:"message"`
+		Enabled           bool              `json:"enabled"`
+		Connected         bool              `json:"connected"`
+		Message           string            `json:"message"`
+		Interval          string            `json:"interval"`
+		MachineName       string            `json:"machine_name"`
+		MachineID         *uuid.UUID        `json:"machine_id,omitempty" format:"uuid"`
+		Warnings          []string          `json:"warnings"`
+		PendingPush       SyncPendingCounts `json:"pending_push"`
+		PendingLimit      int               `json:"pending_limit"`
+		PendingIncomplete bool              `json:"pending_incomplete"`
 	}
 }
 
@@ -760,6 +774,8 @@ type JobOutputInput struct {
 
 // JobLogInput holds query parameters for GET /api/job/log.
 type JobLogInput struct {
+	Raw           bool   `query:"raw" doc:"Return the complete raw log, including orphaned logs"`
+	Path          bool   `query:"path" doc:"Return the daemon log path without reading the file"`
 	JobID         string `query:"job_id" doc:"Job ID"`
 	Offset        string `query:"offset" doc:"Byte offset into the log file"`
 	PreviousAgent string `header:"X-Job-Agent" doc:"Agent identity used for the previous log chunk"`

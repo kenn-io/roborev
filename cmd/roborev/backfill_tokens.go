@@ -1,186 +1,64 @@
 package main
 
 import (
-	"context"
+	"encoding/json/v2"
 	"fmt"
-	"log"
-	"time"
+	"io"
+	"net/http"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/roborev/internal/backfill"
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/tokens"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func backfillTokensCmd() *cobra.Command {
 	var dryRun bool
-
 	cmd := &cobra.Command{
 		Use:   "backfill-tokens",
 		Short: "Backfill token usage for completed jobs",
 		Long: `Scan completed jobs missing token usage or cost data.
 
-Codex job logs are checked first for turn.completed usage events. When
-available, agentsview is also queried to recover cost estimates.
+The daemon checks Codex job logs first for turn.completed usage events.
+When available, agentsview is also queried to recover cost estimates.
 
 This is best-effort: jobs whose session files have been deleted
 will be skipped.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.LoadGlobal()
+			if err := ensureDaemon(); err != nil {
+				return err
+			}
+			ep := getDaemonEndpoint()
+			request := daemon.ScanTokenUsageInput{}
+			request.Body.DryRun = dryRun
+			body, err := json.Marshal(request.Body)
 			if err != nil {
-				return fmt.Errorf("load config: %w", err)
+				return err
 			}
-			fetchConfig := backfillCostFetchConfig(cfg)
-
-			db, err := storage.Open(storage.DefaultDBPath())
+			response, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).ScanTokenUsageRaw(cmd.Context(), nil, roborevclient.WithBody(body))
 			if err != nil {
-				return fmt.Errorf("open database: %w", err)
+				return fmt.Errorf("backfill tokens: %w", err)
 			}
-			defer db.Close()
-
-			// Query all jobs (no status filter) and filter for
-			// terminal states that could have token data.
-			jobs, err := db.ListJobs("", "", 0, 0)
-			if err != nil {
-				return fmt.Errorf("list jobs: %w", err)
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				message, _ := io.ReadAll(response.Body)
+				return fmt.Errorf("backfill tokens: %s", message)
 			}
-
-			agentsviewCandidates := make(map[int64]bool)
-			var candidateCursor int64
-			for {
-				page, err := db.ListTokenCostCandidates(candidateCursor, 1000, time.Time{})
-				if err != nil {
-					return fmt.Errorf("list cost candidates: %w", err)
-				}
-				if len(page) == 0 {
-					break
-				}
-				for _, candidate := range page {
-					agentsviewCandidates[candidate.JobID] = true
-				}
-				candidateCursor = page[len(page)-1].JobID
+			var report daemon.ScanTokenUsageReport
+			if err := json.UnmarshalRead(response.Body, &report); err != nil {
+				return err
 			}
-			candidates := backfill.LogTokenCandidates(jobs)
-
-			var total, updated, skipped, failed int
-			for _, job := range candidates {
-				total++
-
-				var logUsage *tokens.Usage
-				currentLog, logErr := daemon.JobLogIsCurrentAttempt(
-					job.ID, job.StartedAt,
-				)
-				if logErr == nil && currentLog {
-					logUsage, logErr = tokens.ParseCodexUsageFile(
-						daemon.JobLogPath(job.ID),
-					)
-				}
-				if logErr != nil {
-					log.Printf(
-						"job %d: parse job log: %v", job.ID, logErr,
-					)
-				}
-
-				var fetchedUsage *tokens.Usage
-				var fetchErr error
-				if agentsviewCandidates[job.ID] {
-					ctx, cancel := context.WithTimeout(
-						context.Background(), 15*time.Second,
-					)
-					fetchedUsage, fetchErr = tokens.FetchForSessionWithConfig(
-						ctx, job.SessionID, fetchConfig,
-					)
-					cancel()
-				}
-
-				if fetchErr != nil {
-					log.Printf(
-						"job %d: fetch error: %v", job.ID, fetchErr,
-					)
-					if logUsage == nil {
-						failed++
-						continue
-					}
-				}
-				usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), fetchedUsage)
-				if usage == nil {
-					skipped++
-					continue
-				}
-				mergedUsage := backfill.MergeTokenUsage(job.TokenUsage, usage)
-
-				if dryRun {
-					fmt.Printf(
-						"job %d (%s): %s\n",
-						job.ID, job.Agent, mergedUsage.FormatSummary(),
-					)
-					updated++
-					continue
-				}
-
-				sessionID := job.SessionID
-				if sessionID == "" {
-					sessionID = mergedUsage.ThreadID
-				}
-				stored, saved, err := backfill.StoreCapturedTokenUsage(
-					db,
-					backfill.CapturedUsage{
-						JobID:             job.ID,
-						SessionID:         sessionID,
-						ExistingJSON:      job.TokenUsage,
-						ExpectedStartedAt: job.StartedAtRaw,
-					},
-					logUsage,
-					fetchedUsage,
-				)
-				if err != nil {
-					log.Printf(
-						"job %d: save error: %v", job.ID, err,
-					)
-					failed++
-					continue
-				}
-				if !saved {
-					skipped++
-					continue
-				}
-				mergedUsage = stored
-				updated++
-				fmt.Printf(
-					"job %d (%s): %s\n",
-					job.ID, job.Agent, mergedUsage.FormatSummary(),
-				)
+			for _, job := range report.Jobs {
+				cmd.Printf("job %d (%s): %s\n", job.JobID, job.Agent, job.Summary)
 			}
-
 			action := "Updated"
 			if dryRun {
 				action = "Would update"
 			}
-			fmt.Printf(
-				"\n%s %d/%d jobs (%d skipped, %d failed)\n",
-				action, updated, total, skipped, failed,
-			)
+			cmd.Printf("\n%s %d/%d jobs (%d skipped, %d failed)\n", action, report.Updated, report.Total, report.Skipped, report.Failed)
 			return nil
 		},
 	}
-
-	cmd.Flags().BoolVar(
-		&dryRun, "dry-run", false,
-		"show what would be updated without writing",
-	)
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be updated without writing")
 	return cmd
-}
-
-func backfillCostFetchConfig(cfg *config.Config) tokens.FetchConfig {
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	return tokens.FetchConfig{
-		Endpoint:   cfg.Cost.Endpoint,
-		Timeout:    cfg.Cost.ResolvedTimeout(),
-		RequireCLI: true,
-	}
 }

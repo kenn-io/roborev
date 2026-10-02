@@ -3,7 +3,9 @@ title: Repository Management
 description: Manage repositories tracked by roborev
 ---
 
-Manage repositories tracked by roborev:
+Manage repositories tracked by roborev through the daemon API. The daemon owns
+the database and its migrations. These commands start the daemon when needed;
+use `--server` to select another running daemon.
 
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/cli-repo-list.svg" alt="roborev repo list output" loading="lazy" style="max-width: 480px">

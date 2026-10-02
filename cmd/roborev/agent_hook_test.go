@@ -327,6 +327,7 @@ func TestRunAgentHookFailsOpenWhenDaemonUnavailable(t *testing.T) {
 }
 
 func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
+	t.Setenv("QWEN_HOME", t.TempDir())
 	oldPost := postAgentHook
 	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil

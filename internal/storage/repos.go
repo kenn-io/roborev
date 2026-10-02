@@ -366,8 +366,12 @@ func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
 		}
 	}
 
-	// Try name match
-	result, err := db.Exec(`UPDATE repos SET name = ? WHERE name = ?`, newName, identifier)
+	return db.RenameRepoByName(identifier, newName)
+}
+
+// RenameRepoByName updates every repository with the given display name.
+func (db *DB) RenameRepoByName(name, newName string) (int64, error) {
+	result, err := db.Exec(`UPDATE repos SET name = ? WHERE name = ?`, newName, name)
 	if err != nil {
 		return 0, err
 	}

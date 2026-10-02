@@ -1071,6 +1071,226 @@ func (o *BatchJobsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// CleanJobLogsRequestOptions is the options needed to make a request to CleanJobLogs.
+type CleanJobLogsRequestOptions struct {
+	Body *CleanJobLogsBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CleanJobLogsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CleanJobLogsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CleanJobLogsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CleanJobLogsRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CleanJobLogsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ConvertLegacyReviewsRequestOptions is the options needed to make a request to ConvertLegacyReviews.
+type ConvertLegacyReviewsRequestOptions struct {
+	Body *ConvertLegacyReviewsBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ConvertLegacyReviewsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ConvertLegacyReviewsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ConvertLegacyReviewsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ConvertLegacyReviewsRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ConvertLegacyReviewsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ExportLegacyReviewsRequestOptions is the options needed to make a request to ExportLegacyReviews.
+type ExportLegacyReviewsRequestOptions struct {
+	Body *ExportLegacyReviewsBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ExportLegacyReviewsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExportLegacyReviewsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExportLegacyReviewsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExportLegacyReviewsRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExportLegacyReviewsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ImportLegacyReviewRequestOptions is the options needed to make a request to ImportLegacyReview.
+type ImportLegacyReviewRequestOptions struct {
+	Body *ImportLegacyReviewBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ImportLegacyReviewRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ImportLegacyReviewRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ImportLegacyReviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ImportLegacyReviewRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ImportLegacyReviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ScanTokenUsageRequestOptions is the options needed to make a request to ScanTokenUsage.
+type ScanTokenUsageRequestOptions struct {
+	Body *ScanTokenUsageBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ScanTokenUsageRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ScanTokenUsageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ScanTokenUsageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ScanTokenUsageRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ScanTokenUsageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RemapJobsRequestOptions is the options needed to make a request to RemapJobs.
 type RemapJobsRequestOptions struct {
 	Body *RemapJobsBody
@@ -1159,6 +1379,182 @@ func (o *ListReposRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// DeleteRepoRequestOptions is the options needed to make a request to DeleteRepo.
+type DeleteRepoRequestOptions struct {
+	Body *DeleteRepoBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *DeleteRepoRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeleteRepoRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeleteRepoRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeleteRepoRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeleteRepoRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetRepoRequestOptions is the options needed to make a request to GetRepo.
+type GetRepoRequestOptions struct {
+	Query *GetRepoQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetRepoRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetRepoRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetRepoRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetRepoRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetRepoRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MergeReposRequestOptions is the options needed to make a request to MergeRepos.
+type MergeReposRequestOptions struct {
+	Body *MergeReposBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *MergeReposRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MergeReposRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MergeReposRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MergeReposRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MergeReposRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MoveRepoRequestOptions is the options needed to make a request to MoveRepo.
+type MoveRepoRequestOptions struct {
+	Body *MoveRepoBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *MoveRepoRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MoveRepoRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MoveRepoRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MoveRepoRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MoveRepoRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RegisterRepoRequestOptions is the options needed to make a request to RegisterRepo.
 type RegisterRepoRequestOptions struct {
 	Body *RegisterRepoBody
@@ -1200,6 +1596,50 @@ func (o *RegisterRepoRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *RegisterRepoRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RenameRepoRequestOptions is the options needed to make a request to RenameRepo.
+type RenameRepoRequestOptions struct {
+	Body *RenameRepoBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *RenameRepoRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RenameRepoRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RenameRepoRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RenameRepoRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RenameRepoRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

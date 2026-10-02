@@ -135,6 +135,30 @@ type ClientInterface interface {
 	BatchJobs(ctx context.Context, options *BatchJobsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchJobsResponse, error)
 	BatchJobsWithResponse(ctx context.Context, options *BatchJobsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BatchJobsResp, error)
 
+	// CleanJobLogs Remove old daemon job logs
+	CleanJobLogs(ctx context.Context, options *CleanJobLogsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CleanJobLogsResponse, error)
+	CleanJobLogsWithResponse(ctx context.Context, options *CleanJobLogsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CleanJobLogsResp, error)
+
+	// ConvertLegacyReviews Convert recognized archived review formats
+	ConvertLegacyReviews(ctx context.Context, options *ConvertLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ConvertLegacyReviewsResponse, error)
+	ConvertLegacyReviewsWithResponse(ctx context.Context, options *ConvertLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ConvertLegacyReviewsResp, error)
+
+	// ExportLegacyReviews Export unresolved archived reviews
+	ExportLegacyReviews(ctx context.Context, options *ExportLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportLegacyReviewsResponse, error)
+	ExportLegacyReviewsWithResponse(ctx context.Context, options *ExportLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportLegacyReviewsResp, error)
+
+	// ImportLegacyReview Restore an archived review from a structured document
+	ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResponse, error)
+	ImportLegacyReviewWithResponse(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResp, error)
+
+	// ScanTokenUsage Recover token usage from daemon job logs and AgentsView
+	ScanTokenUsage(ctx context.Context, options *ScanTokenUsageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ScanTokenUsageResponse, error)
+	ScanTokenUsageWithResponse(ctx context.Context, options *ScanTokenUsageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ScanTokenUsageResp, error)
+
+	// BackfillVerdicts Backfill legacy review verdicts
+	BackfillVerdicts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*BackfillVerdictsResponse, error)
+	BackfillVerdictsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*BackfillVerdictsResp, error)
+
 	// Ping Get daemon liveness identity
 	Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResponse, error)
 	PingWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResp, error)
@@ -159,9 +183,29 @@ type ClientInterface interface {
 	ListRepos(ctx context.Context, options *ListReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListReposResponse, error)
 	ListReposWithResponse(ctx context.Context, options *ListReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListReposResp, error)
 
+	// DeleteRepo Delete a repository and optionally its reviews
+	DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResponse, error)
+	DeleteRepoWithResponse(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResp, error)
+
+	// GetRepo Get repository details and statistics
+	GetRepo(ctx context.Context, options *GetRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRepoResponse, error)
+	GetRepoWithResponse(ctx context.Context, options *GetRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRepoResp, error)
+
+	// MergeRepos Move reviews to another repository and delete the source
+	MergeRepos(ctx context.Context, options *MergeReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeReposResponse, error)
+	MergeReposWithResponse(ctx context.Context, options *MergeReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeReposResp, error)
+
+	// MoveRepo Update a repository's path and identity
+	MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResponse, error)
+	MoveRepoWithResponse(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResp, error)
+
 	// RegisterRepo Register a repository
 	RegisterRepo(ctx context.Context, options *RegisterRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterRepoResponse, error)
 	RegisterRepoWithResponse(ctx context.Context, options *RegisterRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterRepoResp, error)
+
+	// RenameRepo Rename a repository's display name
+	RenameRepo(ctx context.Context, options *RenameRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameRepoResponse, error)
+	RenameRepoWithResponse(ctx context.Context, options *RenameRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameRepoResp, error)
 
 	// ResolveRepo Resolve whether a path belongs to a tracked repo
 	ResolveRepo(ctx context.Context, options *ResolveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveRepoResponse, error)
@@ -1449,6 +1493,8 @@ func (c *Client) GetJobLog(ctx context.Context, options *GetJobLogRequestOptions
 	queryEncoding := map[string]runtime.QueryEncoding{
 		"job_id": {Style: "form", Explode: &[]bool{false}[0]},
 		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+		"path":   {Style: "form", Explode: &[]bool{false}[0]},
+		"raw":    {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/job/log",
@@ -1990,6 +2036,388 @@ func (c *Client) BatchJobs(ctx context.Context, options *BatchJobsRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// CleanJobLogs Remove old daemon job logs
+func (c *Client) CleanJobLogs(ctx context.Context, options *CleanJobLogsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CleanJobLogsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/logs/clean",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CleanJobLogsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(CleanJobLogsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CleanJobLogsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CleanJobLogsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CleanJobLogsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/logs/clean")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ConvertLegacyReviews Convert recognized archived review formats
+func (c *Client) ConvertLegacyReviews(ctx context.Context, options *ConvertLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ConvertLegacyReviewsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/convert",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ConvertLegacyReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ConvertLegacyReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ConvertLegacyReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ConvertLegacyReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ConvertLegacyReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/legacy/convert")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ExportLegacyReviews Export unresolved archived reviews
+func (c *Client) ExportLegacyReviews(ctx context.Context, options *ExportLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportLegacyReviewsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/export",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ExportLegacyReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ExportLegacyReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ExportLegacyReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ExportLegacyReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ExportLegacyReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/legacy/export")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ImportLegacyReview Restore an archived review from a structured document
+func (c *Client) ImportLegacyReview(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportLegacyReviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/import",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ImportLegacyReviewResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ImportLegacyReviewErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ImportLegacyReviewErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ImportLegacyReviewResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ImportLegacyReviewResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/legacy/import")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ScanTokenUsage Recover token usage from daemon job logs and AgentsView
+func (c *Client) ScanTokenUsage(ctx context.Context, options *ScanTokenUsageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ScanTokenUsageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/tokens/backfill",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ScanTokenUsageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ScanTokenUsageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ScanTokenUsageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ScanTokenUsageResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ScanTokenUsageResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/tokens/backfill")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BackfillVerdicts Backfill legacy review verdicts
+func (c *Client) BackfillVerdicts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*BackfillVerdictsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/maintenance/verdicts/backfill",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*BackfillVerdictsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(BackfillVerdictsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "BackfillVerdictsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(BackfillVerdictsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "BackfillVerdictsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/maintenance/verdicts/backfill")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // Ping Get daemon liveness identity
 func (c *Client) Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResponse, error) {
 	var err error
@@ -2371,6 +2799,267 @@ func (c *Client) ListRepos(ctx context.Context, options *ListReposRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// DeleteRepo Delete a repository and optionally its reviews
+func (c *Client) DeleteRepo(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeleteRepoResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/delete",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DeleteRepoResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DeleteRepoErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DeleteRepoErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(DeleteRepoResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "DeleteRepoResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/delete")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetRepo Get repository details and statistics
+func (c *Client) GetRepo(ctx context.Context, options *GetRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRepoResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"by_path":    {Style: "form", Explode: &[]bool{false}[0]},
+		"identifier": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/repos/detail",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetRepoResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetRepoErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetRepoErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetRepoResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetRepoResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/detail")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MergeRepos Move reviews to another repository and delete the source
+func (c *Client) MergeRepos(ctx context.Context, options *MergeReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergeReposResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/merge",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*MergeReposResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(MergeReposErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "MergeReposErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(MergeReposResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "MergeReposResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/merge")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MoveRepo Update a repository's path and identity
+func (c *Client) MoveRepo(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MoveRepoResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/move",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*MoveRepoResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(MoveRepoErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "MoveRepoErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(MoveRepoResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "MoveRepoResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/move")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RegisterRepo Register a repository
 func (c *Client) RegisterRepo(ctx context.Context, options *RegisterRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RegisterRepoResponse, error) {
 	var err error
@@ -2429,6 +3118,70 @@ func (c *Client) RegisterRepo(ctx context.Context, options *RegisterRepoRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/register")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RenameRepo Rename a repository's display name
+func (c *Client) RenameRepo(ctx context.Context, options *RenameRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenameRepoResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/rename",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RenameRepoResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RenameRepoErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RenameRepoErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RenameRepoResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RenameRepoResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/repos/rename")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

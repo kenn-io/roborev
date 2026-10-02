@@ -1,0 +1,430 @@
+package daemon
+
+import (
+	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/backfill"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/tokens"
+	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
+)
+
+func TestBackfillCostFetchConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = "https://usage.example.test/api/v1/sessions/{session_id}/usage"
+	cfg.Cost.Timeout = "250ms"
+
+	got := backfillCostFetchConfig(cfg)
+
+	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", got.Endpoint)
+	assert.Equal(t, 250*time.Millisecond, got.Timeout)
+	assert.True(t, got.RequireCLI)
+}
+
+func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testing.T) {
+	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	got := backfill.MergeTokenUsage(existing, fetched)
+
+	assert.Equal(t, int64(28800), got.OutputTokens)
+	assert.Equal(t, int64(118000), got.PeakContextTokens)
+	assert.True(t, got.HasCost)
+	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *testing.T) {
+	existing := `{"input_tokens":79150,"cached_input_tokens":2560,` +
+		`"total_output_tokens":3389,"usage_source":"job_log_turn_completed",` +
+		`"thread_id":"thread-123","event_offset":91}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	got := backfill.MergeTokenUsage(existing, fetched)
+
+	assert.Equal(t, int64(79150), got.InputTokens)
+	assert.Equal(t, int64(2560), got.CachedInputTokens)
+	assert.Equal(t, int64(3389), got.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", got.UsageSource)
+	assert.Equal(t, "thread-123", got.ThreadID)
+	assert.Equal(t, int64(91), got.EventOffset)
+	assert.True(t, got.HasCost)
+	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	server, db, _ := newTestServer(t)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:    repo.ID,
+		CommitID:  commit.ID,
+		GitRef:    "abc123",
+		Agent:     "codex",
+		SessionID: "thread-123",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
+
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"thread-123"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":79150,`+
+			`"cached_input_tokens":2560,"output_tokens":3389}}`+"\n",
+	), 0o600))
+
+	// Filesystem write timestamps can lag the nanosecond-precision job start.
+	// Give this current-attempt fixture an explicit, whole-second timestamp.
+	require.NotNil(t, claimed.StartedAt)
+	logTime := claimed.StartedAt.Add(time.Second).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
+
+	dryResponse := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": true})
+	require.Equal(t, http.StatusOK, dryResponse.Code, dryResponse.Body.String())
+	var report ScanTokenUsageReport
+	require.NoError(t, json.Unmarshal(dryResponse.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Updated)
+	require.Len(t, report.Jobs, 1)
+	untouched, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, untouched.TokenUsage)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(79150), usage.InputTokens)
+	assert.Equal(t, int64(2560), usage.CachedInputTokens)
+	assert.Equal(t, int64(3389), usage.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	assert.Equal(t, "thread-123", usage.ThreadID)
+}
+
+func TestBackfillTokensUsesCodexJobLogsWithoutAgentsviewEligibleSession(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	server, db, _ := newTestServer(t)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	missingSession := enqueueCompleteJob(t, db, repo.ID, commit.ID, "")
+	sharedSessionA := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
+	sharedSessionB := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
+
+	writeCodexUsageLog(t, missingSession, "missing-session-thread", 1000, 100, 200)
+	writeCodexUsageLog(t, sharedSessionA, "shared-session", 2000, 200, 300)
+	writeCodexUsageLog(t, sharedSessionB, "shared-session", 3000, 300, 400)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	assertJobUsage := func(jobID int64, threadID string, input, cached, output int64) {
+		updated, err := db.GetJobByID(jobID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.Equal(t, input, usage.InputTokens)
+		assert.Equal(t, cached, usage.CachedInputTokens)
+		assert.Equal(t, output, usage.OutputTokens)
+		assert.Equal(t, threadID, usage.ThreadID)
+		assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	}
+	assertJobUsage(missingSession.ID, "missing-session-thread", 1000, 100, 200)
+	assertJobUsage(sharedSessionA.ID, "shared-session", 2000, 200, 300)
+	assertJobUsage(sharedSessionB.ID, "shared-session", 3000, 300, 400)
+
+	updatedMissingSession, err := db.GetJobByID(missingSession.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "missing-session-thread", updatedMissingSession.SessionID)
+}
+
+func TestBackfillTokensRejectsLogFromPriorCanceledAttempt(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	server, db, _ := newTestServer(t)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "abc123", "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job := enqueueCompleteJob(t, db, repo.ID, commit.ID, "prior-session")
+	writeCodexUsageLog(t, job, "prior-session", 1000, 100, 200)
+
+	require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+	claimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NotNil(t, claimed.StartedAt)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	logPath := JobLogPath(job.ID)
+	staleTime := claimed.StartedAt.Add(-time.Minute)
+	require.NoError(t, os.Chtimes(logPath, staleTime, staleTime))
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.TokenUsage)
+	assert.Empty(t, updated.SessionID)
+}
+
+func enqueueCompleteJob(
+	t *testing.T, db *storage.DB, repoID, commitID int64, sessionID string,
+) *storage.ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:    repoID,
+		CommitID:  commitID,
+		GitRef:    "abc123",
+		Agent:     "codex",
+		SessionID: sessionID,
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
+	return claimed
+}
+
+func writeCodexUsageLog(
+	t *testing.T, job *storage.ReviewJob, threadID string, input, cached, output int64,
+) {
+	t.Helper()
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"`+threadID+`"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":`+
+			fmt.Sprintf("%d", input)+`,"cached_input_tokens":`+
+			fmt.Sprintf("%d", cached)+`,"output_tokens":`+
+			fmt.Sprintf("%d", output)+`}}`+"\n",
+	), 0o600))
+	require.NotNil(t, job.StartedAt)
+	logTime := job.StartedAt.Add(time.Second).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
+}
+
+func maintenanceRequest(t *testing.T, server *Server, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, req)
+	return response
+}
+
+func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	convertible := testutil.CreateCompletedReview(t, db, repo.ID, "convertible-head", "test", "No issues found.")
+	prose := testutil.CreateCompletedReview(t, db, repo.ID, "prose-head", "test", "No issues found.")
+	for jobID, markdown := range map[int64]string{
+		convertible.ID: "## Review Findings\n\n- **Severity**: Medium\n- **Location**: store/save.go:88\n" +
+			"- **Problem**: The write is not atomic.\n- **Fix**: Rename a temporary file.\n\n## Summary\n\nThe change adds a save routine.",
+		prose.ID: "The save routine looks risky. Consider a rename.",
+	} {
+		_, err := db.Exec(`INSERT INTO legacy_reviews (id, job_id, agent, prompt, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
+ SELECT id, job_id, agent, prompt, ?, created_at, closed, 0, uuid, updated_at, 'No valid review JSON document; AI conversion required'
+ FROM reviews WHERE job_id = ?`, markdown, jobID)
+		require.NoError(t, err)
+		_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+		require.NoError(t, err)
+	}
+
+	response := maintenanceRequest(t, server, "/api/maintenance/legacy/convert", map[string]any{"dry_run": true})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var report storage.LegacyConversionReport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 2, report.Unresolved)
+	assert.Equal(t, 1, report.Converted)
+	assert.Equal(t, map[string]int{"unrecognized_format": 1}, report.Refused)
+	_, err = db.GetReviewByJobID(convertible.ID)
+	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)
+
+	response = maintenanceRequest(t, server, "/api/maintenance/legacy/export", map[string]any{"db": filepath.Join(dir, "test.db")})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var exported ExportLegacyReviewsOutput
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &exported.Body))
+	require.Len(t, exported.Body.SQLiteRecords, 2)
+
+	response = maintenanceRequest(t, server, "/api/maintenance/legacy/convert", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Converted)
+	review, err := db.GetReviewByJobID(convertible.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "The change adds a save routine.", review.StructuredOutput["summary"])
+	assert.Equal(t, storage.VerdictFail, review.Verdict())
+
+	response = maintenanceRequest(t, server, "/api/maintenance/legacy/export", map[string]any{})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &exported.Body))
+	require.Len(t, exported.Body.SQLiteRecords, 1)
+	record := exported.Body.SQLiteRecords[0]
+	assert.Equal(t, prose.ID, record.JobID)
+	assert.Equal(t, "The save routine looks risky. Consider a rename.", record.Output)
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	t.Cleanup(httpServer.Close)
+	api, err := roborevclient.NewWithHTTPClient(httpServer.URL, httpServer.Client())
+	require.NoError(t, err)
+	_, err = api.ImportLegacyReview(t.Context(), &generated.ImportLegacyReviewRequestOptions{
+		Body: &generated.ImportLegacyReviewInputBody{
+			ID: new(record.ID), Document: jsontext.Value(testutil.ReviewFixtureJSON("Converted review.")),
+		},
+	})
+	require.NoError(t, err)
+	restored, err := db.GetReviewByJobID(prose.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Converted review.", restored.StructuredOutput["summary"])
+	var original string
+	require.NoError(t, db.QueryRow("SELECT output FROM legacy_reviews WHERE archive_id = ?", record.ID).Scan(&original))
+	assert.Equal(t, record.Output, original)
+
+	response = maintenanceRequest(t, server, "/api/maintenance/legacy/convert", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 0, report.Unresolved)
+	assert.Equal(t, 0, report.Converted)
+}
+
+func TestMaintenanceRejectsOtherDatabase(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	response := maintenanceRequest(t, server, "/api/maintenance/legacy/export", map[string]any{"db": filepath.Join(t.TempDir(), "other.db")})
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "use --server")
+}
+
+func TestMaintenanceBackfillVerdicts(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	job := testutil.CreateCompletedReview(t, db, repo.ID, "test-head", "test", "No issues found.")
+	_, err = db.Exec("UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?", job.ID)
+	require.NoError(t, err)
+	response := maintenanceRequest(t, server, "/api/maintenance/verdicts/backfill", nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result BackfillVerdictsOutput
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result.Body))
+	assert.Equal(t, 1, result.Body.Count)
+	var verdict bool
+	require.NoError(t, db.QueryRow("SELECT verdict_bool FROM reviews WHERE job_id = ?", job.ID).Scan(&verdict))
+	assert.True(t, verdict)
+}
+
+func TestMaintenanceCleanJobLogs(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, _, _ := newTestServer(t)
+	logPath := JobLogPath(7)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte("old log"), 0o600))
+	oldTime := time.Now().Add(-8 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(logPath, oldTime, oldTime))
+	response := maintenanceRequest(t, server, "/api/logs/clean", map[string]any{"days": 7})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result CleanJobLogsOutput
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result.Body))
+	assert.Equal(t, 1, result.Body.Removed)
+	_, err := os.Stat(logPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestSyncStatusReportsDaemonPendingWork(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	cfg := config.DefaultConfig()
+	cfg.Sync.Enabled = true
+	cfg.Sync.Interval = "7m"
+	cfg.Sync.MachineName = "test-machine"
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg = cfg
+	server.configWatcher.cfgMu.Unlock()
+	server.syncWorker = storage.NewSyncWorker(db, cfg.Sync)
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	testutil.CreateCompletedReview(t, db, repo.ID, "pending-job-head", "test", "No issues found.")
+	synced := testutil.CreateCompletedReview(t, db, repo.ID, "synced-job-head", "test", "No issues found.")
+	_, err = db.Exec("UPDATE review_jobs SET synced_at = updated_at WHERE id = ?", synced.ID)
+	require.NoError(t, err)
+	_, err = db.AddCommentToJob(synced.ID, "tester", "First pending comment")
+	require.NoError(t, err)
+	_, err = db.AddCommentToJob(synced.ID, "tester", "Second pending comment")
+	require.NoError(t, err)
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/status", nil)
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result SyncStatusOutput
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result.Body))
+	assert := assert.New(t)
+	assert.True(result.Body.Enabled)
+	assert.False(result.Body.Connected)
+	assert.Equal("not running", result.Body.Message)
+	assert.Equal("7m", result.Body.Interval)
+	assert.Equal("test-machine", result.Body.MachineName)
+	require.NotNil(t, result.Body.MachineID)
+	assert.Equal(machineID, *result.Body.MachineID)
+	assert.Equal(SyncPendingCounts{Jobs: 1, Reviews: 1, Comments: 2}, result.Body.PendingPush)
+	assert.Equal(1000, result.Body.PendingLimit)
+	assert.False(result.Body.PendingIncomplete)
+	assert.Equal([]string{"sync.enabled is true but sync.postgres_url is not set"}, result.Body.Warnings)
+}
+
+func TestMaintenanceAcceptsDatabaseAlias(t *testing.T) {
+	server, _, dir := newTestServer(t)
+	alias := filepath.Join(t.TempDir(), "alias.db")
+	if err := os.Symlink(filepath.Join(dir, "test.db"), alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	response := maintenanceRequest(t, server, "/api/maintenance/legacy/export", map[string]any{"db": alias})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}

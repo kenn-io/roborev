@@ -3791,14 +3791,34 @@ func (s *Server) ShutdownRequested() <-chan struct{} {
 func (s *Server) humaSyncStatus(
 	ctx context.Context, input *struct{},
 ) (*SyncStatusOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	resp := &SyncStatusOutput{}
+	cfg := s.configWatcher.Config()
+	resp.Body.Interval = cfg.Sync.Interval
+	resp.Body.MachineName = cfg.Sync.MachineName
+	resp.Body.Warnings = cfg.Sync.Validate()
 	if s.syncWorker == nil {
-		resp.Body.Enabled = false
-		resp.Body.Connected = false
 		resp.Body.Message = "sync not enabled"
 		return resp, nil
 	}
-
+	machineID, err := s.db.GetMachineID()
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get sync machine ID", err)
+	}
+	resp.Body.MachineID = &machineID
+	// Preserve the CLI's existing status query cap and >= display at the cap.
+	const maxPending = 1000
+	resp.Body.PendingLimit = maxPending
+	jobs, jobsErr := s.db.GetJobsToSync(machineID, maxPending)
+	reviews, reviewsErr := s.db.GetReviewsToSync(machineID, maxPending)
+	comments, commentsErr := s.db.GetCommentsToSync(machineID, maxPending)
+	resp.Body.PendingPush = SyncPendingCounts{Jobs: len(jobs), Reviews: len(reviews), Comments: len(comments)}
+	resp.Body.PendingIncomplete = jobsErr != nil || reviewsErr != nil || commentsErr != nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	healthy, message := s.syncWorker.HealthCheck()
 	resp.Body.Enabled = true
 	resp.Body.Connected = healthy
@@ -3973,6 +3993,24 @@ func (s *Server) humaJobLog(
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		jobID, ok := parseHumaJobID(hctx, input.JobID, "job_id required")
 		if !ok {
+			return
+		}
+
+		hctx.SetHeader("X-Log-Path", JobLogPath(jobID))
+		if input.Path {
+			return
+		}
+		if input.Raw {
+			f, err := os.Open(JobLogPath(jobID))
+			if err != nil {
+				writeHumaJSON(hctx, http.StatusNotFound, ErrorResponse{Error: "no log file for this job"})
+				return
+			}
+			defer f.Close()
+			hctx.SetHeader("Content-Type", "application/x-ndjson")
+			if _, err := io.Copy(hctx.BodyWriter(), f); err != nil {
+				log.Printf("humaJobLog: stream raw log for job %d: %v", jobID, err)
+			}
 			return
 		}
 

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func TestLogCleanCmd_NegativeDays(t *testing.T) {
@@ -56,6 +59,7 @@ func TestLogCmd_MissingLogFile(t *testing.T) {
 
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	cmd := logCmd()
+	_ = logTestAPI(t, nil)
 	cmd.SetArgs([]string{"99999"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
@@ -72,6 +76,7 @@ func TestLogCmd_PathFlag(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := logCmd()
 	cmd.SetOut(&buf)
+	_ = logTestAPI(t, nil)
 	cmd.SetArgs([]string{"--path", "42"})
 	cmd.SilenceUsage = true
 	// --path succeeds even if log file doesn't exist.
@@ -99,6 +104,7 @@ func TestLogCmd_RawFlag(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := logCmd()
 	cmd.SetOut(&buf)
+	_ = logTestAPI(t, nil)
 	cmd.SetArgs([]string{"--raw", "42"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
@@ -106,7 +112,7 @@ func TestLogCmd_RawFlag(t *testing.T) {
 	assert.Equal(rawContent, buf.String())
 }
 
-func TestLogCmdUsesExplicitDatabase(t *testing.T) {
+func TestLogCmdUsesDaemonMetadata(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 	dbPath := filepath.Join(dataDir, "custom.db")
@@ -129,7 +135,8 @@ func TestLogCmdUsesExplicitDatabase(t *testing.T) {
 	var out bytes.Buffer
 	cmd := logCmd()
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--db", dbPath, fmt.Sprint(job.ID)})
+	_ = logTestAPI(t, job)
+	cmd.SetArgs([]string{fmt.Sprint(job.ID)})
 	cmd.SilenceUsage = true
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, logContent, out.String())
@@ -183,7 +190,7 @@ func TestRenderJobLogUsesStoredIdentity(t *testing.T) {
 			}
 			var out bytes.Buffer
 			require.NoError(t, renderJobLog(
-				job.ID, &out, true, storage.DefaultDBPath(),
+				job.ID, &out, true, logTestAPI(t, job),
 			))
 			plain := streamfmt.StripANSI(out.String())
 			for _, want := range tt.want {
@@ -229,7 +236,7 @@ func TestRenderJobLogUsesPersistedLogIdentityAfterCanceledFailover(t *testing.T)
 
 	var out bytes.Buffer
 	require.NoError(t, renderJobLog(
-		job.ID, &out, true, storage.DefaultDBPath(),
+		job.ID, &out, true, logTestAPI(t, job),
 	))
 	plain := streamfmt.StripANSI(out.String())
 	assert.Contains(t, plain, "prior provider output")
@@ -243,7 +250,7 @@ func TestRenderJobLogOrphanSuggestsRaw(t *testing.T) {
 		daemon.JobLogPath(42), []byte(`{"type":"assistant"}`+"\n"), 0o600,
 	))
 
-	err := renderJobLog(42, io.Discard, true, storage.DefaultDBPath())
+	err := renderJobLog(42, io.Discard, true, logTestAPI(t, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--raw")
 }
@@ -269,4 +276,44 @@ func TestLooksLikeJSON(t *testing.T) {
 		got := streamfmt.LooksLikeJSON(tt.input)
 		assert.Equal(tt.want, got, "streamfmt.LooksLikeJSON(%q)", tt.input)
 	}
+}
+
+// The transport supplies the daemon's log bytes and persisted agent identity.
+func logTestAPI(t *testing.T, job *storage.ReviewJob) *roborevclient.Client {
+	t.Helper()
+	dataDir := os.Getenv("ROBOREV_DATA_DIR")
+	md := NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/job/log" {
+			return false
+		}
+		var id int64
+		_, _ = fmt.Sscan(r.URL.Query().Get("job_id"), &id)
+		w.Header().Set("X-Log-Path", daemon.JobLogPath(id))
+		if r.URL.Query().Get("path") == "true" {
+			return true
+		}
+		if r.URL.Query().Get("raw") != "true" {
+			if job == nil {
+				http.NotFound(w, r)
+				return true
+			}
+			identity, err := daemon.ResolveJobLogIdentity(job)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return true
+			}
+			w.Header().Set("X-Job-Agent", identity.Agent)
+			w.Header().Set("X-Job-Source", identity.Source)
+		}
+		f, err := os.Open(daemon.JobLogPath(id))
+		if err != nil {
+			http.NotFound(w, r)
+			return true
+		}
+		defer f.Close()
+		_, _ = io.Copy(w, f)
+		return true
+	}})
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	return newDaemonAPI(md.Server.URL, getDaemonEndpoint().HTTPClient(5*time.Second))
 }

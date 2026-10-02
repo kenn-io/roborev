@@ -499,6 +499,9 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	s.registerRepoManagementAPI(api)
+	s.registerMaintenanceAPI(api)
+
 	return api
 }
 

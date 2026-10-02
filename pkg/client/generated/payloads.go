@@ -28,9 +28,27 @@ type UpdateJobBranchBody = UpdateJobBranchRequest
 
 type BatchJobsBody = BatchJobsRequest
 
+type CleanJobLogsBody = CleanJobLogsInputBody
+
+type ConvertLegacyReviewsBody = ConvertLegacyReviewsInputBody
+
+type ExportLegacyReviewsBody = LegacyMaintenanceTarget
+
+type ImportLegacyReviewBody = ImportLegacyReviewInputBody
+
+type ScanTokenUsageBody = ScanTokenUsageInputBody
+
 type RemapJobsBody = RemapRequest
 
+type DeleteRepoBody = DeleteRepoInputBody
+
+type MergeReposBody = MergeReposInputBody
+
+type MoveRepoBody = MoveRepoInputBody
+
 type RegisterRepoBody = RegisterRepoRequest
+
+type RenameRepoBody = RenameRepoInputBody
 
 type CloseReviewBody = CloseReviewRequest
 

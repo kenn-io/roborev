@@ -1,241 +1,73 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
+	"bytes"
+	"encoding/json/v2"
+	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/roborev/internal/backfill"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/internal/tokens"
 )
 
-func TestBackfillCostFetchConfig(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Cost.Endpoint = "https://usage.example.test/api/v1/sessions/{session_id}/usage"
-	cfg.Cost.Timeout = "250ms"
-
-	got := backfillCostFetchConfig(cfg)
-
-	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", got.Endpoint)
-	assert.Equal(t, 250*time.Millisecond, got.Timeout)
-	assert.True(t, got.RequireCLI)
-}
-
-func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testing.T) {
-	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
-	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
-
-	got := backfill.MergeTokenUsage(existing, fetched)
-
-	assert.Equal(t, int64(28800), got.OutputTokens)
-	assert.Equal(t, int64(118000), got.PeakContextTokens)
-	assert.True(t, got.HasCost)
-	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
-}
-
-func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *testing.T) {
-	existing := `{"input_tokens":79150,"cached_input_tokens":2560,` +
-		`"total_output_tokens":3389,"usage_source":"job_log_turn_completed",` +
-		`"thread_id":"thread-123","event_offset":91}`
-	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
-
-	got := backfill.MergeTokenUsage(existing, fetched)
-
-	assert.Equal(t, int64(79150), got.InputTokens)
-	assert.Equal(t, int64(2560), got.CachedInputTokens)
-	assert.Equal(t, int64(3389), got.OutputTokens)
-	assert.Equal(t, "job_log_turn_completed", got.UsageSource)
-	assert.Equal(t, "thread-123", got.ThreadID)
-	assert.Equal(t, int64(91), got.EventOffset)
-	assert.True(t, got.HasCost)
-	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
-}
-
-func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
-	dataDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	t.Setenv("PATH", t.TempDir())
-
-	db, err := storage.Open(storage.DefaultDBPath())
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	require.NoError(t, err)
-	job, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:    repo.ID,
-		CommitID:  commit.ID,
-		GitRef:    "abc123",
-		Agent:     "codex",
-		SessionID: "thread-123",
-	})
-	require.NoError(t, err)
-	claimed, err := db.ClaimJob("worker-1")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
-
-	logPath := daemon.JobLogPath(job.ID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
-	require.NoError(t, os.WriteFile(logPath, []byte(
-		`{"type":"thread.started","thread_id":"thread-123"}`+"\n"+
-			`{"type":"turn.completed","usage":{"input_tokens":79150,`+
-			`"cached_input_tokens":2560,"output_tokens":3389}}`+"\n",
-	), 0o600))
-
-	// Filesystem write timestamps can lag the nanosecond-precision job start.
-	// Give this current-attempt fixture an explicit, whole-second timestamp.
-	require.NotNil(t, claimed.StartedAt)
-	logTime := claimed.StartedAt.Add(time.Second).Truncate(time.Second)
-	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
-
-	cmd := backfillTokensCmd()
-	cmd.SetArgs(nil)
-	require.NoError(t, cmd.Execute())
-
-	updated, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	usage := tokens.ParseJSON(updated.TokenUsage)
-	require.NotNil(t, usage)
-	assert.Equal(t, int64(79150), usage.InputTokens)
-	assert.Equal(t, int64(2560), usage.CachedInputTokens)
-	assert.Equal(t, int64(3389), usage.OutputTokens)
-	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
-	assert.Equal(t, "thread-123", usage.ThreadID)
-}
-
-func TestBackfillTokensUsesCodexJobLogsWithoutAgentsviewEligibleSession(t *testing.T) {
-	dataDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	t.Setenv("PATH", t.TempDir())
-
-	db, err := storage.Open(storage.DefaultDBPath())
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	require.NoError(t, err)
-
-	missingSession := enqueueCompleteJob(t, db, repo.ID, commit.ID, "")
-	sharedSessionA := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
-	sharedSessionB := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
-
-	writeCodexUsageLog(t, missingSession, "missing-session-thread", 1000, 100, 200)
-	writeCodexUsageLog(t, sharedSessionA, "shared-session", 2000, 200, 300)
-	writeCodexUsageLog(t, sharedSessionB, "shared-session", 3000, 300, 400)
-
-	cmd := backfillTokensCmd()
-	cmd.SetArgs(nil)
-	require.NoError(t, cmd.Execute())
-
-	assertJobUsage := func(jobID int64, threadID string, input, cached, output int64) {
-		updated, err := db.GetJobByID(jobID)
-		require.NoError(t, err)
-		usage := tokens.ParseJSON(updated.TokenUsage)
-		require.NotNil(t, usage)
-		assert.Equal(t, input, usage.InputTokens)
-		assert.Equal(t, cached, usage.CachedInputTokens)
-		assert.Equal(t, output, usage.OutputTokens)
-		assert.Equal(t, threadID, usage.ThreadID)
-		assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+func TestBackfillTokensUsesDaemon(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(map[bool]string{false: "update", true: "dry run"}[dryRun], func(t *testing.T) {
+			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/maintenance/tokens/backfill", r.URL.Path)
+				assert.Equal(t, http.MethodPost, r.Method)
+				var request struct {
+					DryRun bool `json:"dry_run"`
+				}
+				assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+				assert.Equal(t, dryRun, request.DryRun)
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"total":2,"updated":1,"skipped":1,"failed":0,"jobs":[{"job_id":7,"agent":"codex","summary":"1,000 tokens"}]}`))
+				assert.NoError(t, err)
+			}))
+			var out bytes.Buffer
+			command := backfillTokensCmd()
+			command.SetOut(&out)
+			command.SetArgs([]string{})
+			if dryRun {
+				command.SetArgs([]string{"--dry-run"})
+			}
+			require.NoError(t, command.Execute())
+			action := "Updated"
+			if dryRun {
+				action = "Would update"
+			}
+			assert.Equal(t, "job 7 (codex): 1,000 tokens\n\n"+action+" 1/2 jobs (1 skipped, 0 failed)\n", out.String())
+		})
 	}
-	assertJobUsage(missingSession.ID, "missing-session-thread", 1000, 100, 200)
-	assertJobUsage(sharedSessionA.ID, "shared-session", 2000, 200, 300)
-	assertJobUsage(sharedSessionB.ID, "shared-session", 3000, 300, 400)
-
-	updatedMissingSession, err := db.GetJobByID(missingSession.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "missing-session-thread", updatedMissingSession.SessionID)
 }
 
-func TestBackfillTokensRejectsLogFromPriorCanceledAttempt(t *testing.T) {
-	dataDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	t.Setenv("PATH", t.TempDir())
-
-	db, err := storage.Open(storage.DefaultDBPath())
-	require.NoError(t, err)
-	defer db.Close()
-
-	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
-	commit, err := db.GetOrCreateCommit(
-		repo.ID, "abc123", "Author", "Subject", time.Now(),
-	)
-	require.NoError(t, err)
-	job := enqueueCompleteJob(t, db, repo.ID, commit.ID, "prior-session")
-	writeCodexUsageLog(t, job, "prior-session", 1000, 100, 200)
-
-	require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
-	claimed, err := db.ClaimJob("worker-2")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, job.ID, claimed.ID)
-	require.NotNil(t, claimed.StartedAt)
-	require.NoError(t, db.CancelJob(job.ID))
-
-	logPath := daemon.JobLogPath(job.ID)
-	staleTime := claimed.StartedAt.Add(-time.Minute)
-	require.NoError(t, os.Chtimes(logPath, staleTime, staleTime))
-
-	cmd := backfillTokensCmd()
-	cmd.SetArgs(nil)
-	require.NoError(t, cmd.Execute())
-
-	updated, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Empty(t, updated.TokenUsage)
-	assert.Empty(t, updated.SessionID)
+func TestBackfillVerdictsUsesDaemon(t *testing.T) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/maintenance/verdicts/backfill", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"count":3}`))
+		assert.NoError(t, err)
+	}))
+	var out bytes.Buffer
+	command := backfillVerdictsCmd()
+	command.SetOut(&out)
+	command.SetArgs([]string{})
+	require.NoError(t, command.Execute())
+	assert.Equal(t, "Backfilled verdict_bool for 3 reviews.\n", out.String())
 }
 
-func enqueueCompleteJob(
-	t *testing.T, db *storage.DB, repoID, commitID int64, sessionID string,
-) *storage.ReviewJob {
-	t.Helper()
-	job, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:    repoID,
-		CommitID:  commitID,
-		GitRef:    "abc123",
-		Agent:     "codex",
-		SessionID: sessionID,
-	})
-	require.NoError(t, err)
-	claimed, err := db.ClaimJob("worker-1")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
-	return claimed
-}
-
-func writeCodexUsageLog(
-	t *testing.T, job *storage.ReviewJob, threadID string, input, cached, output int64,
-) {
-	t.Helper()
-	logPath := daemon.JobLogPath(job.ID)
-	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
-	require.NoError(t, os.WriteFile(logPath, []byte(
-		`{"type":"thread.started","thread_id":"`+threadID+`"}`+"\n"+
-			`{"type":"turn.completed","usage":{"input_tokens":`+
-			fmt.Sprintf("%d", input)+`,"cached_input_tokens":`+
-			fmt.Sprintf("%d", cached)+`,"output_tokens":`+
-			fmt.Sprintf("%d", output)+`}}`+"\n",
-	), 0o600))
-	require.NotNil(t, job.StartedAt)
-	logTime := job.StartedAt.Add(time.Second).Truncate(time.Second)
-	require.NoError(t, os.Chtimes(logPath, logTime, logTime))
+func TestBackfillVerdictsReportsDaemonProblemDetail(t *testing.T) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, err := w.Write([]byte(`{"status":500,"title":"Internal Server Error","detail":"could not repair review verdicts"}`))
+		assert.NoError(t, err)
+	}))
+	command := backfillVerdictsCmd()
+	command.SetArgs([]string{})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "could not repair review verdicts")
 }

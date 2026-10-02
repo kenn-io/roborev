@@ -326,6 +326,16 @@ func TestInstallHookRepairCmdWithRegisteredWhileDatabaseWriterActive(t *testing.
 	_, err = db.GetOrCreateRepo(repo.Root)
 	require.NoError(t, err)
 
+	md := NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/repos" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"repos":[{"name":"project-a","root_path":%q,"count":0}],"total_count":0}`, filepath.ToSlash(repo.Root))
+		return true
+	}})
+	t.Cleanup(md.Close)
+
 	// Daemon startup can hold a write lock while migrating. Reading the
 	// registered repositories must not compete for that lock.
 	tx, err := db.Begin()
@@ -366,6 +376,16 @@ func TestInstallHookRepairCmdWithRegisteredWorksOutsideGitRepo(t *testing.T) {
 	repo := testutil.NewTestRepo(t)
 	_, err = db.GetOrCreateRepo(repo.Root)
 	require.NoError(t, err)
+
+	md := NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/repos" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"repos":[{"name":"project-a","root_path":%q,"count":0}],"total_count":0}`, filepath.ToSlash(repo.Root))
+		return true
+	}})
+	t.Cleanup(md.Close)
 
 	require.NoError(t, os.MkdirAll(repo.HooksDir, 0o755))
 	require.NoError(t, os.WriteFile(repo.HookPath, []byte(githook.GeneratePostCommitWithBinary(oldBinary)), 0o755))

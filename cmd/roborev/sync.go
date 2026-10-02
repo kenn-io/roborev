@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -34,90 +32,59 @@ func syncStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show sync status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Load config
-			cfg, err := config.LoadGlobal()
-			if err != nil {
-				cfg = config.DefaultConfig()
+			if err := ensureDaemon(); err != nil {
+				return err
 			}
-
-			if !cfg.Sync.Enabled {
-				fmt.Println("Sync: disabled")
-				fmt.Println()
-				fmt.Println("Enable in ~/.roborev/config.toml:")
-				fmt.Println("  [sync]")
-				fmt.Println("  enabled = true")
-				fmt.Println("  postgres_url = \"postgres://...\"")
+			ep := getDaemonEndpoint()
+			status, err := newDaemonAPI(ep.BaseURL(), ep.HTTPClient(0)).GetSyncStatus(cmd.Context())
+			if err != nil {
+				if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
+					return fmt.Errorf("fetch sync status: %s", *problem.Detail)
+				}
+				return fmt.Errorf("fetch sync status: %w", err)
+			}
+			if !status.Enabled {
+				cmd.Println("Sync: disabled")
+				cmd.Println()
+				cmd.Println("Enable in ~/.roborev/config.toml:")
+				cmd.Println("  [sync]")
+				cmd.Println("  enabled = true")
+				cmd.Println("  postgres_url = \"postgres://...\"")
 				return nil
 			}
-
-			fmt.Println("Sync: enabled")
-			fmt.Printf("Interval: %s\n", cfg.Sync.Interval)
-			if cfg.Sync.MachineName != "" {
-				fmt.Printf("Machine name: %s\n", cfg.Sync.MachineName)
+			cmd.Println("Sync: enabled")
+			cmd.Printf("Interval: %s\n", status.Interval)
+			if status.MachineName != "" {
+				cmd.Printf("Machine name: %s\n", status.MachineName)
 			}
-
-			// Validate config
-			warnings := cfg.Sync.Validate()
-			for _, w := range warnings {
-				fmt.Printf("Warning: %s\n", w)
+			for _, warning := range status.Warnings {
+				cmd.Printf("Warning: %s\n", warning)
 			}
-
-			// Open database to check pending items
-			db, err := storage.Open(storage.DefaultDBPath())
-			if err != nil {
-				return fmt.Errorf("failed to open database: %w", err)
+			if status.MachineID != nil {
+				cmd.Printf("Machine ID: %s\n", *status.MachineID)
 			}
-			defer db.Close()
-
-			machineID, err := db.GetMachineID()
-			if err != nil {
-				return fmt.Errorf("failed to get machine ID: %w", err)
+			cmd.Println()
+			if status.PendingIncomplete {
+				cmd.Println("Warning: could not count all pending items")
 			}
-			fmt.Printf("Machine ID: %s\n", machineID)
-
-			// Count pending items
-			const maxPending = 1000
-			jobs, jobsErr := db.GetJobsToSync(machineID, maxPending)
-			reviews, reviewsErr := db.GetReviewsToSync(machineID, maxPending)
-			responses, responsesErr := db.GetCommentsToSync(machineID, maxPending)
-
-			fmt.Println()
-			if jobsErr != nil || reviewsErr != nil || responsesErr != nil {
-				fmt.Println("Warning: could not count all pending items")
-			}
-
-			// Format counts with >= indicator when hitting the cap
-			formatCount := func(count int) string {
-				if count >= maxPending {
+			formatCount := func(count int64) string {
+				if count >= status.PendingLimit {
 					return fmt.Sprintf(">=%d", count)
 				}
 				return fmt.Sprintf("%d", count)
 			}
-			fmt.Printf("Pending push: %s jobs, %s reviews, %s comments\n",
-				formatCount(len(jobs)), formatCount(len(reviews)), formatCount(len(responses)))
+			cmd.Printf("Pending push: %s jobs, %s reviews, %s comments\n",
+				formatCount(status.PendingPush.Jobs), formatCount(status.PendingPush.Reviews), formatCount(status.PendingPush.Comments))
+			cmd.Println()
 
-			// Try to connect to PostgreSQL
-			fmt.Println()
-			fmt.Print("PostgreSQL: ")
-			url := cfg.Sync.PostgresURLExpanded()
-			if url == "" {
-				fmt.Println("not configured")
-				return nil
+			if status.Connected {
+				cmd.Println("PostgreSQL: connected")
+			} else {
+				cmd.Println("PostgreSQL: disconnected")
 			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			pgCfg := storage.DefaultPgPoolConfig()
-			pgCfg.ConnectTimeout = 5 * time.Second
-			pool, err := storage.NewPgPool(ctx, url, pgCfg)
-			if err != nil {
-				fmt.Printf("connection failed (%v)\n", err)
-				return nil
+			if status.Message != "" {
+				cmd.Println(status.Message)
 			}
-			defer pool.Close()
-
-			fmt.Println("connected")
 
 			return nil
 		},

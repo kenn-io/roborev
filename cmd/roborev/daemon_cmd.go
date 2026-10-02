@@ -240,6 +240,7 @@ func daemonRunCmd() *cobra.Command {
 		addr         string
 		workers      int
 		webDevOrigin string
+		queuePaused  bool
 	)
 
 	cmd := &cobra.Command{
@@ -295,12 +296,24 @@ func daemonRunCmd() *cobra.Command {
 				cfg.MaxWorkers = workers
 			}
 
+			// Establish database ownership before opening or migrating SQLite.
+			owner, err := lockDaemonDatabase(dbPath)
+			if err != nil {
+				return err
+			}
+			defer owner.Close()
+
 			// Open database
 			db, err := storage.Open(dbPath)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
 			defer db.Close()
+			if cmd.Flags().Changed("queue-paused") {
+				if err := db.SetQueuePaused(queuePaused); err != nil {
+					return fmt.Errorf("persist initial queue pause state: %w", err)
+				}
+			}
 			log.Printf("Database: %s", dbPath)
 
 			search, err := newDaemonSearch(cmd.Context(), db, dbPath, cfg)
@@ -411,6 +424,8 @@ func daemonRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&configPath, "config", config.GlobalConfigPath(), "path to config file")
 	cmd.Flags().StringVar(&addr, "addr", "", "server address (overrides config)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "number of workers (overrides config)")
+	cmd.Flags().BoolVar(&queuePaused, "queue-paused", false, "initial queue pause state before workers start")
+	_ = cmd.Flags().MarkHidden("queue-paused")
 	cmd.Flags().StringVar(&webDevOrigin, "web-dev-origin", "", "exact loopback origin for web development")
 	if err := cmd.Flags().MarkHidden("web-dev-origin"); err != nil {
 		panic(err)

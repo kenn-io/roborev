@@ -2,106 +2,106 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
+	"net/http"
 	"path/filepath"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestLegacyReviewCommands(t *testing.T) {
-	db, dir := testutil.OpenTestDBWithDir(t)
-	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
-	require.NoError(t, err)
-	job := testutil.CreateCompletedReview(t, db, repo.ID, "test-head", "test", "No issues found.")
-	_, err = db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Legacy review needing conversion' WHERE job_id = ?`, job.ID)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	dbPath := filepath.Join(dir, "test.db")
-	migrated, err := storage.Open(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, migrated.Close())
+	archiveID := uuid.New()
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/maintenance/legacy/export":
+			var target daemon.LegacyMaintenanceTarget
+			assert.NoError(t, json.UnmarshalRead(r.Body, &target))
+			assert.Empty(t, target.DB)
+			assert.Empty(t, target.PostgresURL)
+			assert.NoError(t, json.MarshalWrite(w, map[string]any{"sqlite_records": []storage.LegacyReview{{ID: 7, Output: "Archived prose"}}, "postgres_records": []storage.PostgresLegacyReview{}}))
+		case "/api/maintenance/legacy/convert":
+			var request daemon.ConvertLegacyReviewsInput
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request.Body))
+			assert.True(t, request.Body.DryRun)
+			assert.Equal(t, dbPath, request.Body.DB)
+			assert.NoError(t, json.MarshalWrite(w, storage.LegacyConversionReport{Unresolved: 2, Converted: 1, Refused: map[string]int{"unrecognized_format": 1}, DryRun: true}))
+		case "/api/maintenance/legacy/import":
+			var request daemon.ImportLegacyReviewInput
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request.Body))
+			assert.Equal(t, "postgres://archive.example.test/reviews", request.Body.PostgresURL)
+			assert.Equal(t, archiveID, request.Body.UUID)
+			assert.JSONEq(t, string(testutil.ReviewFixtureJSON("Converted review.")), string(request.Body.Document))
+			_, err := w.Write([]byte(`{"success":true}`))
+			assert.NoError(t, err)
+		default:
+			assert.Equal(t, "/api/maintenance/legacy/import", r.URL.Path, "unexpected maintenance endpoint")
+		}
+	}))
 	var out bytes.Buffer
-	export := legacyReviewsCmd()
-	export.SetOut(&out)
-	export.SetArgs([]string{"--db", dbPath, "export"})
-	require.NoError(t, export.Execute())
+	command := legacyReviewsCmd()
+	command.SetOut(&out)
+	command.SetArgs([]string{"export"})
+	require.NoError(t, command.Execute())
 	var exported struct {
 		Records []storage.LegacyReview `json:"records"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &exported))
 	require.Len(t, exported.Records, 1)
-	assert.Equal(t, "Legacy review needing conversion", exported.Records[0].Output)
-	command := legacyReviewsCmd()
+	assert.Equal(t, int64(7), exported.Records[0].ID)
+	assert.Equal(t, "Archived prose", exported.Records[0].Output)
+
+	out.Reset()
+	command = legacyReviewsCmd()
+	command.SetOut(&out)
+	command.SetArgs([]string{"--db", dbPath, "convert", "--dry-run"})
+	require.NoError(t, command.Execute())
+	assert.Equal(t, "Historical reviews needing conversion: 2\nWould convert: 1\nWould remain unstructured: 1\n  unrecognized_format: 1\n", out.String())
+
+	out.Reset()
+	command = legacyReviewsCmd()
 	command.SetIn(bytes.NewReader(testutil.ReviewFixtureJSON("Converted review.")))
 	command.SetOut(&out)
-	command.SetArgs([]string{"--db", dbPath, "import", "1"})
+	command.SetArgs([]string{"--postgres-url", "postgres://archive.example.test/reviews", "import", archiveID.String()})
 	require.NoError(t, command.Execute())
-	check, err := storage.OpenReadOnly(dbPath)
-	require.NoError(t, err)
-	defer check.Close()
-	review, err := check.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "Converted review.", review.StructuredOutput["summary"])
+	assert.Equal(t, "Converted review restored. The original remains archived.\n", out.String())
 }
 
-func TestLegacyReviewsConvertCommand(t *testing.T) {
-	db, dir := testutil.OpenTestDBWithDir(t)
-	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
-	require.NoError(t, err)
-	convertible := testutil.CreateCompletedReview(t, db, repo.ID, "convertible-head", "test", "No issues found.")
-	prose := testutil.CreateCompletedReview(t, db, repo.ID, "prose-head", "test", "No issues found.")
-	// Archive both reviews as Markdown the way the first JSON release did,
-	// before automatic conversion existed.
-	for jobID, markdown := range map[int64]string{
-		convertible.ID: "## Review Findings\n\n- **Severity**: Medium\n- **Location**: store/save.go:88\n" +
-			"- **Problem**: The write is not atomic.\n- **Fix**: Rename a temporary file.\n\n## Summary\n\nThe change adds a save routine.",
-		prose.ID: "The save routine looks risky. Consider a rename.",
-	} {
-		_, err = db.Exec(`INSERT INTO legacy_reviews (id, job_id, agent, prompt, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
- SELECT id, job_id, agent, prompt, ?, created_at, closed, 0, uuid, updated_at, 'No valid review JSON document; AI conversion required'
- FROM reviews WHERE job_id = ?`, markdown, jobID)
-		require.NoError(t, err)
-		_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
-		require.NoError(t, err)
-	}
-	require.NoError(t, db.Close())
-	dbPath := filepath.Join(dir, "test.db")
+func TestLegacyReviewsReportsDaemonFailure(t *testing.T) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := w.Write([]byte(`{"detail":"use --server to select the daemon that owns the database"}`))
+		assert.NoError(t, err)
+	}))
+	command := legacyReviewsCmd()
+	command.SetArgs([]string{"--db", filepath.Join(t.TempDir(), "other.db"), "convert"})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "use --server")
+}
 
-	run := func(args ...string) string {
-		var out bytes.Buffer
-		command := legacyReviewsCmd()
-		command.SetOut(&out)
-		command.SetArgs(append([]string{"--db", dbPath}, args...))
-		require.NoError(t, command.Execute())
-		return out.String()
-	}
-
-	assert.Equal(t, "Historical reviews needing conversion: 2\nWould convert: 1\nWould remain unstructured: 1\n  unrecognized_format: 1\n",
-		run("convert", "--dry-run"))
-	check, err := storage.OpenReadOnly(dbPath)
-	require.NoError(t, err)
-	_, err = check.GetReviewByJobID(convertible.ID)
-	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration, "a dry run restores nothing")
-	require.NoError(t, check.Close())
-
-	assert.Equal(t, "Historical reviews needing conversion: 1\nConverted and restored: 0\nLeft unstructured for export and import: 1\n  unrecognized_format: 1\n",
-		run("convert"))
-	assert.Equal(t, "Historical reviews needing conversion: 1\nConverted and restored: 0\nLeft unstructured for export and import: 1\n  unrecognized_format: 1\n",
-		run("convert"), "a second run only sees what is still unresolved")
-
-	check, err = storage.OpenReadOnly(dbPath)
-	require.NoError(t, err)
-	defer check.Close()
-	review, err := check.GetReviewByJobID(convertible.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "The change adds a save routine.", review.StructuredOutput["summary"])
-	assert.Equal(t, storage.VerdictFail, review.Verdict())
-	legacy, err := check.GetReviewByJobID(prose.ID)
-	require.NoError(t, err)
-	assert.Contains(t, legacy.Output, "Unstructured historical review")
+func TestLegacyReviewsResolvesDatabaseInCallerDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var target daemon.LegacyMaintenanceTarget
+		assert.NoError(t, json.UnmarshalRead(r.Body, &target))
+		assert.Equal(t, filepath.Join(dir, "reviews.db"), target.DB)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"sqlite_records":[],"postgres_records":[]}`))
+		assert.NoError(t, err)
+	}))
+	command := legacyReviewsCmd()
+	command.SetOut(&bytes.Buffer{})
+	command.SetArgs([]string{"--db", "reviews.db", "export"})
+	require.NoError(t, command.Execute())
 }

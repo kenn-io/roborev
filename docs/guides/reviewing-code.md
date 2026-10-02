@@ -531,26 +531,28 @@ and it syncs to the PostgreSQL mirror again. Older formats never stated the
 agent's own verdict, so their documents use review schema version 1, which has
 no `verdict` member. The review's pass or fail verdict is unchanged either way.
 
-The deterministic converter is also available explicitly. `--dry-run` only reads
-the database and reports which remaining legacy documents it can convert:
+The deterministic converter is also available through the daemon API.
+`--dry-run` reports which remaining legacy documents it can convert without
+changing archived reviews:
 
 ```bash
-roborev legacy-reviews --db /path/to/reviews.db convert --dry-run
+roborev legacy-reviews convert --dry-run
 ```
 
-Stop the daemon before running `convert` without `--dry-run`. Opening the
-writable database first performs automatic history recovery; the command reports
-conversions remaining after that upgrade. Originals remain archived.
+The daemon owns database access and performs automatic history recovery at
+startup. `convert` reports conversions remaining after that recovery. Originals
+remain archived. Use `--server` to select another daemon. The optional `--db`
+argument checks that the selected daemon owns that database; it does not open
+another database.
 
 ### Converting the remaining reviews with an AI agent
 
 Converting free-form text into findings is optional. Roborev never launches an
 agent for this task. Your agent can read the exported input and submit a
-complete structured document. Use the database path for the intended
-installation:
+complete structured document. Use the daemon for the intended installation:
 
 ```bash
-roborev legacy-reviews --db /path/to/reviews.db export > migration-input.json
+roborev legacy-reviews export > migration-input.json
 ```
 
 Give that file to your agent. It contains the original records, the conversion
@@ -559,16 +561,16 @@ findings and to leave any record it cannot convert faithfully unresolved. Import
 each completed JSON document using the archive ID from the export:
 
 ```bash
-roborev legacy-reviews --db /path/to/reviews.db import 1 < converted-review.json
+roborev legacy-reviews import 1 < converted-review.json
 ```
 
-Stop the daemon before using the offline import command. Import accepts the
-existing structured document versions and replaces the whole legacy body, rather
-than merging individual findings. It preserves the active review's identity,
+Import sends the document to the selected daemon. It accepts the existing
+structured document versions and replaces the whole legacy body, rather than
+merging individual findings. It preserves the active review's identity,
 metadata, and open/closed state, and derives its verdict from the supplied
 findings. It rejects invalid documents and refuses to replace an already
 structured review. Synthesis findings must cite valid source reviews. Originals
-remain archived. Restart the daemon after importing.
+remain archived.
 
 An agent working with the running daemon can instead submit the same document to
 `POST /api/review/migrate` on its local API:
@@ -601,7 +603,7 @@ repository.
 The PostgreSQL mirror restores legacy records through the same conversion and
 preservation rules. Its archive retains the original row as JSON in
 `legacy_reviews.record`. The mirror upgrade converts the same formats
-automatically. Use `--postgres-url` instead of `--db` to convert, export, and
+automatically. Use `--postgres-url` to ask the daemon to convert, export, and
 import these records. PostgreSQL archive IDs are UUIDs:
 
 ```bash

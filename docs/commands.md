@@ -516,7 +516,7 @@ panel-era cursors are namespaced and cannot be resumed against each other.
 roborev log <job-id>             # Human-friendly rendered output
 roborev log --raw <job-id>       # Raw NDJSON bytes
 roborev log --path <job-id>      # Print the log file path
-roborev log --db <path> <job-id> # Read metadata from a custom database
+roborev --server 127.0.0.1:7373 log <job-id> # Select a running daemon
 
 roborev log clean                # Remove logs older than 7 days
 roborev log clean --days 3       # Remove logs older than 3 days
@@ -526,17 +526,17 @@ roborev log clean --days 3       # Remove logs older than 3 days
 |------|-------------|
 | `--raw` | Print raw NDJSON without formatting |
 | `--path` | Print the log file path instead of contents |
-| `--db` | SQLite database used for log metadata |
 
 Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
 available after daemon restarts. By default, `roborev log` renders NDJSON into
 compact, human-readable progress lines showing tool calls and agent text. It
-uses stored job metadata to select that renderer; use `--raw` for the original
-NDJSON when scripting, debugging, or reading an orphaned log file. When the
-daemon runs with a custom `--db` path, pass the same path to `roborev log`.
+requests the log and its stored metadata through the daemon API to select that
+renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
+reading an orphaned log file. For a daemon using a custom database, select that
+daemon with `--server`; the CLI does not open SQLite.
 
-The `clean` subcommand removes log files older than the specified number of days
-(default: 7).
+The `clean` subcommand asks the selected daemon to remove log files older than
+the specified number of days (default: 7).
 
 ## Commenting on Reviews
 

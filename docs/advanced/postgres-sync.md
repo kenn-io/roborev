@@ -36,8 +36,8 @@ machine_name = "laptop"   # Friendly name for this machine
 - **UUID-based deduplication**: Each job, review, and response has a globally
     unique UUID. Local review numeric IDs may differ between machines, but UUIDs
     ensure PostgreSQL stores only one copy of each item.
-- **Local-first**: SQLite remains the source of truth. CLI commands query SQLite
-    only.
+- **Local-first**: SQLite remains the source of truth. CLI commands use the
+    generated daemon API; the daemon owns SQLite access.
 - **Review text compatibility**: Invalid UTF-8 and NUL bytes in review text,
     including strings nested in structured review JSON, are replaced in the
     PostgreSQL copy. Pushing a review leaves its local SQLite data unchanged.
@@ -51,7 +51,7 @@ machine_name = "laptop"   # Friendly name for this machine
 ## Commands
 
 ```bash
-roborev sync status    # Show sync configuration and pending items
+roborev sync status    # Show daemon sync health and pending items
 roborev sync now       # Trigger immediate sync
 ```
 

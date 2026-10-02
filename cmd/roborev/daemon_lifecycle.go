@@ -22,7 +22,6 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
@@ -306,15 +305,6 @@ func startDaemon() error {
 		fmt.Fprintln(lifecycleOut, "Starting daemon...")
 	}
 
-	// Persist any pending queue-pause state before the daemon's workers start.
-	// startDaemon runs only after any previous daemon has been stopped (restart)
-	// or when none was running (cold start), so this never migrates a live DB.
-	if pendingStartPause != nil {
-		if err := writeLocalQueuePaused(*pendingStartPause); err != nil {
-			return fmt.Errorf("persist initial queue pause state: %w", err)
-		}
-	}
-
 	var startupLogPath string
 	var startupLogOffset int64
 	manager := kitdaemon.Manager{
@@ -342,9 +332,13 @@ func startDaemon() error {
 			if err != nil {
 				return fmt.Errorf("locate daemon startup log: %w", err)
 			}
+			args := []string{"daemon", "run"}
+			if pendingStartPause != nil {
+				args = append(args, fmt.Sprintf("--queue-paused=%t", *pendingStartPause))
+			}
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
-				Args:            []string{"daemon", "run"},
+				Args:            args,
 				Env:             filterGitEnv(os.Environ()),
 				Stdout:          stdout,
 				Stderr:          stderr,
@@ -479,24 +473,6 @@ func restartDaemon() error {
 	if err := stopDaemonForRestart(); err != nil &&
 		!errors.Is(err, ErrDaemonNotRunning) {
 		return err
-	}
-
-	// Checkpoint WAL to ensure clean state for new daemon
-	// Retry a few times in case daemon hasn't fully released the DB
-	if dbPath := storage.DefaultDBPath(); dbPath != "" {
-		_, err := backoff.Retry(context.Background(), func() (struct{}, error) {
-			db, err := storage.Open(dbPath)
-			if err != nil {
-				return struct{}{}, err
-			}
-			_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-			db.Close()
-			return struct{}{}, err
-		}, backoff.WithBackOff(backoff.NewConstantBackOff(200*time.Millisecond)),
-			backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(0))
-		if err != nil && verbose {
-			fmt.Fprintf(lifecycleOut, "Warning: WAL checkpoint failed: %v\n", backoff.AsRetryError(err).LastErr)
-		}
 	}
 
 	return startDaemonAfterRestart()

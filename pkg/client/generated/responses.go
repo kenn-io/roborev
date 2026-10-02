@@ -196,6 +196,30 @@ type BatchJobsResponse = BatchJobsOutputBody
 
 type BatchJobsErrorResponse = ErrorModel
 
+type CleanJobLogsResponse = CleanJobLogsOutputBody
+
+type CleanJobLogsErrorResponse = ErrorModel
+
+type ConvertLegacyReviewsResponse = LegacyConversionReport
+
+type ConvertLegacyReviewsErrorResponse = ErrorModel
+
+type ExportLegacyReviewsResponse = ExportLegacyReviewsOutputBody
+
+type ExportLegacyReviewsErrorResponse = ErrorModel
+
+type ImportLegacyReviewResponse = ImportLegacyReviewOutputBody
+
+type ImportLegacyReviewErrorResponse = ErrorModel
+
+type ScanTokenUsageResponse = ScanTokenUsageReport
+
+type ScanTokenUsageErrorResponse = ErrorModel
+
+type BackfillVerdictsResponse = BackfillVerdictsOutputBody
+
+type BackfillVerdictsErrorResponse = ErrorModel
+
 type PingResponse = PingInfo
 
 type PingErrorResponse = ErrorModel
@@ -220,9 +244,41 @@ type ListReposResponse = ListReposOutputBody
 
 type ListReposErrorResponse = ErrorModel
 
+type DeleteRepoResponse = DeleteRepoOutputBody
+
+type DeleteRepoErrorResponse = ErrorModel
+
+type DeleteRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type DeleteRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type DeleteRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type GetRepoResponse = RepoDetails
+
+type GetRepoErrorResponse = ErrorModel
+
+type MergeReposResponse = MergeReposOutputBody
+
+type MergeReposErrorResponse = ErrorModel
+
+type MoveRepoResponse = MoveRepoOutputBody
+
+type MoveRepoErrorResponse = ErrorModel
+
+type MoveRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type MoveRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type MoveRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type RegisterRepoResponse = Repo
 
 type RegisterRepoErrorResponse = ErrorModel
+
+type RenameRepoResponse = RenameRepoOutputBody
+
+type RenameRepoErrorResponse = ErrorModel
 
 type ResolveRepoResponse = ResolveRepoOutputBody
 
@@ -513,6 +569,48 @@ type BatchJobsResp struct {
 	JSON200      *BatchJobsResponse
 }
 
+type CleanJobLogsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CleanJobLogsResponse
+}
+
+type ConvertLegacyReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ConvertLegacyReviewsResponse
+}
+
+type ExportLegacyReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExportLegacyReviewsResponse
+}
+
+type ImportLegacyReviewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportLegacyReviewResponse
+}
+
+type ScanTokenUsageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ScanTokenUsageResponse
+}
+
+type BackfillVerdictsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *BackfillVerdictsResponse
+}
+
 type PingResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -555,11 +653,54 @@ type ListReposResp struct {
 	JSON200      *ListReposResponse
 }
 
+type DeleteRepoResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *DeleteRepoResponse
+	ApplicationProblemPlusJSON404 *DeleteRepoErrorResponse
+	ApplicationProblemPlusJSON409 *DeleteRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *DeleteRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *DeleteRepoErrorResponseApplicationProblemPlusJSON500
+}
+
+type GetRepoResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetRepoResponse
+}
+
+type MergeReposResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MergeReposResponse
+}
+
+type MoveRepoResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *MoveRepoResponse
+	ApplicationProblemPlusJSON404 *MoveRepoErrorResponse
+	ApplicationProblemPlusJSON409 *MoveRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *MoveRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *MoveRepoErrorResponseApplicationProblemPlusJSON500
+}
+
 type RegisterRepoResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *RegisterRepoResponse
+}
+
+type RenameRepoResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RenameRepoResponse
 }
 
 type ResolveRepoResp struct {
@@ -1132,6 +1273,98 @@ func (c *RawClient) BatchJobsRaw(ctx context.Context, options *BatchJobsRequestO
 	return c.doer.Do(ctx, req)
 }
 
+func (c *RawClient) CleanJobLogsRaw(ctx context.Context, options *CleanJobLogsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &CleanJobLogsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/logs/clean",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) ConvertLegacyReviewsRaw(ctx context.Context, options *ConvertLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &ConvertLegacyReviewsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/convert",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) ExportLegacyReviewsRaw(ctx context.Context, options *ExportLegacyReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &ExportLegacyReviewsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/export",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) ImportLegacyReviewRaw(ctx context.Context, options *ImportLegacyReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &ImportLegacyReviewRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/legacy/import",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) ScanTokenUsageRaw(ctx context.Context, options *ScanTokenUsageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &ScanTokenUsageRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/maintenance/tokens/backfill",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) BackfillVerdictsRaw(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/maintenance/verdicts/backfill",
+		Method:     "POST",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
 func (c *RawClient) PingRaw(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
 
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
@@ -1211,12 +1444,91 @@ func (c *RawClient) ListReposRaw(ctx context.Context, options *ListReposRequestO
 	return c.doer.Do(ctx, req)
 }
 
+func (c *RawClient) DeleteRepoRaw(ctx context.Context, options *DeleteRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &DeleteRepoRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/delete",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) GetRepoRaw(ctx context.Context, options *GetRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &GetRepoRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/repos/detail",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) MergeReposRaw(ctx context.Context, options *MergeReposRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &MergeReposRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/merge",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) MoveRepoRaw(ctx context.Context, options *MoveRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &MoveRepoRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/move",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
 func (c *RawClient) RegisterRepoRaw(ctx context.Context, options *RegisterRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
 	if options == nil {
 		options = &RegisterRepoRequestOptions{}
 	}
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/register",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) RenameRepoRaw(ctx context.Context, options *RenameRepoRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &RenameRepoRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/repos/rename",
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",

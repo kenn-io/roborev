@@ -1,58 +1,39 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestWriteLocalQueuePaused(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-
-	require.NoError(t, writeLocalQueuePaused(true))
-
-	db, err := storage.Open(storage.DefaultDBPath())
-	require.NoError(t, err)
-	defer db.Close()
-
-	paused, err := db.IsQueuePaused()
-	require.NoError(t, err)
-	assert.True(t, paused)
-}
-
-func TestStartDaemonPersistsPendingPauseState(t *testing.T) {
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	if !isGoTestBinaryPath(exe) {
-		t.Skipf("expected go test binary path, got %q", exe)
+func TestDaemonRunAppliesInitialPauseBeforeWorkers(t *testing.T) {
+	for _, paused := range []bool{true, false} {
+		t.Run(map[bool]string{true: "pause", false: "unpause"}[paused], func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			original := openDaemonSearchIndex
+			stop := errors.New("stop before starting workers")
+			openDaemonSearchIndex = func(context.Context, string) (*searchindex.Index, error) { return nil, stop }
+			t.Cleanup(func() { openDaemonSearchIndex = original })
+			cmd := daemonRunCmd()
+			cmd.SetArgs([]string{"--db", storage.DefaultDBPath(), "--config", filepath.Join(t.TempDir(), "config.toml"), "--queue-paused=" + map[bool]string{true: "true", false: "false"}[paused]})
+			require.ErrorIs(t, cmd.Execute(), stop)
+			db, err := storage.OpenReadOnly(storage.DefaultDBPath())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			got, err := db.IsQueuePaused()
+			require.NoError(t, err)
+			assert.Equal(t, paused, got)
+		})
 	}
-
-	setupIsolatedDataDir(t)
-	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-
-	paused := true
-	pendingStartPause = &paused
-	t.Cleanup(func() { pendingStartPause = nil })
-
-	// startDaemon refuses to spawn the ephemeral test binary, but it must
-	// persist the pending pause state first, in the safe pre-launch window
-	// (no daemon owns the DB), before its workers could claim jobs.
-	_ = startDaemon()
-
-	db, err := storage.Open(storage.DefaultDBPath())
-	require.NoError(t, err)
-	defer db.Close()
-
-	got, err := db.IsQueuePaused()
-	require.NoError(t, err)
-	assert.True(t, got,
-		"startDaemon must persist the pending pause flag before launch")
 }
 
 func TestPauseCmdPostsQueuePause(t *testing.T) {

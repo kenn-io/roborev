@@ -7,12 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/githook"
-	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 type repairHookOptions struct {
@@ -125,7 +126,7 @@ func hookRepairRoots(ctx context.Context, opts repairHookOptions) ([]string, err
 	}
 
 	if opts.registered {
-		registered, err := registeredHookRepos()
+		registered, err := registeredHookRepos(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -137,28 +138,16 @@ func hookRepairRoots(ctx context.Context, opts repairHookOptions) ([]string, err
 	return roots, nil
 }
 
-func registeredHookRepos() ([]string, error) {
-	dbPath := storage.DefaultDBPath()
-	if _, err := os.Stat(dbPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("stat repo database: %w", err)
+func registeredHookRepos(ctx context.Context) ([]string, error) {
+	if err := ensureDaemon(); err != nil {
+		return nil, err
 	}
-
-	db, err := storage.OpenReadOnly(dbPath)
+	repos, err := getDaemonEndpoint().APIClient(5*time.Second).ListRepos(ctx, &generated.ListReposRequestOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("open repo database: %w", err)
+		return nil, fmt.Errorf("list registered repositories: %w", err)
 	}
-	defer db.Close()
-
-	repos, err := db.ListRepos()
-	if err != nil {
-		return nil, fmt.Errorf("list repos: %w", err)
-	}
-
-	roots := make([]string, 0, len(repos))
-	for _, repo := range repos {
+	roots := make([]string, 0, len(repos.Repos))
+	for _, repo := range repos.Repos {
 		roots = append(roots, repo.RootPath)
 	}
 	return roots, nil

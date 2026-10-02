@@ -576,6 +576,12 @@ func (b BackfillTokensRequest) Validate() error {
 	return errors
 }
 
+type BackfillVerdictsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Count  int64   `json:"count"`
+}
+
 type BatchJobsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string                  `json:"$schema,omitempty"`
@@ -628,6 +634,22 @@ type CancelJobRequest struct {
 	JobID  int64   `json:"job_id"`
 }
 
+type CleanJobLogsInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Days   int64   `json:"days" validate:"gte=0,lte=3650"`
+}
+
+func (c CleanJobLogsInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CleanJobLogsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Removed int64   `json:"removed"`
+}
+
 type CloseReviewOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
@@ -649,6 +671,14 @@ type ComponentHealth struct {
 
 func (c ComponentHealth) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type ConvertLegacyReviewsInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	DB          *string `json:"db,omitempty"`
+	DryRun      bool    `json:"dry_run"`
+	PostgresURL *string `json:"postgres_url,omitempty"`
 }
 
 type CostAggregate struct {
@@ -731,6 +761,23 @@ func (d DaemonStatus) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type DeleteRepoInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Cascade bool    `json:"cascade"`
+	RepoID  int64   `json:"repo_id" validate:"gte=1"`
+}
+
+func (d DeleteRepoInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeleteRepoOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Deleted bool    `json:"deleted"`
 }
 
 type DurationStats struct {
@@ -1318,6 +1365,35 @@ func (e ExportCIPanelJob) Validate() error {
 	return errors
 }
 
+type ExportLegacyReviewsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema          *string                `json:"$schema,omitempty"`
+	PostgresRecords []PostgresLegacyReview `json:"postgres_records" validate:"required"`
+	SqliteRecords   []LegacyReview         `json:"sqlite_records" validate:"required"`
+}
+
+func (e ExportLegacyReviewsOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range e.PostgresRecords {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("PostgresRecords[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range e.SqliteRecords {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SqliteRecords[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ExportReview struct {
 	Agent  string  `json:"agent" validate:"required"`
 	Branch *string `json:"branch,omitempty" validate:"required"`
@@ -1776,6 +1852,42 @@ func (h HealthStatus) Validate() error {
 	return errors
 }
 
+type ImportLegacyReviewInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string        `json:"$schema,omitempty"`
+	DB          *string        `json:"db,omitempty"`
+	Document    jsontext.Value `json:"document"`
+	ID          *int64         `json:"id,omitempty"`
+	PostgresURL *string        `json:"postgres_url,omitempty"`
+	UUID        *uuid.UUID     `json:"uuid,omitempty"`
+}
+
+func (i ImportLegacyReviewInputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Document).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Document", err)
+		}
+	}
+	if i.UUID != nil {
+		if v, ok := any(i.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ImportLegacyReviewOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string `json:"$schema,omitempty"`
+	Success bool    `json:"success"`
+}
+
 type Input struct {
 	Cwd                  *string             `json:"cwd,omitempty"`
 	HookEventName        *string             `json:"hook_event_name,omitempty"`
@@ -1857,6 +1969,60 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
+type LegacyConversionReport struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string          `json:"$schema,omitempty"`
+	Converted  int64            `json:"converted"`
+	DryRun     bool             `json:"dry_run"`
+	Refused    map[string]int64 `json:"refused"`
+	Unresolved int64            `json:"unresolved"`
+}
+
+type LegacyMaintenanceTarget struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	DB          *string `json:"db,omitempty"`
+	PostgresURL *string `json:"postgres_url,omitempty"`
+}
+
+type LegacyReview struct {
+	ID             int64                `json:"id"`
+	JobID          int64                `json:"job_id"`
+	JobType        string               `json:"job_type" validate:"required"`
+	Markdown       string               `json:"markdown" validate:"required"`
+	MigrationError string               `json:"migration_error" validate:"required"`
+	PreviousJSON   string               `json:"previous_json" validate:"required"`
+	ReviewID       *int64               `json:"review_id,omitempty"`
+	Sources        []LegacyReviewSource `json:"sources,omitempty"`
+}
+
+func (l LegacyReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.JobType, "required"); err != nil {
+		errors = errors.Append("JobType", err)
+	}
+	if err := typesValidator.Var(l.Markdown, "required"); err != nil {
+		errors = errors.Append("Markdown", err)
+	}
+	if err := typesValidator.Var(l.MigrationError, "required"); err != nil {
+		errors = errors.Append("MigrationError", err)
+	}
+	if err := typesValidator.Var(l.PreviousJSON, "required"); err != nil {
+		errors = errors.Append("PreviousJSON", err)
+	}
+	for i, item := range l.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 // LegacyReviewDocument Historical Markdown without extracted findings.
 type LegacyReviewDocument struct {
 	Findings []StructuredReviewFinding `json:"findings,omitempty"`
@@ -1902,6 +2068,17 @@ type LegacyReviewDocument_Legacy struct {
 }
 
 func (l LegacyReviewDocument_Legacy) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LegacyReviewSource struct {
+	Agent    string    `json:"agent" validate:"required"`
+	Document *struct{} `json:"document,omitempty"`
+	Markdown *string   `json:"markdown,omitempty"`
+	Number   int64     `json:"number"`
+}
+
+func (l LegacyReviewSource) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
@@ -2017,6 +2194,23 @@ func (l ListReposOutputBody) Validate() error {
 	return errors
 }
 
+type MergeReposInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	SourceID int64   `json:"source_id" validate:"gte=1"`
+	TargetID int64   `json:"target_id" validate:"gte=1"`
+}
+
+func (m MergeReposInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MergeReposOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Moved  int64   `json:"moved"`
+}
+
 type MigrateReviewInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string        `json:"$schema,omitempty"`
@@ -2044,6 +2238,37 @@ type MigrateReviewOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
 	Success bool    `json:"success"`
+}
+
+type MoveRepoInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Identity string  `json:"identity" validate:"required"`
+	Path     string  `json:"path" validate:"required,min=1"`
+	RepoID   int64   `json:"repo_id" validate:"gte=1"`
+}
+
+func (m MoveRepoInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MoveRepoOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Repo   Repo    `json:"repo"`
+}
+
+func (m MoveRepoOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Repo).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Repo", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type OverviewStats struct {
@@ -2259,6 +2484,49 @@ func (p PingInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PostgresLegacyReview struct {
+	ID             string               `json:"id" validate:"required"`
+	JobType        string               `json:"job_type" validate:"required"`
+	JobUUID        string               `json:"job_uuid" validate:"required"`
+	Markdown       string               `json:"markdown" validate:"required"`
+	MigrationError string               `json:"migration_error" validate:"required"`
+	PreviousJSON   string               `json:"previous_json" validate:"required"`
+	Sources        []LegacyReviewSource `json:"sources,omitempty"`
+}
+
+func (p PostgresLegacyReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(p.JobType, "required"); err != nil {
+		errors = errors.Append("JobType", err)
+	}
+	if err := typesValidator.Var(p.JobUUID, "required"); err != nil {
+		errors = errors.Append("JobUUID", err)
+	}
+	if err := typesValidator.Var(p.Markdown, "required"); err != nil {
+		errors = errors.Append("Markdown", err)
+	}
+	if err := typesValidator.Var(p.MigrationError, "required"); err != nil {
+		errors = errors.Append("MigrationError", err)
+	}
+	if err := typesValidator.Var(p.PreviousJSON, "required"); err != nil {
+		errors = errors.Append("PreviousJSON", err)
+	}
+	for i, item := range p.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type QueuePauseOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string `json:"$schema,omitempty"`
@@ -2366,6 +2634,37 @@ type RemapResult struct {
 	Skipped  int64   `json:"skipped"`
 }
 
+type RenameRepoInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string `json:"$schema,omitempty"`
+	ByPath     bool    `json:"by_path"`
+	Identifier string  `json:"identifier" validate:"required,min=1"`
+	Name       string  `json:"name" validate:"required,min=1"`
+}
+
+func (r RenameRepoInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RenameRepoOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Repo   Repo    `json:"repo"`
+}
+
+func (r RenameRepoOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.Repo).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Repo", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Repo struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema    *string   `json:"$schema,omitempty"`
@@ -2378,6 +2677,34 @@ type Repo struct {
 
 func (r Repo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RepoDetails struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string `json:"$schema,omitempty"`
+	ClosedReviews int64   `json:"closed_reviews"`
+	CompletedJobs int64   `json:"completed_jobs"`
+	FailedJobs    int64   `json:"failed_jobs"`
+	FailedReviews int64   `json:"failed_reviews"`
+	OpenReviews   int64   `json:"open_reviews"`
+	PassedReviews int64   `json:"passed_reviews"`
+	QueuedJobs    int64   `json:"queued_jobs"`
+	Repo          Repo    `json:"repo"`
+	RunningJobs   int64   `json:"running_jobs"`
+	TotalJobs     int64   `json:"total_jobs"`
+}
+
+func (r RepoDetails) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.Repo).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Repo", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type RepoSummary struct {
@@ -2908,6 +3235,47 @@ func (r ReviewProjectionReview) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type ScanTokenUsageInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	DryRun bool    `json:"dry_run"`
+}
+
+type ScanTokenUsageReport struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string             `json:"$schema,omitempty"`
+	Failed  int64               `json:"failed"`
+	Jobs    []ScannedTokenUsage `json:"jobs" validate:"required"`
+	Skipped int64               `json:"skipped"`
+	Total   int64               `json:"total"`
+	Updated int64               `json:"updated"`
+}
+
+func (s ScanTokenUsageReport) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range s.Jobs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Jobs[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ScannedTokenUsage struct {
+	Agent   string `json:"agent" validate:"required"`
+	JobID   int64  `json:"job_id"`
+	Summary string `json:"summary" validate:"required"`
+}
+
+func (s ScannedTokenUsage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SearchCoverage struct {
 	EmbeddingBacklog     int64  `json:"embedding_backlog"`
 	EmbeddingsConfigured bool   `json:"embeddings_configured"`
@@ -3249,16 +3617,57 @@ func (s Summary) Validate() error {
 	return errors
 }
 
+type SyncPendingCounts struct {
+	Comments int64 `json:"comments"`
+	Jobs     int64 `json:"jobs"`
+	Reviews  int64 `json:"reviews"`
+}
+
 type SyncStatusOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	Connected bool    `json:"connected"`
-	Enabled   bool    `json:"enabled"`
-	Message   string  `json:"message" validate:"required"`
+	Schema            *string           `json:"$schema,omitempty"`
+	Connected         bool              `json:"connected"`
+	Enabled           bool              `json:"enabled"`
+	Interval          string            `json:"interval" validate:"required"`
+	MachineID         *uuid.UUID        `json:"machine_id,omitempty"`
+	MachineName       string            `json:"machine_name" validate:"required"`
+	Message           string            `json:"message" validate:"required"`
+	PendingIncomplete bool              `json:"pending_incomplete"`
+	PendingLimit      int64             `json:"pending_limit"`
+	PendingPush       SyncPendingCounts `json:"pending_push"`
+	Warnings          []string          `json:"warnings" validate:"required"`
 }
 
 func (s SyncStatusOutputBody) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Interval, "required"); err != nil {
+		errors = errors.Append("Interval", err)
+	}
+	if s.MachineID != nil {
+		if v, ok := any(s.MachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("MachineID", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.MachineName, "required"); err != nil {
+		errors = errors.Append("MachineName", err)
+	}
+	if err := typesValidator.Var(s.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if v, ok := any(s.PendingPush).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PendingPush", err)
+		}
+	}
+	if err := typesValidator.Var(s.Warnings, "required"); err != nil {
+		errors = errors.Append("Warnings", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type TokenResult struct {
