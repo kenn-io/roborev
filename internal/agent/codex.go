@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -174,7 +175,7 @@ func (a *CodexAgent) CommandLine() string {
 		autoApprove:   !agenticMode,
 		sandboxBroken: CodexSandboxDisabled(),
 		preview:       true,
-	})
+	}, runtime.GOOS)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
@@ -198,7 +199,7 @@ func (a *CodexAgent) buildArgsWithSchema(
 		autoApprove:   autoApprove,
 		sandboxBroken: sandboxBroken,
 		schemaPath:    schemaPath,
-	})
+	}, runtime.GOOS)
 }
 
 type codexArgOptions struct {
@@ -210,7 +211,7 @@ type codexArgOptions struct {
 	schemaPath    string
 }
 
-func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
+func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	args := []string{"exec"}
 	if a.SessionID != "" {
 		args = append(args, "resume")
@@ -221,6 +222,12 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	}
 	if a.IgnoreUserConfig {
 		args = append(args, codexIgnoreUserConfigFlag)
+	}
+	if goos == "windows" && a.IgnoreUserConfig && opts.autoApprove && !opts.agenticMode && !opts.sandboxBroken {
+		// Ignoring user config also drops the native Windows sandbox selection.
+		// Supply a default before user overrides so an explicit unelevated
+		// setting still wins. The read-only policy is set separately below.
+		args = append(args, "-c", `windows.sandbox="elevated"`)
 	}
 	// User-provided overrides go before roborev's own -c flags so roborev's
 	// safety settings (skills, sandbox, reasoning) win on any key conflict.

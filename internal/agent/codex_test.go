@@ -170,6 +170,65 @@ func TestCodexBuildArgsLoadsUserConfigByDefault(t *testing.T) {
 	assert.NotContains(t, args, codexIgnoreUserConfigFlag)
 }
 
+func TestCodexCommandArgsWindowsSandbox(t *testing.T) {
+	tests := []struct {
+		name          string
+		goos          string
+		ignoreConfig  bool
+		agentic       bool
+		sandboxBroken bool
+		wantDefault   bool
+	}{
+		{"windows ignored config", "windows", true, false, false, true},
+		{"windows user config", "windows", false, false, false, false},
+		{"linux ignored config", "linux", true, false, false, false},
+		{"macos ignored config", "darwin", true, false, false, false},
+		{"agentic", "windows", true, true, false, false},
+		{"sandbox disabled", "windows", true, false, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), tt.ignoreConfig).(*CodexAgent)
+			args := a.commandArgs(codexArgOptions{
+				agenticMode:   tt.agentic,
+				autoApprove:   !tt.agentic,
+				sandboxBroken: tt.sandboxBroken,
+			}, tt.goos)
+
+			if tt.wantDefault {
+				assert.Contains(t, args, `windows.sandbox="elevated"`)
+				assert.Contains(t, args, "read-only")
+				assert.NotContains(t, args, codexDangerousFlag)
+			} else {
+				assert.NotContains(t, args, `windows.sandbox="elevated"`)
+			}
+		})
+	}
+}
+
+func TestCodexCommandArgsWindowsSandboxOverride(t *testing.T) {
+	for _, sessionID := range []string{"", "session-123"} {
+		t.Run("session="+sessionID, func(t *testing.T) {
+			a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), true).(*CodexAgent)
+			a.SessionID = sessionID
+			a.ConfigOverrides = []string{`windows.sandbox="unelevated"`}
+			args := a.commandArgs(codexArgOptions{autoApprove: true, preview: true}, "windows")
+
+			var configs []string
+			for i, arg := range args {
+				if arg == "-c" {
+					configs = append(configs, args[i+1])
+				}
+			}
+			want := []string{`windows.sandbox="elevated"`, `windows.sandbox="unelevated"`}
+			if sessionID != "" {
+				want = append(want, `sandbox_mode="read-only"`)
+			}
+			assert.Equal(t, want, configs, "explicit sandbox implementation must follow the default")
+		})
+	}
+}
+
 func TestCodexBuildArgsIncludesConfigOverrides(t *testing.T) {
 	a := NewCodexAgent("codex")
 	a.ConfigOverrides = []string{

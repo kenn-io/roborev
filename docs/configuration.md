@@ -1657,6 +1657,30 @@ numbers and booleans stay bare, and arrays stay arrays. roborev's own review
 controls (skill suppression, sandbox mode, reasoning effort) are applied after
 your overrides, so they take precedence if a key collides.
 
+#### Windows Sandbox
+
+On native Windows, `--ignore-user-config` also drops the `[windows]` sandbox
+selection from your Codex config. Without a native sandbox implementation, Codex
+can reject even read-only shell commands with `blocked by policy`. For sandboxed
+reviews that ignore user config, roborev passes `-c windows.sandbox="elevated"`
+by default, alongside the read-only policy.
+
+This uses Codex's
+[recommended Windows sandbox](https://developers.openai.com/codex/windows).
+Complete its setup in Codex before running reviews. If your machine requires the
+`unelevated` implementation, set it explicitly in roborev:
+
+```toml
+# ~/.roborev/config.toml
+[agent.codex.config.windows]
+sandbox = "unelevated"
+```
+
+This explicit choice takes precedence over roborev's Windows default. When
+`ignore_review_user_config = false`, Codex uses its own configuration instead.
+roborev does not add the Windows default on other platforms or when the review
+bypasses the sandbox.
+
 ### Grok Sandbox Profile
 
 The `[agent.grok]` section sets the Grok sandbox profile for non-agentic reviews
