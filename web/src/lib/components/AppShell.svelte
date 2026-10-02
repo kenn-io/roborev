@@ -7,7 +7,7 @@
   } from "@kenn-io/kit-ui";
   import BookOpenIcon from "@lucide/svelte/icons/book-open";
   import { Effect } from "effect";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   import { appPath } from "../base-path";
   import { executeRoborevRequest } from "../api/client";
@@ -19,6 +19,7 @@
   import { makeAppRuntime } from "../runtime/runtime";
   import { createReviewStores } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
+  import { setupAppOpenedReporting } from "../utils/app-opened";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -54,6 +55,7 @@
   });
   setAppRuntime(runtime);
   provideReviewStores(stores);
+  onMount(() => setupAppOpenedReporting());
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

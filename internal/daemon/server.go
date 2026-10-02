@@ -203,6 +203,7 @@ func newServerWithLogs(
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
 	s.registerAgentHookRoutes(mux)
+	s.registerTelemetryCaptureRoute(mux)
 	if cfg.MCP.Enabled {
 		s.mcpEnabled = true
 		mcpServer := mcpserver.New(s.mcpBackend(), version.Version)

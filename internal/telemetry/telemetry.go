@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 
 	EventDaemonStarted = "daemon_started"
 	EventDaemonActive  = "daemon_active"
+	EventAppOpened     = "app_opened"
 )
 
 var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
@@ -42,7 +44,8 @@ func EnabledFromEnv() bool {
 
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
-		return DisabledReporter(), nil
+		// An opted-out kit reporter keeps the allowlist, so the capture route can still reject unknown events.
+		return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
 	}
 	if opts.Database == nil {
 		return nil, errors.New("telemetry database is required")
@@ -77,6 +80,11 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
+// NewCaptureHandler lets the web UI report allowlisted events through reporter; a nil reporter admits none.
+func NewCaptureHandler(reporter *Reporter) http.Handler {
+	return kittelemetry.NewPostHogCaptureHandler(reporter)
+}
+
 func allowedEventOptions() []kittelemetry.PostHogOption {
 	daemonProperties := []kittelemetry.AllowedTelemetryProperty{
 		kittelemetry.AllowTelemetryProperty("repo_count", kittelemetry.AllowTelemetryNumber),
@@ -89,6 +97,7 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 	return []kittelemetry.PostHogOption{
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
+		kittelemetry.WithAllowedEvent(EventAppOpened),
 	}
 }
 

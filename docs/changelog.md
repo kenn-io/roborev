@@ -7,6 +7,13 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- The web UI reports an anonymous `app_opened` event through the daemon when it
+    loads and on the first window focus of each later UTC day.
+    `ROBOREV_TELEMETRY_ENABLED=0` turns it off with the daemon events. See
+    [Telemetry](/docs/configuration/#telemetry).
+
 **Improvements**
 
 - Navigate the TUI with `u`/`d` to page up/down, `g`/`G` to jump to the

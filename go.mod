@@ -38,7 +38,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.0.1
 	gitlab.com/gitlab-org/api/client-go/v3 v3.4.0
-	go.kenn.io/kit v0.29.3-0.20261001185527-19c076773245
+	go.kenn.io/kit v0.29.3-0.20261002145319-8ef3d4c5134f
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -52,6 +52,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/TwiN/go-color v1.4.1 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
+	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -99,6 +100,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
@@ -112,7 +114,7 @@ require (
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
-	github.com/posthog/posthog-go v1.12.6 // indirect
+	github.com/posthog/posthog-go v1.30.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

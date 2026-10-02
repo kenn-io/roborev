@@ -1575,7 +1575,7 @@ systemctl --user enable --now roborev
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
-| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous daemon telemetry |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous telemetry |
 | `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
 | `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key = { env = "VOYAGE_API_KEY" }` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
@@ -1587,6 +1587,12 @@ roborev sends limited anonymous telemetry when the daemon starts and once every
 `daemon_active`, with repo count, review count, whether sync is enabled, whether
 CI is enabled, whether auto design review is enabled, roborev version, OS,
 architecture, and an anonymous install ID stored in the local database.
+
+The web UI also reports an anonymous `app_opened` event to the daemon when it
+loads and on the first window focus of each later UTC day, so an open tab counts
+once a day. The daemon sends it with the same install ID, version, OS and
+architecture and no other properties. The browser never contacts PostHog, and
+the same environment variables turn it off.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

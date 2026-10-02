@@ -44,6 +44,7 @@ var browserAPIRoutes = map[routeKey]routePolicy{
 	{http.MethodPost, "/api/job/rerun"}:           mutationRoute,
 	{http.MethodPost, "/api/review/close"}:        mutationRoute,
 	{http.MethodPost, "/api/comment"}:             mutationRoute,
+	{http.MethodPost, "/api/telemetry/events"}:    mutationRoute,
 }
 
 type browserPrincipalContextKey struct{}
