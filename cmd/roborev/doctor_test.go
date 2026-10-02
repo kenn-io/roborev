@@ -158,6 +158,18 @@ func TestDoctorHookToolsUseDaemonView(t *testing.T) {
 	assert.Empty(t, checkDoctorIntegrations(env))
 }
 
+func TestDoctorAgentsUnknownPreferredIgnoresBackup(t *testing.T) {
+	t.Setenv("PATH", writeFakeAgentBinary(t, "gemini"))
+
+	env := &doctorEnv{
+		ctx:    t.Context(),
+		global: &config.Config{DefaultAgent: "acp.missing", ReviewBackupAgent: "gemini"},
+	}
+	review, _ := checkDoctorReviewAgent(env)
+	assert.Equal(t, doctorFail, review.Status)
+	assert.Equal(t, "reviews will fail: agent acp.missing is not a known agent", review.Summary)
+}
+
 func TestDoctorAgentsBackupFallback(t *testing.T) {
 	t.Setenv("PATH", writeFakeAgentBinary(t, "gemini"))
 

@@ -547,6 +547,18 @@ func checkDoctorReviewAgent(env *doctorEnv) (doctorCheck, map[string]bool) {
 	}
 	reported[doctorAgentKey(res.PreferredAgent)] = true
 	details := []string{fmt.Sprintf("%s is not available to %s: %s", res.PreferredAgent, primary.where(), doctorFirstLine(primary.diag.Error))}
+	if primary.diag.Unknown {
+		// Resolution rejects an unknown preferred name before it tries
+		// backups, so a working backup does not help.
+		c.Status = doctorFail
+		c.Summary = fmt.Sprintf("reviews will fail: agent %s is not a known agent", res.PreferredAgent)
+		c.Details = details
+		if res.BackupAgent != "" {
+			c.Details = append(c.Details, fmt.Sprintf("backup %s is never tried, because the preferred name is rejected first", res.BackupAgent))
+		}
+		c.Fix = fmt.Sprintf("fix the agent name, or add an [acp.<name>] table if %s is meant to be a named ACP agent", res.PreferredAgent)
+		return c, reported
+	}
 	if res.BackupAgent != "" {
 		backup := env.viewAgent(res.BackupAgent)
 		if backup.diag.Available {

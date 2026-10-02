@@ -18,6 +18,7 @@ func TestDiagnose(t *testing.T) {
 		agent     string
 		cfg       *config.Config
 		available bool
+		unknown   bool
 		command   string
 		path      string
 	}{
@@ -50,6 +51,12 @@ func TestDiagnose(t *testing.T) {
 			path:      fakeACP,
 		},
 		{
+			name:    "ACP name without a config table",
+			agent:   "acp.missing",
+			cfg:     &config.Config{},
+			unknown: true,
+		},
+		{
 			name:    "named ACP agent with missing command",
 			agent:   "acp.goose",
 			cfg:     &config.Config{ACP: config.ACPAgentConfigs{"goose": {Command: "goose-not-installed"}}},
@@ -63,6 +70,7 @@ func TestDiagnose(t *testing.T) {
 			assert.Equal(tt.available, got.Available)
 			assert.Equal(tt.command, got.Command)
 			assert.Equal(tt.path, got.Path)
+			assert.Equal(tt.unknown, got.Unknown)
 			assert.Equal(!tt.available, got.Error != "", "error: %q", got.Error)
 		})
 	}

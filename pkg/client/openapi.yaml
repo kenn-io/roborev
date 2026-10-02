@@ -1028,6 +1028,8 @@ components:
           type: string
         path:
           type: string
+        unknown:
+          type: boolean
       required:
         - name
         - available

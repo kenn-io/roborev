@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -15,6 +16,10 @@ type Diagnosis struct {
 	Command   string `json:"command,omitempty"`
 	Path      string `json:"path,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Unknown is set when the name is neither a built-in agent nor a
+	// configured ACP agent. Review resolution rejects such a name before
+	// it tries any backup agent.
+	Unknown bool `json:"unknown,omitempty"`
 }
 
 // DiagnoseAll reports availability for every built-in agent and every
@@ -38,6 +43,7 @@ func Diagnose(repoCfg *config.RepoConfig, name string, cfg *config.Config) Diagn
 	a, err := GetAvailableExactWithConfigFromConfig(repoCfg, d.Name, cfg)
 	if err != nil {
 		d.Error = err.Error()
+		_, d.Unknown = errors.AsType[*UnknownAgentError](err)
 		d.Command = expectedCommand(repoCfg, d.Name, cfg)
 		return d
 	}

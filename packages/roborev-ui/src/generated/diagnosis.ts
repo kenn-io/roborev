@@ -8,4 +8,5 @@ export interface Diagnosis {
   error?: string;
   name: string;
   path?: string;
+  unknown?: boolean;
 }

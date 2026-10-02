@@ -780,6 +780,7 @@ type Diagnosis struct {
 	ErrorData *string `json:"error,omitempty"`
 	Name      string  `json:"name" validate:"required"`
 	Path      *string `json:"path,omitempty"`
+	Unknown   *bool   `json:"unknown,omitempty"`
 }
 
 func (d Diagnosis) Validate() error {
