@@ -352,13 +352,22 @@ func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
 	return attempts, rows.Err()
 }
 
-// GetFailedReviewAttempts returns non-terminal attempts with a recorded failure,
-// including attempts whose retry backoff has not elapsed yet.
+// GetFailedReviewAttempts returns unresolved review failures, including queued
+// retries and attempts finalized without delivering a review. Successful posted
+// reviews retain their historical error fields but are no longer failures.
 func (db *DB) GetFailedReviewAttempts(repo string) ([]ReviewAttempt, error) {
 	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
 		FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND state IN ('pending', 'deferred')
-		  AND (last_error_class != '' OR last_error_excerpt != '')`, repo)
+		WHERE github_repo = ? AND (
+		  (state IN ('pending', 'deferred')
+		    AND (last_error_class != '' OR last_error_excerpt != ''))
+		  OR (state = 'done' AND EXISTS (
+		    SELECT 1 FROM ci_pr_panels p
+		    WHERE p.github_repo = ci_pr_review_attempts.github_repo
+		      AND p.pr_number = ci_pr_review_attempts.pr_number
+		      AND p.head_sha = ci_pr_review_attempts.head_sha
+		      AND p.outcome IN (?, ?, ?))))`,
+		repo, PanelOutcomeNoReviewPosted, PanelOutcomeGiveupPosted, PanelOutcomeAbandoned)
 	if err != nil {
 		return nil, fmt.Errorf("get failed review attempts: %w", err)
 	}

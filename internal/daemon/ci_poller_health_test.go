@@ -110,7 +110,95 @@ func TestHealthCIPollerPRFailureContinuesPolling(t *testing.T) {
 	assert.ErrorIs(err, fetchErr)
 }
 
-func TestHealthCIPollerRetryFailure(t *testing.T) {
+func TestHealthCIPollerReviewRecovery(t *testing.T) {
+	assert := assert.New(t)
+	h, server := newCIHealthHarness(t)
+	h.stubProcessPRGit()
+	h.Cfg.CI.Repos = []string{"acme/api"}
+	h.Cfg.CI.Agents = []string{"test"}
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+	comments := h.CaptureComments()
+	h.Poller.poll(context.Background())
+	assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+		"ordinary queued reviews are healthy")
+
+	for range 2 {
+		synthID := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "transient")
+		h.Poller.handleReviewFailed(ciEvent(synthID, "review.failed"))
+		h.Poller.poll(context.Background())
+		assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+
+		_, err := h.DB.MakeTransientReviewAttemptsDue(time.Now())
+		require.NoError(t, err)
+		// Observe health inside enqueue, before end-of-poll reconciliation can
+		// hide a premature recovery from a concurrent health request.
+		h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+			assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+				"enqueueing a retry does not prove recovery")
+			return nil
+		}
+		h.Poller.poll(context.Background())
+		assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+			"a queued retry must retain its previous failure")
+		for _, member := range h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid) {
+			h.markJobRunning(t, member.ID)
+		}
+		h.Poller.poll(context.Background())
+		health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+		assert.False(health.Healthy,
+			"a running retry must retain its previous failure")
+		assert.Len(health.RecentErrors, 1, "retries continue the same failure without recording a fresh alert")
+	}
+	assert.Empty(*comments, "failed runs produce no review")
+	synthID := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "done")
+	h.Poller.handleReviewCompleted(ciEvent(synthID, "review.completed"))
+	require.Len(t, *comments, 1, "recovery requires delivery of usable review output")
+	h.Poller.poll(context.Background())
+	assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+}
+
+func TestHealthCIPollerExhaustedRetry(t *testing.T) {
+	for _, recovery := range []string{"closed", "new head", "skipped"} {
+		t.Run(recovery, func(t *testing.T) {
+			assert := assert.New(t)
+			h, server := newCIHealthHarness(t)
+			h.stubProcessPRGit()
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			pr := ghPR{Number: 1, HeadRefOid: "head-a", BaseRefName: "main"}
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+			comments := h.CaptureComments()
+			h.Poller.poll(context.Background())
+			// Exhaust the existing retry window through the normal finalizer.
+			_, err := h.DB.Exec(`UPDATE ci_pr_review_attempts SET first_attempt_at = datetime('now', '-4 days')`)
+			require.NoError(t, err)
+			synthID := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "transient")
+			h.Poller.handleReviewFailed(ciEvent(synthID, "review.failed"))
+			h.Poller.poll(context.Background())
+			assert.Empty(*comments)
+			assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+				"giving up without a review is not recovery")
+			switch recovery {
+			case "closed":
+				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+				h.Poller.isPROpenFn = func(string, int) bool { return false }
+			case "new head":
+				pr.HeadRefOid = "head-b"
+			case "skipped":
+				h.Cfg.CI.SkipLabels = []string{"skip-review"}
+				pr.Labels = []string{"skip-review"}
+			}
+			h.Poller.poll(context.Background())
+			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+				"a failed review no longer needed by the PR must not hold health unhealthy")
+		})
+	}
+}
+
+func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 	for _, recovery := range []string{"retry", "new head", "reviewed head", "active", "done", "older done", "removed", "closed", "skipped", "disabled"} {
 		t.Run(recovery, func(t *testing.T) {
 			h, server := newCIHealthHarness(t)
@@ -123,8 +211,9 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 			created, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, now.Add(-time.Hour))
 			require.NoError(t, err)
 			require.True(t, created)
-			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
-				"transient", "provider unavailable", nil, now.Add(-time.Minute), false))
+			// A stranded enqueue has no provider failure to recover from.
+			_, err = h.DB.RearmStuckReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, now.Add(-time.Minute))
+			require.NoError(t, err)
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
 				return []ghPR{pr}, nil
 			}
@@ -199,7 +288,8 @@ func TestHealthCIPollerRetryFailure(t *testing.T) {
 					"a newer review does not resolve the older attempt until it is removed")
 			}
 			if recovery == "retry" || recovery == "new head" || recovery == "reviewed head" || recovery == "disabled" {
-				_, err = h.DB.MakeTransientReviewAttemptsDue(time.Now())
+				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 minute')
+					WHERE state = 'deferred'`)
 				require.NoError(t, err)
 			}
 			h.Poller.poll(context.Background())
@@ -271,8 +361,8 @@ func TestHealthCIPollerStartRestoresRetryHealth(t *testing.T) {
 	})
 }
 
-func TestHealthCIPollerRestartRecognizesRecoveredRetry(t *testing.T) {
-	for _, recovery := range []string{"active", "done", "removed"} {
+func TestHealthCIPollerRestartRecognizesRetryOutcome(t *testing.T) {
+	for _, recovery := range []string{"active", "posted", "exhausted", "abandoned", "removed"} {
 		t.Run(recovery, func(t *testing.T) {
 			h, server := newCIHealthHarness(t)
 			h.Cfg.CI.Repos = []string{"acme/api"}
@@ -282,7 +372,7 @@ func TestHealthCIPollerRestartRecognizesRecoveredRetry(t *testing.T) {
 			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 1, "head-a",
 				"genuine", "review failed", nil, time.Now().Add(-time.Minute), true))
 			switch recovery {
-			case "active":
+			case "active", "posted", "exhausted", "abandoned":
 				claimed, _, _, err := h.DB.ClaimDueReviewAttempt("acme/api", 1, "head-a", time.Now())
 				require.NoError(t, err)
 				require.True(t, claimed)
@@ -291,15 +381,30 @@ func TestHealthCIPollerRestartRecognizesRecoveredRetry(t *testing.T) {
 				created, _, _, err := h.DB.CreateCIPanelRun("acme/api", 1, "head-a", []storage.EnqueueOpts{opts}, opts)
 				require.NoError(t, err)
 				require.True(t, created)
-			case "done":
-				require.NoError(t, h.DB.MarkReviewAttemptDone("acme/api", 1, "head-a"))
+				if recovery != "active" {
+					panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 1, "head-a")
+					require.NoError(t, err)
+					outcome := storage.PanelOutcomeReviewPosted
+					switch recovery {
+					case "exhausted":
+						outcome = storage.PanelOutcomeNoReviewPosted
+					case "abandoned":
+						outcome = storage.PanelOutcomeAbandoned
+					}
+					require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome))
+				}
 			case "removed":
 				require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 1, "head-a"))
 			}
 			h.Poller.poll(context.Background())
 			health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
-			assert.True(t, health.Healthy)
-			assert.Empty(t, health.RecentErrors, "historical errors on recovered retries must not create fresh alerts")
+			if recovery == "posted" || recovery == "removed" {
+				assert.True(t, health.Healthy)
+				assert.Empty(t, health.RecentErrors, "recovered retries must not create fresh alerts")
+			} else {
+				assert.False(t, health.Healthy, "retry health must survive a restart until a review is delivered")
+				assert.Len(t, health.RecentErrors, 1)
+			}
 		})
 	}
 }
@@ -391,7 +496,18 @@ func TestHealthCIPollerRetrySweepFailures(t *testing.T) {
 				target.HeadSHA = pr.HeadRefOid
 			}
 			h.Poller.poll(context.Background())
-			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			if failure == "delete stale" || failure == "delete skipped" || failure == "delete closed" {
+				assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			} else {
+				assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+					"a repaired sweep must still deliver the failed review")
+				comments := h.CaptureComments()
+				synthID := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "done")
+				h.Poller.handleReviewCompleted(ciEvent(synthID, "review.completed"))
+				require.Len(t, *comments, 1)
+				h.Poller.poll(context.Background())
+				assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			}
 		})
 	}
 }

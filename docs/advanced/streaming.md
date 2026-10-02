@@ -73,16 +73,21 @@ discovery removes it from the configured set. Discovery failures remain
 unhealthy even when polling can use cached or partial repository lists.
 Successful discovery clears the discovery failure.
 
-A failed retry stays unhealthy during retry backoff. Polling restores recorded
-failures after a restart, including while retries are still in backoff. Each
-error belongs to that commit: it clears when that review queues successfully, a
-later poll confirms it is active or complete, or its attempt is removed. A
-successful review of a newer commit does not clear an older retry's error.
+A failed review stays unhealthy during backoff and while its retry is queued or
+running. Polling restores these failures after a restart. Recovery requires a
+posted review with usable output; exhausting retries or abandoning delivery does
+not restore health. Ordinary queued reviews with no previous failure are
+healthy. An enqueue error alone can clear once polling confirms an active panel.
+
+Each error belongs to that commit. A successful review of another commit does
+not clear an older retry's error until the obsolete attempt is removed.
 Closed-PR cleanup and removal of obsolete retries clear their errors only after
 they succeed. An intentionally empty review matrix removes a claimed retry
 instead of re-arming disabled work. Adding a configured skip label removes a
 deferred retry and its health error on the next poll, without waiting for
-backoff to expire. Active and completed reviews are left unchanged.
+backoff to expire. Terminal failures also clear when the PR closes, advances to
+a new commit, or gets a skip label. Active and successfully posted reviews are
+left unchanged.
 
 Cleanup also removes stored review state for numbers GitHub confirms are
 ordinary issues. This verification requires access to GitHub's issue endpoint. A
