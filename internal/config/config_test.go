@@ -5372,9 +5372,9 @@ func TestWebConfigNormalization(t *testing.T) {
 	}{
 		{name: "loopback defaults", contents: "[web]\nlisten = \"127.0.0.1:0\"\n"},
 		{name: "canonical public origin", contents: "[web]\npublic_origin = \"HTTPS://REVIEWS.EXAMPLE.COM:443\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
-		{name: "shared key public origin", contents: "auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n[web]\npublic_origin = \"https://reviews.example.com\"\n", wantOrigin: "https://reviews.example.com"},
-		{name: "reject shared key remote HTTP", contents: "auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
-		{name: "reject shared key remote bind", contents: "auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "loopback"},
+		{name: "shared key public origin", contents: "auth_key = \"51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015\"\n[web]\npublic_origin = \"https://reviews.example.com\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "reject shared key remote HTTP", contents: "auth_key = \"51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015\"\n[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
+		{name: "reject shared key remote bind", contents: "auth_key = \"51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015\"\n[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "loopback"},
 		{name: "proxy authentication", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_mode = \"proxy\"\n", wantOrigin: "https://reviews.example.com", wantAuthMode: WebAuthModeProxy},
 		{name: "reject unknown auth mode", contents: "[web]\nauth_mode = \"trusted\"\n", wantErr: "auth mode"},
 		{name: "reject proxy mode without origin", contents: "[web]\nauth_mode = \"proxy\"\n", wantErr: "public origin"},

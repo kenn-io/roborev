@@ -171,7 +171,9 @@ func looksLikeFlagValue(token string) bool {
 }
 
 // isProcessAlive checks whether a process with the given PID exists.
-func isProcessAlive(pid int) bool {
+var isProcessAlive = isProcessAliveImpl
+
+func isProcessAliveImpl(pid int) bool {
 	return processExists(pid)
 }
 

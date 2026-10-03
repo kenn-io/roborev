@@ -163,15 +163,17 @@ func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	tcpTLS := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373", TLSCertPEM: "pinned-certificate"}
 	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/roborev.sock"}
 	assert.Equal("http://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcp))
+	assert.Equal("https://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcpTLS))
 	assert.Empty(mcpURLForEndpoint(false, tcp))
 	assert.Empty(mcpURLForEndpoint(true, unix))
 	assert.Empty(mcpURLForEndpoint(true, DaemonEndpoint{}))
 
 	server, _ := newMCPTestServer(t, true)
 	server.endpointMu.Lock()
-	server.endpoint = tcp
+	server.endpoint = tcpTLS
 	server.endpointMu.Unlock()
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	w := httptest.NewRecorder()
@@ -179,11 +181,11 @@ func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code)
 	var ping PingInfo
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &ping))
-	assert.Equal("http://127.0.0.1:7373/mcp", ping.MCPURL)
+	assert.Equal("https://127.0.0.1:7373/mcp", ping.MCPURL)
 
 	disabled, _ := newMCPTestServer(t, false)
 	disabled.endpointMu.Lock()
-	disabled.endpoint = tcp
+	disabled.endpoint = tcpTLS
 	disabled.endpointMu.Unlock()
 	w = httptest.NewRecorder()
 	disabled.httpServer.Handler.ServeHTTP(w, req)

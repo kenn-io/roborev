@@ -131,11 +131,13 @@ the global configuration and restart the daemon:
 enabled = true
 ```
 
-With the default `server_addr` the endpoint is `http://127.0.0.1:7373/mcp`. The
-daemon only listens on loopback. If global `auth_key` is set, `/mcp` requires
+With the default `server_addr` and no `auth_key`, the endpoint is
+`http://127.0.0.1:7373/mcp`. The daemon only listens on loopback. When
+`auth_key` is set, the TCP endpoint uses HTTPS and `/mcp` requires
 `Authorization: Bearer <key>` on every request, like the other daemon APIs.
-Without it, clients receive HTTP 401. Use stdio with the installers, or
-configure that header manually in an MCP client that supports it. See
+Native clients trust the certificate from the daemon runtime record. Use stdio
+with the installers. A manually configured Streamable HTTP MCP client must
+support both the authorization header and that certificate. See
 [Daemon authentication](/docs/configuration/#daemon-authentication) for key
 setup and rotation. When the daemon listens on a Unix domain socket, most MCP
 clients cannot reach it over HTTP; use stdio instead.

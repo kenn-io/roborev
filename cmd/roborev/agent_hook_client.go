@@ -191,5 +191,5 @@ func agentHookEndpoint(addr string) (daemon.DaemonEndpoint, error) {
 	if err != nil {
 		return daemon.DaemonEndpoint{}, fmt.Errorf("parse roborev daemon address: %w", err)
 	}
-	return ep, nil
+	return pinRuntimeTLSCertificate(ep), nil
 }

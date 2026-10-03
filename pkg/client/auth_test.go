@@ -9,12 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func TestAuthKeyTypedAndRawClient(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
 			w.WriteHeader(401)
 			return
 		}
@@ -26,7 +27,7 @@ func TestAuthKeyTypedAndRawClient(t *testing.T) {
 		_, _ = w.Write([]byte("raw-log"))
 	}))
 	defer server.Close()
-	api, err := NewWithAuthKey(server.URL, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	api, err := NewWithAuthKeyAndHTTPClient(server.URL, "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015", server.Client())
 	require.NoError(t, err)
 	ping, err := api.Ping(context.Background())
 	require.NoError(t, err)
@@ -38,7 +39,16 @@ func TestAuthKeyTypedAndRawClient(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestAuthKeyRejectsShortCredential(t *testing.T) {
-	_, err := NewWithAuthKey("http://127.0.0.1:7373", "a")
-	require.ErrorContains(t, err, "64 lowercase hex characters")
+func TestAuthKeyClientRefusesPlainHTTP(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	api, err := NewWithAuthKey(server.URL, "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015")
+	require.NoError(t, err)
+	_, err = api.Ping(context.Background())
+	require.ErrorIs(t, err, auth.ErrPlaintextTransport)
+	assert.Zero(t, requests)
 }

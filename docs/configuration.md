@@ -290,17 +290,16 @@ for all native daemon APIs, including reads, shutdown, streaming, profiling, MCP
 and the OpenAPI document. Authentication is disabled when `auth_key` is empty
 (the default). This key is global-only; repo config cannot override it.
 
-Generate 32 random bytes encoded as 64 lowercase hex characters:
+Generate a fresh 32-byte key with:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Paste the output into the global config:
+Put its 64 lowercase hexadecimal characters in `~/.roborev/config.toml`:
 
 ```toml
-# ~/.roborev/config.toml
-auth_key = "<paste-generated-key>"
+auth_key = "<paste-the-generated-value-here>"
 ```
 
 Nonempty keys must use this format. Short keys and other encodings are rejected.
@@ -342,6 +341,18 @@ roborev daemon stop
 roborev daemon start
 ```
 
+If a TCP daemon is still running after you add `auth_key`, use
+`roborev daemon restart`. The CLI verifies the local runtime and endpoint before
+sending a shutdown request without the new key. If the TCP endpoint is occupied
+but its daemon identity cannot be verified, the CLI refuses to start another
+daemon.
+
+When upgrading from a pre-TLS release with `auth_key` already enabled on TCP,
+`roborev daemon restart` cannot stop the existing process: its runtime record
+has no TLS certificate pin, and the old daemon rejects the keyless shutdown
+request. Stop it through its service manager or stop the recorded PID manually,
+then start the daemon again. The CLI will not send the key over plaintext.
+
 For a service-managed daemon, stop the service, update the configs, then start
 the service. Editing or deleting config while the daemon is running does not
 change its active key. Existing CLI/TUI HTTP clients reread their config for
@@ -360,21 +371,35 @@ stdio transport when `auth_key` is set; see
 Custom API clients send the key in an HTTP header:
 
 ```bash
-curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
-  http://127.0.0.1:7373/api/status
+curl --cacert "$ROBOREV_DAEMON_CERT" \
+  -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
+  https://127.0.0.1:7373/api/status
 ```
 
-`ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
-override. Missing or incorrect credentials return HTTP 401. Query-string keys
-are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
-Roborev clients scope keys to their configured endpoint and do not follow
-redirects.
+`ROBOREV_AUTH_KEY` and `ROBOREV_DAEMON_CERT` above are shell variables for curl,
+not roborev config overrides. Set the certificate variable to a PEM file
+containing the `tls_certificate` from the daemon's protected runtime record. The
+certificate is public; the runtime record does not contain the private key or
+`auth_key`. Missing or incorrect credentials return HTTP 401. Query-string keys
+are not accepted. Native clients discover and trust the runtime certificate
+automatically. Go consumers can pass an `http.Client` configured to trust that
+certificate to `client.NewWithAuthKeyAndHTTPClient`.
 
-This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
-not encrypt or authenticate the listening process. A process impersonating a
-localhost TCP endpoint can capture a Bearer key; use protected Unix sockets on
-shared machines where that threat matters. It does not isolate processes that
-already run as the daemon owner's account or can read its config.
+When `auth_key` is set on a TCP listener, native API traffic uses TLS and
+clients verify the daemon certificate before sending the key. TCP listeners
+remain loopback-only. With no key, TCP continues to use HTTP. Unix sockets use
+their filesystem permissions and do not use TLS. Native clients refresh the
+certificate pin from the matching live runtime record on each new TLS
+connection, so polling clients can reconnect after the daemon restarts.
+Authenticated TCP startup fails if the daemon cannot publish its certificate in
+the runtime record, so clients do not try to send the key without a pin.
+
+The browser UI runs on a separate loopback HTTP listener. Its login credentials,
+including the shared key, browser token, or key supplied by a trusted proxy,
+travel over that connection. An active local TCP impersonator could capture
+them. Use an HTTPS reverse proxy for remote browser access and keep its backend
+on the trusted host. This does not isolate processes that already run as the
+daemon owner's account or can read its config.
 
 ## Per-Repository Configuration
 
@@ -1229,7 +1254,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
-| `auth_key` | string | empty | Shared Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
+| `auth_key` | string | empty | 32-byte hex Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
 | `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |

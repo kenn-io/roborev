@@ -150,6 +150,9 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("query for %s: %w: check auth_key in the global config", sha, daemon.ErrDaemonAccessDenied)
+		}
 		return nil, fmt.Errorf("query for %s: server returned %s", sha, resp.Status)
 	}
 
@@ -176,6 +179,9 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	defer fallbackResp.Body.Close()
 
 	if fallbackResp.StatusCode != http.StatusOK {
+		if fallbackResp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("fallback query for %s: %w: check auth_key in the global config", sha, daemon.ErrDaemonAccessDenied)
+		}
 		return nil, fmt.Errorf("fallback query for %s: server returned %s", sha, fallbackResp.Status)
 	}
 

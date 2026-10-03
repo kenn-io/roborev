@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,15 +21,38 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/version"
 )
+
+func authDaemonEndpoint(t *testing.T, server *httptest.Server) daemon.DaemonEndpoint {
+	t.Helper()
+	ep, err := daemon.ParseEndpoint(strings.TrimPrefix(server.URL, "https://"))
+	require.NoError(t, err)
+	ep.TLSCertPEM = string(pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: server.Certificate().Raw,
+	}))
+	return ep
+}
+
+func useAuthDaemonEndpoint(t *testing.T, endpoint daemon.DaemonEndpoint) {
+	t.Helper()
+	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
+	serverAddr = endpoint.Address
+	parsedServerEndpoint = &endpoint
+	t.Cleanup(func() {
+		serverAddr = oldAddr
+		parsedServerEndpoint = oldEndpoint
+	})
+}
 
 func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 	for _, tc := range []struct{ name, contents string }{
 		{"syntax", `auth_key = secret-never-print`},
 		{"invalid key", `auth_key = "bad key"`},
-		{"short key", `auth_key = "a"`},
+		{"guessable key", `auth_key = "short"`},
 		{"missing", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,9 +74,9 @@ func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 
 func TestAuthCLIJobLookup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -59,30 +84,160 @@ func TestAuthCLIJobLookup(t *testing.T) {
 		_, _ = w.Write([]byte(`{"jobs":[{"id":23,"status":"done"}]}`))
 	}))
 	defer server.Close()
-	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
-	serverAddr = strings.TrimPrefix(server.URL, "http://")
-	parsedServerEndpoint = nil
-	t.Cleanup(func() { serverAddr = oldAddr; parsedServerEndpoint = oldEndpoint })
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	useAuthDaemonEndpoint(t, ep)
 	job, err := findJobForCommit(t.TempDir(), "abc123")
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	assert.EqualValues(t, 23, job.ID)
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "5edae9b7c0eda3b75e0d34d9eda9607f54b4ac60f7e02e593dec0b2b1e98a5e0"`), 0o600))
 	_, err = findJobForCommit(t.TempDir(), "abc123")
-	require.ErrorContains(t, err, "401 Unauthorized")
+	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+	assert.Contains(t, err.Error(), "check auth_key in the global config")
+}
+
+func TestAuthExplicitServerUsesRuntimeTLSCertificate(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","version":%q,"pid":%d}`, version.Version, os.Getpid())
+	}))
+	defer server.Close()
+
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
+	serverAddr = ep.Address
+	parsedServerEndpoint = nil
+	t.Cleanup(func() {
+		serverAddr = oldAddr
+		parsedServerEndpoint = oldEndpoint
+	})
+	require.NoError(t, validateServerFlag())
+
+	selected := getDaemonEndpoint()
+	assert.Equal(t, "https://"+ep.Address, selected.BaseURL())
+	require.NoError(t, ensureDaemon())
+	resp, err := selected.HTTPClient(time.Second).Get(selected.BaseURL() + "/api/ping")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.EqualValues(t, 2, requests.Load())
+}
+
+func TestAuthExplicitAgentHookAddressUsesRuntimeTLSCertificate(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
+	var requests atomic.Int32
+	gotPaths := make(chan string, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		gotPaths <- r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"session_id":"synthetic-session"}`))
+	}))
+	defer server.Close()
+
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	response, err := postAgentHookRequest(context.Background(), ep.Address, agenthook.Request{
+		Event: agenthook.Input{SessionID: "synthetic-session"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "synthetic-session", response.SessionID)
+	assert.Equal(t, "/api/agent-hook/event", <-gotPaths)
+	assert.EqualValues(t, 1, requests.Load())
+}
+
+func TestAuthExplicitTUIAddressUsesRuntimeTLSCertificate(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
+	var requests atomic.Int32
+	gotPaths := make(chan string, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		gotPaths <- r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"service":"roborev"}`))
+	}))
+	defer server.Close()
+
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	selected, err := tuiDaemonEndpoint(ep.Address)
+	require.NoError(t, err)
+	response, err := selected.HTTPClient(time.Second).Get(selected.BaseURL() + "/api/ping")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "/api/ping", <-gotPaths)
+	assert.EqualValues(t, 1, requests.Load())
+}
+
+func TestPinRuntimeTLSCertificateSkipsStaleRecords(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	liveServer := httptest.NewTLSServer(http.NotFoundHandler())
+	defer liveServer.Close()
+	liveEndpoint := authDaemonEndpoint(t, liveServer)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(
+		liveEndpoint, nil, "test-version", nil, liveEndpoint.TLSCertPEM,
+	))
+
+	staleCertificate := string(pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: []byte("synthetic stale certificate"),
+	}))
+	assert.NotEqual(t, liveEndpoint.TLSCertPEM, staleCertificate)
+
+	records, err := daemon.RuntimeStore().List()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	staleRecord := records[0]
+	staleRecord.PID = math.MaxInt32
+	staleRecord.StartedAt = staleRecord.StartedAt.Add(-time.Second)
+	staleRecord.Metadata = map[string]string{"tls_certificate": staleCertificate}
+	_, err = daemon.RuntimeStore().Write(staleRecord)
+	require.NoError(t, err)
+	records, err = daemon.RuntimeStore().List()
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, math.MaxInt32, records[0].PID)
+	assert.Equal(t, liveEndpoint.Address, records[0].Address)
+	assert.Equal(t, staleCertificate, records[0].Metadata["tls_certificate"])
+
+	selected := pinRuntimeTLSCertificate(daemon.DaemonEndpoint{
+		Network: "tcp", Address: liveEndpoint.Address,
+	})
+
+	assert.Equal(t, liveEndpoint.TLSCertPEM, selected.TLSCertPEM)
 }
 
 func TestAuthExplicitURLHelpers(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
 	var recovered atomic.Bool
 	patchFixDaemonRetryForTest(t, func() error {
 		recovered.Store(true)
 		return errors.New("unexpected daemon recovery")
 	})
 	fixDaemonRecoveryWait = 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -97,6 +252,9 @@ func TestAuthExplicitURLHelpers(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	useAuthDaemonEndpoint(t, ep)
 	ctx := context.Background()
 	review, err := fetchReview(ctx, server.URL, 23)
 	require.NoError(t, err)
@@ -261,16 +419,31 @@ func TestAuthFixRecoveryStopsOnAccessErrors(t *testing.T) {
 }
 
 func TestAuthHookKeepsCapturedEndpoint(t *testing.T) {
-	repo, mux := setupTestEnvironment(t)
-	repo.CommitFile("file.txt", "content", "initial")
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := createTestRepo(t, map[string]string{"file.txt": "content"})
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
 	var received atomic.Bool
-	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-		received.Store(true)
-		assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":23}`))
-	})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/ping":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","version":%q,"pid":%d}`, version.Version, os.Getpid())
+		case "/api/enqueue":
+			received.Store(true)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":23}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
+	useAuthDaemonEndpoint(t, ep)
 	other := httptest.NewServer(http.NotFoundHandler())
 	defer other.Close()
 	original := hookHTTPClient
@@ -299,9 +472,9 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == tc.path && (!tc.legacy || r.URL.Query().Get("commit_id") != "") {
 						w.WriteHeader(http.StatusUnauthorized)
 						return
@@ -317,7 +490,7 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				patchServerAddr(t, server.URL)
+				useAuthDaemonEndpoint(t, authDaemonEndpoint(t, server))
 				tester := agent.NewTestAgent()
 				tracker := &fixSessionTracker{base: tester, out: io.Discard}
 				cmd, _ := newTestCmd(t)
@@ -336,17 +509,16 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 
 func TestAuthStartUsesAuthenticatedDiscovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"`), 0o600))
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
+		assert.Equal(t, "Bearer 51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015", r.Header.Get("Authorization"))
 		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 	}))
 	defer server.Close()
-	ep, err := daemon.ParseEndpoint(server.Listener.Addr().String())
-	require.NoError(t, err)
-	require.NoError(t, daemon.WriteRuntime(ep, nil, "test-version", nil))
+	ep := authDaemonEndpoint(t, server)
+	require.NoError(t, daemon.WriteRuntimeWithTLS(ep, nil, "test-version", nil, ep.TLSCertPEM))
 	require.NoError(t, startDaemon())
 	assert.EqualValues(t, 1, requests.Load())
 }
