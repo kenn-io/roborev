@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-02
 title: Configuration
 description: Configure roborev behavior globally and per-repository
+last_edited: 2026-10-02
 ---
 
 roborev uses a layered configuration system. Settings are resolved in this order

@@ -1,6 +1,7 @@
 ---
 title: Installation
 description: Install roborev on your system
+last_edited: 2026-10-02
 ---
 
 ## Quick Install (Recommended)

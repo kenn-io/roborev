@@ -1,3 +1,8 @@
+---
+title: "Review commit look-ahead bias using MCP"
+description: "Run an authorized commit look-ahead review and read its progress and results through RoboRev MCP tools."
+last_edited: 2026-09-19
+---
 ## Instructions (MCP mode)
 
 1. Resolve the roborev MCP tools through the agent's tool discovery. If a tool

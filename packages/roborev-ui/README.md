@@ -1,3 +1,8 @@
+---
+title: "@kenn-io/roborev-ui"
+description: "Network-free Svelte and TypeScript presentation components for RoboRev review content and metadata."
+last_edited: 2026-08-16
+---
 # `@kenn-io/roborev-ui`
 
 Network-free Svelte presentation components for Roborev review content.

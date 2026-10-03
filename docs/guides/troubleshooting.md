@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Diagnose and fix common roborev issues
+last_edited: 2026-09-28
 ---
 
 ## Missing or unstructured reviews after upgrade

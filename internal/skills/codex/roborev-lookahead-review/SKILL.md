@@ -1,6 +1,8 @@
 ---
-name: roborev-lookahead-review
+title: "roborev-lookahead-review"
 description: Use only when the user explicitly invokes $roborev-lookahead-review
+last_edited: 2026-09-24
+name: roborev-lookahead-review
 ---
 
 # roborev-lookahead-review

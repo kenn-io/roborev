@@ -1,6 +1,7 @@
 ---
 title: Changelog
 description: Release history for roborev
+last_edited: 2026-10-02
 ---
 
 All notable changes to roborev, grouped by minor release.

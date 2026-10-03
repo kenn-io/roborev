@@ -1,3 +1,8 @@
+---
+title: "Refine code using MCP review results"
+description: "Run authorized review and fix iterations, track results through MCP, and continue until the configured stopping condition."
+last_edited: 2026-09-19
+---
 ## Instructions (MCP mode)
 
 1. Resolve roborev MCP tools using tool discovery. If unavailable, report the

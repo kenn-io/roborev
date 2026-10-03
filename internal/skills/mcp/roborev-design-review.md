@@ -1,3 +1,8 @@
+---
+title: "Review a design commit using MCP"
+description: "Run an authorized commit design review and read its progress and results through RoboRev MCP tools."
+last_edited: 2026-09-19
+---
 ## Instructions (MCP mode)
 
 1. Resolve the roborev MCP tools through the agent's tool discovery. If a tool

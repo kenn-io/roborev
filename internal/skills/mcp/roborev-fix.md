@@ -1,3 +1,8 @@
+---
+title: "Fix review findings using MCP"
+description: "Read review findings, verify and fix in-scope issues, record outcomes, and complete Agent Hook fix sessions through MCP."
+last_edited: 2026-09-19
+---
 ## Instructions
 
 Use the roborev MCP server for review data and bookkeeping. Discover the tools

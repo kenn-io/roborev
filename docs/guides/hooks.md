@@ -1,6 +1,7 @@
 ---
 title: Review Hooks
 description: Run shell commands automatically when reviews complete or fail
+last_edited: 2026-09-13
 ---
 
 roborev runs reviews in the background. Without hooks, you find out about

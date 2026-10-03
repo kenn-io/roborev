@@ -1,6 +1,7 @@
 ---
 title: Terminal UI (TUI)
 description: Interactive terminal interface for viewing and managing reviews
+last_edited: 2026-10-02
 ---
 
 The interactive terminal UI (`roborev tui`) is the primary interface for working

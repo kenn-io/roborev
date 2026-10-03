@@ -1,3 +1,8 @@
+---
+title: "roborev Skills"
+description: "Install and use agent skills to fix review findings, review designs, respond to reviews, and snooze Agent Hooks."
+last_edited: 2026-09-19
+---
 # roborev Skills
 
 Let AI agents automatically fix issues found in code reviews.

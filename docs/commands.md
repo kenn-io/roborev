@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-17
 title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
+last_edited: 2026-09-17
 ---
 
 <figure class="screenshot" data-lightbox>

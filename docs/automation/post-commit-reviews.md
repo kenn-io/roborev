@@ -1,3 +1,8 @@
+---
+title: "Automation: hands-off reviews"
+description: "Set up post-commit reviews and Agent Hooks to automate the review and fix loop."
+last_edited: 2026-09-25
+---
 # Automation: hands-off reviews
 
 roborev is built to run hands-off. There are two automation layers - turn on

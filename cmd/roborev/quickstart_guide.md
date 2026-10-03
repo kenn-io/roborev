@@ -1,3 +1,8 @@
+---
+title: "How roborev works"
+description: "Agent-oriented setup guidance for post-commit reviews, Agent Hooks, skills, and review workflows."
+last_edited: 2026-09-25
+---
 ## How roborev works
 
 roborev gives your coding agent a second set of eyes. It reviews your code

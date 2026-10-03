@@ -11,9 +11,10 @@ import (
 )
 
 type skillDerivation struct {
-	TargetAgent  Agent
-	SkillName    string
-	Replacements []stringReplacement
+	TargetAgent            Agent
+	SkillName              string
+	DisableModelInvocation bool
+	Replacements           []stringReplacement
 }
 
 type stringReplacement struct {
@@ -75,16 +76,11 @@ func skillDerivations() []skillDerivation {
 				New: "the runtime's supported sandbox escalation mechanism",
 			},
 		}
-		if skillName == "roborev-snooze" {
-			replacements = append([]stringReplacement{{
-				Old: "invokes $" + skillName + "\n---",
-				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
-			}}, replacements...)
-		}
 		derivations = append(derivations, skillDerivation{
-			TargetAgent:  AgentDroid,
-			SkillName:    skillName,
-			Replacements: replacements,
+			TargetAgent:            AgentDroid,
+			DisableModelInvocation: skillName == "roborev-snooze",
+			SkillName:              skillName,
+			Replacements:           replacements,
 		})
 	}
 	for _, skillName := range derivedClaudeSkills {
@@ -106,16 +102,11 @@ func skillDerivations() []skillDerivation {
 		// disable-model-invocation would block that path. Its explicit-only
 		// description and body section remain the guard against implicit
 		// selection.
-		if skillName != "roborev-fix" {
-			replacements = append([]stringReplacement{{
-				Old: "invokes $" + skillName + "\n---",
-				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
-			}}, replacements...)
-		}
 		derivations = append(derivations, skillDerivation{
-			TargetAgent:  AgentClaude,
-			SkillName:    skillName,
-			Replacements: replacements,
+			TargetAgent:            AgentClaude,
+			DisableModelInvocation: skillName != "roborev-fix",
+			SkillName:              skillName,
+			Replacements:           replacements,
 		})
 	}
 	for _, skillName := range derivedGrokSkills {
@@ -132,16 +123,11 @@ func skillDerivations() []skillDerivation {
 		}
 		// Same model-invocation rules as Claude: roborev-fix stays invocable
 		// for agent-hook Stop; other skills are explicit-only.
-		if skillName != "roborev-fix" {
-			replacements = append([]stringReplacement{{
-				Old: "invokes $" + skillName + "\n---",
-				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
-			}}, replacements...)
-		}
 		derivations = append(derivations, skillDerivation{
-			TargetAgent:  AgentGrok,
-			SkillName:    skillName,
-			Replacements: replacements,
+			TargetAgent:            AgentGrok,
+			DisableModelInvocation: skillName != "roborev-fix",
+			SkillName:              skillName,
+			Replacements:           replacements,
 		})
 	}
 	return derivations
@@ -164,9 +150,46 @@ func renderDerivedSkills(fsys fs.FS) (map[string][]byte, error) {
 			rendered = strings.ReplaceAll(rendered, replacement.Old, replacement.New)
 		}
 
-		out[path.Join(string(derivation.TargetAgent), derivation.SkillName, "SKILL.md")] = []byte(rendered)
+		metadata, body, ok := splitSkillFrontmatter(rendered)
+		if !ok {
+			return nil, fmt.Errorf("source skill %s has no frontmatter", derivation.SkillName)
+		}
+		if derivation.DisableModelInvocation {
+			metadata += "disable-model-invocation: true\n"
+		}
+
+		relPath := path.Join(string(derivation.TargetAgent), derivation.SkillName, "SKILL.md")
+		existing, err := fs.ReadFile(fsys, relPath)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read derived skill %s: %w", relPath, err)
+		}
+		// A metadata-only regeneration must retain this target's body-edit date.
+		if oldMetadata, oldBody, ok := splitSkillFrontmatter(string(existing)); ok && oldBody == body {
+			for line := range strings.SplitSeq(oldMetadata, "\n") {
+				if strings.HasPrefix(line, "last_edited:") {
+					lines := strings.Split(metadata, "\n")
+					for i, current := range lines {
+						if strings.HasPrefix(current, "last_edited:") {
+							lines[i] = line
+						}
+					}
+					metadata = strings.Join(lines, "\n")
+					break
+				}
+			}
+		}
+		out[relPath] = []byte("---\n" + metadata + "---\n" + body)
 	}
 	return out, nil
+}
+
+func splitSkillFrontmatter(content string) (metadata, body string, ok bool) {
+	content, ok = strings.CutPrefix(content, "---\n")
+	if !ok {
+		return "", "", false
+	}
+	metadata, body, ok = strings.Cut(content, "\n---\n")
+	return metadata + "\n", body, ok
 }
 
 func validateSkillDerivation(derivation skillDerivation) error {

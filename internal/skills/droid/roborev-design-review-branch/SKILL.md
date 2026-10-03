@@ -1,6 +1,8 @@
 ---
-name: roborev-design-review-branch
+title: "roborev-design-review-branch"
 description: Use only when the user explicitly invokes /roborev-design-review-branch
+last_edited: 2026-09-24
+name: roborev-design-review-branch
 ---
 
 # roborev-design-review-branch

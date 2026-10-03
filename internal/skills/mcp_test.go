@@ -3,11 +3,44 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMCPInstallPreservesCanonicalMetadataAndSnippetBody(t *testing.T) {
+	for _, agent := range Agents() {
+		t.Run(string(agent), func(t *testing.T) {
+			assert := assert.New(t)
+			dir := filepath.Join(t.TempDir(), "skills")
+			_, err := InstallToPath(agent, dir, new(true))
+			require.NoError(t, err)
+			spec, ok := lookupAgent(agent)
+			require.True(t, ok)
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+			for _, skill := range skills {
+				canonicalMetadata, _, ok := splitSkillFrontmatter(string(skill.Content))
+				require.True(t, ok)
+				installed, err := os.ReadFile(skillInstallPath(dir, skill.DirName))
+				require.NoError(t, err)
+				installedMetadata, installedBody, ok := splitSkillFrontmatter(string(installed))
+				require.True(t, ok)
+				assert.Equal(canonicalMetadata, installedMetadata, skill.DirName)
+
+				source, err := mcpInstructions.ReadFile("mcp/" + skill.Name + ".md")
+				require.NoError(t, err)
+				_, sourceBody, ok := splitSkillFrontmatter(string(source))
+				require.True(t, ok)
+				_, appendedBody, ok := strings.Cut(installedBody, mcpModeMarker+"\n\n")
+				require.True(t, ok)
+				assert.Equal(sourceBody, appendedBody, skill.DirName)
+			}
+		})
+	}
+}
 
 func TestMCPInstallPreservesModeOnUpdate(t *testing.T) {
 	for _, agent := range Agents() {

@@ -1,3 +1,8 @@
+---
+title: "roborev-snooze"
+description: "Temporarily silence or resume Agent Hook reminders for the current worktree and branch."
+last_edited: 2026-08-03
+---
 # roborev-snooze
 
 Temporarily silence or resume roborev Agent Hook reminders for the current

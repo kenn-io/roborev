@@ -1,6 +1,7 @@
 ---
 title: Supported Agents
 description: AI agents supported by roborev
+last_edited: 2026-09-24
 ---
 
 roborev supports multiple AI coding agents and auto-detects which ones are

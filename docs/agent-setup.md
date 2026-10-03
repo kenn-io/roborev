@@ -1,6 +1,7 @@
 ---
 title: Agent-Assisted Setup
 description: A setup prompt you hand to your coding agent to configure roborev in a repository
+last_edited: 2026-09-25
 ---
 
 This page is a prompt for your coding agent. It walks the agent through setting

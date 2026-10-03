@@ -1,3 +1,8 @@
+---
+title: "roborev-design-review"
+description: "Review design proposals for completeness, feasibility, clarity, and technical soundness."
+last_edited: 2026-03-16
+---
 # /roborev-design-review
 
 Review a design proposal for completeness, feasibility, and technical soundness.

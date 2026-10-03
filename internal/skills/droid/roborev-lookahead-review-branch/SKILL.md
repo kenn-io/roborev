@@ -1,6 +1,8 @@
 ---
-name: roborev-lookahead-review-branch
+title: "roborev-lookahead-review-branch"
 description: Use only when the user explicitly invokes /roborev-lookahead-review-branch
+last_edited: 2026-09-24
+name: roborev-lookahead-review-branch
 ---
 
 # roborev-lookahead-review-branch

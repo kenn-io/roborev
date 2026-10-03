@@ -1,6 +1,7 @@
 ---
 title: Auto-Fix with Refine
 description: Iterative review-fix loop that keeps going until all reviews pass
+last_edited: 2026-09-19
 ---
 
 `roborev refine` is a fully automated loop: it finds failed reviews on your

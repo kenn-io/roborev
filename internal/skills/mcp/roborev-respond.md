@@ -1,3 +1,8 @@
+---
+title: "Respond to reviews using MCP"
+description: "Record a user-supplied review comment, close the review, and verify both changes through MCP tools."
+last_edited: 2026-09-19
+---
 ## Instructions
 
 Use the roborev MCP server. Discover tools by their names below, allowing for

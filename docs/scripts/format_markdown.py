@@ -13,9 +13,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TABLE_DELIMITER = re.compile(
     r"^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$",
 )
+FRONT_MATTER = re.compile(r"\A---\n.*?^(?:---|\.\.\.)\n", re.MULTILINE | re.DOTALL)
 
 
 def format_text(source: str) -> str:
+    # Metadata spelling, comments, and types belong to the document author.
+    # Preserve the existing separator too, including a body adjacent to YAML.
+    prefix = ""
+    if match := FRONT_MATTER.match(source):
+        prefix = match.group()
+        source = source[match.end() :]
+        separator = source[: len(source) - len(source.lstrip("\n"))]
+        prefix += separator
+        source = source[len(separator) :]
     masked, tables = mask_tables(source)
     formatted = mdformat.text(
         masked,
@@ -24,7 +34,7 @@ def format_text(source: str) -> str:
     )
     for marker, table in tables:
         formatted = formatted.replace(f"{marker}\n", table, 1)
-    return formatted
+    return prefix + formatted
 
 
 def mask_tables(source: str) -> tuple[str, list[tuple[str, str]]]:

@@ -1,6 +1,8 @@
 ---
-name: roborev-review-branch
+title: "roborev-review-branch"
 description: Use only when the user explicitly invokes /roborev-review-branch
+last_edited: 2026-09-07
+name: roborev-review-branch
 disable-model-invocation: true
 ---
 

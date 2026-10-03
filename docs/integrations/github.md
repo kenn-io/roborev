@@ -1,6 +1,7 @@
 ---
 title: GitHub Integration
 description: Automatically review GitHub PRs and post results as bot comments
+last_edited: 2026-09-27
 ---
 
 roborev can poll GitHub for open pull requests, run code reviews on each one,

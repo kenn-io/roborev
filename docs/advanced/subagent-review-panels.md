@@ -1,6 +1,7 @@
 ---
 title: Subagent Review Panels
 description: Fan out one review target to multiple reviewers and synthesize one actionable result
+last_edited: 2026-09-13
 ---
 
 Subagent review panels let one daemon review target run through several named

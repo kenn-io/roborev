@@ -1,6 +1,8 @@
 ---
-name: roborev-design-review
+title: "roborev-design-review"
 description: Use only when the user explicitly invokes /roborev-design-review
+last_edited: 2026-09-24
+name: roborev-design-review
 disable-model-invocation: true
 ---
 

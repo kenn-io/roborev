@@ -1,3 +1,8 @@
+---
+title: "Claude Code project guidance"
+description: "Claude Code context and workflow guidance for contributing to RoboRev alongside the shared repository instructions."
+last_edited: 2026-09-22
+---
 # CLAUDE.md
 
 @AGENTS.md

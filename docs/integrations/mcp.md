@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-02
 title: MCP Server
 description: Expose roborev review data to AI agents over the Model Context Protocol using stdio or streamable HTTP
+last_edited: 2026-10-02
 ---
 
 roborev ships an optional

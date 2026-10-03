@@ -21,6 +21,10 @@ func renderMCPSkill(content []byte) []byte {
 	name, _ := parseFrontmatter(content)
 	text := string(content)
 	if body, err := mcpInstructions.ReadFile("mcp/" + name + ".md"); err == nil {
+		snippet := string(body)
+		if _, instructions, ok := splitSkillFrontmatter(snippet); ok {
+			snippet = instructions
+		}
 		// Preserve invocation and scope policy; replace CLI-specific execution steps.
 		cut := strings.Index(text, "## Instructions")
 		if important := strings.Index(text, "## IMPORTANT"); important >= 0 {
@@ -37,7 +41,7 @@ func renderMCPSkill(content []byte) []byte {
 				text = text[:start] + text[start+3+end+1:]
 			}
 		}
-		return []byte(text + "\n" + mcpModeMarker + "\n\n" + string(body))
+		return []byte(text + "\n" + mcpModeMarker + "\n\n" + snippet)
 	}
 	return content
 }

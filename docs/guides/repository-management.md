@@ -1,6 +1,7 @@
 ---
 title: Repository Management
 description: Manage repositories tracked by roborev
+last_edited: 2026-10-02
 ---
 
 Manage repositories tracked by roborev through the daemon API. The daemon owns

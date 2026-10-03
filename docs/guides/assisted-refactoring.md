@@ -1,6 +1,7 @@
 ---
 title: Code Analysis and Assisted Refactoring
 description: Run built-in code analysis and automatically apply fixes with roborev analyze and roborev fix
+last_edited: 2026-09-05
 ---
 
 Use `roborev analyze` to run structured code analysis on your files, and

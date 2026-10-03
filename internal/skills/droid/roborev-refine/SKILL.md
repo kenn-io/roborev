@@ -1,6 +1,8 @@
 ---
-name: roborev-refine
+title: "roborev-refine"
 description: Use only when the user explicitly invokes /roborev-refine
+last_edited: 2026-09-24
+name: roborev-refine
 ---
 
 # roborev-refine

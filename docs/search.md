@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-30
 title: Review History Search
 description: Search completed reviews by keyword, meaning, repository, branch, time, verdict, and state
+last_edited: 2026-09-30
 ---
 
 Roborev can search completed review history across every repository in the local

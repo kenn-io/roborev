@@ -1,6 +1,8 @@
 ---
-name: roborev-snooze
+title: "roborev-snooze"
 description: Use only when the user explicitly invokes $roborev-snooze
+last_edited: 2026-09-01
+name: roborev-snooze
 ---
 
 # roborev-snooze

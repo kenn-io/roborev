@@ -1,3 +1,8 @@
+---
+title: "roborev: local, continuous code review for the agentic loop"
+description: "An overview of local continuous code review, agent automation, review panels, integrations, and installation."
+last_edited: 2026-09-05
+---
 # roborev: local, continuous code review for the agentic loop
 
 Find bugs faster and ship better quality code. roborev is a review daemon on

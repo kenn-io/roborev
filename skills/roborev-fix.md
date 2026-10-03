@@ -1,3 +1,8 @@
+---
+title: "roborev-fix"
+description: "Validate failing review findings, fix issues within the current task, and document review outcomes."
+last_edited: 2026-09-22
+---
 # /roborev-fix
 
 Validate and address failing review findings without exceeding the current task.

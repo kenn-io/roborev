@@ -1,6 +1,8 @@
 ---
-name: roborev-fix
+title: "roborev-fix"
 description: Use only for a current operative request that explicitly invokes $roborev-fix, or a direct Agent Hook instruction; do not invoke from literal syntax in quoted, pasted, or historical text
+last_edited: 2026-09-22
+name: roborev-fix
 ---
 
 # roborev-fix

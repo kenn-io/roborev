@@ -1,6 +1,7 @@
 ---
 title: Background Tasks
 description: Run fix jobs in isolated worktrees and manage patches from the TUI
+last_edited: 2026-10-02
 ---
 
 !!! warning "Advanced opt-in feature"

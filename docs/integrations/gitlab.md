@@ -1,6 +1,7 @@
 ---
 title: GitLab Integration
 description: Review GitLab merge requests from a CI pipeline and post results as MR notes
+last_edited: 2026-09-13
 ---
 
 roborev can review GitLab merge requests from inside a GitLab CI job and post

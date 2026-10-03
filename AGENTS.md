@@ -21,6 +21,11 @@ changes when working in a growing Go project.
 
 ## Documentation Style
 
+Every new Markdown file, except root `README.md` and `AGENTS.md`, must have YAML
+frontmatter with `title`, `description`, and `last_edited`, in that order.
+Update `last_edited` to the body-edit date whenever you change the body of any
+nonexempt Markdown file; preserve it for metadata-only edits.
+
 - Write documentation for humans and agents in plain language: name who does
   what, use short sentences, and explain unfamiliar terms. Prefer bullets for
   independent facts, numbered steps for sequences, and paragraphs for rationale.

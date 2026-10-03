@@ -1,6 +1,7 @@
 ---
 title: Custom Review Types
 description: Define reusable schema-constrained reviews with Go templates
+last_edited: 2026-09-20
 ---
 
 Custom review types let you give a specialized review a name and run it through

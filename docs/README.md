@@ -1,3 +1,8 @@
+---
+title: "roborev docs maintainer guide"
+description: "Maintain, build, validate, and publish the RoboRev website, documentation, and screenshot assets."
+last_edited: 2026-09-20
+---
 # roborev docs maintainer guide
 
 This directory contains the source for <https://roborev.io>. The site has three

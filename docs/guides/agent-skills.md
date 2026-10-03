@@ -1,6 +1,7 @@
 ---
 title: Agent Skills
 description: Install slash commands that let AI agents request reviews and fix findings
+last_edited: 2026-09-19
 ---
 
 Install slash commands that let AI agents request reviews and fix findings

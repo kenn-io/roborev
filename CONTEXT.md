@@ -1,3 +1,8 @@
+---
+title: "RoboRev review terminology"
+description: "Definitions of logical reviews, review jobs, panels, and experiments used throughout RoboRev."
+last_edited: 2026-08-26
+---
 # Roborev
 
 Roborev maintains a persistent queue of AI-assisted code reviews and the work

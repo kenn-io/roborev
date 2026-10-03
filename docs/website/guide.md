@@ -1,3 +1,8 @@
+---
+title: "The roborev guide: a ten-stop tour of the review loop"
+description: "A guided tour from installation and automatic reviews to team workflows, review panels, and analytics."
+last_edited: 2026-09-05
+---
 # The roborev guide: a ten-stop tour of the review loop
 
 A review loop you set up once and stop thinking about. Ten stops from a fresh

@@ -1,4 +1,6 @@
 ---
+title: "Roborev MCP guidance"
+description: "Navigate review data, record comments, close reviews, snooze Agent Hooks, and complete fix sessions through MCP tools."
 last_edited: 2026-09-17
 ---
 

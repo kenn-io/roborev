@@ -1,6 +1,7 @@
 ---
 title: Responding to Reviews
 description: Use reviews in your agent sessions and record responses and comments
+last_edited: 2026-09-05
 ---
 
 The review queue is a ledger: every review stays open until you explicitly close

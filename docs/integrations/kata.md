@@ -1,6 +1,7 @@
 ---
 title: Kata
 description: Pull Kata task context into review prompts and file review findings back as Kata issues
+last_edited: 2026-09-05
 ---
 
 [Kata](https://katatracker.com/) is a local-first issue tracker for humans and

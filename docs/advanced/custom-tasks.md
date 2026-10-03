@@ -1,6 +1,7 @@
 ---
 title: Custom Tasks & Agentic Mode
 description: Run custom AI tasks and understand review vs agentic modes
+last_edited: 2026-09-05
 ---
 
 Use `roborev run` to execute custom tasks with AI agents. While automatic

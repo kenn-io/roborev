@@ -1,3 +1,8 @@
+---
+title: "Snooze Agent Hooks using MCP"
+description: "Silence or resume Agent Hook reminders for the current repository, worktree, and branch through MCP."
+last_edited: 2026-09-19
+---
 ## Instructions
 
 Use the roborev MCP server's `roborev_snooze` tool. Discover it by name,

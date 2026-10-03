@@ -1,6 +1,7 @@
 ---
 title: Claude Chic
 description: Alternate terminal UI for Claude Code based on Textual and the Claude Agent SDK, with live roborev review integration
+last_edited: 2026-09-05
 ---
 
 [Claude Chic](https://github.com/mrocklin/claudechic) is an alternative terminal

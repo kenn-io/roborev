@@ -1,3 +1,8 @@
+---
+title: "Documentation Screenshot Pipeline"
+description: "Generate documentation screenshots from sanitized public review data using the Dockerized terminal and browser pipeline."
+last_edited: 2026-08-16
+---
 # Documentation Screenshot Pipeline
 
 The Dockerized screenshot pipeline creates the terminal and browser images used

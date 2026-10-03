@@ -1,6 +1,7 @@
 ---
 title: Event Streaming & Daemon API
 description: Stream review events and integrate with the daemon REST API
+last_edited: 2026-10-02
 ---
 
 ## Daemon API

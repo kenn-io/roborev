@@ -965,6 +965,33 @@ func TestDerivedSkillFilesAreCurrent(t *testing.T) {
 	}
 }
 
+func TestDerivedSkillDatesFollowBodyChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		existingBody string
+		wantDate     string
+	}{
+		{"metadata only", "# Example\n", "2026-08-01"},
+		{"body changed", "# Earlier content\n", "2026-09-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixtures := fstest.MapFS{}
+			for _, name := range derivedDroidSkills {
+				fixtures[path.Join("codex", name, "SKILL.md")] = &fstest.MapFile{
+					Data: fmt.Appendf(nil, "---\ntitle: Example\ndescription: New description\nlast_edited: 2026-09-01\nname: %s\n---\n# Example\n", name),
+				}
+			}
+			fixtures["grok/roborev-respond/SKILL.md"] = &fstest.MapFile{
+				Data: []byte("---\ntitle: Example\ndescription: Old description\nlast_edited: 2026-08-01\nname: roborev-respond\ndisable-model-invocation: true\n---\n" + tc.existingBody),
+			}
+
+			derived, err := renderDerivedSkills(fixtures)
+			require.NoError(t, err)
+			assert.Equal(t, "---\ntitle: Example\ndescription: New description\nlast_edited: "+tc.wantDate+"\nname: roborev-respond\ndisable-model-invocation: true\n---\n# Example\n", string(derived["grok/roborev-respond/SKILL.md"]))
+		})
+	}
+}
+
 func TestGrokSkillsCapabilityParityAndLinks(t *testing.T) {
 	// Capability set matches Droid (full derived surface), not the smaller
 	// Claude install set — so review/design/lookahead cross-links resolve.

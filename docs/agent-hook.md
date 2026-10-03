@@ -1,6 +1,7 @@
 ---
 title: Agent Hook
 description: Bring background roborev findings back into active coding-agent sessions
+last_edited: 2026-09-25
 ---
 
 `roborev agent-hook` connects roborev's asynchronous reviews to coding-agent

@@ -1,3 +1,8 @@
+---
+title: "Review configuration experiments"
+description: "Confirmed design for deterministic branch-scoped experiments comparing review configurations and outcomes."
+last_edited: 2026-08-26
+---
 # Review configuration experiments
 
 Status: Confirmed design

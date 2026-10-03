@@ -20,6 +20,24 @@ LONG_PARAGRAPH = (
 
 
 class FormatMarkdownTest(unittest.TestCase):
+    def test_format_text_preserves_yaml_and_body_separator(self) -> None:
+        metadata = (
+            "---\n"
+            'title: "Quoted title" # retain this comment\n'
+            "description: |\n"
+            "  A multiline description.\n"
+            "last_edited: 2026-09-01\n"
+            "enabled: true\n"
+            "---\n"
+        )
+        for separator in ("", "\n", "\n\n"):
+            with self.subTest(separator=separator):
+                formatted = format_text(metadata + separator + LONG_PARAGRAPH + "\n")
+                self.assertTrue(formatted.startswith(metadata + separator))
+                prose = formatted[len(metadata + separator) :]
+                self.assertFalse(prose.startswith("\n"))
+                self.assertLessEqual(max(map(len, prose.splitlines())), 80)
+
     def test_format_text_preserves_zensical_extensions(self) -> None:
         source = (
             "---\n"

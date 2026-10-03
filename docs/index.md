@@ -1,6 +1,7 @@
 ---
 title: roborev documentation
 description: Operating documentation for roborev, the continuous code review daemon for coding agents
+last_edited: 2026-09-25
 ---
 
 # roborev documentation

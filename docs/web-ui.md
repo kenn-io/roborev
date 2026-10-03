@@ -1,6 +1,7 @@
 ---
 title: Browser UI
 description: Browse reviews and analyze project review health in the native Roborev web application
+last_edited: 2026-09-30
 ---
 
 Browse reviews, follow the live queue, and compare review performance in your
