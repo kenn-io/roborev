@@ -176,9 +176,21 @@ func (a *ACPAgent) WithModel(model string) Agent {
 
 // Review implements the main review functionality using ACP SDK
 func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if planningReadOnly(ctx) {
+		a = a.withPlanningMode()
+	}
 	reviewPrompt := fmt.Sprintf("Review the code changes in commit %s.\n\nRepository: %s\n\nPrompt: %s",
 		commitSHA, repoPath, prompt)
 	return a.runPrompt(ctx, repoPath, reviewPrompt, output)
+}
+
+func (a *ACPAgent) withPlanningMode() *ACPAgent {
+	clone := *a
+	clone.Agentic = false
+	if strings.TrimSpace(clone.Mode) != "" {
+		clone.Mode = clone.ReadOnlyMode
+	}
+	return &clone
 }
 
 func (a *ACPAgent) runPrompt(

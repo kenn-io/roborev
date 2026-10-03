@@ -87,7 +87,7 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 	expectedMax := max(50-visLines, 0)
 	assert.Equal(t, expectedMax, m3.logScroll)
 
-	m4, _ := pressKeys(m, []rune{'G'})
+	m4, _ := pressKeys(m, []rune{'g'})
 	assert.Equal(t, expectedMax, m4.logScroll)
 
 	mMid := m
@@ -97,6 +97,28 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 
 	m6, _ := pressSpecial(m, tea.KeyPgUp)
 	assert.Equal(t, 0, m6.logScroll)
+}
+
+func TestTUILogPageDownClampsScroll(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewLog
+	m.height = 20
+	m.logFollow = false
+	for i := range 50 {
+		m.logLines = append(m.logLines, logLine{text: fmt.Sprintf("line %d", i)})
+	}
+	visibleLines := m.logVisibleLines()
+	maxScroll := max(len(m.logLines)-visibleLines, 0)
+
+	for range 100 {
+		m, _ = pressSpecial(m, tea.KeyPgDown)
+	}
+	assert.Equal(maxScroll, m.logScroll, "PgDn clamps at the last log page")
+
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+	assert.Equal(max(maxScroll-visibleLines, 0), m.logScroll, "PgUp moves back one page from the bottom")
 }
 
 func TestTUILogPagingNoHeader(t *testing.T) {

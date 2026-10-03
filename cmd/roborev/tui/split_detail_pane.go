@@ -62,6 +62,27 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 	return out
 }
 
+// reviewPaneBodyGeometry returns the markdown body height after reserving the
+// inline fix panel, and the number of body lines visible below the pane header.
+func (m model) reviewPaneBodyGeometry(innerW, innerH int) (bodyH, visibleLines int) {
+	panelReserve := 0
+	if m.reviewFixPanelOpen {
+		panelReserve = reviewFixPanelPaneReserve
+	}
+	bodyH = max(innerH-panelReserve, 1)
+	visibleLines = max(bodyH-len(m.reviewPaneHeaderLines(innerW)), 1)
+	return bodyH, visibleLines
+}
+
+func (m model) reviewPageSize() int {
+	if !m.splitActive() {
+		return max(m.height-10, 1)
+	}
+	g := splitLayoutConfig.Geometry(m.width, m.height, len(convertAndReflowHelpRows(m.splitFooterRows(), m.width)))
+	_, visibleLines := m.reviewPaneBodyGeometry(g.DetailInnerW, g.DetailInnerH)
+	return visibleLines
+}
+
 // reviewPaneBodyLines returns the markdown-rendered body lines for the
 // current review, windowed to wrapWidth/maxWidth derived from innerW.
 // Shared by renderReviewPaneBody and reviewPaneScrollInfo so both compute
@@ -84,21 +105,15 @@ func (m model) reviewPaneBodyLines(innerW int) []string {
 // handleKeyMsg's reviewFixPanelFocused capture at the top of the key
 // dispatch chain.
 func (m model) renderReviewPaneBody(innerW, innerH int) []string {
-	panelReserve := 0
-	if m.reviewFixPanelOpen {
-		panelReserve = reviewFixPanelPaneReserve
-	}
-	bodyH := max(innerH-panelReserve, 1)
+	bodyH, visible := m.reviewPaneBodyGeometry(innerW, innerH)
 
 	out := append([]string{}, m.reviewPaneHeaderLines(innerW)...)
 
 	// Markdown body, windowed by m.reviewScroll.
 	lines := m.reviewPaneBodyLines(innerW)
-	visible := max(bodyH-len(out), 1)
 	maxScroll := max(len(lines)-visible, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastReviewMaxScroll = maxScroll
-		m.mdCache.lastReviewVisibleLines = visible
 	}
 	start := max(min(m.reviewScroll, maxScroll), 0)
 	for i := start; i < min(start+visible, len(lines)); i++ {
@@ -128,10 +143,14 @@ func (m model) renderReviewPaneBody(innerW, innerH int) []string {
 func (m model) renderReviewFixPanelPaneLines(innerW int) []string {
 	boxW := max(innerW-2, 10) // box inner width; total visual width = boxW+2 (borders)
 	trunc := func(s string) string { return xansi.Truncate(s, innerW, "") }
+	planState := "off"
+	if m.fixPlanFirst {
+		planState = "on"
+	}
 
 	var out []string
 	if m.reviewFixPanelFocused {
-		label := "Fix: enter instructions (or leave blank for default)"
+		label := "Fix: enter instructions | Plan first: " + planState
 		if runewidth.StringWidth(label) > innerW {
 			label = runewidth.Truncate(label, innerW, "")
 		}
@@ -158,9 +177,9 @@ func (m model) renderReviewFixPanelPaneLines(innerW int) []string {
 		for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 			out = append(out, trunc(line))
 		}
-		out = append(out, trunc(helpStyle.Render("tab: scroll review | enter: submit | esc: cancel")))
+		out = append(out, trunc(helpStyle.Render("ctrl+p: plan | tab: scroll review | enter: submit | esc: cancel")))
 	} else {
-		out = append(out, trunc(statusStyle.Render("Fix (Tab to focus)")))
+		out = append(out, trunc(statusStyle.Render("Fix (Tab to focus) | Plan first: "+planState)))
 
 		inputDisplay := m.fixPromptText
 		if inputDisplay == "" {

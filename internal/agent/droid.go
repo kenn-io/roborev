@@ -103,7 +103,7 @@ func (a *DroidAgent) buildArgs(agenticMode bool) []string {
 
 func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	args := a.buildArgs(agenticMode)
 

@@ -58,6 +58,8 @@ func fixCmd() *cobra.Command {
 		batchSize   int
 		list        bool
 		resume      bool
+		plan        bool
+		planOnly    bool
 	)
 
 	cmd := &cobra.Command{
@@ -101,6 +103,12 @@ Examples:
 				_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 			}
 
+			if list && (plan || planOnly) {
+				return fmt.Errorf("--list cannot be used with --plan or --plan-only")
+			}
+			if planOnly && resume {
+				return fmt.Errorf("--resume cannot be used with --plan-only")
+			}
 			if allBranches && branch != "" {
 				return usageErr(cmd, fmt.Errorf("--all-branches and --branch are mutually exclusive"))
 			}
@@ -148,6 +156,8 @@ Examples:
 				minSeverity: minSeverity,
 				quiet:       quiet,
 				resume:      resume,
+				plan:        plan,
+				planOnly:    planOnly,
 				classify:    agent.ClassifyLimit,
 			}
 
@@ -220,6 +230,8 @@ Examples:
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 0, "concatenate up to N reviews per agent invocation (cap by count, still bounded by max_prompt_size)")
 	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing")
+	cmd.Flags().BoolVar(&plan, "plan", false, "plan fixes in read-only mode before implementing")
+	cmd.Flags().BoolVar(&planOnly, "plan-only", false, "print and store fix plans without editing or closing reviews")
 	cmd.Flags().BoolVar(&resume, "resume", false, "resume the agent's session ID across calls within this run")
 	_ = cmd.Flags().MarkHidden("open")
 	_ = cmd.Flags().MarkHidden("unaddressed")
@@ -236,6 +248,8 @@ type fixOptions struct {
 	minSeverity string
 	quiet       bool
 	resume      bool
+	plan        bool
+	planOnly    bool
 
 	// classify is the rate-limit classifier. Defaults to
 	// agent.ClassifyLimit in the production cobra command's RunE; tests
@@ -556,7 +570,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			// In discovery mode (seen != nil), log a warning and
 			// continue best-effort. For explicit job IDs (seen ==
 			// nil), return the error so the CLI exits non-zero.
-			if seen != nil {
+			if seen != nil && !opts.planOnly {
 				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
 				seen[jobID] = true
 				continue
@@ -660,6 +674,9 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 
 		if err := runFixWithSeen(cmd, newIDs, opts, seen, tracker); err != nil {
 			return err
+		}
+		if opts.planOnly {
+			return nil
 		}
 	}
 }
@@ -1062,8 +1079,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
-		if err := markJobClosed(ctx, addr, jobID); err != nil && !opts.quiet {
-			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
+		if !opts.planOnly {
+			if err := markJobClosed(ctx, addr, jobID); err != nil && !opts.quiet {
+				cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
+			}
 		}
 		return nil
 	}
@@ -1117,6 +1136,30 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
 		return err
 	}
+	implementationPrompt := buildGenericFixPromptWithMetadataForRef(review.Output, minSev, comments, metadata, fixCfg.FixGuidelines, reviewedRefForFix(job))
+	if opts.plan || opts.planOnly {
+		review.Job = job
+		builder := prompt.NewBuilderWithConfig(nil, fixCfg).ForRepo(repoRoot, 0)
+		planningPrompt, planErr := builder.BuildPlanPrompt(review, comments, minSev)
+		if planErr != nil {
+			return planErr
+		}
+		implementationPrompt, planErr = planFix(ctx, cmd, repoRoot, tracker.base, planningPrompt, implementationPrompt, []int64{jobID}, opts, fixCfg)
+		if planErr != nil {
+			return planErr
+		}
+		if opts.planOnly {
+			return nil
+		}
+		prepared, prepareErr := builder.Prepare(implementationPrompt, prompt.SnapshotTarget{})
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if prepared.Cleanup != nil {
+			defer prepared.Cleanup()
+		}
+		implementationPrompt = prepared.Prompt
+	}
 	currentAgent, resuming := tracker.NextAgent()
 
 	if !opts.quiet {
@@ -1146,10 +1189,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Metadata:      metadata,
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
-	}, buildGenericFixPromptWithMetadataForRef(
-		review.Output, minSev, comments, metadata, fixCfg.FixGuidelines,
-		reviewedRefForFix(job),
-	))
+	}, implementationPrompt)
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
 	if fmtr != nil {
@@ -1305,6 +1345,9 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		if err := processFixBatch(ctx, cmd, roots, newIDs, batchSize, opts, tracker); err != nil {
 			return err
 		}
+		if opts.planOnly {
+			return nil
+		}
 	}
 }
 
@@ -1352,8 +1395,10 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			if err := markJobClosed(ctx, batchAddr, id); err != nil && !opts.quiet {
-				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
+			if !opts.planOnly {
+				if err := markJobClosed(ctx, batchAddr, id); err != nil && !opts.quiet {
+					cmd.Printf("Warning: could not close job %d: %v\n", id, err)
+				}
 			}
 			continue
 		}
@@ -1442,10 +1487,33 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			if resuming {
 				cmd.Printf("Resuming session %s\n", shortSessionID(tracker.last))
 			}
-			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())
 		}
 
+		var cleanupPrompt func()
 		fixPrompt := buildBatchFixPromptWithMetadata(batch, minSev, metadata, cfg.FixGuidelines)
+		if opts.plan || opts.planOnly {
+			findings := batchPlanningContext(roots.worktreeRoot, batch)
+			planningPrompt, planErr := prompt.BuildFixPlanPrompt(roots.worktreeRoot, cfg, findings, minSev, nil, "")
+			if planErr != nil {
+				return planErr
+			}
+			fixPrompt, planErr = planFix(ctx, cmd, roots.worktreeRoot, tracker.base, planningPrompt, fixPrompt, batchJobIDs, opts, cfg)
+			if planErr != nil {
+				return planErr
+			}
+			if opts.planOnly {
+				continue
+			}
+			prepared, prepareErr := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(roots.worktreeRoot, 0).Prepare(fixPrompt, prompt.SnapshotTarget{})
+			if prepareErr != nil {
+				return prepareErr
+			}
+			fixPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
+		}
+
+		if !opts.quiet {
+			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())
+		}
 
 		underlying := io.Discard
 		var fmtr *streamfmt.Formatter
@@ -1467,6 +1535,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
 		}, fixPrompt)
+		if cleanupPrompt != nil {
+			cleanupPrompt()
+		}
 		// Flush capture FIRST so session extraction completes before reading SessionID.
 		capture.Flush()
 		if fmtr != nil {

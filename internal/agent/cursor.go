@@ -92,7 +92,7 @@ func (a *CursorAgent) buildArgs(agenticMode bool) []string {
 }
 
 func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	args := a.buildArgs(agenticMode)
 

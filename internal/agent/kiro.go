@@ -154,7 +154,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		)
 	}
 
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	// kiro-cli chat --no-interactive [--trust-all-tools] <prompt>
 	// The prompt is passed as a positional argument

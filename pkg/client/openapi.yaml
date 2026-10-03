@@ -1968,6 +1968,8 @@ components:
         parent_job_id:
           format: int64
           type: integer
+        plan_first:
+          type: boolean
         prompt:
           type: string
         stale_job_id:

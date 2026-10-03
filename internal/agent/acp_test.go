@@ -154,6 +154,43 @@ func TestNewACPAgentFromConfigDisableModeNegotiation(t *testing.T) {
 	require.False(t, nonAgentic.mutatingOperationsAllowed(), "expected mutating operations denied in non-agentic mode when negotiation is disabled")
 }
 
+func TestACPAgentWithPlanningMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		wantMode string
+	}{
+		{
+			name:     "preserves disabled mode negotiation",
+			mode:     "",
+			wantMode: "",
+		},
+		{
+			name:     "selects read-only mode when negotiation is enabled",
+			mode:     "auto-approve",
+			wantMode: "plan",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := &ACPAgent{
+				Mode:            tc.mode,
+				ReadOnlyMode:    "plan",
+				AutoApproveMode: "auto-approve",
+				Agentic:         true,
+			}
+			planned := agent.withPlanningMode()
+
+			assert := assert.New(t)
+			assert.Equal(tc.wantMode, planned.Mode)
+			assert.False(planned.Agentic)
+			assert.Equal(tc.mode, agent.Mode)
+			assert.True(agent.Agentic)
+		})
+	}
+}
+
 func TestGetAvailableWithConfigResolvesCanonicalACPIdentity(t *testing.T) {
 	t.Parallel()
 

@@ -421,10 +421,8 @@ type markdownCache struct {
 	// Max scroll positions computed during the last render.
 	// Stored here (in the shared pointer) so key handlers can clamp
 	// scroll values even though View() uses a value receiver.
-	lastReviewMaxScroll    int
-	lastPromptMaxScroll    int
-	lastReviewVisibleLines int
-	lastPromptVisibleLines int
+	lastReviewMaxScroll int
+	lastPromptMaxScroll int
 }
 
 // newMarkdownCache creates an initial palette without reading stdin. Bubble Tea

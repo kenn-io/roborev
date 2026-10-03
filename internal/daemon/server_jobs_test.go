@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
@@ -3100,6 +3101,14 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		DiffContent: diff,
 	})
 	require.NoError(t, err)
+	plannedJob, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:  repo.ID,
+		GitRef:  "planned-ref",
+		Agent:   "test",
+		Prompt:  prompt.EncodeFixPlan("planning context", "implementation prompt"),
+		JobType: storage.JobTypeFix,
+	})
+	require.NoError(t, err)
 
 	ts := httptest.NewServer(server.httpServer.Handler)
 	t.Cleanup(ts.Close)
@@ -3133,21 +3142,27 @@ func TestListJobsOmitPrompt(t *testing.T) {
 
 	t.Run("default includes prompt", func(t *testing.T) {
 		jobs := listJobs(t, &daemonclient.ListJobsQuery{Repo: repoFilter})
-		require.Len(t, jobs, 2)
+		require.Len(t, jobs, 3)
 		done := jobByID(t, jobs, doneJob.ID)
 		require.NotNil(t, done.Prompt)
 		assert.Equal("a very large stored prompt", *done.Prompt)
+		planned := jobByID(t, jobs, plannedJob.ID)
+		require.NotNil(t, planned.Prompt)
+		assert.Equal("## Planning Prompt\n\nplanning context\n\n## Implementation Prompt\n\nimplementation prompt", *planned.Prompt)
 	})
 
 	t.Run("omit_prompt=true strips terminal jobs, keeps queued", func(t *testing.T) {
 		jobs := listJobs(t, &daemonclient.ListJobsQuery{Repo: repoFilter, OmitPrompt: &omit})
-		require.Len(t, jobs, 2)
+		require.Len(t, jobs, 3)
 		done := jobByID(t, jobs, doneJob.ID)
 		assert.Nil(done.Prompt)
 		assert.Nil(done.DiffContent)
 		queued := jobByID(t, jobs, queuedJob.ID)
 		require.NotNil(t, queued.Prompt)
 		assert.Equal("a queued prompt", *queued.Prompt)
+		planned := jobByID(t, jobs, plannedJob.ID)
+		require.NotNil(t, planned.Prompt)
+		assert.Equal("## Planning Prompt\n\nplanning context\n\n## Implementation Prompt\n\nimplementation prompt", *planned.Prompt)
 	})
 
 	t.Run("omit_prompt=true strips prompt on terminal single-job lookup", func(t *testing.T) {
@@ -3162,6 +3177,13 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		require.Len(t, jobs, 1)
 		require.NotNil(t, jobs[0].Prompt)
 		assert.Equal("a queued prompt", *jobs[0].Prompt)
+	})
+
+	t.Run("single-job lookup renders planned prompt", func(t *testing.T) {
+		jobs := listJobs(t, &daemonclient.ListJobsQuery{ID: &plannedJob.ID})
+		require.Len(t, jobs, 1)
+		require.NotNil(t, jobs[0].Prompt)
+		assert.Equal("## Planning Prompt\n\nplanning context\n\n## Implementation Prompt\n\nimplementation prompt", *jobs[0].Prompt)
 	})
 }
 

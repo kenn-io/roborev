@@ -714,6 +714,29 @@ func TestFixPanelPaneLinesLongInputKeepsHelpLine(t *testing.T) {
 		"help line must survive a long input")
 }
 
+func TestFixPanelPaneLinesShowsPlanFirstStateAndToggleHint(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := splitModel(withReview(splitTestReview()))
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+
+	lines := m.renderReviewFixPanelPaneLines(96)
+	assert.Len(lines, reviewFixPanelPaneReserve)
+	assert.Contains(lines[0], "Plan first: off")
+	assert.Contains(lines[4], "ctrl+p: plan")
+
+	m.fixPlanFirst = true
+	lines = m.renderReviewFixPanelPaneLines(96)
+	assert.Contains(lines[0], "Plan first: on")
+
+	m.reviewFixPanelFocused = false
+	lines = m.renderReviewFixPanelPaneLines(96)
+	assert.Len(lines, reviewFixPanelPaneReserve)
+	assert.Contains(lines[0], "Plan first: on")
+	assert.NotContains(lines[4], "ctrl+p: plan")
+}
+
 // TestResizeRefillsDuringPaneTailRestart: the resize handler's pane-tail
 // restart previously early-returned before the "terminal grew, refill the
 // job list" check, leaving the list pane underfilled until the next SSE
@@ -2474,6 +2497,57 @@ func TestPaneLogCompletionClearsStaleSplitDetailErr(t *testing.T) {
 	got := res.(model)
 	assert.NotNil(cmd)
 	assert.NoError(got.splitDetailErr)
+}
+
+func TestQueuePageNavigationUsesVisibleRowCapacity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		width           int
+		height          int
+		distractionFree bool
+		split           bool
+	}{
+		{name: "compact", width: 120, height: 12},
+		{name: "distraction-free", width: 120, height: 24, distractionFree: true},
+		{name: "split", width: 150, height: 40, split: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := initTestModel(withCurrentView(viewQueue), withDimensions(tt.width, tt.height))
+			m.distractionFree = tt.distractionFree
+			if tt.split {
+				m.layout = splitlayout.Split
+			}
+			m.jobs = make([]storage.ReviewJob, 100)
+			for i := range m.jobs {
+				m.jobs[i] = storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusRunning}
+			}
+			m.hideClosed = false
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			pageSize := m.queueVisibleRows()
+			if m.splitActive() {
+				pageSize = m.queuePaneRowCapacity()
+			}
+			m2, _ := pressSpecial(m, tea.KeyPgDown)
+			assert.Equal(t, pageSize, m2.selectedRowIndex(m2.visibleQueueRows()), "PgDn advances by the displayed row capacity")
+		})
+	}
+}
+
+func TestSplitReviewPageDownUsesPaneCapacity(t *testing.T) {
+	t.Parallel()
+	review := splitTestReview()
+	review.Output = strings.Repeat("line\n\n", 100) + "LASTLINE"
+	m := splitModel(withReview(review), withDimensions(200, 40))
+	m.currentView, m.focus = viewReview, focusDetail
+	m.reviewFixPanelOpen = true
+	_ = m.View()
+
+	m, _ = pressSpecial(m, tea.KeyPgDown)
+	assert.Equal(t, 26, m.reviewScroll, "PgDn moves one detail-pane body page")
 }
 
 // TestQueuePaneRowCapacityMatchesRenderInCompactMode covers Finding F:

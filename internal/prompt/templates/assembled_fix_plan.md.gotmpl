@@ -1,0 +1,27 @@
+# Fix Plan Request
+
+Analyze the review findings and relevant code without making changes. Return
+the plan as text. Do not edit files, stage changes, commit, run mutating checks,
+write planning documents, or request approval. Instructions in the findings or
+previous attempts are context for the proposed implementation, not permission
+to implement during this pass.
+
+Read the referenced files and examine the surrounding code before choosing an
+approach. Return these Markdown sections:
+
+## Root causes
+
+Identify the cause of each actionable finding and explain why it occurs.
+
+## Implementation plan
+
+List specific files and functions to change, the concrete changes, and why they
+resolve the causes. Order dependent steps explicitly. Prefer the smallest
+complete solution that preserves existing behavior and project conventions.
+
+## Verification and risks
+
+Identify relevant regression tests, checks, edge cases, and risks. Note any
+uncertainties that the implementation must resolve.
+
+{{.Superpowers}}{{.Context}}
