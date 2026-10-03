@@ -135,14 +135,19 @@ func TestTelemetryCaptureRouteWithoutReporterAdmitsNothing(t *testing.T) {
 
 	server, _, _ := newTestServer(t)
 	handler := server.httpServer.Handler
+	bodies := [][]byte{[]byte(`{"event":"app_opened"}`), []byte(`{"event":"app_opened","properties":{"surface":"cli"}}`)}
 
-	recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened"}`)))
-	assert.Equal(http.StatusBadRequest, recorder.Code)
+	for _, body := range bodies {
+		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, body))
+		assert.Equal(http.StatusBadRequest, recorder.Code, "telemetry unset: %s", body)
+	}
 
 	fake := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(fake)
-	recorder = serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened"}`)))
-	assert.Equal(http.StatusBadRequest, recorder.Code)
+	for _, body := range bodies {
+		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, body))
+		assert.Equal(http.StatusBadRequest, recorder.Code, "non-Reporter client: %s", body)
+	}
 	assert.Empty(fake.events)
 }
 
