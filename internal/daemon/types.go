@@ -838,11 +838,12 @@ type DoctorAgentsOutput struct {
 
 // DoctorPanel is one selected review panel as the daemon would queue it.
 type DoctorPanel struct {
-	Name      string              `json:"name"`
-	UsedFor   []string            `json:"used_for" doc:"Which reviews select this panel: post_commit, manual, or both"`
-	Error     string              `json:"error,omitempty" doc:"Why the panel itself cannot be resolved"`
-	Members   []DoctorPanelMember `json:"members"`
-	Synthesis agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
+	Name       string              `json:"name"`
+	UsedFor    []string            `json:"used_for" doc:"Which reviews select this panel: post_commit, manual, or both"`
+	Experiment string              `json:"experiment,omitempty" doc:"ID of the enabled experiment that selects this panel; empty for the base configuration"`
+	Error      string              `json:"error,omitempty" doc:"Why the panel itself cannot be resolved"`
+	Members    []DoctorPanelMember `json:"members"`
+	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
 }
 
 // DoctorPanelMember is one panel member and the agent the daemon selects for

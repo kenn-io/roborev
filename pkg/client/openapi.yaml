@@ -1083,6 +1083,9 @@ components:
         error:
           description: Why the panel itself cannot be resolved
           type: string
+        experiment:
+          description: ID of the enabled experiment that selects this panel; empty for the base configuration
+          type: string
         members:
           items:
             $ref: "#/components/schemas/DoctorPanelMember"

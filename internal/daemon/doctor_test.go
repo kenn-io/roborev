@@ -89,10 +89,10 @@ allow_failure = true
 members = ["ok", "missing"]
 synthesis_agent = "test"
 `), 0o600))
-	repoCfg, err := config.LoadRepoConfig(repo)
+	repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
 	require.NoError(t, err)
 
-	panels := ResolveDoctorPanels(repo, repoCfg, config.DefaultConfig())
+	panels := ResolveDoctorPanels(repoCfg, rawRepo, config.DefaultConfig())
 	require.Len(t, panels, 1)
 	assert := assert.New(t)
 	p := panels[0]
@@ -103,4 +103,45 @@ synthesis_agent = "test"
 	assert.Equal("test", p.Members[0].Agent)
 	assert.NotEmpty(p.Members[1].Error, "an explicit agent that is not installed cannot be selected, even with allow_failure")
 	assert.True(p.Synthesis.Available)
+}
+
+func TestResolveDoctorPanelsIncludesExperimentPanels(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(`
+[review]
+hook_review_panel = "base"
+
+[review.subagents.ok]
+agent = "test"
+
+[review.panels.base]
+members = ["ok"]
+synthesis_agent = "test"
+
+[review.panels.alt]
+members = ["ok"]
+synthesis_agent = "test"
+
+[experiments.try-alt]
+enabled = true
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.try-alt.config.review]
+hook_review_panel = "alt"
+`), 0o600))
+	repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
+	require.NoError(t, err)
+
+	panels := ResolveDoctorPanels(repoCfg, rawRepo, config.DefaultConfig())
+	require.Len(t, panels, 2)
+	assert := assert.New(t)
+	assert.Equal("base", panels[0].Name)
+	assert.Empty(panels[0].Experiment)
+	assert.Equal("alt", panels[1].Name)
+	assert.Equal("try-alt", panels[1].Experiment)
+	assert.Equal([]string{"post_commit"}, panels[1].UsedFor)
+	assert.Empty(panels[1].Error)
+	assert.True(panels[1].Synthesis.Available)
 }

@@ -539,3 +539,30 @@ review_agent = "gemini"
 	require.Len(t, got.Details, 1)
 	assert.Contains(t, got.Details[0], "gemini (set by experiments.try-gemini: review_agent)")
 }
+
+func TestDoctorGuidelinesCountExperimentSecurityPanels(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepo(t)
+	repo.CommitFile(".roborev.toml", `
+[review.subagents.sec]
+agent = "codex"
+review_type = "security"
+
+[review.panels.guard]
+members = ["sec"]
+
+[experiments.try-guard]
+enabled = true
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.try-guard.config.review]
+hook_review_panel = "guard"
+`, "add experiment")
+
+	env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
+	require.NoError(t, env.repoErr)
+	got := findDoctorCheck(t, checkDoctorGuidelines(env), "repo.guidelines")
+	assert.Equal(t, doctorFail, got.Status)
+	assert.Contains(t, got.Details, `experiments.try-guard: review.hook_review_panel = "guard" includes a security reviewer`)
+}

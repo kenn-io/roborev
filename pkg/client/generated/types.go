@@ -851,10 +851,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 
 type DoctorPanel struct {
 	// ErrorData Why the panel itself cannot be resolved
-	ErrorData *string             `json:"error,omitempty"`
-	Members   []DoctorPanelMember `json:"members" validate:"required"`
-	Name      string              `json:"name" validate:"required"`
-	Synthesis Diagnosis           `json:"synthesis"`
+	ErrorData *string `json:"error,omitempty"`
+
+	// Experiment ID of the enabled experiment that selects this panel; empty for the base configuration
+	Experiment *string             `json:"experiment,omitempty"`
+	Members    []DoctorPanelMember `json:"members" validate:"required"`
+	Name       string              `json:"name" validate:"required"`
+	Synthesis  Diagnosis           `json:"synthesis"`
 
 	// UsedFor Which reviews select this panel: post_commit, manual, or both
 	UsedFor []string `json:"used_for" validate:"required"`

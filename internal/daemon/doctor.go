@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -26,13 +28,14 @@ func (s *Server) humaDoctorAgents(
 	cfg := s.configWatcher.Config()
 	resp := &DoctorAgentsOutput{}
 	var repoCfg *config.RepoConfig
+	var rawRepo map[string]any
 	if repo != "" {
 		cfg = cfg.ForRepo(repo)
-		loaded, err := config.LoadRepoConfig(repo)
+		loaded, raw, err := config.LoadRepoConfigWithRaw(repo)
 		if err != nil {
 			resp.Body.RepoConfigError = err.Error()
 		} else {
-			repoCfg = loaded
+			repoCfg, rawRepo = loaded, raw
 		}
 	}
 	resp.Body.PathEnv = os.Getenv("PATH")
@@ -63,59 +66,81 @@ func (s *Server) humaDoctorAgents(
 		}
 		resp.Body.HookTools = append(resp.Body.HookTools, d)
 	}
-	resp.Body.Panels = ResolveDoctorPanels(repo, repoCfg, cfg)
+	resp.Body.Panels = ResolveDoctorPanels(repoCfg, rawRepo, cfg)
 	return resp, nil
 }
 
 // ResolveDoctorPanels resolves the panels selected for post-commit and manual
 // reviews with the same member and synthesis resolution the daemon uses when
-// it queues a panel review. Agent lookups use the calling process's PATH, so
-// the daemon's answer is authoritative; the CLI calls this directly only when
-// the daemon cannot be asked.
-func ResolveDoctorPanels(repo string, repoCfg *config.RepoConfig, cfg *config.Config) []DoctorPanel {
-	merged := config.MergeReviewConfigFromConfig(repoCfg, cfg)
-	var panels []DoctorPanel
-	add := func(name, use string) {
-		if name == "" {
-			return
+// it queues a panel review. It also resolves any different panel an enabled
+// experiment selects, labelled with the experiment ID. Agent lookups use the
+// calling process's PATH, so the daemon's answer is authoritative; the CLI
+// calls this directly only when the daemon cannot be asked.
+func ResolveDoctorPanels(repoCfg *config.RepoConfig, rawRepo map[string]any, cfg *config.Config) []DoctorPanel {
+	type selection struct {
+		experiment string
+		repoCfg    *config.RepoConfig
+	}
+	selections := []selection{{repoCfg: repoCfg}}
+	if experiments, err := config.EnabledExperimentConfigs(cfg, repoCfg, rawRepo); err == nil {
+		for _, id := range slices.Sorted(maps.Keys(experiments)) {
+			selections = append(selections, selection{experiment: id, repoCfg: experiments[id]})
 		}
-		for i := range panels {
-			if panels[i].Name == name {
-				panels[i].UsedFor = append(panels[i].UsedFor, use)
+	}
+
+	var panels []DoctorPanel
+	checked := map[string]bool{} // "use/panel" pairs already reported
+	for _, sel := range selections {
+		merged := config.MergeReviewConfigFromConfig(sel.repoCfg, cfg)
+		var batch []DoctorPanel
+		add := func(name, use string) {
+			if name == "" || checked[use+"/"+name] {
 				return
 			}
-		}
-		panels = append(panels, DoctorPanel{Name: name, UsedFor: []string{use}})
-	}
-	add(merged.HookPanel, "post_commit")
-	add(merged.DefaultPanel, "manual")
-
-	for i := range panels {
-		p := &panels[i]
-		members, synth, err := config.ResolvePanel(p.Name, repo, cfg)
-		if err != nil {
-			p.Error = err.Error()
-			continue
-		}
-		for _, m := range members {
-			dm := DoctorPanelMember{Name: m.Name}
-			selected, _, _, _, err := resolvePanelMemberExecution(m, targetDescriptor{}, repoCfg, cfg)
-			if err != nil {
-				dm.Error = err.Error()
-			} else {
-				dm.Agent = selected
+			checked[use+"/"+name] = true
+			for i := range batch {
+				if batch[i].Name == name {
+					batch[i].UsedFor = append(batch[i].UsedFor, use)
+					return
+				}
 			}
-			p.Members = append(p.Members, dm)
+			batch = append(batch, DoctorPanel{Name: name, UsedFor: []string{use}, Experiment: sel.experiment})
 		}
-		p.Synthesis = agent.Diagnosis{Name: synth.Agent}
-		if a, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, synth.Agent, cfg, synth.BackupAgent); err != nil {
-			p.Synthesis.Error = err.Error()
-		} else {
-			p.Synthesis.Available = true
-			if ca, ok := a.(agent.CommandAgent); ok {
-				p.Synthesis.Command = ca.CommandName()
-			}
+		add(merged.HookPanel, "post_commit")
+		add(merged.DefaultPanel, "manual")
+		for i := range batch {
+			resolveDoctorPanel(&batch[i], sel.repoCfg, cfg)
 		}
+		panels = append(panels, batch...)
 	}
 	return panels
+}
+
+// resolveDoctorPanel fills in one panel's members and synthesis agent from
+// already-loaded config, so an experiment's effective config is used as is.
+func resolveDoctorPanel(p *DoctorPanel, repoCfg *config.RepoConfig, cfg *config.Config) {
+	members, synth, err := config.ResolveCIPanel(p.Name, repoCfg, cfg)
+	if err != nil {
+		p.Error = err.Error()
+		return
+	}
+	for _, m := range members {
+		dm := DoctorPanelMember{Name: m.Name}
+		selected, _, _, _, err := resolvePanelMemberExecution(m, targetDescriptor{}, repoCfg, cfg)
+		if err != nil {
+			dm.Error = err.Error()
+		} else {
+			dm.Agent = selected
+		}
+		p.Members = append(p.Members, dm)
+	}
+	p.Synthesis = agent.Diagnosis{Name: synth.Agent}
+	if a, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, synth.Agent, cfg, synth.BackupAgent); err != nil {
+		p.Synthesis.Error = err.Error()
+	} else {
+		p.Synthesis.Available = true
+		if ca, ok := a.(agent.CommandAgent); ok {
+			p.Synthesis.Command = ca.CommandName()
+		}
+	}
 }

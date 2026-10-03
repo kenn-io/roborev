@@ -7,6 +7,8 @@ import type { DoctorPanelMember } from "./doctorPanelMember";
 export interface DoctorPanel {
   /** Why the panel itself cannot be resolved */
   error?: string;
+  /** ID of the enabled experiment that selects this panel; empty for the base configuration */
+  experiment?: string;
   members: DoctorPanelMember[];
   name: string;
   /** The agent that combines member results */

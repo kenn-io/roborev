@@ -531,14 +531,18 @@ func checkDoctorReviewAgents(env *doctorEnv) ([]doctorCheck, map[string]bool) {
 	if env.daemonAgents != nil {
 		panels = env.daemonAgents.Panels
 	} else {
-		panels = daemon.ResolveDoctorPanels(env.repoPath, env.repoCfg, env.global)
+		panels = daemon.ResolveDoctorPanels(env.repoCfg, env.repoRaw, env.global)
 	}
 	covered := map[string]bool{}
 	var out []doctorCheck
 	reported := map[string]bool{}
 	for _, p := range panels {
-		for _, use := range p.UsedFor {
-			covered[use] = true
+		// Experiments apply to a share of branches; the single review agent
+		// still runs for the rest, so only base-config panels replace it.
+		if p.Experiment == "" {
+			for _, use := range p.UsedFor {
+				covered[use] = true
+			}
 		}
 		check, names := checkDoctorPanel(env, p)
 		out = append(out, check)
@@ -581,6 +585,9 @@ func checkDoctorPanel(env *doctorEnv, p daemon.DoctorPanel) (doctorCheck, map[st
 		uses = append(uses, doctorPanelUses[u])
 	}
 	label := fmt.Sprintf("panel %q (%s)", p.Name, strings.Join(uses, " and "))
+	if p.Experiment != "" {
+		label = fmt.Sprintf("panel %q (%s, experiment %s)", p.Name, strings.Join(uses, " and "), p.Experiment)
+	}
 	c := doctorCheck{ID: "agents.review_panel", Category: "agents"}
 	reported := map[string]bool{}
 	merged := config.MergeReviewConfigFromConfig(env.repoCfg, env.global)
@@ -1093,16 +1100,29 @@ func mentionsAny(text string, terms []string) bool {
 
 // securityReviewSources lists the review panels that run security reviews
 // for the current repository: the panel for manual reviews and the panel for
-// post-commit reviews.
+// post-commit reviews, in the base config and in each enabled experiment.
 func securityReviewSources(env *doctorEnv) []string {
 	var sources []string
-	merged := config.MergeReviewConfigFromConfig(env.repoCfg, env.global)
-	for _, sel := range []struct{ key, name string }{
-		{"review.default_panel", merged.DefaultPanel},
-		{"review.hook_review_panel", merged.HookPanel},
-	} {
-		if sel.name != "" && panelHasSecurityMember(env, merged, sel.name) {
-			sources = append(sources, fmt.Sprintf("%s = %q includes a security reviewer", sel.key, sel.name))
+	// An experiment's effective config repeats the base selections; report
+	// each setting and panel once, under the first config that selects it.
+	seen := map[string]bool{}
+	addFrom := func(prefix string, repoCfg *config.RepoConfig) {
+		merged := config.MergeReviewConfigFromConfig(repoCfg, env.global)
+		for _, sel := range []struct{ key, name string }{
+			{"review.default_panel", merged.DefaultPanel},
+			{"review.hook_review_panel", merged.HookPanel},
+		} {
+			if sel.name == "" || seen[sel.key+"/"+sel.name] || !panelHasSecurityMember(env, merged, sel.name) {
+				continue
+			}
+			seen[sel.key+"/"+sel.name] = true
+			sources = append(sources, fmt.Sprintf("%s%s = %q includes a security reviewer", prefix, sel.key, sel.name))
+		}
+	}
+	addFrom("", env.repoCfg)
+	if experiments, err := config.EnabledExperimentConfigs(env.global, env.repoCfg, env.repoRaw); err == nil {
+		for _, id := range slices.Sorted(maps.Keys(experiments)) {
+			addFrom("experiments."+id+": ", experiments[id])
 		}
 	}
 	return sources
@@ -1214,12 +1234,6 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 		status := doctorWarn
 		if len(ci.Repos) == 0 {
 			problems = append(problems, "ci.repos is empty, so the CI poller watches nothing")
-		}
-		if ci.GitHubAppConfigured() {
-			if _, err := ci.GitHubAppPrivateKeyResolved(); err != nil {
-				problems = append(problems, "GitHub App private key cannot be read: "+err.Error())
-				status = doctorFail
-			}
 		}
 		if _, err := ci.QuietHours.Resolve(); err != nil {
 			problems = append(problems, "ci.quiet_hours is invalid and ignored: "+err.Error())

@@ -287,10 +287,11 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 	}
 	for _, p := range resp.Panels {
 		panel := daemon.DoctorPanel{
-			Name:      p.Name,
-			UsedFor:   p.UsedFor,
-			Error:     deref(p.ErrorData),
-			Synthesis: diagnosisFromAPI(p.Synthesis),
+			Name:       p.Name,
+			UsedFor:    p.UsedFor,
+			Experiment: deref(p.Experiment),
+			Error:      deref(p.ErrorData),
+			Synthesis:  diagnosisFromAPI(p.Synthesis),
 		}
 		for _, m := range p.Members {
 			panel.Members = append(panel.Members, daemon.DoctorPanelMember{
