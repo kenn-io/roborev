@@ -32,6 +32,7 @@ roborev ui                       # Open the native browser application
 roborev ui 42                    # Open browser review detail for local job 42
 roborev version                  # Show version
 roborev version --json           # Show stable machine-readable version data
+roborev doctor                   # Diagnose setup and configuration problems
 ```
 
 When the binary was built without the production web assets, the human-readable
@@ -1149,6 +1150,57 @@ control response.
 
 See [Agent Hook](/docs/agent-hook/) for profile detection, threshold
 configuration, the exact-ID fix workflow, and declarative config details.
+
+## Diagnosing Setup
+
+```bash
+roborev doctor                 # Check config, daemon, agents, and this repo
+roborev doctor --json          # Machine-readable report for scripts and agents
+roborev doctor --repo <path>   # Check a different repository
+```
+
+`roborev doctor` reads configuration and daemon state and reports problems with
+a suggested fix for each. It never starts or restarts the daemon, installs
+hooks, or edits config.
+
+| Area | What doctor checks |
+|------|--------------------|
+| Configuration | Global and repo config load and validate; unknown (usually misspelled) keys; `.roborev.toml` on the default branch parses |
+| Daemon | Running, same version as the CLI, queue not paused, healthy components, recent daemon errors |
+| Agents | Agents the daemon can run; agents found in your shell but not on the daemon's `PATH`; what runs post-commit and manual reviews (the selected review panel's members and synthesis agent, or the single review agent and its backup); every agent named in config. The daemon resolves each agent itself |
+| Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
+| Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
+| Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, `[ci]` problems such as an unreadable GitHub App key |
+
+Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
+any check fails and `0` otherwise, including when there are only warnings.
+
+Security reviews count as enabled for a repository when the panel selected by
+`review.default_panel` or `review.hook_review_panel` has a member with
+`review_type = "security"`. In that case, missing review guidelines are a
+failure: security reviewers need a threat model to judge what is trusted.
+Without security reviews, missing guidelines are a warning.
+
+With `--json`, the report has this shape. Check IDs are stable.
+
+```json
+{
+  "version": "v0.70.0",
+  "repo": "/path/to/repo",
+  "checks": [
+    {
+      "id": "agents.daemon_path",
+      "category": "agents",
+      "status": "warn",
+      "summary": "1 agent installed here cannot be run by the daemon",
+      "details": ["claude-code: found at /opt/bin/claude in this shell, but not on the daemon's PATH"],
+      "fix": "run 'roborev daemon restart' from this shell, or set the agent's *_cmd config key to an absolute path"
+    }
+  ],
+  "summary": {"ok": 12, "info": 1, "warn": 1, "fail": 0}
+}
+```
 
 ## Checking Agents
 

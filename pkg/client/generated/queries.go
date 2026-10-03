@@ -56,6 +56,14 @@ func (g GetCostQuery) Validate() error {
 	return errors
 }
 
+type DoctorAgentsQuery struct {
+	// Repo Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
+	Repo *string `json:"repo,omitempty"`
+
+	// Agent Agent names to resolve exactly as the daemon would (repeatable)
+	Agent []string `json:"agent,omitempty"`
+}
+
 type ExportCiCostsQuery struct {
 	// Format Output format; only json is supported
 	Format *string `json:"format,omitempty"`
@@ -198,6 +206,9 @@ type ListJobsQuery struct {
 	// PanelRun Return all jobs (members + synthesis) of one panel run
 	PanelRun *string `json:"panel_run,omitempty"`
 
+	// IncludePanelMembers Include individual panel member jobs alongside panel synthesis jobs
+	IncludePanelMembers *ListJobsQueryIncludePanelMembers `json:"include_panel_members,omitempty"`
+
 	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsQueryOmitPrompt `json:"omit_prompt,omitempty"`
 
@@ -247,6 +258,13 @@ func (l ListJobsQuery) Validate() error {
 		if v, ok := any(l.HideClassifyJobs).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("HideClassifyJobs", err)
+			}
+		}
+	}
+	if l.IncludePanelMembers != nil {
+		if v, ok := any(l.IncludePanelMembers).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("IncludePanelMembers", err)
 			}
 		}
 	}

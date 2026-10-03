@@ -166,7 +166,7 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(hooksDir, name), []byte(content), 0o755))
 		}
 
-		warnings := readOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		warnings := ReadOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
 		require.Len(t, warnings, 3)
 		assert.Contains(t, warnings[0], "post-commit")
 		assert.Contains(t, warnings[0], "stale")
@@ -190,7 +190,7 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 			filepath.Join(hooksDir, "pre-push"),
 			[]byte(githook.GeneratePrePushWithBinary(binary)), 0o755))
 
-		assert.Empty(t, readOnlyHookWarnings(t.Context(), repo.Root, binary))
+		assert.Empty(t, ReadOnlyHookWarnings(t.Context(), repo.Root, binary))
 	})
 
 	t.Run("outdated marker warns without duplicate stale warning", func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 		legacy := "#!/bin/sh\n# roborev post-commit hook v1\nroborev enqueue\n"
 		require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(legacy), 0o755))
 
-		warnings := readOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		warnings := ReadOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
 		var postCommitWarnings []string
 		for _, w := range warnings {
 			if strings.Contains(w, "post-commit") {
@@ -221,7 +221,7 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 			filepath.Join(hooksDir, "pre-push"),
 			[]byte(githook.GeneratePrePushWithBinary(binary)), 0o755))
 
-		warnings := readOnlyHookWarnings(t.Context(), repo.Root, binary)
+		warnings := ReadOnlyHookWarnings(t.Context(), repo.Root, binary)
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0], "post-rewrite")
 	})
