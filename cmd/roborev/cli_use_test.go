@@ -410,7 +410,10 @@ func TestCLIUseCommandSet(t *testing.T) {
 		"roborev run", "roborev prompt", "roborev analyze", "roborev compact", "roborev insights", "roborev summary",
 		"roborev cost", "roborev stream", "roborev snooze", "roborev pause", "roborev unpause",
 		"roborev export reviews", "roborev export ci-metrics", "roborev export ci-costs", "roborev sync now",
-		"roborev init",
+		"roborev init", "roborev log", "roborev log clean", "roborev repo list", "roborev repo show",
+		"roborev repo rename", "roborev repo move", "roborev repo delete", "roborev repo merge",
+		"roborev legacy-reviews convert", "roborev legacy-reviews export", "roborev legacy-reviews import",
+		"roborev backfill-verdicts", "roborev backfill-tokens", "roborev sync status",
 	}
 	got := make([]string, 0, len(cliUseCommands))
 	for path, counted := range cliUseCommands {
