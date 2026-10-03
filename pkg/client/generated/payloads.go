@@ -14,6 +14,8 @@ type AddCommentBody = AddCommentRequest
 
 type EnqueueJobBody = EnqueueRequest
 
+type GoalReviewBody = GoalGateRequest
+
 type MarkJobAppliedBody = JobIDRequest
 
 type CancelJobBody = CancelJobRequest

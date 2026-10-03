@@ -470,6 +470,10 @@ max_chars = 50000
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
+| `goal_review.enabled` | bool | Automatically review Superpowers spec/plan and Kata changes (default: `false`; repo only) |
+| `goal_review.spec_file` | string | Design spec path; omit for unambiguous discovery |
+| `goal_review.plan_file` | string | Linked implementation plan path; omit for discovery |
+| `goal_review.watch` | array | Triggers: `goal` and `kata_graph` (both by default); `[]` disables automatic polling |
 | `max_prompt_size` | int | Inline prompt budget in bytes before file handoff (default: 204800) |
 | `snapshot_dir` | string | Repo-relative directory for prompt and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
 
@@ -643,6 +647,31 @@ event = "review.*"
 type = "kata"
 project = "myproj"
 ```
+
+### Superpowers Intent Reviews
+
+The repo-only `[goal_review]` settings select Superpowers design specs and
+linked implementation plans. They enable automatic checkout-scoped reviews when
+the selected artifacts or open Kata graph change. The synchronous candidate gate
+operates independently of automatic polling; its mode is global-only so a
+checkout cannot disable its own gate. See
+[Superpowers Intent Reviews](/docs/integrations/goal-review/) for gate policy.
+
+```toml
+# .roborev.toml
+review_agent = "pi"
+
+[goal_review]
+enabled = true
+watch = ["goal", "kata_graph"]
+```
+
+Manual reviews use `roborev review --type goal`. These reviews require a
+complete snapshot and fail when a bound Kata project is unavailable. Prompts
+above the inline budget use complete file handoff through the agent adapter;
+Roborev does not trim or reject them for size. See
+[Superpowers Intent Reviews](/docs/integrations/goal-review/) for artifact
+selection, supported agents and the versioned candidate-gate API.
 
 ### Kata Integration
 
@@ -1215,6 +1244,9 @@ mouse_enabled = true              # Enable mouse interactions in the TUI
 tab_width = 4                     # Tab expansion width for code blocks in TUI (default: 2)
 column_borders = true             # Show separators between TUI columns
 
+[goal_review.kata_gate]
+default = "block"                 # Trusted candidate-gate policy: block, warn, or off
+
 [tui]
 filter_repo = false               # Show all repos on startup (default: current repo)
 filter_branch = false             # Show all branches on startup (default: current branch)
@@ -1251,6 +1283,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
+| `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Superpowers Intent Reviews](/docs/integrations/goal-review/) | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |
 | `refine_min_severity` | string | - | Default minimum severity for `refine`: `critical`, `high`, `medium`, or `low` | Yes |

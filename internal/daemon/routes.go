@@ -83,6 +83,49 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		EnqueueSkippedResponse{},
 	)
 	jobSchema := jsonSchema(api, storage.ReviewJob{})
+	huma.Post(api, "/api/goal-review", s.humaGoalGate, func(o *huma.Operation) {
+		o.OperationID = "goal-review"
+		o.Summary = "Review Superpowers intent and a proposed Kata graph edit"
+		requestSchema := jsonSchema(api, GoalGateRequest{})
+		// Optional arrays distinguish preserving existing values from clearing
+		// them. Keep empty arrays on the wire in the generated Go client.
+		candidateSchema := api.OpenAPI().Components.Schemas.Map()["Candidate"]
+		for _, name := range []string{"labels", "links"} {
+			property := candidateSchema.Properties[name]
+			if property.Extensions == nil {
+				property.Extensions = map[string]any{}
+			}
+			property.Nullable = true
+			property.Extensions["x-omitempty"] = false
+			// Omit nil slices, while preserving explicit empty arrays in both
+			// JSON encoders.
+			property.Extensions["x-oapi-codegen-extra-tags"] = map[string]string{"json": name + ",omitzero"}
+		}
+		o.RequestBody = &huma.RequestBody{Content: map[string]*huma.MediaType{
+			"application/json": {Schema: requestSchema},
+		}}
+		o.Responses = jsonResponses(map[string]*huma.Schema{
+			"200": jsonSchema(api, GoalGateResponse{}),
+			"400": jsonSchema(api, GoalGateResponse{}),
+			"503": jsonSchema(api, GoalGateResponse{}),
+		})
+		o.Tags = []string{"reviews"}
+		// Candidate edits can include complete Kata task bodies; preserve the full input.
+		o.MaxBodyBytes = -1
+		o.SkipValidateBody = true
+	})
+	// Huma's schema-link transformer adds a read-only $schema property to
+	// request schemas when the operation is registered. The strict gate decoder
+	// does not accept that field, so keep it out of this request contract.
+	delete(api.OpenAPI().Components.Schemas.Map()["GoalGateRequest"].Properties, "$schema")
+	// Huma marks every RawBody as required after the operation callback runs.
+	// The handler validates empty bodies so it can preserve GoalGateResponse.
+	api.OpenAPI().Paths["/api/goal-review"].Post.RequestBody.Required = false
+
+	// RawBody gives the handler control over malformed JSON responses, but
+	// Huma adds a binary media type during registration. The public gate
+	// contract accepts JSON only.
+	delete(api.OpenAPI().Paths["/api/goal-review"].Post.RequestBody.Content, "application/octet-stream")
 
 	huma.Get(api, "/api/jobs", s.humaListJobs,
 		func(o *huma.Operation) {

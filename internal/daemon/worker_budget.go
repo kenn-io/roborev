@@ -17,7 +17,8 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		agent.CanonicalName(job.Agent) == "test" ||
 		job.FrozenExperimentPlan != nil || job.BudgetRoutingLocked || job.RetryCount != 0 || job.SessionID != "" ||
 		job.RequestedModel != "" || job.RequestedProvider != "" || job.PanelRole != "" ||
-		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() {
+		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() ||
+		job.IsGoalReviewJob() {
 		return nil, true
 	}
 	repoCfg, err := config.LoadRepoConfig(job.RepoPath)

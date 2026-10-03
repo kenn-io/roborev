@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "kata attention-hook end --source kata-agent-hook-end",
+            "type": "command"
+          }
+        ],
+        "matcher": "logout|prompt_input_exit|bypass_permissions_disabled|other"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "kata attention-hook start --source kata-agent-hook-start",
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume|clear"
+      }
+    ]
+  }
+}

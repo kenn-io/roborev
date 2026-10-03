@@ -25,13 +25,14 @@ func TestFilterReviewJobs(t *testing.T) {
 		wantIDs []int64
 	}{
 		{
-			name: "excludes_compact_and_task",
+			name: "excludes_non_review_jobs",
 			jobs: []storage.ReviewJob{
 				{ID: 1, JobType: "review"},
 				{ID: 2, JobType: "compact"},
 				{ID: 3, JobType: "range"},
 				{ID: 4, JobType: "task"},
 				{ID: 5, JobType: "dirty"},
+				{ID: 6, JobType: storage.JobTypeGoalReview},
 			},
 			wantIDs: []int64{1, 3, 5},
 		},
@@ -55,6 +56,7 @@ func TestFilterReviewJobs(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{ID: 1, JobType: "compact"},
 				{ID: 2, JobType: "task"},
+				{ID: 3, JobType: storage.JobTypeGoalReview},
 			},
 			wantIDs: nil,
 		},

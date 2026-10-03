@@ -81,6 +81,15 @@ func TestClassifierAdapter_No(t *testing.T) {
 	assert.Equal(t, "local fix", reason)
 }
 
+func TestClassifierAdapterTestAgentProvidesValidOutput(t *testing.T) {
+	testAgent := agent.NewTestAgent()
+	require.ErrorContains(t, agent.ValidateClassifyAgent(testAgent.Name()), "test")
+	yes, reason, err := newClassifierAdapter(testAgent, 20*1024, nil).Decide(context.Background(), autotype.Input{})
+	require.NoError(t, err)
+	assert.False(t, yes)
+	assert.Equal(t, "test agent", reason)
+}
+
 func TestClassifierAdapter_ForwardsProgressOutput(t *testing.T) {
 	var out strings.Builder
 	ad := newClassifierAdapter(&fakeSchemaAgent{

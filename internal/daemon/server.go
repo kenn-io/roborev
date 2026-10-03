@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
@@ -93,6 +94,11 @@ type Server struct {
 	updateCoordinator       *updateDrainCoordinator
 	agentHookState          *agenthook.StateStore
 	agentHookStateErr       error
+	goalWatchMu             sync.Mutex
+	goalWatchCancel         context.CancelFunc
+	goalWatchDone           chan struct{}
+	goalGate                *goalGate
+	goalReviewRunner        goalReviewRunner // Test-only schema adapter; nil in production.
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -181,6 +187,7 @@ func newServerWithLogs(
 
 	s := &Server{
 		authKey:            cfg.AuthKey,
+		goalGate:           newGoalGate(cfg.MaxWorkers),
 		db:                 db,
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,
@@ -426,6 +433,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)
+	s.startGoalWatcher(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
@@ -467,6 +475,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopPanelSweep()
+		s.stopGoalWatcher()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -662,6 +671,10 @@ func (s *Server) stopOnce0() error {
 
 	// Stop the panel sweep goroutine
 	s.stopPanelSweep()
+	s.stopGoalWatcher()
+
+	// Cancel gate evaluations before draining HTTP connections.
+	s.goalGate.stop()
 
 	// Stop worker pool
 	s.workerPool.Stop()
@@ -922,9 +935,12 @@ func resolveRerunOpts(
 	if job.WorktreePath != "" {
 		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
 		if worktreePath == "" {
-			return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
+			if !job.IsGoalReviewJob() {
+				return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
+			}
+		} else {
+			resolutionPath = worktreePath
 		}
-		resolutionPath = worktreePath
 	}
 
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
@@ -975,13 +991,18 @@ func resolveRerunOpts(
 				"resolve selected agent %q: %w", selectedAgent, err,
 			)
 		}
-		if job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected) {
+		if job.JobType == storage.JobTypeClassify && !agent.IsProductionSchemaAgent(selected) {
 			return storage.ReenqueueOpts{}, fmt.Errorf(
-				"classifier reruns require a SchemaAgent, got %q", selectedAgent,
+				"classifier reruns require a production SchemaAgent, got %q", selectedAgent,
 			)
 		}
 		if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
 			return storage.ReenqueueOpts{}, err
+		}
+		if job.IsGoalReviewJob() {
+			if err := goalreview.ValidateAgent(selected); err != nil {
+				return storage.ReenqueueOpts{}, err
+			}
 		}
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
@@ -2371,12 +2392,12 @@ func (s *Server) humaCancelJob(
 		job, _ = s.db.GetJobByID(input.Body.JobID)
 	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
-		ctx, eventForJob("review.canceled", job, input.Body.JobID),
+		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
 	))
 	for i := range canceledMembers {
 		member := &canceledMembers[i]
 		s.broadcaster.Broadcast(eventForMutationPrincipal(
-			ctx, eventForJob("review.canceled", member, member.ID),
+			ctx, eventForJob(jobEventType(member, "canceled"), member, member.ID),
 		))
 	}
 
@@ -2524,6 +2545,13 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
+	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("get job: %v", jobErr),
+		)
+	}
+
 	err := s.db.MarkReviewClosedByJobID(
 		input.Body.JobID, input.Body.Closed,
 	)
@@ -2538,22 +2566,11 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	eventType := "review.closed"
+	event := "closed"
 	if !input.Body.Closed {
-		eventType = "review.reopened"
+		event = "reopened"
 	}
-	evt := Event{
-		Type:  eventType,
-		TS:    time.Now(),
-		JobID: input.Body.JobID,
-	}
-	if job, err := s.db.GetJobByID(input.Body.JobID); err == nil {
-		evt.Repo = job.RepoPath
-		evt.RepoName = job.RepoName
-		evt.SHA = job.GitRef
-		evt.Branch = job.HookBranch()
-		evt.Agent = job.Agent
-	}
+	evt := eventForJob(jobEventType(job, event), job, input.Body.JobID)
 	s.broadcaster.Broadcast(eventForMutationPrincipal(ctx, evt))
 
 	resp := &CloseReviewOutput{}
@@ -2605,7 +2622,7 @@ func (s *Server) humaAddComment(
 		if jobErr != nil {
 			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
 		}
-		commentEvent = eventForJob("review.commented", job, input.Body.JobID)
+		commentEvent = eventForJob(jobEventType(job, "commented"), job, input.Body.JobID)
 	} else {
 		commit, commitErr := s.db.GetCommitBySHA(input.Body.SHA)
 		if commitErr != nil {
@@ -2681,6 +2698,12 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.ReviewType == config.ReviewTypeGoal {
+		return s.enqueueGoalReview(ctx, req)
+	}
+	if req.SpecFile != nil || req.PlanFile != nil || req.JobType == storage.JobTypeGoalReview {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "artifact selection and goal_review jobs require review_type goal"})
+	}
 	gitRef := req.GitRef
 	if gitRef == "" {
 		gitRef = req.CommitSHA
@@ -3356,6 +3379,9 @@ func (s *Server) humaFixJob(
 			http.StatusNotFound,
 			ErrorResponse{Error: "parent job not found"},
 		)
+	}
+	if parentJob.IsGoalReviewJob() {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "goal reviews cannot be fixed as code"})
 	}
 	if parentJob.IsFixJob() {
 		return rawJSONOutput(

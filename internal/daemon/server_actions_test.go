@@ -383,6 +383,39 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 	assert.Equal(t, job.ID, event.JobID)
 }
 
+func TestGoalReviewRerunRejectsUnsupportedStructuredAgent(t *testing.T) {
+	t.Parallel()
+	db, repoPath := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	grokCommand, err := os.Executable()
+	require.NoError(t, err)
+	cfg.GrokCmd = grokCommand
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+	repo, err := db.GetOrCreateRepo(repoPath)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "goal-review-rerun", Agent: "pi",
+		ReviewType: config.ReviewTypeGoal, JobType: storage.JobTypeGoalReview,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	request := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{
+		JobID: job.ID, Agent: "grok",
+	})
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+
+	testutil.AssertStatusCode(t, response, http.StatusBadRequest)
+	assert.Contains(t, response.Body.String(), "goal review requires a tool-disabled schema agent")
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, updated.Status)
+	assert.Equal(t, "pi", updated.Agent)
+}
+
 func TestHandleRerunJob(t *testing.T) {
 	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
@@ -637,6 +670,7 @@ func TestHandleRerunJob(t *testing.T) {
 			{name: "unavailable", selected: "rerun-unavailable", wantError: "unavailable"},
 			{name: "structured", selected: "rerun-unstructured", reviewType: "custom", wantError: "schema-constrained reviews"},
 			{name: "classifier", selected: "rerun-unstructured", reviewType: "design", jobType: storage.JobTypeClassify, wantError: "SchemaAgent"},
+			{name: "classifier test agent", selected: "test", reviewType: "design", jobType: storage.JobTypeClassify, wantError: "production SchemaAgent"},
 			{name: "experiment", selected: "test", wantError: "frozen experiment", experiment: &storage.ExperimentAssignmentInput{
 				ExperimentID: "rerun-agent", DefinitionHash: "definition", DefinitionJSON: `{}`,
 				Arm: "experiment", SubjectHash: "subject", EffectiveConfigHash: "effective", EffectiveConfigJSON: `{}`,
@@ -922,6 +956,32 @@ func TestResolveRerunModelProviderRejectsInvalidWorktreeConfig(t *testing.T) {
 	require.ErrorContains(t, err, "rerun job worktree path is stale or invalid")
 	assert.Empty(t, model)
 	assert.Empty(t, provider)
+}
+
+func TestGoalReviewRerunFallsBackToMainRepoWhenWorktreeIsMissing(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	mainRepo := filepath.Join(tempDir, "goal-rerun")
+	testutil.InitTestGitRepo(t, mainRepo)
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	repo, err := db.GetOrCreateRepo(mainRepo)
+	require.NoError(t, err)
+	removedWorktree := filepath.Join(tempDir, "removed-worktree")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "frozen-goal-review", Agent: "test",
+		ReviewType: config.ReviewTypeGoal, JobType: storage.JobTypeGoalReview,
+		WorktreePath: removedWorktree,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	request := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+	testutil.AssertStatusCode(t, response, http.StatusOK)
+
+	rerun, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, rerun.Status)
 }
 
 func TestResolveRerunModelProviderRejectsInvalidWorktreeWithRequestedOverrides(t *testing.T) {
@@ -1246,6 +1306,27 @@ func TestHandleAddCommentBroadcastsEvent(t *testing.T) {
 		}
 	})
 
+	t.Run("goal review job comment", func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		job := createTestGoalReviewJob(t, db, t.TempDir())
+		_, eventCh := server.broadcaster.Subscribe("")
+
+		_, err := server.humaAddComment(context.Background(), &AddCommentInput{
+			Body: AddCommentRequest{
+				JobID: job.ID, Commenter: "reviewer", Comment: "Review complete",
+			},
+		})
+		require.NoError(t, err)
+
+		var event Event
+		select {
+		case event = <-eventCh:
+		default:
+		}
+		assert.Equal(t, "goal_review.commented", event.Type)
+		assert.Equal(t, job.ID, event.JobID)
+	})
+
 	t.Run("commit comment", func(t *testing.T) {
 		server, db, tmpDir := newTestServer(t)
 		repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -1311,6 +1392,35 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 	}
 }
 
+func TestHandleCloseGoalReview_BroadcastsGoalReviewEvent(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+	job := createTestGoalReviewJob(t, db, tmpDir)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
+
+	_, eventCh := server.broadcaster.Subscribe("")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/review/close", CloseReviewRequest{
+		JobID: job.ID, Closed: true,
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case event := <-eventCh:
+		assert.Equal("goal_review.closed", event.Type)
+		assert.Equal(job.ID, event.JobID)
+		assert.NotEmpty(event.Repo)
+		assert.NotEmpty(event.RepoName)
+		assert.Equal("goal-review-digest", event.SHA)
+	case <-time.After(time.Second):
+		require.FailNow(t, "timed out waiting for goal_review.closed event")
+	}
+}
+
 func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
 	assert := assert.New(t)
 	server, db, tmpDir := newTestServer(t)
@@ -1345,6 +1455,36 @@ func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
 		assert.Equal("test", event.Agent)
 	case <-time.After(time.Second):
 		require.FailNow(t, "timed out waiting for review.reopened event")
+	}
+}
+
+func TestHandleReopenGoalReview_BroadcastsGoalReviewEvent(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+	job := createTestGoalReviewJob(t, db, tmpDir)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "output"))
+	require.NoError(t, db.MarkReviewClosedByJobID(job.ID, true))
+
+	_, eventCh := server.broadcaster.Subscribe("")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/review/close", CloseReviewRequest{
+		JobID: job.ID, Closed: false,
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case event := <-eventCh:
+		assert.Equal("goal_review.reopened", event.Type)
+		assert.Equal(job.ID, event.JobID)
+		assert.NotEmpty(event.Repo)
+		assert.NotEmpty(event.RepoName)
+		assert.Equal("goal-review-digest", event.SHA)
+	case <-time.After(time.Second):
+		require.FailNow(t, "timed out waiting for goal_review.reopened event")
 	}
 }
 

@@ -20,14 +20,27 @@ var (
 )
 
 // Issue is the subset of a kata issue roborev consumes. Field names match the
-// kata daemon JSON wire schema. QualifiedID is only present on list rows.
+// kata daemon JSON wire schema. QualifiedID is available when the command
+// returns a project-qualified issue identity.
 type Issue struct {
-	ShortID     string   `json:"short_id"`
-	QualifiedID string   `json:"qualified_id"`
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	Status      string   `json:"status"`
-	Labels      []string `json:"labels"`
+	ShortID     string     `json:"short_id"`
+	QualifiedID string     `json:"qualified_id"`
+	Title       string     `json:"title"`
+	Body        string     `json:"body"`
+	Status      string     `json:"status"`
+	Labels      []string   `json:"labels"`
+	Parent      *LinkPeer  `json:"parent,omitempty"`
+	Blocks      []LinkPeer `json:"blocks,omitempty"`
+	BlockedBy   []LinkPeer `json:"blocked_by,omitempty"`
+	Related     []LinkPeer `json:"related,omitempty"`
+}
+
+// LinkPeer identifies a related issue without claiming its body was captured.
+type LinkPeer struct {
+	ShortID     string `json:"short_id"`
+	Project     string `json:"project,omitempty"`
+	QualifiedID string `json:"qualified_id,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
 // Binding identifies the kata project a workspace is bound to.
@@ -37,7 +50,8 @@ type Binding struct {
 
 // ListOpts controls a List call.
 type ListOpts struct {
-	Status string // "open" (default) | "closed" | "all"
+	Status    string // "open" (default) | "closed" | "all"
+	Unlimited bool   // request the complete graph (--limit 0)
 }
 
 // CreateReq describes an issue to create.

@@ -148,6 +148,21 @@ func createTestJob(t *testing.T, db *storage.DB, dir, gitRef, agent string) *sto
 	return job
 }
 
+func createTestGoalReviewJob(t *testing.T, db *storage.DB, dir string) *storage.ReviewJob {
+	t.Helper()
+	repo, err := db.GetOrCreateRepo(dir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:     repo.ID,
+		GitRef:     "goal-review-digest",
+		Agent:      "test",
+		ReviewType: "goal",
+		JobType:    storage.JobTypeGoalReview,
+	})
+	require.NoError(t, err)
+	return job
+}
+
 func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
 	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
