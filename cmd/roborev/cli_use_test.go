@@ -405,7 +405,7 @@ func TestCLIUseReportsAppOpenedAfterDaemonCommand(t *testing.T) {
 func TestCLIUseCommandSet(t *testing.T) {
 	assert := assert.New(t)
 	want := []string{
-		"roborev review", "roborev wait", "roborev status", "roborev show", "roborev list", "roborev search",
+		"roborev review", "roborev wait", "roborev status", "roborev doctor", "roborev show", "roborev list", "roborev search",
 		"roborev comment", "roborev respond", "roborev close", "roborev cancel", "roborev fix", "roborev refine",
 		"roborev run", "roborev prompt", "roborev analyze", "roborev compact", "roborev insights", "roborev summary",
 		"roborev cost", "roborev stream", "roborev snooze", "roborev pause", "roborev unpause",
