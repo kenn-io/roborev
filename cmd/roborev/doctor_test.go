@@ -515,7 +515,6 @@ func TestDoctorReviewPanels(t *testing.T) {
 }
 
 func TestDoctorConfiguredAgentsIncludeEnabledExperiments(t *testing.T) {
-	t.Setenv("PATH", writeFakeAgentBinary(t, "claude"))
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("default_agent = \"claude-code\"\n"), 0o600))
@@ -531,6 +530,8 @@ workflows = ["review"]
 review_agent = "gemini"
 `, "add experiment")
 
+	// Narrow PATH only after the repository exists: building it runs git.
+	t.Setenv("PATH", writeFakeAgentBinary(t, "claude"))
 	env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
 	require.NoError(t, env.repoErr)
 	got := findDoctorCheck(t, checkDoctorConfiguredAgents(env, nil), "agents.configured")
