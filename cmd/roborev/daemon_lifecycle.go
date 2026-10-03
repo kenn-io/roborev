@@ -30,6 +30,16 @@ import (
 // lifecycleOut keeps daemon diagnostics separate from command and protocol output.
 var lifecycleOut io.Writer = os.Stderr
 
+// ensureProbeTimeout is the existing readiness budget, shared with the
+// credential-free TCP occupancy check.
+const ensureProbeTimeout = 2 * time.Second
+
+// The daemon has three bounded readiness checks after binding its listener:
+// the primary API, optional auxiliary listener, and optional browser listener.
+// Their two-second budgets set the grace period for runtime publication after
+// the start lock is free. Longer lock contention still uses daemonStartTimeout.
+const ensureRuntimePublicationTimeout = 6 * time.Second
+
 var (
 	// Polling intervals for waitForJob - exposed for testing
 	pollStartInterval = 1 * time.Second
@@ -52,19 +62,23 @@ var (
 	// daemon to become ready. Database initialization can exceed the former
 	// 15-second budget (SQLite alone permits a 30-second busy wait). Match the
 	// slow-start budget in TestDaemonLifecycleEndToEnd.
-	daemonStartTimeout          = 2 * time.Minute
-	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
-	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = daemon.ListAllRuntimes
-	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
-	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
-	restartDaemonForEnsure      = restartDaemon
-	startDaemonForEnsure        = startDaemon
-	startDaemonDetached         = startDetachedDaemon
-	stopDaemonForRestart        = stopDaemon
-	startDaemonAfterRestart     = startDaemon
-	stopDaemonForUpdate         = stopDaemon
-	startUpdatedDaemon          = func(binDir string) error {
+	daemonStartTimeout           = 2 * time.Minute
+	getAnyRunningDaemon          = daemon.GetAnyRunningDaemon
+	getAnyRunningDaemonForStart  = daemon.GetAnyRunningDaemonContext
+	listAllRuntimes              = daemon.ListAllRuntimes
+	cleanupZombieDaemons         = daemon.CleanupZombieDaemons
+	tcpEndpointOccupiedForEnsure = isTCPEndpointOccupied
+	acquireStartLockForEnsure    = func(ctx context.Context) (func(), error) {
+		return daemon.RuntimeStore().AcquireStartLock(ctx)
+	}
+	isPIDAliveForUpdate     = isPIDAliveForUpdateDefault
+	restartDaemonForEnsure  = restartDaemon
+	startDaemonForEnsure    = startDaemon
+	startDaemonDetached     = startDetachedDaemon
+	stopDaemonForRestart    = stopDaemon
+	startDaemonAfterRestart = startDaemon
+	stopDaemonForUpdate     = stopDaemon
+	startUpdatedDaemon      = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
 		if runtime.GOOS == "windows" {
 			newBinary += ".exe"
@@ -87,6 +101,18 @@ var (
 		return sigCh, func() { signal.Stop(sigCh) }
 	}
 )
+
+func isTCPEndpointOccupied(endpoint daemon.DaemonEndpoint) bool {
+	if endpoint.Network != "tcp" || endpoint.Address == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", endpoint.Address, ensureProbeTimeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 // ErrDaemonNotRunning indicates no daemon runtime file was found
 var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
@@ -147,19 +173,42 @@ func validateServerFlag() error {
 	return nil
 }
 
+func pinRuntimeTLSCertificate(endpoint daemon.DaemonEndpoint) daemon.DaemonEndpoint {
+	if endpoint.IsUnix() || endpoint.TLSCertPEM != "" {
+		return endpoint
+	}
+	runtimes, err := daemon.ListAllRuntimes()
+	if err != nil {
+		return endpoint
+	}
+	for _, runtime := range runtimes {
+		if runtime.HasStaleProcess() {
+			continue
+		}
+		for _, candidate := range runtime.Endpoints() {
+			if candidate.TLSCertPEM != "" && candidate.Network == endpoint.Network &&
+				daemon.SameRuntimeEndpointAddress(candidate.Address, endpoint.Address) {
+				endpoint.TLSCertPEM = candidate.TLSCertPEM
+				return endpoint
+			}
+		}
+	}
+	return endpoint
+}
+
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
 // An explicit --server flag takes precedence over auto-discovered daemons.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
-			return *parsedServerEndpoint
+			return pinRuntimeTLSCertificate(*parsedServerEndpoint)
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
 			return fallbackDaemonEndpoint()
 		}
-		return ep
+		return pinRuntimeTLSCertificate(ep)
 	}
 	// No explicit flag: discover running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
@@ -181,14 +230,49 @@ func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Clie
 		return ep.HTTPClient(timeout)
 	}
 	origin, err := url.Parse(baseURL)
-	if err == nil && origin.Scheme == "http" && origin.Host != "" && origin.User == nil {
+	if err == nil && origin.Host != "" && origin.User == nil {
 		if target, err := daemon.ParseEndpoint(origin.Host); err == nil {
-			return target.HTTPClient(timeout)
+			switch origin.Scheme {
+			case "http":
+				return target.HTTPClient(timeout)
+			case "https":
+				target = pinRuntimeTLSCertificate(target)
+				if target.TLSCertPEM != "" {
+					return target.HTTPClient(timeout)
+				}
+				return auth.HTTPClient(baseURL, &http.Client{
+					Timeout:   timeout,
+					Transport: unavailableUnpinnedTLSTransport{endpoint: target},
+				}, loadDaemonClientAuthKey)
+			}
 		}
 	}
 	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
 		return "", fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied)
 	})
+}
+
+func loadDaemonClientAuthKey() (string, error) {
+	key, err := config.LoadGlobalAuthKey()
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", daemon.ErrClientConfig, err)
+	}
+	return key, nil
+}
+
+type unavailableUnpinnedTLSTransport struct {
+	endpoint daemon.DaemonEndpoint
+}
+
+// RoundTrip never connects to an HTTPS endpoint without a matching runtime
+// certificate. An unoccupied address returns a retryable connection error so
+// callers can resolve the current daemon endpoint; an occupied address fails
+// closed because its listener cannot be authenticated.
+func (t unavailableUnpinnedTLSTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	if isTCPEndpointOccupied(t.endpoint) {
+		return nil, fmt.Errorf("%w: refusing unverified HTTPS daemon endpoint", daemon.ErrDaemonAccessDenied)
+	}
+	return nil, syscall.ECONNREFUSED
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -253,7 +337,11 @@ func ensureDaemon() error {
 		if err != nil {
 			return fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
 		}
+		ep = pinRuntimeTLSCertificate(ep)
 		_, err = daemon.ProbeDaemon(ep, 2*time.Second)
+		if errors.Is(err, daemon.ErrPlaintextAuthTransport) && ep.Network == "tcp" && !tcpEndpointOccupiedForEnsure(ep) {
+			return fmt.Errorf("no daemon is listening at %s: %w", ep.Address, syscall.ECONNREFUSED)
+		}
 		return err
 	}
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
@@ -296,7 +384,7 @@ func ensureDaemon() error {
 	// Try the configured default address for manual daemon runs that do not
 	// have a runtime file yet.
 	ep := getDaemonEndpoint()
-	probe, probeErr := probeDaemonForEnsure(ep, 2*time.Second)
+	probe, probeErr := probeDaemonForEnsure(ep, ensureProbeTimeout)
 	if probeErr == nil {
 		if !skipVersionCheck {
 			if probe.Version == "" {
@@ -314,8 +402,43 @@ func ensureDaemon() error {
 		}
 		return nil
 	}
-	if daemon.IsDaemonAccessError(probeErr) {
+	if daemon.IsDaemonAccessError(probeErr) && !errors.Is(probeErr, daemon.ErrPlaintextAuthTransport) {
 		return fmt.Errorf("probe daemon: %w", probeErr)
+	}
+	if errors.Is(probeErr, daemon.ErrPlaintextAuthTransport) && tcpEndpointOccupiedForEnsure(ep) {
+		info, endpoint, err := discoverDaemonAfterConcurrentStart(ep)
+		if err == nil {
+			probe, probeErr := probeDaemonForEnsure(endpoint, ensureProbeTimeout)
+			if probeErr != nil {
+				if daemon.IsDaemonAccessError(probeErr) {
+					return fmt.Errorf("probe daemon: %w", probeErr)
+				}
+				if verbose {
+					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
+				}
+				return restartDaemonForEnsure()
+			}
+			if probe == nil || probe.PID == 0 || probe.PID != info.PID {
+				return fmt.Errorf("daemon endpoint identity could not be verified: %w", daemon.ErrDaemonAccessDenied)
+			}
+			if !skipVersionCheck {
+				if probe.Version == "" || probe.Version != version.Version {
+					if verbose {
+						fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
+					}
+					return restartDaemonForEnsure()
+				}
+			}
+			return nil
+		}
+		if daemon.IsDaemonAccessError(err) {
+			return fmt.Errorf("discover daemon after startup: %w", err)
+		}
+		return fmt.Errorf(
+			"daemon endpoint %s is occupied but its identity cannot be verified; confirm the daemon is ready or free the address before retrying: %w",
+			ep.Address,
+			daemon.ErrDaemonAccessDenied,
+		)
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
@@ -324,6 +447,51 @@ func ensureDaemon() error {
 
 	// Start daemon in background
 	return startDaemonForEnsure()
+}
+
+func discoverDaemonAfterConcurrentStart(endpoint daemon.DaemonEndpoint) (*daemon.RuntimeInfo, daemon.DaemonEndpoint, error) {
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), daemonStartTimeout)
+
+	// Manager.Ensure holds this lock until its daemon has published a discoverable runtime record.
+	release, err := acquireStartLockForEnsure(lockCtx)
+	cancelLock()
+	if err != nil {
+		return nil, daemon.DaemonEndpoint{}, err
+	}
+	defer release()
+
+	// Manual and service-managed starts may bind their listener before writing
+	// a runtime record and do not hold the CLI start lock. Give the bounded
+	// listener-readiness checks time to publish the record without applying the
+	// full concurrent-start lock wait to an unrelated occupied endpoint.
+	ctx, cancel := context.WithTimeout(context.Background(), ensureRuntimePublicationTimeout)
+	defer cancel()
+	ticker := time.NewTicker(ensureProbeRetryDelay)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, daemon.DaemonEndpoint{}, err
+		}
+		runtimes, err := listAllRuntimes()
+		if err != nil {
+			return nil, daemon.DaemonEndpoint{}, err
+		}
+		for _, info := range runtimes {
+			if info == nil || info.PID <= 0 || info.HasStaleProcess() {
+				continue
+			}
+			for _, candidate := range info.Endpoints() {
+				if candidate.Network == endpoint.Network && daemon.SameRuntimeEndpointAddress(candidate.Address, endpoint.Address) {
+					return info, candidate, nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, daemon.DaemonEndpoint{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func startDaemon() error {

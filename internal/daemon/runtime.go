@@ -18,7 +18,9 @@ import (
 	"github.com/cenkalti/backoff/v7"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 	runtimeWebBasePathKey       = "web_base_path"
 	runtimeWebCapabilitiesKey   = "web_capabilities"
 	runtimeWebDisabledReasonKey = "web_disabled_reason"
+	runtimeTLSCertificateKey    = "tls_certificate"
 )
 
 // Reasons the daemon publishes when the browser listener is not running, so
@@ -42,9 +45,14 @@ const (
 	WebDisabledReasonMissingAssets = "missing-web-assets"
 )
 
-// ErrDaemonAccessDenied means the daemon rejected authentication or local
-// permissions prevented every usable endpoint from being probed.
-var ErrDaemonAccessDenied = errors.New("daemon access denied")
+// ErrDaemonAccessDenied means the daemon rejected authentication, its server
+// identity could not be verified, or local permissions prevented every usable
+// endpoint from being probed.
+var ErrDaemonAccessDenied = auth.ErrUnverifiedServer
+
+// ErrPlaintextAuthTransport means the client refused to probe a TCP endpoint
+// because it could not verify the server before sending the shared key.
+var ErrPlaintextAuthTransport = auth.ErrPlaintextTransport
 
 var probeRuntimeEndpoint = probeRuntimeRecord
 
@@ -63,8 +71,10 @@ type RuntimeInfo struct {
 	WebBasePath       string   `json:"-"`
 	WebCapabilities   []string `json:"-"`
 	WebDisabledReason string   `json:"-"`
+	TLSCertPEM        string   `json:"-"`
 
 	processIdentity kitdaemon.ProcessIdentity
+	legacyRecord    bool
 }
 
 // BrowserRuntimeInfo is the non-secret discovery information published for
@@ -81,13 +91,15 @@ type BrowserRuntimeInfo struct {
 
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
-	return daemonEndpointFromKit(kitdaemon.RuntimeRecord{
+	info := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
 		PID:     r.PID,
 		Network: r.Network,
 		Address: r.Address,
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
+	info.TLSCertPEM = r.TLSCertPEM
+	return info
 }
 
 // Endpoints returns the primary endpoint followed by a valid distinct
@@ -109,8 +121,11 @@ func (r RuntimeInfo) Endpoints() []DaemonEndpoint {
 		return endpoints
 	}
 	alternate, err := ParseEndpoint(raw)
-	if err != nil || alternate == primary {
+	if err != nil || alternate.Network == primary.Network && alternate.Address == primary.Address {
 		return endpoints
+	}
+	if alternate.Network == "tcp" {
+		alternate.TLSCertPEM = r.TLSCertPEM
 	}
 	return append(endpoints, alternate)
 }
@@ -152,6 +167,7 @@ func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 		WebAddress:       rec.Metadata[runtimeWebAddressKey],
 		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
 		WebBasePath:      rec.Metadata[runtimeWebBasePathKey],
+		TLSCertPEM:       rec.Metadata[runtimeTLSCertificateKey],
 	}
 	info.WebDisabledReason = rec.Metadata[runtimeWebDisabledReasonKey]
 	if info.WebOrigin != "" {
@@ -189,8 +205,26 @@ func RuntimePathForPID(pid int) string {
 // WriteRuntime saves the daemon runtime info atomically.
 // Uses write-to-temp-then-rename to prevent readers from seeing partial writes.
 func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version string, browser *BrowserRuntimeInfo) error {
+	return WriteRuntimeWithTLS(primary, alternate, version, browser, "")
+}
+
+// WriteRuntimeWithTLS publishes the public certificate used to authenticate
+// the daemon's TCP TLS listener. The private key and auth_key are never stored.
+func WriteRuntimeWithTLS(
+	primary DaemonEndpoint,
+	alternate *DaemonEndpoint,
+	version string,
+	browser *BrowserRuntimeInfo,
+	tlsCertPEM string,
+) error {
 	rec := kitdaemon.NewRuntimeRecord(daemonServiceName, version, primary.kitEndpoint())
 	rec.Metadata = make(map[string]string)
+	if tlsCertPEM != "" {
+		if primary.Network != "tcp" {
+			return fmt.Errorf("TLS certificate requires a TCP primary endpoint")
+		}
+		rec.Metadata[runtimeTLSCertificateKey] = tlsCertPEM
+	}
 	if alternate != nil {
 		info := RuntimeInfo{
 			Network:          primary.Network,
@@ -344,11 +378,12 @@ func listLegacyRuntimes() []*RuntimeInfo {
 			network = "tcp"
 		}
 		runtimes = append(runtimes, &RuntimeInfo{
-			PID:        legacy.PID,
-			Network:    network,
-			Address:    legacy.Addr,
-			Version:    legacy.Version,
-			SourcePath: path,
+			PID:          legacy.PID,
+			Network:      network,
+			Address:      legacy.Addr,
+			Version:      legacy.Version,
+			SourcePath:   path,
+			legacyRecord: true,
 		})
 	}
 	return runtimes
@@ -372,10 +407,12 @@ func probeRuntimeRecordWithKey(ctx context.Context, ep DaemonEndpoint, key strin
 	return probeDaemonHTTP(ctx, ep, time.Second, ep.HTTPClientWithAuthKey(time.Second, key))
 }
 
-// IsDaemonAccessError reports credential, configuration, and local permission
-// errors that must not trigger daemon recovery or stale-runtime cleanup.
+// IsDaemonAccessError reports credential, configuration, transport-security,
+// and local permission errors that must not trigger recovery of a recorded
+// daemon or stale-runtime cleanup.
 func IsDaemonAccessError(err error) bool {
-	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
+	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrPlaintextAuthTransport) ||
+		errors.Is(err, ErrClientConfig) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
@@ -392,7 +429,7 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
-		if info.hasStaleProcess() {
+		if info.HasStaleProcess() {
 			continue
 		}
 		primary := info.Endpoint()
@@ -522,15 +559,16 @@ func IsDaemonAlive(ep DaemonEndpoint) bool {
 	return alive
 }
 
-// hasStaleProcess rejects dead or reused PIDs before sending credentials.
-// An unknown identity is not proof of a mismatch; older records may lack it.
-func (r *RuntimeInfo) hasStaleProcess() bool {
+// HasStaleProcess reports whether the recorded process exited or its PID now
+// identifies a different process. An unknown identity is not proof of a
+// mismatch; older records may lack it.
+func (r *RuntimeInfo) HasStaleProcess() bool {
 	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
 		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
 }
 
 func probeRuntimeAlive(info *RuntimeInfo) (bool, error) {
-	if info.hasStaleProcess() {
+	if info.HasStaleProcess() {
 		return false, nil
 	}
 	var deniedErr error
@@ -623,7 +661,7 @@ func KillDaemon(info *RuntimeInfo) error {
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
 	}
-	if info.hasStaleProcess() || confirmedDead() {
+	if info.HasStaleProcess() || confirmedDead() {
 		removeRuntimeFile()
 		return nil
 	}
@@ -652,14 +690,62 @@ func KillDaemon(info *RuntimeInfo) error {
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead); err != nil {
-			return err
+		shutdownErr := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead)
+		if errors.Is(shutdownErr, auth.ErrPlaintextTransport) {
+			if !confirmedDead() {
+				if err := requestUnauthenticatedDaemonShutdown(shutdownCleanupCtx, info, ep, confirmedDead); err != nil && !confirmedDead() {
+					return err
+				}
+			}
+		} else if shutdownErr != nil {
+			return shutdownErr
 		}
-		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
+		if !confirmedDead() {
+			waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
+		}
 		removeRuntimeFile()
 		return nil
 	}
 	return fmt.Errorf("daemon shutdown was not accepted")
+}
+
+func requestUnauthenticatedDaemonShutdown(
+	ctx context.Context,
+	info *RuntimeInfo,
+	ep DaemonEndpoint,
+	confirmedDead func() bool,
+) error {
+	if info == nil || info.legacyRecord || info.PID <= 0 || info.Network != "tcp" || !isLoopbackAddr(info.Address) ||
+		info.Service != daemonServiceName ||
+		ep.TLSCertPEM != "" || identifyProcess(info.PID) != processIsRoborev {
+		return fmt.Errorf("%w: refusing unauthenticated shutdown for an unverified local daemon", ErrDaemonAccessDenied)
+	}
+	identityStatus := kitdaemon.CompareProcessIdentity(info.PID, info.processIdentity)
+	if identityStatus != kitdaemon.ProcessIdentityMatch {
+		return fmt.Errorf("%w: refusing unauthenticated shutdown for an unverified local daemon", ErrDaemonAccessDenied)
+	}
+
+	// This path is only for verified current-format daemons that started before
+	// auth_key was enabled. Send no credential; legacy records lack the process
+	// identity required by the guard above.
+	client := &http.Client{
+		Transport: http.DefaultTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	ping, err := probeDaemonHTTP(ctx, ep, 2*time.Second, client)
+	if err != nil {
+		return err
+	}
+	if ping.PID != info.PID {
+		return fmt.Errorf("%w: daemon endpoint does not match its runtime process", ErrDaemonAccessDenied)
+	}
+	api, err := roborevclient.NewWithHTTPClient(ep.BaseURL(), client)
+	if err != nil {
+		return fmt.Errorf("create unauthenticated daemon client: %w", err)
+	}
+	return requestGracefulDaemonShutdownWithClient(ctx, confirmedDead, api)
 }
 
 func requestGracefulDaemonShutdown(
@@ -667,7 +753,14 @@ func requestGracefulDaemonShutdown(
 	ep DaemonEndpoint,
 	confirmedDead func() bool,
 ) error {
-	client := ep.APIClient(0)
+	return requestGracefulDaemonShutdownWithClient(ctx, confirmedDead, ep.APIClient(0))
+}
+
+func requestGracefulDaemonShutdownWithClient(
+	ctx context.Context,
+	confirmedDead func() bool,
+	client *roborevclient.Client,
+) error {
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
 			return struct{}{}, nil
@@ -722,7 +815,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		ep := info.Endpoint()
 
 		// Check the recorded process before any endpoint receives credentials.
-		if info.hasStaleProcess() {
+		if info.HasStaleProcess() {
 			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.ProcessAlive(info.PID) {
 				// Clean up non-matching sockets only when the PID is dead.
 				os.Remove(ep.Address)

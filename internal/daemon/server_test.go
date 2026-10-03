@@ -264,7 +264,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 
 func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
 	testenv.SetDataDir(t)
-	existing := httptest.NewServer(newAuthTestServer(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210").httpServer.Handler)
+	existing := httptest.NewServer(newAuthTestServer(t, "existing-daemon-key").httpServer.Handler)
 	defer existing.Close()
 	require.NoError(t, WriteRuntime(authEndpoint(t, existing.URL), nil, "test-version", nil))
 
@@ -381,6 +381,73 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	sweepCancel := server.sweepCancel
 	server.sweepMu.Unlock()
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
+}
+
+func TestServerStartStopsAuthenticatedListenerWhenRuntimePublicationFails(t *testing.T) {
+	dataDir := testenv.SetDataDir(t)
+	runtimeDir := filepath.Join(dataDir, "runtime")
+	previousListen := listenAuxiliaryEndpointForServer
+	var prepareErr error
+	listenAuxiliaryEndpointForServer = func(DaemonEndpoint) (net.Listener, *DaemonEndpoint, error) {
+		prepareErr = os.RemoveAll(runtimeDir)
+		if prepareErr == nil {
+			prepareErr = os.WriteFile(runtimeDir, []byte("occupied"), 0o600)
+		}
+		return nil, nil, prepareErr
+	}
+	t.Cleanup(func() { listenAuxiliaryEndpointForServer = previousListen })
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.AuthKey = strings.Repeat("a", 64)
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+	startErrCh := make(chan error, 1)
+	go func() { startErrCh <- server.Start(context.Background()) }()
+
+	var startErr error
+	require.Eventually(t, func() bool {
+		select {
+		case startErr = <-startErrCh:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond, "authenticated startup must fail if its TLS runtime record cannot be published")
+	require.NoError(t, prepareErr)
+	require.Error(t, startErr)
+	require.ErrorContains(t, startErr, "failed to write runtime info")
+	assert.NoFileExists(t, RuntimePath())
+
+	server.endpointMu.Lock()
+	endpoint := server.endpoint
+	server.endpointMu.Unlock()
+	assert.Equal(t, "tcp", endpoint.Network)
+	assert.NotEmpty(t, endpoint.Address)
+	conn, dialErr := net.DialTimeout("tcp", endpoint.Address, time.Second)
+	if conn != nil {
+		require.NoError(t, conn.Close())
+	}
+	require.Error(t, dialErr, "authenticated listener must close when runtime publication fails")
+
+	assert.Eventually(t, func() bool {
+		select {
+		case <-server.workerPool.stopCh:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "worker pool must stop after runtime publication failure")
+	server.searchMu.Lock()
+	searchStopped := server.searchStopped
+	server.searchMu.Unlock()
+	assert.True(t, searchStopped)
+	server.sweepMu.Lock()
+	sweepCancel := server.sweepCancel
+	server.sweepMu.Unlock()
+	assert.Nil(t, sweepCancel)
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {

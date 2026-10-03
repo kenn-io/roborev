@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -45,6 +46,8 @@ import (
 // Server is the HTTP API server for the daemon
 type Server struct {
 	authKey                 string // Immutable startup credential.
+	tlsCertificate          *tls.Certificate
+	tlsCertPEM              string
 	db                      *storage.DB
 	configWatcher           *ConfigWatcher
 	broadcaster             Broadcaster
@@ -328,6 +331,17 @@ func (s *Server) Start(ctx context.Context) error {
 			s.httpServer.Addr = ep.Address
 		}
 	}
+	if s.authKey != "" && !ep.IsUnix() {
+		certificate, certificatePEM, certErr := newDaemonTLSCertificate(ep.Address)
+		if certErr != nil {
+			_ = listener.Close()
+			s.configWatcher.Stop()
+			return fmt.Errorf("create daemon TLS certificate: %w", certErr)
+		}
+		s.tlsCertificate = &certificate
+		s.tlsCertPEM = certificatePEM
+		ep.TLSCertPEM = certificatePEM
+	}
 
 	s.endpointMu.Lock()
 	s.endpoint = ep
@@ -335,8 +349,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	serveErrCh := make(chan error, 1)
 	log.Printf("Starting HTTP server on %s", ep)
+	serveListener := listener
+	if s.tlsCertificate != nil {
+		serveListener = tls.NewListener(listener, &tls.Config{
+			Certificates: []tls.Certificate{*s.tlsCertificate},
+			MinVersion:   tls.VersionTLS12,
+		})
+	}
 	go func() {
-		serveErrCh <- s.httpServer.Serve(listener)
+		serveErrCh <- s.httpServer.Serve(serveListener)
 	}()
 
 	if err := cleanupStaleCIWorktrees(ctx); err != nil {
@@ -347,7 +368,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.workerPool.Start()
 	s.startSearch(ctx)
 
-	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.authKey)
+	readinessEndpoint := ep
+	readinessEndpoint.allowTLSBootstrap = true
+	ready, serveExited, err := waitForServerReady(ctx, readinessEndpoint, 2*time.Second, serveErrCh, s.authKey)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -430,7 +453,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.startPanelSweep(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
+	if err := WriteRuntimeWithTLS(ep, alternate, version.Version, browserRuntime, s.tlsCertPEM); err != nil {
+		if s.tlsCertificate != nil {
+			s.browserMu.Unlock()
+			startupErr := fmt.Errorf("failed to write runtime info: %w", err)
+			return errors.Join(startupErr, s.stopAfterFailedStartup())
+		}
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 	s.browserMu.Unlock()
@@ -629,6 +657,20 @@ func (s *Server) Stop() error {
 		s.stopErr = s.stopOnce0()
 	})
 	return s.stopErr
+}
+
+// stopAfterFailedStartup tears down services after a required runtime record
+// cannot be published. The listener must stop even if the drain flag cannot
+// be persisted because clients cannot discover its TLS certificate.
+func (s *Server) stopAfterFailedStartup() error {
+	drainErr := s.beginShutdownDrain()
+	if drainErr != nil {
+		s.workerPool.BeginStop()
+	}
+	s.stopOnce.Do(func() {
+		s.stopErr = s.stopOnce0()
+	})
+	return errors.Join(drainErr, s.stopErr)
 }
 
 func (s *Server) stopOnce0() error {

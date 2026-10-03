@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -86,6 +88,25 @@ func TestGetDaemonEndpointIgnoresCachedDefaultFromEmptyServerFlagInTests(t *test
 	got := getDaemonEndpoint()
 	assert.Equal(t, "tcp", got.Network)
 	assert.Equal(t, "127.0.0.1:1", got.Address)
+}
+
+func TestSameRuntimeEndpointAddressMatchesLocalhostAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		runtimeAddress  string
+		selectedAddress string
+		want            bool
+	}{
+		{name: "exact", runtimeAddress: "127.0.0.1:7373", selectedAddress: "127.0.0.1:7373", want: true},
+		{name: "localhost to IPv4", runtimeAddress: "localhost:7373", selectedAddress: "127.0.0.1:7373", want: true},
+		{name: "IPv6 to localhost", runtimeAddress: "[::1]:7373", selectedAddress: "localhost:7373", want: true},
+		{name: "different port", runtimeAddress: "127.0.0.1:7373", selectedAddress: "localhost:7374"},
+		{name: "different loopback IP", runtimeAddress: "127.0.0.2:7373", selectedAddress: "localhost:7373"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, daemon.SameRuntimeEndpointAddress(tc.runtimeAddress, tc.selectedAddress))
+		})
+	}
 }
 
 func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
@@ -294,6 +315,451 @@ func TestEnsureDaemonDoesNotColdStartAfterAccessDeniedDefaultProbe(t *testing.T)
 	require.True(t, daemon.IsDaemonAccessError(err))
 	assert.Zero(t, cleanupCalls)
 	assert.Zero(t, startCalls)
+}
+
+func TestEnsureDaemonColdStartsWhenAuthKeyRequiresTLSAndNoRuntimeExists(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGet := getAnyRunningDaemon
+	origProbe := probeDaemonForEnsure
+	origOccupied := tcpEndpointOccupiedForEnsure
+	origCleanup := cleanupZombieDaemons
+	origStart := startDaemonForEnsure
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	probeDaemonForEnsure = daemon.ProbeDaemon
+	occupiedCalls, cleanupCalls, startCalls := 0, 0, 0
+	tcpEndpointOccupiedForEnsure = func(endpoint daemon.DaemonEndpoint) bool {
+		occupiedCalls++
+		assert.Equal(t, "tcp", endpoint.Network)
+		return false
+	}
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
+	startDaemonForEnsure = func() error { startCalls++; return nil }
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGet
+		probeDaemonForEnsure = origProbe
+		tcpEndpointOccupiedForEnsure = origOccupied
+		cleanupZombieDaemons = origCleanup
+		startDaemonForEnsure = origStart
+	})
+
+	require.NoError(t, ensureDaemon())
+	assert.Equal(t, 1, occupiedCalls)
+	assert.Equal(t, 1, cleanupCalls)
+	assert.Equal(t, 1, startCalls)
+}
+
+func TestEnsureDaemonDoesNotColdStartWhenUnverifiedEndpointIsOccupied(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGet := getAnyRunningDaemon
+	origListRuntimes := listAllRuntimes
+	origProbe := probeDaemonForEnsure
+	origOccupied := tcpEndpointOccupiedForEnsure
+	origAcquireStartLock := acquireStartLockForEnsure
+	origStartTimeout := daemonStartTimeout
+	origProbeDelay := ensureProbeRetryDelay
+	origCleanup := cleanupZombieDaemons
+	origStart := startDaemonForEnsure
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
+	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return nil, daemon.ErrPlaintextAuthTransport
+	}
+	acquireStartLockForEnsure = func(context.Context) (func(), error) { return func() {}, nil }
+	daemonStartTimeout = time.Second
+	ensureProbeRetryDelay = 100 * time.Millisecond
+	occupiedCalls, cleanupCalls, startCalls := 0, 0, 0
+	tcpEndpointOccupiedForEnsure = func(endpoint daemon.DaemonEndpoint) bool {
+		occupiedCalls++
+		assert.Equal(t, "tcp", endpoint.Network)
+		return true
+	}
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
+	startDaemonForEnsure = func() error { startCalls++; return nil }
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGet
+		listAllRuntimes = origListRuntimes
+		probeDaemonForEnsure = origProbe
+		tcpEndpointOccupiedForEnsure = origOccupied
+		acquireStartLockForEnsure = origAcquireStartLock
+		daemonStartTimeout = origStartTimeout
+		ensureProbeRetryDelay = origProbeDelay
+		cleanupZombieDaemons = origCleanup
+		startDaemonForEnsure = origStart
+	})
+
+	synctest.Test(t, func(t *testing.T) {
+		err := ensureDaemon()
+		require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+		assert.Equal(t, 1, occupiedCalls)
+		assert.Zero(t, cleanupCalls)
+		assert.Zero(t, startCalls)
+	})
+}
+
+func TestEnsureDaemonBoundsWaitForUnpublishedOccupiedEndpoint(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGet := getAnyRunningDaemon
+	origListRuntimes := listAllRuntimes
+	origProbe := probeDaemonForEnsure
+	origOccupied := tcpEndpointOccupiedForEnsure
+	origAcquireStartLock := acquireStartLockForEnsure
+	origStartTimeout := daemonStartTimeout
+	origProbeDelay := ensureProbeRetryDelay
+	origCleanup := cleanupZombieDaemons
+	origStart := startDaemonForEnsure
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	var runtimeListCalls atomic.Int32
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		runtimeListCalls.Add(1)
+		return nil, nil
+	}
+	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return nil, daemon.ErrPlaintextAuthTransport
+	}
+	tcpEndpointOccupiedForEnsure = func(daemon.DaemonEndpoint) bool { return true }
+	acquireStartLockForEnsure = func(context.Context) (func(), error) { return func() {}, nil }
+	daemonStartTimeout = 2 * time.Minute
+	ensureProbeRetryDelay = time.Second
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
+	startDaemonForEnsure = func() error { return nil }
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGet
+		listAllRuntimes = origListRuntimes
+		probeDaemonForEnsure = origProbe
+		tcpEndpointOccupiedForEnsure = origOccupied
+		acquireStartLockForEnsure = origAcquireStartLock
+		daemonStartTimeout = origStartTimeout
+		ensureProbeRetryDelay = origProbeDelay
+		cleanupZombieDaemons = origCleanup
+		startDaemonForEnsure = origStart
+	})
+
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		err := ensureDaemon()
+		elapsed := time.Since(started)
+
+		require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
+		assert.LessOrEqual(t, elapsed, 6*time.Second, "occupied unverified endpoint must not consume the two-minute start-lock budget")
+		assert.Greater(t, runtimeListCalls.Load(), int32(1))
+	})
+}
+
+func TestEnsureDaemonExplicitServerReportsUnavailableEndpointWithAuthKey(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	serverAddr = address
+	parsedServerEndpoint = nil
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+	})
+
+	err = ensureDaemon()
+	require.ErrorIs(t, err, syscall.ECONNREFUSED)
+	assert.Contains(t, err.Error(), "no daemon is listening at "+address)
+}
+
+func TestEnsureDaemonWaitsForConcurrentDaemonStartBeforeRefusingOccupiedEndpoint(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGet := getAnyRunningDaemon
+	origGetForStart := getAnyRunningDaemonForStart
+	origListRuntimes := listAllRuntimes
+	origProbe := probeDaemonForEnsure
+	origOccupied := tcpEndpointOccupiedForEnsure
+	origAcquireStartLock := acquireStartLockForEnsure
+	origCleanup := cleanupZombieDaemons
+	origStart := startDaemonForEnsure
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	occupiedEndpoint := getDaemonEndpoint()
+	published := make(chan struct{})
+	info := &daemon.RuntimeInfo{
+		PID:        os.Getpid(),
+		Network:    "tcp",
+		Address:    occupiedEndpoint.Address,
+		Service:    "roborev",
+		Version:    version.Version,
+		TLSCertPEM: "test-pinned-certificate",
+	}
+	unrelated := &daemon.RuntimeInfo{
+		PID:        os.Getpid(),
+		Network:    "tcp",
+		Address:    "127.0.0.1:7374",
+		Service:    "roborev",
+		Version:    version.Version,
+		TLSCertPEM: "unrelated-pinned-certificate",
+	}
+	assert.Equal(info.Address, getDaemonEndpoint().Address)
+	assert.False(info.HasStaleProcess())
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		select {
+		case <-published:
+			return unrelated, nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+	listCalls := 0
+	listBeforePublication := false
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		listCalls++
+		select {
+		case <-published:
+			return []*daemon.RuntimeInfo{unrelated, info}, nil
+		default:
+			listBeforePublication = true
+			return nil, nil
+		}
+	}
+	probeCalls, cleanupCalls, startCalls := 0, 0, 0
+	probeDaemonForEnsure = func(endpoint daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+		probeCalls++
+		if endpoint.TLSCertPEM == "" {
+			return nil, daemon.ErrPlaintextAuthTransport
+		}
+		if endpoint.Address != info.Address {
+			return nil, daemon.ErrPlaintextAuthTransport
+		}
+		return &daemon.PingInfo{PID: info.PID, Version: version.Version}, nil
+	}
+	occupied := make(chan struct{}, 1)
+	tcpEndpointOccupiedForEnsure = func(endpoint daemon.DaemonEndpoint) bool {
+		assert.Equal("tcp", endpoint.Network)
+		occupied <- struct{}{}
+		return true
+	}
+	lockRequested := make(chan struct{}, 1)
+	acquireStartLockForEnsure = func(ctx context.Context) (func(), error) {
+		lockRequested <- struct{}{}
+		return origAcquireStartLock(ctx)
+	}
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
+	startDaemonForEnsure = func() error { startCalls++; return nil }
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGet
+		getAnyRunningDaemonForStart = origGetForStart
+		listAllRuntimes = origListRuntimes
+		probeDaemonForEnsure = origProbe
+		tcpEndpointOccupiedForEnsure = origOccupied
+		acquireStartLockForEnsure = origAcquireStartLock
+		cleanupZombieDaemons = origCleanup
+		startDaemonForEnsure = origStart
+	})
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDaemonStartLockHelper$")
+	cmd.Env = append(
+		os.Environ(),
+		"ROBOREV_DAEMON_START_LOCK_HELPER=1",
+		"ROBOREV_DAEMON_START_LOCK_DIR="+os.Getenv("ROBOREV_DATA_DIR"),
+	)
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = cmd.Wait()
+	})
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "locked\n", line)
+
+	done := make(chan struct{})
+	var ensureErr error
+	go func() {
+		ensureErr = ensureDaemon()
+		close(done)
+	}()
+	<-occupied
+
+	returnedBeforeLock := false
+	select {
+	case <-lockRequested:
+	case <-done:
+		returnedBeforeLock = true
+	}
+	require.False(t, returnedBeforeLock, "ensure returned before waiting for the concurrent daemon startup lock")
+
+	close(published)
+	require.NoError(t, stdin.Close())
+	<-done
+	require.NoError(t, ensureErr)
+	assert.Equal(1, listCalls)
+	assert.False(listBeforePublication)
+	assert.Equal(2, probeCalls)
+	assert.Zero(cleanupCalls)
+	assert.Zero(startCalls)
+}
+
+func TestEnsureDaemonWaitsForManualDaemonRuntimePublication(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "51085fd49ac22900a0839b036090b4ea2050c5911e0edcbe0b8f7fed5a096015"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		origServerAddr := serverAddr
+		origParsed := parsedServerEndpoint
+		origGet := getAnyRunningDaemon
+		origListRuntimes := listAllRuntimes
+		origProbe := probeDaemonForEnsure
+		origOccupied := tcpEndpointOccupiedForEnsure
+		origAcquireStartLock := acquireStartLockForEnsure
+		origStartTimeout := daemonStartTimeout
+		origProbeDelay := ensureProbeRetryDelay
+		origCleanup := cleanupZombieDaemons
+		origStart := startDaemonForEnsure
+		serverAddr = ""
+		parsedServerEndpoint = nil
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+		endpoint := getDaemonEndpoint()
+		info := &daemon.RuntimeInfo{
+			PID:        os.Getpid(),
+			Network:    "tcp",
+			Address:    endpoint.Address,
+			Service:    "roborev",
+			Version:    version.Version,
+			TLSCertPEM: "synthetic-pinned-certificate",
+		}
+		daemonStartTimeout = time.Second
+		ensureProbeRetryDelay = 100 * time.Millisecond
+		var runtimeListCalls, probeCalls, occupiedCalls, cleanupCalls, startCalls atomic.Int32
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+			if runtimeListCalls.Add(1) < 3 {
+				return nil, nil
+			}
+			return []*daemon.RuntimeInfo{info}, nil
+		}
+		probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			probeCalls.Add(1)
+			if ep.TLSCertPEM == "" {
+				return nil, daemon.ErrPlaintextAuthTransport
+			}
+			return &daemon.PingInfo{PID: info.PID, Version: version.Version}, nil
+		}
+		tcpEndpointOccupiedForEnsure = func(daemon.DaemonEndpoint) bool {
+			occupiedCalls.Add(1)
+			return true
+		}
+		acquireStartLockForEnsure = func(context.Context) (func(), error) { return func() {}, nil }
+		cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls.Add(1); return 0 }
+		startDaemonForEnsure = func() error { startCalls.Add(1); return nil }
+		t.Cleanup(func() {
+			serverAddr = origServerAddr
+			parsedServerEndpoint = origParsed
+			getAnyRunningDaemon = origGet
+			listAllRuntimes = origListRuntimes
+			probeDaemonForEnsure = origProbe
+			tcpEndpointOccupiedForEnsure = origOccupied
+			acquireStartLockForEnsure = origAcquireStartLock
+			daemonStartTimeout = origStartTimeout
+			ensureProbeRetryDelay = origProbeDelay
+			cleanupZombieDaemons = origCleanup
+			startDaemonForEnsure = origStart
+		})
+
+		require.NoError(t, ensureDaemon())
+		assert.EqualValues(3, runtimeListCalls.Load())
+		assert.EqualValues(2, probeCalls.Load())
+		assert.EqualValues(1, occupiedCalls.Load())
+		assert.Zero(cleanupCalls.Load())
+		assert.Zero(startCalls.Load())
+	})
+}
+
+func TestDaemonStartLockHelper(t *testing.T) {
+	if os.Getenv("ROBOREV_DAEMON_START_LOCK_HELPER") != "1" {
+		t.Skip("subprocess helper")
+	}
+	dataDir := os.Getenv("ROBOREV_DAEMON_START_LOCK_DIR")
+	require.NotEmpty(t, dataDir)
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	release, err := daemon.RuntimeStore().AcquireStartLock(context.Background())
+	require.NoError(t, err)
+	defer release()
+
+	_, err = io.WriteString(os.Stdout, "locked\n")
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, os.Stdin)
+	assert.NoError(t, err)
+}
+
+func TestTCPEndpointOccupancyCheckConnectsWithoutSendingData(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+
+	endpoint := daemon.DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
+	require.True(t, isTCPEndpointOccupied(endpoint))
+	conn := <-accepted // The test waits for the local TCP connect to finish.
+	defer conn.Close()
+	// The accepted TCP socket must close without receiving an HTTP request.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	buffer := make([]byte, 1)
+	count, err := conn.Read(buffer)
+	assert.Zero(t, count)
+	assert.Equal(t, io.EOF, err)
 }
 
 func TestStartDaemonUsesAlternateAwareDiscoveryInsideStartLock(t *testing.T) {
