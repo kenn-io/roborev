@@ -130,6 +130,17 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.71.0
+
+Check these items when updating from 0.70.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| The TUI release-notes shortcut | Press `U` instead of `u`. `u` now pages up. See [TUI keyboard commands](/docs/integrations/tui/#keyboard-commands). |
+| `roborev log --db <path>` | Remove `--db`. To read logs from a daemon that uses a custom database, select that daemon with `--server`. See [Job Logs](/docs/commands/#job-logs). |
+| `roborev legacy-reviews` scripts | Keep the daemon running. The commands now work through the daemon, and `--db` only checks that the selected daemon owns that database. See [legacy review migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration). |
+| Scripts that pass `--server` | Start that daemon yourself. If it is unavailable, commands now return an error instead of starting a local daemon. |
+
 ### Upgrading to 0.70.0
 
 Check these settings when updating from 0.69.x or earlier:
