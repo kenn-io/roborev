@@ -321,30 +321,39 @@ var roborevCountedPaths = map[string]bool{
 	"init": true,
 }
 
+// pathComplete reports whether path names a whole command: export and sync take a second word.
+func pathComplete(path string) bool {
+	return path != "" && path != "export" && path != "sync"
+}
+
 // unmarkedCountedRoborevTokens matches a roborev command the CLI would count as a person's use because it lacks --from-skill.
 func unmarkedCountedRoborevTokens(tokens []string) bool {
 	if len(tokens) < 2 || filepath.Base(tokens[0]) != "roborev" {
 		return false
 	}
 	// Cobra resolves the command path past flags, so the oracle skips them too; --server takes the next token as its value.
-	var words []string
-	for i := 1; i < len(tokens); i++ {
-		if tokens[i] == "--server" {
+	// The marker counts only where no other flag can consume it as a value: before the path or right after it, as the skills write it.
+	isMarker := func(token string) bool { return token == "--from-skill" || token == "--from-skill=true" }
+	var path string
+	marked := false
+	i := 1
+	for ; i < len(tokens) && !pathComplete(path); i++ {
+		switch token := tokens[i]; {
+		case token == "--server":
 			i++
-			continue
+		case isMarker(token):
+			marked = true
+		case strings.HasPrefix(token, "-"):
+		case path == "":
+			path = token
+		default:
+			path += " " + token
 		}
-		if !strings.HasPrefix(tokens[i], "-") {
-			words = append(words, tokens[i])
-		}
 	}
-	if len(words) == 0 {
-		return false
+	if i < len(tokens) && isMarker(tokens[i]) {
+		marked = true
 	}
-	path := words[0]
-	if (path == "export" || path == "sync") && len(words) > 1 {
-		path += " " + words[1]
-	}
-	return roborevCountedPaths[path] && !slices.Contains(tokens[1:], "--from-skill")
+	return roborevCountedPaths[path] && !marked
 }
 
 // roborevCountedCommandsMarked reports whether every counted roborev command the agent ran carries --from-skill.
@@ -823,6 +832,8 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		"roborev show --from-skill --job 1 --json",
 		`roborev comment --from-skill --commenter roborev-fix --job 1 -m "checked"`,
 		"roborev close --from-skill 1",
+		"roborev show --from-skill=true --job 1 --json",
+		"roborev --from-skill status",
 		`/bin/zsh -c 'roborev comment --from-skill --job 1 "ok" && roborev close --from-skill 1'`,
 		"roborev export reviews --from-skill",
 		"roborev agent-hook fix-done --session abc",
@@ -843,6 +854,7 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		{name: "unmarked after a root flag", commands: append(slices.Clone(marked), "roborev --verbose show --job 1 --json")},
 		{name: "unmarked after a server flag", commands: append(slices.Clone(marked), "roborev --server 127.0.0.1:7373 status")},
 		{name: "unmarked two-word path with a flag between", commands: append(slices.Clone(marked), "roborev export --verbose reviews")},
+		{name: "marker consumed as a flag value", commands: append(slices.Clone(marked), "roborev comment --job 1 -m --from-skill")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
