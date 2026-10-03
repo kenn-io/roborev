@@ -173,6 +173,7 @@ jobs:
   test:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
