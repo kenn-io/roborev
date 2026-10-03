@@ -9,7 +9,7 @@
    Pass user-supplied refs as separate arguments or quoted shell variables,
    never interpolate them into shell source. Honor the requested panel and
    review type; omit optional flags when absent.
-3. Start the authorized review with `roborev review --branch` and the
+3. Start the authorized review with `roborev review --from-skill --branch` and the
    selected arguments. Do not use `--wait`: record the job ID from the enqueue
    output, then poll `roborev_list_jobs` with `repo_path` and the current branch,
    following `next_cursor` until that job is found. Read running output with

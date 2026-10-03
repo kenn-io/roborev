@@ -6,8 +6,8 @@
    as a commit and ancestor of HEAD. Require `--since` on the default branch.
    Honor `--max-iterations` (default 10). Pass refs as separate arguments or
    quoted shell variables, never interpolate them into shell source.
-3. Start the authorized review with `roborev review --since <commit>` when
-   supplied, otherwise `roborev review --branch`. Do not use `--wait` or shell
+3. Start the authorized review with `roborev review --from-skill --since <commit>` when
+   supplied, otherwise `roborev review --from-skill --branch`. Do not use `--wait` or shell
    out to the refine CLI. Record the enqueue job ID; for panels this is the
    synthesis parent.
 4. Poll `roborev_list_jobs` with `repo_path` and branch, following `next_cursor`

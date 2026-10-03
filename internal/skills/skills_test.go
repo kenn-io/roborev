@@ -1577,11 +1577,25 @@ func TestBundledSkillCommandsCarryFromSkill(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "skills")
 			_, err = InstallToPath(spec.agent, dir, new(true))
 			require.NoError(t, err)
+			mcpTotal := 0
 			for _, skill := range skills {
 				content, err := os.ReadFile(skillInstallPath(dir, skill.DirName))
 				require.NoError(t, err)
-				assert.NotContains(t, string(content), "--from-skill", "MCP-mode %s", skill.DirName)
+				// MCP-mode instructions still shell out to roborev review, named in inline code spans.
+				_, instructions, found := strings.Cut(string(content), mcpModeMarker)
+				require.True(t, found, "MCP-mode %s", skill.DirName)
+				spans := strings.Split(instructions, "`")
+				for i := 1; i < len(spans); i += 2 {
+					command := strings.Fields(spans[i])
+					if len(command) == 0 || command[0] != "roborev" {
+						continue
+					}
+					mcpTotal++
+					require.GreaterOrEqual(t, len(command), 3, "MCP-mode %s: %s", skill.DirName, spans[i])
+					assert.Equal(t, "--from-skill", command[2], "MCP-mode %s: %s", skill.DirName, spans[i])
+				}
 			}
+			assert.NotZero(t, mcpTotal)
 		})
 	}
 }

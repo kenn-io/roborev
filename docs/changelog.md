@@ -13,15 +13,16 @@ All notable changes to roborev, grouped by minor release.
     loads and on the first window focus of each later UTC day.
     `ROBOREV_TELEMETRY_ENABLED=0` turns it off with the daemon events. See
     [Telemetry](/docs/configuration/#telemetry).
-- `roborev tui` reports an anonymous `app_opened` event through the daemon each
-    time it starts, and web and TUI events carry `surface` (`web` or `tui`).
+- `roborev tui` reports an anonymous `app_opened` event through the daemon when
+    it starts, and web and TUI events carry `surface` (`web` or `tui`).
     `ROBOREV_TELEMETRY_ENABLED=0` turns it off. See
     [Telemetry](/docs/configuration/#telemetry).
 - CLI commands that work through the daemon report an anonymous `app_opened`
-    event with `surface: cli` after their first successful daemon request, the
-    daemon sends at most one `app_opened` per surface per UTC day, and commands
-    the bundled agent skills run carry `--from-skill` so they are not counted.
-    See [Telemetry](/docs/configuration/#telemetry).
+    event with `surface: cli` after their first successful daemon request. The
+    daemon now sends at most one `app_opened` per surface per UTC day, so
+    repeated web, TUI and CLI opens on the same day count once. Commands the
+    bundled agent skills run carry `--from-skill` so they are not counted. See
+    [Telemetry](/docs/configuration/#telemetry).
 
 **Improvements**
 
