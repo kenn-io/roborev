@@ -5,42 +5,137 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.71.0
+
+<small>2026-10-03</small>
+
+Diagnose setup problems with `roborev doctor`, route jobs against a daily spend
+budget, and protect the daemon with a shared key. Before updating, check the
+[0.71.0 upgrade steps](/docs/installation/#upgrading-to-0710) for the TUI
+release-notes shortcut and the removed `roborev log --db` flag.
 
 **New features**
 
-- The web UI reports an anonymous `app_opened` event through the daemon when it
-    loads and on the first window focus of each later UTC day.
-    `ROBOREV_TELEMETRY_ENABLED=0` turns it off with the daemon events. See
-    [Telemetry](/docs/configuration/#telemetry).
-- `roborev tui` reports an anonymous `app_opened` event through the daemon when
-    it starts, and web and TUI events carry `surface` (`web` or `tui`).
-    `ROBOREV_TELEMETRY_ENABLED=0` turns it off. See
-    [Telemetry](/docs/configuration/#telemetry).
-- CLI commands that work through the daemon report an anonymous `app_opened`
-    event with `surface: cli` after their first successful daemon request. The
-    daemon now sends at most one `app_opened` per surface per UTC day, so
-    repeated web, TUI and CLI opens on the same day count once. Commands the
-    bundled agent skills run carry `--from-skill` so they are not counted. See
-    [Telemetry](/docs/configuration/#telemetry).
 - `roborev doctor` diagnoses setup problems and suggests fixes. It checks config
-    files (including misspelled keys roborev ignores), the daemon, agents,
-    recent failed reviews and post-commit queueing failures, git hooks, and
-    review guidelines for the current repository. It compares the agents your
-    shell can run with the agents the daemon can run, so a daemon started with a
-    different `PATH` is easy to spot. When security reviews are enabled and the
-    repository has no review guidelines or threat model, doctor reports a
-    failure. `--json` prints the report for scripts and agents.
+    files (including misspelled keys roborev ignores and `.roborev.toml` on the
+    default branch), the daemon, agents, recent failed reviews and post-commit
+    queueing failures, git hooks, and review guidelines for the current
+    repository. It compares the agents your shell can run with the agents the
+    daemon can run, so a daemon started with a different `PATH` is easy to spot.
+    When security reviews are enabled and the repository has no review
+    guidelines or threat model, doctor reports a failure. `--json` prints the
+    report for scripts and agents. See
+    [Diagnosing Setup](/docs/commands/#diagnosing-setup).
+- Route daemon jobs to cheaper agents as recorded daily spend rises. Enable
+    `[budget]` in the global config and set a daily limit and an estimated cost
+    per job for each candidate agent. Routing is off by default. The limit is
+    soft, so reviews keep running after spend reaches it. See
+    [budget-aware agent routing](/docs/configuration/#budget-aware-agent-routing).
+- Require a shared key for daemon API access with the global `auth_key` setting.
+    Generate it with `openssl rand -hex 32`, add it to the global config, and
+    restart the daemon. CLI commands, hooks, and the TUI send the key
+    automatically. The web UI asks for it at login unless a separate browser
+    token is configured. TCP connections still use plaintext HTTP. See
+    [daemon authentication](/docs/configuration/#daemon-authentication).
+- Set `isolate_reviews = true` globally or per repository to run commit and
+    range reviews in temporary daemon-owned checkouts. You can then remove a
+    linked worktree while its review is running. Agents see committed files
+    only, and queued jobs and retries still need the registered repository path.
+    See
+    [isolated review checkouts](/docs/configuration/#isolated-review-checkouts).
+- Set `synthesis_reasoning` on a review panel to choose the reasoning level for
+    its synthesis step without changing `fix_reasoning`. This includes named
+    panels used in CI. See
+    [panel configuration](/docs/advanced/subagent-review-panels/#panels).
 
 **Improvements**
 
 - Navigate the TUI with `u`/`d` to page up/down, `g`/`G` to jump to the
     top/bottom, and `Ctrl-P`/`Ctrl-N` to move up/down. The release-notes
-    shortcut moves from `u` to uppercase `U`. See
+    shortcut moves from `u` to uppercase `U`. In the log view, `g` stops
+    following output and `G` resumes it. See
     [TUI keyboard commands](/docs/integrations/tui/#keyboard-commands).
-- Set `synthesis_reasoning` on a review panel to choose the reasoning level for
-    its synthesis step without changing `fix_reasoning`. See
-    [panel configuration](/docs/advanced/subagent-review-panels/#panels).
+- Daemons that sync through PostgreSQL now share review-search vectors. A daemon
+    imports vectors another machine already computed for the same review text
+    instead of sending that text to its embedding provider again. There is no
+    setting. See
+    [shared vectors](/docs/search/#shared-vectors-across-synced-machines).
+- CLI commands, including `roborev log` and `roborev legacy-reviews`, read and
+    change the database only through the daemon. Commands start the local daemon
+    when needed. An explicit `--server` selects a daemon you manage; if it is
+    unavailable, the command returns an error instead of starting a local
+    daemon. You no longer stop the daemon before converting or importing legacy
+    reviews. See [Global Flags](/docs/commands/#global-flags).
+- Anonymous telemetry now records opens of the web UI, the TUI, and CLI commands
+    that work through the daemon. The daemon sends at most one `app_opened`
+    event per surface (`web`, `tui`, or `cli`) per UTC day. Git hooks, agent
+    hooks, MCP, and commands run by the bundled agent skills are not counted.
+    Events also carry the install's age in hours when it is known.
+    `ROBOREV_TELEMETRY_ENABLED=0` turns all telemetry off. See
+    [Telemetry](/docs/configuration/#telemetry).
+
+**Bug fixes**
+
+- Codex structured reviews accept a valid final JSON answer when Codex writes a
+    short note before it. These reviews no longer retry three times and fall
+    back to the backup agent.
+- Native Windows Codex reviews select the `elevated` sandbox when
+    `ignore_review_user_config = true`. Codex no longer rejects every shell
+    command as `blocked by policy`. An explicit `[agent.codex.config.windows]`
+    setting takes precedence. See
+    [Windows sandbox](/docs/configuration/#windows-sandbox).
+- On Windows, paths through NTFS directory junctions work for ACP agent file
+    access and snapshot validation. ACP writes through a junction that leads
+    outside the repository are rejected, as is a junction used as `snapshot_dir`
+    inside the repository.
+- Semantic search works with embedding servers that reject a zero `dimensions`
+    field when no dimensions are configured. An embedding configuration error,
+    such as an unknown model, leaves reviews pending instead of skipping them.
+    Reviews whose text is too long or refused by content policy are still
+    skipped.
+- CI health stays unhealthy until a failed review produces usable output and
+    posts it. Queueing another attempt no longer reports recovery, failures
+    survive restarts, and a skip label clears a failure only after the skipped
+    status is published. See [CI health](/docs/advanced/streaming/#ci-health).
+- CI health no longer stays unhealthy forever when a review target turns out to
+    be an ordinary GitHub issue. Cleanup removes the stale review records after
+    GitHub confirms the number is not a pull request.
+- Reviews from linked worktrees show the repository name instead of the checkout
+    folder name. Startup corrects existing names that match a checkout folder,
+    including removed checkouts. Other custom names stay unchanged.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added `roborev doctor`
+    in [#1274](https://github.com/kenn-io/roborev/pull/1274), shared search
+    vectors in [#1285](https://github.com/kenn-io/roborev/pull/1285), and
+    daemon-owned database access with repository names in
+    [#1282](https://github.com/kenn-io/roborev/pull/1282), and fixed embedding
+    error handling in [#1279](https://github.com/kenn-io/roborev/pull/1279).
+- [Phillip Cloud](https://github.com/cpcloud) added panel `synthesis_reasoning`
+    in [#1305](https://github.com/kenn-io/roborev/pull/1305).
+- [Rod Boev](https://github.com/rodboev) added web, TUI, and CLI open reporting
+    in [#1299](https://github.com/kenn-io/roborev/pull/1299),
+    [#1300](https://github.com/kenn-io/roborev/pull/1300), and
+    [#1302](https://github.com/kenn-io/roborev/pull/1302), tagged telemetry with
+    install age in [#1283](https://github.com/kenn-io/roborev/pull/1283), and
+    fixed Codex structured reviews in
+    [#1287](https://github.com/kenn-io/roborev/pull/1287).
+- [Rusty Shackleford](https://github.com/salmonumbrella) added budget routing in
+    [#1289](https://github.com/kenn-io/roborev/pull/1289), daemon authentication
+    in [#1290](https://github.com/kenn-io/roborev/pull/1290), and TUI navigation
+    shortcuts in [#1288](https://github.com/kenn-io/roborev/pull/1288). The
+    shared vector cache builds on their design in
+    [#1236](https://github.com/kenn-io/roborev/pull/1236).
+- [Steve Francia](https://github.com/spf13) fixed Windows directory junctions in
+    [#1286](https://github.com/kenn-io/roborev/pull/1286).
+- [Wes McKinney](https://github.com/wesm) added isolated review checkouts in
+    [#1297](https://github.com/kenn-io/roborev/pull/1297), fixed the Windows
+    Codex sandbox in [#1291](https://github.com/kenn-io/roborev/pull/1291), and
+    improved CI health in [#1292](https://github.com/kenn-io/roborev/pull/1292)
+    and [#1277](https://github.com/kenn-io/roborev/pull/1277).
 
 ## 0.70.0
 
@@ -66,11 +161,6 @@ filters, search credentials, and Agent Hook reminders.
 
 **Improvements**
 
-- Daemons that sync through PostgreSQL now share review-search vectors. A daemon
-    imports vectors another machine already computed for the same review text
-    instead of sending that text to its embedding provider again. There is no
-    setting. See
-    [shared vectors](/docs/search/#shared-vectors-across-synced-machines).
 - Open the TUI directly to the current repository and branch, including in
     linked worktrees. Press `Esc` to clear the filters. The settings are now
     `filter_repo` and `filter_branch` under `[tui]`; the old `auto_filter_repo`

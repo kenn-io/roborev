@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-02
+last_edited: 2026-10-03
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -13,88 +13,6 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **Project defaults** in global `projects` tables, matched by Git remote
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
-
-## Budget-aware agent routing
-
-A global soft daily budget can route fresh daemon jobs to cheaper agents as
-recorded spend rises. Routing is disabled by default. Add this to your global
-`~/.roborev/config.toml`:
-
-```toml
-[budget]
-enabled = true
-daily_limit_cents = 500
-reserve_floor_cents = 100
-
-[budget.agent_costs]
-claude-code = 15
-codex = 12
-gemini = 5
-```
-
-Prices are positive integer estimates of cents per job. Only listed, installed
-agents participate; command overrides and named ACP agents are supported. If the
-configured agent has no listed price, it keeps ordinary routing, even at the
-cap: the daemon cannot compare its cost with the candidates. Candidates for
-custom review types must support structured review output. Quote ACP identities
-in TOML, for example `"acp.reviewer" = 5`. Aliases are accepted, but listing two
-names for the same agent is an error. The daily limit must be positive when
-enabled, and the reserve must be between zero and the limit.
-
-Below `daily_limit_cents - reserve_floor_cents`, the configured agent runs. At
-that threshold, candidates are scored by quality divided by estimated cost: the
-configured agent gets weight 2 and alternatives get weight 1. At or above the
-daily limit, the cheapest available candidate runs. Ties prefer the configured
-agent, then alphabetical agent name. Agents in quota cooldown are excluded. The
-reserve uses the same weights throughout; scoring does not change gradually as
-spend approaches the cap. The cap never stops jobs; missing cost data,
-unavailable candidates, or a spend-query error preserve ordinary agent
-resolution and quota failover.
-
-If repository config cannot be read, jobs with stored prompts skip budget
-substitution and use ordinary agent resolution. Budget routing does not make
-repository config mandatory for these jobs.
-
-Spend uses recorded costs on currently retained terminal job rows completed
-within the UTC calendar day, across all repositories. With PostgreSQL sync, this
-includes other machines' jobs once their costs arrive through sync; it is not a
-per-machine budget. Failed, canceled and skipped jobs contribute when their cost
-was captured or backfilled. Jobs with neither an agent invocation nor recorded
-usage are excluded. Unpriced jobs are unknown rather than free, so measured
-spend may understate usage. Rerunning, retrying, or failing over a job replaces
-its previous attempt telemetry and can reduce measured spend. This is an
-approximate routing budget, not an accounting ledger. Agent prices remain static
-estimates; they are not learned from historical costs.
-
-Fresh review, range, dirty, task/analysis, insights, compact and background fix
-jobs can be routed, including jobs with an explicit `--agent`. Explicit
-model/provider requests, nonempty sessions (including automatic session reuse),
-panel/CI execution choices, requests using the offline `test` agent, frozen
-experiment assignments, retries, quota failover, classification and synthesis
-preserve their selected execution contract. Their recorded costs still
-contribute to spend. Substitutions use the new adapter's default model and
-provider, or a model explicitly paired with the configured backup. When routing
-selects that backup, the original agent becomes the failover target for this
-attempt. A manual rerun on this daemon restores the pre-budget agent and backup
-settings, resolves its model again, and applies the current budget. Selecting an
-agent explicitly for the rerun replaces that original choice. The routing lock
-and original choices are local scheduling state and are not synced to other
-machines.
-
-The daemon applies config reloads to subsequent job decisions. Spend is cached
-for up to 10 seconds, refreshes at UTC midnight, and is invalidated when this
-worker pool records a completed job or new cost data, or the daemon accepts a
-manual rerun. Concurrent jobs may start before another job's cost is available.
-
-You can edit individual prices through the CLI:
-
-```bash
-roborev config set budget.daily_limit_cents 500 --global
-roborev config set budget.agent_costs.codex 12 --global
-roborev config get budget.agent_costs.codex --global
-roborev config set budget.enabled true --global
-roborev config set budget.agent_costs.codex '' --global  # remove a candidate
-```
 
 ## The `config` Command
 
@@ -282,99 +200,6 @@ These settings change models and reasoning, not agents or providers. Use a model
 accepted by each affected agent when overriding a mixed-agent panel. Backup
 models retain their existing failover behavior. Settings for other projects are
 unaffected.
-
-## Daemon authentication
-
-Set a shared key in the daemon owner's global config to require authentication
-for all native daemon APIs, including reads, shutdown, streaming, profiling, MCP
-and the OpenAPI document. Authentication is disabled when `auth_key` is empty
-(the default). This key is global-only; repo config cannot override it.
-
-Generate 32 random bytes encoded as 64 lowercase hex characters:
-
-```bash
-openssl rand -hex 32
-```
-
-Paste the output into the global config:
-
-```toml
-# ~/.roborev/config.toml
-auth_key = "<paste-generated-key>"
-```
-
-Nonempty keys must use this format. Short keys and other encodings are rejected.
-Generate a new key rather than padding or repeating a password to fit the
-required length; format validation cannot verify randomness.
-
-Keep this file readable only by the account that owns the daemon
-(`chmod 600 ~/.roborev/config.toml` on Unix). Roborev's global config writes use
-`0600`. `roborev config get auth_key --global` and config lists mask the key.
-Invalid keys or malformed config prevent daemon startup. An explicitly supplied
-`daemon run --config` path must exist.
-
-The CLI, hooks and TUI read the key from their global config automatically,
-including for `--server` and Unix sockets. To allow a different account, give it
-the same `auth_key` in its own global config. When the daemon uses a custom
-`--config` file, configure the matching key in each client's usual global config
-too. `ROBOREV_DATA_DIR` changes the global config directory as usual. The key is
-not published in daemon runtime files.
-
-If posting a fix comment or enqueueing its follow-up review returns HTTP 401,
-the CLI reports access denied and directs you to check `auth_key` in the global
-config. It does not retry the write or start daemon recovery.
-
-The browser UI requires this key at login when no explicit `[web]` token or
-trusted proxy authentication is configured. An explicit browser token remains an
-independent login credential. When `auth_key` is enabled with proxy mode, the
-reverse proxy must supply `Authorization: Bearer <key>` to the backend
-`/api/ui/session` endpoints (below `web.base_path`, if configured). Forwarding
-headers alone cannot authenticate the proxy on a shared host. Browser
-authentication keeps its existing session, origin and CSRF checks.
-
-Auth changes require a daemon restart. Stop the daemon while the old key is
-still configured, update the key in the daemon and client config files, then
-start it again:
-
-```bash
-roborev daemon stop
-# Edit auth_key in the daemon and client global config files.
-roborev daemon start
-```
-
-For a service-managed daemon, stop the service, update the configs, then start
-the service. Editing or deleting config while the daemon is running does not
-change its active key. Existing CLI/TUI HTTP clients reread their config for
-later requests, so they use the updated key after restart. If discovery failed
-before a client selected a daemon, restart that client after correcting its
-config so it can discover the endpoint again.
-
-Daemon HTTP clients validate `auth_key` separately from other settings. An
-unrelated invalid setting does not prevent them from using a valid key.
-Malformed TOML or an invalid `auth_key` prevents requests from being sent.
-
-MCP installers do not configure HTTP authentication headers. Use the default
-stdio transport when `auth_key` is set; see
-[MCP Server](/docs/integrations/mcp/).
-
-Custom API clients send the key in an HTTP header:
-
-```bash
-curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
-  http://127.0.0.1:7373/api/status
-```
-
-`ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
-override. Missing or incorrect credentials return HTTP 401. Query-string keys
-are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
-Roborev clients scope keys to their configured endpoint and do not follow
-redirects.
-
-This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
-not encrypt or authenticate the listening process. A process impersonating a
-localhost TCP endpoint can capture a Bearer key; use protected Unix sockets on
-shared machines where that threat matters. It does not isolate processes that
-already run as the daemon owner's account or can read its config.
 
 ## Per-Repository Configuration
 
@@ -1543,6 +1368,99 @@ startup. The socket is removed on graceful shutdown.
     Unix domain sockets are not supported on Windows. Socket path length is limited
     to 104 bytes on macOS and 108 bytes on Linux.
 
+### Daemon authentication
+
+Set a shared key in the daemon owner's global config to require authentication
+for all native daemon APIs, including reads, shutdown, streaming, profiling, MCP
+and the OpenAPI document. Authentication is disabled when `auth_key` is empty
+(the default). This key is global-only; repo config cannot override it.
+
+Generate 32 random bytes encoded as 64 lowercase hex characters:
+
+```bash
+openssl rand -hex 32
+```
+
+Paste the output into the global config:
+
+```toml
+# ~/.roborev/config.toml
+auth_key = "<paste-generated-key>"
+```
+
+Nonempty keys must use this format. Short keys and other encodings are rejected.
+Generate a new key rather than padding or repeating a password to fit the
+required length; format validation cannot verify randomness.
+
+Keep this file readable only by the account that owns the daemon
+(`chmod 600 ~/.roborev/config.toml` on Unix). Roborev's global config writes use
+`0600`. `roborev config get auth_key --global` and config lists mask the key.
+Invalid keys or malformed config prevent daemon startup. An explicitly supplied
+`daemon run --config` path must exist.
+
+The CLI, hooks and TUI read the key from their global config automatically,
+including for `--server` and Unix sockets. To allow a different account, give it
+the same `auth_key` in its own global config. When the daemon uses a custom
+`--config` file, configure the matching key in each client's usual global config
+too. `ROBOREV_DATA_DIR` changes the global config directory as usual. The key is
+not published in daemon runtime files.
+
+If posting a fix comment or enqueueing its follow-up review returns HTTP 401,
+the CLI reports access denied and directs you to check `auth_key` in the global
+config. It does not retry the write or start daemon recovery.
+
+The browser UI requires this key at login when no explicit `[web]` token or
+trusted proxy authentication is configured. An explicit browser token remains an
+independent login credential. When `auth_key` is enabled with proxy mode, the
+reverse proxy must supply `Authorization: Bearer <key>` to the backend
+`/api/ui/session` endpoints (below `web.base_path`, if configured). Forwarding
+headers alone cannot authenticate the proxy on a shared host. Browser
+authentication keeps its existing session, origin and CSRF checks.
+
+Auth changes require a daemon restart. Stop the daemon while the old key is
+still configured, update the key in the daemon and client config files, then
+start it again:
+
+```bash
+roborev daemon stop
+# Edit auth_key in the daemon and client global config files.
+roborev daemon start
+```
+
+For a service-managed daemon, stop the service, update the configs, then start
+the service. Editing or deleting config while the daemon is running does not
+change its active key. Existing CLI/TUI HTTP clients reread their config for
+later requests, so they use the updated key after restart. If discovery failed
+before a client selected a daemon, restart that client after correcting its
+config so it can discover the endpoint again.
+
+Daemon HTTP clients validate `auth_key` separately from other settings. An
+unrelated invalid setting does not prevent them from using a valid key.
+Malformed TOML or an invalid `auth_key` prevents requests from being sent.
+
+MCP installers do not configure HTTP authentication headers. Use the default
+stdio transport when `auth_key` is set; see
+[MCP Server](/docs/integrations/mcp/).
+
+Custom API clients send the key in an HTTP header:
+
+```bash
+curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
+  http://127.0.0.1:7373/api/status
+```
+
+`ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
+override. Missing or incorrect credentials return HTTP 401. Query-string keys
+are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
+Roborev clients scope keys to their configured endpoint and do not follow
+redirects.
+
+This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
+not encrypt or authenticate the listening process. A process impersonating a
+localhost TCP endpoint can capture a Bearer key; use protected Unix sockets on
+shared machines where that threat matters. It does not isolate processes that
+already run as the daemon owner's account or can read its config.
+
 ### Persistent Daemon
 
 The daemon starts automatically when you run `roborev init` or any command that
@@ -1823,6 +1741,88 @@ defensiveness, not part of the contract.
 A session priced at exactly zero must send an explicit `0` (or `0`
 microdollars); absent is not the same as free. Flagging `has_cost` with neither
 field is a schema error.
+
+### Budget-aware agent routing
+
+A global soft daily budget can route fresh daemon jobs to cheaper agents as
+recorded spend rises. Routing is disabled by default. Add this to your global
+`~/.roborev/config.toml`:
+
+```toml
+[budget]
+enabled = true
+daily_limit_cents = 500
+reserve_floor_cents = 100
+
+[budget.agent_costs]
+claude-code = 15
+codex = 12
+gemini = 5
+```
+
+Prices are positive integer estimates of cents per job. Only listed, installed
+agents participate; command overrides and named ACP agents are supported. If the
+configured agent has no listed price, it keeps ordinary routing, even at the
+cap: the daemon cannot compare its cost with the candidates. Candidates for
+custom review types must support structured review output. Quote ACP identities
+in TOML, for example `"acp.reviewer" = 5`. Aliases are accepted, but listing two
+names for the same agent is an error. The daily limit must be positive when
+enabled, and the reserve must be between zero and the limit.
+
+Below `daily_limit_cents - reserve_floor_cents`, the configured agent runs. At
+that threshold, candidates are scored by quality divided by estimated cost: the
+configured agent gets weight 2 and alternatives get weight 1. At or above the
+daily limit, the cheapest available candidate runs. Ties prefer the configured
+agent, then alphabetical agent name. Agents in quota cooldown are excluded. The
+reserve uses the same weights throughout; scoring does not change gradually as
+spend approaches the cap. The cap never stops jobs; missing cost data,
+unavailable candidates, or a spend-query error preserve ordinary agent
+resolution and quota failover.
+
+If repository config cannot be read, jobs with stored prompts skip budget
+substitution and use ordinary agent resolution. Budget routing does not make
+repository config mandatory for these jobs.
+
+Spend uses recorded costs on currently retained terminal job rows completed
+within the UTC calendar day, across all repositories. With PostgreSQL sync, this
+includes other machines' jobs once their costs arrive through sync; it is not a
+per-machine budget. Failed, canceled and skipped jobs contribute when their cost
+was captured or backfilled. Jobs with neither an agent invocation nor recorded
+usage are excluded. Unpriced jobs are unknown rather than free, so measured
+spend may understate usage. Rerunning, retrying, or failing over a job replaces
+its previous attempt telemetry and can reduce measured spend. This is an
+approximate routing budget, not an accounting ledger. Agent prices remain static
+estimates; they are not learned from historical costs.
+
+Fresh review, range, dirty, task/analysis, insights, compact and background fix
+jobs can be routed, including jobs with an explicit `--agent`. Explicit
+model/provider requests, nonempty sessions (including automatic session reuse),
+panel/CI execution choices, requests using the offline `test` agent, frozen
+experiment assignments, retries, quota failover, classification and synthesis
+preserve their selected execution contract. Their recorded costs still
+contribute to spend. Substitutions use the new adapter's default model and
+provider, or a model explicitly paired with the configured backup. When routing
+selects that backup, the original agent becomes the failover target for this
+attempt. A manual rerun on this daemon restores the pre-budget agent and backup
+settings, resolves its model again, and applies the current budget. Selecting an
+agent explicitly for the rerun replaces that original choice. The routing lock
+and original choices are local scheduling state and are not synced to other
+machines.
+
+The daemon applies config reloads to subsequent job decisions. Spend is cached
+for up to 10 seconds, refreshes at UTC midnight, and is invalidated when this
+worker pool records a completed job or new cost data, or the daemon accepts a
+manual rerun. Concurrent jobs may start before another job's cost is available.
+
+You can edit individual prices through the CLI:
+
+```bash
+roborev config set budget.daily_limit_cents 500 --global
+roborev config set budget.agent_costs.codex 12 --global
+roborev config get budget.agent_costs.codex --global
+roborev config set budget.enabled true --global
+roborev config set budget.agent_costs.codex '' --global  # remove a candidate
+```
 
 ### Agentic Mode
 

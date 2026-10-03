@@ -1187,7 +1187,7 @@ With `--json`, the report has this shape. Check IDs are stable.
 
 ```json
 {
-  "version": "v0.70.0",
+  "version": "v0.71.0",
   "repo": "/path/to/repo",
   "checks": [
     {
