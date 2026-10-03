@@ -123,7 +123,9 @@ func looksLikeFlagValue(token string) bool {
 
 // isProcessAlive checks whether a process with the given PID exists.
 // It uses signal 0 which doesn't actually send a signal but checks for existence.
-func isProcessAlive(pid int) bool {
+var isProcessAlive = isProcessAliveImpl
+
+func isProcessAliveImpl(pid int) bool {
 	process, _ := os.FindProcess(pid)
 	err := process.Signal(syscall.Signal(0))
 	return err == nil || errors.Is(err, syscall.EPERM)

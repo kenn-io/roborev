@@ -38,15 +38,9 @@ to the current branch. Use = syntax for explicit values:
 				return fmt.Errorf("daemon error: %w", err)
 			}
 
-			var ep daemon.DaemonEndpoint
-			if addr == "" {
-				ep = getDaemonEndpoint()
-			} else {
-				var err error
-				ep, err = daemon.ParseEndpoint(addr)
-				if err != nil {
-					return fmt.Errorf("--addr: %w", err)
-				}
+			ep, err := tuiDaemonEndpoint(addr)
+			if err != nil {
+				return err
 			}
 
 			if cmd.Flags().Changed("repo") {
@@ -105,4 +99,15 @@ to the current branch. Use = syntax for explicit values:
 	)
 
 	return cmd
+}
+
+func tuiDaemonEndpoint(addr string) (daemon.DaemonEndpoint, error) {
+	if addr == "" {
+		return getDaemonEndpoint(), nil
+	}
+	ep, err := daemon.ParseEndpoint(addr)
+	if err != nil {
+		return daemon.DaemonEndpoint{}, fmt.Errorf("--addr: %w", err)
+	}
+	return pinRuntimeTLSCertificate(ep), nil
 }

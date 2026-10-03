@@ -9,7 +9,6 @@ import (
 
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -27,7 +26,7 @@ func loadClientAuthKey() (string, error) {
 // HTTPClientWithAuthKey uses an explicit startup key for daemon readiness.
 // Ordinary CLI and TUI clients use HTTPClient to load the global key instead.
 func (e DaemonEndpoint) HTTPClientWithAuthKey(timeout time.Duration, key string) *http.Client {
-	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) { return key, nil })
+	return e.authenticatedClient(timeout, func() (string, error) { return key, nil })
 }
 
 // WithAccessError prevents an endpoint-selection failure from falling back to
