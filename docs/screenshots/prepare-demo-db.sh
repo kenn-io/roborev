@@ -173,6 +173,8 @@ all_repo_rows = src.execute("SELECT * FROM repos").fetchall()
 if not all_repo_rows:
     raise SystemExit("source database has no repos")
 repo_rows = []
+repo_alias = {}
+matched_repo_rows = []
 for name in allowed_repos:
     expected = canonical_repos[name]
     matches = [
@@ -180,14 +182,18 @@ for name in allowed_repos:
         for row in all_repo_rows
         if row["name"] == name and repo_matches_canonical(row, expected)
     ]
-    if len(matches) != 1:
-        detail = "missing" if len(matches) == 0 else f"ambiguous ({len(matches)} matches)"
-        raise SystemExit(f"public docs repo {name!r} is {detail}; expected canonical {expected}")
-    repo_rows.append(matches[0])
+    if not matches:
+        raise SystemExit(f"public docs repo {name!r} is missing; expected canonical {expected}")
+    # Each checkout and linked worktree of a repository has its own row with the
+    # same name and identity. Merge them into one demo repo.
+    primary = min(matches, key=lambda row: row["id"])
+    repo_rows.append(primary)
+    matched_repo_rows.extend(matches)
+    for row in matches:
+        repo_alias[row["id"]] = primary["id"]
 
-repo_by_id = {row["id"]: row for row in repo_rows}
-repo_ids = tuple(repo_by_id)
-repo_roots = {row["root_path"]: f"/repos/{row['name']}" for row in repo_rows}
+repo_ids = tuple(repo_alias)
+repo_roots = {row["root_path"]: f"/repos/{row['name']}" for row in matched_repo_rows}
 
 
 def sanitize_text(value):
@@ -261,15 +267,7 @@ def row_value(row, key, default=""):
 
 
 def review_is_failing(row):
-    verdict = row["review_verdict_bool"]
-    if verdict is not None:
-        return int(verdict) == 0
-    output = row["review_output"] or ""
-    if re.search(r"\bP/F:\s*F\b", output, re.IGNORECASE):
-        return True
-    if re.search(r"^\s*(?:[-*]\s*)?(?:Critical|High|Medium|Low)\s*[:\-\u2013\u2014]", output, re.IGNORECASE | re.MULTILINE):
-        return True
-    return False
+    return int(row["review_verdict_bool"]) == 0
 
 
 status_clause = qmarks(len(review_statuses))
@@ -278,7 +276,6 @@ candidate_rows = src.execute(
     SELECT
       j.*,
       c.subject AS commit_subject,
-      rv.output AS review_output,
       rv.verdict_bool AS review_verdict_bool
     FROM review_jobs j
     JOIN commits c ON c.id = j.commit_id
@@ -286,7 +283,8 @@ candidate_rows = src.execute(
     WHERE j.repo_id IN ({qmarks(len(repo_ids))})
       AND j.status IN ({status_clause})
       AND j.commit_id IS NOT NULL
-      AND COALESCE(rv.output, '') <> ''
+      AND COALESCE(rv.structured_output, '') <> ''
+      AND rv.verdict_bool IS NOT NULL
       AND COALESCE(NULLIF(j.job_type, ''), 'review') = 'review'
       AND COALESCE(j.dirty_files, '') IN ('', '[]', 'null')
     ORDER BY datetime(COALESCE(j.finished_at, j.started_at, j.enqueued_at)) DESC, j.id DESC
@@ -294,7 +292,7 @@ candidate_rows = src.execute(
     repo_ids + review_statuses,
 ).fetchall()
 if not candidate_rows:
-    raise SystemExit("no completed reviewed jobs found for public docs repos")
+    raise SystemExit("no completed structured reviews found for public docs repos")
 
 failing = [row for row in candidate_rows if review_is_failing(row)]
 passing = [row for row in candidate_rows if not review_is_failing(row)]
@@ -331,11 +329,19 @@ for row in repo_rows:
         },
     )
 
+# Merged checkouts can each record the same commit; keep one row per SHA.
+commit_id_map = {}
+commit_by_key = {}
 if commit_ids:
     for row in src.execute(
-        f"SELECT * FROM commits WHERE id IN ({qmarks(len(commit_ids))})", commit_ids
+        f"SELECT * FROM commits WHERE id IN ({qmarks(len(commit_ids))}) ORDER BY id",
+        commit_ids,
     ):
-        insert_row("commits", row)
+        key = (repo_alias[row["repo_id"]], row["sha"])
+        if key not in commit_by_key:
+            commit_by_key[key] = row["id"]
+            insert_row("commits", row, {"repo_id": key[0]})
+        commit_id_map[row["id"]] = commit_by_key[key]
 
 for row in selected_jobs:
     insert_row(
@@ -343,6 +349,8 @@ for row in selected_jobs:
         row,
         {
             "id": job_id_map[row["id"]],
+            "repo_id": repo_alias[row["repo_id"]],
+            "commit_id": commit_id_map[row["commit_id"]],
             "dirty_files": "[]",
             "error": None,
             "source_machine_id": None,
@@ -425,7 +433,7 @@ copied_failures = sum(1 for row in selected_jobs if review_is_failing(row))
 copied_passes = len(selected_jobs) - copied_failures
 print("Demo database created successfully")
 print(f"Repos: {len(repo_rows)}")
-print(f"Commits: {len(commit_ids)}")
+print(f"Commits: {len(commit_by_key)}")
 print(f"Review Jobs: {len(selected_jobs)}")
 print(f"Failing Reviews: {copied_failures}")
 print(f"Passing Reviews: {copied_passes}")
