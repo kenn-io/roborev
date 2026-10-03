@@ -100,6 +100,9 @@ func (a *OpenCodeAgent) Review(
 	output io.Writer,
 ) (string, error) {
 	args := a.buildArgs()
+	if planningReadOnly(ctx) {
+		args = append(args, "--agent", "plan")
+	}
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "opencode",

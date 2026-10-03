@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -123,10 +124,15 @@ func (a *KiloAgent) Review(
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
+	args := a.buildArgs()
+	if planningReadOnly(ctx) {
+		args = slices.DeleteFunc(args, func(arg string) bool { return arg == "--auto" })
+		args = append(args, "--agent", "plan")
+	}
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:          "kilo",
 		Command:       a.Command,
-		Args:          a.buildArgs(),
+		Args:          args,
 		Dir:           repoPath,
 		Stdin:         strings.NewReader(prompt),
 		Output:        output,

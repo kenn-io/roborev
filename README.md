@@ -123,6 +123,8 @@ For fully automated iteration (advanced feature), use `refine`:
 
 ```bash
 roborev refine                  # Fix, re-review, repeat until passing
+roborev refine --plan            # Plan each fix before editing
+roborev refine --plan-only       # Inspect plans for existing failed reviews
 ```
 
 `refine` runs in an isolated worktree and loops: fix findings, wait for

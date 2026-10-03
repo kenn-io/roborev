@@ -566,6 +566,8 @@ roborev refine                   # Fix failed reviews on branch
 roborev refine --max-iterations 5
 roborev refine --since HEAD~3    # Refine specific range
 roborev refine --quiet           # Show elapsed time only
+roborev refine --plan            # Plan each fix before editing
+roborev refine --plan-only       # Print plans for existing failures
 roborev refine --list            # Preview what would be refined
 roborev refine --all-branches    # Refine all branches with failures
 roborev refine --branch feature  # Validate branch before refining
@@ -579,6 +581,8 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
+| `--plan` | Produce and store a read-only plan before each fix |
+| `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
 | `--branch <name>` | Validate current branch before refining |
 | `--all-branches` | Discover and refine all branches with failed reviews (implies `--open`) |
@@ -587,6 +591,12 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--quiet` | Only show progress/elapsed time |
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+
+`--plan-only` snapshots completed failed reviews in the selected branch or
+`--since` range, including range reviews. It skips passing and pending reviews
+and does not queue re-reviews. With `--all-branches`, it analyzes local branch
+heads in detached worktrees without switching your checkout. Plans are printed
+even with `--quiet`. `--list` cannot be combined with either planning flag.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
@@ -602,6 +612,8 @@ roborev fix                        # Fix all open reviews on this branch
 roborev fix 123                    # Fix a specific review by job ID
 roborev fix 42 43 44               # Fix multiple reviews sequentially
 roborev fix --batch                # Batch all open into one agent prompt
+roborev fix --plan                 # Plan, then implement
+roborev fix --plan-only --batch    # Print a joint plan without edits
 roborev fix --batch 42 43 44       # Batch specific jobs into one prompt
 roborev fix --batch-size 5         # Pack up to 5 reviews per agent invocation
 roborev fix --resume               # Reuse agent session across calls
@@ -619,12 +631,38 @@ roborev fix --min-severity medium  # Skip low-severity findings
 | `--quiet` | Suppress agent output |
 | `--branch <name>` | Filter by branch (default: current branch) |
 | `--all-branches` | Include open jobs from all branches |
+| `--plan` | Produce and store a read-only plan before each fix or batch |
+| `--plan-only` | Print and store plans without editing, committing, enqueueing, or closing reviews |
 | `--batch` | Concatenate multiple reviews into a single agent prompt instead of fixing one at a time |
 | `--batch-size <n>` | Pack up to N reviews into each agent invocation, bounded by `max_prompt_size`. Multiple invocations are issued when more than N reviews are open. Mutually exclusive with `--batch` and `--list`. |
 | `--resume` | Reuse the agent's session ID across calls within a single fix run so chained fixes build on prior context |
 | `--list` | List open reviews with details (job ID, ref, branch, agent, verdict) without running any fixes |
 | `--newest-first` | Process jobs newest first instead of oldest first |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+
+Planned fixes require a clean working tree. Each planning call uses a fresh
+session in a disposable worktree with read-only agent settings. The plan covers
+root causes, file/function changes, their order, and verification risks. It is
+stored as a `roborev-plan` comment and included before the findings during
+implementation. Batch mode shares one plan across the batch's reviews.
+`--plan-only` takes one snapshot of open jobs and exits; plans still print with
+`--quiet`. Planning errors stop implementation. Both phases use the complete
+prompt file transport when their context exceeds the configured inline
+threshold. `--list` is incompatible with either flag, and `--resume` is
+incompatible with `--plan-only`. With `--plan --resume`, only implementation
+resumes a session.
+
+When the repository has both Superpowers `brainstorming` and `writing-plans`
+skills under `.agents/skills`, `.claude/skills`, or `.pi/skills`, planning
+includes their design and ordered-step discipline. Namespaced directories and
+symlinks are supported. Superpowers is optional, and skill discovery does not
+enable planning by itself.
+
+For background fixes, set `plan_first: true` on `POST /api/job/fix`. In the TUI,
+press `F` to open the fix panel and `Ctrl+P` to toggle **Plan first** before
+submitting. Completed fix results show separate Plan and Implementation sections
+alongside the patch. Queued phase requests survive daemon restarts, and retries
+run a fresh planning pass.
 
 For foreground `fix` and `analyze --fix` flows, the selected agent owns the
 commit. `fix_commit_author` and `fix_commit_co_authored_by` are included as

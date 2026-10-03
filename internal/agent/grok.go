@@ -172,6 +172,25 @@ var grokReviewToolNames = []string{
 
 var grokReviewTools = strings.Join(grokReviewToolNames, ",")
 
+// Grok planning does not need a shell: the complete plan prompt carries the
+// requested context, and these tools can inspect files without writing them.
+var grokPlanningToolNames = []string{"read_file", "grep", "list_dir"}
+
+var grokPlanningTools = strings.Join(grokPlanningToolNames, ",")
+
+var grokPlanningDisallowedTools = strings.Join(grokPlanningDisallowedToolNames(), ",")
+
+func grokPlanningDisallowedToolNames() []string {
+	out := make([]string, 0, len(grokDefaultToolNames)-len(grokPlanningToolNames))
+	for _, name := range grokDefaultToolNames {
+		if slices.Contains(grokPlanningToolNames, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 func grokMutatingToolNames() []string {
 	out := make([]string, 0, len(grokDefaultToolNames))
 	for _, name := range grokDefaultToolNames {
@@ -321,33 +340,57 @@ func (a *GrokAgent) sandboxProfile() string {
 	return grokSandboxReadOnly
 }
 
+// planningSandboxProfile ignores configured writable profiles. Planning uses
+// read-only by default and only uses workspace after the read-only sandbox is
+// refused; the planning tool allowlist remains read-only on that retry.
+func (a *GrokAgent) planningSandboxProfile() string {
+	if a.fallbackSandbox != "" {
+		return a.fallbackSandbox
+	}
+	return grokSandboxReadOnly
+}
+
 // wrapSandboxRefusal marks err with errGrokSandboxRefused when stderr shows
 // Grok refusing to start because it cannot apply the sandbox profile. Grok's
 // read-only profile masks container runtime sockets and refuses a socket
 // that is a symlink (OrbStack publishes /var/run/docker.sock that way).
 // Agentic runs pass no --sandbox, so a refusal there is not ours to explain.
-func (a *GrokAgent) wrapSandboxRefusal(err error, stderr string) error {
-	if a.Agentic || AllowUnsafeAgents() ||
+func (a *GrokAgent) wrapSandboxRefusal(ctx context.Context, err error, stderr string) error {
+	if effectiveAgentic(ctx, a.Agentic) ||
 		!strings.Contains(stderr, "sandbox") || !strings.Contains(stderr, "Refusing to start") {
 		return err
+	}
+	profile := a.sandboxProfile()
+	if planningReadOnly(ctx) {
+		profile = a.planningSandboxProfile()
+		return fmt.Errorf(
+			"%w\n%w: could not apply the %q profile for read-only planning; check Grok sandbox support",
+			err, errGrokSandboxRefused, profile,
+		)
 	}
 	return fmt.Errorf(
 		"%w\n%w: could not apply the %q profile; set sandbox under [agent.grok] in "+
 			"~/.roborev/config.toml to \"workspace\", a custom ~/.grok/sandbox.toml profile, or \"off\"",
-		err, errGrokSandboxRefused, a.sandboxProfile(),
+		err, errGrokSandboxRefused, profile,
 	)
 }
 
 // sandboxFallback returns a copy of the agent that retries under the
-// workspace profile when the default read-only profile was refused.
-// An explicitly configured [agent.grok] sandbox profile is never replaced.
-func (a *GrokAgent) sandboxFallback(err error) (*GrokAgent, bool) {
-	if !errors.Is(err, errGrokSandboxRefused) || a.Sandbox != "" || a.fallbackSandbox != "" {
+// workspace profile when a sandbox refusal is recoverable. Non-planning runs
+// keep explicit [agent.grok] profiles; planning retries keep their read-only
+// tool allowlist if the profile must change.
+func (a *GrokAgent) sandboxFallback(ctx context.Context, err error) (*GrokAgent, bool) {
+	if !errors.Is(err, errGrokSandboxRefused) ||
+		(!planningReadOnly(ctx) && a.Sandbox != "") || a.fallbackSandbox != "" {
 		return nil, false
+	}
+	profile := a.sandboxProfile()
+	if planningReadOnly(ctx) {
+		profile = a.planningSandboxProfile()
 	}
 	log.Printf(
 		"Warning: grok could not start its %q sandbox profile; retrying under %q: %v",
-		grokSandboxReadOnly, grokSandboxWorkspace, err,
+		profile, grokSandboxWorkspace, err,
 	)
 	fallback := *a
 	fallback.fallbackSandbox = grokSandboxWorkspace
@@ -364,6 +407,20 @@ func appendGrokReviewSafetyArgs(args []string, sandbox string) []string {
 	args = append(args, "--tools", grokReviewTools)
 	// Deny MCP meta and all mutating defaults that can outlive the allowlist.
 	args = append(args, "--disallowed-tools", grokMutatingDisallowedTools)
+	args = append(args, "--no-subagents")
+	args = append(args, "--disable-web-search")
+	return args
+}
+
+// appendGrokPlanningSafetyArgs keeps plan sessions read-only even when the
+// fallback workspace sandbox is needed: shell and every mutating tool stay
+// outside the positive allowlist, while the denylist closes Grok's retained
+// MCP meta-tools.
+func appendGrokPlanningSafetyArgs(args []string, sandbox string) []string {
+	args = append(args, "--sandbox", sandbox)
+	args = append(args, "--deny", grokDenyEditRule)
+	args = append(args, "--tools", grokPlanningTools)
+	args = append(args, "--disallowed-tools", grokPlanningDisallowedTools)
 	args = append(args, "--no-subagents")
 	args = append(args, "--disable-web-search")
 	return args
@@ -394,6 +451,14 @@ func appendGrokClassifySafetyArgs(args []string, sandbox string) []string {
 // large prompts never hit OS argument limits (Grok headless does not read
 // the prompt from stdin).
 func (a *GrokAgent) buildArgs(agenticMode bool, promptFile string) []string {
+	return a.buildArgsWithSafety(agenticMode, false, promptFile)
+}
+
+func (a *GrokAgent) buildPlanningArgs(promptFile string) []string {
+	return a.buildArgsWithSafety(false, true, promptFile)
+}
+
+func (a *GrokAgent) buildArgsWithSafety(agenticMode, planning bool, promptFile string) []string {
 	args := []string{
 		"--no-auto-update",
 		"--output-format", grokOutputFormatStreamingJSON,
@@ -412,6 +477,8 @@ func (a *GrokAgent) buildArgs(agenticMode bool, promptFile string) []string {
 	if agenticMode {
 		// Agentic mode: Grok auto-approves tools (Claude's --dangerously-skip-permissions analogue).
 		args = append(args, "--always-approve")
+	} else if planning {
+		args = appendGrokPlanningSafetyArgs(args, a.planningSandboxProfile())
 	} else {
 		args = appendGrokReviewSafetyArgs(args, a.sandboxProfile())
 	}
@@ -428,15 +495,13 @@ func (a *GrokAgent) buildArgs(agenticMode bool, promptFile string) []string {
 // Review runs a code review through Grok Build headless mode.
 func (a *GrokAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	result, err := a.run(ctx, repoPath, prompt, output)
-	if fallback, ok := a.sandboxFallback(err); ok {
+	if fallback, ok := a.sandboxFallback(ctx, err); ok {
 		return fallback.run(ctx, repoPath, prompt, output)
 	}
 	return result, err
 }
 
 func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.Writer) (string, error) {
-	agenticMode := a.Agentic || AllowUnsafeAgents()
-
 	// Grok headless does not read the prompt from stdin; use a temp file
 	// like Pi to avoid OS command-line length limits.
 	tmpFile, err := os.CreateTemp("", "roborev-grok-prompt-*.md")
@@ -454,7 +519,12 @@ func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.
 		return "", fmt.Errorf("close temp prompt file: %w", err)
 	}
 
-	args := a.buildArgs(agenticMode, promptPath)
+	var args []string
+	if planningReadOnly(ctx) {
+		args = a.buildPlanningArgs(promptPath)
+	} else {
+		args = a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath)
+	}
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "grok",
@@ -474,7 +544,7 @@ func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.
 	}
 
 	if runResult.WaitErr != nil {
-		return "", a.wrapSandboxRefusal(
+		return "", a.wrapSandboxRefusal(ctx,
 			formatStreamingCLIWaitError("grok", runResult, runResult.Stderr),
 			runResult.Stderr,
 		)
@@ -583,7 +653,7 @@ func (a *GrokAgent) ClassifyWithSchema(
 	out io.Writer,
 ) (jsontext.Value, error) {
 	result, err := a.classifyWithSchema(ctx, repoPath, prompt, schema, out)
-	if fallback, ok := a.sandboxFallback(err); ok {
+	if fallback, ok := a.sandboxFallback(ctx, err); ok {
 		return fallback.classifyWithSchema(ctx, repoPath, prompt, schema, out)
 	}
 	return result, err
@@ -630,7 +700,7 @@ func (a *GrokAgent) classifyWithSchema(
 			return nil, ctxErr
 		}
 		stderr := strings.TrimSpace(stderrBuf.String())
-		return nil, a.wrapSandboxRefusal(
+		return nil, a.wrapSandboxRefusal(ctx,
 			fmt.Errorf("grok classifier failed: %w\nstderr: %s", err, stderr),
 			stderr,
 		)
@@ -646,7 +716,7 @@ func (a *GrokAgent) ReviewWithSchema(
 	out io.Writer,
 ) (jsontext.Value, error) {
 	result, err := a.reviewWithSchema(ctx, repoPath, prompt, schema, out)
-	if fallback, ok := a.sandboxFallback(err); ok {
+	if fallback, ok := a.sandboxFallback(ctx, err); ok {
 		return fallback.reviewWithSchema(ctx, repoPath, prompt, schema, out)
 	}
 	return result, err
@@ -710,7 +780,7 @@ func (a *GrokAgent) reviewWithSchema(
 			return nil, ctxErr
 		}
 		stderr := strings.TrimSpace(stderrBuf.String())
-		return nil, a.wrapSandboxRefusal(
+		return nil, a.wrapSandboxRefusal(ctx,
 			fmt.Errorf("grok structured review failed: %w\nstderr: %s", err, stderr),
 			stderr,
 		)

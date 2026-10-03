@@ -374,8 +374,11 @@ func (a *PiAgent) Review(
 	}
 
 	sessionPath := resolvePiSessionPath(a.SessionID)
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(sessionPath, agenticMode)
+	if planningReadOnly(ctx) {
+		args = append(args, "--no-extensions")
+	}
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

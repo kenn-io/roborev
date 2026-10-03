@@ -299,7 +299,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)

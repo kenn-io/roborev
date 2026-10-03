@@ -180,7 +180,7 @@ func (a *CopilotAgent) CommandLine() string {
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	supportsAllowAllTools, err := copilotSupportsAllowAllTools(ctx, a.Command)
 	if err != nil {

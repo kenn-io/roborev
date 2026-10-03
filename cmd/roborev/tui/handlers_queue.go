@@ -298,12 +298,12 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
-	case "down", "ctrl+n":
+	case "down":
 		if m.colOptionsIdx < len(m.colOptionsList)-1 {
 			m.colOptionsIdx++
 		}
 		return m, nil
-	case "up", "ctrl+p":
+	case "up":
 		if m.colOptionsIdx > 0 {
 			m.colOptionsIdx--
 		}

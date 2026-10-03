@@ -110,7 +110,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("antigravity CLI does not support explicit Gemini model selection; remove the model override or configure gemini_cmd to the legacy gemini CLI")
 	}
 
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(agenticMode)
 
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)

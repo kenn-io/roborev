@@ -226,7 +226,6 @@ func (m model) renderReviewView() string {
 	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastReviewMaxScroll = maxScroll
-		m.mdCache.lastReviewVisibleLines = visibleLines
 	}
 	start := max(min(m.reviewScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
@@ -250,11 +249,15 @@ func (m model) renderReviewView() string {
 
 	// Render inline fix panel when open
 	if m.reviewFixPanelOpen {
+		planState := "off"
+		if m.fixPlanFirst {
+			planState = "on"
+		}
 		innerWidth := max(m.width-4, 18) // box inner width; total visual width = innerWidth+2 (borders)
 
 		if m.reviewFixPanelFocused {
 			// Label line
-			label := "Fix: enter instructions (or leave blank for default)"
+			label := "Fix: enter instructions | Plan first: " + planState
 			if runewidth.StringWidth(label) > m.width-1 {
 				label = runewidth.Truncate(label, m.width-1, "")
 			}
@@ -285,11 +288,11 @@ func (m model) renderReviewView() string {
 				b.WriteString(line)
 				b.WriteString("\x1b[K\n")
 			}
-			b.WriteString(helpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
+			b.WriteString(helpStyle.Render("ctrl+p: plan | tab: scroll review | enter: submit | esc: cancel"))
 			b.WriteString("\x1b[K\n")
 		} else {
 			// Label line (dimmed)
-			b.WriteString(statusStyle.Render("Fix (Tab to focus)"))
+			b.WriteString(statusStyle.Render("Fix (Tab to focus) | Plan first: " + planState))
 			b.WriteString("\x1b[K\n")
 
 			inputDisplay := m.fixPromptText
@@ -377,7 +380,6 @@ func (m model) renderPromptView() string {
 	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastPromptMaxScroll = maxScroll
-		m.mdCache.lastPromptVisibleLines = visibleLines
 	}
 	start := max(min(m.promptScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
@@ -495,8 +497,15 @@ func (m model) renderRespondView() string {
 }
 
 func (m model) commitMsgLines() []string {
-	// Wrap text to terminal width minus padding.
 	return wrapText(m.commitMsgContent, max(20, min(m.width-4, 100)))
+}
+
+func (m model) commitMsgVisibleLines() int {
+	return max(m.height-4, 1)
+}
+
+func (m model) commitMsgMaxScroll() int {
+	return max(len(m.commitMsgLines())-m.commitMsgVisibleLines(), 0)
 }
 
 func (m model) renderCommitMsgView() string {
@@ -523,7 +532,7 @@ func (m model) renderCommitMsgView() string {
 	lines := m.commitMsgLines()
 
 	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := max(m.height-4, 1)
+	visibleLines := m.commitMsgVisibleLines()
 
 	// Clamp scroll position to valid range
 	maxScroll := max(len(lines)-visibleLines, 0)

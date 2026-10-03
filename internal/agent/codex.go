@@ -394,8 +394,11 @@ func (a *CodexAgent) review(
 	repoPath, commitSHA, prompt, schemaPath string,
 	output io.Writer,
 ) (string, error) {
-	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	sandboxBroken := CodexSandboxDisabled()
+	if planningReadOnly(ctx) && sandboxBroken {
+		return "", fmt.Errorf("planning requires the Codex read-only sandbox; sandbox is disabled")
+	}
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
 	if a.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
@@ -447,7 +450,6 @@ func (a *CodexAgent) review(
 
 	// Use codex exec with --json for JSONL streaming output
 	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
-	sandboxBroken := CodexSandboxDisabled()
 	if sandboxBroken && autoApprove {
 		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
 	}

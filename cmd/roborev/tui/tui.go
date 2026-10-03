@@ -311,6 +311,7 @@ type model struct {
 	// Fix task state
 	fixJobs              []storage.ReviewJob // Fix jobs for tasks view
 	fixSelectedIdx       int                 // Selected index in tasks view
+	fixPlanFirst         bool                // Plan before implementing an inline fix
 	fixPromptText        string              // Editable fix prompt text
 	fixPromptJobID       int64               // Parent job ID for fix prompt modal
 	fixShowHelp          bool                // Show help overlay in tasks view

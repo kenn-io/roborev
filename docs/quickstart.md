@@ -108,6 +108,8 @@ For a headless fix without an interactive agent session:
 ```bash
 roborev fix                        # Fix all open reviews on this branch
 roborev fix 123                    # Fix a specific review by job ID
+roborev fix --plan-only            # Inspect and store plans without edits
+roborev fix --plan                 # Plan before applying fixes
 ```
 
 The agent applies changes, commits, and closes the review. For a fully automated

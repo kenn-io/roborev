@@ -1795,6 +1795,7 @@ type FixJobRequest struct {
 	Schema      *string `json:"$schema,omitempty"`
 	GitRef      *string `json:"git_ref,omitempty"`
 	ParentJobID int64   `json:"parent_job_id"`
+	PlanFirst   *bool   `json:"plan_first,omitempty"`
 	Prompt      *string `json:"prompt,omitempty"`
 	StaleJobID  *int64  `json:"stale_job_id,omitempty"`
 }

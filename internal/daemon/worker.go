@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/cenkalti/backoff/v7"
+	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -946,6 +947,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
 	storedPromptValue := job.Prompt
+	var planningPrompt string
+	if job.IsFixJob() {
+		var decodeErr error
+		planningPrompt, storedPromptValue, _, decodeErr = prompt.DecodeFixPlan(job.Prompt)
+		if decodeErr != nil {
+			wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, job.Agent, decodeErr.Error())
+			return
+		}
+	}
 	if job.PromptPrebuilt && storedPromptValue != "" {
 		// CI-enqueued review with prebuilt prompt (includes PR
 		// discussion context and system prompt). Use as-is so the
@@ -971,9 +981,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
-			reviewPrompt = preamble + "\n" + job.Prompt
+			reviewPrompt = preamble + "\n" + storedPromptValue
 		} else {
-			reviewPrompt = job.Prompt
+			reviewPrompt = storedPromptValue
 		}
 		promptToPersist = job.Prompt
 	} else if job.UsesStoredPrompt() {
@@ -1184,32 +1194,42 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	reviewPrompt = priorResult.Prompt
 
-	preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
-		RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
-	})
-	if prepareErr != nil {
-		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
-		return
+	var fixPlan string
+	implementationRef := job.GitRef
+	if planningPrompt != "" {
+		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
+		if err == nil {
+			fixPlan, reviewPrompt, err = wp.prepareFixPlan(ctx, workerID, a, job, reviewRepoPath, planningPrompt, reviewPrompt, pb, checkout.promptRepoPath, io.MultiWriter(jobLog, outputWriter))
+		}
 	}
-	if preparedPrompt.Cleanup != nil {
-		defer preparedPrompt.Cleanup()
+	if err == nil {
+		err = ctx.Err()
 	}
-	reviewPrompt = preparedPrompt.Prompt
-
-	// Record that an agent is being invoked, now that all pre-agent gates
-	// (prompt preparation, worktree creation) have passed.
-	wp.markAgentInvoked(workerID, job, a)
+	if err == nil {
+		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
+			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+		})
+		if prepareErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
+			return
+		}
+		if preparedPrompt.Cleanup != nil {
+			defer preparedPrompt.Cleanup()
+		}
+		reviewPrompt = preparedPrompt.Prompt
+		wp.markAgentInvoked(workerID, job, a)
+	}
 
 	// Tasks and fixes use free-form output. Reviews and compact jobs validate
 	// the same JSON document before completing.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
-	if job.IsTaskJob() || job.IsFixJob() {
+	if err == nil && (job.IsTaskJob() || job.IsFixJob()) {
 		agentReview.Output, err = a.Review(
-			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
+			ctx, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
 		)
-	} else {
+	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
 			effectiveMinSeverity, agentOutput,
@@ -1263,6 +1283,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
 		return
+	}
+
+	if fixPlan != "" {
+		output = "## Plan\n\n" + fixPlan + "\n\n## Implementation\n\n" + output
 	}
 
 	// For fix jobs, capture the patch from the worktree. Patch capture

@@ -7,6 +7,7 @@ export interface FixJobRequest {
   readonly $schema?: string;
   git_ref?: string;
   parent_job_id: number;
+  plan_first?: boolean;
   prompt?: string;
   stale_job_id?: number;
 }
