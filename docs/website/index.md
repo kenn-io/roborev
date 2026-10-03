@@ -141,7 +141,7 @@ Nothing leaves except the calls your agents already make. PostgreSQL sync lets
 every machine keep its local database while the team's review history
 converges in one place, deduplicated by UUID. Interfaces: CLI, TUI, browser UI,
 HTTP API with server-sent events, bundled agent skills. Telemetry is anonymous
-daemon counts and app opens from the web UI and TUI, off with
+daemon counts and app opens from the web UI, TUI and command line, off with
 `ROBOREV_TELEMETRY_ENABLED=0`.
 
 ## 09 / Boundary: the layer before the pull request

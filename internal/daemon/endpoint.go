@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -72,12 +73,20 @@ func (e DaemonEndpoint) BaseURL() string {
 
 // HTTPClient returns an http.Client configured for this endpoint's transport.
 func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
-	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) {
+	client := auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) {
 		if e.accessErr != nil {
 			return "", e.accessErr
 		}
 		return loadClientAuthKey()
 	})
+	if obs := clientResponseObserver.Load(); obs != nil {
+		transport := client.Transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		client.Transport = observedTransport{base: transport, ep: e, fn: *obs}
+	}
+	return client
 }
 
 func (e DaemonEndpoint) transportClient(timeout time.Duration) *http.Client {
@@ -85,6 +94,33 @@ func (e DaemonEndpoint) transportClient(timeout time.Duration) *http.Client {
 		Timeout:           timeout,
 		DisableKeepAlives: e.IsUnix(),
 	})
+}
+
+// clientResponseObserver, when set by the CLI, sees each response a client from HTTPClient receives.
+var clientResponseObserver atomic.Pointer[func(DaemonEndpoint, *http.Request, *http.Response)]
+
+// SetClientResponseObserver installs fn for clients built after the call; nil removes it. The daemon and the TUI never set it.
+func SetClientResponseObserver(fn func(DaemonEndpoint, *http.Request, *http.Response)) {
+	if fn == nil {
+		clientResponseObserver.Store(nil)
+		return
+	}
+	clientResponseObserver.Store(&fn)
+}
+
+type observedTransport struct {
+	base http.RoundTripper
+	ep   DaemonEndpoint
+	fn   func(DaemonEndpoint, *http.Request, *http.Response)
+}
+
+// RoundTrip hands every response back untouched; the observer must not read or close the body.
+func (t observedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err == nil {
+		t.fn(t.ep, req, resp)
+	}
+	return resp, err
 }
 
 // Listener creates a net.Listener bound to this endpoint.

@@ -180,6 +180,7 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 	}{
 		{name: "tui", value: "tui", want: "tui"},
 		{name: "web", value: "web", want: "web"},
+		{name: "cli", value: "cli", want: "cli"},
 		{name: "padded tui", value: " tui ", want: "tui"},
 		{name: "upper case", value: "TUI"},
 		{name: "unknown surface", value: "desktop"},
@@ -292,7 +293,7 @@ func TestCaptureHandlerSendsSurfaceFromFixedList(t *testing.T) {
 	}{
 		{body: `{"event":"app_opened","properties":{"surface":"tui"}}`, wantSurface: "tui"},
 		{body: `{"event":"app_opened","properties":{"surface":"web"}}`, wantSurface: "web"},
-		{body: `{"event":"app_opened","properties":{"surface":"cli"}}`},
+		{body: `{"event":"app_opened","properties":{"surface":"cli"}}`, wantSurface: "cli"},
 		{body: `{"event":"app_opened","properties":{"surface":["tui"]}}`},
 		{body: `{"event":"app_opened"}`},
 		{body: `{"event":"app_opened","properties":{"surface":"tui","source":"web"}}`, wantSurface: "tui"},

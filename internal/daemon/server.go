@@ -75,6 +75,7 @@ type Server struct {
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
+	appOpened               telemetry.AppOpenedLimiter // daily app_opened limit; outlives the per-request capture handler
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
 	mcpEnabled              bool       // [mcp] enabled at construction; /mcp is mounted on the API listener

@@ -60,7 +60,7 @@ Construct and execute the review command:
 If no base branch is specified, run:
 
 ```bash
-roborev review --branch --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill --branch --wait [--type <type>] [--panel <name>|none]
 ```
 
 If a base branch is specified, run:
@@ -95,7 +95,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
-roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]
+roborev review --from-skill --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]
 ```
 
 - If `--base` is specified, include it (otherwise auto-detects the base branch)
@@ -142,7 +142,7 @@ If the review passed, confirm the result and do not offer `/roborev-fix`.
 User: `/roborev-review-branch`
 
 Agent:
-1. Executes `roborev review --branch --wait`
+1. Executes `roborev review --from-skill --branch --wait`
 2. Presents the verdict and findings grouped by severity
 3. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1042`"
 4. If passed: "Branch review passed with no findings."
@@ -153,7 +153,7 @@ User: `/roborev-review-branch --base develop --type security`
 
 Agent:
 1. Validates: `git rev-parse --verify --end-of-options "develop"`
-2. Executes `roborev review --branch --wait --base develop --type security`
+2. Executes `roborev review --from-skill --branch --wait --base develop --type security`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 

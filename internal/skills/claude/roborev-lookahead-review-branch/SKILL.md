@@ -62,7 +62,7 @@ Construct the review command:
 If no base branch is specified, run:
 
 ```bash
-roborev review --branch --wait --type lookahead [--panel <name>|none]
+roborev review --from-skill --branch --wait --type lookahead [--panel <name>|none]
 ```
 
 If a base branch is specified, run:
@@ -72,7 +72,7 @@ read -r branch <<'ROBOREV_REF'
 <branch>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$branch" || exit 1
-roborev review --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
+roborev review --from-skill --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
 ```
 
 - If `--base` is specified, include it (otherwise auto-detects the base branch)
@@ -87,7 +87,7 @@ Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
 If no base branch is specified, run:
 
 ```bash
-roborev review --branch --wait --type lookahead [--panel <name>|none]
+roborev review --from-skill --branch --wait --type lookahead [--panel <name>|none]
 ```
 
 If a base branch is specified, run:
@@ -97,7 +97,7 @@ read -r branch <<'ROBOREV_REF'
 <branch>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$branch" || exit 1
-roborev review --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
+roborev review --from-skill --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
 ```
 
 Tell the user that the look-ahead review has been submitted and they can continue working. You will present the results when the review completes.
@@ -142,7 +142,7 @@ If the review passed, confirm the result and do not offer `/roborev-fix`.
 User: `/roborev-lookahead-review-branch`
 
 Agent:
-1. Launches background task: `roborev review --branch --wait --type lookahead`
+1. Launches background task: `roborev review --from-skill --branch --wait --type lookahead`
 2. Tells user: "Look-ahead review submitted for branch. I'll present the results when it completes."
 3. When complete, presents the verdict and findings grouped by severity
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1042`"
@@ -154,7 +154,7 @@ User: `/roborev-lookahead-review-branch --base develop`
 
 Agent:
 1. Validates `develop` resolves to a valid ref
-2. Launches background task: `roborev review --branch --wait --type lookahead --base develop`
+2. Launches background task: `roborev review --from-skill --branch --wait --type lookahead --base develop`
 3. Tells user: "Look-ahead review submitted for branch (against develop). I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"

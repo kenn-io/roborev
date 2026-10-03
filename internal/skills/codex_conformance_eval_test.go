@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -306,8 +307,48 @@ func tokenListMatches(tokens []string, matcher func([]string) bool) (bool, error
 }
 
 func roborevBranchReviewTokens(tokens []string) bool {
-	return len(tokens) == 4 && tokens[0] == "roborev" &&
-		tokens[1] == "review" && tokens[2] == "--branch" && tokens[3] == "--wait"
+	return len(tokens) == 5 && tokens[0] == "roborev" &&
+		tokens[1] == "review" && tokens[2] == "--from-skill" && tokens[3] == "--branch" && tokens[4] == "--wait"
+}
+
+// roborevCountedPaths mirrors the CLI's counted command paths (cmd/roborev cli_use.go) without the leading "roborev".
+var roborevCountedPaths = map[string]bool{
+	"review": true, "wait": true, "status": true, "show": true, "list": true, "search": true,
+	"comment": true, "respond": true, "close": true, "cancel": true, "fix": true, "refine": true,
+	"run": true, "prompt": true, "analyze": true, "compact": true, "insights": true, "summary": true,
+	"cost": true, "stream": true, "snooze": true, "pause": true, "unpause": true,
+	"export reviews": true, "export ci-metrics": true, "export ci-costs": true, "sync now": true,
+	"init": true,
+}
+
+// unmarkedCountedRoborevTokens matches a roborev command the CLI would count as a person's use because it lacks --from-skill.
+func unmarkedCountedRoborevTokens(tokens []string) bool {
+	if len(tokens) < 2 || filepath.Base(tokens[0]) != "roborev" {
+		return false
+	}
+	path := tokens[1]
+	if (path == "export" || path == "sync") && len(tokens) > 2 {
+		path += " " + tokens[2]
+	}
+	return roborevCountedPaths[path] && !slices.Contains(tokens[2:], "--from-skill")
+}
+
+// roborevCountedCommandsMarked reports whether every counted roborev command the agent ran carries --from-skill.
+func roborevCountedCommandsMarked(events []codexCommandEvent) (bool, error) {
+	for _, event := range events {
+		tokens, err := shellWords(event.Command)
+		if err != nil {
+			return false, fmt.Errorf("classify command: %w", err)
+		}
+		unmarked, err := tokenListMatches(tokens, unmarkedCountedRoborevTokens)
+		if err != nil {
+			return false, fmt.Errorf("classify command: %w", err)
+		}
+		if unmarked {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func shellCommandString(tokens []string) (string, bool, error) {
@@ -486,7 +527,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "successful stub execution",
 			events: []codexCommandEvent{{
-				Command:          "roborev review --branch --wait",
+				Command:          "roborev review --from-skill --branch --wait",
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -496,7 +537,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "non-login wrapper",
 			events: []codexCommandEvent{{
-				Command:          `/bin/zsh -c 'roborev review --branch --wait'`,
+				Command:          `/bin/zsh -c 'roborev review --from-skill --branch --wait'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -506,7 +547,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "login wrapper rejected",
 			events: []codexCommandEvent{{
-				Command:          `/bin/zsh -lc 'roborev review --branch --wait'`,
+				Command:          `/bin/zsh -lc 'roborev review --from-skill --branch --wait'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -515,7 +556,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "prefixed login wrapper rejected",
 			events: []codexCommandEvent{{
-				Command:          `env /bin/zsh -lc 'roborev review --branch --wait'`,
+				Command:          `env /bin/zsh -lc 'roborev review --from-skill --branch --wait'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -524,7 +565,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "nested login wrapper rejected",
 			events: []codexCommandEvent{{
-				Command:          `/bin/sh -c 'zsh -lc "roborev review --branch --wait"'`,
+				Command:          `/bin/sh -c 'zsh -lc "roborev review --from-skill --branch --wait"'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -533,7 +574,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "multi-level login wrapper rejected",
 			events: []codexCommandEvent{{
-				Command:          `command /bin/bash -c 'exec sh -lc "roborev review --branch --wait"'`,
+				Command:          `command /bin/bash -c 'exec sh -lc "roborev review --from-skill --branch --wait"'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -542,7 +583,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "nested non-login wrappers",
 			events: []codexCommandEvent{{
-				Command:          `/bin/sh -c 'env zsh -c "roborev review --branch --wait"'`,
+				Command:          `/bin/sh -c 'env zsh -c "roborev review --from-skill --branch --wait"'`,
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -552,14 +593,14 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "marker in separate event",
 			events: []codexCommandEvent{
-				{Command: "roborev review --branch --wait", ExitCode: intPointer(0), Status: "completed"},
+				{Command: "roborev review --from-skill --branch --wait", ExitCode: intPointer(0), Status: "completed"},
 				{Command: "printf marker", AggregatedOutput: marker, ExitCode: intPointer(0), Status: "completed"},
 			},
 		},
 		{
 			name: "failed command",
 			events: []codexCommandEvent{{
-				Command:          "roborev review --branch --wait",
+				Command:          "roborev review --from-skill --branch --wait",
 				AggregatedOutput: marker,
 				ExitCode:         intPointer(1),
 				Status:           "failed",
@@ -568,15 +609,24 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 		{
 			name: "missing exit code",
 			events: []codexCommandEvent{{
-				Command:          "roborev review --branch --wait",
+				Command:          "roborev review --from-skill --branch --wait",
 				AggregatedOutput: marker,
+				Status:           "completed",
+			}},
+		},
+		{
+			name: "unmarked command",
+			events: []codexCommandEvent{{
+				Command:          "roborev review --branch --wait",
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
 				Status:           "completed",
 			}},
 		},
 		{
 			name: "non-exact workflow",
 			events: []codexCommandEvent{{
-				Command:          "roborev review --branch garbage --wait",
+				Command:          "roborev review --from-skill --branch garbage --wait",
 				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
@@ -721,24 +771,65 @@ func TestContainsRoborevBranchReviewWorkflow(t *testing.T) {
 		commands []string
 		want     bool
 	}{
-		{name: "direct", commands: []string{"roborev review --branch --wait"}, want: true},
-		{name: "trailing option", commands: []string{"roborev review --branch --wait --type security"}},
-		{name: "interleaved argument", commands: []string{"roborev review --branch garbage --wait"}},
-		{name: "absolute executable", commands: []string{"/known/path/roborev review --branch --wait"}},
-		{name: "zsh login command", commands: []string{`/bin/zsh -lc 'roborev review --branch --wait'`}, want: true},
-		{name: "zsh wrapper", commands: []string{`/bin/zsh -lc 'cd /tmp/repo && roborev review --branch --wait'`}, want: true},
-		{name: "split across events", commands: []string{"roborev review --branch", "roborev review --wait"}},
-		{name: "wrong flag order", commands: []string{"roborev review --wait --branch"}},
+		{name: "direct", commands: []string{"roborev review --from-skill --branch --wait"}, want: true},
+		{name: "unmarked", commands: []string{"roborev review --branch --wait"}},
+		{name: "marker after flags", commands: []string{"roborev review --branch --wait --from-skill"}},
+		{name: "trailing option", commands: []string{"roborev review --from-skill --branch --wait --type security"}},
+		{name: "interleaved argument", commands: []string{"roborev review --from-skill --branch garbage --wait"}},
+		{name: "absolute executable", commands: []string{"/known/path/roborev review --from-skill --branch --wait"}},
+		{name: "zsh login command", commands: []string{`/bin/zsh -lc 'roborev review --from-skill --branch --wait'`}, want: true},
+		{name: "zsh wrapper", commands: []string{`/bin/zsh -lc 'cd /tmp/repo && roborev review --from-skill --branch --wait'`}, want: true},
+		{name: "split across events", commands: []string{"roborev review --from-skill --branch", "roborev review --from-skill --wait"}},
+		{name: "wrong flag order", commands: []string{"roborev review --from-skill --wait --branch"}},
 		{name: "command lookup", commands: []string{"command -v roborev"}},
-		{name: "ripgrep mention", commands: []string{`rg 'roborev review --branch --wait' README.md`}},
-		{name: "printf mention", commands: []string{`printf '%s\n' 'roborev review --branch --wait'`}},
-		{name: "prose mention", commands: []string{"The command is roborev review --branch --wait"}},
-		{name: "unrelated subcommand", commands: []string{"roborev status --branch --wait"}},
+		{name: "ripgrep mention", commands: []string{`rg 'roborev review --from-skill --branch --wait' README.md`}},
+		{name: "printf mention", commands: []string{`printf '%s\n' 'roborev review --from-skill --branch --wait'`}},
+		{name: "prose mention", commands: []string{"The command is roborev review --from-skill --branch --wait"}},
+		{name: "unrelated subcommand", commands: []string{"roborev status --from-skill --branch --wait"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := containsRoborevBranchReviewWorkflow(tt.commands)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
+	events := func(commands ...string) []codexCommandEvent {
+		out := make([]codexCommandEvent, len(commands))
+		for i, command := range commands {
+			out[i] = codexCommandEvent{Command: command, ExitCode: intPointer(0), Status: "completed"}
+		}
+		return out
+	}
+	marked := []string{
+		"roborev show --from-skill --job 1 --json",
+		`roborev comment --from-skill --commenter roborev-fix --job 1 -m "checked"`,
+		"roborev close --from-skill 1",
+		`/bin/zsh -c 'roborev comment --from-skill --job 1 "ok" && roborev close --from-skill 1'`,
+		"roborev export --from-skill reviews",
+		"roborev agent-hook fix-done --session abc",
+		"roborev skills update",
+		"git status",
+	}
+	tests := []struct {
+		name     string
+		commands []string
+		want     bool
+	}{
+		{name: "every counted command marked", commands: marked, want: true},
+		{name: "unmarked show", commands: append(slices.Clone(marked), "roborev show --job 1 --json")},
+		{name: "unmarked comment", commands: append(slices.Clone(marked), `roborev comment --job 1 -m "checked"`)},
+		{name: "unmarked close", commands: append(slices.Clone(marked), "roborev close 1")},
+		{name: "unmarked close in a chain", commands: append(slices.Clone(marked), `sh -c 'roborev comment --from-skill --job 1 "ok" && roborev close 1'`)},
+		{name: "unmarked two-word path", commands: append(slices.Clone(marked), "roborev sync now")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := roborevCountedCommandsMarked(events(tt.commands...))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -1036,6 +1127,9 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 				require.NoError(t, err, "inspect per-case roborev execution sentinel")
 				if tc.wantStub {
 					require.True(t, stubExecuted, "explicit skill did not execute the stub for model=%s case=%s", model, tc.name)
+					marked, err := roborevCountedCommandsMarked(events)
+					require.NoError(t, err, "skill command marker classification was uncertain")
+					require.True(t, marked, "skill ran a counted roborev command without --from-skill for model=%s case=%s", model, tc.name)
 					// Fix stubs cannot return valid review JSON; only branch review has an exact workflow oracle.
 					if !tc.wantBranchReview {
 						return

@@ -1081,8 +1081,8 @@ func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
 			assert.Contains(t, content, "never\nby interpolating dynamic text directly into a shell string")
 			assert.NotContains(t, content, `"<summary of changes>"`)
 			assert.NotContains(t, content, "Escape quotes and special characters in the bash command")
-			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1019 "`))
-			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1021 "`))
+			assert.Equal(t, 0, strings.Count(content, `roborev comment --from-skill --commenter roborev-fix --job 1019 "`))
+			assert.Equal(t, 0, strings.Count(content, `roborev comment --from-skill --commenter roborev-fix --job 1021 "`))
 		})
 	}
 }
@@ -1138,7 +1138,7 @@ if ! git rev-parse --verify --quiet --end-of-options "$branch" >/dev/null; then
   fi
   git rev-parse --verify --end-of-options "$branch" >/dev/null || exit 1
 fi
-roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]`
+roborev review --from-skill --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]`
 
 const wantReviewBranchFetchCommand = `git fetch --quiet --refmap= -- "$remote" "refs/heads/$remote_branch:refs/remotes/$remote/$remote_branch" || exit 1`
 
@@ -1329,7 +1329,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				"  command git \"$@\"\n" +
 				"}\n" +
 				strings.Replace(snippets[0], "<branch>", tc.ref, 1)
-			script = strings.Replace(script, "roborev review --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", `printf "ROBOREV_WOULD_RUN %s\n" "$branch"; git rev-parse --verify --end-of-options "$branch" > .review-base-sha`, 1)
+			script = strings.Replace(script, "roborev review --from-skill --branch --wait --base \"$branch\" [--type <type>] [--panel <name>|none]", `printf "ROBOREV_WOULD_RUN %s\n" "$branch"; git rev-parse --verify --end-of-options "$branch" > .review-base-sha`, 1)
 			scriptPath := filepath.Join(t.TempDir(), "review-branch.sh")
 			require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
 
@@ -1529,4 +1529,59 @@ func stubUserHomeDir(t *testing.T, home string) {
 	t.Cleanup(func() {
 		userHomeDir = old
 	})
+}
+
+// fencedRoborevCommands returns each roborev invocation inside fenced code blocks as its tokens from the subcommand on.
+func fencedRoborevCommands(content string) [][]string {
+	var commands [][]string
+	inFence := false
+	for line := range strings.SplitSeq(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			continue
+		}
+		for segment := range strings.SplitSeq(line, "&&") {
+			tokens := strings.Fields(segment)
+			for i, token := range tokens {
+				if token == "roborev" && i+1 < len(tokens) {
+					commands = append(commands, tokens[i+1:])
+				}
+			}
+		}
+	}
+	return commands
+}
+
+// Commands a bundled skill runs carry --from-skill so the CLI does not count the agent's call as a person opening roborev.
+func TestBundledSkillCommandsCarryFromSkill(t *testing.T) {
+	for _, spec := range supportedAgents {
+		t.Run(string(spec.agent), func(t *testing.T) {
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+			total := 0
+			for _, skill := range skills {
+				for _, command := range fencedRoborevCommands(string(skill.Content)) {
+					if command[0] == "agent-hook" {
+						continue
+					}
+					total++
+					require.GreaterOrEqual(t, len(command), 2, "%s: roborev %s", skill.DirName, command[0])
+					assert.Equal(t, "--from-skill", command[1], "%s: roborev %s", skill.DirName, strings.Join(command, " "))
+				}
+			}
+			assert.NotZero(t, total)
+
+			dir := filepath.Join(t.TempDir(), "skills")
+			_, err = InstallToPath(spec.agent, dir, new(true))
+			require.NoError(t, err)
+			for _, skill := range skills {
+				content, err := os.ReadFile(skillInstallPath(dir, skill.DirName))
+				require.NoError(t, err)
+				assert.NotContains(t, string(content), "--from-skill", "MCP-mode %s", skill.DirName)
+			}
+		})
+	}
 }

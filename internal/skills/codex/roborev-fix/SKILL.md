@@ -97,7 +97,7 @@ directly. Do not re-fetch reviews that are already present in the
 conversation. When reusing pasted findings, collect any job IDs mentioned
 alongside them — step 5 needs these to comment on and close the reviews.
 If job IDs are missing from the pasted output, discover them via
-`roborev fix --list` and match each pasted finding to the correct
+`roborev fix --from-skill --list` and match each pasted finding to the correct
 job by commit SHA or reviewed file paths. If a finding cannot be
 confidently matched to a specific job, ask the user for the job ID
 rather than closing the wrong review.
@@ -106,14 +106,14 @@ If job IDs are provided and findings are NOT already in the conversation,
 fetch them:
 
 ```bash
-roborev show --job <job_id> --json
+roborev show --from-skill --job <job_id> --json
 ```
 
 If no job IDs are provided and no findings are in the conversation, discover
 open failing reviews:
 
 ```bash
-roborev fix --list
+roborev fix --from-skill --list
 ```
 
 This lists each actionable open failing job with its ID, commit SHA/ref, agent, and summary (a panel review shows as its synthesis parent).
@@ -131,7 +131,7 @@ Skip this step if findings are already available from step 1.
 For each job ID, fetch the full review as JSON:
 
 ```bash
-roborev show --job <job_id> --json
+roborev show --from-skill --job <job_id> --json
 ```
 
 If the command fails for a job ID, report the error and continue with the remaining jobs.
@@ -219,15 +219,15 @@ reviews created later by commit hooks, handle the original candidate job set.
 For each closable review, record a concise comment that states what was fixed
 and the evidence for every finding rejected as invalid, then close it. Invalid
 reviews must be closed without code changes. Run these as **separate commands**,
-and only run `roborev close` after confirming the comment succeeded:
+and only run `roborev close --from-skill` after confirming the comment succeeded:
 
 ```bash
-roborev comment --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
+roborev comment --from-skill --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
 <summary of changes>
 ROBOREV_COMMENT
 )"
 # Only if the comment above succeeded:
-roborev close <job_id>
+roborev close --from-skill <job_id>
 ```
 
 **Important:** Always pass the comment text via a heredoc as shown above, never
@@ -248,7 +248,7 @@ commit when every finding was invalid or deferred.
 Before the final response, inspect every original candidate job ID:
 
 ```bash
-roborev show --job <job_id> --json
+roborev show --from-skill --job <job_id> --json
 ```
 
 Verify that each resolved or invalid review reports `closed=true` and each
@@ -280,18 +280,18 @@ Agent:
 User: `$roborev-fix`
 
 Agent:
-1. Runs `roborev fix --list` and finds 2 open failing reviews: job 1019 and job 1021
-2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
+1. Runs `roborev fix --from-skill --list` and finds 2 open failing reviews: job 1019 and job 1021
+2. Fetches both reviews with `roborev show --from-skill --job 1019 --json` and `roborev show --from-skill --job 1021 --json`
 3. Runs `git show <git_ref>` for one review where the finding lacked enough context
 4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
    - Records a heredoc comment for job 1019 summarizing the fixed null check and added error handling
-   - `roborev close 1019`
+   - `roborev close --from-skill 1019`
    - Records a heredoc comment for job 1021 summarizing the fixed missing validation
-   - `roborev close 1021`
+   - `roborev close --from-skill 1021`
 7. Commits the changes per project conventions, or commits before step 6 if repository policy requires a SHA in close comments
-8. Audits jobs 1019 and 1021 with `roborev show --job <job_id> --json` and verifies `closed=true`
+8. Audits jobs 1019 and 1021 with `roborev show --from-skill --job <job_id> --json` and verifies `closed=true`
 
 **Explicit job IDs:**
 
@@ -304,9 +304,9 @@ Agent:
 4. Runs `go test ./...` to verify
 5. Records comment and closes review:
    - Records a heredoc comment for job 1019 summarizing the fixed null check in `foo.go` and error handling in `bar.go`
-   - `roborev close 1019`
+   - `roborev close --from-skill 1019`
 6. Commits the changes per project conventions, or commits before step 5 if repository policy requires a SHA in close comments
-7. Audits job 1019 with `roborev show --job 1019 --json` and verifies `closed=true`
+7. Audits job 1019 with `roborev show --from-skill --job 1019 --json` and verifies `closed=true`
 
 **Agent Hook job IDs:**
 

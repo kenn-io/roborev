@@ -59,7 +59,7 @@ Construct the review command:
 If no commit is specified:
 
 ```
-roborev review --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill --wait [--type <type>] [--panel <name>|none]
 ```
 
 If a commit is specified:
@@ -69,7 +69,7 @@ read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
-roborev review "$commit" --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill "$commit" --wait [--type <type>] [--panel <name>|none]
 ```
 
 - If `--type` is specified, include it
@@ -84,7 +84,7 @@ Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
 If no commit is specified:
 
 ```
-roborev review --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill --wait [--type <type>] [--panel <name>|none]
 ```
 
 If a commit is specified:
@@ -94,7 +94,7 @@ read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
-roborev review "$commit" --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill "$commit" --wait [--type <type>] [--panel <name>|none]
 ```
 
 Tell the user that the review has been submitted and they can continue working. You will present the results when the review completes.
@@ -139,7 +139,7 @@ If the review passed, confirm the result and do not offer `/roborev-fix`.
 User: `/roborev-review`
 
 Agent:
-1. Launches background task: `roborev review --wait`
+1. Launches background task: `roborev review --from-skill --wait`
 2. Tells user: "Review submitted for HEAD. I'll present the results when it completes."
 3. When complete, presents the verdict and findings grouped by severity
 4. If findings exist: "Would you like me to fix these findings? Run `/roborev-fix 1042`"
@@ -151,7 +151,7 @@ User: `/roborev-review abc123 --type security`
 
 Agent:
 1. Validates `abc123` resolves to a valid commit
-2. Launches background task: `roborev review abc123 --wait --type security`
+2. Launches background task: `roborev review --from-skill abc123 --wait --type security`
 3. Tells user: "Security review submitted for abc123. I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to fix these findings? Run `/roborev-fix 1043`"

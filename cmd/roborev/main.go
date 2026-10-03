@@ -15,9 +15,24 @@ import (
 var (
 	serverAddr string
 	verbose    bool
+	fromSkill  bool
 )
 
 func main() {
+	err := newRootCmd().Execute()
+	waitCLIUse()
+	if err != nil {
+		// exitError carries a specific exit code; the RunE that returned
+		// it has already silenced cobra's error printing via silentExit.
+		if exitErr, ok := errors.AsType[*exitError](err); ok {
+			os.Exit(exitErr.code)
+		}
+		// All other errors: cobra already printed them.
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
@@ -33,12 +48,15 @@ func main() {
 			// errors from RunE just get a plain "Error: ..." line without
 			// the usage wall.
 			cmd.SilenceUsage = true
+			armCLIUse(cmd)
 			return nil
 		},
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "daemon server address (e.g. 127.0.0.1:7373 or unix://)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&fromSkill, "from-skill", false, "set by bundled agent skills; the command is not counted as an app open")
+	_ = rootCmd.PersistentFlags().MarkHidden("from-skill")
 
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(quickstartCmd())
@@ -90,13 +108,5 @@ func main() {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(verifyWebAssetsCmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		// exitError carries a specific exit code; the RunE that returned
-		// it has already silenced cobra's error printing via silentExit.
-		if exitErr, ok := errors.AsType[*exitError](err); ok {
-			os.Exit(exitErr.code)
-		}
-		// All other errors: cobra already printed them.
-		os.Exit(1)
-	}
+	return rootCmd
 }

@@ -1590,11 +1590,18 @@ architecture, and an anonymous install ID stored in the local database.
 
 The web UI also reports an anonymous `app_opened` event to the daemon when it
 loads and on the first window focus of each later UTC day, so an open tab counts
-once a day. `roborev tui` reports the same event once each time it starts. The
-daemon sends it with the same install ID, version, OS and architecture plus
-`surface`, which is `web` or `tui` and nothing else. The browser and the TUI
-never contact PostHog. The same environment variables turn it off; the daemon
-reads them, and so does the `roborev tui` process.
+once a day. `roborev tui` reports the same event once each time it starts.
+Commands that work through the daemon, such as `roborev review`, `roborev list`
+and `roborev show`, report it once their first daemon request succeeds, and they
+never start a daemon to do so. Git hook, agent hook, MCP and daemon management
+commands never report it. Commands run by the bundled agent skills pass
+`--from-skill` and are not counted; an agent that runs roborev outside a bundled
+skill, or drops the flag, still counts. The daemon sends it with the same
+install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
+or `cli` and nothing else, and it sends at most one `app_opened` per surface per
+UTC day, forgetting that on restart. The browser, the TUI and the CLI never
+contact PostHog. The same environment variables turn it off; the daemon reads
+them, and so do the `roborev tui` and CLI processes.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
@@ -1608,6 +1615,7 @@ environment variable:
 ROBOREV_TELEMETRY_ENABLED=0 roborev daemon run
 TELEMETRY_ENABLED=0 roborev daemon run
 ROBOREV_TELEMETRY_ENABLED=0 roborev tui
+ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```
 
 Telemetry is disabled in Go test processes.

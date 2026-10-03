@@ -17,6 +17,11 @@ All notable changes to roborev, grouped by minor release.
     time it starts, and web and TUI events carry `surface` (`web` or `tui`).
     `ROBOREV_TELEMETRY_ENABLED=0` turns it off. See
     [Telemetry](/docs/configuration/#telemetry).
+- CLI commands that work through the daemon report an anonymous `app_opened`
+    event with `surface: cli` after their first successful daemon request, the
+    daemon sends at most one `app_opened` per surface per UTC day, and commands
+    the bundled agent skills run carry `--from-skill` so they are not counted.
+    See [Telemetry](/docs/configuration/#telemetry).
 
 **Improvements**
 

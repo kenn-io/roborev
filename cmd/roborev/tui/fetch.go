@@ -399,25 +399,9 @@ func (m model) reportAppOpened() tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
-	body, err := json.Marshal(map[string]any{
-		"event":      telemetry.EventAppOpened,
-		"properties": map[string]string{telemetry.PropertySurface: telemetry.SurfaceTUI},
-	})
-	if err != nil {
-		return nil
-	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
-		req, err := http.NewRequestWithContext(m.apiContext(), http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
-			return nil
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil
-		}
-		_ = resp.Body.Close()
+		telemetry.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
 		return nil
 	}
 }

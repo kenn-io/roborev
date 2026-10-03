@@ -59,7 +59,7 @@ Construct and execute the review command:
 If no commit is specified, run:
 
 ```bash
-roborev review --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill --wait [--type <type>] [--panel <name>|none]
 ```
 
 If a commit is specified, run:
@@ -69,7 +69,7 @@ read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
-roborev review "$commit" --wait [--type <type>] [--panel <name>|none]
+roborev review --from-skill "$commit" --wait [--type <type>] [--panel <name>|none]
 ```
 
 - If `--type` is specified, include it
@@ -115,7 +115,7 @@ If the review passed, confirm the result and do not offer `/roborev-fix`.
 User: `/roborev-review`
 
 Agent:
-1. Executes `roborev review --wait`
+1. Executes `roborev review --from-skill --wait`
 2. Presents the verdict and findings grouped by severity
 3. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1042`"
 4. If passed: "Review passed with no findings."
@@ -126,7 +126,7 @@ User: `/roborev-review abc123 --type security`
 
 Agent:
 1. Validates: `git rev-parse --verify --end-of-options "abc123^{commit}"`
-2. Executes `roborev review abc123 --wait --type security`
+2. Executes `roborev review --from-skill abc123 --wait --type security`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 

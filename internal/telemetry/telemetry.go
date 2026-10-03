@@ -30,6 +30,7 @@ const (
 	PropertySurface = "surface"
 	SurfaceWeb      = "web"
 	SurfaceTUI      = "tui"
+	SurfaceCLI      = "cli"
 )
 
 var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
@@ -103,7 +104,7 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventAppOpened,
-			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI))),
+			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
 	}
 }
 

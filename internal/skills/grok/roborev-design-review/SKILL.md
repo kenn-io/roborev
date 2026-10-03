@@ -59,7 +59,7 @@ Construct and execute the review command:
 If no commit is specified, run:
 
 ```bash
-roborev review --wait --type design [--panel <name>|none]
+roborev review --from-skill --wait --type design [--panel <name>|none]
 ```
 
 If a commit is specified, run:
@@ -69,7 +69,7 @@ read -r commit <<'ROBOREV_REF'
 <commit>
 ROBOREV_REF
 git rev-parse --verify --end-of-options "$commit^{commit}" || exit 1
-roborev review "$commit" --wait --type design [--panel <name>|none]
+roborev review --from-skill "$commit" --wait --type design [--panel <name>|none]
 ```
 
 - If `--panel <name>` is specified, include it (fans out to the named config panel); `--panel none` forces a single-agent review
@@ -114,7 +114,7 @@ If the review passed, confirm the result and do not offer `/roborev-fix`.
 User: `/roborev-design-review`
 
 Agent:
-1. Executes `roborev review --wait --type design`
+1. Executes `roborev review --from-skill --wait --type design`
 2. Presents the verdict and findings grouped by severity
 3. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1042`"
 4. If passed: "Design review passed with no findings."
@@ -125,7 +125,7 @@ User: `/roborev-design-review abc123`
 
 Agent:
 1. Validates: `git rev-parse --verify --end-of-options "abc123^{commit}"`
-2. Executes `roborev review abc123 --wait --type design`
+2. Executes `roborev review --from-skill abc123 --wait --type design`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 

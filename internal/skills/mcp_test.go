@@ -30,7 +30,7 @@ func TestMCPInstallPreservesModeOnUpdate(t *testing.T) {
 			assert.False(t, installedMCPMode(dir))
 			cli, err := os.ReadFile(skillInstallPath(dir, "roborev-fix"))
 			require.NoError(t, err)
-			assert.Contains(t, string(cli), "roborev show --job")
+			assert.Contains(t, string(cli), "roborev show --from-skill --job")
 		})
 	}
 }

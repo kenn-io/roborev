@@ -73,6 +73,12 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
+			name:       "cli body with surface",
+			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"cli"}}`)),
+			wantStatus: http.StatusAccepted,
+			wantBody:   `{"status":"disabled"}`,
+		},
+		{
 			name:       "unknown event",
 			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"search_run"}`)),
 			wantStatus: http.StatusBadRequest,

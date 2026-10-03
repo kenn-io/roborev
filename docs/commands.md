@@ -1173,6 +1173,9 @@ roborev skills install           # Install skills for agents
 roborev skills update            # Update installed skills
 ```
 
+Bundled skills pass the hidden `--from-skill` flag on the roborev commands they
+run, so those calls are not counted as app opens.
+
 See: [Agent Skills](/docs/guides/agent-skills/)
 
 ## MCP Server
