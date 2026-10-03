@@ -13,6 +13,8 @@ export interface DoctorAgentsOutputBody {
   hook_tools: Diagnosis[];
   /** Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review */
   panels: DoctorPanel[];
+  /** Why the review experiment configuration could not be applied; panels were not checked */
+  panels_error?: string;
   /** PATH environment variable of the daemon process */
   path_env: string;
   /** Why the repository config could not be loaded; results use global config only */

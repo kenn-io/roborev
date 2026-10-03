@@ -832,6 +832,7 @@ type DoctorAgentsOutput struct {
 		Requested       []agent.Diagnosis `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
 		HookTools       []agent.Diagnosis `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
 		Panels          []DoctorPanel     `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
+		PanelsError     string            `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
 		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
 	}
 }
@@ -840,17 +841,14 @@ type DoctorAgentsOutput struct {
 type DoctorPanel struct {
 	Name       string              `json:"name"`
 	UsedFor    []string            `json:"used_for" doc:"Which reviews select this panel: post_commit, manual, or both"`
-	Experiment string              `json:"experiment,omitempty" doc:"ID of the enabled experiment that selects this panel; empty for the base configuration"`
-	Error      string              `json:"error,omitempty" doc:"Why the panel itself cannot be resolved"`
+	Experiment string              `json:"experiment,omitempty" doc:"ID of the review experiment whose experimental arm runs this panel; empty for the default configuration"`
+	Error      string              `json:"error,omitempty" doc:"Why queueing this panel would be rejected"`
 	Members    []DoctorPanelMember `json:"members"`
 	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
 }
 
-// DoctorPanelMember is one panel member and the agent the daemon selects for
-// it. Error is set when the daemon cannot select an agent, which makes the
-// whole panel review fail to queue.
+// DoctorPanelMember is one panel member and the agent queueing selects for it.
 type DoctorPanelMember struct {
 	Name  string `json:"name"`
-	Agent string `json:"agent,omitempty"`
-	Error string `json:"error,omitempty"`
+	Agent string `json:"agent"`
 }

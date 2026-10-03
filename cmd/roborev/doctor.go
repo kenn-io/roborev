@@ -65,6 +65,7 @@ type doctorDaemonAgents struct {
 	Requested       []agent.Diagnosis    `json:"requested"`
 	HookTools       []agent.Diagnosis    `json:"hook_tools"`
 	Panels          []daemon.DoctorPanel `json:"panels"`
+	PanelsError     string               `json:"panels_error,omitempty"`
 	RepoConfigError string               `json:"repo_config_error,omitempty"`
 }
 
@@ -284,6 +285,7 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 		Requested:       diagnosesFromAPI(resp.Requested),
 		HookTools:       diagnosesFromAPI(resp.HookTools),
 		RepoConfigError: deref(resp.RepoConfigError),
+		PanelsError:     deref(resp.PanelsError),
 	}
 	for _, p := range resp.Panels {
 		panel := daemon.DoctorPanel{
@@ -294,9 +296,7 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 			Synthesis:  diagnosisFromAPI(p.Synthesis),
 		}
 		for _, m := range p.Members {
-			panel.Members = append(panel.Members, daemon.DoctorPanelMember{
-				Name: m.Name, Agent: deref(m.Agent), Error: deref(m.ErrorData),
-			})
+			panel.Members = append(panel.Members, daemon.DoctorPanelMember{Name: m.Name, Agent: m.Agent})
 		}
 		out.Panels = append(out.Panels, panel)
 	}

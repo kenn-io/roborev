@@ -5,9 +5,9 @@ import type { Diagnosis } from "./diagnosis";
 import type { DoctorPanelMember } from "./doctorPanelMember";
 
 export interface DoctorPanel {
-  /** Why the panel itself cannot be resolved */
+  /** Why queueing this panel would be rejected */
   error?: string;
-  /** ID of the enabled experiment that selects this panel; empty for the base configuration */
+  /** ID of the review experiment whose experimental arm runs this panel; empty for the default configuration */
   experiment?: string;
   members: DoctorPanelMember[];
   name: string;

@@ -1059,6 +1059,9 @@ components:
           items:
             $ref: "#/components/schemas/DoctorPanel"
           type: array
+        panels_error:
+          description: Why the review experiment configuration could not be applied; panels were not checked
+          type: string
         path_env:
           description: PATH environment variable of the daemon process
           type: string
@@ -1081,10 +1084,10 @@ components:
       additionalProperties: false
       properties:
         error:
-          description: Why the panel itself cannot be resolved
+          description: Why queueing this panel would be rejected
           type: string
         experiment:
-          description: ID of the enabled experiment that selects this panel; empty for the base configuration
+          description: ID of the review experiment whose experimental arm runs this panel; empty for the default configuration
           type: string
         members:
           items:
@@ -1111,12 +1114,11 @@ components:
       properties:
         agent:
           type: string
-        error:
-          type: string
         name:
           type: string
       required:
         - name
+        - agent
       type: object
     DurationStats:
       additionalProperties: false

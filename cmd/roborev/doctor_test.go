@@ -135,7 +135,7 @@ func TestDoctorAgentsTrustsDaemonOverShell(t *testing.T) {
 		ping:         &daemon.PingInfo{OK: true},
 		daemonAgents: &doctorDaemonAgents{},
 	}
-	review, _ := checkDoctorReviewAgent(env)
+	review, _ := checkDoctorReviewAgent(env, "reviews")
 	assert.Equal(t, doctorFail, review.Status)
 	assert.Contains(t, review.Details[0], "did not resolve this agent")
 }
@@ -166,7 +166,7 @@ func TestDoctorAgentsUnknownPreferredIgnoresBackup(t *testing.T) {
 		ctx:    t.Context(),
 		global: &config.Config{DefaultAgent: "acp.missing", ReviewBackupAgent: "gemini"},
 	}
-	review, _ := checkDoctorReviewAgent(env)
+	review, _ := checkDoctorReviewAgent(env, "reviews")
 	assert.Equal(t, doctorFail, review.Status)
 	assert.Equal(t, "reviews will fail: agent acp.missing is not a known agent", review.Summary)
 }
@@ -178,7 +178,7 @@ func TestDoctorAgentsBackupFallback(t *testing.T) {
 		ctx:    t.Context(),
 		global: &config.Config{DefaultAgent: "codex", ReviewBackupAgent: "gemini", CodexCmd: "codex"},
 	}
-	review, _ := checkDoctorReviewAgent(env)
+	review, _ := checkDoctorReviewAgent(env, "reviews")
 	assert.Equal(t, doctorWarn, review.Status)
 	assert.Contains(t, review.Summary, "backup agent gemini")
 }
@@ -496,12 +496,10 @@ func TestDoctorReviewPanels(t *testing.T) {
 		assert.Equal(t, "manual reviews will fail: agent codex is not available", single.Summary)
 	})
 
-	t.Run("a member without an agent fails the panel", func(t *testing.T) {
+	t.Run("a panel that cannot be queued fails", func(t *testing.T) {
 		broken := okPanel
-		broken.Members = []daemon.DoctorPanelMember{
-			{Name: "sec", Agent: "claude-code"},
-			{Name: "style", Error: `agent "gemini" unavailable`},
-		}
+		broken.Members = nil
+		broken.Error = `panel member "style": agent "gemini" unavailable`
 		env := &doctorEnv{
 			ctx:          t.Context(),
 			global:       &config.Config{},
@@ -510,7 +508,35 @@ func TestDoctorReviewPanels(t *testing.T) {
 		checks, _ := checkDoctorReviewAgents(env)
 		require.Len(t, checks, 1)
 		assert.Equal(t, doctorFail, checks[0].Status)
-		assert.Contains(t, checks[0].Details, `member style: agent "gemini" unavailable`)
+		assert.Equal(t, []string{broken.Error}, checks[0].Details)
+	})
+
+	t.Run("a missing synthesis agent fails the panel", func(t *testing.T) {
+		noSynth := okPanel
+		noSynth.Synthesis = agent.Diagnosis{Name: "claude-code", Error: `agent "claude-code" unavailable`}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{noSynth}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, doctorFail, checks[0].Status)
+	})
+
+	t.Run("an experimental-arm panel does not replace the single agent", func(t *testing.T) {
+		armPanel := okPanel
+		armPanel.Experiment = "try"
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{DefaultAgent: "codex"},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{armPanel}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		single := findDoctorCheck(t, checks, "agents.review")
+		assert.Equal(t, "reviews will fail: agent codex is not available", single.Summary)
+		panel := findDoctorCheck(t, checks, "agents.review_panel")
+		assert.Contains(t, panel.Summary, "experimental arm of try")
 	})
 }
 

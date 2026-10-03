@@ -800,6 +800,9 @@ type DoctorAgentsOutputBody struct {
 	// Panels Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
 	Panels []DoctorPanel `json:"panels" validate:"required"`
 
+	// PanelsError Why the review experiment configuration could not be applied; panels were not checked
+	PanelsError *string `json:"panels_error,omitempty"`
+
 	// PathEnv PATH environment variable of the daemon process
 	PathEnv string `json:"path_env" validate:"required"`
 
@@ -850,10 +853,10 @@ func (d DoctorAgentsOutputBody) Validate() error {
 }
 
 type DoctorPanel struct {
-	// ErrorData Why the panel itself cannot be resolved
+	// ErrorData Why queueing this panel would be rejected
 	ErrorData *string `json:"error,omitempty"`
 
-	// Experiment ID of the enabled experiment that selects this panel; empty for the base configuration
+	// Experiment ID of the review experiment whose experimental arm runs this panel; empty for the default configuration
 	Experiment *string             `json:"experiment,omitempty"`
 	Members    []DoctorPanelMember `json:"members" validate:"required"`
 	Name       string              `json:"name" validate:"required"`
@@ -890,9 +893,8 @@ func (d DoctorPanel) Validate() error {
 }
 
 type DoctorPanelMember struct {
-	Agent     *string `json:"agent,omitempty"`
-	ErrorData *string `json:"error,omitempty"`
-	Name      string  `json:"name" validate:"required"`
+	Agent string `json:"agent" validate:"required"`
+	Name  string `json:"name" validate:"required"`
 }
 
 func (d DoctorPanelMember) Validate() error {

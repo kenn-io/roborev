@@ -2,14 +2,15 @@ package daemon
 
 import (
 	"context"
-	"maps"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // hookTools maps a [[hooks]] type to the CLI the daemon runs for it.
@@ -66,76 +67,71 @@ func (s *Server) humaDoctorAgents(
 		}
 		resp.Body.HookTools = append(resp.Body.HookTools, d)
 	}
-	resp.Body.Panels = ResolveDoctorPanels(repoCfg, rawRepo, cfg)
+	panels, err := ResolveDoctorPanels(repo, repoCfg, rawRepo, cfg)
+	if err != nil {
+		resp.Body.PanelsError = err.Error()
+	}
+	resp.Body.Panels = panels
 	return resp, nil
 }
 
-// ResolveDoctorPanels resolves the panels selected for post-commit and manual
-// reviews with the same member and synthesis resolution the daemon uses when
-// it queues a panel review. It also resolves any different panel an enabled
-// experiment selects, labelled with the experiment ID. Agent lookups use the
-// calling process's PATH, so the daemon's answer is authoritative; the CLI
-// calls this directly only when the daemon cannot be asked.
-func ResolveDoctorPanels(repoCfg *config.RepoConfig, rawRepo map[string]any, cfg *config.Config) []DoctorPanel {
-	type selection struct {
-		experiment string
-		repoCfg    *config.RepoConfig
-	}
-	selections := []selection{{repoCfg: repoCfg}}
-	if experiments, err := config.EnabledExperimentConfigs(cfg, repoCfg, rawRepo); err == nil {
-		for _, id := range slices.Sorted(maps.Keys(experiments)) {
-			selections = append(selections, selection{experiment: id, repoCfg: experiments[id]})
-		}
-	}
-
-	var panels []DoctorPanel
-	checked := map[string]bool{} // "use/panel" pairs already reported
-	for _, sel := range selections {
-		merged := config.MergeReviewConfigFromConfig(sel.repoCfg, cfg)
-		var batch []DoctorPanel
-		add := func(name, use string) {
-			if name == "" || checked[use+"/"+name] {
-				return
-			}
-			checked[use+"/"+name] = true
-			for i := range batch {
-				if batch[i].Name == name {
-					batch[i].UsedFor = append(batch[i].UsedFor, use)
-					return
-				}
-			}
-			batch = append(batch, DoctorPanel{Name: name, UsedFor: []string{use}, Experiment: sel.experiment})
-		}
-		add(merged.HookPanel, "post_commit")
-		add(merged.DefaultPanel, "manual")
-		for i := range batch {
-			resolveDoctorPanel(&batch[i], sel.repoCfg, cfg)
-		}
-		panels = append(panels, batch...)
-	}
-	return panels
+// doctorPanelSources maps each kind of review to the job source that selects
+// its panel: post-commit reviews use hook_review_panel, manual reviews use
+// default_panel.
+var doctorPanelSources = []struct{ use, source string }{
+	{"post_commit", storage.JobSourcePostCommit},
+	{"manual", ""},
 }
 
-// resolveDoctorPanel fills in one panel's members and synthesis agent from
-// already-loaded config, so an experiment's effective config is used as is.
-func resolveDoctorPanel(p *DoctorPanel, repoCfg *config.RepoConfig, cfg *config.Config) {
-	members, synth, err := config.ResolveCIPanel(p.Name, repoCfg, cfg)
+// ResolveDoctorPanels reports what queueing a post-commit or manual review
+// would run, for every config a review can use: the default arm and, when a
+// review experiment is enabled, its experimental arm. Panels are selected and
+// planned by the same functions that queue a review, and the synthesis agent
+// is resolved the way the worker resolves it. Identical outcomes are merged;
+// an experimental arm is listed separately only when its outcome differs.
+// Agent lookups use the calling process's PATH, so the daemon's answer is
+// authoritative; the CLI calls this directly only when the daemon cannot be
+// asked.
+func ResolveDoctorPanels(
+	repo string, repoCfg *config.RepoConfig, rawRepo map[string]any, cfg *config.Config,
+) ([]DoctorPanel, error) {
+	arms, err := config.WorkflowExperimentArms(config.ExperimentWorkflowReview, cfg, repoCfg, rawRepo)
+	if err != nil {
+		return nil, err
+	}
+	var panels []DoctorPanel
+	for _, arm := range arms {
+		merged := config.MergeReviewConfigFromConfig(arm.RepoConfig, cfg)
+		for _, src := range doctorPanelSources {
+			name := config.SelectPanelName("", src.source, merged)
+			if name == "" {
+				continue
+			}
+			p := planDoctorPanel(repo, name, arm.RepoConfig, cfg)
+			if arm.Arm == config.ExperimentArmExperimental {
+				p.Experiment = arm.ExperimentID
+			}
+			panels = mergeDoctorPanel(panels, p, src.use)
+		}
+	}
+	return panels, nil
+}
+
+// planDoctorPanel plans one panel with planPanelRun and resolves its
+// synthesis agent with the worker's resolution.
+func planDoctorPanel(repo, name string, repoCfg *config.RepoConfig, cfg *config.Config) DoctorPanel {
+	p := DoctorPanel{Name: name}
+	plan, err := planPanelRun(targetDescriptor{}, name, uuid.UUID{}, repoCfg, cfg)
 	if err != nil {
 		p.Error = err.Error()
-		return
+		return p
 	}
-	for _, m := range members {
-		dm := DoctorPanelMember{Name: m.Name}
-		selected, _, _, _, err := resolvePanelMemberExecution(m, targetDescriptor{}, repoCfg, cfg)
-		if err != nil {
-			dm.Error = err.Error()
-		} else {
-			dm.Agent = selected
-		}
-		p.Members = append(p.Members, dm)
+	for _, o := range plan.memberOpts {
+		p.Members = append(p.Members, DoctorPanelMember{Name: o.PanelMemberName, Agent: o.Agent})
 	}
-	p.Synthesis = agent.Diagnosis{Name: synth.Agent}
-	if a, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, synth.Agent, cfg, synth.BackupAgent); err != nil {
+	job := &storage.ReviewJob{RepoPath: repo, Agent: plan.synthOpts.Agent, BackupAgent: plan.synthOpts.BackupAgent}
+	p.Synthesis = agent.Diagnosis{Name: plan.synthOpts.Agent}
+	if a, err := resolveConfiguredJobAgent(job, cfg, job.BackupAgent); err != nil {
 		p.Synthesis.Error = err.Error()
 	} else {
 		p.Synthesis.Available = true
@@ -143,4 +139,26 @@ func resolveDoctorPanel(p *DoctorPanel, repoCfg *config.RepoConfig, cfg *config.
 			p.Synthesis.Command = ca.CommandName()
 		}
 	}
+	return p
+}
+
+// mergeDoctorPanel adds p for the given kind of review, merging it into an
+// existing entry with the same outcome. The default arm is planned first, so
+// an experimental arm that changes nothing merges into it.
+func mergeDoctorPanel(panels []DoctorPanel, p DoctorPanel, use string) []DoctorPanel {
+	for i := range panels {
+		if sameDoctorPanelOutcome(panels[i], p) {
+			if !slices.Contains(panels[i].UsedFor, use) {
+				panels[i].UsedFor = append(panels[i].UsedFor, use)
+			}
+			return panels
+		}
+	}
+	p.UsedFor = []string{use}
+	return append(panels, p)
+}
+
+func sameDoctorPanelOutcome(a, b DoctorPanel) bool {
+	return a.Name == b.Name && a.Error == b.Error &&
+		slices.Equal(a.Members, b.Members) && a.Synthesis == b.Synthesis
 }

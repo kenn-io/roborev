@@ -129,56 +129,23 @@ func validateMaterializedExperimentConfigs(
 	global *Config, rawRepo map[string]any,
 	definitions map[string]ExperimentDefinition,
 ) error {
-	_, err := materializeExperimentConfigs(global, rawRepo, definitions)
-	return err
-}
-
-// materializeExperimentConfigs builds and validates the effective repository
-// config for each experiment definition, keyed by experiment ID.
-func materializeExperimentConfigs(
-	global *Config, rawRepo map[string]any,
-	definitions map[string]ExperimentDefinition,
-) (map[string]*RepoConfig, error) {
-	effective := make(map[string]*RepoConfig, len(definitions))
 	for _, id := range sortedMapKeys(definitions) {
 		effectiveRaw, err := applyExperimentOverlay(
 			global, rawRepo, definitions[id].Config,
 		)
 		if err != nil {
-			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg, err := decodeExperimentRepoConfig(effectiveRaw)
 		if err != nil {
-			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
 		if err := ValidateEffectiveReviewConfig(global, effectiveCfg); err != nil {
-			return nil, markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
-		effective[id] = effectiveCfg
 	}
-	return effective, nil
-}
-
-// EnabledExperimentConfigs returns the effective repository config for each
-// enabled experiment, built and validated the same way
-// ValidateExperimentConfigs builds them.
-func EnabledExperimentConfigs(
-	global *Config, repo *RepoConfig, rawRepo map[string]any,
-) (map[string]*RepoConfig, error) {
-	if repo != nil && rawRepo == nil {
-		return nil, markExperimentConfigError(
-			fmt.Errorf("repository config is missing its paired raw representation"),
-		)
-	}
-	definitions, err := mergeExperimentDefinitions(global, repo)
-	if err != nil {
-		return nil, markExperimentConfigError(err)
-	}
-	maps.DeleteFunc(definitions, func(_ string, definition ExperimentDefinition) bool {
-		return !experimentEnabled(definition)
-	})
-	return materializeExperimentConfigs(global, rawRepo, definitions)
+	return nil
 }
 
 // ValidateEffectiveReviewConfig validates review-time settings after merging
@@ -317,23 +284,9 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	}
 	result.SubjectHash = hashExperimentSubject(in.Subject)
 
-	definitions, err := mergeExperimentDefinitions(in.Global, in.Repo)
+	selectedID, selected, err := experimentForWorkflow(in.Global, in.Repo, in.Workflow)
 	if err != nil {
 		return ExperimentSelection{}, err
-	}
-	var selectedID string
-	var selected ExperimentDefinition
-	for _, id := range sortedMapKeys(definitions) {
-		definition := definitions[id]
-		if experimentEnabled(definition) && slices.Contains(definition.Workflows, in.Workflow) {
-			if selectedID != "" {
-				return ExperimentSelection{}, fmt.Errorf(
-					"enabled experiments %q and %q both apply to workflow %q",
-					selectedID, id, in.Workflow,
-				)
-			}
-			selectedID, selected = id, definition
-		}
 	}
 	if selectedID == "" {
 		return result, nil
@@ -346,32 +299,16 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	}
 	arm := assignExperimentArm(selectedID, subjectHash, *selected.Ratio)
 
-	if in.Repo != nil && in.RawRepo == nil {
-		return ExperimentSelection{}, fmt.Errorf(
-			"experiment %q: repository config is missing its paired raw representation",
-			selectedID,
-		)
-	}
-	effectiveRaw := cloneExperimentMap(in.RawRepo)
-	effectiveCfg := in.Repo
-	overlaidRaw, err := applyExperimentOverlay(in.Global, effectiveRaw, selected.Config)
+	overlaidCfg, overlaidRaw, err := experimentalArmConfig(in.Global, in.Repo, in.RawRepo, selectedID, selected)
 	if err != nil {
 		return ExperimentSelection{}, err
 	}
-	overlaidCfg, err := decodeExperimentRepoConfig(overlaidRaw)
-	if err != nil {
-		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
-	}
-	overlaidCfg.experimentOverlay = cloneExperimentMap(selected.Config)
-	if err := ValidateEffectiveReviewConfig(in.Global, overlaidCfg); err != nil {
-		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
-	}
+	result.RepoConfig = in.Repo
+	result.RawRepoConfig = cloneExperimentMap(in.RawRepo)
 	if arm == ExperimentArmExperimental {
-		effectiveRaw = overlaidRaw
-		effectiveCfg = overlaidCfg
+		result.RepoConfig = overlaidCfg
+		result.RawRepoConfig = overlaidRaw
 	}
-	result.RepoConfig = effectiveCfg
-	result.RawRepoConfig = effectiveRaw
 	result.Assignment = &ExperimentAssignment{
 		ID:             selectedID,
 		Arm:            arm,
@@ -380,6 +317,93 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 		DefinitionJSON: string(definitionJSON),
 	}
 	return result, nil
+}
+
+// ExperimentArmConfig is the repository config that one arm of a workflow's
+// experiment runs with. ExperimentID is empty when no experiment applies.
+type ExperimentArmConfig struct {
+	ExperimentID  string
+	Arm           ExperimentArm
+	RepoConfig    *RepoConfig
+	RawRepoConfig map[string]any
+}
+
+// WorkflowExperimentArms returns every repository config a workflow can run
+// with: the default arm, plus the experimental arm when an enabled
+// experiment applies to the workflow. It applies the experiment the same way
+// SelectReviewExperiment does, without assigning a branch to an arm.
+func WorkflowExperimentArms(
+	workflow ExperimentWorkflow, global *Config, repo *RepoConfig, rawRepo map[string]any,
+) ([]ExperimentArmConfig, error) {
+	id, definition, err := experimentForWorkflow(global, repo, workflow)
+	if err != nil {
+		return nil, err
+	}
+	arms := []ExperimentArmConfig{{
+		ExperimentID: id, Arm: ExperimentArmDefault, RepoConfig: repo, RawRepoConfig: rawRepo,
+	}}
+	if id == "" {
+		return arms, nil
+	}
+	cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
+	if err != nil {
+		return nil, err
+	}
+	return append(arms, ExperimentArmConfig{
+		ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
+	}), nil
+}
+
+// experimentForWorkflow returns the single enabled experiment that applies
+// to workflow, or an empty ID when none does.
+func experimentForWorkflow(
+	global *Config, repo *RepoConfig, workflow ExperimentWorkflow,
+) (string, ExperimentDefinition, error) {
+	definitions, err := mergeExperimentDefinitions(global, repo)
+	if err != nil {
+		return "", ExperimentDefinition{}, err
+	}
+	var selectedID string
+	var selected ExperimentDefinition
+	for _, id := range sortedMapKeys(definitions) {
+		definition := definitions[id]
+		if experimentEnabled(definition) && slices.Contains(definition.Workflows, workflow) {
+			if selectedID != "" {
+				return "", ExperimentDefinition{}, fmt.Errorf(
+					"enabled experiments %q and %q both apply to workflow %q",
+					selectedID, id, workflow,
+				)
+			}
+			selectedID, selected = id, definition
+		}
+	}
+	return selectedID, selected, nil
+}
+
+// experimentalArmConfig applies an experiment's overlay to the repository
+// config and validates the result.
+func experimentalArmConfig(
+	global *Config, repo *RepoConfig, rawRepo map[string]any,
+	id string, definition ExperimentDefinition,
+) (*RepoConfig, map[string]any, error) {
+	if repo != nil && rawRepo == nil {
+		return nil, nil, fmt.Errorf(
+			"experiment %q: repository config is missing its paired raw representation", id,
+		)
+	}
+	overlaidRaw, err := applyExperimentOverlay(global, cloneExperimentMap(rawRepo), definition.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	overlaidCfg, err := decodeExperimentRepoConfig(overlaidRaw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("experiment %q config: %w", id, err)
+	}
+	overlaidCfg.experimentOverlay = cloneExperimentMap(definition.Config)
+	if err := ValidateEffectiveReviewConfig(global, overlaidCfg); err != nil {
+		return nil, nil, fmt.Errorf("experiment %q config: %w", id, err)
+	}
+	return overlaidCfg, overlaidRaw, nil
 }
 
 func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]ExperimentDefinition, error) {

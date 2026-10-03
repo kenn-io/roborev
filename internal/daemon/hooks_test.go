@@ -1149,3 +1149,11 @@ func TestWaitUntilIdle_StopDoesNotDeadlock(t *testing.T) {
 		<-done
 	})
 }
+
+func TestHookEventFires(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(HookEventFires("review.failed"))
+	assert.True(HookEventFires("review.*"))
+	assert.False(HookEventFires("review.done"))
+	assert.False(HookEventFires("job.*"))
+}

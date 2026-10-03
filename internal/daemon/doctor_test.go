@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -71,12 +72,109 @@ func TestDoctorAgentsReportsDaemonView(t *testing.T) {
 }
 
 func TestResolveDoctorPanels(t *testing.T) {
+	const base = `
+[review]
+hook_review_panel = "guard"
+default_panel = "guard"
+
+[review.subagents.ok]
+agent = "test"
+
+[review.panels.guard]
+members = ["ok"]
+synthesis_agent = "test"
+
+[review.panels.alt]
+members = ["ok"]
+synthesis_agent = "test"
+`
+	const experiment = `
+[experiments.try]
+enabled = true
+ratio = 0.5
+workflows = [%q]
+
+[experiments.try.config%s]
+%s
+`
+	type want struct {
+		name        string
+		experiment  string
+		usedFor     []string
+		errContains string
+	}
+	both := []string{"post_commit", "manual"}
+	tests := []struct {
+		name   string
+		config string
+		want   []want
+	}{
+		{
+			name:   "default config only",
+			config: base,
+			want:   []want{{name: "guard", usedFor: both}},
+		},
+		{
+			name:   "experiment selecting a different panel is listed separately",
+			config: base + fmt.Sprintf(experiment, "review", ".review", `hook_review_panel = "alt"`),
+			want: []want{
+				{name: "guard", usedFor: both},
+				{name: "alt", experiment: "try", usedFor: []string{"post_commit"}},
+			},
+		},
+		{
+			name:   "experiment changing a member under the same panel name is listed separately",
+			config: base + fmt.Sprintf(experiment, "review", ".review.subagents.ok", `agent = "codex"`),
+			want: []want{
+				{name: "guard", usedFor: both},
+				{name: "guard", experiment: "try", usedFor: both, errContains: `panel member "ok"`},
+			},
+		},
+		{
+			name:   "experiment that does not change the panel is merged",
+			config: base + fmt.Sprintf(experiment, "review", "", `review_reasoning = "fast"`),
+			want:   []want{{name: "guard", usedFor: both}},
+		},
+		{
+			name:   "experiment for the CI workflow does not affect local reviews",
+			config: base + fmt.Sprintf(experiment, "ci", ".review", `hook_review_panel = "alt"`),
+			want:   []want{{name: "guard", usedFor: both}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PATH", t.TempDir())
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(tt.config), 0o600))
+			repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
+			require.NoError(t, err)
+
+			panels, err := ResolveDoctorPanels(repo, repoCfg, rawRepo, config.DefaultConfig())
+			require.NoError(t, err)
+			require.Len(t, panels, len(tt.want), "%+v", panels)
+			for i, w := range tt.want {
+				assert := assert.New(t)
+				p := panels[i]
+				assert.Equal(w.name, p.Name)
+				assert.Equal(w.experiment, p.Experiment)
+				assert.Equal(w.usedFor, p.UsedFor)
+				if w.errContains == "" {
+					assert.Empty(p.Error)
+					assert.True(p.Synthesis.Available)
+				} else {
+					assert.Contains(p.Error, w.errContains)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveDoctorPanelsRejectsUnselectableMember(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	repo := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(`
 [review]
 hook_review_panel = "guard"
-default_panel = "guard"
 
 [review.subagents.ok]
 agent = "test"
@@ -92,56 +190,9 @@ synthesis_agent = "test"
 	repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
 	require.NoError(t, err)
 
-	panels := ResolveDoctorPanels(repoCfg, rawRepo, config.DefaultConfig())
-	require.Len(t, panels, 1)
-	assert := assert.New(t)
-	p := panels[0]
-	assert.Equal("guard", p.Name)
-	assert.Equal([]string{"post_commit", "manual"}, p.UsedFor)
-	assert.Empty(p.Error)
-	require.Len(t, p.Members, 2)
-	assert.Equal("test", p.Members[0].Agent)
-	assert.NotEmpty(p.Members[1].Error, "an explicit agent that is not installed cannot be selected, even with allow_failure")
-	assert.True(p.Synthesis.Available)
-}
-
-func TestResolveDoctorPanelsIncludesExperimentPanels(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	repo := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(`
-[review]
-hook_review_panel = "base"
-
-[review.subagents.ok]
-agent = "test"
-
-[review.panels.base]
-members = ["ok"]
-synthesis_agent = "test"
-
-[review.panels.alt]
-members = ["ok"]
-synthesis_agent = "test"
-
-[experiments.try-alt]
-enabled = true
-ratio = 0.5
-workflows = ["review"]
-
-[experiments.try-alt.config.review]
-hook_review_panel = "alt"
-`), 0o600))
-	repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
+	panels, err := ResolveDoctorPanels(repo, repoCfg, rawRepo, config.DefaultConfig())
 	require.NoError(t, err)
-
-	panels := ResolveDoctorPanels(repoCfg, rawRepo, config.DefaultConfig())
-	require.Len(t, panels, 2)
-	assert := assert.New(t)
-	assert.Equal("base", panels[0].Name)
-	assert.Empty(panels[0].Experiment)
-	assert.Equal("alt", panels[1].Name)
-	assert.Equal("try-alt", panels[1].Experiment)
-	assert.Equal([]string{"post_commit"}, panels[1].UsedFor)
-	assert.Empty(panels[1].Error)
-	assert.True(panels[1].Synthesis.Available)
+	require.Len(t, panels, 1)
+	assert.Contains(t, panels[0].Error, `panel member "missing"`,
+		"queueing selects every member's agent, so allow_failure does not help")
 }

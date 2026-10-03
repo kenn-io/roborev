@@ -3,7 +3,6 @@
  */
 
 export interface DoctorPanelMember {
-  agent?: string;
-  error?: string;
+  agent: string;
   name: string;
 }

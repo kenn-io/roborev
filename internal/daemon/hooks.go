@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -210,6 +211,22 @@ func (hr *HookRunner) handleEvent(event Event) {
 	if fired > 0 {
 		hr.logger.Printf("Hooks: fired %d hook(s) for %s (job %d)", fired, event.Type, event.JobID)
 	}
+}
+
+// HookEvents are the event types the daemon broadcasts to [[hooks]]. Add an
+// event here when the daemon starts publishing it, so configuration checks
+// such as roborev doctor accept hooks that subscribe to it.
+var HookEvents = []string{
+	"review.started", "review.completed", "review.failed", "review.canceled",
+	"review.closed", "review.reopened", "review.commented", "review.remapped",
+}
+
+// HookEventFires reports whether a hook's event pattern matches any event the
+// daemon broadcasts.
+func HookEventFires(pattern string) bool {
+	return slices.ContainsFunc(HookEvents, func(event string) bool {
+		return matchEvent(pattern, event)
+	})
 }
 
 // matchEvent checks if an event type matches a hook's event pattern.
