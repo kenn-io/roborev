@@ -51,7 +51,7 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 	handler := server.httpServer.Handler
 
 	unknownLength := newTelemetryCaptureRequest(http.MethodPost, nil)
-	unknownLength.Body = io.NopCloser(sizeHiddenReader{bytes.NewReader(trailingPaddedTelemetryBody(1048577))})
+	unknownLength.Body = io.NopCloser(sizeHiddenReader{bytes.NewReader(trailingPaddedTelemetryBody(65537))})
 	unknownLength.ContentLength = -1
 
 	tests := []struct {
@@ -79,20 +79,20 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
 		},
 		{
-			name:       "body at the 1048576 byte cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 1048576)),
+			name:       "body at the 65536 byte cap",
+			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 65536)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "body one byte over the cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 1048577)),
+			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 65537)),
 			wantStatus: http.StatusRequestEntityTooLarge,
 			wantBody:   "too large",
 		},
 		{
 			name:       "valid event with trailing padding over the cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, trailingPaddedTelemetryBody(1048577)),
+			request:    newTelemetryCaptureRequest(http.MethodPost, trailingPaddedTelemetryBody(65537)),
 			wantStatus: http.StatusRequestEntityTooLarge,
 			wantBody:   "too large",
 		},
