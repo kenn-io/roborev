@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"strings"
-	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -319,19 +318,11 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
 		workerID, job.ID, job.RepoName, job.PanelName)
 
-	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
-		Verdict:  string(verdict),
-		Findings: output,
-	})
+	event := eventForJob("review.completed", job, job.ID)
+	event.Agent = agentName
+	event.Verdict = string(verdict)
+	event.Findings = output
+	wp.broadcaster.Broadcast(event)
 }
 
 // runSynthesisAgent invokes the configured agent read-only (non-agentic) to
@@ -354,16 +345,9 @@ func (wp *WorkerPool) runSynthesisAgent(
 		return reviewpkg.SynthesisDocument{}, "", "", err
 	}
 
-	wp.broadcaster.Broadcast(Event{
-		Type:     "review.started",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
-	})
+	event := eventForJob("review.started", job, job.ID)
+	event.Agent = agentName
+	wp.broadcaster.Broadcast(event)
 
 	normalizer := GetNormalizer(agentName)
 	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
@@ -395,11 +379,26 @@ func (wp *WorkerPool) runSynthesisAgent(
 		// Synthesis follows the same isolation policy as its member reviews.
 		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
 			checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
+			if err != nil {
+				return reviewpkg.SynthesisCheckout{}, err
+			}
+			configRepoPath := ""
+			if checkout.isolatedLocalReview {
+				if err := wp.db.ClearJobSession(job.ID, workerID); err != nil {
+					checkout.cleanup()
+					return reviewpkg.SynthesisCheckout{}, fmt.Errorf("clear synthesis session: %w", err)
+				}
+				job.SessionID = ""
+				job.ResumeSourceJobUUID = nil
+				checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+				configRepoPath = checkout.resolvedConfigRepoPath()
+			}
 			return reviewpkg.SynthesisCheckout{
-				RepoPath: checkout.agentRepoPath,
-				GitRef:   job.GitRef,
-				Cleanup:  checkout.cleanup,
-			}, err
+				RepoPath:       checkout.agentRepoPath,
+				ConfigRepoPath: configRepoPath,
+				GitRef:         job.GitRef,
+				Cleanup:        checkout.cleanup,
+			}, nil
 		},
 	})
 	sessionWriter.Flush()

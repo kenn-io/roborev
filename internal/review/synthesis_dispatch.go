@@ -11,11 +11,13 @@ import (
 )
 
 // SynthesisCheckout is the checkout used for agent execution and prompt file
-// handoff. Cleanup may be nil.
+// handoff. ConfigRepoPath overrides the hook's config path when set; Cleanup
+// may be nil.
 type SynthesisCheckout struct {
-	RepoPath string
-	GitRef   string
-	Cleanup  func()
+	RepoPath       string
+	ConfigRepoPath string
+	GitRef         string
+	Cleanup        func()
 }
 
 // SynthesisCheckoutError wraps a failure to prepare the checkout for the
@@ -30,7 +32,8 @@ func (e *SynthesisCheckoutError) Unwrap() error { return e.Err }
 
 // SynthesisHooks lets a caller observe the dispatch without duplicating it.
 type SynthesisHooks struct {
-	// ConfigRepoPath resolves the prompt budget and snapshot directory from the trusted checkout.
+	// ConfigRepoPath is the fallback for checkouts that do not provide their
+	// own configuration path.
 	ConfigRepoPath string
 	GlobalConfig   *config.Config
 	// BeforeInvoke runs once, immediately before the agent is called. The
@@ -79,9 +82,13 @@ func RunSynthesisAgent(
 	if checkout.Cleanup != nil {
 		defer checkout.Cleanup()
 	}
-	builder := promptpkg.NewBuilderWithConfig(nil, hooks.GlobalConfig).ForRepo(hooks.ConfigRepoPath, 0)
+	configRepoPath := checkout.ConfigRepoPath
+	if configRepoPath == "" {
+		configRepoPath = hooks.ConfigRepoPath
+	}
+	builder := promptpkg.NewBuilderWithConfig(nil, hooks.GlobalConfig).ForRepo(configRepoPath, 0)
 	prepared, err := builder.Prepare(prompt, promptpkg.SnapshotTarget{
-		RepoPath: checkout.RepoPath, ConfigRepoPath: hooks.ConfigRepoPath,
+		RepoPath: checkout.RepoPath, ConfigRepoPath: configRepoPath,
 	})
 	if err != nil {
 		return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}

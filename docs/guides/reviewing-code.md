@@ -338,6 +338,11 @@ reuse_review_session = true
 reuse_review_session = true
 ```
 
+Reviews running with
+[`review_in_worktree = true`](/docs/configuration/#isolated-review-checkouts)
+start fresh sessions so a resumed session cannot retain an old checkout. Those
+sessions are excluded from reuse by later reviews.
+
 ### How It Works
 
 When a new review is enqueued, the daemon searches for a prior completed review

@@ -117,9 +117,9 @@ func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
 		return b.repoCfg, nil
 	}
 	if b.repoCfgRef != "" {
-		return config.LoadRepoConfigFromRef(b.repoPath, b.repoCfgRef)
+		return config.LoadRepoConfigFromRef(b.resolvedConfigRepoPath(), b.repoCfgRef)
 	}
-	return config.LoadRepoConfig(b.repoPath)
+	return config.LoadRepoConfig(b.resolvedConfigRepoPath())
 }
 
 func (b *Builder) readCustomReviewFile(
@@ -139,9 +139,9 @@ func (b *Builder) readCustomReviewFile(
 		if clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") {
 			return b.readCustomReviewRefFile(clean)
 		}
-		resolvedPath = filepath.Join(b.repoPath, filePath)
+		resolvedPath = filepath.Join(b.resolvedConfigRepoPath(), filePath)
 	} else if !filepath.IsAbs(filePath) {
-		resolvedPath = filepath.Join(b.repoPath, filePath)
+		resolvedPath = filepath.Join(b.resolvedConfigRepoPath(), filePath)
 	}
 	return os.ReadFile(resolvedPath)
 }
@@ -191,12 +191,12 @@ func (b *Builder) readCustomReviewRefFile(
 			return os.ReadFile(filepath.Join(linkTarget, filepath.FromSlash(remaining)))
 		}
 		filesystemTarget := filepath.Clean(filepath.Join(
-			b.repoPath,
+			b.resolvedConfigRepoPath(),
 			filepath.FromSlash(path.Dir(linkPath)),
 			linkTarget,
 			filepath.FromSlash(remaining),
 		))
-		relativeTarget, relErr := filepath.Rel(b.repoPath, filesystemTarget)
+		relativeTarget, relErr := filepath.Rel(b.resolvedConfigRepoPath(), filesystemTarget)
 		if relErr != nil || relativeTarget == ".." ||
 			strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) {
 			return os.ReadFile(filesystemTarget)

@@ -862,6 +862,68 @@ func (db *DB) MarkClassifyAgentInvoked(
 	return nil
 }
 
+// ClearJobSession discards inherited resume metadata before an isolated attempt
+// starts a fresh agent session. Its local provenance also excludes sessions
+// discovered later by usage backfill. The precise attempt timestamp keeps a
+// later non-isolated rerun eligible for reuse.
+func (db *DB) ClearJobSession(jobID int64, workerID string) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := beginImmediate(ctx, conn); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if err := rollbackConn(conn); err != nil {
+				log.Printf("jobs ClearJobSession: rollback failed: %v", err)
+			}
+		}
+	}()
+	result, err := conn.ExecContext(ctx, `
+		UPDATE review_jobs
+		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	result, err = conn.ExecContext(ctx, `
+		INSERT INTO daemon_state (key, value, updated_at)
+		SELECT ? || uuid, started_at, datetime('now')
+		FROM review_jobs
+		WHERE id = ? AND uuid IS NOT NULL AND uuid != '' AND started_at IS NOT NULL
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, isolatedReviewSessionStatePrefix, jobID)
+	if err != nil {
+		return err
+	}
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 // SaveJobSessionID stores the captured agent session ID for a job.
 // The first captured ID wins so repeated lifecycle events do not
 // overwrite it. The update is scoped to the current execution

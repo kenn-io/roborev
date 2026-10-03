@@ -16,7 +16,7 @@ func (b *Builder) Prepare(text string, target SnapshotTarget) (SnapshotResult, e
 	text = strings.ToValidUTF8(text, "\uFFFD")
 	configRepo := target.ConfigRepoPath
 	if configRepo == "" {
-		configRepo = b.repoPath
+		configRepo = b.resolvedConfigRepoPath()
 	}
 	if len(text) <= config.ResolveMaxPromptSize(configRepo, b.globalCfg) {
 		return SnapshotResult{Prompt: text}, nil

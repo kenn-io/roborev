@@ -39,6 +39,9 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.SHA = job.GitRef
 	event.Branch = job.HookBranch()
 	event.Agent = job.Agent
+	if !job.IsCIReview() {
+		event.WorktreePath = job.WorktreePath
+	}
 	return event
 }
 
