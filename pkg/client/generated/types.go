@@ -774,6 +774,133 @@ func (d DeleteRepoInputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type Diagnosis struct {
+	Available bool    `json:"available"`
+	Command   *string `json:"command,omitempty"`
+	ErrorData *string `json:"error,omitempty"`
+	Name      string  `json:"name" validate:"required"`
+	Path      *string `json:"path,omitempty"`
+	Unknown   *bool   `json:"unknown,omitempty"`
+}
+
+func (d Diagnosis) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorAgentsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Agents Every agent the daemon knows
+	Agents []Diagnosis `json:"agents" validate:"required"`
+
+	// HookTools CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+	HookTools []Diagnosis `json:"hook_tools" validate:"required"`
+
+	// Panels Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
+	Panels []DoctorPanel `json:"panels" validate:"required"`
+
+	// PanelsError Why the review experiment configuration could not be applied; panels were not checked
+	PanelsError *string `json:"panels_error,omitempty"`
+
+	// PathEnv PATH environment variable of the daemon process
+	PathEnv string `json:"path_env" validate:"required"`
+
+	// RepoConfigError Why the repository config could not be loaded; results use global config only
+	RepoConfigError *string `json:"repo_config_error,omitempty"`
+
+	// Requested The requested agent names, resolved by the daemon; unknown names report an error
+	Requested []Diagnosis `json:"requested" validate:"required"`
+}
+
+func (d DoctorAgentsOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Agents {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range d.HookTools {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("HookTools[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range d.Panels {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Panels[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.PathEnv, "required"); err != nil {
+		errors = errors.Append("PathEnv", err)
+	}
+	for i, item := range d.Requested {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DoctorPanel struct {
+	// ErrorData Why queueing this panel would be rejected
+	ErrorData *string `json:"error,omitempty"`
+
+	// Experiment ID of the review experiment whose experimental arm runs this panel; empty for the default configuration
+	Experiment *string             `json:"experiment,omitempty"`
+	Members    []DoctorPanelMember `json:"members" validate:"required"`
+	Name       string              `json:"name" validate:"required"`
+	Synthesis  Diagnosis           `json:"synthesis"`
+
+	// UsedFor Which reviews select this panel: post_commit, manual, or both
+	UsedFor []string `json:"used_for" validate:"required"`
+}
+
+func (d DoctorPanel) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if v, ok := any(d.Synthesis).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Synthesis", err)
+		}
+	}
+	if err := typesValidator.Var(d.UsedFor, "required"); err != nil {
+		errors = errors.Append("UsedFor", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DoctorPanelMember struct {
+	Agent string `json:"agent" validate:"required"`
+	Name  string `json:"name" validate:"required"`
+}
+
+func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DurationStats struct {
 	QueueP50Secs  float64 `json:"queue_p50_secs"`
 	QueueP90Secs  float64 `json:"queue_p90_secs"`

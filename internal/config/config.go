@@ -482,10 +482,18 @@ func validateACPAgentConfigs(configs ACPAgentConfigs) error {
 }
 
 func validateAgentReferences(cfg any) error {
-	return walkAgentReferences(reflect.ValueOf(cfg), "")
+	return walkAgentReferences(reflect.ValueOf(cfg), "", func(path, name string) error {
+		if err := agentname.ValidateReference(name); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		return nil
+	})
 }
 
-func walkAgentReferences(value reflect.Value, path string) error {
+// walkAgentReferences calls visit for every agent name a config struct sets:
+// string fields tagged "agent" or "*_agent", "agents" slices, and the keys of
+// "reviews" maps. The path is the dotted TOML key that holds the name.
+func walkAgentReferences(value reflect.Value, path string, visit func(path, name string) error) error {
 	if !value.IsValid() {
 		return nil
 	}
@@ -493,7 +501,7 @@ func walkAgentReferences(value reflect.Value, path string) error {
 		if value.IsNil() {
 			return nil
 		}
-		return walkAgentReferences(value.Elem(), path)
+		return walkAgentReferences(value.Elem(), path, visit)
 	}
 	if value.Kind() != reflect.Struct {
 		return nil
@@ -514,15 +522,15 @@ func walkAgentReferences(value reflect.Value, path string) error {
 
 		if field.Kind() == reflect.String &&
 			(tag == "agent" || strings.HasSuffix(tag, "_agent")) {
-			if err := agentname.ValidateReference(field.String()); err != nil {
-				return fmt.Errorf("%s: %w", fieldPath, err)
+			if err := visit(fieldPath, field.String()); err != nil {
+				return err
 			}
 			continue
 		}
 		if field.Kind() == reflect.Slice && tag == "agents" {
 			for j := range field.Len() {
-				if err := agentname.ValidateReference(field.Index(j).String()); err != nil {
-					return fmt.Errorf("%s[%d]: %w", fieldPath, j, err)
+				if err := visit(fmt.Sprintf("%s[%d]", fieldPath, j), field.Index(j).String()); err != nil {
+					return err
 				}
 			}
 			continue
@@ -535,17 +543,17 @@ func walkAgentReferences(value reflect.Value, path string) error {
 			for _, key := range keys {
 				entryPath := fmt.Sprintf("%s.%v", fieldPath, key.Interface())
 				if tag == "reviews" {
-					if err := agentname.ValidateReference(fmt.Sprint(key.Interface())); err != nil {
-						return fmt.Errorf("%s: %w", entryPath, err)
+					if err := visit(entryPath, fmt.Sprint(key.Interface())); err != nil {
+						return err
 					}
 				}
-				if err := walkAgentReferences(field.MapIndex(key), entryPath); err != nil {
+				if err := walkAgentReferences(field.MapIndex(key), entryPath, visit); err != nil {
 					return err
 				}
 			}
 			continue
 		}
-		if err := walkAgentReferences(field, fieldPath); err != nil {
+		if err := walkAgentReferences(field, fieldPath, visit); err != nil {
 			return err
 		}
 	}

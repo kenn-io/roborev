@@ -277,6 +277,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/doctor/agents", s.humaDoctorAgents,
+		func(o *huma.Operation) {
+			o.OperationID = "doctor-agents"
+			o.Summary = "Report agent availability as the daemon sees it"
+			o.Tags = []string{"daemon"}
+		})
+
 	huma.Get(api, "/api/ping", s.humaPing,
 		func(o *huma.Operation) {
 			o.OperationID = "ping"

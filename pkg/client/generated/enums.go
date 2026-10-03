@@ -157,6 +157,25 @@ func (l ListJobsQueryHideClassifyJobs) Validate() error {
 	}
 }
 
+// ListJobsQueryIncludePanelMembers Include individual panel member jobs alongside panel synthesis jobs
+type ListJobsQueryIncludePanelMembers string
+
+const (
+	ListJobsQueryIncludePanelMembersEmpty ListJobsQueryIncludePanelMembers = ""
+	ListJobsQueryIncludePanelMembersFalse ListJobsQueryIncludePanelMembers = "false"
+	ListJobsQueryIncludePanelMembersTrue  ListJobsQueryIncludePanelMembers = "true"
+)
+
+// Validate checks if the ListJobsQueryIncludePanelMembers value is valid
+func (l ListJobsQueryIncludePanelMembers) Validate() error {
+	switch l {
+	case ListJobsQueryIncludePanelMembersEmpty, ListJobsQueryIncludePanelMembersFalse, ListJobsQueryIncludePanelMembersTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryIncludePanelMembers value, got: %v", l))
+	}
+}
+
 // ListJobsQueryOmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 type ListJobsQueryOmitPrompt string
 

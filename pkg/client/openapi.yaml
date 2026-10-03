@@ -1015,6 +1015,111 @@ components:
         - repo_id
         - cascade
       type: object
+    Diagnosis:
+      additionalProperties: false
+      properties:
+        available:
+          type: boolean
+        command:
+          type: string
+        error:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        unknown:
+          type: boolean
+      required:
+        - name
+        - available
+      type: object
+    DoctorAgentsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/DoctorAgentsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        agents:
+          description: Every agent the daemon knows
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
+        hook_tools:
+          description: CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
+        panels:
+          description: Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
+          items:
+            $ref: "#/components/schemas/DoctorPanel"
+          type: array
+        panels_error:
+          description: Why the review experiment configuration could not be applied; panels were not checked
+          type: string
+        path_env:
+          description: PATH environment variable of the daemon process
+          type: string
+        repo_config_error:
+          description: Why the repository config could not be loaded; results use global config only
+          type: string
+        requested:
+          description: The requested agent names, resolved by the daemon; unknown names report an error
+          items:
+            $ref: "#/components/schemas/Diagnosis"
+          type: array
+      required:
+        - path_env
+        - agents
+        - requested
+        - hook_tools
+        - panels
+      type: object
+    DoctorPanel:
+      additionalProperties: false
+      properties:
+        error:
+          description: Why queueing this panel would be rejected
+          type: string
+        experiment:
+          description: ID of the review experiment whose experimental arm runs this panel; empty for the default configuration
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/DoctorPanelMember"
+          type: array
+        name:
+          type: string
+        synthesis:
+          $ref: "#/components/schemas/Diagnosis"
+          description: The agent that combines member results
+        used_for:
+          description: "Which reviews select this panel: post_commit, manual, or both"
+          items:
+            type: string
+          type: array
+      required:
+        - name
+        - used_for
+        - members
+        - synthesis
+      type: object
+    DoctorPanelMember:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        name:
+          type: string
+      required:
+        - name
+        - agent
+      type: object
     DurationStats:
       additionalProperties: false
       properties:
@@ -4820,6 +4925,42 @@ paths:
       summary: Get aggregate review cost
       tags:
         - daemon
+  /api/doctor/agents:
+    get:
+      operationId: doctor-agents
+      parameters:
+        - description: Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks
+            type: string
+        - description: Agent names to resolve exactly as the daemon would (repeatable)
+          explode: true
+          in: query
+          name: agent
+          schema:
+            description: Agent names to resolve exactly as the daemon would (repeatable)
+            items:
+              type: string
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorAgentsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Report agent availability as the daemon sees it
+      tags:
+        - daemon
   /api/enqueue:
     post:
       operationId: enqueue-job
@@ -5530,6 +5671,17 @@ paths:
           name: panel_run
           schema:
             description: Return all jobs (members + synthesis) of one panel run
+            type: string
+        - description: Include individual panel member jobs alongside panel synthesis jobs
+          explode: false
+          in: query
+          name: include_panel_members
+          schema:
+            description: Include individual panel member jobs alongside panel synthesis jobs
+            enum:
+              - "true"
+              - "false"
+              - ""
             type: string
         - description: Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
           explode: false

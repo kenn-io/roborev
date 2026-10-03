@@ -18,6 +18,7 @@ var cliUseCommands = map[string]bool{
 	"roborev review":                 true,
 	"roborev wait":                   true,
 	"roborev status":                 true,
+	"roborev doctor":                 true,
 	"roborev show":                   true,
 	"roborev list":                   true,
 	"roborev search":                 true,

@@ -6,6 +6,7 @@ import type { ListJobsBranchIncludeEmpty } from "./listJobsBranchIncludeEmpty";
 import type { ListJobsClosed } from "./listJobsClosed";
 import type { ListJobsHideClassifyJobs } from "./listJobsHideClassifyJobs";
 import type { ListJobsIncludeFindings } from "./listJobsIncludeFindings";
+import type { ListJobsIncludePanelMembers } from "./listJobsIncludePanelMembers";
 import type { ListJobsOmitPrompt } from "./listJobsOmitPrompt";
 
 export type ListJobsParams = {
@@ -65,6 +66,10 @@ export type ListJobsParams = {
    * Return all jobs (members + synthesis) of one panel run
    */
   panel_run?: string;
+  /**
+   * Include individual panel member jobs alongside panel synthesis jobs
+   */
+  include_panel_members?: ListJobsIncludePanelMembers;
   /**
    * Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
    */

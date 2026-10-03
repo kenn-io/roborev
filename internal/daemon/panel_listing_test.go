@@ -94,6 +94,34 @@ func TestListJobsPanelRunReturnsMembers(t *testing.T) {
 	assert.True(sawSynth, "panel_run must include the synthesis row")
 }
 
+// TestListJobsIncludePanelMembers verifies include_panel_members=true returns
+// member rows alongside the synthesis parent, so a caller can see a member
+// that failed inside a panel that still finished.
+func TestListJobsIncludePanelMembers(t *testing.T) {
+	assert := assert.New(t)
+	server, _, _ := newTestServer(t)
+
+	runUUID, synthID, _ := enqueueTrioPanel(t, server)
+
+	jobs := listJobsViaHTTP(t, server, "?include_panel_members=true")
+
+	var members int
+	var sawSynth bool
+	for _, j := range jobs {
+		if j.PanelRunUUID == nil || *j.PanelRunUUID != runUUID {
+			continue
+		}
+		switch j.PanelRole {
+		case storage.PanelRoleMember:
+			members++
+		case storage.PanelRoleSynthesis:
+			sawSynth = j.ID == synthID
+		}
+	}
+	assert.Equal(3, members, "include_panel_members must return every member row")
+	assert.True(sawSynth, "the synthesis parent is still listed")
+}
+
 // TestFindJobForCommitResolvesToSynthesis verifies the wait/show SHA path:
 // a git_ref filter (members share the frozen ref) resolves to the synthesis
 // parent, never a member.

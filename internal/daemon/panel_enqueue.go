@@ -549,23 +549,43 @@ func storageAssignmentForExperiment(
 // availability is deferred to worker time (failover). Member execution fields
 // are resolved up front so a selected backup agent receives its own model
 // instead of the preferred agent's model.
-func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJSONOutput, error) {
-	members, synth, err := config.ResolveCIPanel(in.panelName, in.repoCfg, in.cfg)
-	if err != nil {
-		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
-	}
+// panelRunPlan is the member and synthesis jobs that queueing a panel would
+// create, before anything is written.
+type panelRunPlan struct {
+	members    []config.ResolvedMember
+	memberOpts []storage.EnqueueOpts
+	synthOpts  storage.EnqueueOpts
+}
 
+// planPanelRun resolves a panel and selects every member's agent without
+// writing anything. Queueing a panel review and the doctor endpoint both use
+// it, so doctor reports exactly what queueing would do.
+func planPanelRun(
+	descriptor targetDescriptor, panelName string, runUUID uuid.UUID,
+	repoCfg *config.RepoConfig, cfg *config.Config,
+) (panelRunPlan, error) {
+	members, synth, err := config.ResolveCIPanel(panelName, repoCfg, cfg)
+	if err != nil {
+		return panelRunPlan{}, err
+	}
+	memberOpts, err := panelMemberOpts(descriptor, panelName, runUUID, members, repoCfg, cfg)
+	if err != nil {
+		return panelRunPlan{}, err
+	}
+	return panelRunPlan{
+		members:    members,
+		memberOpts: memberOpts,
+		synthOpts:  panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg),
+	}, nil
+}
+
+func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJSONOutput, error) {
 	runUUID := uuid.New()
-	memberOpts, err := panelMemberOpts(
-		in.descriptor, in.panelName, runUUID, members,
-		in.repoCfg, in.cfg,
-	)
+	plan, err := planPanelRun(in.descriptor, in.panelName, runUUID, in.repoCfg, in.cfg)
 	if err != nil {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
-	synthOpts := panelSynthesisOpts(
-		in.descriptor, in.panelName, runUUID, synth, in.repoCfg, in.cfg,
-	)
+	members, memberOpts, synthOpts := plan.members, plan.memberOpts, plan.synthOpts
 	if in.experiment != nil {
 		assignment, assignErr := storageAssignmentForExperiment(
 			in.experiment, experimentPlanForPanel(memberOpts, synthOpts),

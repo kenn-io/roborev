@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
@@ -96,27 +97,28 @@ type RemapMapping struct {
 //     values like -1 are treated as unlimited, matching legacy)
 //   - Offset: default -1 (negative offsets clamp to 0)
 type ListJobsInput struct {
-	ID                 int64     `query:"id" default:"-1" doc:"Return a single job by ID"`
-	Status             string    `query:"status" doc:"Filter by job status"`
-	Repo               []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
-	GitRef             string    `query:"git_ref" doc:"Filter by git ref"`
-	AnalysisType       string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
-	AnalysisFile       []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
-	Branch             string    `query:"branch" doc:"Filter by branch name"`
-	BranchEmpty        string    `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
-	BranchIncludeEmpty string    `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
-	Closed             string    `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
-	JobType            string    `query:"job_type" doc:"Filter by job type"`
-	ExcludeJobType     string    `query:"exclude_job_type" doc:"Exclude jobs of this type"`
-	HideClassifyJobs   string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
-	PanelRun           uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
-	OmitPrompt         string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
-	IncludeFindings    string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`
-	RepoPrefix         string    `query:"repo_prefix" doc:"Filter repos by path prefix"`
-	Limit              int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
-	Offset             int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
-	Before             int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
-	Cursor             string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
+	ID                  int64     `query:"id" default:"-1" doc:"Return a single job by ID"`
+	Status              string    `query:"status" doc:"Filter by job status"`
+	Repo                []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
+	GitRef              string    `query:"git_ref" doc:"Filter by git ref"`
+	AnalysisType        string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
+	AnalysisFile        []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
+	Branch              string    `query:"branch" doc:"Filter by branch name"`
+	BranchEmpty         string    `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
+	BranchIncludeEmpty  string    `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
+	Closed              string    `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
+	JobType             string    `query:"job_type" doc:"Filter by job type"`
+	ExcludeJobType      string    `query:"exclude_job_type" doc:"Exclude jobs of this type"`
+	HideClassifyJobs    string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
+	PanelRun            uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
+	IncludePanelMembers string    `query:"include_panel_members" doc:"Include individual panel member jobs alongside panel synthesis jobs" enum:"true,false,"`
+	OmitPrompt          string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
+	IncludeFindings     string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`
+	RepoPrefix          string    `query:"repo_prefix" doc:"Filter repos by path prefix"`
+	Limit               int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
+	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
+	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
+	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.
@@ -810,4 +812,43 @@ type BackfillTokensOutput struct {
 // StreamEventsInput holds query parameters for GET /api/stream/events.
 type StreamEventsInput struct {
 	Repo string `query:"repo" doc:"Filter events by repo root path"`
+}
+
+// -- GET /api/doctor/agents --
+
+// DoctorAgentsInput holds query parameters for the daemon's agent diagnosis.
+type DoctorAgentsInput struct {
+	Repo  string   `query:"repo" doc:"Repository root whose .roborev.toml supplies ACP agents, overrides, and hooks"`
+	Agent []string `query:"agent,explode" doc:"Agent names to resolve exactly as the daemon would (repeatable)"`
+}
+
+// DoctorAgentsOutput is the response for GET /api/doctor/agents. It reports
+// agent and hook-tool availability as the daemon process sees it, which can
+// differ from a user's shell when the daemon started with a different PATH.
+type DoctorAgentsOutput struct {
+	Body struct {
+		PathEnv         string            `json:"path_env" doc:"PATH environment variable of the daemon process"`
+		Agents          []agent.Diagnosis `json:"agents" doc:"Every agent the daemon knows"`
+		Requested       []agent.Diagnosis `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
+		HookTools       []agent.Diagnosis `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		Panels          []DoctorPanel     `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
+		PanelsError     string            `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
+		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
+	}
+}
+
+// DoctorPanel is one selected review panel as the daemon would queue it.
+type DoctorPanel struct {
+	Name       string              `json:"name"`
+	UsedFor    []string            `json:"used_for" doc:"Which reviews select this panel: post_commit, manual, or both"`
+	Experiment string              `json:"experiment,omitempty" doc:"ID of the review experiment whose experimental arm runs this panel; empty for the default configuration"`
+	Error      string              `json:"error,omitempty" doc:"Why queueing this panel would be rejected"`
+	Members    []DoctorPanelMember `json:"members"`
+	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
+}
+
+// DoctorPanelMember is one panel member and the agent queueing selects for it.
+type DoctorPanelMember struct {
+	Name  string `json:"name"`
+	Agent string `json:"agent"`
 }
