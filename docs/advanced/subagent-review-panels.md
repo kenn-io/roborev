@@ -49,6 +49,7 @@ members = ["bug"]
 members = ["bug", "security", "design"]
 synthesis_agent = "codex"
 synthesis_model = "gpt-5.5"
+synthesis_reasoning = "medium"
 synthesis_backup_agent = "claude-code"
 synthesis_backup_model = "claude-opus-4-8"
 ```
@@ -227,6 +228,7 @@ members = ["bug", "security", "trial"]
 members = ["bug", "security", "design"]
 synthesis_agent = "codex"
 synthesis_model = "gpt-5.5"
+synthesis_reasoning = "medium"
 synthesis_backup_agent = "claude-code"
 synthesis_backup_model = "claude-opus-4-8"
 ```
@@ -236,12 +238,14 @@ synthesis_backup_model = "claude-opus-4-8"
 | `members` | array | Ordered list of subagent names. Required and must not be empty. |
 | `synthesis_agent` | string | Agent for synthesis. Empty means use fix workflow agent resolution. |
 | `synthesis_model` | string | Model for synthesis. Empty means use fix workflow model resolution. |
+| `synthesis_reasoning` | string | Reasoning level for synthesis. Empty means use `fix_reasoning` from the repository, then the global config, then `standard`. A project `synthesis_reasoning` overrides it. |
 | `synthesis_backup_agent` | string | Explicit backup agent for synthesis if the primary is unavailable or fails. |
 | `synthesis_backup_model` | string | Explicit backup model for synthesis backup. |
 
 Panel validation fails if `default_panel` or `hook_review_panel` names an
 undefined panel, a panel has no members, or a panel references an undefined
-subagent.
+subagent. Loading a config fails if a panel's `synthesis_reasoning` is not a
+valid reasoning level.
 
 ## CI Panels
 

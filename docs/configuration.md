@@ -274,9 +274,9 @@ nonempty project `review_reasoning`. Explicit CLI reasoning keeps priority in
 daemon-free CI reviews.
 
 Project `synthesis_reasoning` independently overrides panel and CI synthesis
-reasoning, including daemon-free `roborev ci review`. It does not require
-`override_panel_reasoning`. When omitted, synthesis keeps its existing reasoning
-selection.
+reasoning, including a panel's own `synthesis_reasoning` and daemon-free
+`roborev ci review`. It does not require `override_panel_reasoning`. When
+omitted, synthesis keeps its existing reasoning selection.
 
 These settings change models and reasoning, not agents or providers. Use a model
 accepted by each affected agent when overriding a mixed-agent panel. Backup

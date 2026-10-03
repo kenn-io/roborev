@@ -705,3 +705,52 @@ func TestResolvePanelNonVotingMember(t *testing.T) {
 	_, _, err = ResolveCIPanel("observers", nil, global)
 	require.ErrorContains(t, err, `panel "observers" has no voting members`)
 }
+
+func TestResolvePanelSynthesisReasoningPrecedence(t *testing.T) {
+	for _, tt := range []struct {
+		name, panelReasoning, projectReasoning, want string
+		repoPanel                                    bool
+	}{
+		{name: "fix reasoning when unset", want: "high"},
+		{name: "panel over fix reasoning", panelReasoning: "medium", want: "medium"},
+		{name: "repo panel over fix reasoning", panelReasoning: "medium", repoPanel: true, want: "medium"},
+		{name: "project over panel", panelReasoning: "medium", projectReasoning: "low", want: "low"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			review := ReviewConfig{
+				Subagents: map[string]SubagentSpec{"general": {Agent: "codex"}},
+				Panels: map[string]PanelSpec{"full": {
+					Members: []string{"general"}, SynthesisReasoning: tt.panelReasoning,
+				}},
+			}
+			globalCfg := &Config{
+				FixReasoning: "high",
+				project:      ProjectConfig{SynthesisReasoning: tt.projectReasoning},
+			}
+			repoCfg := &RepoConfig{FixReasoning: "high"}
+			if tt.repoPanel {
+				repoCfg.Review = review
+			} else {
+				globalCfg.Review = review
+			}
+
+			_, synth, err := ResolveCIPanel("full", repoCfg, globalCfg)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, synth.Reasoning)
+		})
+	}
+}
+
+func TestPanelSynthesisReasoningValidation(t *testing.T) {
+	review := ReviewConfig{
+		Subagents: map[string]SubagentSpec{"general": {Agent: "codex"}},
+		Panels: map[string]PanelSpec{"full": {
+			Members: []string{"general"}, SynthesisReasoning: "urgent",
+		}},
+	}
+
+	require.ErrorContains(t, review.Validate(), `panel "full" synthesis_reasoning`)
+	require.ErrorContains(t, (&Config{Review: review}).Validate(), `review.panels."full".synthesis_reasoning`)
+	require.ErrorContains(t, (&RepoConfig{Review: review}).Validate(), `review.panels."full".synthesis_reasoning`)
+}

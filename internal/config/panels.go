@@ -30,7 +30,8 @@ type SubagentSpec struct {
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
-// agent/model. Synthesis falls back to the fix-workflow resolution when unset.
+// agent/model/reasoning. Synthesis falls back to the fix-workflow resolution
+// when unset.
 // The synthesis backup agent/model are an explicit opt-in: they pass straight
 // through to the synthesis job's stored failover backup, with no resolution or
 // fallback.
@@ -38,6 +39,7 @@ type PanelSpec struct {
 	Members              []string `toml:"members"`
 	SynthesisAgent       string   `toml:"synthesis_agent"`
 	SynthesisModel       string   `toml:"synthesis_model"`
+	SynthesisReasoning   string   `toml:"synthesis_reasoning"`
 	SynthesisBackupAgent string   `toml:"synthesis_backup_agent"`
 	SynthesisBackupModel string   `toml:"synthesis_backup_model"`
 }
@@ -147,6 +149,9 @@ func (rc ReviewConfig) Validate() error {
 		}
 		if err := rc.checkVotingMember(name, panel); err != nil {
 			errs = append(errs, err)
+		}
+		if _, err := NormalizeReasoning(panel.SynthesisReasoning); err != nil {
+			errs = append(errs, fmt.Errorf("panel %q synthesis_reasoning: %w", name, err))
 		}
 	}
 	errs = append(errs, rc.checkPanelRef("default_panel", rc.DefaultPanel))
@@ -445,8 +450,9 @@ func validateSubagentTimeout(timeout string) error {
 }
 
 // resolveSynthesis resolves the synthesis agent/model/reasoning: the panel's
-// explicit synthesis_agent/synthesis_model else the fix-workflow resolution,
-// and the fix-workflow reasoning (synthesis consolidates like a fix). An
+// explicit synthesis_agent/synthesis_model/synthesis_reasoning else the
+// fix-workflow resolution (synthesis consolidates like a fix). A project
+// synthesis_model or synthesis_reasoning overrides the panel's value. An
 // omitted synthesis_model inherits a workflow or default model only when the
 // configuration layer supplying that model resolves to the selected agent
 // (mirrors member resolution).
@@ -464,7 +470,11 @@ func resolveSynthesisFromConfig(
 	repoCfg *RepoConfig,
 	globalCfg *Config,
 ) (SynthesisSpec, error) {
-	reasoning, err := ResolveFixReasoningFromConfig(globalCfg.ProjectSynthesisReasoning(), repoCfg, globalCfg)
+	explicitReasoning := globalCfg.ProjectSynthesisReasoning()
+	if explicitReasoning == "" {
+		explicitReasoning = panel.SynthesisReasoning
+	}
+	reasoning, err := ResolveFixReasoningFromConfig(explicitReasoning, repoCfg, globalCfg)
 	if err != nil {
 		return SynthesisSpec{}, err
 	}

@@ -584,6 +584,11 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	case *RepoConfig:
 		review = typed.Review
 	}
+	for _, name := range slices.Sorted(maps.Keys(review.Panels)) {
+		if _, err := NormalizeReasoning(review.Panels[name].SynthesisReasoning); err != nil {
+			return fmt.Errorf("review.panels.%q.synthesis_reasoning: %w", name, err)
+		}
+	}
 	if err := validateCustomReviewTypes(review.Types); err != nil {
 		return err
 	}

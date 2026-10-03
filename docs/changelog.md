@@ -13,6 +13,9 @@ All notable changes to roborev, grouped by minor release.
     top/bottom, and `Ctrl-P`/`Ctrl-N` to move up/down. The release-notes
     shortcut moves from `u` to uppercase `U`. See
     [TUI keyboard commands](/docs/integrations/tui/#keyboard-commands).
+- Set `synthesis_reasoning` on a review panel to choose the reasoning level for
+    its synthesis step without changing `fix_reasoning`. See
+    [panel configuration](/docs/advanced/subagent-review-panels/#panels).
 
 ## 0.70.0
 
