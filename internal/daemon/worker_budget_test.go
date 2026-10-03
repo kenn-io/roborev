@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"net/http"
@@ -40,6 +41,14 @@ func (a *budgetRecordingAgent) Review(_ context.Context, _, _, prompt string, _ 
 		return "", a.err
 	}
 	return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+}
+
+type budgetStructuredReviewAgent struct{ *budgetRecordingAgent }
+
+func (a *budgetStructuredReviewAgent) ReviewWithSchema(
+	context.Context, string, string, string, jsontext.Value, io.Writer,
+) (jsontext.Value, error) {
+	return jsontext.Value(`{"findings":[]}`), nil
 }
 
 func configureUnpricedBudgetRouting(t *testing.T, tc *workerTestContext) (*config.Config, time.Time) {
@@ -167,6 +176,56 @@ func TestBudgetRoutingPreservesTestAgent(t *testing.T) {
 	assert.Nil(t, selected)
 	assert.Equal(t, "test", job.Agent)
 	assert.False(t, job.BudgetRoutingLocked)
+}
+
+func TestBudgetRoutingPreservesGoalReviewAgent(t *testing.T) {
+	ctx := newWorkerTestContext(t, 1)
+	primary := &budgetRecordingAgent{name: "pi"}
+	cheaper := &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}
+	for _, candidate := range []agent.Agent{primary, cheaper} {
+		original, err := agent.Get(candidate.Name())
+		require.NoError(t, err)
+		agent.Register(candidate)
+		t.Cleanup(func() { agent.Register(original) })
+	}
+	require.NoError(t, agent.ValidateStructuredReviewSelection(config.ReviewTypeGoal, cheaper))
+
+	cfg := config.DefaultConfig()
+	cfg.Budget = config.BudgetConfig{
+		Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100,
+		AgentCosts: config.BudgetAgentCosts{"pi": 15, "grok": 5},
+	}
+	ctx.reconfigurePool(cfg)
+	now := time.Now().UTC()
+	ctx.Pool.budgetRouter.now = func() time.Time { return now }
+
+	prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
+	require.NoError(t, err)
+	stamp := now.Format(time.RFC3339)
+	_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, stamp, stamp, prior.ID)
+	require.NoError(t, err)
+
+	queued, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: ctx.Repo.ID, GitRef: "goal-review-digest", Agent: "pi",
+		ReviewType: config.ReviewTypeGoal, JobType: storage.JobTypeGoalReview,
+	})
+	require.NoError(t, err)
+	job, err := ctx.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Equal(t, queued.ID, job.ID)
+
+	selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+
+	assert := assert.New(t)
+	require.True(t, proceed)
+	assert.Nil(selected)
+	assert.Equal("pi", job.Agent)
+	assert.False(job.BudgetRoutingLocked)
+	stored, err := ctx.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal("pi", stored.Agent)
+	assert.False(stored.BudgetRoutingLocked)
 }
 
 func TestBudgetRoutingRerunRestoresAgent(t *testing.T) {

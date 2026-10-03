@@ -634,6 +634,45 @@ type CancelJobRequest struct {
 	JobID  int64   `json:"job_id"`
 }
 
+type Candidate struct {
+	Body    string          `json:"body" validate:"required"`
+	Labels  []string        `json:"labels,omitzero"`
+	Links   []CandidateLink `json:"links,omitzero"`
+	ShortID *string         `json:"short_id,omitempty"`
+	Title   string          `json:"title" validate:"required"`
+}
+
+func (c Candidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	for i, item := range c.Links {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CandidateLink struct {
+	Incoming *bool  `json:"incoming,omitempty"`
+	ToRef    string `json:"to_ref" validate:"required"`
+	Type     string `json:"type" validate:"required"`
+}
+
+func (c CandidateLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CleanJobLogsInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -1065,12 +1104,14 @@ type EnqueueRequest struct {
 	Model             *string  `json:"model,omitempty"`
 	OutputPrefix      *string  `json:"output_prefix,omitempty"`
 	Panel             *string  `json:"panel,omitempty"`
+	PlanFile          *string  `json:"plan_file,omitempty"`
 	Provider          *string  `json:"provider,omitempty"`
 	Reasoning         *string  `json:"reasoning,omitempty"`
 	RepoPath          string   `json:"repo_path" validate:"required"`
 	ReviewType        *string  `json:"review_type,omitempty"`
 	Since             *string  `json:"since,omitempty"`
 	Source            *string  `json:"source,omitempty"`
+	SpecFile          *string  `json:"spec_file,omitempty"`
 }
 
 func (e EnqueueRequest) Validate() error {
@@ -1910,6 +1951,31 @@ type FailureStats struct {
 	Total   int64            `json:"total"`
 }
 
+type Finding struct {
+	Location Location `json:"location"`
+	Message  string   `json:"message" validate:"required"`
+	Severity string   `json:"severity" validate:"required"`
+}
+
+func (f Finding) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(f.Location).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Location", err)
+		}
+	}
+	if err := typesValidator.Var(f.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if err := typesValidator.Var(f.Severity, "required"); err != nil {
+		errors = errors.Append("Severity", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FindingCounts struct {
 	Critical int64 `json:"critical"`
 	High     int64 `json:"high"`
@@ -1925,6 +1991,68 @@ type FixJobRequest struct {
 	PlanFirst   *bool   `json:"plan_first,omitempty"`
 	Prompt      *string `json:"prompt,omitempty"`
 	StaleJobID  *int64  `json:"stale_job_id,omitempty"`
+}
+
+type GoalGateRequest struct {
+	Candidate *Candidate `json:"candidate,omitempty"`
+	PlanFile  *string    `json:"plan_file,omitempty"`
+	RepoPath  string     `json:"repo_path" validate:"required"`
+	SpecFile  *string    `json:"spec_file,omitempty"`
+}
+
+func (g GoalGateRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.Candidate != nil {
+		if v, ok := any(g.Candidate).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Candidate", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(g.RepoPath, "required"); err != nil {
+		errors = errors.Append("RepoPath", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoalGateResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string   `json:"$schema,omitempty"`
+	Blocked    bool      `json:"blocked"`
+	ErrorData  *string   `json:"error,omitempty"`
+	Findings   []Finding `json:"findings" validate:"required"`
+	Mode       string    `json:"mode" validate:"required"`
+	SnapshotID *string   `json:"snapshot_id,omitempty"`
+	Status     string    `json:"status" validate:"required"`
+	Version    int64     `json:"version"`
+}
+
+func (g GoalGateResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range g.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(g.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if err := typesValidator.Var(g.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s GoalGateResponse) Error() string {
+	return "unmapped client error"
 }
 
 type HealthStatus struct {
@@ -2325,6 +2453,12 @@ func (l ListReposOutputBody) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Location struct {
+	File   *string `json:"file,omitempty"`
+	KataID *string `json:"kata_id,omitempty"`
+	Line   *int64  `json:"line,omitempty"`
 }
 
 type MergeReposInputBody struct {

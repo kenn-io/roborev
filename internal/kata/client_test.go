@@ -162,6 +162,22 @@ func TestShowNoLabels(t *testing.T) {
 	assert.Empty(t, iss.Labels)
 }
 
+func TestShowUsesProjectQualifiedLinkDirection(t *testing.T) {
+	workdir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workdir, ".kata.toml"),
+		[]byte("[project]\nname = \"current\"\n"), 0o600))
+	c, _ := stubClient(`{"issue":{"short_id":"same","title":"Current"},"links":[
+		{"type":"blocks","from":{"short_id":"same","project":"other","qualified_id":"other#same"},
+		 "to":{"short_id":"same","project":"current","qualified_id":"current#same"}}]}`, nil)
+	c.workdir = workdir
+
+	issue, err := c.Show(context.Background(), "same")
+	require.NoError(t, err)
+	require.Len(t, issue.BlockedBy, 1)
+	assert.Equal(t, "other#same", issue.BlockedBy[0].QualifiedID)
+	assert.Empty(t, issue.Blocks)
+}
+
 func TestCreateParsesEnvelopeAndArgs(t *testing.T) {
 	c, args := stubClient(`{"kata_api_version":1,"issue":{"short_id":"zzz9"},"changed":true,"reused":true}`, nil)
 	p := 2

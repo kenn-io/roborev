@@ -81,6 +81,7 @@ func TestCodexSkillsEmbedInvocationPolicies(t *testing.T) {
 		"roborev-review",
 		"roborev-review-branch",
 		"roborev-snooze",
+		"roborev-superpowers",
 	}
 	assert.ElementsMatch(t, wantSkills, expectedSkillDirNamesForAgent(t, AgentCodex))
 
@@ -100,7 +101,7 @@ func TestCodexSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		wantDescription := "Use only when the user explicitly invokes $" + skill.DirName
@@ -117,7 +118,7 @@ func TestCodexSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		content := string(skill.Content)
@@ -144,7 +145,7 @@ func TestClaudeSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		wantDescription := "Use only when the user explicitly invokes /" + skill.DirName
@@ -161,7 +162,7 @@ func TestDroidSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		wantDescription := "Use only when the user explicitly invokes /" + skill.DirName
@@ -184,7 +185,7 @@ func TestClaudeSkillsEmbedExplicitInvocationPolicy(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		content := strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
@@ -207,7 +208,7 @@ func TestClaudeSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)
 	require.NoError(t, err)
-	require.Len(t, skills, 10)
+	require.Len(t, skills, 11)
 
 	for _, skill := range skills {
 		content := string(skill.Content)
@@ -252,7 +253,7 @@ func TestAgentSkillsDocumentSandboxRecovery(t *testing.T) {
 			require.True(t, ok)
 			skills, err := embeddedSkillsForAgent(spec)
 			require.NoError(t, err)
-			require.Len(t, skills, 10)
+			require.Len(t, skills, 11)
 
 			for _, skill := range skills {
 				content := strings.Join(strings.Fields(string(skill.Content)), " ")
@@ -955,8 +956,8 @@ func TestDroidSkillsUseDroidAdaptations(t *testing.T) {
 func TestDerivedSkillFilesAreCurrent(t *testing.T) {
 	derived, err := renderDerivedSkills(os.DirFS("."))
 	require.NoError(t, err)
-	// 10 droid + 4 claude + 10 grok (full capability-set parity for Grok)
-	require.Len(t, derived, 24)
+	// 11 droid + 5 claude + 11 grok (full capability-set parity for Grok)
+	require.Len(t, derived, 27)
 
 	for relPath, want := range derived {
 		got, err := os.ReadFile(filepath.FromSlash(relPath))

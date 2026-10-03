@@ -15,6 +15,7 @@ const (
 	ReviewTypeSecurity  = "security"
 	ReviewTypeDesign    = "design"
 	ReviewTypeLookahead = "lookahead"
+	ReviewTypeGoal      = "goal"
 )
 
 // IsDefaultReviewType returns true if the review type represents the standard
@@ -97,7 +98,7 @@ func ValidReviewTypesHelp() string {
 }
 
 func WorkflowForReviewType(reviewType string) string {
-	if IsDefaultReviewType(reviewType) {
+	if IsDefaultReviewType(reviewType) || reviewType == ReviewTypeGoal {
 		return "review"
 	}
 	return reviewType

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -7658,6 +7659,20 @@ func TestRerunAgentPickerFiltersNonSchemaClassifierAgents(t *testing.T) { //noli
 	assert.Equal(t, viewRerunAgent, got.currentView)
 	assert.Contains(t, got.rerunAgentOptions, "picker-schema")
 	assert.NotContains(t, got.rerunAgentOptions, "picker-non-schema")
+}
+
+func TestRerunAgentPickerFiltersUnsupportedGoalReviewAgents(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent
+	registerRerunPickerAgent(t, "picker-current")
+	m := rerunPickerModel(t, rerunOKHandler)
+	m.jobs[0].JobType = storage.JobTypeGoalReview
+	m.jobs[0].ReviewType = config.ReviewTypeGoal
+	grokCommand, err := os.Executable()
+	require.NoError(t, err)
+	m.globalCfg.GrokCmd = grokCommand
+
+	options, err := m.availableRerunAgents(&m.jobs[0])
+	require.NoError(t, err)
+	assert.NotContains(t, options, "grok")
 }
 
 func TestRerunAgentPickerEligibility(t *testing.T) { //nolint:paralleltest // global agent registry; the picker lists every registered agent

@@ -571,13 +571,13 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 	return &job, nil
 }
 
-// filterReviewJobs excludes non-review job types (compact, task) from
-// the source list to prevent recursive self-compaction loops.
+// filterReviewJobs excludes non-review job types and goal reviews from the
+// source list so compaction only reconciles code-review findings.
 func filterReviewJobs(jobs []storage.ReviewJob) []storage.ReviewJob {
 	filtered := make([]storage.ReviewJob, 0, len(jobs))
 	for _, j := range jobs {
 		switch j.JobType {
-		case "compact", "task":
+		case "compact", "task", storage.JobTypeGoalReview:
 			continue
 		default:
 			filtered = append(filtered, j)

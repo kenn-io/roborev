@@ -16,6 +16,16 @@ failed reviews and review findings back into Kata as issues.
     skipped without failing the review.
 - The repo must be bound to a Kata project with a committed `.kata.toml`.
 
+## Superpowers specs, plans and the open graph
+
+[Superpowers Intent Reviews](/docs/integrations/goal-review/) review design
+intent before implementation, using the spec, its linked plan and the complete
+open Kata graph. They include issues filed by roborev, preserve graph relations
+and fail when a bound ledger is unavailable. A synchronous API can also evaluate
+a proposed issue or edit before a caller writes it to Kata.
+
+The optional code-review context below has separate settings and limits.
+
 ## Task Context in Review Prompts
 
 When enabled, roborev includes Kata issue content in local review prompts so the

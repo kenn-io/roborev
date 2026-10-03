@@ -860,7 +860,7 @@ func filterFixCandidateJobs(jobs []storage.ReviewJob) []storage.ReviewJob {
 }
 
 func isFixCandidateJob(job storage.ReviewJob) bool {
-	if job.IsCIReview() {
+	if job.IsCIReview() || job.IsGoalReviewJob() {
 		return false
 	}
 	verdict := ""
@@ -1069,6 +1069,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	if job.Status != storage.JobStatusDone {
 		return fmt.Errorf("job %d is not complete (status: %s)", jobID, job.Status)
+	}
+
+	if job.IsGoalReviewJob() {
+		return fmt.Errorf("goal reviews cannot be fixed as code")
 	}
 
 	// Fetch the review/analysis output

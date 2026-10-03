@@ -11,6 +11,8 @@ import type {
   ExportReviewsDocument,
   ExportReviewsParams,
   GetReviewParams,
+  GoalGateRequest,
+  GoalGateResponse,
   MigrateReviewInputBody,
   MigrateReviewOutputBody,
   Review,
@@ -132,6 +134,36 @@ export const exportReviews = async (
   return roborevFetch<ExportReviewsDocument>(getExportReviewsUrl(params), {
     ...options,
     method: "GET",
+  });
+};
+
+export const getGoalReviewUrl = () => {
+  return `/api/goal-review`;
+};
+
+/**
+ * @summary Review Superpowers intent and a proposed Kata graph edit
+ */
+export const goalReview = async (
+  goalGateRequest?: GoalGateRequest,
+  options?: RequestInit,
+): Promise<GoalGateResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+  return roborevFetch<GoalGateResponse>(getGoalReviewUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(goalGateRequest),
   });
 };
 
