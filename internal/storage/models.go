@@ -44,15 +44,16 @@ const (
 
 // JobType classifies what kind of work a review job represents.
 const (
-	JobTypeReview    = "review"    // Single commit review
-	JobTypeRange     = "range"     // Commit range review
-	JobTypeDirty     = "dirty"     // Uncommitted changes review
-	JobTypeTask      = "task"      // Run/analyze/design/custom prompt
-	JobTypeInsights  = "insights"  // Historical review insights analysis
-	JobTypeCompact   = "compact"   // Consolidated review verification
-	JobTypeFix       = "fix"       // Background fix using worktree
-	JobTypeClassify  = "classify"  // Routing classifier that decides whether to enqueue a design review
-	JobTypeSynthesis = "synthesis" // Panel synthesis job: produces the canonical review from member reviews
+	JobTypeReview     = "review"      // Single commit review
+	JobTypeGoalReview = "goal_review" // Superpowers intent and open Kata graph review
+	JobTypeRange      = "range"       // Commit range review
+	JobTypeDirty      = "dirty"       // Uncommitted changes review
+	JobTypeTask       = "task"        // Run/analyze/design/custom prompt
+	JobTypeInsights   = "insights"    // Historical review insights analysis
+	JobTypeCompact    = "compact"     // Consolidated review verification
+	JobTypeFix        = "fix"         // Background fix using worktree
+	JobTypeClassify   = "classify"    // Routing classifier that decides whether to enqueue a design review
+	JobTypeSynthesis  = "synthesis"   // Panel synthesis job: produces the canonical review from member reviews
 )
 
 // Panel roles classify a review_jobs row within a panel run. These values
@@ -224,7 +225,7 @@ func (j ReviewJob) IsTaskJob() bool {
 // (task, insights, compact, or fix). These job types have prompts built at enqueue
 // time, not constructed by the worker from git data.
 func (j ReviewJob) UsesStoredPrompt() bool {
-	return j.JobType == JobTypeTask ||
+	return j.IsGoalReviewJob() || j.JobType == JobTypeTask ||
 		j.JobType == JobTypeInsights ||
 		j.JobType == JobTypeCompact ||
 		j.JobType == JobTypeFix
@@ -237,7 +238,7 @@ func (j ReviewJob) UsesStoredPrompt() bool {
 // old stored-prompt jobs that happen to have a GitRef.
 func (j ReviewJob) IsReviewJob() bool {
 	if j.JobType != "" {
-		return j.JobType == JobTypeReview ||
+		return j.IsGoalReviewJob() || j.JobType == JobTypeReview ||
 			j.JobType == JobTypeRange ||
 			j.JobType == JobTypeDirty
 	}
@@ -253,6 +254,11 @@ func (j ReviewJob) IsReviewJob() bool {
 		return true
 	}
 	return false
+}
+
+// IsGoalReviewJob reports whether this job reviews intent artifacts and Kata.
+func (j ReviewJob) IsGoalReviewJob() bool {
+	return j.JobType == JobTypeGoalReview
 }
 
 // IsFixJob returns true if this is a background fix job.

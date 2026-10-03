@@ -412,6 +412,7 @@ func TestSearchReconcilerLifecycleAndEventWakes(t *testing.T) {
 
 		for _, eventType := range []string{
 			"review.completed", "review.closed", "review.reopened", "review.commented",
+			"goal_review.completed", "goal_review.closed", "goal_review.reopened", "goal_review.commented",
 		} {
 			server.broadcaster.Broadcast(Event{Type: eventType, JobID: 7})
 		}
@@ -420,8 +421,8 @@ func TestSearchReconcilerLifecycleAndEventWakes(t *testing.T) {
 		server.broadcaster.Broadcast(Event{Type: "review.remapped"})
 		server.broadcaster.Broadcast(Event{Type: "review.started", JobID: 7})
 		synctest.Wait()
-		require.Len(t, reconciler.jobs, 4)
-		for range 4 {
+		require.Len(t, reconciler.jobs, 8)
+		for range 8 {
 			assert.Equal(t, int64(7), <-reconciler.jobs)
 		}
 		assert.Len(t, reconciler.wakes, 2)

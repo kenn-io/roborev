@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -234,6 +235,9 @@ func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
 		}
 		selected, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, name, cfg)
 		if err != nil || (job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected)) {
+			continue
+		}
+		if job.IsGoalReviewJob() && goalreview.ValidateAgent(selected) != nil {
 			continue
 		}
 		if agent.ValidateStructuredReviewSelection(job.ReviewType, selected) == nil {

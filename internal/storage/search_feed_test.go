@@ -82,6 +82,39 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 	assert.Equal(t, "synthesis", all[5].StructuredOutput["summary"])
 }
 
+func TestSearchFeedIncludesGoalReview(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID, commitID := seedSearchFeedBase(t, db)
+	reviewID := seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{
+		jobType:  JobTypeGoalReview,
+		status:   JobStatusDone,
+		gitRef:   "goal-review",
+		output:   "intent review",
+		noCommit: true,
+	})
+	var jobID int64
+	require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+
+	byJob, err := db.GetSearchDocumentForJob(t.Context(), jobID)
+	require.NoError(t, err)
+	require.NotNil(t, byJob)
+	assert.Equal(t, "intent review", byJob.Output)
+
+	listed, err := db.ListSearchDocuments(t.Context(), 0, 10)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, reviewID, listed[0].ReviewID)
+
+	key := SearchDocumentKey(byJob.ReviewID, byJob.ReviewUUID)
+	found, err := db.GetSearchReviews(t.Context(), []string{key})
+	require.NoError(t, err)
+	require.Contains(t, found, key)
+	assert.Equal(t, reviewID, found[key].ReviewID)
+}
+
 func TestSearchFeedLimitSkipsSemanticallyEmptyStructuredRows(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

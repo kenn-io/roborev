@@ -45,7 +45,7 @@ const searchFeedEligibility = `
 	AND j.status IN ('done', 'applied', 'rebased')
 	AND (COALESCE(rv.output, '') != '' OR COALESCE(rv.structured_output, '') != '')
 	AND (
-		j.job_type IN ('review', 'range', 'dirty', 'synthesis', 'compact')
+		j.job_type IN ('review', 'range', 'dirty', 'synthesis', 'compact', 'goal_review')
 		OR (COALESCE(j.job_type, '') = '' AND (
 			j.commit_id IS NOT NULL
 			OR j.git_ref = 'dirty'

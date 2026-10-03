@@ -218,6 +218,26 @@ func TestCancelMemberDoesNotCascade(t *testing.T) {
 	assert.True(synth.ClaimBlocked, "synthesis stays blocked while a member is alive")
 }
 
+func TestCancelGoalReviewBroadcastsGoalEvent(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	job := createTestGoalReviewJob(t, db, t.TempDir())
+	_, events := server.broadcaster.Subscribe("")
+
+	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+		Body: CancelJobRequest{JobID: job.ID},
+	})
+	require.NoError(t, err)
+
+	var event Event
+	select {
+	case event = <-events:
+	default:
+	}
+	assert.Equal(t, "goal_review.canceled", event.Type)
+	assert.Equal(t, job.ID, event.JobID)
+	assert.Empty(t, events, "cancel should emit one goal-review event")
+}
+
 // TestListPanelRunReturnsFullRun verifies a panel_run expansion is not truncated
 // at the default 50-row limit: a run with more than 50 rows returns every member
 // plus the synthesis when the caller provides no explicit limit.

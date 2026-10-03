@@ -13,6 +13,8 @@ import (
 )
 
 type EnqueueRequest struct {
+	SpecFile          *string  `json:"spec_file,omitempty"`
+	PlanFile          *string  `json:"plan_file,omitempty"`
 	RepoPath          string   `json:"repo_path"`
 	CommitSHA         string   `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
 	GitRef            string   `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"

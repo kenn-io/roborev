@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -64,6 +65,8 @@ func reviewCmd() *cobra.Command {
 		provider    string
 		minSeverity string
 		panel       string
+		specFile    string
+		planFile    string
 	)
 
 	cmd := &cobra.Command{
@@ -106,7 +109,7 @@ Examples:
 			// Get repo root
 			root, err := git.GetRepoRoot(repoPath)
 			if err != nil {
-				if quiet {
+				if quiet && reviewType != config.ReviewTypeGoal {
 					return nil // Not a repo - silent exit for hooks
 				}
 				// Scan for child git repos to give a helpful hint
@@ -121,6 +124,28 @@ Examples:
 					return fmt.Errorf("%s", b.String())
 				}
 				return fmt.Errorf("not a git repository: %w", err)
+			}
+
+			if reviewType == config.ReviewTypeGoal {
+				if len(args) != 0 {
+					return usageErr(cmd, fmt.Errorf("goal review takes no commit arguments"))
+				}
+				for _, name := range []string{"sha", "dirty", "branch", "since", "base", "panel", "min-severity"} {
+					if cmd.Flags().Changed(name) {
+						return usageErr(cmd, fmt.Errorf("goal review does not support --%s", name))
+					}
+				}
+				var spec, plan *string
+				if cmd.Flags().Changed("spec") {
+					spec = &specFile
+				}
+				if cmd.Flags().Changed("plan") {
+					plan = &planFile
+				}
+				return runGoalReview(cmd, root, goalreview.AgentOptions{Agent: agent, Model: model, Provider: provider, Reasoning: reasoning}, local, wait, quiet, spec, plan)
+			}
+			if cmd.Flags().Changed("spec") || cmd.Flags().Changed("plan") {
+				return usageErr(cmd, fmt.Errorf("--spec and --plan require --type goal"))
 			}
 
 			// Skip during rebase to avoid reviewing every replayed commit
@@ -433,7 +458,9 @@ Examples:
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
-	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead) — changes system prompt")
+	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead, goal)")
+	cmd.Flags().StringVar(&specFile, "spec", "", "Superpowers design spec for --type goal")
+	cmd.Flags().StringVar(&planFile, "plan", "", "Superpowers implementation plan for --type goal")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum severity threshold: critical, high, medium, low")
 	cmd.Flags().StringVar(&panel, "panel", "", "review panel to fan out to (config panel name; 'none' forces single-agent)")

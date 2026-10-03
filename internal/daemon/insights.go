@@ -58,7 +58,7 @@ func (s *Server) fetchInsightsReviews(
 
 	reviews := make([]prompt.InsightsReview, 0, min(len(jobs), maxInsightsReviews))
 	for _, job := range jobs {
-		if !job.IsReviewJob() {
+		if !job.IsReviewJob() || job.IsGoalReviewJob() {
 			continue
 		}
 		if job.FinishedAt != nil && job.FinishedAt.Before(since) {

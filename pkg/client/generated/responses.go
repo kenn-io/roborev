@@ -148,6 +148,12 @@ type ExportReviewsResponse = ExportReviewsDocument
 
 type ExportReviewsErrorResponse = ErrorModel
 
+type GoalReviewResponse = GoalGateResponse
+
+type GoalReviewErrorResponse = GoalGateResponse
+
+type GoalReviewErrorResponseJSON = GoalGateResponse
+
 type GetHealthResponse = HealthStatus
 
 type GetHealthErrorResponse = ErrorModel
@@ -476,6 +482,15 @@ type ExportReviewsResp struct {
 	StatusCode                    int
 	JSON200                       *ExportReviewsResponse
 	ApplicationProblemPlusJSON409 *ExportReviewsErrorResponse
+}
+
+type GoalReviewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GoalReviewResponse
+	JSON400      *GoalReviewErrorResponse
+	JSON503      *GoalReviewErrorResponseJSON
 }
 
 type GetHealthResp struct {
@@ -1073,6 +1088,22 @@ func (c *RawClient) ExportReviewsRaw(ctx context.Context, options *ExportReviews
 		RequestURL: c.apiClient.GetBaseURL() + "/api/export/reviews",
 		Method:     "GET",
 		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) GoalReviewRaw(ctx context.Context, options *GoalReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &GoalReviewRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/goal-review",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

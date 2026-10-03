@@ -84,7 +84,7 @@ func validateCustomReviewTypes(types map[string]ReviewTypeSpec) error {
 }
 
 func isReservedCustomReviewTypeName(name string) bool {
-	return IsBuiltInReviewType(name) || slices.Contains(
+	return name == ReviewTypeGoal || IsBuiltInReviewType(name) || slices.Contains(
 		[]string{"general", "review", "fix", "refine", "classify"}, name,
 	)
 }

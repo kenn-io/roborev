@@ -32,6 +32,7 @@ var derivedDroidSkills = []string{
 	"roborev-review",
 	"roborev-review-branch",
 	"roborev-snooze",
+	"roborev-superpowers",
 }
 
 var derivedClaudeSkills = []string{
@@ -39,6 +40,7 @@ var derivedClaudeSkills = []string{
 	"roborev-refine",
 	"roborev-respond",
 	"roborev-snooze",
+	"roborev-superpowers",
 }
 
 // Grok Build uses slash-style skill invocation like Claude Code and discovers
@@ -59,6 +61,7 @@ var derivedGrokSkills = []string{
 	"roborev-review",
 	"roborev-review-branch",
 	"roborev-snooze",
+	"roborev-superpowers",
 }
 
 func skillDerivations() []skillDerivation {
