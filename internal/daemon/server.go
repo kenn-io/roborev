@@ -2481,6 +2481,7 @@ func (s *Server) humaRerunJob(
 		)
 	}
 	if !replayed {
+		s.workerPool.invalidateBudgetSpend()
 		if rerunOpts.Agent != "" {
 			job.Agent = rerunOpts.Agent
 		}

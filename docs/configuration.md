@@ -51,6 +51,10 @@ spend approaches the cap. The cap never stops jobs; missing cost data,
 unavailable candidates, or a spend-query error preserve ordinary agent
 resolution and quota failover.
 
+If repository config cannot be read, jobs with stored prompts skip budget
+substitution and use ordinary agent resolution. Budget routing does not make
+repository config mandatory for these jobs.
+
 Spend uses recorded costs on currently retained terminal job rows completed
 within the UTC calendar day, across all repositories. With PostgreSQL sync, this
 includes other machines' jobs once their costs arrive through sync; it is not a
@@ -79,8 +83,8 @@ machines.
 
 The daemon applies config reloads to subsequent job decisions. Spend is cached
 for up to 10 seconds, refreshes at UTC midnight, and is invalidated when this
-worker pool records a completed job or new cost data. Concurrent jobs may start
-before another job's cost is available.
+worker pool records a completed job or new cost data, or the daemon accepts a
+manual rerun. Concurrent jobs may start before another job's cost is available.
 
 You can edit individual prices through the CLI:
 

@@ -22,6 +22,11 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 	}
 	repoCfg, err := config.LoadRepoConfig(job.RepoPath)
 	if err != nil {
+		if job.UsesStoredPrompt() {
+			// Budget substitution must not require config that ordinary
+			// stored-prompt execution can run without.
+			return nil, true
+		}
 		wp.logJobStarted(workerID, job)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "load budget routing config: "+err.Error())
 		return nil, false

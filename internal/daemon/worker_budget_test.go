@@ -236,27 +236,33 @@ func TestBudgetRoutingRerunRestoresAgent(t *testing.T) {
 	}
 }
 
-func TestBudgetRoutingUnpricedTaskIgnoresMalformedRepoConfig(t *testing.T) {
-	setupTestEnv(t)
-	tc := newWorkerTestContext(t, 1)
-	cfg, _ := configureUnpricedBudgetRouting(t, tc)
-	delete(cfg.Budget.AgentCosts, "codex")
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: tc.Repo.ID, GitRef: "run:task", Agent: "codex",
-		Prompt: "Do the task", JobType: storage.JobTypeTask,
-	})
-	require.NoError(t, err)
-	claimed, err := tc.DB.ClaimJob(testWorkerID)
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("invalid = ["), 0o600))
+func TestBudgetRoutingStoredPromptIgnoresMalformedRepoConfig(t *testing.T) {
+	for _, price := range []string{"priced", "unpriced"} {
+		t.Run(price, func(t *testing.T) {
+			setupTestEnv(t)
+			tc := newWorkerTestContext(t, 1)
+			cfg, _ := configureUnpricedBudgetRouting(t, tc)
+			if price == "unpriced" {
+				delete(cfg.Budget.AgentCosts, "codex")
+			}
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, GitRef: "run:task", Agent: "codex",
+				Prompt: "Do the task", JobType: storage.JobTypeTask,
+			})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			require.Equal(t, job.ID, claimed.ID)
+			require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("invalid = ["), 0o600))
 
-	tc.Pool.processJob(testWorkerID, claimed)
-	got := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Equal(t, "codex", got.Agent)
-	assert.False(t, got.BudgetRoutingLocked)
-	assert.Zero(t, got.RetryCount)
+			tc.Pool.processJob(testWorkerID, claimed)
+			got := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+			assert.Equal(t, "codex", got.Agent)
+			assert.False(t, got.BudgetRoutingLocked)
+			assert.Zero(t, got.RetryCount)
+		})
+	}
 }
 
 func TestBudgetRoutingErrorsPreserveAgentAndIsolateLog(t *testing.T) {
