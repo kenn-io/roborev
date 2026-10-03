@@ -326,11 +326,25 @@ func unmarkedCountedRoborevTokens(tokens []string) bool {
 	if len(tokens) < 2 || filepath.Base(tokens[0]) != "roborev" {
 		return false
 	}
-	path := tokens[1]
-	if (path == "export" || path == "sync") && len(tokens) > 2 {
-		path += " " + tokens[2]
+	// Cobra resolves the command path past flags, so the oracle skips them too; --server takes the next token as its value.
+	var words []string
+	for i := 1; i < len(tokens); i++ {
+		if tokens[i] == "--server" {
+			i++
+			continue
+		}
+		if !strings.HasPrefix(tokens[i], "-") {
+			words = append(words, tokens[i])
+		}
 	}
-	return roborevCountedPaths[path] && !slices.Contains(tokens[2:], "--from-skill")
+	if len(words) == 0 {
+		return false
+	}
+	path := words[0]
+	if (path == "export" || path == "sync") && len(words) > 1 {
+		path += " " + words[1]
+	}
+	return roborevCountedPaths[path] && !slices.Contains(tokens[1:], "--from-skill")
 }
 
 // roborevCountedCommandsMarked reports whether every counted roborev command the agent ran carries --from-skill.
@@ -810,7 +824,7 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		`roborev comment --from-skill --commenter roborev-fix --job 1 -m "checked"`,
 		"roborev close --from-skill 1",
 		`/bin/zsh -c 'roborev comment --from-skill --job 1 "ok" && roborev close --from-skill 1'`,
-		"roborev export --from-skill reviews",
+		"roborev export reviews --from-skill",
 		"roborev agent-hook fix-done --session abc",
 		"roborev skills update",
 		"git status",
@@ -826,6 +840,9 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		{name: "unmarked close", commands: append(slices.Clone(marked), "roborev close 1")},
 		{name: "unmarked close in a chain", commands: append(slices.Clone(marked), `sh -c 'roborev comment --from-skill --job 1 "ok" && roborev close 1'`)},
 		{name: "unmarked two-word path", commands: append(slices.Clone(marked), "roborev sync now")},
+		{name: "unmarked after a root flag", commands: append(slices.Clone(marked), "roborev --verbose show --job 1 --json")},
+		{name: "unmarked after a server flag", commands: append(slices.Clone(marked), "roborev --server 127.0.0.1:7373 status")},
+		{name: "unmarked two-word path with a flag between", commands: append(slices.Clone(marked), "roborev export --verbose reviews")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
