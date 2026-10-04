@@ -108,3 +108,9 @@ func TestFindingsFromDocumentKeepsExactArtifactPaths(t *testing.T) {
 		assert.Equal(t, []Finding{{Severity: "high", Message: "Contradiction", Fix: "Resolve it.", Location: Location{File: name}}}, FindingsFromDocument(doc, snapshot))
 	}
 }
+
+func TestGoalFindingDocumentRoundTripPreservesKataPrefixedFile(t *testing.T) {
+	snapshot := Snapshot{Artifacts: []Artifact{{Kind: "spec", Path: "Kata notes.md", Content: "# Feature"}}}
+	findings := []Finding{{Severity: "high", Message: "Contradiction", Fix: "Resolve it.", Location: Location{File: "Kata notes.md", Line: 1}}}
+	assert.Equal(t, findings, FindingsFromDocument(Document(findings), snapshot))
+}

@@ -198,19 +198,22 @@ func FindingsFromDocument(doc structuredreview.Document, snapshot Snapshot) []Fi
 	for i, finding := range doc.Findings {
 		location := normalizeLocation(Location{File: finding.Location}, snapshot)
 		if location.File == "" {
-			if id, ok := strings.CutPrefix(finding.Location, "Kata "); ok {
-				location = Location{KataID: id}
-			} else if colon := strings.LastIndexByte(finding.Location, ':'); colon >= 0 {
+			if colon := strings.LastIndexByte(finding.Location, ':'); colon >= 0 {
 				if line, err := strconv.Atoi(finding.Location[colon+1:]); err == nil {
-					location = Location{File: finding.Location[:colon], Line: line}
+					location = normalizeLocation(Location{File: finding.Location[:colon], Line: line}, snapshot)
 				}
+			}
+		}
+		if location.File == "" {
+			if id, ok := strings.CutPrefix(finding.Location, "Kata "); ok {
+				location = normalizeLocation(Location{KataID: id}, snapshot)
 			}
 		}
 		findings[i] = Finding{
 			Severity: finding.Severity,
 			Message:  finding.Problem,
 			Fix:      finding.Fix,
-			Location: normalizeLocation(location, snapshot),
+			Location: location,
 		}
 	}
 	return findings
