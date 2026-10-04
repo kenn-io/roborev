@@ -28,6 +28,23 @@ func TestRemoteConfigFailsClosed(t *testing.T) {
 	require.Error(t, validateRemoteConfig(cfg))
 	cfg.Remote.Keys[0].AllRepos = true
 	require.NoError(t, validateRemoteConfig(cfg))
+	cfg.Web.PublicOrigin = "https://reviews.example.com"
+	require.ErrorContains(t, validateRemoteConfig(cfg), "web.auth_token")
+	cfg.Web.AuthToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	require.NoError(t, validateRemoteConfig(cfg))
+	cfg.Web.AuthToken = ""
+	cfg.Web.AuthTokenFile = filepath.Join(t.TempDir(), "browser.token")
+	require.NoError(t, os.WriteFile(cfg.Web.AuthTokenFile, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), 0o600))
+	require.NoError(t, validateRemoteConfig(cfg))
+	cfg.Web.AuthTokenFile = ""
+	cfg.Web.AuthMode = WebAuthModeProxy
+	require.NoError(t, validateRemoteConfig(cfg))
+	cfg.Web.AuthMode = ""
+	cfg.Web.PublicOrigin = "http://127.0.0.1:7374"
+	require.NoError(t, validateRemoteConfig(cfg))
+	cfg.Web.PublicOrigin = "https://reviews.example.com"
+	cfg.Web.Enabled = false
+	require.NoError(t, validateRemoteConfig(cfg))
 }
 
 func TestLoadRemoteClientConfig(t *testing.T) {

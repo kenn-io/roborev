@@ -49,6 +49,14 @@ arguments, URLs, source files, or browser storage.
 The key is independent of `auth_key`. This listener requires a nonempty valid
 `auth_key` as well as signing. Configure clients with both credentials.
 
+If you also publish the browser UI with token login, set `web.auth_token` or
+`web.auth_token_file` to an independent browser token. The daemon rejects a
+non-loopback `web.public_origin` without that token while the remote listener is
+enabled. Otherwise, a scoped remote reader could use the shared `auth_key` to
+log into the browser UI and read other repositories. Proxy authentication keeps
+its existing requirement that the proxy or network admit only intended browser
+users; see [proxy authentication](../web-ui.md#proxy-authentication).
+
 ## Configure the restricted listener
 
 Settings are captured at startup and require a daemon restart. Disabled is the
@@ -157,18 +165,24 @@ roborev --server https://reviews.example.com/history stream
 
 Remote `list` uses server grants instead of inferring a local repository or
 branch. Explicit branch filters work; local path filters do not. Remote `show`
-requires a numeric `--job`; remote `wait` also requires explicit `--job` IDs.
+requires a numeric `--job` and fetches the review and its comments before
+printing output. A failed comment read returns an error rather than a partial
+review. The server includes eligible legacy comments in that response; the
+client does not fetch them separately. Remote `wait` also requires explicit
+`--job` IDs.
+
 Remote `stream` rejects `--repo`; its repository scope comes from server grants.
 It reconnects after a clean stream close with a fresh signature. Reconnects use
 the native job-poll backoff from one to five seconds; received events reset the
 delay. Authentication, connection, and read failures stop the command with an
 error. Reconnect notices go to stderr; stdout remains JSONL. Events missed
-between connections are not recovered. Remote failures never start or restart a
-local daemon. The endpoint uses normal HTTPS certificate verification, with an
-optional configured CA bundle. It requires no shared local runtime files and
-does not weaken local process identity checks. Help, version output, and
-shell-completion generation also work with `--server`; they do not contact the
-daemon.
+between connections are not recovered.
+
+Remote failures never start or restart a local daemon. The endpoint uses normal
+HTTPS certificate verification, with an optional configured CA bundle. It
+requires no shared local runtime files and does not weaken local process
+identity checks. Help, version output, and shell-completion generation also work
+with `--server`; they do not contact the daemon.
 
 Signing occurs after bearer injection at the native HTTP transport boundary.
 Generated calls, direct requests, polling, and stream reconnects share that

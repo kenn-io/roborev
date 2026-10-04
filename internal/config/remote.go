@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"runtime"
 	"time"
@@ -77,6 +78,21 @@ func validateRemoteConfig(cfg *Config) error {
 	}
 	if cfg.AuthKey == "" || ValidateAuthKey(cfg.AuthKey) != nil {
 		return errors.New("remote listener requires a valid nonempty auth_key")
+	}
+	if cfg.Web.Enabled && cfg.Web.AuthMode != WebAuthModeProxy && cfg.Web.PublicOrigin != "" {
+		origin, err := url.Parse(cfg.Web.PublicOrigin)
+		if err != nil {
+			return fmt.Errorf("web public origin: %w", err)
+		}
+		if !isLoopbackHost(origin.Hostname()) {
+			token, err := cfg.Web.ResolveAuthToken()
+			if err != nil {
+				return err
+			}
+			if token == "" {
+				return errors.New("remote listener requires web.auth_token or web.auth_token_file for a published browser UI")
+			}
+		}
 	}
 	if _, err := requestsigning.ValidateBase(r.ExternalURL); err != nil {
 		return err

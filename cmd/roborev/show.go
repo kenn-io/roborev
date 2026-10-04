@@ -214,6 +214,15 @@ Examples:
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
+			var allComments []storage.Response
+			if ep.IsRemote() {
+				// Remote job comments already include eligible legacy comments.
+				allComments, err = getCommentsForJob(review.JobID)
+				if err != nil {
+					return err
+				}
+			}
+
 			if jsonOutput {
 				// Include comments so tools/skills can see developer feedback.
 				type reviewWithComments struct {
@@ -221,8 +230,10 @@ Examples:
 					Comments []storage.Response `json:"comments,omitempty"`
 					Panel    *showPanelBlock    `json:"panel,omitempty"`
 				}
-				out := reviewWithComments{Review: review}
-				out.Comments = fetchShowComments(client, addr, review)
+				out := reviewWithComments{Review: review, Comments: allComments}
+				if !ep.IsRemote() {
+					out.Comments = fetchShowComments(client, addr, review)
+				}
 				if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != nil {
 					if members, err := fetchPanelMembers(client, addr, *review.Job.PanelRunUUID); err == nil && len(members) > 0 {
 						block := buildShowPanelBlock(review.JobID, *review.Job.PanelRunUUID, review.Job.PanelName, members)
@@ -262,7 +273,10 @@ Examples:
 			}
 
 			// Fetch and display comments (including legacy commit-based)
-			if allComments := fetchShowComments(client, addr, review); len(allComments) > 0 {
+			if !ep.IsRemote() {
+				allComments = fetchShowComments(client, addr, review)
+			}
+			if len(allComments) > 0 {
 				fmt.Println()
 				fmt.Println("--- Comments ---")
 				for _, r := range allComments {
