@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"runtime"
 	"time"
@@ -57,45 +56,28 @@ type RemoteConfig struct {
 	TrustedProxy      bool               `toml:"trusted_proxy"`
 	CertFile          string             `toml:"cert_file"`
 	TLSKeyFile        string             `toml:"tls_key_file"`
-	ReplayFile        string             `toml:"replay_file"`
-	MaxBodyBytes      int64              `toml:"max_body_bytes"`
 	MaxHeaderBytes    int                `toml:"max_header_bytes"`
 	MaxConcurrent     int                `toml:"max_concurrent"`
-	ReplayCapacity    int                `toml:"replay_capacity"`
 	ReadHeaderTimeout string             `toml:"read_header_timeout"`
 	ReadTimeout       string             `toml:"read_timeout"`
 	RequestTimeout    string             `toml:"request_timeout"`
 	Keys              []RemoteSigningKey `toml:"keys"`
 }
 
-func validateRemoteConfig(cfg *Config) error {
-	r := cfg.Remote
+func validateRemoteConfig(r RemoteConfig) error {
 	if !r.Enabled {
 		return nil
 	}
 	if runtime.GOOS == "windows" {
 		return errors.New("remote listener requires POSIX owner-only signing files")
 	}
-	if cfg.AuthKey == "" || ValidateAuthKey(cfg.AuthKey) != nil {
-		return errors.New("remote listener requires a valid nonempty auth_key")
-	}
-	if cfg.Web.Enabled && cfg.Web.AuthMode != WebAuthModeProxy && cfg.Web.PublicOrigin != "" {
-		origin, err := url.Parse(cfg.Web.PublicOrigin)
-		if err != nil {
-			return fmt.Errorf("web public origin: %w", err)
-		}
-		if !isLoopbackHost(origin.Hostname()) {
-			token, err := cfg.Web.ResolveAuthToken()
-			if err != nil {
-				return err
-			}
-			if token == "" {
-				return errors.New("remote listener requires web.auth_token or web.auth_token_file for a published browser UI")
-			}
-		}
-	}
-	if _, err := requestsigning.ValidateBase(r.ExternalURL); err != nil {
+	external, err := requestsigning.ValidateBase(r.ExternalURL)
+	if err != nil {
 		return err
+	}
+	// Native TLS receives the client's path unchanged; only a proxy strips a prefix.
+	if !r.TrustedProxy && external.Path != "" {
+		return errors.New("remote.external_url may include a path prefix only with trusted_proxy")
 	}
 	if r.Listen != "" {
 		host, _, err := net.SplitHostPort(r.Listen)
@@ -113,8 +95,8 @@ func validateRemoteConfig(cfg *Config) error {
 	} else if r.CertFile == "" || r.TLSKeyFile == "" {
 		return errors.New("remote listener requires native TLS files or explicit trusted_proxy")
 	}
-	if r.MaxBodyBytes <= 0 || r.MaxHeaderBytes <= 0 || r.MaxConcurrent <= 0 || r.ReplayCapacity <= 0 || r.ReplayFile == "" {
-		return errors.New("remote listener requires explicit positive body, header, concurrency and replay budgets and a replay_file")
+	if r.MaxHeaderBytes <= 0 || r.MaxConcurrent <= 0 {
+		return errors.New("remote listener requires explicit positive header and concurrency budgets")
 	}
 	for _, value := range []string{r.ReadHeaderTimeout, r.ReadTimeout, r.RequestTimeout} {
 		d, err := time.ParseDuration(value)
@@ -173,7 +155,7 @@ func LoadRemoteClient() (RemoteClientConfig, error) {
 }
 
 // ValidateRemote checks listener configuration before any daemon startup work.
-func ValidateRemote(cfg *Config) error { return validateRemoteConfig(cfg) }
+func ValidateRemote(r RemoteConfig) error { return validateRemoteConfig(r) }
 
 func (r RemoteClientConfig) SigningKey() (requestsigning.Key, error) {
 	key, err := requestsigning.ReadKey(r.KeyID, r.SecretFile, r.SecretEnv)

@@ -11,40 +11,28 @@ import (
 )
 
 func TestRemoteConfigFailsClosed(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Remote.Enabled = true
-	require.Error(t, validateRemoteConfig(cfg))
-	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	cfg.Remote = RemoteConfig{Enabled: true, ExternalURL: "https://reviews.example.com/history", TrustedProxy: true, ReplayFile: "replay.json", MaxBodyBytes: 1024, MaxHeaderBytes: 8192, MaxConcurrent: 2, ReplayCapacity: 100, ReadHeaderTimeout: "5s", ReadTimeout: "30s", RequestTimeout: "1m", Keys: []RemoteSigningKey{{ID: "reader", SecretFile: "reader.key", Grants: []string{"history:read"}, RepoIDs: []int64{1}}}}
+	r := RemoteConfig{Enabled: true}
+	require.Error(t, validateRemoteConfig(r))
+	r = RemoteConfig{Enabled: true, ExternalURL: "https://reviews.example.com/history", TrustedProxy: true, MaxHeaderBytes: 8192, MaxConcurrent: 2, ReadHeaderTimeout: "5s", ReadTimeout: "30s", RequestTimeout: "1m", Keys: []RemoteSigningKey{{ID: "reader", SecretFile: "reader.key", Grants: []string{"history:read"}, RepoIDs: []int64{1}}}}
 	if runtime.GOOS == "windows" {
-		require.Error(t, validateRemoteConfig(cfg))
+		require.Error(t, validateRemoteConfig(r))
 		return
 	}
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Remote.Keys[0].Grants = []string{"execute"}
-	require.Error(t, validateRemoteConfig(cfg))
-	cfg.Remote.Keys[0].Grants = []string{"history:read"}
-	cfg.Remote.Keys[0].RepoIDs = nil
-	require.Error(t, validateRemoteConfig(cfg))
-	cfg.Remote.Keys[0].AllRepos = true
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Web.PublicOrigin = "https://reviews.example.com"
-	require.ErrorContains(t, validateRemoteConfig(cfg), "web.auth_token")
-	cfg.Web.AuthToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Web.AuthToken = ""
-	cfg.Web.AuthTokenFile = filepath.Join(t.TempDir(), "browser.token")
-	require.NoError(t, os.WriteFile(cfg.Web.AuthTokenFile, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), 0o600))
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Web.AuthTokenFile = ""
-	cfg.Web.AuthMode = WebAuthModeProxy
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Web.AuthMode = ""
-	cfg.Web.PublicOrigin = "http://127.0.0.1:7374"
-	require.NoError(t, validateRemoteConfig(cfg))
-	cfg.Web.PublicOrigin = "https://reviews.example.com"
-	cfg.Web.Enabled = false
-	require.NoError(t, validateRemoteConfig(cfg))
+	require.NoError(t, validateRemoteConfig(r), "remote readers do not need the daemon auth_key")
+	r.Keys[0].Grants = []string{"execute"}
+	require.Error(t, validateRemoteConfig(r))
+	r.Keys[0].Grants = []string{"history:read"}
+	r.Keys[0].RepoIDs = nil
+	require.Error(t, validateRemoteConfig(r))
+	r.Keys[0].AllRepos = true
+	require.NoError(t, validateRemoteConfig(r))
+
+	// Native TLS receives unmodified paths, so a prefix could never verify.
+	r.TrustedProxy = false
+	r.CertFile, r.TLSKeyFile = "cert.pem", "key.pem"
+	require.ErrorContains(t, validateRemoteConfig(r), "path prefix only with trusted_proxy")
+	r.ExternalURL = "https://reviews.example.com"
+	require.NoError(t, validateRemoteConfig(r))
 }
 
 func TestLoadRemoteClientConfig(t *testing.T) {

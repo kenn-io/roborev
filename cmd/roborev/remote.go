@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -38,22 +37,17 @@ func validateRemoteCommand(name string) error {
 }
 
 func signingInitCmd() *cobra.Command {
-	var secretFile, replayFile string
-	cmd := &cobra.Command{Use: "signing-init", Short: "Create private signing key and replay files for a new remote verifier", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if secretFile == "" || replayFile == "" || secretFile == replayFile {
-			return errors.New("distinct --secret-file and --replay-file are required")
+	var secretFile string
+	cmd := &cobra.Command{Use: "signing-init", Short: "Create a private signing key file for a remote reader", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if secretFile == "" {
+			return errors.New("--secret-file is required")
 		}
 		if err := requestsigning.GenerateKey(secretFile); err != nil {
 			return err
 		}
-		if err := requestsigning.InitializeReplay(replayFile); err != nil {
-			_ = os.Remove(secretFile)
-			return err
-		}
-		cmd.Println("Created private signing files. Configure a new key ID and explicit history grants before enabling the remote listener.")
+		cmd.Println("Created a private signing key. Configure a new key ID and explicit history grants before enabling the remote listener.")
 		return nil
 	}}
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "new private secret file (secret is never printed)")
-	cmd.Flags().StringVar(&replayFile, "replay-file", "", "new private replay state file")
 	return cmd
 }

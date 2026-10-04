@@ -4,10 +4,10 @@ description: Signed, restricted HTTPS access to daemon history
 ---
 
 Native clients can read daemon history over an explicitly configured HTTPS
-endpoint. An optional restricted listener requires both the daemon bearer key
-and an independent HTTP signing key. It exposes no execution or administrative
-operations. Existing local unsigned clients and browser sessions retain their
-existing behavior.
+endpoint. An optional restricted listener accepts requests signed with a
+per-reader signing key. It exposes no execution or administrative operations.
+Remote readers never receive the daemon `auth_key`. Existing local clients and
+browser sessions keep their existing behavior.
 
 ## Supported workflows
 
@@ -29,33 +29,26 @@ filesystem. The remote listener is a read surface on an existing daemon; it does
 not start a second worker pool or change where reviews execute. It does not
 provide a worker-free display daemon or copy another machine's SQLite history.
 
-## Create private signing files
+## Create a signing key
 
-Generate a fresh key and replay state without printing the secret:
+Generate a fresh key without printing the secret:
 
 ```bash
-roborev signing-init --secret-file /run/secrets/review-reader.key \
-  --replay-file /var/lib/roborev/request-replay.json
+roborev signing-init --secret-file /run/secrets/review-reader.key
 ```
 
-Both destinations must be new, distinct files in existing private directories.
-Initialization syncs each file and its parent directory before reporting
-success. If it fails, it removes only files created by that invocation. The
-secret file contains 128 lowercase hex characters representing 64 random bytes.
-Keep it owner-only. A named environment variable containing the same hex format
-can replace `secret_file` with `secret_env`; never put the secret in command
-arguments, URLs, source files, or browser storage.
+The destination must be a new file in an existing private directory.
+Initialization syncs the file and its parent directory before reporting success.
+If it fails, it removes only the file it created. The secret file contains 128
+lowercase hex characters representing 64 random bytes. Keep it owner-only. A
+named environment variable containing the same hex format can replace
+`secret_file` with `secret_env`; never put the secret in command arguments,
+URLs, source files, or browser storage.
 
-The key is independent of `auth_key`. This listener requires a nonempty valid
-`auth_key` as well as signing. Configure clients with both credentials.
-
-If you also publish the browser UI with token login, set `web.auth_token` or
-`web.auth_token_file` to an independent browser token. The daemon rejects a
-non-loopback `web.public_origin` without that token while the remote listener is
-enabled. Otherwise, a scoped remote reader could use the shared `auth_key` to
-log into the browser UI and read other repositories. Proxy authentication keeps
-its existing requirement that the proxy or network admit only intended browser
-users; see [proxy authentication](../web-ui.md#proxy-authentication).
+The signing key is the only credential a remote reader needs. The listener
+ignores the daemon `auth_key`, and readers never hold it, so a reader cannot use
+it against the local API, MCP, or browser login. Give each reader its own key so
+you can scope and revoke readers independently.
 
 ## Configure the restricted listener
 
@@ -69,13 +62,10 @@ enabled = true
 listen = "127.0.0.1:7375"
 external_url = "https://reviews.example.com/history"
 trusted_proxy = true
-replay_file = "/var/lib/roborev/request-replay.json"
 
 # Operator-selected ingress budgets; these are examples, not defaults.
-max_body_bytes = 1048576
 max_header_bytes = 16384
 max_concurrent = 4
-replay_capacity = 10000
 read_header_timeout = "5s"
 read_timeout = "30s"
 request_timeout = "1m"
@@ -87,19 +77,17 @@ grants = ["history:read"]
 repo_ids = [1, 2]
 ```
 
-Choose budgets from the actual ingress contract and workload. Body and header
-budgets are bytes; concurrency is simultaneous admitted requests, including
-streams; replay capacity bounds active nonces and retained key identities. Time
+Choose budgets from the actual ingress contract and workload. The header budget
+is bytes; concurrency is simultaneous admitted requests, including streams. Time
 budgets are Go durations. Every budget is required and positive. Saturated
-request slots return 503; full replay state fails closed. Bodies are streamed to
-private temporary files, checked completely, and removed after the request.
-Oversized content is rejected, never truncated. Read deadlines bound body
-verification and are cleared once the body is verified. `request_timeout` bounds
-execution and stream lifetime. Each stream write, including the final response
-frame, also gets up to `request_timeout` to complete. Idle streams have no
-socket write deadline, so planned expiry can close the response cleanly. Clients
-must reconnect with a fresh signature. These budgets apply only to the new
-restricted listener.
+request slots return 503. The listener serves reads only, so any request body is
+rejected with 413 instead of being read or stored. The read deadline bounds the
+empty-body check and is cleared afterward. `request_timeout` bounds execution
+and stream lifetime. Each stream write, including the final response frame, also
+gets up to `request_timeout` to complete. Idle streams have no socket write
+deadline, so planned expiry can close the response cleanly. Clients must
+reconnect with a fresh signature. These budgets apply only to the new restricted
+listener.
 
 Use repository numeric IDs from the local daemon's repository listing. Every key
 needs explicit `repo_ids`, or `all_repos = true` instead. Unknown repository IDs
@@ -133,10 +121,11 @@ received path and raw query. Keep the regular daemon API listener inaccessible
 through that ingress: it has a different, unrestricted local policy.
 
 For native TLS, omit `trusted_proxy` and configure `cert_file` and
-`tls_key_file`. Use a certificate valid for `external_url`'s host. The native
-listener also receives paths with the configured prefix stripped; use an empty
-external prefix when clients connect directly. Explicit non-loopback IP binding
-is allowed only with native TLS. This feature creates no public routing.
+`tls_key_file`. Use a certificate valid for `external_url`'s host. Clients
+connect directly, so `external_url` must not include a path prefix; the daemon
+rejects that configuration at startup. Explicit non-loopback IP binding is
+allowed only with native TLS. The certificate is loaded at startup, so restart
+the daemon after renewing it. This feature creates no public routing.
 
 ## Configure native clients
 
@@ -175,8 +164,8 @@ Remote `stream` rejects `--repo`; its repository scope comes from server grants.
 It reconnects after a clean stream close with a fresh signature. Reconnects use
 the native job-poll backoff from one to five seconds; received events reset the
 delay. Authentication, connection, and read failures stop the command with an
-error. Reconnect notices go to stderr; stdout remains JSONL. Events missed
-between connections are not recovered.
+error. A single reconnect notice goes to stderr; stdout remains JSONL. Events
+missed between connections are not recovered.
 
 Remote failures never start or restart a local daemon. The endpoint uses normal
 HTTPS certificate verification, with an optional configured CA bundle. It
@@ -184,15 +173,15 @@ requires no shared local runtime files and does not weaken local process
 identity checks. Help, version output, and shell-completion generation also work
 with `--server`; they do not contact the daemon.
 
-Signing occurs after bearer injection at the native HTTP transport boundary.
-Generated calls, direct requests, polling, and stream reconnects share that
-transport. Each application attempt gets a new random nonce. The client pins
-both origin and prefix and follows no redirects, even to the same origin.
-Nonrepeatable request bodies fail before sending. Post-send `net/http` retries
-are disabled for HTTP/1 and HTTP/2, including bodyless GETs; retry explicitly to
-create a fresh signed attempt. Pre-send unusable-connection retries cannot
-consume replay admission. HTTP/2 and TLS verification remain enabled. The client
-never falls back to unsigned access.
+Signing occurs at the native HTTP transport boundary. The client sends no daemon
+bearer token. Generated calls, direct requests, polling, and stream reconnects
+share that transport. Each application attempt gets a new random nonce. The
+client pins both origin and prefix and follows no redirects, even to the same
+origin. Nonrepeatable request bodies fail before sending. Post-send `net/http`
+retries are disabled for HTTP/1 and HTTP/2, including bodyless GETs; retry
+explicitly to create a fresh signed attempt. Pre-send unusable-connection
+retries cannot consume a nonce. HTTP/2 and TLS verification remain enabled. The
+client never falls back to unsigned access.
 
 ## Wire profile
 
@@ -204,7 +193,7 @@ negotiation.
 
 - Label: `sig1`.
 - Ordered components: `@method`, `@target-uri`, `content-digest`,
-    `content-type`, `authorization`.
+    `content-type`.
 - Content type: `application/json`, including bodyless requests.
 - Digest: `sha-256=:BASE64:`, including the empty body digest.
 - Required parameters: exactly `created`, `expires`, `nonce`, `keyid`, `alg`.
@@ -218,46 +207,31 @@ negotiation.
 Duplicate covered headers, trailers, content encodings, ambiguous path
 encodings, dot segments, and backslashes are rejected. Raw query ordering and
 escaping are signed exactly; the restricted policy rejects duplicate query
-parameters. Signature metadata is authenticated before body reads. Body digest,
-freshness, and replay state must pass before dispatch. Signature errors do not
-include credentials or request content.
+parameters. Signature metadata is authenticated before any body read. The
+listener accepts only the empty-body digest. Freshness and nonce checks must
+pass before dispatch. Signature errors do not include credentials or request
+content.
 
-## Replay, rotation, and recovery
+## Replay and rotation
 
-The verifier stores hashed nonce identities and expiry times in a separate
-owner-only journal. It holds an exclusive lock on a stable sibling `.lock` file.
-Each admission atomically writes and fsyncs state, renames it, then fsyncs its
-parent directory before executing the handler. A second process cannot open the
-same replay state. Storage must support POSIX owner-only files and these
-durability operations; unsupported filesystems fail closed. The verifier and
-`signing-init` are not available on Windows because Go file modes cannot enforce
-owner-only access there. Windows native clients can use `secret_env` with normal
-HTTPS trust.
+The verifier keeps used nonces in memory until their signatures expire, so each
+signed request runs at most once. After a restart, it rejects every signature
+created before the new process started. A request admitted by the previous
+process therefore cannot run again, and no replay state is stored on disk.
+Clients retry with a fresh signature. A wall-clock step backward can briefly let
+a request whose nonce was already pruned verify again; TLS remains the primary
+protection against capture.
 
-Pruning expired nonces and advancing the wall-clock highwater happen together.
-Clock rollback below that durable watermark, missing or corrupt state, and
-uncertain writes reject admission. In-process rollback compares Unix nanoseconds
-under the admission lock and remains fenced until wall time catches up. Clock
-and cancellation checks run again after hashing and durable publication. Never
-delete or reset replay state while retaining signing keys. No startup quarantine
-substitutes for durable nonce history. Active replicas must use disjoint signing
-secrets and separate journals; sharing a secret between independently cached
-replicas is unsupported.
+The verifier and `signing-init` are not available on Windows because Go file
+modes cannot enforce owner-only access there. Windows native clients can use
+`secret_env` with normal HTTPS trust.
 
 To rotate a key:
 
 1. Generate a new owner-only secret with a new key ID.
-1. Add it with explicit grants and restart the verifier. Keep existing replay
-    state; adding or removing keys never clears nonce records.
+1. Add it with explicit grants and restart the verifier.
 1. Switch clients to the new ID and secret.
 1. Remove the old key and restart to revoke it. Restart terminates old streams.
-
-Each key needs distinct secret material, including retained revoked identities.
-A key ID is permanently bound to its secret fingerprint in the journal. Reusing
-an ID with another secret fails startup. Retained key identities count against
-configured replay capacity; select capacity for the expected rotation history.
-After journal loss or corruption, generate fresh signing keys and fresh state,
-revoke every old key, and update clients before enabling the listener again.
 
 ## Release and deployment prerequisites
 
@@ -269,9 +243,9 @@ listener for remote ingress. Keep PostgreSQL private and reviews executing
 locally.
 
 Rollback disables the remote listener and removes its ingress route. Revoke
-exposed keys, stop existing streams, and retain replay state for retained keys.
-Browser users continue to use browser sessions and CSRF controls; never inject
-long-lived HMAC secrets into JavaScript, URLs, or localStorage.
+exposed keys and stop existing streams. Browser users continue to use browser
+sessions and CSRF controls; never inject long-lived HMAC secrets into
+JavaScript, URLs, or localStorage.
 
 HTTP history replication remains separate work. Existing HTTP export pages are
 read-only and do not provide idempotent ingest, conflict resolution, deletions,

@@ -59,7 +59,6 @@ type Server struct {
 	searchStopped           bool
 	httpServer              *http.Server
 	remoteServer            *http.Server
-	remoteHandler           *remoteHandler
 	remoteCancel            context.CancelFunc
 	browserMu               sync.Mutex
 	browserServer           *http.Server
@@ -225,7 +224,7 @@ func newServerWithLogs(
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
 	cfg := s.configWatcher.Config()
-	if err := config.ValidateRemote(cfg); err != nil {
+	if err := config.ValidateRemote(cfg.Remote); err != nil {
 		return err
 	}
 
@@ -670,7 +669,6 @@ func (s *Server) stopOnce0() error {
 	browserServer := s.browserServer
 	browserListener := s.browserListener
 	remoteServer := s.remoteServer
-	remoteHandler := s.remoteHandler
 	remoteCancel := s.remoteCancel
 	s.browserMu.Unlock()
 	if remoteCancel != nil {
@@ -734,9 +732,6 @@ func (s *Server) stopOnce0() error {
 			cleanupErr = errors.Join(cleanupErr, err)
 			_ = remoteServer.Close()
 		}
-	}
-	if remoteHandler != nil {
-		cleanupErr = errors.Join(cleanupErr, remoteHandler.Close())
 	}
 
 	// Stop hook runner

@@ -67,7 +67,7 @@ func TestRemoteCLIStreamReconnectsWithFreshSignature(t *testing.T) {
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
 	t.Setenv("TEST_REMOTE_STREAM_SECRET", hex.EncodeToString(secret))
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "auth_key='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'\n[remote_client]\nexternal_url='%s'\nkey_id='reader'\nsecret_env='TEST_REMOTE_STREAM_SECRET'\nca_file='%s'\n", server.URL+"/history", caFile), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "[remote_client]\nexternal_url='%s'\nkey_id='reader'\nsecret_env='TEST_REMOTE_STREAM_SECRET'\nca_file='%s'\n", server.URL+"/history", caFile), 0o600))
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	serverAddr, parsedServerEndpoint = server.URL+"/history", nil
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
@@ -102,7 +102,7 @@ func TestRemoteCLIStreamReconnectsWithFreshSignature(t *testing.T) {
 	assert.Len(unique, 8)
 	assert.Equal(2, strings.Count(output.String(), "\n"))
 	assert.Equal([]time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second, 5 * time.Second, time.Second}, delays)
-	assert.Contains(notices.String(), "reconnecting")
+	assert.Equal(1, strings.Count(notices.String(), "reconnect"), "the reconnect notice prints once per stream")
 }
 
 func TestRemoteCommandsRejectLocalOperations(t *testing.T) {
@@ -184,23 +184,19 @@ func TestRemoteListAndShowRejectUsageBeforeConnecting(t *testing.T) {
 }
 
 func TestSigningInitWritesPrivateNewFiles(t *testing.T) {
-	dir := t.TempDir()
-	key := filepath.Join(dir, "reader.key")
-	state := filepath.Join(dir, "replay.json")
+	key := filepath.Join(t.TempDir(), "reader.key")
 	cmd := signingInitCmd()
-	cmd.SetArgs([]string{"--secret-file", key, "--replay-file", state})
+	cmd.SetArgs([]string{"--secret-file", key})
 	if runtime.GOOS == "windows" {
 		require.Error(t, cmd.Execute())
 		assert.NoFileExists(t, key)
-		assert.NoFileExists(t, state)
 		return
 	}
 	require.NoError(t, cmd.Execute())
 	info, err := os.Stat(key)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	assert.FileExists(t, state)
-	require.Error(t, cmd.Execute())
+	require.Error(t, cmd.Execute(), "an existing key file is never overwritten")
 }
 
 func TestRemoteCLIListOutsideGitUsesNativeSigning(t *testing.T) {
@@ -238,7 +234,7 @@ func TestRemoteCLIListOutsideGitUsesNativeSigning(t *testing.T) {
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
 	t.Setenv("TEST_REMOTE_SIGNING_SECRET", hex.EncodeToString(secret))
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "auth_key='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'\n[remote_client]\nexternal_url='%s'\nkey_id='reader'\nsecret_env='TEST_REMOTE_SIGNING_SECRET'\nca_file='%s'\n", server.URL+"/history", caFile), 0o600))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "[remote_client]\nexternal_url='%s'\nkey_id='reader'\nsecret_env='TEST_REMOTE_SIGNING_SECRET'\nca_file='%s'\n", server.URL+"/history", caFile), 0o600))
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	serverAddr = server.URL + "/history"
 	parsedServerEndpoint = nil

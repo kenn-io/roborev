@@ -1032,7 +1032,7 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := validateSearchConfig(cfg.Search); err != nil {
 		return err
 	}
-	if err := validateRemoteConfig(cfg); err != nil {
+	if err := validateRemoteConfig(cfg.Remote); err != nil {
 		return err
 	}
 	return normalizeWebConfig(&cfg.Web, cfg.AuthKey)

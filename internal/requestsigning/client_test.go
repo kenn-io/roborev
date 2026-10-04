@@ -46,7 +46,6 @@ func TestClientClosesBodyBeforeTransportOnSigningFailure(t *testing.T) {
 			body := &trackedRequestBody{Reader: strings.NewReader("{}")}
 			r, err := http.NewRequest("GET", target, body)
 			require.NoError(t, err)
-			r.Header.Set("Authorization", "Bearer synthetic")
 			_, err = client.Transport.RoundTrip(r)
 			require.Error(t, err)
 			assert.True(t, body.closed, "RoundTripper must close bodies on every error path")
@@ -62,7 +61,7 @@ func TestClientHTTPSOriginPrefixRedirectAndReconnect(t *testing.T) {
 		target := "https://" + r.Host + r.URL.RequestURI()
 		v, err := VerifyHeaders(r, target, map[string]Key{key.ID: key}, time.Now())
 		assert.NoError(t, err)
-		assert.NoError(t, VerifyBody(w, r, 1024, t.TempDir()))
+		assert.NoError(t, VerifyEmptyBody(r))
 		defer r.Body.Close()
 		mu.Lock()
 		nonces = append(nonces, v.Nonce)
@@ -79,7 +78,6 @@ func TestClientHTTPSOriginPrefixRedirectAndReconnect(t *testing.T) {
 	for range 2 {
 		r, err := http.NewRequest("GET", server.URL+"/history/api/ping", nil)
 		require.NoError(t, err)
-		r.Header.Set("Authorization", "Bearer synthetic")
 		resp, err := client.Do(r)
 		require.NoError(t, err)
 		resp.Body.Close()
@@ -89,7 +87,6 @@ func TestClientHTTPSOriginPrefixRedirectAndReconnect(t *testing.T) {
 	assert.NotEqual(t, nonces[0], nonces[1])
 	mu.Unlock()
 	r, _ := http.NewRequest("GET", server.URL+"/history/redirect", nil)
-	r.Header.Set("Authorization", "Bearer synthetic")
 	resp, err := client.Do(r)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -111,7 +108,7 @@ func TestClientDoesNotRetryAdmittedRequestImplicitly(t *testing.T) {
 			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, err := VerifyHeaders(r, "https://"+r.Host+r.URL.RequestURI(), map[string]Key{key.ID: key}, time.Now())
 				assert.NoError(t, err)
-				assert.NoError(t, VerifyBody(w, r, 1024, t.TempDir()))
+				assert.NoError(t, VerifyEmptyBody(r))
 				defer r.Body.Close()
 				if r.URL.Path == "/history/lose" && admissions.Add(1) == 1 {
 					_ = r.Context().Value(connectionKey{}).(net.Conn).Close()
@@ -130,7 +127,6 @@ func TestClientDoesNotRetryAdmittedRequestImplicitly(t *testing.T) {
 			request := func(path string) (*http.Response, error) {
 				r, err := http.NewRequest("GET", server.URL+"/history/"+path, nil)
 				require.NoError(t, err)
-				r.Header.Set("Authorization", "Bearer synthetic")
 				return client.Do(r)
 			}
 			prime, err := request("prime")

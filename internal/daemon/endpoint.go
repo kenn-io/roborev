@@ -42,12 +42,13 @@ func ParseEndpoint(serverAddr string) (DaemonEndpoint, error) {
 		if err != nil {
 			return DaemonEndpoint{}, err
 		}
-		// An exact explicit credential binding selects remote trust. All other
-		// endpoints retain the existing local transport/runtime policy.
-		if cfg.MatchOrigin(serverAddr) == nil {
-			u, _ := requestsigning.ValidateBase(serverAddr)
-			return DaemonEndpoint{Network: "https", Address: u.Host, remoteURL: u.String()}, nil
+		// Only an exact explicit credential binding selects remote trust. Local
+		// daemons never use HTTPS, so report the remote mismatch directly.
+		if err := cfg.MatchOrigin(serverAddr); err != nil {
+			return DaemonEndpoint{}, fmt.Errorf("remote daemon address %q: %w", serverAddr, err)
 		}
+		u, _ := requestsigning.ValidateBase(serverAddr)
+		return DaemonEndpoint{Network: "https", Address: u.Host, remoteURL: u.String()}, nil
 	}
 	raw := serverAddr
 	if raw == "" {

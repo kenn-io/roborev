@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,13 +24,16 @@ import (
 const (
 	Lifetime   int64 = 30
 	FutureSkew int64 = 5
-	components       = `("@method" "@target-uri" "content-digest" "content-type" "authorization")`
+	components       = `("@method" "@target-uri" "content-digest" "content-type")`
 )
 
 var (
 	keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 	noncePattern = regexp.MustCompile(`^"[A-Za-z0-9_-]{32}"$`)
 	ErrInvalid   = errors.New("invalid or expired request signature")
+	// ErrBodyNotAllowed reports a request body on the read-only profile.
+	ErrBodyNotAllowed = errors.New("signed requests must not have a body")
+	emptyDigest       = "sha-256=:" + base64.StdEncoding.EncodeToString(sha256.New().Sum(nil)) + ":"
 )
 
 // Key is an independent signing secret; ID is a public selector.
@@ -83,12 +85,12 @@ func validateRequest(r *http.Request) error {
 	if len(r.Trailer) > 0 || len(r.Header.Values("Trailer")) > 0 || len(r.Header.Values("Content-Encoding")) > 0 {
 		return ErrInvalid
 	}
-	for _, name := range []string{"Authorization", "Content-Type", "Content-Digest", "Signature-Input", "Signature"} {
+	for _, name := range []string{"Content-Type", "Content-Digest", "Signature-Input", "Signature"} {
 		if len(r.Header.Values(name)) != 1 || strings.ContainsAny(r.Header.Get(name), "\r\n") || strings.TrimSpace(r.Header.Get(name)) != r.Header.Get(name) {
 			return ErrInvalid
 		}
 	}
-	if r.Header.Get("Authorization") == "" || r.Header.Get("Content-Type") != "application/json" {
+	if r.Header.Get("Content-Type") != "application/json" {
 		return ErrInvalid
 	}
 	return nil
@@ -99,7 +101,7 @@ func params(created int64, nonce, id string) string {
 }
 
 func signatureBase(r *http.Request, target, p string) string {
-	return fmt.Sprintf("\"@method\": %s\n\"@target-uri\": %s\n\"content-digest\": %s\n\"content-type\": %s\n\"authorization\": %s\n\"@signature-params\": %s", r.Method, target, r.Header.Get("Content-Digest"), r.Header.Get("Content-Type"), r.Header.Get("Authorization"), p)
+	return fmt.Sprintf("\"@method\": %s\n\"@target-uri\": %s\n\"content-digest\": %s\n\"content-type\": %s\n\"@signature-params\": %s", r.Method, target, r.Header.Get("Content-Digest"), r.Header.Get("Content-Type"), p)
 }
 
 func digest(reader io.Reader) (string, error) {
@@ -113,7 +115,7 @@ func digest(reader io.Reader) (string, error) {
 }
 
 // Sign hashes a repeatable body without buffering it. Request-time signing must
-// run after bearer injection, and on every application retry/reconnect.
+// run on every application retry/reconnect.
 func Sign(r *http.Request, k Key, now time.Time) error {
 	if err := k.Validate(); err != nil {
 		return err
@@ -247,56 +249,31 @@ func VerifyHeaders(r *http.Request, target string, keys map[string]Key, now time
 	return v, nil
 }
 
-// VerifyBody uses an operator-specified byte budget and private temporary file.
-// Only a completely verified body reaches handlers; it is never truncated.
-func VerifyBody(w http.ResponseWriter, r *http.Request, maxBytes int64, dir string) error {
-	if maxBytes <= 0 || r.ContentLength > maxBytes {
-		return errors.New("signed body exceeds configured limit")
+// VerifyEmptyBody accepts only an empty body matching the signed digest. The
+// remote listener serves reads only, so it never needs to buffer a body.
+func VerifyEmptyBody(r *http.Request) error {
+	if r.ContentLength > 0 {
+		return ErrBodyNotAllowed
+	}
+	if r.Header.Get("Content-Digest") != emptyDigest {
+		return ErrInvalid
 	}
 	if r.Body == nil {
-		d, _ := digest(nil)
-		if d != r.Header.Get("Content-Digest") {
-			return ErrInvalid
-		}
 		return nil
 	}
-	f, err := os.CreateTemp(dir, "signed-body-*")
-	if err != nil {
-		return errors.New("cannot spool signed body")
-	}
-	keep := false
-	defer func() {
-		if !keep {
-			_ = f.Close()
-			_ = os.Remove(f.Name())
-		}
-	}()
-	original := r.Body
-	defer original.Close()
-	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(f, h), http.MaxBytesReader(w, original, maxBytes))
+	n, err := io.Copy(io.Discard, io.LimitReader(r.Body, 1))
 	if err != nil {
 		return err
+	}
+	if n != 0 {
+		return ErrBodyNotAllowed
 	}
 	// net/http may populate unannounced trailers only after reading EOF.
 	if len(r.Trailer) != 0 {
 		return ErrInvalid
 	}
-	expected := "sha-256=:" + base64.StdEncoding.EncodeToString(h.Sum(nil)) + ":"
-	if expected != r.Header.Get("Content-Digest") {
-		return ErrInvalid
-	}
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	r.Body = &spooledBody{File: f}
-	keep = true
 	return nil
 }
-
-type spooledBody struct{ *os.File }
-
-func (s *spooledBody) Close() error { return errors.Join(s.File.Close(), os.Remove(s.Name())) }
 
 // contextReader checks cancellation between fixed-size hash reads.
 type contextReader struct {

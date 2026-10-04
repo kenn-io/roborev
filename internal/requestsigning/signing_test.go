@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +29,6 @@ func signedRequest(t *testing.T, key Key, body string) *http.Request {
 	t.Helper()
 	r, err := http.NewRequest("POST", "https://example.com/history/api/review?b=2&a=%2F", strings.NewReader(body))
 	require.NoError(t, err)
-	r.Header.Set("Authorization", "Bearer native-test-auth")
 	require.NoError(t, Sign(r, key, time.Now()))
 	return r
 }
@@ -44,14 +42,13 @@ func TestSignVerifyAndTampering(t *testing.T) {
 		{"method", func(r *http.Request) { r.Method = "GET" }},
 		{"prefix", func(r *http.Request) { r.URL.Path = "/other/api/review" }},
 		{"query", func(r *http.Request) { r.URL.RawQuery = "a=%2F&b=2" }},
-		{"auth", func(r *http.Request) { r.Header.Set("Authorization", "Bearer other") }},
 		{"digest", func(r *http.Request) { r.Header.Set("Content-Digest", "sha-256=:AAAA:") }},
 		{"type", func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }},
 		{"input", func(r *http.Request) {
 			r.Header.Set("Signature-Input", strings.ReplaceAll(r.Header.Get("Signature-Input"), "reader-1", "reader-2"))
 		}},
 		{"signature", func(r *http.Request) { r.Header.Set("Signature", "sig1=:AAAA:") }},
-		{"duplicate", func(r *http.Request) { r.Header.Add("Authorization", r.Header.Get("Authorization")) }},
+		{"duplicate", func(r *http.Request) { r.Header.Add("Content-Type", r.Header.Get("Content-Type")) }},
 		{"encoding", func(r *http.Request) { r.Header.Set("Content-Encoding", "gzip") }},
 		{"trailer", func(r *http.Request) { r.Trailer = http.Header{"Extra": []string{"data"}} }},
 	} {
@@ -69,20 +66,19 @@ func TestSignVerifyAndTampering(t *testing.T) {
 	assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 }
 
-func TestBodyDigestExactAndBounded(t *testing.T) {
+func TestVerifyEmptyBody(t *testing.T) {
 	key := testKey(t)
-	r := signedRequest(t, key, "body")
-	out := httptest.NewRecorder()
-	require.NoError(t, VerifyBody(out, r, 4, t.TempDir()))
-	got, err := io.ReadAll(r.Body)
-	require.NoError(t, err)
-	require.NoError(t, r.Body.Close())
-	assert.Equal(t, "body", string(got))
+	r := signedRequest(t, key, "")
+	require.NoError(t, VerifyEmptyBody(r))
 	r = signedRequest(t, key, "body")
-	r.Body = io.NopCloser(strings.NewReader("evil"))
-	require.Error(t, VerifyBody(out, r, 4, t.TempDir()))
-	r = signedRequest(t, key, "body")
-	require.Error(t, VerifyBody(out, r, 3, t.TempDir()))
+	require.ErrorIs(t, VerifyEmptyBody(r), ErrBodyNotAllowed)
+	r = signedRequest(t, key, "")
+	r.ContentLength = -1
+	r.Body = io.NopCloser(strings.NewReader("unannounced"))
+	require.ErrorIs(t, VerifyEmptyBody(r), ErrBodyNotAllowed)
+	r = signedRequest(t, key, "")
+	r.Header.Set("Content-Digest", "sha-256=:AAAA:")
+	require.ErrorIs(t, VerifyEmptyBody(r), ErrInvalid)
 }
 
 func FuzzSignatureInputStrict(f *testing.F) {
@@ -91,7 +87,6 @@ func FuzzSignatureInputStrict(f *testing.F) {
 	f.Fuzz(func(t *testing.T, id string) {
 		key := Key{ID: id, Secret: bytes.Repeat([]byte{7}, 64)}
 		r, _ := http.NewRequest("GET", "https://example.com/api/ping", nil)
-		r.Header.Set("Authorization", "Bearer synthetic")
 		err := Sign(r, key, time.Unix(1000, 0))
 		if err != nil {
 			return
@@ -117,7 +112,6 @@ func TestSignatureFreshnessAndCanonicalParameters(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := http.NewRequest("GET", "https://example.com/api/ping?", nil)
-			r.Header.Set("Authorization", "Bearer synthetic")
 			now := time.Unix(1000, 0)
 			require.NoError(t, Sign(r, key, now.Add(tc.offset)))
 			_, err := VerifyHeaders(r, r.URL.String(), map[string]Key{key.ID: key}, now)
@@ -142,7 +136,7 @@ func TestCanonicalTransmittedParameterOrder(t *testing.T) {
 		for _, i := range order {
 			p += ";" + fields[i+1]
 		}
-		base := fmt.Sprintf("\"@method\": %s\n\"@target-uri\": %s\n\"content-digest\": %s\n\"content-type\": %s\n\"authorization\": %s\n\"@signature-params\": %s", r.Method, r.URL.String(), r.Header.Get("Content-Digest"), r.Header.Get("Content-Type"), r.Header.Get("Authorization"), p)
+		base := fmt.Sprintf("\"@method\": %s\n\"@target-uri\": %s\n\"content-digest\": %s\n\"content-type\": %s\n\"@signature-params\": %s", r.Method, r.URL.String(), r.Header.Get("Content-Digest"), r.Header.Get("Content-Type"), p)
 		mac := hmac.New(sha256.New, key.Secret)
 		_, err := io.WriteString(mac, base)
 		require.NoError(t, err)

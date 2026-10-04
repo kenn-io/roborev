@@ -15,8 +15,9 @@ func withAuthentication(next http.Handler, key string) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only the browser session boundary can set this internal principal.
-		if _, authenticated := BrowserPrincipalFromContext(r.Context()); authenticated {
+		// Only the browser session boundary and the signed remote listener can
+		// set these internal principals.
+		if _, authenticated := BrowserPrincipalFromContext(r.Context()); authenticated || remoteScoped(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
 		}

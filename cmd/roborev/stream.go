@@ -74,6 +74,7 @@ Examples:
 			// Reuse the native job-poll bounds in daemon_lifecycle.go (1s to
 			// 5s). Empty remote streams back off; received events reset it.
 			delay := pollStartInterval
+			warnedReconnect := false
 			for {
 				resp, err := api.StreamEventsRaw(ctx, options)
 				if ctx.Err() != nil {
@@ -109,7 +110,10 @@ Examples:
 				if n > 0 {
 					delay = pollStartInterval
 				}
-				cmd.PrintErrln("Remote event stream ended; reconnecting. Events may have been missed.")
+				if !warnedReconnect {
+					cmd.PrintErrln("Remote event streams reconnect periodically; events between connections may be missed.")
+					warnedReconnect = true
+				}
 				if err := wait(ctx, delay); err != nil {
 					if ctx.Err() != nil {
 						return nil

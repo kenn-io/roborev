@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/requestsigning"
 )
@@ -24,13 +23,6 @@ func (e DaemonEndpoint) remoteHTTPClient(timeout time.Duration) *http.Client {
 	}
 	if err = cfg.MatchOrigin(e.BaseURL()); err != nil {
 		return remoteErrorClient(timeout, err)
-	}
-	key, err := loadClientAuthKey()
-	if err != nil {
-		return remoteErrorClient(timeout, err)
-	}
-	if key == "" {
-		return remoteErrorClient(timeout, errors.New("remote HTTPS requires a nonempty daemon auth_key"))
 	}
 	if _, err = cfg.SigningKey(); err != nil {
 		return remoteErrorClient(timeout, err)
@@ -64,9 +56,9 @@ func (e DaemonEndpoint) remoteHTTPClient(timeout time.Duration) *http.Client {
 	if err != nil {
 		return remoteErrorClient(timeout, err)
 	}
-	// Bearer injection is outermost so its exact value is signed. The inner
-	// transport pins HTTPS origin and prefix independently of auth's origin pin.
-	return auth.HTTPClient(e.BaseURL(), client, loadClientAuthKey)
+	// The signing key is the only remote credential; the daemon auth_key never
+	// leaves the server machine.
+	return client
 }
 
 func remoteErrorClient(timeout time.Duration, err error) *http.Client {

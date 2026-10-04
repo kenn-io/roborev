@@ -75,7 +75,7 @@ func TestRemoteShowRequiresCommentsBeforeOutput(t *testing.T) {
 			caFile := filepath.Join(t.TempDir(), "ca.pem")
 			require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
 			t.Setenv("TEST_SHOW_SIGNING_SECRET", hex.EncodeToString(secret))
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "auth_key='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'\n[remote_client]\nexternal_url='%s/history'\nkey_id='reader'\nsecret_env='TEST_SHOW_SIGNING_SECRET'\nca_file='%s'\n", server.URL, caFile), 0o600))
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "[remote_client]\nexternal_url='%s/history'\nkey_id='reader'\nsecret_env='TEST_SHOW_SIGNING_SECRET'\nca_file='%s'\n", server.URL, caFile), 0o600))
 			oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 			serverAddr, parsedServerEndpoint = server.URL+"/history", nil
 			t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })

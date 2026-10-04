@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/requestsigning"
 	"go.kenn.io/roborev/internal/storage"
@@ -55,20 +54,20 @@ type remoteHandler struct {
 	external *url.URL
 	keys     map[string]requestsigning.Key
 	grants   map[string]remoteGrant
-	replay   *requestsigning.ReplayStore
+	nonces   *requestsigning.NonceCache
 	slots    chan struct{}
 	budget   time.Duration
 }
 
 func (s *Server) newRemoteHandler(cfg config.RemoteConfig) (*remoteHandler, error) {
-	if err := config.ValidateRemote(&config.Config{AuthKey: s.authKey, Remote: cfg}); err != nil {
+	if err := config.ValidateRemote(cfg); err != nil {
 		return nil, err
 	}
 	external, err := requestsigning.ValidateBase(cfg.ExternalURL)
 	if err != nil {
 		return nil, err
 	}
-	h := &remoteHandler{server: s, cfg: cfg, external: external, keys: map[string]requestsigning.Key{}, grants: map[string]remoteGrant{}, slots: make(chan struct{}, cfg.MaxConcurrent)}
+	h := &remoteHandler{server: s, cfg: cfg, external: external, keys: map[string]requestsigning.Key{}, grants: map[string]remoteGrant{}, nonces: requestsigning.NewNonceCache(time.Now()), slots: make(chan struct{}, cfg.MaxConcurrent)}
 	h.budget, _ = time.ParseDuration(cfg.RequestTimeout)
 	for _, entry := range cfg.Keys {
 		key, err := requestsigning.ReadKey(entry.ID, entry.SecretFile, entry.SecretEnv)
@@ -90,17 +89,9 @@ func (s *Server) newRemoteHandler(cfg config.RemoteConfig) (*remoteHandler, erro
 		}
 		h.grants[entry.ID] = g
 	}
-	h.replay, err = requestsigning.OpenReplay(cfg.ReplayFile, cfg.ReplayCapacity)
-	if err != nil {
-		return nil, err
-	}
-	if err = h.replay.BindKeys(h.keys); err != nil {
-		_ = h.replay.Close()
-		return nil, err
-	}
 	return h, nil
 }
-func (h *remoteHandler) Close() error { return h.replay.Close() }
+
 func remoteError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -117,10 +108,6 @@ func (h *remoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if headers > h.cfg.MaxHeaderBytes {
 		remoteError(w, 431, "remote header budget exceeded")
-		return
-	}
-	if len(r.Header.Values("Authorization")) != 1 || !auth.EqualKey("Bearer "+h.server.authKey, r.Header.Get("Authorization")) {
-		remoteError(w, 401, "daemon authentication required")
 		return
 	}
 	if !h.cfg.TrustedProxy && (r.TLS == nil || r.Host != h.external.Host) {
@@ -174,10 +161,9 @@ func (h *remoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = controller.SetWriteDeadline(time.Now().Add(h.budget))
 	// Read the original request: net/http publishes late trailers there, while
 	// Request.Clone copies the initial trailer map before body consumption.
-	if err = requestsigning.VerifyBody(w, r, h.cfg.MaxBodyBytes, config.DataDir()); err != nil {
-		var tooLarge *http.MaxBytesError
+	if err = requestsigning.VerifyEmptyBody(r); err != nil {
 		status := 400
-		if errors.As(err, &tooLarge) || r.ContentLength > h.cfg.MaxBodyBytes {
+		if errors.Is(err, requestsigning.ErrBodyNotAllowed) {
 			status = 413
 		}
 		remoteError(w, status, "signed body verification failed")
@@ -187,20 +173,12 @@ func (h *remoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// shares this connection deadline and cancels the request when it expires,
 	// so clear it before execution or an idle stream would end prematurely.
 	_ = controller.SetReadDeadline(time.Time{})
-	clone.Body = r.Body
-	if clone.Body != nil {
-		defer clone.Body.Close()
-	}
-	if ctx.Err() != nil || !v.Fresh(time.Now().Unix()) {
+	if ctx.Err() != nil {
 		remoteError(w, 401, "request signature expired before admission")
 		return
 	}
-	if err = h.replay.AdmitVerified(v); err != nil {
+	if err = h.nonces.Admit(v, time.Now()); err != nil {
 		remoteError(w, 401, "request replay admission denied")
-		return
-	}
-	if ctx.Err() != nil || h.replay.CheckVerified(v) != nil {
-		remoteError(w, 401, "request expired or canceled after durable admission")
 		return
 	}
 	if clone.URL.Path == "/api/ping" {
@@ -367,7 +345,6 @@ func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
 	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		_ = handler.Close()
 		return err
 	}
 	headerBudget, _ := time.ParseDuration(cfg.ReadHeaderTimeout)
@@ -380,7 +357,6 @@ func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
 		if err != nil {
 			cancelRequests()
 			_ = listener.Close()
-			_ = handler.Close()
 			return errors.New("cannot load remote TLS identity")
 		}
 		srv.TLSConfig.Certificates = []tls.Certificate{cert}
@@ -391,11 +367,9 @@ func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
 		s.browserMu.Unlock()
 		cancelRequests()
 		_ = listener.Close()
-		_ = handler.Close()
 		return http.ErrServerClosed
 	}
 	s.remoteServer = srv
-	s.remoteHandler = handler
 	s.remoteCancel = cancelRequests
 	s.browserMu.Unlock()
 	go func() {
@@ -426,19 +400,16 @@ func sanitizeRemoteJob(job *storage.ReviewJob) {
 	job.SessionID = ""
 }
 
-// abortRemoteServer tears down partial startup without leaving a listener or
-// journal lock behind. It only touches this Server's optional remote ingress.
+// abortRemoteServer tears down partial startup without leaving a listener
+// behind. It only touches this Server's optional remote ingress.
 func (s *Server) abortRemoteServer() {
 	s.browserMu.Lock()
-	srv, handler, cancel := s.remoteServer, s.remoteHandler, s.remoteCancel
+	srv, cancel := s.remoteServer, s.remoteCancel
 	s.browserMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 	if srv != nil {
 		_ = srv.Close()
-	}
-	if handler != nil {
-		_ = handler.Close()
 	}
 }
