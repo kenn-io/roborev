@@ -2339,13 +2339,22 @@ func (p *CIPoller) setPanelPending(jobID int64) {
 	if !won {
 		return // already delivered, retired, or being posted
 	}
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending", "Review in progress"); err != nil {
-		log.Printf("CI poller: failed to set pending status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-	} else if err := p.db.MarkCIPanelPendingStatusSent(row.ID); err != nil {
-		log.Printf("CI poller: error acknowledging pending status for panel %d: %v", row.ID, err)
+	job, err := p.db.GetJobByID(jobID)
+	if err != nil {
+		log.Printf("CI poller: error checking rerun %d before pending status: %v", jobID, err)
+		p.releasePanelClaim(row.ID)
+		return
+	}
+	// A delayed pending write must not precede recovery of a terminal result.
+	if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
+		if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending", "Review in progress"); err != nil {
+			log.Printf("CI poller: failed to set pending status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+		} else if err := p.db.MarkCIPanelPendingStatusSent(row.ID); err != nil {
+			log.Printf("CI poller: error acknowledging pending status for panel %d: %v", row.ID, err)
+		}
 	}
 	p.releasePanelClaim(row.ID)
-	job, err := p.db.GetJobByID(jobID)
+	job, err = p.db.GetJobByID(jobID)
 	if err != nil {
 		log.Printf("CI poller: error checking rerun %d after pending status: %v", jobID, err)
 		return

@@ -100,6 +100,8 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 		{"active", []string{"success", "pending"}},
 		{"no token", []string{"success", "pending"}},
 		{"done", []string{"success", "success"}},
+		{"done undelivered", []string{"success", "success"}},
+		{"done final status fails", []string{"success"}},
 		{"canceled", []string{"success", "error"}},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
@@ -109,9 +111,10 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 				t.Setenv("GITHUB_TOKEN", "")
 			}
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.CaptureComments()
+			comments := h.CaptureComments()
 			var states []string
 			failPending := true
+			failFinal := false
 			setStatus := func(repo, sha, state, desc string) error {
 				assert.Equal(t, "acme/api", repo)
 				assert.Equal(t, "head-a", sha)
@@ -119,6 +122,9 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 					if tc.state == "no token" {
 						return h.Poller.setCommitStatus(repo, sha, state, desc)
 					}
+					return errors.New("GitHub unavailable")
+				}
+				if state == "success" && failFinal {
 					return errors.New("GitHub unavailable")
 				}
 				states = append(states, state)
@@ -135,15 +141,18 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			require.Equal(t, []string{"success"}, states, "the failed write left the old status on GitHub")
+			failFinal = tc.state == "done final status fails"
 			switch tc.state {
-			case "done":
+			case "done", "done undelivered", "done final status fails":
 				members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
 				require.NoError(t, err)
 				for _, member := range members {
 					h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
 				}
 				h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
-				h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
+				if tc.state == "done" {
+					h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
+				}
 			case "canceled":
 				_, err := server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
 				require.NoError(t, err)
@@ -158,6 +167,8 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			poller := NewCIPoller(db, NewStaticConfig(h.Cfg), nil)
 			poller.setCommitStatusFn = setStatus
+			poller.postPRCommentFn = h.Poller.postPRCommentFn
+			poller.prPostTargetFn = h.Poller.prPostTargetFn
 			failPending = false
 			// The delivery target remains valid even with no configured poll repos.
 			h.Cfg.CI.Repos = nil
@@ -165,6 +176,9 @@ func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
 			assert.Equal(t, tc.want, states)
 			poller.poll(context.Background())
 			assert.Equal(t, tc.want, states, "successful and terminal writes must not retry")
+			if tc.state == "done undelivered" || tc.state == "done final status fails" {
+				assert.Len(t, *comments, 2, "recover the rerun without reposting either review")
+			}
 		})
 	}
 }
