@@ -43,7 +43,7 @@ another agent; goal review currently supports only Pi and Claude.
    non-goals, and observable success criteria. Keep its spec authoritative.
 2. Search Kata first; reuse or create a parent for this outcome. Record the spec
    path, attention state, and existing branch when applicable. Review the spec
-   with `roborev review --type goal --agent <reviewer> --wait --spec <spec-path>`.
+   with `roborev review --from-skill --type goal --agent <reviewer> --wait --spec <spec-path>`.
    Quote paths as shell arguments.
 3. Resolve findings against the captured artifacts. Correct incomplete intent or
    explain a false positive with evidence. A changed requirement returns to
@@ -57,7 +57,7 @@ another agent; goal review currently supports only Pi and Claude.
 5. Review the linked plan and the populated open graph together:
 
    ```bash
-   roborev review --type goal --agent <reviewer> --wait \
+   roborev review --from-skill --type goal --agent <reviewer> --wait \
      --spec docs/superpowers/specs/feature-design.md \
      --plan docs/superpowers/plans/feature.md
    ```
