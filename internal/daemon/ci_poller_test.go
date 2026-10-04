@@ -998,34 +998,22 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 }
 
 func TestCIPollerStartStopHealth(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	cfg := config.DefaultConfig()
-	cfg.CI.Enabled = true
-	cfg.CI.PollInterval = "10s" // <30s should clamp to default
-
-	p := NewCIPoller(db, NewStaticConfig(cfg), NewBroadcaster())
-
-	if err := p.Start(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Start: %v", err)
-	}
-
-	healthy, msg := p.HealthCheck()
-	if !healthy || msg != "running" {
-		require.Condition(t, func() bool {
-			return false
-		}, "HealthCheck after Start = (%v, %q), want (true, running)", healthy, msg)
-	}
-
-	p.Stop()
-
-	healthy, msg = p.HealthCheck()
-	if healthy || msg != "not running" {
-		require.Condition(t, func() bool {
-			return false
-		}, "HealthCheck after Stop = (%v, %q), want (false, not running)", healthy, msg)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		cfg := config.DefaultConfig()
+		cfg.CI.Enabled = true
+		cfg.CI.PollInterval = "10s" // <30s should clamp to default
+		p := NewCIPoller(db, NewStaticConfig(cfg), NewBroadcaster())
+		require.NoError(t, p.Start())
+		synctest.Wait()
+		healthy, msg := p.HealthCheck()
+		assert.True(t, healthy)
+		assert.Equal(t, "running", msg)
+		p.Stop()
+		healthy, msg = p.HealthCheck()
+		assert.False(t, healthy)
+		assert.Equal(t, "not running", msg)
+	})
 }
 
 func TestCIPollerStopDrainsQueuedEventsBeforeReturning(t *testing.T) {

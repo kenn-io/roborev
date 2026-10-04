@@ -11,6 +11,8 @@ export interface HealthStatus {
   components: ComponentHealth[];
   error_count_24h: number;
   healthy: boolean;
+  /** Daemon can process work; CI review failures remain unhealthy while recovery runs */
+  ready: boolean;
   recent_errors: ErrorEntry[];
   search?: SearchHealth;
   uptime: string;

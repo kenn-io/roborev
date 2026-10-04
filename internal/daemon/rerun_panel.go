@@ -199,6 +199,9 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*Re
 
 	_, synthJob, replayed, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)
 	if err != nil {
+		if errors.Is(err, storage.ErrCIPanelActive) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("enqueue rerun panel: %v", err))
 	}

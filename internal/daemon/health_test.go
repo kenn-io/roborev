@@ -128,6 +128,7 @@ func TestHealth(t *testing.T) {
 		assert.True(t, hasComponent(health.Components, "database"), "Expected component 'database' in health check")
 		assert.True(t, hasComponent(health.Components, "workers"), "Expected component 'workers' in health check")
 		assert.True(t, health.Healthy, "Expected health to be OK")
+		assert.True(t, health.Ready)
 	})
 
 	t.Run("With Errors", func(t *testing.T) {
@@ -249,6 +250,7 @@ func TestHealthReportsAbandonedAndOverdueJobs(t *testing.T) {
 			require.Equal(t, http.StatusOK, response.Code)
 			health := decodeHealthStatus(t, response)
 			assert.False(t, health.Healthy)
+			assert.False(t, health.Ready, "stalled workers block activation")
 			assert.Contains(t, health.Components, storage.ComponentHealth{
 				Name: "workers", Healthy: false,
 				Message: "1 stalled job(s) running beyond their allowed time",

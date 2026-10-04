@@ -706,39 +706,22 @@ func TestParseDuration(t *testing.T) {
 }
 
 func TestServerStop_StopsCIPoller(t *testing.T) {
-	server, db, _ := newTestServer(t)
-
-	cfg := config.DefaultConfig()
-	cfg.CI.Enabled = true
-	cfg.CI.PollInterval = "1h"
-
-	poller := NewCIPoller(db, NewStaticConfig(cfg), server.Broadcaster())
-	if err := poller.Start(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Start poller: %v", err)
-	}
-
-	healthy, _ := poller.HealthCheck()
-	if !healthy {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected poller running after Start")
-	}
-
-	server.SetCIPoller(poller)
-	if err := server.Stop(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Server.Stop: %v", err)
-	}
-
-	healthy, msg := poller.HealthCheck()
-	if healthy {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		cfg := config.DefaultConfig()
+		cfg.CI.Enabled = true
+		cfg.CI.PollInterval = "1h"
+		poller := NewCIPoller(db, NewStaticConfig(cfg), server.Broadcaster())
+		require.NoError(t, poller.Start())
+		synctest.Wait()
+		healthy, _ := poller.HealthCheck()
+		assert.True(t, healthy)
+		server.SetCIPoller(poller)
+		require.NoError(t, server.Stop())
+		healthy, msg := poller.HealthCheck()
+		assert.False(t, healthy)
+		assert.Equal(t, "not running", msg)
+	})
 }
 
 func TestCostOptionsFromInput(t *testing.T) {

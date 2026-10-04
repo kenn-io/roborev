@@ -467,6 +467,7 @@ type DaemonStatus struct {
 // HealthStatus represents the overall daemon health
 type HealthStatus struct {
 	Healthy      bool              `json:"healthy"`
+	Ready        bool              `json:"ready" doc:"Daemon can process work; CI review failures remain unhealthy while recovery runs"`
 	Uptime       string            `json:"uptime"`
 	Version      string            `json:"version"`
 	Components   []ComponentHealth `json:"components"`

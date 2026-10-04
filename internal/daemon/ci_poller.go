@@ -126,17 +126,18 @@ type CIPoller struct {
 	// owned by the single poll goroutine.
 	quietHours *config.QuietHoursWindow
 
-	subID          int // broadcaster subscription ID for event listening
-	stopCh         chan struct{}
-	doneCh         chan struct{}
-	eventDoneCh    chan struct{}
-	cancelFunc     context.CancelFunc // cancels the context for external commands
-	mu             sync.Mutex
-	running        bool
-	stopping       bool
-	pollStopping   bool
-	eventsStopping bool
-	pollErrors     map[ciPollTarget]string // guarded by mu
+	subID              int // broadcaster subscription ID for event listening
+	stopCh             chan struct{}
+	doneCh             chan struct{}
+	eventDoneCh        chan struct{}
+	cancelFunc         context.CancelFunc // cancels the context for external commands
+	mu                 sync.Mutex
+	running            bool
+	stopping           bool
+	pollStopping       bool
+	eventsStopping     bool
+	pollErrors         map[ciPollTarget]string // guarded by mu
+	initialPollPending bool                    // guarded by mu; startup has not established health yet
 }
 
 type ciPollTarget struct {
@@ -255,12 +256,19 @@ func (p *CIPoller) Start() error {
 	p.eventDoneCh = make(chan struct{})
 	p.cancelFunc = cancel
 	p.running = true
+	p.initialPollPending = true
 	p.stopping = false
 	p.pollStopping = false
 	p.eventsStopping = false
 
 	stopCh := p.stopCh
 	doneCh := p.doneCh
+
+	if rearmed, err := p.db.RearmFailedReviewAttempts(time.Now()); err != nil {
+		log.Printf("CI poller: error rearming failed review attempts on startup: %v", err)
+	} else if rearmed > 0 {
+		log.Printf("CI poller: rearmed %d failed review attempt(s) on startup", rearmed)
+	}
 
 	if woke, err := p.db.MakeTransientReviewAttemptsDue(time.Now()); err != nil {
 		log.Printf("CI poller: error making transient review attempts due on startup: %v", err)
@@ -340,17 +348,33 @@ func (p *CIPoller) Stop() {
 
 // HealthCheck returns whether the CI poller is healthy
 func (p *CIPoller) HealthCheck() (bool, string) {
+	return p.healthCheck(false)
+}
+
+// ReadinessCheck reports whether CI can poll for work. Outstanding PR review
+// failures affect HealthCheck until delivery, but do not prevent startup.
+func (p *CIPoller) ReadinessCheck() (bool, string) {
+	return p.healthCheck(true)
+}
+
+func (p *CIPoller) healthCheck(readiness bool) (bool, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if !p.running {
 		return false, "not running"
 	}
-	if len(p.pollErrors) > 0 {
-		messages := make([]string, 0, len(p.pollErrors))
-		for _, message := range p.pollErrors {
-			messages = append(messages, message)
+	if p.initialPollPending {
+		return false, "waiting for initial poll"
+	}
+	messages := make([]string, 0, len(p.pollErrors))
+	for target, message := range p.pollErrors {
+		if readiness && target.prNumber != 0 {
+			continue
 		}
+		messages = append(messages, message)
+	}
+	if len(messages) > 0 {
 		slices.Sort(messages)
 		return false, strings.Join(messages, "; ")
 	}
@@ -385,6 +409,9 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 
 	// Poll immediately on start
 	p.poll(ctx)
+	p.mu.Lock()
+	p.initialPollPending = false
+	p.mu.Unlock()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2318,7 +2345,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		if retired {
 			log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
 				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
-			if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+			if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
 				log.Printf("CI poller: error deleting stale-head review attempt for %s#%d@%s: %v",
 					row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 			}
@@ -2397,22 +2424,18 @@ func (p *CIPoller) jobMatchesGithubRepo(job *storage.ReviewJob, ghRepo string) (
 }
 
 func (p *CIPoller) deletePanelAndAttempt(row *storage.CIPanel, reason string) {
+	if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
+		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
+		return
+	}
 	if err := p.db.DeleteCIPanel(row.ID); err != nil {
 		log.Printf("CI poller: error deleting %s panel %d: %v", reason, row.ID, err)
-	}
-	if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
-		log.Printf("CI poller: error deleting %s review attempt for %s#%d@%s: %v",
-			reason, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
 }
 
 func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason string) {
-	if err := p.db.MarkPanelRetired(row.ID); err != nil {
+	if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
 		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
-	}
-	if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
-		log.Printf("CI poller: error deleting %s review attempt for %s#%d@%s: %v",
-			reason, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
 }
 
@@ -3238,11 +3261,11 @@ func (p *CIPoller) reconcileStuckAttempts(ghRepo string) error {
 
 // attemptStuck reports whether a 'pending' attempt is genuinely stranded with no
 // live panel and should be re-deferred. The attempt's current HEAD panel
-// (GetCIPanelByPRSHA, the single mapping per repo/pr/head_sha) is authoritative:
+// (GetCIPanelByPRSHA, the latest mapping per repo/pr/head_sha) is authoritative:
 //   - no panel row -> the run is MISSING (a re-enqueue that failed after deleting
 //     the prior retired mapping, or a crash before any run was created) -> stuck.
-//   - panel posted -> the run finished or is being posted (the attempt will be
-//     marked done) -> NOT stuck.
+//   - panel posted -> NOT stuck, unless a no-review failure was retired for
+//     recovery and the replacement enqueue failed before creating a panel.
 //   - panel not retired -> either LIVE (synthesis queued/running) or a
 //     terminal-unposted run that reconcilePanelPosting owns -> NOT stuck.
 //   - panel retired + unposted -> confirm via the synthesis job that the run is
@@ -3260,8 +3283,11 @@ func (p *CIPoller) attemptStuck(attempt *storage.ReviewAttempt) (bool, error) {
 		return false, fmt.Errorf("reconcile: get panel for PR #%d@%s: %w",
 			attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
 	}
-	if panel.PostedAt != nil || panel.RetiredAt == nil {
-		return false, nil // posted (done/posting) or live/posting-owned: not stuck
+	if panel.RetiredAt == nil {
+		return false, nil // live/posting-owned: not stuck
+	}
+	if panel.PostedAt != nil && (panel.Outcome == nil || *panel.Outcome != storage.PanelOutcomeNoReviewPosted) {
+		return false, nil // successfully posted or intentionally abandoned
 	}
 	synth, err := p.db.GetSynthesisJob(panel.PanelRunUUID)
 	if err != nil {

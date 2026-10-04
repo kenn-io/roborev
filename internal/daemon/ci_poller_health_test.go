@@ -57,6 +57,7 @@ func TestHealthCIPollerRepositoryFailureAndRecovery(t *testing.T) {
 		assert := assert.New(t)
 		assert.Equal([]string{"acme/api", "acme/web"}, visited)
 		assert.False(health.Healthy)
+		assert.False(health.Ready, "repository polling failure blocks activation")
 		assert.Contains(health.Components, storage.ComponentHealth{
 			Name: "ci", Healthy: false, Message: "polling failed for acme/api",
 		})
@@ -69,6 +70,7 @@ func TestHealthCIPollerRepositoryFailureAndRecovery(t *testing.T) {
 	h.Poller.poll(context.Background())
 	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.True(t, health.Healthy)
+	assert.True(t, health.Ready)
 	assert.Contains(t, health.Components, storage.ComponentHealth{
 		Name: "ci", Healthy: true, Message: "running",
 	})
@@ -152,6 +154,7 @@ func TestHealthCIPollerReviewRecovery(t *testing.T) {
 		health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 		assert.False(health.Healthy,
 			"a running retry must retain its previous failure")
+		assert.True(health.Ready, "a running recovery must not fail deployment readiness")
 		assert.Len(health.RecentErrors, 1, "retries continue the same failure without recording a fresh alert")
 	}
 	assert.Empty(*comments, "failed runs produce no review")

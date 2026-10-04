@@ -36,6 +36,43 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 	}
 }
 
+func TestCIPanelHistoryMigration(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	setupOldSchemaDB(t, dbPath, `CREATE TABLE ci_pr_panels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		github_repo TEXT NOT NULL, pr_number INTEGER NOT NULL, head_sha TEXT NOT NULL,
+		panel_run_uuid TEXT NOT NULL, synthesis_job_id INTEGER,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, posting_claimed_at TIMESTAMP,
+		posted_at TIMESTAMP, retired_at TIMESTAMP, outcome TEXT,
+		first_attempt_at TEXT, attempt_count INTEGER, synthesis_agent TEXT, synthesis_model TEXT,
+		allow_stale_post INTEGER NOT NULL DEFAULT 0,
+		UNIQUE(github_repo, pr_number, head_sha)
+	)`, `INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, posted_at, retired_at, outcome, attempt_count)
+		VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000001',
+		  datetime('now'), datetime('now'), 'no_review_posted', 3)`)
+
+	for range 2 {
+		db, err := Open(dbPath)
+		require.NoError(t, err)
+		var outcome string
+		var count int
+		require.NoError(t, db.QueryRow(`SELECT outcome, attempt_count FROM ci_pr_panels WHERE id = 1`).Scan(&outcome, &count))
+		assert.Equal(t, "no_review_posted", outcome)
+		assert.Equal(t, 3, count)
+		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
+			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000002')`)
+		require.NoError(t, err, "retired history must not occupy the active review slot")
+		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
+			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000003')`)
+		require.Error(t, err, "only one active panel may own a PR HEAD")
+		_, err = db.Exec(`DELETE FROM ci_pr_panels WHERE id != 1`)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+	}
+}
+
 func TestOpenReadOnly(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reviews.db")

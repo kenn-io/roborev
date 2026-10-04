@@ -1226,6 +1226,10 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	if err := db.migrateCIPanelHistory(); err != nil {
+		return fmt.Errorf("migrate CI panel history: %w", err)
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

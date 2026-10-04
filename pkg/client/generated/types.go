@@ -1932,10 +1932,13 @@ type HealthStatus struct {
 	Components    []ComponentHealth `json:"components" validate:"required"`
 	ErrorCount24H int64             `json:"error_count_24h"`
 	Healthy       bool              `json:"healthy"`
-	RecentErrors  []ErrorEntry      `json:"recent_errors" validate:"required"`
-	Search        *SearchHealth     `json:"search,omitempty"`
-	Uptime        string            `json:"uptime" validate:"required"`
-	Version       string            `json:"version" validate:"required"`
+
+	// Ready Daemon can process work; CI review failures remain unhealthy while recovery runs
+	Ready        bool          `json:"ready"`
+	RecentErrors []ErrorEntry  `json:"recent_errors" validate:"required"`
+	Search       *SearchHealth `json:"search,omitempty"`
+	Uptime       string        `json:"uptime" validate:"required"`
+	Version      string        `json:"version" validate:"required"`
 }
 
 func (h HealthStatus) Validate() error {

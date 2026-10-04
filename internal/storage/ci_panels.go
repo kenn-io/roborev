@@ -3,11 +3,64 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 	"uuid"
 )
+
+// ErrCIPanelActive means another run or posting lease still owns this PR HEAD.
+var ErrCIPanelActive = errors.New("CI panel is still active or posting")
+
+// rerunCIPanelTx transfers CI ownership to an explicit rerun in the same
+// transaction as its jobs and request ledger. The original PR HEAD stays frozen;
+// the poster still verifies that target before publishing the new result.
+func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synth *ReviewJob, now time.Time) error {
+	source, err := scanCIPanel(conn.QueryRowContext(ctx, `SELECT `+ciPanelColumns+`
+		FROM ci_pr_panels WHERE synthesis_job_id = ?`, sourceJobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // local panel, not a CI rerun
+	}
+	if err != nil {
+		return err
+	}
+	active, err := scanCIPanel(conn.QueryRowContext(ctx, `SELECT `+ciPanelColumns+`
+		FROM ci_pr_panels WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
+		source.GithubRepo, source.PRNumber, source.HeadSHA))
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if active != nil && active.PostedAt == nil &&
+		(active.ID != source.ID || active.PostingClaimedAt != nil) {
+		return ErrCIPanelActive
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE ci_pr_panels
+		SET retired_at = ?, posting_claimed_at = NULL
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
+		now.Format(time.RFC3339), source.GithubRepo, source.PRNumber, source.HeadSHA); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, source.GithubRepo, source.PRNumber, source.HeadSHA,
+		synth.PanelRunUUID, synth.ID, now.Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if err := reserveReviewAttemptTx(ctx, conn, source.GithubRepo, source.PRNumber, source.HeadSHA, now); err != nil {
+		return err
+	}
+	succeeded := active != nil && active.Outcome != nil && *active.Outcome == PanelOutcomeReviewPosted
+	_, err = conn.ExecContext(ctx, `UPDATE ci_pr_review_attempts
+		SET state = 'pending', attempt = 1, consecutive_genuine_attempts = 0,
+		    first_attempt_at = ?, next_attempt_at = NULL, updated_at = ?,
+		    last_error_class = CASE WHEN ? THEN '' ELSE last_error_class END,
+		    last_error_excerpt = CASE WHEN ? THEN '' ELSE last_error_excerpt END
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		now.Format(time.RFC3339), now.Format(time.RFC3339), succeeded, succeeded,
+		source.GithubRepo, source.PRNumber, source.HeadSHA)
+	return err
+}
 
 // Panel terminal outcomes, persisted once at finalization. A NULL outcome
 // means the row was finalized before outcome persistence existed; exports
@@ -124,12 +177,12 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	return &p, nil
 }
 
-// GetCIPanelByPRSHA returns the panel mapping for a PR at a specific HEAD SHA.
+// GetCIPanelByPRSHA returns the latest panel mapping for a PR at a specific HEAD SHA.
 // Returns sql.ErrNoRows when no mapping exists.
 func (db *DB) GetCIPanelByPRSHA(githubRepo string, prNumber int, headSHA string) (*CIPanel, error) {
 	row := db.QueryRow(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? ORDER BY id DESC LIMIT 1`,
 		githubRepo, prNumber, headSHA)
 	return scanCIPanel(row)
 }
@@ -218,27 +271,6 @@ func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo st
 	members []EnqueueOpts, synthesis EnqueueOpts, machineID uuid.UUID, now time.Time,
 ) (bool, []*ReviewJob, *ReviewJob, error) {
 	runUUID := uuid.New()
-
-	// Rows created before source was persisted are CI-owned only through this
-	// mapping. Preserve that ownership before replacing a retired same-HEAD
-	// mapping so historical retry costs remain exportable.
-	if _, err := exec.ExecContext(ctx,
-		`UPDATE review_jobs
-		 SET source = ?
-		 WHERE COALESCE(source, '') = ''
-		   AND panel_run_uuid IN (
-		       SELECT panel_run_uuid FROM ci_pr_panels
-		       WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
-		         AND retired_at IS NOT NULL
-		   )`, JobSourceCI, githubRepo, prNumber, headSHA); err != nil {
-		return false, nil, nil, err
-	}
-	if _, err := exec.ExecContext(ctx,
-		`DELETE FROM ci_pr_panels
-		 WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NOT NULL`,
-		githubRepo, prNumber, headSHA); err != nil {
-		return false, nil, nil, err
-	}
 
 	res, err := exec.ExecContext(ctx,
 		`INSERT OR IGNORE INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, created_at)
@@ -387,6 +419,33 @@ func (db *DB) MarkPanelRetired(id int64) error {
 		SET retired_at = datetime('now'), posting_claimed_at = NULL
 		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, id)
 	return err
+}
+
+// RetirePanelAndDeleteAttempt removes a canceled or obsolete run's retry state
+// only while that run still owns the HEAD. Historical cancellation events can
+// arrive after a successor starts, so retirement and ownership-checked deletion
+// must share a transaction with respect to rerun creation.
+func (db *DB) RetirePanelAndDeleteAttempt(id int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE ci_pr_panels
+		SET retired_at = datetime('now'), posting_claimed_at = NULL
+		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ci_pr_review_attempts
+		WHERE (github_repo, pr_number, head_sha) = (
+		  SELECT p.github_repo, p.pr_number, p.head_sha FROM ci_pr_panels p
+		  WHERE p.id = ? AND p.posted_at IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM ci_pr_panels newer
+		      WHERE newer.github_repo = p.github_repo AND newer.pr_number = p.pr_number
+		        AND newer.head_sha = p.head_sha AND newer.id > p.id))`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MarkPanelRetiredIfStalePostDisallowed retires the panel only when

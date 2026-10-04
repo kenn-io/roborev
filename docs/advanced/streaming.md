@@ -72,6 +72,13 @@ re-arm stuck attempts also make CI unhealthy. Failed cleanup remains eligible
 for another poll, including when only part of a panel was canceled. An HTTP 200
 response alone does not indicate healthy polling.
 
+The `ready` field reports whether the daemon can process work. It requires
+healthy database and workers, configured sync health, and a completed initial CI
+poll without discovery or repository polling errors. Outstanding review failures
+keep `healthy` false while their retries run, but do not prevent `ready` from
+becoming true. Deployment checks may use `ready`; availability monitoring must
+use `healthy`.
+
 Polling continues for other pull requests and repositories after a failure. Each
 repository stays unhealthy until its next successful poll or until a successful
 discovery removes it from the configured set. Discovery failures remain
@@ -94,13 +101,21 @@ instead of re-arming disabled work. Adding a configured skip label removes a
 deferred retry and its health error on the next poll, without waiting for
 backoff to expire.
 
-Terminal failures do not expire: one unresolved PR keeps overall health
-unhealthy until the PR closes, advances to a new commit, or gets a skip label.
-To acknowledge a failure after retries stop, add a configured skip label. This
-waives review while the label remains. Skipping publishes the skipped check and
-sets the commit status to success with a "Review skipped" description before
-clearing the failure; a publishing error leaves the failure for the next poll.
-Later polls leave an identical skip status unchanged.
+Terminal failures do not expire. After an agent or provider repair, restarting
+the daemon gives exhausted agent failures a fresh retry budget. Normal polls do
+not reset that budget. Polling checks that the PR remains open, eligible, and at
+the same commit before retrying. Empty reviews, timeouts, and permanent delivery
+failures remain terminal. An explicit rerun of a CI panel also retains its
+GitHub delivery target and checks the PR commit before posting. Recovery leaves
+previous runs available for inspection, and health stays unhealthy until a
+usable review is posted.
+
+An unresolved PR also clears from health when it closes, advances to a new
+commit, or gets a skip label. To acknowledge a failure after retries stop, add a
+configured skip label. This waives review while the label remains. Skipping
+publishes the skipped check and sets the commit status to success with a "Review
+skipped" description before clearing the failure; a publishing error leaves the
+failure for the next poll. Later polls leave an identical skip status unchanged.
 
 Cleanup also retires the failed panel, allowing a fresh review if the PR reopens
 or the skip label is removed at the same commit. Active and successfully posted
