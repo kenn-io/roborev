@@ -254,7 +254,7 @@ func enqueueCompletedInsightsGoalReviewJob(t *testing.T, db *storage.DB, repoID 
 	claimed, err := db.ClaimJob("worker")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, "test", job.Prompt, output))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", job.Prompt, output))
 }
 
 func failingInsightsOutput(summary string) string {
