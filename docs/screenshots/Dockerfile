@@ -51,8 +51,9 @@ COPY docs/screenshots/package.json docs/screenshots/package-lock.json ./
 RUN npm ci && npx playwright install --with-deps chromium
 COPY docs/screenshots/ ./
 
-# Create config pointing to local daemon
-RUN mkdir -p /root/.roborev && \
+# Create config pointing to local daemon, plus the parent directory that
+# screenshot-all.sh copies the source repo into
+RUN mkdir -p /root/.roborev /repos && \
     echo 'server_addr = "127.0.0.1:7373"' > /root/.roborev/config.toml
 
 # Mock xclip for clipboard operations (atotto/clipboard uses this on Linux)

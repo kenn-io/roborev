@@ -65,7 +65,8 @@ sleep 0.3
 echo "==> TUI screenshots"
 
 # Start the daemon in the background and wait for it to be ready
-send "roborev daemon run &" Enter
+# Keep daemon logs out of the pane so they cannot draw over the TUI.
+send "roborev daemon run >/tmp/roborev-daemon.log 2>&1 &" Enter
 daemon_ready=false
 for i in $(seq 1 60); do
     status_out=$(roborev status 2>&1 || true)

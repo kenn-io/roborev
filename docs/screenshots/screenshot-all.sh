@@ -82,13 +82,16 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "==> Generating documentation screenshots..."
-docker run --rm \
-    -v "$DEMO_DATA_DIR:/data" \
-    -v "$OUTPUT_DIR:/output" \
-    -v "$REPO:/repos/roborev:ro" \
-    -e ROBOREV_DATA_DIR=/data \
-    "$IMAGE_NAME" \
-    /screenshots/generate-screenshots.sh /output
+# Copy inputs and outputs with docker cp instead of bind mounts. Docker
+# runtimes such as Colima share only some host directories with their VM, and
+# an unshared bind mount silently becomes an empty directory.
+CONTAINER_ID=$(docker create -e ROBOREV_DATA_DIR=/data \
+    "$IMAGE_NAME" /screenshots/generate-screenshots.sh /output)
+trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
+docker cp "$DEMO_DATA_DIR/." "$CONTAINER_ID:/data"
+docker cp "$REPO/." "$CONTAINER_ID:/repos/roborev"
+docker start -a "$CONTAINER_ID"
+docker cp "$CONTAINER_ID:/output/." "$OUTPUT_DIR/"
 
 echo ""
 echo "Done! Output files are in $OUTPUT_DIR"
