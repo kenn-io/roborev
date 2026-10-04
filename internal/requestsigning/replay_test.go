@@ -10,10 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// signedAt returns verified metadata for a signature created at created.
+func signedAt(nonce string, created time.Time) Verified {
+	return Verified{KeyID: "reader", Nonce: nonce, Created: created.Unix(), Expires: created.Unix() + Lifetime}
+}
+
 func TestNonceCacheAdmitsEachSignatureOnce(t *testing.T) {
-	now := time.Unix(1000, 0)
-	cache := NewNonceCache(now)
-	v := Verified{KeyID: "reader", Nonce: "nonce", Created: now.Unix(), Expires: now.Unix() + Lifetime}
+	started := time.Unix(1000, 0)
+	cache := NewNonceCache(started)
+	now := started.Add(time.Duration(FutureSkew+1) * time.Second)
+	v := signedAt("nonce", now)
 	var accepted atomic.Int64
 	var wg sync.WaitGroup
 	for range 20 {
@@ -30,23 +36,38 @@ func TestNonceCacheAdmitsEachSignatureOnce(t *testing.T) {
 	require.NoError(t, cache.Admit(other, now), "nonces are scoped to their key")
 }
 
-func TestNonceCacheRejectsStaleAndPreStartSignatures(t *testing.T) {
-	now := time.Unix(1000, 0)
-	cache := NewNonceCache(now)
-	before := Verified{KeyID: "reader", Nonce: "before", Created: now.Unix() - 1, Expires: now.Unix() - 1 + Lifetime}
-	require.Error(t, cache.Admit(before, now), "a restart must not admit signatures the previous process could have seen")
-	fresh := Verified{KeyID: "reader", Nonce: "fresh", Created: now.Unix(), Expires: now.Unix() + Lifetime}
-	require.Error(t, cache.Admit(fresh, now.Add(time.Duration(Lifetime+1)*time.Second)))
-	require.NoError(t, cache.Admit(fresh, now))
+func TestNonceCacheRejectsSignaturesThePreviousProcessCouldHaveAdmitted(t *testing.T) {
+	started := time.Unix(1000, 500_000_000)
+	cache := NewNonceCache(started)
+	for _, tc := range []struct {
+		name    string
+		created time.Time
+	}{
+		{"before start", started.Add(-time.Second)},
+		{"same second as start", started.Add(-400 * time.Millisecond)},
+		{"future-dated within skew", started.Add(time.Duration(FutureSkew) * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Error(t, cache.Admit(signedAt(tc.name, tc.created), started))
+		})
+	}
+	after := started.Add(time.Duration(FutureSkew+1) * time.Second)
+	require.NoError(t, cache.Admit(signedAt("after skew", after), after))
+}
+
+func TestNonceCacheRejectsExpiredSignatures(t *testing.T) {
+	started := time.Unix(1000, 0)
+	cache := NewNonceCache(started)
+	created := started.Add(time.Duration(FutureSkew+1) * time.Second)
+	require.Error(t, cache.Admit(signedAt("late", created), created.Add(time.Duration(Lifetime+1)*time.Second)))
 }
 
 func TestNonceCachePrunesExpiredNonces(t *testing.T) {
-	now := time.Unix(1000, 0)
-	cache := NewNonceCache(now)
-	old := Verified{KeyID: "reader", Nonce: "old", Created: now.Unix(), Expires: now.Unix() + Lifetime}
-	require.NoError(t, cache.Admit(old, now))
-	later := now.Add(time.Duration(Lifetime+1) * time.Second)
-	next := Verified{KeyID: "reader", Nonce: "next", Created: later.Unix(), Expires: later.Unix() + Lifetime}
-	require.NoError(t, cache.Admit(next, later))
+	started := time.Unix(1000, 0)
+	cache := NewNonceCache(started)
+	first := started.Add(time.Duration(FutureSkew+1) * time.Second)
+	require.NoError(t, cache.Admit(signedAt("old", first), first))
+	later := first.Add(time.Duration(Lifetime+1) * time.Second)
+	require.NoError(t, cache.Admit(signedAt("next", later), later))
 	assert.Len(t, cache.seen, 1)
 }

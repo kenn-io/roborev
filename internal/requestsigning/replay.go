@@ -7,8 +7,9 @@ import (
 )
 
 // NonceCache admits each signature once while it can still verify. It rejects
-// signatures created before the cache started, so a daemon restart cannot
-// reopen requests that the previous process already admitted.
+// signatures created at or before its start plus FutureSkew: the previous
+// process may have admitted any of those, including future-dated signatures
+// and ones from the same whole second, so a restart cannot replay them.
 type NonceCache struct {
 	mu      sync.Mutex
 	started int64
@@ -22,8 +23,8 @@ func NewNonceCache(now time.Time) *NonceCache {
 
 // Admit consumes the signature's nonce if the signature is fresh at now.
 func (c *NonceCache) Admit(v Verified, now time.Time) error {
-	if v.Created < c.started {
-		return errors.New("signature predates verifier start")
+	if v.Created <= c.started+FutureSkew {
+		return errors.New("signature may predate verifier start")
 	}
 	if !v.Fresh(now.Unix()) {
 		return ErrInvalid

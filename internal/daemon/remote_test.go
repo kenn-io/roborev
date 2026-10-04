@@ -66,8 +66,7 @@ func remoteRequest(t *testing.T, key requestsigning.Key, path string) *http.Requ
 
 func TestRemoteRequiredSigningAndDeniedRoutes(t *testing.T) {
 	s, cfg, key := remoteFixture(t)
-	remote, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	remote := startedRemoteHandler(t, s, cfg)
 	r := remoteRequest(t, key, "/api/ping")
 	out := httptest.NewRecorder()
 	remote.ServeHTTP(out, r)
@@ -104,8 +103,7 @@ func TestRemoteScopesIDListAndReplay(t *testing.T) {
 		}
 		cfg.Keys[0].AllRepos = false
 		cfg.Keys[0].RepoIDs = []int64{repo.ID}
-		remote, err := s.newRemoteHandler(cfg)
-		require.NoError(t, err)
+		remote := startedRemoteHandler(t, s, cfg)
 		r := remoteRequest(t, key, "/api/jobs")
 		replay := r.Clone(r.Context())
 		out := httptest.NewRecorder()
@@ -124,13 +122,17 @@ func TestRemoteScopesIDListAndReplay(t *testing.T) {
 			remote.ServeHTTP(out, remoteRequest(t, key, path))
 			assert.Equal(t, 403, out.Code)
 		}
-		// A restarted verifier rejects signatures created before it started.
-		time.Sleep(time.Second)
+		// A verifier restarted in the same second rejects signatures the previous
+		// process could have admitted, then accepts ones signed after the cutoff.
 		remote, err = s.newRemoteHandler(cfg)
 		require.NoError(t, err)
 		out = httptest.NewRecorder()
 		remote.ServeHTTP(out, replay)
 		assert.Equal(t, 401, out.Code)
+		time.Sleep(time.Duration(requestsigning.FutureSkew+1) * time.Second)
+		out = httptest.NewRecorder()
+		remote.ServeHTTP(out, remoteRequest(t, key, "/api/jobs"))
+		assert.Equal(t, 200, out.Code, out.Body.String())
 	})
 }
 
@@ -140,8 +142,7 @@ func (b *unreadBody) Read([]byte) (int, error) { b.reads++; return 0, fmt.Errorf
 func (b *unreadBody) Close() error             { return nil }
 func TestRemoteRejectsBeforeReadingAndBoundsBodies(t *testing.T) {
 	s, cfg, key := remoteFixture(t)
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	for _, mutate := range []func(*http.Request){
 		func(r *http.Request) { r.Header.Del("Signature") },
 		func(r *http.Request) { r.URL.Path = "/api/shutdown" },
@@ -177,9 +178,7 @@ func TestRemoteProductionClientBehindHTTPSPrefix(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg.ExternalURL = server.URL + "/history"
-	var err error
-	handler, err = s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler = startedRemoteHandler(t, s, cfg)
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), fmt.Appendf(nil, "[remote_client]\nexternal_url='%s'\nkey_id='%s'\nsecret_file='%s'\nca_file='%s'\n", cfg.ExternalURL, key.ID, cfg.Keys[0].SecretFile, caFile), 0o600))
@@ -205,8 +204,7 @@ func (b delayedEmptyBody) Close() error             { return nil }
 func TestRemoteSlowBodyExpiresBeforeExecution(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, cfg, key := remoteFixture(t)
-		handler, err := s.newRemoteHandler(cfg)
-		require.NoError(t, err)
+		handler := startedRemoteHandler(t, s, cfg)
 		r := remoteRequest(t, key, "/api/ping")
 		r.Body = delayedEmptyBody{delay: 31 * time.Second}
 		out := httptest.NewRecorder()
@@ -229,8 +227,7 @@ func TestRemoteStreamReconnectAndRepositoryFilter(t *testing.T) {
 		cfg.Keys[0].AllRepos = false
 		cfg.Keys[0].RepoIDs = []int64{allowed.ID}
 		cfg.Keys[0].Grants = []string{"history:events"}
-		handler, err := s.newRemoteHandler(cfg)
-		require.NoError(t, err)
+		handler := startedRemoteHandler(t, s, cfg)
 		var nonces []string
 		for range 2 {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -301,9 +298,7 @@ func TestRemoteIdleTLSStreamUsesRequestBudget(t *testing.T) {
 				defer server.Close()
 				defer peer.Close()
 				cfg.ExternalURL = server.URL + "/history"
-				var err error
-				handler, err = s.newRemoteHandler(cfg)
-				require.NoError(t, err)
+				handler = startedRemoteHandler(t, s, cfg)
 				transport := server.Client().Transport.(*http.Transport).Clone()
 				transport.DialContext = func(context.Context, string, string) (net.Conn, error) { return peer, nil }
 				defer transport.CloseIdleConnections()
@@ -342,8 +337,7 @@ func (b blockingEmptyBody) Close() error             { return nil }
 func TestRemoteConcurrentRequestBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, cfg, key := remoteFixture(t)
-		handler, err := s.newRemoteHandler(cfg)
-		require.NoError(t, err)
+		handler := startedRemoteHandler(t, s, cfg)
 		release := make(chan struct{})
 		var wg sync.WaitGroup
 		for range cfg.MaxConcurrent {
@@ -362,22 +356,20 @@ func TestRemoteConcurrentRequestBudget(t *testing.T) {
 
 func TestRemoteKeyRevocationAndNewIDRotation(t *testing.T) {
 	s, cfg, key := remoteFixture(t)
-	first, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	first := startedRemoteHandler(t, s, cfg)
 	r := remoteRequest(t, key, "/api/ping")
 	out := httptest.NewRecorder()
 	first.ServeHTTP(out, r)
 	require.Equal(t, 200, out.Code)
 	fresh := make([]byte, 64)
-	_, err = rand.Read(fresh)
+	_, err := rand.Read(fresh)
 	require.NoError(t, err)
 	newKey := requestsigning.Key{ID: "reader-next", Secret: fresh}
 	file := filepath.Join(t.TempDir(), "next.key")
 	require.NoError(t, os.WriteFile(file, []byte(hex.EncodeToString(fresh)), 0o600))
 	cfg.Keys[0].ID = newKey.ID
 	cfg.Keys[0].SecretFile = file
-	second, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	second := startedRemoteHandler(t, s, cfg)
 	out = httptest.NewRecorder()
 	second.ServeHTTP(out, remoteRequest(t, key, "/api/ping"))
 	assert.Equal(t, 401, out.Code)
@@ -400,8 +392,7 @@ func TestRemoteListenerShutdownCancelsRequests(t *testing.T) {
 
 func TestRemoteRejectsUnannouncedWireTrailers(t *testing.T) {
 	s, cfg, key := remoteFixture(t)
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	r, err := http.NewRequest("GET", cfg.ExternalURL+"/api/ping", nil)
@@ -436,8 +427,7 @@ func TestRemoteRepositoryGrantSurvivesPathReuse(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Keys[0].AllRepos = false
 	cfg.Keys[0].RepoIDs = []int64{allowed.ID}
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	require.NoError(t, s.db.MoveRepo(allowed.ID, "/synthetic/moved", ""))
 	require.NoError(t, s.db.MoveRepo(denied.ID, allowed.RootPath, ""))
 	out := httptest.NewRecorder()
@@ -465,8 +455,7 @@ func TestRemoteRepositoryGrantDoesNotTransferAfterDeletion(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Keys[0].AllRepos = false
 	cfg.Keys[0].RepoIDs = []int64{repo.ID}
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	out := httptest.NewRecorder()
 	handler.ServeHTTP(out, remoteRequest(t, key, fmt.Sprintf("/api/jobs?id=%d", job.ID)))
 	require.Equal(t, http.StatusOK, out.Code, out.Body.String())
@@ -500,8 +489,7 @@ func TestRemoteLegacyCommentsUseOwningRepository(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Keys[0].AllRepos = false
 	cfg.Keys[0].RepoIDs = []int64{allowed.ID}
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	path := fmt.Sprintf("/api/comments?job_id=%d", job.ID)
 	out := httptest.NewRecorder()
 	handler.ServeHTTP(out, remoteRequest(t, key, path))
@@ -527,8 +515,7 @@ func TestRemoteLegacyCommentsMatchJobSubject(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.AddComment(commit.ID, "reader", "commit feedback")
 	require.NoError(t, err)
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	for _, tc := range []struct {
 		name       string
 		opts       storage.EnqueueOpts
@@ -578,8 +565,7 @@ func TestRemoteRechecksJobScopeAfterBody(t *testing.T) {
 	require.NoError(t, err)
 	cfg.Keys[0].AllRepos = false
 	cfg.Keys[0].RepoIDs = []int64{allowed.ID}
-	handler, err := s.newRemoteHandler(cfg)
-	require.NoError(t, err)
+	handler := startedRemoteHandler(t, s, cfg)
 	for _, route := range []string{"/api/jobs?id=", "/api/review?job_id=", "/api/comments?job_id="} {
 		job, err := s.db.EnqueueJob(storage.EnqueueOpts{RepoID: allowed.ID, GitRef: "task", Agent: "test"})
 		require.NoError(t, err)
@@ -594,4 +580,14 @@ func TestRemoteRechecksJobScopeAfterBody(t *testing.T) {
 		handler.ServeHTTP(out, r)
 		assert.Equal(t, 403, out.Code, route+": "+out.Body.String())
 	}
+}
+
+// startedRemoteHandler returns a handler whose startup replay cutoff has
+// already passed, so tests can sign requests immediately.
+func startedRemoteHandler(t *testing.T, s *Server, cfg config.RemoteConfig) *remoteHandler {
+	t.Helper()
+	h, err := s.newRemoteHandler(cfg)
+	require.NoError(t, err)
+	h.nonces = requestsigning.NewNonceCache(time.Now().Add(-time.Minute))
+	return h
 }

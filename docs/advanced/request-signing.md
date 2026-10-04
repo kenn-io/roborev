@@ -216,11 +216,13 @@ content.
 
 The verifier keeps used nonces in memory until their signatures expire, so each
 signed request runs at most once. After a restart, it rejects every signature
-created before the new process started. A request admitted by the previous
-process therefore cannot run again, and no replay state is stored on disk.
-Clients retry with a fresh signature. A wall-clock step backward can briefly let
-a request whose nonce was already pruned verify again; TLS remains the primary
-protection against capture.
+created up to 5 seconds after the new process started, because the previous
+process may have admitted future-dated signatures from that window. A request
+admitted by the previous process therefore cannot run again, and no replay state
+is stored on disk. Remote reads fail with 401 for about 6 seconds after a
+restart. Streams reconnect on their own; re-run one-off commands. A wall-clock
+step backward can briefly let a request whose nonce was already pruned verify
+again; TLS remains the primary protection against capture.
 
 The verifier and `signing-init` are not available on Windows because Go file
 modes cannot enforce owner-only access there. Windows native clients can use
