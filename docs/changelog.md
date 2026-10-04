@@ -14,14 +14,6 @@ All notable changes to roborev, grouped by minor release.
     editing code. Background fix requests and the TUI fix panel can also plan
     before implementation.
 
-**Improvements**
-
-- Simplify TUI navigation: use `PgUp`/`PgDn` to page through content and `u` to
-    open release notes. The `u`/`d` paging and `Ctrl-P`/`Ctrl-N` movement
-    aliases are removed. Main views retain `Home`/`g` top jumps; `gg` and
-    `End`/`G` aliases are removed. In the log view, `g`/`G` toggles between the
-    top and bottom.
-
 ## 0.71.0
 
 <small>2026-10-03</small>

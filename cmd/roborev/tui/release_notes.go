@@ -17,17 +17,21 @@ func (m model) handleReleaseNotesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.currentView = m.releaseNotesFromView
 		return m, nil
-	case "u":
+	case "U":
 		m.releaseNotesLoading = true
 		m.releaseNotesErr = nil
 		return m, m.fetchReleaseNotes()
-	case "up", "k":
+	case "home", "g":
+		m.releaseNotesScroll = 0
+	case "end", "G":
+		m.releaseNotesScroll = m.releaseNotesMaxScroll()
+	case "up", "k", "ctrl+p":
 		m.releaseNotesScroll = max(0, m.releaseNotesScroll-1)
-	case "down", "j":
+	case "down", "j", "ctrl+n":
 		m.releaseNotesScroll = min(m.releaseNotesMaxScroll(), m.releaseNotesScroll+1)
-	case "pgup":
-		m.releaseNotesScroll = max(0, m.releaseNotesScroll-m.releaseNotesVisibleLines())
-	case "pgdown":
+	case "pgup", "u":
+		m.releaseNotesScroll = max(0, min(m.releaseNotesScroll, m.releaseNotesMaxScroll())-m.releaseNotesVisibleLines())
+	case "pgdown", "d":
 		m.releaseNotesScroll = min(
 			m.releaseNotesMaxScroll(),
 			m.releaseNotesScroll+m.releaseNotesVisibleLines(),
@@ -38,7 +42,7 @@ func (m model) handleReleaseNotesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func releaseNotesHelpRows() [][]helplayout.HelpItem {
 	return [][]helplayout.HelpItem{
-		{{Key: "j/k", Description: "scroll"}, {Key: "pgup/pgdn", Description: "page"}, {Key: "u", Description: "refresh"}, {Key: "esc/q", Description: "close"}},
+		{{Key: "j/k", Description: "scroll"}, {Key: "u/d", Description: "page"}, {Key: "g/G", Description: "top/bottom"}, {Key: "U", Description: "refresh"}, {Key: "esc/q", Description: "close"}},
 	}
 }
 
@@ -56,7 +60,7 @@ func (m model) releaseNotesLines() []string {
 			errorStyle.Render("Could not load release notes"),
 			m.releaseNotesErr.Error(),
 			"",
-			"Press u to retry.",
+			"Press U to retry.",
 		}
 	}
 	if len(m.releaseNotes) == 0 {

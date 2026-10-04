@@ -40,8 +40,8 @@ branch.
 
 | Key | Action |
 |-----|--------|
-| `Up`/`k`, `Down`/`j` | Navigate jobs |
-| `PgUp`, `PgDn` | Page through list |
+| `Up`/`k`/`Ctrl-P`, `Down`/`j`/`Ctrl-N` | Navigate jobs |
+| `PgUp`/`u`, `PgDn`/`d` | Page through list |
 | `Enter` | View review |
 | `Space` | Expand or collapse a panel run |
 | `Right` | Expand a panel run |
@@ -61,11 +61,12 @@ branch.
 | `f` | Open filter (repo/branch tree) |
 | `b` | Open filter with branches expanded |
 | `h` | Toggle hide closed/failed/canceled |
-| `u` | View recent Roborev release notes |
+| `U` | View recent Roborev release notes |
 | `L` | Toggle split-screen or stacked layout |
 | `D` | Toggle distraction-free mode |
 | `P` | Pause or resume queue processing |
-| `g` | Jump to top of queue |
+| `Home`, `g` or `gg` | Jump to top of queue |
+| `End`, `G` | Jump to bottom of loaded queue |
 | `?` | Show all commands |
 | `Esc` | Clear filters (one layer at a time) |
 | `Ctrl-D` | Quit |
@@ -85,11 +86,20 @@ The alternate-agent picker does not open for panel rows or experiment-attributed
 jobs.
 
 When a newer Roborev version is available, the queue banner points to the
-release-notes viewer. Press `u` at any time to open it. The viewer renders the
-recent GitHub release notes and supports `j`/`k`, page scrolling, and `u` to
+release-notes viewer. Press `U` at any time to open it. The viewer renders the
+recent GitHub release notes and supports `j`/`k`, page scrolling, and `U` to
 refresh. Roborev caches the notes in its local SQLite database. It checks GitHub
 again after one hour and uses GitHub's cache validator so edited notes replace
 the saved copy.
+
+Navigation shortcuts also work in the review, prompt, commit message, help, log,
+patch, release-notes and task views. `Ctrl-P`/`Ctrl-N` match the up/down arrows,
+`u`/`d` move one visible page, `g` or `gg` jumps to the top, and `G` jumps to
+the bottom. In the queue, bottom means the last currently loaded visible row;
+reaching it can fetch another page of older jobs. Text inputs keep printable
+shortcuts as text. In the filter tree, use `Ctrl-P`/`Ctrl-N` to navigate while
+typing a search. Existing `j`/`k` review and prompt shortcuts continue to move
+between jobs.
 
 ## Split-Screen Review
 
@@ -142,11 +152,10 @@ daemon restarts.
 
 | Key | Action |
 |-----|--------|
-| `Up`/`k`, `Down`/`j` | Scroll output |
-| `PgUp`, `PgDn` | Page through output |
-| `Home` | Jump to top |
-| `End` | Jump to bottom (enables follow mode) |
-| `g` | Toggle between top and bottom |
+| `Up`/`k`/`Ctrl-P`, `Down`/`j`/`Ctrl-N` | Scroll output |
+| `PgUp`/`u`, `PgDn`/`d` | Page through output |
+| `Home`, `g` or `gg` | Jump to top (disables follow mode) |
+| `End`, `G` | Jump to bottom (enables follow mode) |
 | `Left`, `Right` | Previous/next job log |
 | `i` | Expand or collapse the full command line |
 | `x` | Cancel running job |
@@ -156,9 +165,8 @@ daemon restarts.
 The log view features:
 
 - **Follow mode**: When a job is still running, the view polls for new output
-    and auto-scrolls to the bottom. Scrolling up disables follow mode; `End`
-    re-enables it, while `g` toggles between the top and bottom and enables
-    follow mode only when pressed at the top.
+    and auto-scrolls to the bottom. Scrolling up disables follow mode; pressing
+    `End` or `G` re-enables it.
 - **Incremental fetching**: Only new bytes since the last fetch are downloaded,
     keeping the view responsive for long-running jobs.
 - **Formatted output**: NDJSON agent output is rendered as compact progress
@@ -177,7 +185,7 @@ repo).
 
 | Key | Action |
 |-----|--------|
-| `Up`, `Down` | Navigate tree |
+| `Up`/`Ctrl-P`, `Down`/`Ctrl-N` | Navigate tree |
 | `Right` | Expand repo to show branches |
 | `Left` | Collapse repo (works during search too) |
 | `Enter` | Apply selected filter |

@@ -281,12 +281,12 @@ func (m model) handleRerunAgentPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.closeRerunAgentPicker()
 		return m, nil
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		if m.rerunAgentSelected > 0 {
 			m.rerunAgentSelected--
 		}
 		return m, nil
-	case "down", "j":
+	case "down", "j", "ctrl+n":
 		if m.rerunAgentSelected < len(m.rerunAgentOptions)-1 {
 			m.rerunAgentSelected++
 		}

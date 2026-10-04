@@ -579,13 +579,33 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			want: "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.",
 		},
 		{
+			name:              "StreamsToWriter",
+			input:             buildStream(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`),
+			want:              "hello",
+			wantWriterContent: "agent_message",
+		},
+		{
+			name:    "NoValidJSONReturnsError",
+			input:   buildStream("plain text output", "another plain text line"),
+			wantErr: errNoCodexJSON,
+		},
+		{
+			name: "JSONWithoutCodexEventTypeReturnsError",
+			input: buildStream(
+				`{"foo":"bar"}`,
+				`{"type":""}`,
+				`{"type":"foo.bar"}`,
+			),
+			wantErr: errNoCodexJSON,
+		},
+		{
 			name: "FinalMessageOnlyDropsPreambleWithoutToolEvent",
 			input: buildStream(
-				jsonThreadStarted,
-				jsonTurnStarted,
-				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
+				`{"type":"thread.started","thread_id":"t"}`,
+				`{"type":"turn.started"}`,
+				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
 				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
-				jsonTurnCompleted,
+				`{"type":"turn.completed","usage":{}}`,
 			),
 			want:             `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
 			finalMessageOnly: true,
@@ -596,7 +616,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 				jsonThreadStarted,
 				jsonTurnStarted,
 				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
-				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Repository read commands are blocked by policy."}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Repository read commands are blocked by policy, so I can only assess the supplied diff."}}`,
 				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"t\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
 				jsonTurnCompleted,
 			),
@@ -628,31 +648,11 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			input: buildStream(
 				`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first."}}`,
 				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
-				`{"type":"item.updated","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files, then run tests."}}`,
-				jsonTurnCompleted,
+				`{"type":"item.updated","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed files first, then the tests."}}`,
+				`{"type":"turn.completed","usage":{}}`,
 			),
 			want:             `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
 			finalMessageOnly: true,
-		},
-		{
-			name:              "StreamsToWriter",
-			input:             buildStream(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`),
-			want:              "hello",
-			wantWriterContent: "agent_message",
-		},
-		{
-			name:    "NoValidJSONReturnsError",
-			input:   buildStream("plain text output", "another plain text line"),
-			wantErr: errNoCodexJSON,
-		},
-		{
-			name: "JSONWithoutCodexEventTypeReturnsError",
-			input: buildStream(
-				`{"foo":"bar"}`,
-				`{"type":""}`,
-				`{"type":"foo.bar"}`,
-			),
-			wantErr: errNoCodexJSON,
 		},
 	}
 
@@ -708,7 +708,7 @@ func TestCodexReviewWithSchemaUsesFinalAgentMessage(t *testing.T) {
 		StdoutLines: []string{
 			`{"type":"thread.started","thread_id":"t"}`,
 			`{"type":"turn.started"}`,
-			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository first.\n"}}`,
+			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I'll check the changed documentation against the repository and inspect the docs packaging script without executing code.\n"}}`,
 			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
 			`{"type":"turn.completed","usage":{}}`,
 		},
@@ -724,7 +724,7 @@ func TestCodexReviewWithSchemaRejectsNonJSONFinalMessage(t *testing.T) {
 		HelpOutput: "usage --sandbox",
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
-			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"This response is not JSON."}}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Review complete; the JSON above has the findings."}}`,
 			`{"type":"turn.completed","usage":{}}`,
 		},
 	})

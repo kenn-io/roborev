@@ -61,10 +61,10 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterSearch = ""
 		m.filterBranchMode = false
 		return m, nil
-	case "up":
+	case "up", "ctrl+p":
 		m.filterNavigateUp()
 		return m, nil
-	case "down":
+	case "down", "ctrl+n":
 		m.filterNavigateDown()
 		return m, nil
 	case "right":
@@ -277,44 +277,32 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		m.logFollow = false
 		if m.logScroll > 0 {
 			m.logScroll--
 		}
 		return m, nil
-	case "down", "j":
+	case "down", "j", "ctrl+n":
 		m.logScroll++
 		return m, nil
-	case "pgup":
+	case "pgup", "u":
 		m.logFollow = false
-		visibleLines := m.logVisibleLines()
-		maxScroll := max(len(m.logLines)-visibleLines, 0)
-		m.logScroll = max(0, min(m.logScroll, maxScroll)-visibleLines)
+		pageSize, maxScroll := m.navigationBounds()
+		m.logScroll = max(0, min(m.logScroll, maxScroll)-pageSize)
 		return m, tea.ClearScreen
-	case "pgdown":
-		visibleLines := m.logVisibleLines()
-		m.logScroll = min(m.logScroll+visibleLines, max(len(m.logLines)-visibleLines, 0))
+	case "pgdown", "d":
+		pageSize, maxScroll := m.navigationBounds()
+		m.logScroll = min(maxScroll, m.logScroll+pageSize)
 		return m, tea.ClearScreen
-	case "home":
+	case "home", "g":
 		m.logFollow = false
 		m.logScroll = 0
 		return m, nil
-	case "end":
+	case "end", "G":
 		m.logFollow = true
-		maxScroll := max(len(m.logLines)-m.logVisibleLines(), 0)
-		m.logScroll = maxScroll
+		_, m.logScroll = m.navigationBounds()
 		return m, nil
-	case "g", "G":
-		maxScroll := max(len(m.logLines)-m.logVisibleLines(), 0)
-		if m.logScroll == 0 {
-			m.logFollow = true
-			m.logScroll = maxScroll
-		} else {
-			m.logFollow = false
-			m.logScroll = 0
-		}
-		return m, tea.ClearScreen
 	case "left":
 		return m.handlePrevKey()
 	case "right":
@@ -444,12 +432,26 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.exitTasksToQueue()
 	case "o":
 		return m.handleColumnOptionsKey()
-	case "up", "k":
+	case "home", "g":
+		m.fixSelectedIdx = 0
+		return m, nil
+	case "end", "G":
+		m.fixSelectedIdx = max(len(m.fixJobs)-1, 0)
+		return m, nil
+	case "pgup", "u":
+		pageSize, _ := m.navigationBounds()
+		m.fixSelectedIdx = max(0, min(m.fixSelectedIdx, max(len(m.fixJobs)-1, 0))-pageSize)
+		return m, nil
+	case "pgdown", "d":
+		pageSize, _ := m.navigationBounds()
+		m.fixSelectedIdx = min(max(len(m.fixJobs)-1, 0), m.fixSelectedIdx+pageSize)
+		return m, nil
+	case "up", "k", "ctrl+p":
 		if m.fixSelectedIdx > 0 {
 			m.fixSelectedIdx--
 		}
 		return m, nil
-	case "down", "j":
+	case "down", "j", "ctrl+n":
 		if m.fixSelectedIdx < len(m.fixJobs)-1 {
 			m.fixSelectedIdx++
 		}
@@ -593,31 +595,27 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.savePatchInputActive = true
 		m.savePatchInput = filepath.Join(os.TempDir(), fmt.Sprintf("roborev-%d.patch", m.patchJobID))
 		return m, nil
-	case "up", "k":
+	case "up", "k", "ctrl+p":
 		if m.patchScroll > 0 {
 			m.patchScroll--
 		}
 		return m, nil
-	case "down", "j":
+	case "down", "j", "ctrl+n":
 		m.patchScroll++
 		return m, nil
-	case "pgup":
-		visibleLines := max(m.height-4, 1)
-		maxScroll := max(len(strings.Split(m.patchText, "\n"))-visibleLines, 0)
-		m.patchScroll = max(min(m.patchScroll, maxScroll)-visibleLines, 0)
+	case "pgup", "u":
+		pageSize, maxScroll := m.navigationBounds()
+		m.patchScroll = max(0, min(m.patchScroll, maxScroll)-pageSize)
 		return m, tea.ClearScreen
-	case "pgdown":
-		visibleLines := max(m.height-4, 1)
-		maxScroll := max(len(strings.Split(m.patchText, "\n"))-visibleLines, 0)
-		m.patchScroll = min(m.patchScroll+visibleLines, maxScroll)
+	case "pgdown", "d":
+		pageSize, maxScroll := m.navigationBounds()
+		m.patchScroll = min(maxScroll, m.patchScroll+pageSize)
 		return m, tea.ClearScreen
 	case "home", "g":
 		m.patchScroll = 0
 		return m, nil
 	case "end", "G":
-		lines := strings.Split(m.patchText, "\n")
-		visibleRows := max(m.height-4, 1)
-		m.patchScroll = max(len(lines)-visibleRows, 0)
+		_, m.patchScroll = m.navigationBounds()
 		return m, nil
 	}
 	return m, nil

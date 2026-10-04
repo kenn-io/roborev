@@ -126,7 +126,7 @@ roborev update
 ```
 
 This downloads and replaces the current binary with the latest release. Read the
-[changelog](/docs/changelog/) before updating, or press `u` in the terminal
+[changelog](/docs/changelog/) before updating, or press `U` in the terminal
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 

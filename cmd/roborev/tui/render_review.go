@@ -499,15 +499,8 @@ func (m model) renderRespondView() string {
 }
 
 func (m model) commitMsgLines() []string {
+	// Wrap text to terminal width minus padding.
 	return wrapText(m.commitMsgContent, max(20, min(m.width-4, 100)))
-}
-
-func (m model) commitMsgVisibleLines() int {
-	return max(m.height-4, 1)
-}
-
-func (m model) commitMsgMaxScroll() int {
-	return max(len(m.commitMsgLines())-m.commitMsgVisibleLines(), 0)
 }
 
 func (m model) renderCommitMsgView() string {
@@ -534,7 +527,7 @@ func (m model) renderCommitMsgView() string {
 	lines := m.commitMsgLines()
 
 	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := m.commitMsgVisibleLines()
+	visibleLines := max(m.height-4, 1)
 
 	// Clamp scroll position to valid range
 	maxScroll := max(len(lines)-visibleLines, 0)
