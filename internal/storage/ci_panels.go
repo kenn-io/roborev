@@ -633,17 +633,17 @@ func (db *DB) MarkCIPanelPendingStatusSent(id int64) error {
 }
 
 // GetUnpostedTerminalPanels returns panel rows whose synthesis job is terminal
-// (done or failed) but that were never posted — the dropped-event / crash
-// recovery set for the spec §10 posting reconcile.
+// (done, failed, or canceled) but that were never posted or retired. An empty
+// githubRepo includes all repositories, even those no longer polled.
 func (db *DB) GetUnpostedTerminalPanels(githubRepo string) ([]CIPanel, error) {
 	rows, err := db.Query(`
 		SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
-		WHERE github_repo = ? AND posted_at IS NULL AND retired_at IS NULL
+		WHERE (? = '' OR github_repo = ?) AND posted_at IS NULL AND retired_at IS NULL
 		  AND EXISTS (
 		      SELECT 1 FROM review_jobs s
 		      WHERE s.id = ci_pr_panels.synthesis_job_id
-		        AND s.status IN ('done', 'failed'))`, githubRepo)
+		        AND s.status IN ('done', 'failed', 'canceled'))`, githubRepo, githubRepo)
 	if err != nil {
 		return nil, err
 	}

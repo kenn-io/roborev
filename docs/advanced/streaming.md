@@ -116,9 +116,11 @@ rerun sets the commit status to pending, replacing any previous success. If
 GitHub rejects that write, the daemon retries it on subsequent polls while the
 run is active, including after a restart. A completed or canceled run cannot be
 set back to pending. If the rerun fails, the status becomes error. Canceling a
-rerun sets an error status with "Review canceled". It does not discard a
+rerun sets an error status with "Review canceled". If that write fails, polling
+retries it until delivered or superseded by a newer run. It does not discard a
 previously delivered review or cause the normal poll to review that commit
-again.
+again. After a restart, polling also recovers interrupted cancellation and
+unfinished review delivery, including for repositories removed from polling.
 
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a

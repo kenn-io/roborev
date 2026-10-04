@@ -468,6 +468,7 @@ func (p *CIPoller) poll(ctx context.Context) {
 			log.Printf("CI poller: error polling %s: %v", ghRepo, err)
 		}
 	}
+	p.reconcileUnpolledPanelPosting(ctx, repos)
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
@@ -2284,6 +2285,7 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 	defer p.releasePanelClaim(row.ID)
 	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", "Review canceled"); err != nil {
 		log.Printf("CI poller: failed to set canceled status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+		return // retain the canceled panel so polling can retry delivery
 	}
 	// Keep ownership through the status write so a successor cannot publish
 	// pending and then have its status overwritten by this cancellation.
@@ -3359,7 +3361,28 @@ func (p *CIPoller) attemptStuck(attempt *storage.ReviewAttempt) (bool, error) {
 	return isRerunnableStatus(synth.Status), nil // retired + terminal synthesis: stuck
 }
 
-// reconcilePanelPosting posts any terminal-but-unposted panel run for ghRepo
+// reconcileUnpolledPanelPosting recovers stored delivery targets outside the
+// current polling set. Configured repositories keep their normal ordering:
+// processPR can retain quiet-hours snapshots before posting checks their heads.
+func (p *CIPoller) reconcileUnpolledPanelPosting(ctx context.Context, repos []string) {
+	rows, err := p.db.GetUnpostedTerminalPanels("")
+	if err != nil {
+		log.Printf("CI poller: error listing unposted terminal panels: %v", err)
+		return
+	}
+	reconciled := make(map[string]bool, len(repos))
+	for _, repo := range repos {
+		reconciled[repo] = true
+	}
+	for _, row := range rows {
+		if !reconciled[row.GithubRepo] {
+			p.reconcilePanelPosting(ctx, row.GithubRepo)
+			reconciled[row.GithubRepo] = true
+		}
+	}
+}
+
+// reconcilePanelPosting finishes any terminal-but-unposted panel run for ghRepo
 // whose synthesis event was dropped (crash/restart or lost delivery). It reuses
 // postPanelRun, so the posting CAS makes it idempotent with the event-driven
 // path and it also reclaims a claim whose holder crashed mid-post.
@@ -3373,7 +3396,16 @@ func (p *CIPoller) reconcilePanelPosting(ctx context.Context, ghRepo string) {
 		return
 	}
 	for i := range rows {
-		p.postPanelRun(ctx, &rows[i])
+		job, err := p.db.GetJobByID(*rows[i].SynthesisJobID)
+		if err != nil {
+			log.Printf("CI poller: error checking terminal panel %d: %v", rows[i].ID, err)
+			continue
+		}
+		if job.Status == storage.JobStatusCanceled {
+			p.handleReviewCanceled(Event{Type: "review.canceled", JobID: job.ID})
+		} else {
+			p.postPanelRun(ctx, &rows[i])
+		}
 	}
 	log.Printf("CI poller: reconciled %d unposted terminal panel run(s) for %s", len(rows), ghRepo)
 }
