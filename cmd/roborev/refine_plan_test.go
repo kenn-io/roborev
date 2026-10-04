@@ -332,51 +332,70 @@ func (a *refineModeGuardAgent) WithModel(model string) agent.Agent {
 	return &refineModeGuardAgent{Agent: a.Agent.WithModel(model), t: a.t}
 }
 
-func TestRefinePlanStopsAfterWorkingTreeChangesDuringPlanning(t *testing.T) {
-	originalUnsafe := agent.AllowUnsafeAgents()
-	t.Cleanup(func() { agent.SetAllowUnsafeAgents(originalUnsafe) })
-	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
-	base := repo.HeadSHA()
-	initial := repo.CommitFile("next.go", "package source\n", "Add next source")
-	job := storage.ReviewJob{ID: 7, GitRef: initial, Status: storage.JobStatusDone}
-	review := &storage.Review{
-		ID: 7, JobID: 7, Job: &job,
-		VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation"),
-		Output:      "High: missing cancellation",
+func TestRefinePlanStopsAfterCallerChangesDuringPlanning(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		branchChange, planFails bool
+	}{
+		{name: "dirty tree after successful plan"},
+		{name: "dirty tree after failed plan", planFails: true},
+		{name: "branch switch after failed plan", branchChange: true, planFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			originalUnsafe := agent.AllowUnsafeAgents()
+			t.Cleanup(func() { agent.SetAllowUnsafeAgents(originalUnsafe) })
+			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+			base := repo.HeadSHA()
+			initial := repo.CommitFile("next.go", "package source\n", "Add next source")
+			repo.Run("branch", "other")
+			job := storage.ReviewJob{ID: 7, GitRef: initial, Status: storage.JobStatusDone}
+			review := &storage.Review{
+				ID: 7, JobID: 7, Job: &job,
+				VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation"),
+				Output:      "High: missing cancellation",
+			}
+			_ = newMockDaemonBuilder(t).
+				WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, review)
+				}).
+				WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, map[string]any{"responses": []storage.Response{}})
+				}).Build()
+
+			calls := 0
+			name := "refine-plan-state-change-test"
+			agent.Register(&refineModeGuardAgent{t: t, Agent: &agent.FakeAgent{
+				NameStr: name,
+				ReviewFn: func(_ context.Context, path, _, _ string, _ io.Writer) (string, error) {
+					calls++
+					assert.NotEqual(t, repo.Dir, path)
+					if tc.branchChange {
+						repo.Run("checkout", "other")
+					} else {
+						require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "source.go"), []byte("package source\n// concurrent change\n"), 0o600))
+					}
+					if tc.planFails {
+						return "", fmt.Errorf("planning provider unavailable")
+					}
+					return "Check cancellation before claiming work", nil
+				},
+			}})
+			t.Cleanup(func() { agent.Unregister(name) })
+
+			var runErr error
+			stdout := captureOutput(t, func() error {
+				runErr = runRefine(
+					RunContext{Context: context.Background(), WorkingDir: repo.Dir},
+					refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false},
+				)
+				return nil
+			})
+			require.ErrorContains(t, runErr, "changed during planning")
+			assert.Equal(t, 1, calls)
+			assert.Contains(t, stdout, "Planning error:")
+			assert.NotContains(t, stdout, "Will retry in next iteration")
+		})
 	}
-	_ = newMockDaemonBuilder(t).
-		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, review)
-		}).
-		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"responses": []storage.Response{}})
-		}).Build()
-
-	calls := 0
-	name := "refine-plan-state-change-test"
-	agent.Register(&refineModeGuardAgent{t: t, Agent: &agent.FakeAgent{
-		NameStr: name,
-		ReviewFn: func(_ context.Context, path, _, _ string, _ io.Writer) (string, error) {
-			calls++
-			assert.NotEqual(t, repo.Dir, path)
-			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "source.go"), []byte("package source\n// concurrent change\n"), 0o600))
-			return "Check cancellation before claiming work", nil
-		},
-	}})
-	t.Cleanup(func() { agent.Unregister(name) })
-
-	var runErr error
-	stdout := captureOutput(t, func() error {
-		runErr = runRefine(
-			RunContext{Context: context.Background(), WorkingDir: repo.Dir},
-			refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false},
-		)
-		return nil
-	})
-	require.ErrorContains(t, runErr, "changed during planning")
-	assert.Equal(t, 1, calls)
-	assert.Contains(t, stdout, "Planning error:")
-	assert.NotContains(t, stdout, "Will retry in next iteration")
 }
 
 func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.T) {

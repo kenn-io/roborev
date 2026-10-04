@@ -602,6 +602,8 @@ Refine planning requires a clean working tree with no rebase in progress. Commit
 or stash changes, and finish or abort any rebase before planning. During the
 same refine run, later fixes receive earlier plans, implementation results, and
 trusted comments as context. Comments remain attached to their original reviews.
+If the caller's working tree, HEAD, or branch changes during planning, refine
+stops even when the planning agent fails.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and

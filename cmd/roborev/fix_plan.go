@@ -54,14 +54,12 @@ func planFixAtRevision(ctx context.Context, cmd *cobra.Command, repoPath, ref st
 		return "", err
 	}
 	planCtx, cancelPlan := withAgentCallTimeout(ctx)
-	plan, err := agent.RunPlan(planCtx, a, repoPath, planningHead, planningPrompt, io.Discard, func(path, text string) (string, func(), error) {
+	plan, planErr := agent.RunPlan(planCtx, a, repoPath, planningHead, planningPrompt, io.Discard, func(path, text string) (string, func(), error) {
 		prepared, err := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0).Prepare(text, prompt.SnapshotTarget{RepoPath: path, ConfigRepoPath: repoPath})
 		return prepared.Prompt, prepared.Cleanup, err
 	})
 	cancelPlan()
-	if err != nil {
-		return "", err
-	}
+	// Validate the caller even when planning fails: refine may retry the error.
 	after, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", err
@@ -72,6 +70,9 @@ func planFixAtRevision(ctx context.Context, cmd *cobra.Command, repoPath, ref st
 	}
 	if dirty || after != head || gitrepo.CurrentBranch(ctx, repoPath) != branch {
 		return "", &planningStateError{reason: "working tree or HEAD changed during planning; refusing to implement"}
+	}
+	if planErr != nil {
+		return "", planErr
 	}
 	for _, jobID := range jobIDs {
 		if err := addJobResponse(ctx, getDaemonEndpoint().BaseURL(), jobID, "roborev-plan", "## Plan\n\n"+plan); err != nil {
