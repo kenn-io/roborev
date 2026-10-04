@@ -78,12 +78,8 @@ func runRefinePlanOnly(cmd *cobra.Command, opts refineOptions) error {
 	if root, e := gitrepo.MainRoot(ctx, repoPath); e == nil {
 		apiRoot = root
 	}
-	branch := gitrepo.CurrentBranch(ctx, repoPath)
-	queryBranch := branch
-	if opts.allBranches {
-		queryBranch = ""
-	}
-	jobs, err := queryOpenJobs(ctx, apiRoot, queryBranch)
+	// Select by commit ancestry below; recorded branch names can outlive a rename.
+	jobs, err := queryOpenJobs(ctx, apiRoot, "")
 	if err != nil {
 		return err
 	}
@@ -141,7 +137,8 @@ func runRefinePlanOnly(cmd *cobra.Command, opts refineOptions) error {
 			if e != nil {
 				continue
 			}
-			afterBase, e := gitrepo.IsAncestor(ctx, repoPath, mergeBase, sha)
+			// Match mergeBase..HEAD, including side branches merged after the base.
+			inBase, e := gitrepo.IsAncestor(ctx, repoPath, sha, mergeBase)
 			if e != nil {
 				return e
 			}
@@ -149,7 +146,7 @@ func runRefinePlanOnly(cmd *cobra.Command, opts refineOptions) error {
 			if e != nil {
 				return e
 			}
-			if sha == mergeBase || !afterBase || !onBranch {
+			if inBase || !onBranch {
 				continue
 			}
 		}

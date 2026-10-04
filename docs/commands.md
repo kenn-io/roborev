@@ -594,10 +594,13 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
 `--plan-only` snapshots completed failed reviews in the selected branch or
-`--since` range, including range reviews. It skips passing and pending reviews
-and does not queue re-reviews. With `--all-branches`, it analyzes local branch
-heads in detached worktrees without switching your checkout. Plans are printed
-even with `--quiet`. `--list` cannot be combined with either planning flag.
+`--since` range, including range reviews. Single-branch selection uses commit
+ancestry, so reviews remain eligible after a branch rename or when a side branch
+is merged after `--since`. It skips passing and pending reviews and does not
+queue re-reviews. With `--all-branches`, it analyzes local branch heads in
+detached worktrees without switching your checkout. Plans are printed even with
+`--quiet`. `--list` cannot be combined with either planning flag.
+
 Refine planning requires a clean working tree with no rebase in progress. Commit
 or stash changes, and finish or abort any rebase before planning. During the
 same refine run, later fixes receive earlier plans, implementation results, and

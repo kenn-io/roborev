@@ -54,7 +54,7 @@ func TestRefinePlanFlags(t *testing.T) {
 }
 
 func TestRefinePlanOnlySnapshot(t *testing.T) {
-	for _, mode := range []string{"failed", "range", "three-dot-range", "passing", "pending", "all-branches", "all-branches-range", "rewritten-branch", "outside-range", "missing-branch"} {
+	for _, mode := range []string{"failed", "range", "three-dot-range", "passing", "pending", "all-branches", "all-branches-range", "rewritten-branch", "outside-range", "missing-branch", "renamed-branch", "other-branch", "merged-branch"} {
 		t.Run(mode, func(t *testing.T) {
 			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
 			base := repo.HeadSHA()
@@ -63,6 +63,7 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 			targetHead := head
 			originalBranch := strings.TrimSpace(repo.Run("branch", "--show-current"))
 			branch := originalBranch
+			wantBranch := originalBranch
 			ref := head
 			verdict := "F"
 			status := storage.JobStatusDone
@@ -99,11 +100,33 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				ref = head
 				branch = "other"
 			}
+			if mode == "renamed-branch" {
+				repo.Run("branch", "-m", "renamed")
+				wantBranch = "renamed"
+			}
+			if mode == "other-branch" {
+				ref = repo.Run("commit-tree", head+"^{tree}", "-p", base, "-m", "Other branch revision")
+				repo.Run("branch", "other", ref)
+				branch = "other"
+			}
+			if mode == "merged-branch" {
+				ref = repo.Run("commit-tree", head+"^{tree}", "-p", base, "-m", "Side branch revision")
+				repo.Run("branch", "side", ref)
+				merged := repo.Run("commit-tree", head+"^{tree}", "-p", head, "-p", ref, "-m", "Merge side branch")
+				base = head
+				head, targetHead = merged, merged
+				repo.Run("update-ref", "HEAD", merged)
+				branch = "side"
+			}
 			queries, calls, closes, enqueues, comments := 0, 0, 0, 0, 0
 			_ = newMockDaemonBuilder(t).
 				WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 					queries++
-					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: status, Agent: "test", JobType: storage.JobTypeReview, GitRef: ref, Branch: branch, Verdict: &verdict}}})
+					jobs := []storage.ReviewJob{{ID: 7, Status: status, Agent: "test", JobType: storage.JobTypeReview, GitRef: ref, Branch: branch, Verdict: &verdict}}
+					if filter := r.URL.Query().Get("branch"); filter != "" && filter != branch {
+						jobs = nil
+					}
+					writeJSON(w, map[string]any{"jobs": jobs})
 				}).
 				WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, storage.Review{JobID: 7, Output: "High: missing cancellation check"})
@@ -127,13 +150,13 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 			if opts.allBranches {
 				opts.since = ""
 			}
-			if mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" {
+			if mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" || mode == "other-branch" {
 				opts.agentName = "unavailable-planning-agent"
 			}
 			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error { return runRefinePlanOnly(cmd, opts) })
 			require.NoError(t, err)
 			expected := 1
-			if mode == "passing" || mode == "pending" || mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" {
+			if mode == "passing" || mode == "pending" || mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" || mode == "other-branch" {
 				expected = 0
 			}
 			assert.Equal(t, expected, calls)
@@ -146,7 +169,7 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 			}
 			assert.Equal(t, head, repo.HeadSHA())
 			assert.Empty(t, repo.Run("status", "--porcelain"))
-			assert.Equal(t, originalBranch, strings.TrimSpace(repo.Run("branch", "--show-current")))
+			assert.Equal(t, wantBranch, strings.TrimSpace(repo.Run("branch", "--show-current")))
 		})
 	}
 }
