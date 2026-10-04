@@ -27,6 +27,7 @@ echo ""
 
 export SOURCE_DB DEST_DB
 python3 <<'PY'
+import json
 import os
 import pathlib
 import re
@@ -238,6 +239,28 @@ def sanitize_text(value):
     return sanitized
 
 
+def map_json_strings(node, fn):
+    if isinstance(node, str):
+        return fn(node)
+    if isinstance(node, list):
+        return [map_json_strings(item, fn) for item in node]
+    if isinstance(node, dict):
+        return {key: map_json_strings(item, fn) for key, item in node.items()}
+    return node
+
+
+def sanitize_json(value):
+    # Sanitize decoded strings so path patterns cannot consume the escapes
+    # that keep the stored document valid JSON.
+    return json.dumps(map_json_strings(json.loads(value), sanitize_text), ensure_ascii=False)
+
+
+def json_text(value):
+    strings = []
+    map_json_strings(json.loads(value), strings.append)
+    return "\n".join(strings)
+
+
 def insert_row(table, row, overrides=None):
     overrides = overrides or {}
     cols = table_columns(dst, table)
@@ -250,7 +273,10 @@ def insert_row(table, row, overrides=None):
             value = row[col]
         else:
             value = None
-        values.append(sanitize_text(value))
+        if col == "structured_output" and value:
+            values.append(sanitize_json(value))
+        else:
+            values.append(sanitize_text(value))
     dst.execute(
         f"INSERT INTO {ident(table)} ({', '.join(ident(col) for col in cols)}) VALUES ({qmarks(len(cols))})",
         values,
@@ -411,6 +437,9 @@ def validate_sanitized():
             ):
                 row_number += 1
                 text = str(row[col])
+                if col == "structured_output":
+                    # Check decoded strings; JSON escapes are not values.
+                    text = json_text(text)
                 if any(pattern.search(text) for pattern in private_patterns):
                     failures.append(f"{table}.{col} row {row_number}")
                     if len(failures) >= 20:
