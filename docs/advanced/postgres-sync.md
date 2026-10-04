@@ -7,6 +7,10 @@ last_edited: 2026-09-24
 Sync reviews across multiple machines using PostgreSQL as a central store while
 keeping SQLite as the local primary database.
 
+Native [request signing](request-signing.md) protects restricted HTTP history
+reads. It does not transport this PostgreSQL protocol or replicate another
+machine's local history over HTTP.
+
 ## Purpose
 
 The primary purpose is to consolidate reviews from multiple machines into a

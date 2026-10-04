@@ -58,6 +58,9 @@ type Server struct {
 	searchWG                sync.WaitGroup
 	searchStopped           bool
 	httpServer              *http.Server
+	remoteServer            *http.Server
+	remoteHandler           *remoteHandler
+	remoteCancel            context.CancelFunc
 	browserMu               sync.Mutex
 	browserServer           *http.Server
 	browserListener         net.Listener
@@ -222,6 +225,9 @@ func newServerWithLogs(
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
 	cfg := s.configWatcher.Config()
+	if err := config.ValidateRemote(cfg); err != nil {
+		return err
+	}
 
 	// Check for socket activation before falling back to the config
 	listener, ep, err := getSystemdListenerForServer()
@@ -406,8 +412,16 @@ func (s *Server) Start(ctx context.Context) error {
 	s.alternateEndpoint = alternate
 	s.endpointMu.Unlock()
 
+	if err := s.startRemoteServer(cfg.Remote); err != nil {
+		_ = s.httpServer.Close()
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
+		s.stopSearch()
+		return err
+	}
 	browserRuntime, err := s.startBrowserServer(cfg.Web)
 	if err != nil {
+		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
@@ -420,6 +434,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.browserMu.Lock()
 	if s.browserStopping {
 		s.browserMu.Unlock()
+		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
@@ -654,7 +669,13 @@ func (s *Server) stopOnce0() error {
 	s.browserStopping = true
 	browserServer := s.browserServer
 	browserListener := s.browserListener
+	remoteServer := s.remoteServer
+	remoteHandler := s.remoteHandler
+	remoteCancel := s.remoteCancel
 	s.browserMu.Unlock()
+	if remoteCancel != nil {
+		remoteCancel()
+	}
 
 	// Stop new CI polling work. Keep its completion listener subscribed while
 	// active workers finish so their terminal events are still finalized.
@@ -706,6 +727,16 @@ func (s *Server) stopOnce0() error {
 				fmt.Errorf("close browser listener: %w", err),
 			)
 		}
+	}
+
+	if remoteServer != nil {
+		if err := remoteServer.Shutdown(shutdownCleanupCtx); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+			_ = remoteServer.Close()
+		}
+	}
+	if remoteHandler != nil {
+		cleanupErr = errors.Join(cleanupErr, remoteHandler.Close())
 	}
 
 	// Stop hook runner
@@ -1404,6 +1435,9 @@ func (s *Server) humaListJobs(
 				fmt.Sprintf("database error: %v", err),
 			)
 		}
+		if !remoteAllowsJob(ctx, job) {
+			return nil, huma.Error403Forbidden("job repository denied")
+		}
 		job.Patch = nil
 		var review *storage.Review
 		var reviewErr error
@@ -1427,7 +1461,11 @@ func (s *Server) humaListJobs(
 		job.WebURL = s.reviewBrowserURL(job.ID)
 		resp.Body.Jobs = []storage.ReviewJob{*job}
 		renderFixPlanPrompts(resp.Body.Jobs)
-		attachPanelSummaries(s.db, resp.Body.Jobs)
+		if !remoteScoped(ctx) {
+			attachPanelSummaries(s.db, resp.Body.Jobs)
+		} else {
+			sanitizeRemoteJobs(resp.Body.Jobs)
+		}
 		if input.OmitPrompt == "true" {
 			stripJobPrompts(resp.Body.Jobs)
 		}
@@ -1490,7 +1528,7 @@ func (s *Server) humaListJobs(
 		fetchLimit = limit + 1
 	}
 
-	var listOpts []storage.ListJobsOption
+	listOpts := remoteJobOptions(ctx)
 	if input.OmitPrompt == "true" {
 		listOpts = append(listOpts, storage.WithoutPrompt())
 	}
@@ -1615,14 +1653,18 @@ func (s *Server) humaListJobs(
 		stripJobPrompts(jobs)
 	}
 
-	attachPanelSummaries(s.db, jobs)
+	if !remoteScoped(ctx) {
+		attachPanelSummaries(s.db, jobs)
+	} else {
+		sanitizeRemoteJobs(jobs)
+	}
 
 	// Stats describe the aggregate population for the active scope and ignore
 	// pagination. The closed-state filter intentionally applies only to the
 	// listing: queue consumers use Stats to report both open and closed totals.
 	// FilteredStats below carries the exact closed-filtered counts for browser
 	// views that need counts matching the visible rows.
-	var statsOpts []storage.ListJobsOption
+	statsOpts := remoteJobOptions(ctx)
 	if input.GitRef != "" {
 		statsOpts = append(statsOpts, storage.WithGitRef(input.GitRef))
 	}
@@ -1739,6 +1781,12 @@ func (s *Server) humaGetReview(
 		return nil, huma.Error404NotFound("review not found")
 	}
 
+	if !remoteAllowsJob(ctx, review.Job) {
+		return nil, huma.Error403Forbidden("review repository denied")
+	}
+	if remoteScoped(ctx) {
+		sanitizeRemoteJob(review.Job)
+	}
 	review.WebURL = s.reviewBrowserURL(review.JobID)
 	if review.Job != nil {
 		review.Job.WebURL = review.WebURL

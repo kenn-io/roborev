@@ -110,12 +110,21 @@ Examples:
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// Ensure daemon is running (and restart if version mismatch)
+			ep := getDaemonEndpoint()
+			if ep.IsRemote() {
+				if !forceJobID || len(args) != 1 {
+					return usageErr(cmd, fmt.Errorf("remote show requires --job with a numeric job ID"))
+				}
+				id, err := strconv.ParseInt(args[0], 10, 64)
+				if err != nil || id <= 0 {
+					return usageErr(cmd, fmt.Errorf("remote show requires a positive numeric job ID"))
+				}
+			}
+			// Ensure daemon is running (and restart if version mismatch).
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
-
-			ep := getDaemonEndpoint()
+			ep = getDaemonEndpoint()
 			addr := ep.BaseURL()
 			client := ep.HTTPClient(5 * time.Second)
 

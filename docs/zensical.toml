@@ -44,6 +44,7 @@ nav = [
     {"Custom Tasks & Agentic Mode" = "advanced/custom-tasks.md"},
     {"Agent Client Protocol (ACP)" = "advanced/acp.md"},
     {"PostgreSQL Sync" = "advanced/postgres-sync.md"},
+    {"Native Request Signing" = "advanced/request-signing.md"},
     {"Streaming & Daemon API" = "advanced/streaming.md"},
   ]},
   {"Integrations" = [
