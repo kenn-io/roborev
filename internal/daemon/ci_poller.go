@@ -2248,8 +2248,8 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 	p.notifyDiscordCIJobFailed(event)
 }
 
-// handleReviewCanceled retires an active CI panel mapping for a canceled
-// synthesis parent without posting. Supersede/closed-PR cleanup normally makes
+// handleReviewCanceled sets an error status and retires an active CI panel
+// for a canceled synthesis parent. Supersede/closed-PR cleanup normally makes
 // the mapping non-postable before canceling, but direct user/API cancellation
 // can otherwise leave an active unposted row that suppresses future polls.
 func (p *CIPoller) handleReviewCanceled(event Event) {
@@ -2264,6 +2264,26 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 		log.Printf("CI poller: error checking canceled CI panel for job %d: %v", event.JobID, err)
 		return
 	}
+	if row.RetiredAt != nil {
+		// Cleanup can retire the panel before the cancellation event arrives.
+		// Finish deleting its attempt without changing any successor's status.
+		p.retirePanelAndDeleteAttempt(row, "canceled")
+		return
+	}
+	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
+	if err != nil {
+		log.Printf("CI poller: error claiming canceled panel %d: %v", row.ID, err)
+		return
+	}
+	if !won {
+		return // already finalized, or pending publication still owns the claim
+	}
+	defer p.releasePanelClaim(row.ID)
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", "Review canceled"); err != nil {
+		log.Printf("CI poller: failed to set canceled status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+	// Keep ownership through the status write so a successor cannot publish
+	// pending and then have its status overwritten by this cancellation.
 	p.retirePanelAndDeleteAttempt(row, "canceled")
 }
 
@@ -2312,8 +2332,11 @@ func (p *CIPoller) setPanelPending(jobID int64) {
 		log.Printf("CI poller: error checking rerun %d after pending status: %v", jobID, err)
 		return
 	}
-	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
+	switch job.Status {
+	case storage.JobStatusDone, storage.JobStatusFailed:
 		p.postPanelRun(context.Background(), row)
+	case storage.JobStatusCanceled:
+		p.handleReviewCanceled(Event{Type: "review.canceled", JobID: jobID})
 	}
 }
 

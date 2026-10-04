@@ -458,7 +458,7 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 16, "headsha-canceled", "base..headsha-canceled",
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Stale member finding"}})
-	h.markJobCanceled(t, synth.ID, "superseded by newer PR head")
+	h.markJobCanceled(t, synth.ID, "canceled by user")
 
 	eventCh := make(chan Event, 1)
 	eventCh <- ciEvent(synth.ID, "review.canceled")
@@ -467,7 +467,7 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	h.Poller.listenForEvents(eventCh, doneCh)
 
 	assert.Empty(*comments, "canceled synthesis must not post stale raw fallback")
-	assert.Empty(*statuses, "canceled synthesis must not set commit status")
+	assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "headsha-canceled", State: "error", Desc: "Review canceled"}}, *statuses)
 	assert.False(h.panelPostedAt(t, panel.ID), "canceled panel is not marked posted")
 	_, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 16, "headsha-canceled")
 	require.ErrorIs(t, err, sql.ErrNoRows, "canceled synthesis retires active panel mapping")

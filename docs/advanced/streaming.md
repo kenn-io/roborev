@@ -113,9 +113,9 @@ health stays unhealthy until a usable review is posted.
 
 The latest requested run determines review status and health. Queueing a CI
 rerun sets the commit status to pending, replacing any previous success. If the
-rerun fails, the status becomes error. Canceling a rerun does not discard a
-previously delivered review or cause the normal poll to review that commit
-again.
+rerun fails, the status becomes error. Canceling a rerun sets an error status
+with "Review canceled". It does not discard a previously delivered review or
+cause the normal poll to review that commit again.
 
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a
