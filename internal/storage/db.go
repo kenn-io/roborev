@@ -286,6 +286,11 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("preserve job IDs: %w", err)
 	}
 
+	if err := wrapped.migrateRepoIDs(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("preserve repository IDs: %w", err)
+	}
+
 	log.Printf("Database migration: restoring archived reviews")
 	if err := wrapped.restoreLegacyReviews(); err != nil {
 		db.Close()

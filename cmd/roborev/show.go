@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -206,6 +207,9 @@ Examples:
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
+			} else if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}

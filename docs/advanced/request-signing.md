@@ -86,9 +86,11 @@ budgets are Go durations. Every budget is required and positive. Saturated
 request slots return 503; full replay state fails closed. Bodies are streamed to
 private temporary files, checked completely, and removed after the request.
 Oversized content is rejected, never truncated. Read deadlines bound body
-verification and are cleared once the body is verified. Write deadlines and
-`request_timeout` bound execution and streams. Streams end at `request_timeout`
-and must reconnect with a fresh signature. These budgets apply only to the new
+verification and are cleared once the body is verified. `request_timeout` bounds
+execution and stream lifetime. Each stream write, including the final response
+frame, also gets up to `request_timeout` to complete. Idle streams have no
+socket write deadline, so planned expiry can close the response cleanly. Clients
+must reconnect with a fresh signature. These budgets apply only to the new
 restricted listener.
 
 Use repository numeric IDs from the local daemon's repository listing. Every key
@@ -99,9 +101,11 @@ available to authenticated keys. `history:events` separately permits
 `/api/stream/events`. No mutation grant exists.
 
 Scoped job listings apply stable repository IDs before pagination and
-statistics; renaming or reassigning a repository path cannot transfer a grant.
-ID lookups recheck the owning repository after body verification and replay
-admission. Legacy SHA comment joins use that repository too. Review and comment
+statistics. Repository IDs are never reused after deletion; renaming or
+reassigning a repository path cannot transfer a grant either. ID lookups recheck
+the owning repository after body verification and replay admission. Legacy SHA
+comment joins use that repository too, and apply only to single-commit reviews.
+Dirty reviews and stored-prompt jobs show their own comments. Review and comment
 reads require `job_id`; SHA and commit-ID lookups are excluded. Job panel
 summaries are omitted because their member joins need an independent scope
 audit. Stored command lines, adapter configuration, session IDs, and worktree

@@ -285,50 +285,63 @@ func (*remotePipeListener) Addr() net.Addr {
 }
 
 func TestRemoteIdleTLSStreamUsesRequestBudget(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s, cfg, key := remoteFixture(t)
-		cfg.Keys[0].Grants = []string{"history:events"}
-		var handler *remoteHandler
-		done := make(chan struct{})
-		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer close(done)
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/history")
-			r.RequestURI = r.URL.RequestURI()
-			handler.ServeHTTP(w, r)
-		}))
-		// net.Pipe keeps the real TLS/net/http deadline machinery inside the
-		// synctest bubble, so the configured 30s/1m budgets use virtual time.
-		require.NoError(t, server.Listener.Close())
-		peer, conn := net.Pipe()
-		server.Listener = &remotePipeListener{conn: conn, closed: make(chan struct{})}
-		server.StartTLS()
-		defer server.Close()
-		defer peer.Close()
-		cfg.ExternalURL = server.URL + "/history"
-		var err error
-		handler, err = s.newRemoteHandler(cfg)
-		require.NoError(t, err)
-		defer handler.Close()
-		transport := server.Client().Transport.(*http.Transport).Clone()
-		transport.DialContext = func(context.Context, string, string) (net.Conn, error) { return peer, nil }
-		defer transport.CloseIdleConnections()
-		client, err := requestsigning.HTTPClient(cfg.ExternalURL, &http.Client{Transport: transport}, func() (requestsigning.Key, error) { return key, nil })
-		require.NoError(t, err)
-		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, cfg.ExternalURL+"/api/stream/events", nil)
-		require.NoError(t, err)
-		r.Header.Set("Authorization", "Bearer "+s.authKey)
-		resp, err := client.Do(r)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		time.Sleep(31 * time.Second)
-		synctest.Wait()
-		assert.Len(t, handler.slots, 1, "idle stream must remain admitted beyond the body read budget")
-		time.Sleep(30 * time.Second)
-		synctest.Wait()
-		assert.Empty(t, handler.slots, "request budget must release the stream admission")
-		<-done
-	})
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%t", http2), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, cfg, key := remoteFixture(t)
+				cfg.Keys[0].Grants = []string{"history:events"}
+				var handler *remoteHandler
+				done := make(chan struct{})
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(done)
+					r.URL.Path = strings.TrimPrefix(r.URL.Path, "/history")
+					r.RequestURI = r.URL.RequestURI()
+					handler.ServeHTTP(w, r)
+				}))
+				// net.Pipe keeps the real TLS/net/http deadline machinery inside the
+				// synctest bubble, so the configured 30s/1m budgets use virtual time.
+				require.NoError(t, server.Listener.Close())
+				peer, conn := net.Pipe()
+				server.Listener = &remotePipeListener{conn: conn, closed: make(chan struct{})}
+				server.EnableHTTP2 = http2
+				server.StartTLS()
+				defer server.Close()
+				defer peer.Close()
+				cfg.ExternalURL = server.URL + "/history"
+				var err error
+				handler, err = s.newRemoteHandler(cfg)
+				require.NoError(t, err)
+				defer handler.Close()
+				transport := server.Client().Transport.(*http.Transport).Clone()
+				transport.DialContext = func(context.Context, string, string) (net.Conn, error) { return peer, nil }
+				defer transport.CloseIdleConnections()
+				client, err := requestsigning.HTTPClient(cfg.ExternalURL, &http.Client{Transport: transport}, func() (requestsigning.Key, error) { return key, nil })
+				require.NoError(t, err)
+				r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, cfg.ExternalURL+"/api/stream/events", nil)
+				require.NoError(t, err)
+				r.Header.Set("Authorization", "Bearer "+s.authKey)
+				resp, err := client.Do(r)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				if http2 {
+					require.Equal(t, 2, resp.ProtoMajor)
+				} else {
+					require.Equal(t, 1, resp.ProtoMajor)
+				}
+				time.Sleep(31 * time.Second)
+				synctest.Wait()
+				assert.Len(t, handler.slots, 1, "idle stream must remain admitted beyond the body read budget")
+				time.Sleep(30 * time.Second)
+				synctest.Wait()
+				assert.Empty(t, handler.slots, "request budget must release the stream admission")
+				<-done
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err, "planned expiry must finish HTTP framing so clients can reconnect")
+				assert.Empty(t, body)
+			})
+		})
+	}
 }
 
 type blockingEmptyBody struct{ release <-chan struct{} }
@@ -459,6 +472,35 @@ func TestRemoteRepositoryGrantSurvivesPathReuse(t *testing.T) {
 	}
 }
 
+func TestRemoteRepositoryGrantDoesNotTransferAfterDeletion(t *testing.T) {
+	s, cfg, key := remoteFixture(t)
+	repo, err := s.db.GetOrCreateRepo("/synthetic/project-a")
+	require.NoError(t, err)
+	job, err := s.db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "original-history", Agent: "test"})
+	require.NoError(t, err)
+	cfg.Keys[0].AllRepos = false
+	cfg.Keys[0].RepoIDs = []int64{repo.ID}
+	handler, err := s.newRemoteHandler(cfg)
+	require.NoError(t, err)
+	defer handler.Close()
+	out := httptest.NewRecorder()
+	handler.ServeHTTP(out, remoteRequest(t, key, fmt.Sprintf("/api/jobs?id=%d", job.ID)))
+	require.Equal(t, http.StatusOK, out.Code, out.Body.String())
+	assert.Contains(t, out.Body.String(), "original-history")
+	require.NoError(t, s.db.DeleteRepo(repo.ID, true))
+	replacement, err := s.db.GetOrCreateRepo("/synthetic/project-b")
+	require.NoError(t, err)
+	job, err = s.db.EnqueueJob(storage.EnqueueOpts{RepoID: replacement.ID, GitRef: "replacement-history", Agent: "test"})
+	require.NoError(t, err)
+	out = httptest.NewRecorder()
+	handler.ServeHTTP(out, remoteRequest(t, key, fmt.Sprintf("/api/jobs?id=%d", job.ID)))
+	assert.Equal(t, http.StatusForbidden, out.Code, out.Body.String())
+	out = httptest.NewRecorder()
+	handler.ServeHTTP(out, remoteRequest(t, key, "/api/jobs"))
+	require.Equal(t, http.StatusOK, out.Code, out.Body.String())
+	assert.NotContains(t, out.Body.String(), "replacement-history")
+}
+
 func TestRemoteLegacyCommentsUseOwningRepository(t *testing.T) {
 	s, cfg, key := remoteFixture(t)
 	allowed, err := s.db.GetOrCreateRepo("/synthetic/allowed")
@@ -491,6 +533,54 @@ func TestRemoteLegacyCommentsUseOwningRepository(t *testing.T) {
 	require.Equal(t, 200, out.Code, out.Body.String())
 	assert.Contains(t, out.Body.String(), "allowed legacy comment")
 	assert.NotContains(t, out.Body.String(), "denied legacy comment")
+}
+
+func TestRemoteLegacyCommentsMatchJobSubject(t *testing.T) {
+	s, cfg, key := remoteFixture(t)
+	repo, err := s.db.GetOrCreateRepo("/synthetic/project")
+	require.NoError(t, err)
+	sha := strings.Repeat("a", 40)
+	commit, err := s.db.GetOrCreateCommit(repo.ID, sha, "author", "subject", time.Now())
+	require.NoError(t, err)
+	_, err = s.db.AddComment(commit.ID, "reader", "commit feedback")
+	require.NoError(t, err)
+	handler, err := s.newRemoteHandler(cfg)
+	require.NoError(t, err)
+	defer handler.Close()
+	for _, tc := range []struct {
+		name       string
+		opts       storage.EnqueueOpts
+		wantLegacy bool
+	}{
+		{"commit", storage.EnqueueOpts{GitRef: sha, CommitID: commit.ID}, true},
+		{"commit_without_id", storage.EnqueueOpts{GitRef: sha}, true},
+		{"dirty", storage.EnqueueOpts{GitRef: "dirty", JobType: storage.JobTypeDirty, CommitID: commit.ID}, false},
+		{"task", storage.EnqueueOpts{GitRef: sha, JobType: storage.JobTypeTask, Prompt: "Explain this subsystem"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.opts.RepoID, tc.opts.Agent = repo.ID, "test"
+			job, err := s.db.EnqueueJob(tc.opts)
+			require.NoError(t, err)
+			_, err = s.db.AddCommentToJob(job.ID, "reader", "job feedback")
+			require.NoError(t, err)
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, remoteRequest(t, key, fmt.Sprintf("/api/comments?job_id=%d", job.ID)))
+			require.Equal(t, http.StatusOK, out.Code, out.Body.String())
+			var result struct {
+				Responses []storage.Response `json:"responses"`
+			}
+			testutil.DecodeJSON(t, out, &result)
+			want := []string{"job feedback"}
+			if tc.wantLegacy {
+				want = append(want, "commit feedback")
+			}
+			var got []string
+			for _, response := range result.Responses {
+				got = append(got, response.Response)
+			}
+			assert.ElementsMatch(t, want, got)
+		})
+	}
 }
 
 type scopeChangingBody struct{ change func() }

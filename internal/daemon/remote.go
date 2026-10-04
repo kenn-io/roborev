@@ -223,14 +223,15 @@ func (h *remoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		responses, err := h.server.db.GetCommentsForJob(id)
-		if err == nil {
+		commitID, fallbackSHA := job.LegacyCommentLookupTarget()
+		if err == nil && (commitID > 0 || fallbackSHA != "") {
 			// Legacy SHA lookup must be repository-scoped, including when the
 			// job has no commit ID. Missing legacy commits are ordinary here.
 			var commit *storage.Commit
-			if job.CommitID != nil {
-				commit, err = h.server.db.GetCommitByID(*job.CommitID)
+			if commitID > 0 {
+				commit, err = h.server.db.GetCommitByID(commitID)
 			} else {
-				commit, err = h.server.db.GetCommitByRepoAndSHA(job.RepoID, job.GitRef)
+				commit, err = h.server.db.GetCommitByRepoAndSHA(job.RepoID, fallbackSHA)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
 				err = nil
@@ -314,9 +315,15 @@ func (h *remoteHandler) stream(w http.ResponseWriter, r *http.Request, g remoteG
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	controller := http.NewResponseController(w)
+	// Bound each write by the configured request budget, without leaving a
+	// socket deadline running while idle. On return, net/http still needs to
+	// write the final HTTP frame after the stream context has expired.
+	defer func() { _ = controller.SetWriteDeadline(time.Now().Add(h.budget)) }()
+	_ = controller.SetWriteDeadline(time.Now().Add(h.budget))
 	if controller.Flush() != nil {
 		return
 	}
+	_ = controller.SetWriteDeadline(time.Time{})
 	id, ch := h.server.broadcaster.Subscribe("")
 	defer h.server.broadcaster.Unsubscribe(id)
 	for {
@@ -334,12 +341,14 @@ func (h *remoteHandler) stream(w http.ResponseWriter, r *http.Request, g remoteG
 				continue
 			}
 			event.WorktreePath = ""
+			_ = controller.SetWriteDeadline(time.Now().Add(h.budget))
 			if !writeHumaNDJSON(w, event) {
 				return
 			}
 			if controller.Flush() != nil {
 				return
 			}
+			_ = controller.SetWriteDeadline(time.Time{})
 		}
 	}
 }
