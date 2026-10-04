@@ -105,10 +105,16 @@ Terminal failures do not expire. After an agent or provider repair, restarting
 the daemon gives exhausted agent failures a fresh retry budget. Normal polls do
 not reset that budget. Polling checks that the PR remains open, eligible, and at
 the same commit before retrying. Empty reviews, timeouts, and permanent delivery
-failures remain terminal. An explicit rerun of a CI panel also retains its
-GitHub delivery target and checks the PR commit before posting. Recovery leaves
-previous runs available for inspection, and health stays unhealthy until a
-usable review is posted.
+failures remain terminal. An explicit rerun of a CI panel retains its GitHub
+delivery target, including after the PR closes and reopens, and checks the PR
+commit before posting. A historical CI run whose delivery target is missing
+cannot be rerun. Recovery leaves previous runs available for inspection, and
+health stays unhealthy until a usable review is posted.
+
+The latest requested run determines review status and health. A rerun can
+replace a previously successful commit status with pending and then error if it
+fails. Canceling a rerun does not discard a previously delivered review or cause
+the normal poll to review that commit again.
 
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a

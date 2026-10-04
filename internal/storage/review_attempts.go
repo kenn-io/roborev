@@ -213,7 +213,7 @@ func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
 		  AND p.retired_at IS NULL AND p.outcome = ?
 		  AND EXISTS (SELECT 1 FROM review_jobs j
 		    WHERE j.panel_run_uuid = p.panel_run_uuid AND j.status = 'failed'
-		      AND (j.panel_role = 'member' OR
+		      AND ((j.panel_role = 'member' AND COALESCE(j.error, '') NOT LIKE 'no-verdict: %') OR
 		        (j.panel_role = 'synthesis' AND (j.error LIKE 'outage: %' OR j.error LIKE 'quota: %'))))`,
 		PanelOutcomeNoReviewPosted)
 	if err != nil {

@@ -494,8 +494,9 @@ func TestPanelClosedPRPostsNothing(t *testing.T) {
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 
 	assert.Empty(*comments, "no comment on a closed PR")
-	_, err := h.DB.GetCIPanelByPRSHA("acme/api", 7, "headsha333")
-	require.ErrorIs(t, err, sql.ErrNoRows, "closed PR deletes the mapping")
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 7, "headsha333")
+	require.NoError(t, err)
+	assert.NotNil(panel.RetiredAt, "closed PR retains a non-postable delivery target")
 	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
 	require.NoError(t, err)
 	assert.False(reviewed, "same-HEAD reopen must be reviewable")

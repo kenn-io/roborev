@@ -13,6 +13,9 @@ import (
 // ErrCIPanelActive means another run or posting lease still owns this PR HEAD.
 var ErrCIPanelActive = errors.New("CI panel is still active or posting")
 
+// ErrCIPanelTargetMissing prevents a CI rerun from silently becoming local work.
+var ErrCIPanelTargetMissing = errors.New("CI panel delivery target is missing")
+
 // rerunCIPanelTx transfers CI ownership to an explicit rerun in the same
 // transaction as its jobs and request ledger. The original PR HEAD stays frozen;
 // the poster still verifies that target before publishing the new result.
@@ -20,6 +23,9 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 	source, err := scanCIPanel(conn.QueryRowContext(ctx, `SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels WHERE synthesis_job_id = ?`, sourceJobID))
 	if errors.Is(err, sql.ErrNoRows) {
+		if synth.Source == JobSourceCI {
+			return ErrCIPanelTargetMissing
+		}
 		return nil // local panel, not a CI rerun
 	}
 	if err != nil {
@@ -51,13 +57,23 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 		return err
 	}
 	succeeded := active != nil && active.Outcome != nil && *active.Outcome == PanelOutcomeReviewPosted
+	unresolved := ""
+	if active != nil && active.Outcome != nil {
+		switch *active.Outcome {
+		case PanelOutcomeNoReviewPosted, PanelOutcomeGiveupPosted, PanelOutcomeAbandoned:
+			// Timeouts and permanent delivery failures may have no attempt error.
+			// Keep their failure visible while the replacement review runs.
+			unresolved = "Previous CI review did not deliver usable output"
+		}
+	}
 	_, err = conn.ExecContext(ctx, `UPDATE ci_pr_review_attempts
 		SET state = 'pending', attempt = 1, consecutive_genuine_attempts = 0,
 		    first_attempt_at = ?, next_attempt_at = NULL, updated_at = ?,
 		    last_error_class = CASE WHEN ? THEN '' ELSE last_error_class END,
-		    last_error_excerpt = CASE WHEN ? THEN '' ELSE last_error_excerpt END
+		    last_error_excerpt = CASE WHEN ? THEN ''
+		      WHEN last_error_excerpt = '' THEN ? ELSE last_error_excerpt END
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-		now.Format(time.RFC3339), now.Format(time.RFC3339), succeeded, succeeded,
+		now.Format(time.RFC3339), now.Format(time.RFC3339), succeeded, succeeded, unresolved,
 		source.GithubRepo, source.PRNumber, source.HeadSHA)
 	return err
 }
@@ -197,6 +213,17 @@ func (db *DB) GetActiveCIPanelByPRSHA(githubRepo string, prNumber int, headSHA s
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
 		githubRepo, prNumber, headSHA)
 	return scanCIPanel(row)
+}
+
+// HasPostedCIReview includes retired history so canceling a rerun cannot make
+// the normal poll forget a review already delivered for this commit.
+func (db *DB) HasPostedCIReview(githubRepo string, prNumber int, headSHA string) (bool, error) {
+	var posted bool
+	err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM ci_pr_panels
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
+		  AND posted_at IS NOT NULL AND outcome = ?)`,
+		githubRepo, prNumber, headSHA, PanelOutcomeReviewPosted).Scan(&posted)
+	return posted, err
 }
 
 // GetCIPanelBySynthesisJobID returns the panel mapping whose run is finalized
@@ -517,7 +544,7 @@ func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, 
 }
 
 // GetUnpostedPanelsForPR includes retired runs so cleanup can retry failed
-// cancellations or mapping deletions after retirement.
+// cancellations after retirement.
 func (db *DB) GetUnpostedPanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
 	rows, err := db.Query(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
@@ -607,12 +634,16 @@ func (db *DB) GetUnpostedTerminalPanels(githubRepo string) ([]CIPanel, error) {
 
 // GetPendingPanelPRs returns the distinct (github_repo, pr_number) pairs that
 // have an un-posted panel run, so the poll loop can check whether those PRs are
-// still open (closed-PR cleanup). Includes retired runs with unfinished cleanup.
+// still open (closed-PR cleanup). Retired runs remain candidates only while
+// they have jobs to cancel; completed cleanup retains the delivery mapping.
 func (db *DB) GetPendingPanelPRs(githubRepo string) ([]PanelPRRef, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT github_repo, pr_number
 		FROM ci_pr_panels
-		WHERE github_repo = ? AND posted_at IS NULL`, githubRepo)
+		WHERE github_repo = ? AND posted_at IS NULL
+		  AND (retired_at IS NULL OR EXISTS (
+		    SELECT 1 FROM review_jobs j WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+		      AND j.status IN ('queued', 'running')))`, githubRepo)
 	if err != nil {
 		return nil, err
 	}

@@ -906,25 +906,25 @@ func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (ciRepoConfigSou
 // reserve-on-enqueue, or on a DB where the row was lost). Legacy ci_pr_reviews
 // rows are intentionally ignored: the legacy CI poster is gone, so those rows
 // cannot be allowed to suppress panel creation for in-flight upgrade leftovers.
+// A delivered panel review still counts after an explicit rerun retires it.
 func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
 	attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
 	if err != nil {
 		return false, fmt.Errorf("check review attempt: %w", err)
 	}
 	if attempt != nil {
-		switch attempt.State {
-		case "done":
-			return true, nil
-		case "deferred":
-			return true, nil
-		}
+		return true, nil
 	}
 	if _, err := p.db.GetActiveCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid); err == nil {
 		return true, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("check CI panel: %w", err)
 	}
-	return attempt != nil, nil
+	posted, err := p.db.HasPostedCIReview(ghRepo, pr.Number, pr.HeadRefOid)
+	if err != nil {
+		return false, fmt.Errorf("check posted CI review: %w", err)
+	}
+	return posted, nil
 }
 
 // markPanelsForStalePost flags a PR's still-active panel runs to post despite
@@ -2327,7 +2327,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 	if !target.Open {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
 			row.GithubRepo, row.PRNumber, row.ID)
-		p.deletePanelAndAttempt(row, "closed-PR")
+		p.retirePanelAndDeleteAttempt(row, "closed-PR")
 		return false
 	}
 	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
@@ -2421,16 +2421,6 @@ func (p *CIPoller) jobMatchesGithubRepo(job *storage.ReviewJob, ghRepo string) (
 		return false, fmt.Errorf("repo %d identity %q is not on configured GitHub host", repo.ID, repo.Identity)
 	}
 	return strings.EqualFold(strings.TrimSuffix(ownerRepo, ".git"), strings.TrimSuffix(ghRepo, ".git")), nil
-}
-
-func (p *CIPoller) deletePanelAndAttempt(row *storage.CIPanel, reason string) {
-	if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
-		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
-		return
-	}
-	if err := p.db.DeleteCIPanel(row.ID); err != nil {
-		log.Printf("CI poller: error deleting %s panel %d: %v", reason, row.ID, err)
-	}
 }
 
 func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason string) {
@@ -3062,7 +3052,7 @@ func (p *CIPoller) retryAttemptPR(
 // panel mapping. Each PR is open-checked at most once (the union dedups), so a
 // PR present in both sets never double-calls the GitHub API. For each PR absent
 // from the open list AND confirmed closed by callPanelPostTarget (PR state can change
-// during a poll) it cancels the run parent-first, deletes its mapping, and
+// during a poll) it cancels the run parent-first, retires its mapping, and
 // deletes the PR's attempt rows. Per-PR errors are returned and the sweep continues.
 func (p *CIPoller) cleanupClosedPRPanels(ctx context.Context, ghRepo string, openPRs map[int]bool) error {
 	prNumbers, err := p.closedPRCleanupCandidates(ghRepo)
@@ -3155,8 +3145,9 @@ func (p *CIPoller) deleteClosedPRAttempts(ghRepo string, prNumber int) error {
 	return nil
 }
 
-// cancelClosedPRPanelRuns cancels (parent-first) and deletes every unposted
+// cancelClosedPRPanelRuns cancels (parent-first) and retires every unposted
 // panel run for a confirmed-closed PR, including retired runs awaiting cleanup.
+// Keep delivery mappings so an explicit rerun can still target the same PR.
 func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 	rows, err := p.db.GetUnpostedPanelsForPR(ghRepo, prNumber)
 	if err != nil {
@@ -3170,8 +3161,8 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("get synthesis for %s: %w", row.PanelRunUUID, err))
 			continue
 		}
-		// Retire before worker cancellation events can fire, but retain the
-		// mapping until cleanup succeeds so a later poll can retry failures.
+		// Retire before worker cancellation events can fire. The mapping
+		// remains available for cleanup retries and explicit review reruns.
 		if err := p.db.MarkPanelRetired(row.ID); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("retire panel %s: %w", row.PanelRunUUID, err))
 			continue
@@ -3180,10 +3171,6 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 		p.broadcastCanceledJobs(canceled)
 		if err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("cancel run %s: %w", row.PanelRunUUID, err))
-			continue
-		}
-		if err := p.db.DeleteCIPanelByRun(row.PanelRunUUID); err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete mapping %s: %w", row.PanelRunUUID, err))
 			continue
 		}
 		log.Printf("CI poller: canceled panel run for closed PR %s#%d", ghRepo, prNumber)

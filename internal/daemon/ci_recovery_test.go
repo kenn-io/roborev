@@ -217,6 +217,8 @@ func TestCIPollerRestartKeepsNonFailureOutcomesTerminal(t *testing.T) {
 		outcome string
 	}{
 		{"empty", jobSpec{Agent: "test", Status: "done", Output: " "}, storage.PanelOutcomeNoReviewPosted},
+		{"no verdict", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted},
+		{"unreadable", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "unable to read the diff"}, storage.PanelOutcomeNoReviewPosted},
 		{"timeout", jobSpec{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}, storage.PanelOutcomeNoReviewPosted},
 		{"posted", jobSpec{Agent: "test", Status: "done", Output: "No issues found."}, storage.PanelOutcomeReviewPosted},
 		{"inaccessible", jobSpec{Agent: "test", Status: "failed", Error: "model unavailable"}, storage.PanelOutcomeAbandoned},
@@ -267,4 +269,107 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 			assert.Equal(t, *rerun.Body.RunUUID, active.PanelRunUUID)
 		})
 	}
+}
+
+func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
+	for _, posted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("posted=%t", posted), func(t *testing.T) {
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+				[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
+			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+			if posted {
+				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
+			}
+			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			require.NoError(t, err)
+			_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
+			require.NoError(t, err)
+
+			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"})
+			require.NoError(t, err)
+			assert.Equal(t, posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
+		})
+	}
+}
+
+func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
+	for _, outcome := range []string{storage.PanelOutcomeNoReviewPosted, storage.PanelOutcomeAbandoned} {
+		t.Run(outcome, func(t *testing.T) {
+			h, server := newCIHealthHarness(t)
+			comments := h.CaptureComments()
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+				[]jobSpec{{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}})
+			h.markJobFailed(t, synth.ID, "no member output")
+			if outcome == storage.PanelOutcomeAbandoned {
+				h.Poller.abandonPanelPost(panel, "Review failed to post", "inaccessible GitHub repo/PR")
+			} else {
+				h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+			}
+			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			require.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			require.NoError(t, err)
+			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+				"queueing a rerun does not deliver a review")
+
+			members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
+			require.NoError(t, err)
+			for _, member := range members {
+				h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
+			}
+			h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
+			h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
+			require.Len(t, *comments, 1)
+			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+		})
+	}
+}
+
+func TestCIPanelRerunAfterClosedPRCleanup(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	_, synth, _ := h.seedBlockedPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+		[]jobSpec{{Agent: "test"}})
+	h.Poller.isPROpenFn = func(string, int) bool { return false }
+	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", nil))
+	candidates, err := h.Poller.closedPRCleanupCandidates("acme/api")
+	require.NoError(t, err)
+	assert.Empty(t, candidates, "finished cleanup must not keep checking a closed PR")
+	h.Poller.isPROpenFn = func(string, int) bool { return true }
+	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
+	require.NoError(t, err)
+	for _, member := range members {
+		h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
+	}
+	h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
+	h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
+	require.Len(t, *comments, 1, "historical CI rerun must still publish after the PR reopens")
+	assert.Equal(t, "acme/api", (*comments)[0].Repo)
+	assert.Equal(t, 7, (*comments)[0].PR)
+}
+
+func TestCIPanelRerunRejectsMissingDeliveryTarget(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
+	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+	// Older closed-PR cleanup removed mappings but preserved CI job ownership.
+	require.NoError(t, h.DB.DeleteCIPanel(panel.ID))
+	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	response := serveHuma(t, server, http.MethodPost, "/api/job/rerun",
+		[]byte(fmt.Sprintf(`{"job_id":%d}`, synth.ID)))
+	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, jobs, 2, "a rejected rerun must roll back its new jobs")
 }
