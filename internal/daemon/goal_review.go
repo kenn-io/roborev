@@ -101,9 +101,10 @@ func jobEventType(job *storage.ReviewJob, event string) string {
 	return "review." + event
 }
 
-// Automatic reviews use the registered main checkout's policy. Explicit goal
-// requests use their checkout's policy while that checkout still exists.
-func goalReviewConfigRepoPath(job *storage.ReviewJob) string {
+// GoalReviewConfigRepoPath selects the policy for a captured goal review.
+// Watcher jobs use the registered main checkout; explicit requests use their
+// checkout while it still exists.
+func GoalReviewConfigRepoPath(job *storage.ReviewJob) string {
 	if job.Source != "goal_watch" {
 		if root := validatedWorktreePath(job.WorktreePath, job.RepoPath); root != "" {
 			return root
@@ -129,7 +130,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}
 	prepared, err := prompt.NewBuilderWithConfig(wp.db, cfg).ForRepo(root, job.RepoID).Prepare(
 		goalreview.BuildPrompt(snapshot),
-		prompt.SnapshotTarget{RepoPath: root, ConfigRepoPath: goalReviewConfigRepoPath(job)},
+		prompt.SnapshotTarget{RepoPath: root, ConfigRepoPath: GoalReviewConfigRepoPath(job)},
 	)
 	if err != nil {
 		fail(fmt.Errorf("prepare goal review prompt: %w", err))

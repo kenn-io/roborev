@@ -877,7 +877,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// overlay any frozen panel-member timeout captured at enqueue time.
 	configRoot := job.RepoPath
 	if job.IsGoalReviewJob() {
-		configRoot = goalReviewConfigRepoPath(job)
+		configRoot = GoalReviewConfigRepoPath(job)
 	}
 	timeoutMinutes := config.ResolveJobTimeout(configRoot, cfg)
 	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
@@ -1883,8 +1883,12 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		"", job.RepoPath, cfg, failoverWorkflow(job), "",
+		"", configRoot, cfg, failoverWorkflow(job), "",
 	)
 	if err != nil {
 		return ""
@@ -1896,7 +1900,7 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	// Resolve exactly the configured backup using the config-aware path so
 	// command overrides and configured ACP aliases participate in failover
 	// without falling through to unrelated agents.
-	resolved, err := agent.GetAvailableExactWithConfig(job.RepoPath, backup, cfg)
+	resolved, err := agent.GetAvailableExactWithConfig(configRoot, backup, cfg)
 	if err != nil {
 		return ""
 	}
@@ -1925,8 +1929,12 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		"", job.RepoPath, cfg, failoverWorkflow(job), "",
+		"", configRoot, cfg, failoverWorkflow(job), "",
 	)
 	if err != nil {
 		return ""

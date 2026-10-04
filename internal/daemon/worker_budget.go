@@ -22,7 +22,7 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 	}
 	configRoot := job.RepoPath
 	if job.IsGoalReviewJob() {
-		configRoot = goalReviewConfigRepoPath(job)
+		configRoot = GoalReviewConfigRepoPath(job)
 	}
 	repoCfg, err := config.LoadRepoConfig(configRoot)
 	if err != nil {

@@ -163,9 +163,10 @@ watch = ["goal", "kata_graph"]
 The watcher uses the main checkout's configuration and Kata binding for all its
 worktrees. Artifact paths resolve inside each worktree. Manual reviews and gate
 requests use the requested checkout's configuration and binding instead. Queued
-jobs use the same configuration source for prompt preparation, timeouts, and
-budget routing. If a requested worktree disappears before execution, its frozen
-review runs in the main checkout using the main checkout's configuration.
+jobs use the same configuration source for prompt preparation, timeouts, budget
+routing, reruns, and backup selection. The TUI rerun picker follows this policy
+too. If a requested worktree disappears before execution, its frozen review runs
+in the main checkout using the main checkout's configuration.
 
 Every 30 seconds, the daemon checks registered repository configuration.
 Disabled repositories skip Git worktree discovery and Kata capture. Each enabled
