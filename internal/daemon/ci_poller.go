@@ -546,6 +546,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	if err := p.reconcileRetryHealth(ghRepo, prs, cfg, unavailableHeads); err != nil {
 		processingErrors = append(processingErrors, err)
 	}
+	p.retryFinalPanelStatuses(ghRepo)
 	return errors.Join(processingErrors...)
 }
 
@@ -910,6 +911,11 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected 
 	}
 	if err := p.db.DeleteReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
 		return fmt.Errorf("delete skipped review attempt: %w", err)
+	}
+	if panelID != 0 {
+		if err := p.db.MarkCIPanelFinalStatusSent(panelID); err != nil {
+			return fmt.Errorf("supersede panel final status: %w", err)
+		}
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
@@ -2352,6 +2358,50 @@ func (p *CIPoller) routePanelEvent(jobID int64) {
 	p.postPanelRun(context.Background(), row)
 }
 
+func (p *CIPoller) retryFinalPanelStatuses(ghRepo string) {
+	statuses, err := p.db.GetCIPanelFinalStatuses(ghRepo)
+	if err != nil {
+		log.Printf("CI poller: error listing final status deliveries for %s: %v", ghRepo, err)
+		return
+	}
+	for _, status := range statuses {
+		p.deliverPanelFinalStatus(status)
+	}
+}
+
+func (p *CIPoller) deliverPanelFinalStatus(status storage.CIPanelFinalStatus) {
+	won, err := p.db.ClaimPanelFinalStatus(status.PanelID, panelPostingStaleWindow)
+	if err != nil {
+		log.Printf("CI poller: error claiming panel %d final status: %v", status.PanelID, err)
+		return
+	}
+	if !won {
+		return
+	}
+	defer p.releasePanelClaim(status.PanelID)
+	if err := p.callSetCommitStatus(status.GithubRepo, status.HeadSHA, status.State, status.Description); err != nil {
+		log.Printf("CI poller: failed to set final status for %s@%s: %v", status.GithubRepo, gitpkg.ShortSHA(status.HeadSHA), err)
+		return
+	}
+	if err := p.db.MarkCIPanelFinalStatusSent(status.PanelID); err != nil {
+		log.Printf("CI poller: error acknowledging panel %d final status: %v", status.PanelID, err)
+	}
+}
+
+// finalizePanelStatus records comment delivery and the final status intent
+// together, so a failed status write never requires another PR comment.
+func (p *CIPoller) finalizePanelStatus(row *storage.CIPanel, outcome, state, description string) {
+	if err := p.db.MarkPanelPosted(row.ID, outcome, state, description); err != nil {
+		log.Printf("CI poller: error finalizing panel %d: %v", row.ID, err)
+		p.releasePanelClaim(row.ID)
+		return
+	}
+	p.deliverPanelFinalStatus(storage.CIPanelFinalStatus{
+		PanelID: row.ID, GithubRepo: row.GithubRepo, HeadSHA: row.HeadSHA,
+		State: state, Description: description,
+	})
+}
+
 func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
 	if err != nil {
@@ -2590,28 +2640,15 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 	}
 
 	state, desc := panelCommitStatus(members)
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, state, desc); err != nil {
-		// Comment already posted: a status failure is log-only, never re-post.
-		log.Printf("CI poller: failed to set %s status for %s@%s: %v",
-			state, row.GithubRepo, row.HeadSHA, err)
-	}
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeReviewPosted); err != nil {
-		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeReviewPosted, state, desc)
 	log.Printf("CI poller: posted panel comment on %s#%d (panel %d, %d members)",
 		row.GithubRepo, row.PRNumber, row.ID, len(members))
 }
 
 // finalizePanelWithoutReview records a failed status without creating a PR
-// comment. Status write errors are log-only, as they are after posting a review.
+// comment. Failed status delivery remains eligible for polling recovery.
 func (p *CIPoller) finalizePanelWithoutReview(row *storage.CIPanel, statusDesc string) {
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); err != nil {
-		log.Printf("CI poller: failed to set error status for %s@%s: %v",
-			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-	}
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeNoReviewPosted); err != nil {
-		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeNoReviewPosted, "error", statusDesc)
 }
 
 // deferTransientPanel handles an all-transient panel (no successful member, ≥1
@@ -2717,15 +2754,9 @@ func (p *CIPoller) handlePanelPostError(row *storage.CIPanel, postErr error) {
 }
 
 func (p *CIPoller) abandonPanelPost(row *storage.CIPanel, statusDesc, reason string) {
-	if statusErr := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); statusErr != nil {
-		log.Printf("CI poller: failed to set error status for %s@%s: %v",
-			row.GithubRepo, row.HeadSHA, statusErr)
-	}
 	log.Printf("CI poller: abandoning panel %d for %s %s#%d",
 		row.ID, reason, row.GithubRepo, row.PRNumber)
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeAbandoned); err != nil {
-		log.Printf("CI poller: error finalizing abandoned panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeAbandoned, "error", statusDesc)
 }
 
 // releasePanelClaim clears a panel's posting lease so a later sweep retries.
@@ -3517,7 +3548,7 @@ func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) e
 		return p.setCommitStatusFn(ghRepo, sha, "success", description)
 	}
 	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
-		return nil
+		return errors.New("GitHub token required to publish skipped commit status")
 	}
 	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
@@ -3755,7 +3786,7 @@ func truncateUTF8(text string, maxBytes int) string {
 // setCommitStatus posts a commit status check via the GitHub API.
 func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error {
 	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
-		return nil
+		return errors.New("GitHub token required to publish commit status")
 	}
 	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {

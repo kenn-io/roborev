@@ -90,10 +90,65 @@ func TestClaimPanelForPosting(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got3, "re-claimable after release")
 
-	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", ""))
 	got4, err := db.ClaimPanelForPosting(id, staleWindow)
 	require.NoError(t, err)
 	assert.False(t, got4, "posted row never claims again")
+}
+
+func TestFinalStatusAcknowledgmentKeepsPublicationClaim(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		skip    bool
+	}{
+		{"final status", PanelOutcomeReviewPosted, false},
+		{"skip review", PanelOutcomeReviewPosted, true},
+		{"skip failure", PanelOutcomeNoReviewPosted, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			id := seedPanelRow(t, db, "acme/api", 7, "head-a")
+			require.NoError(t, db.MarkPanelPosted(id, tc.outcome, "error", "Review failed"))
+
+			func() {
+				if !tc.skip {
+					claimed, err := db.ClaimPanelFinalStatus(id, PanelPostingStaleWindow)
+					require.NoError(t, err)
+					require.True(t, claimed)
+				} else {
+					claimed, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+					require.NoError(t, err)
+					require.Equal(t, id, claimed)
+				}
+				defer func() { require.NoError(t, db.ReleasePanelPostClaim(id)) }()
+				if tc.skip {
+					require.NoError(t, db.DeleteReviewAttempt("acme/api", 7, "head-a"))
+				}
+				require.NoError(t, db.MarkCIPanelFinalStatusSent(id))
+
+				// Try to start another publisher after acknowledgment but before
+				// deferred cleanup. It must not acquire a lease cleanup could erase.
+				competingSkip := make(chan error, 1)
+				go func() {
+					_, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+					competingSkip <- err
+				}()
+				assert.ErrorIs(<-competingSkip, ErrCIPanelActive)
+			}()
+
+			claimed, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+			require.NoError(t, err, "the next publisher can claim after cleanup")
+			assert.Equal(id, claimed)
+			pending, err := db.GetCIPanelFinalStatuses("acme/api")
+			require.NoError(t, err)
+			assert.Empty(pending, "acknowledgment still clears the delivery intent")
+		})
+	}
 }
 
 // TestClaimPanelForPostingStaleReclaim proves the stale-window reclaim works,
@@ -166,7 +221,7 @@ func TestGetPendingPanelPRs(t *testing.T) {
 	// PR 1 posted (excluded), PR 2 + PR 3 pending (included). A row under a
 	// different repo proves the github_repo filter excludes it.
 	postedID := seedPanelRow(t, db, "o/r", 1, "sha1")
-	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
 	seedPanelRow(t, db, "o/r", 2, "sha2")
 	seedPanelRow(t, db, "o/r", 3, "sha3")
 	seedPanelRow(t, db, "x/y", 9, "sha9")
@@ -195,7 +250,7 @@ func TestGetActivePanelsForPR(t *testing.T) {
 	// Two rows for PR 7: one posted (excluded), one pending (included). Rows for
 	// a different PR and a different repo prove the filters.
 	postedID := seedPanelRow(t, db, "o/r", 7, "posted")
-	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
 	seedPanelRow(t, db, "o/r", 7, "pending")
 	seedPanelRow(t, db, "o/r", 8, "other-pr")
 	seedPanelRow(t, db, "x/y", 7, "other-repo")
@@ -244,7 +299,7 @@ func TestGetTimedOutPanels(t *testing.T) {
 	queuedOld, queuedMember := seedRun(4, "queued-old", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'queued', started_at = NULL WHERE id = ?`, queuedMember.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(oldPosted.ID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(oldPosted.ID, PanelOutcomeReviewPosted, "", ""))
 	_ = recentUnposted
 	_ = queuedOld
 
@@ -457,7 +512,7 @@ func TestGetUnpostedTerminalPanels(t *testing.T) {
 	// (c) synthesis failed, posted_at SET -> EXCLUDED (already posted).
 	cPanel, cSynth := seedPanelRunForRepo(t, db, repo.ID, "o/r", 3, "failed-posted")
 	setStatus(t, db, cSynth.ID, JobStatusFailed)
-	require.NoError(t, db.MarkPanelPosted(cPanel.ID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(cPanel.ID, PanelOutcomeReviewPosted, "", ""))
 	// (d) synthesis failed, posted_at NULL -> INCLUDED (raw-fallback must post).
 	dPanel, dSynth := seedPanelRunForRepo(t, db, repo.ID, "o/r", 4, "failed-unposted")
 	setStatus(t, db, dSynth.ID, JobStatusFailed)
@@ -554,7 +609,7 @@ func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	id := seedPanelRow(t, db, "o/r", 6, "posted-head")
-	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", ""))
 	require.NoError(t, db.MarkPanelRetired(id))
 
 	panel, err := db.GetActiveCIPanelByPRSHA("o/r", 6, "posted-head")
@@ -707,7 +762,7 @@ func TestMarkPanelPostedSnapshotsAttemptMetrics(t *testing.T) {
 	require.True(t, created)
 
 	id := seedPanelRow(t, db, "o/r", 7, "headsha7")
-	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", ""))
 
 	// MarkPanelPosted finalizes the attempt row and the panel row in the same
 	// transaction; the attempt must be terminal before it is ever deleted.
@@ -737,7 +792,7 @@ func TestMarkPanelPostedWithoutAttemptRow(t *testing.T) {
 	defer db.Close()
 
 	id := seedPanelRow(t, db, "o/r", 8, "headsha8")
-	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeAbandoned))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeAbandoned, "", ""))
 
 	p, err := db.GetCIPanelByPRSHA("o/r", 8, "headsha8")
 	require.NoError(t, err)
@@ -764,12 +819,12 @@ func TestMarkPanelPostedTwiceErrorsAndPreservesFirstResult(t *testing.T) {
 	require.True(t, created)
 
 	id := seedPanelRow(t, db, "o/r", 9, "headsha9")
-	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", ""))
 
 	first, err := db.GetCIPanelByPRSHA("o/r", 9, "headsha9")
 	require.NoError(t, err)
 
-	err = db.MarkPanelPosted(id, PanelOutcomeAbandoned)
+	err = db.MarkPanelPosted(id, PanelOutcomeAbandoned, "", "")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "not finalizable")
 
@@ -811,7 +866,7 @@ func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
 	id := seedPanelRow(t, db, "o/r", 10, "headsha10")
 	require.NoError(t, db.MarkPanelRetired(id))
 
-	err = db.MarkPanelPosted(id, PanelOutcomeReviewPosted)
+	err = db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", "")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "not finalizable")
 
@@ -838,7 +893,7 @@ func TestMarkPanelsAllowStalePost(t *testing.T) {
 	activeID := seedPanelRow(t, db, "o/r", 7, "old-head")
 	sameHeadID := seedPanelRow(t, db, "o/r", 7, "new-head")
 	postedID := seedPanelRow(t, db, "o/r", 7, "posted-head")
-	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
 	retiredID := seedPanelRow(t, db, "o/r", 7, "retired-head")
 	require.NoError(t, db.MarkPanelRetired(retiredID))
 	otherPRID := seedPanelRow(t, db, "o/r", 8, "old-head")
@@ -897,7 +952,7 @@ func TestMarkPanelRetiredIfStalePostDisallowed(t *testing.T) {
 	assert.False(retired, "already-retired row is not retired again")
 
 	postedID := seedPanelRow(t, db, "o/r", 8, "posted")
-	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
 	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(postedID)
 	require.NoError(t, err)
 	assert.False(retired, "posted row is not retired")

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,53 @@ func TestCIPanelHistoryMigration(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
 	}
+}
+
+func TestCIPanelFinalStatusMigration(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	// The preceding panel-history migration has already run. This table has
+	// active-row uniqueness and preserved history, but no final-status columns.
+	setupOldSchemaDB(t, dbPath, `CREATE TABLE ci_pr_panels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		github_repo TEXT NOT NULL, pr_number INTEGER NOT NULL, head_sha TEXT NOT NULL,
+		panel_run_uuid TEXT NOT NULL, synthesis_job_id INTEGER,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, posting_claimed_at TIMESTAMP,
+		posted_at TIMESTAMP, retired_at TIMESTAMP, outcome TEXT,
+		first_attempt_at TEXT, attempt_count INTEGER, synthesis_agent TEXT, synthesis_model TEXT,
+		allow_stale_post INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE UNIQUE INDEX idx_ci_panels_active_head
+		ON ci_pr_panels(github_repo, pr_number, head_sha) WHERE retired_at IS NULL`,
+		`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, posted_at, retired_at, outcome, attempt_count)
+		VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000001',
+		  datetime('now'), datetime('now'), 'no_review_posted', 3)`)
+
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	statuses, err := db.GetCIPanelFinalStatuses("acme/api")
+	require.NoError(t, err)
+	assert.Empty(t, statuses, "historical delivery must not be replayed")
+	_, err = db.Exec(`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid)
+		VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000002')`)
+	require.NoError(t, err)
+	require.NoError(t, db.MarkPanelPosted(2, PanelOutcomeReviewPosted, "success", "Review complete"))
+	require.NoError(t, db.Close())
+
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	statuses, err = db.GetCIPanelFinalStatuses("acme/api")
+	require.NoError(t, err)
+	assert.Equal(t, []CIPanelFinalStatus{{PanelID: 2, GithubRepo: "acme/api", HeadSHA: "head-a", State: "success", Description: "Review complete"}}, statuses)
+	history, err := db.GetCIPanelByRunUUID(uuid.MustParse("00000000-0000-4000-8000-000000000001"))
+	require.NoError(t, err)
+	require.NotNil(t, history.Outcome)
+	assert.Equal(t, PanelOutcomeNoReviewPosted, *history.Outcome)
+	require.NotNil(t, history.AttemptCount)
+	assert.Equal(t, int64(3), *history.AttemptCount)
 }
 
 func TestOpenReadOnly(t *testing.T) {

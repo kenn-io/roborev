@@ -360,6 +360,7 @@ func (db *DB) DeleteReviewAttemptsForPR(repo string, pr int) (int64, error) {
 
 // Keep attempt removal and failed-panel retirement atomic: leaving either one
 // behind can suppress the next review or lose the health failure on cleanup errors.
+// Retain any publication lease until its owner finishes skip or status delivery.
 func (db *DB) deleteReviewAttempts(repo string, pr int, sha *string) (int64, error) {
 	where := "github_repo = ? AND pr_number = ?"
 	args := []any{repo, pr}
@@ -373,7 +374,7 @@ func (db *DB) deleteReviewAttempts(repo string, pr int, sha *string) (int64, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`UPDATE ci_pr_panels
-		SET retired_at = datetime('now'), posting_claimed_at = NULL
+		SET retired_at = datetime('now')
 		WHERE `+where+` AND posted_at IS NOT NULL AND retired_at IS NULL
 		  AND outcome IN (?, ?, ?)`,
 		append(args, PanelOutcomeNoReviewPosted, PanelOutcomeGiveupPosted, PanelOutcomeAbandoned)...)

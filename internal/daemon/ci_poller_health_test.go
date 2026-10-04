@@ -556,7 +556,7 @@ func TestHealthCIPollerRestartRecognizesRetryOutcome(t *testing.T) {
 					case "abandoned":
 						outcome = storage.PanelOutcomeAbandoned
 					}
-					require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome))
+					require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome, "", ""))
 				}
 			case "removed":
 				require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 1, "head-a"))
