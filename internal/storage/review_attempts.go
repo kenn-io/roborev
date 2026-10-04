@@ -194,6 +194,68 @@ func (db *DB) MakeTransientReviewAttemptsDue(now time.Time) (int64, error) {
 	return n, nil
 }
 
+// RearmFailedReviewAttempts grants exhausted reviews a fresh retry budget on
+// daemon startup, when an operator may have repaired an agent or provider.
+// The normal poll never calls this: repeated failures still exhaust the usual
+// budget. Retain error details until a review is delivered so restart alone
+// does not clear failure health. Empty results and permanent GitHub failures
+// are not agent failures and remain terminal.
+func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT p.id, p.github_repo, p.pr_number, p.head_sha
+		FROM ci_pr_panels p JOIN ci_pr_review_attempts a
+		  ON a.github_repo = p.github_repo AND a.pr_number = p.pr_number AND a.head_sha = p.head_sha
+		WHERE a.state = 'done' AND a.last_error_class IN ('genuine', 'transient')
+		  AND p.retired_at IS NULL AND p.outcome = ?
+		  AND EXISTS (SELECT 1 FROM review_jobs j
+		    WHERE j.panel_run_uuid = p.panel_run_uuid AND j.status = 'failed'
+		      AND ((j.panel_role = 'member' AND COALESCE(j.non_voting, 0) = 0
+		        AND COALESCE(j.error, '') NOT LIKE 'no-verdict: %') OR
+		        (j.panel_role = 'synthesis' AND (j.error LIKE 'outage: %' OR j.error LIKE 'quota: %'))))`,
+		PanelOutcomeNoReviewPosted)
+	if err != nil {
+		return 0, err
+	}
+	var panels []CIPanel
+	for rows.Next() {
+		var panel CIPanel
+		if err := rows.Scan(&panel.ID, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		panels = append(panels, panel)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, panel := range panels {
+		_, err := tx.Exec(`UPDATE ci_pr_review_attempts
+			SET state = 'deferred', attempt = 0, consecutive_genuine_attempts = 0,
+			    first_attempt_at = ?, next_attempt_at = ?, updated_at = ?
+			WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+			now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339),
+			panel.GithubRepo, panel.PRNumber, panel.HeadSHA)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`UPDATE ci_pr_panels SET retired_at = ?, posting_claimed_at = NULL WHERE id = ?`,
+			now.Format(time.RFC3339), panel.ID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int64(len(panels)), nil
+}
+
 // RearmStuckReviewAttempt re-defers a 'pending' attempt that the crash/stuck
 // reconcile found stranded — claimed by the retry sweep (state flipped to
 // 'pending', attempt bumped) but then CreateCIPanelRun failed or the daemon
@@ -397,6 +459,7 @@ func (db *DB) GetFailedReviewAttempts(repo string) ([]ReviewAttempt, error) {
 		    WHERE p.github_repo = ci_pr_review_attempts.github_repo
 		      AND p.pr_number = ci_pr_review_attempts.pr_number
 		      AND p.head_sha = ci_pr_review_attempts.head_sha
+		      AND p.retired_at IS NULL
 		      AND p.outcome IN (?, ?, ?))))`,
 		repo, PanelOutcomeNoReviewPosted, PanelOutcomeGiveupPosted, PanelOutcomeAbandoned)
 	if err != nil {

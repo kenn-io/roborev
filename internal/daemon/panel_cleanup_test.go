@@ -409,7 +409,7 @@ func TestExpireTimedOutPanelsDisabled(t *testing.T) {
 }
 
 // TestCleanupClosedPRPanels covers F13: a pending run whose PR is closed has its
-// synthesis+members canceled (parent-first) and its mapping deleted.
+// synthesis+members canceled (parent-first) and its mapping retired.
 func TestCleanupClosedPRPanels(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -434,7 +434,7 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 
 	rows, err := h.DB.GetActivePanelsForPR("acme/api", 10)
 	require.NoError(t, err)
-	assert.Empty(rows, "closed-PR mapping deleted")
+	assert.Empty(rows, "closed-PR mapping retired")
 	require.Len(t, events, 2, "each canceled panel job should notify live clients")
 	parentEvent := <-events
 	memberEvent := <-events

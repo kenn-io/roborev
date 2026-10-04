@@ -507,6 +507,9 @@ func (db *DB) enqueuePanelRun(
 		return nil, nil, false, err
 	}
 	if rerunSourceJobID != 0 {
+		if err := rerunCIPanelTx(ctx, conn, rerunSourceJobID, synthJob, now); err != nil {
+			return nil, nil, false, err
+		}
 		ledgerRequestID := rerunRequestID
 		if ledgerRequestID == uuid.Nil() {
 			ledgerRequestID = uuid.New()
@@ -1638,7 +1641,7 @@ func lookupPanelRerunBySource(
 		FROM rerun_requests rr
 		WHERE rr.source_job_id = ?
 		  AND COALESCE(rr.panel_run_uuid, '') != ''
-		  AND EXISTS (
+		  AND (EXISTS (
 			SELECT 1
 			FROM review_jobs j
 			WHERE j.panel_run_uuid = rr.panel_run_uuid
@@ -1646,7 +1649,11 @@ func lookupPanelRerunBySource(
 				j.status IN ('queued', 'running')
 				OR (j.status = 'canceled' AND COALESCE(j.worker_id, '') != '')
 			  )
-		  )
+		  ) OR EXISTS (
+			SELECT 1 FROM ci_pr_panels p
+			WHERE p.panel_run_uuid = rr.panel_run_uuid
+			  AND p.posted_at IS NULL AND p.retired_at IS NULL
+		  ))
 		ORDER BY rr.created_at DESC, rr.result_job_id DESC
 		LIMIT 1
 	`, sourceJobID).Scan(&result.JobID, &result.PanelRunUUID)

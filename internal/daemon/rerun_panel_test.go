@@ -699,8 +699,9 @@ func TestRerunCIPanelPreservesSynthesisACPSnapshot(t *testing.T) {
 		Source: storage.JobSourceCI, PanelMemberConfigJSON: string(snapshot),
 		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
 	}
-	_, synthJob, err := db.EnqueuePanelRun(members, synth)
+	_, _, synthJob, err := db.CreateCIPanelRun("acme/api", 7, "head", members, synth)
 	require.NoError(t, err)
+	runUUID = *synthJob.PanelRunUUID
 
 	newUUID, _ := rerunAndLoadNewRun(t, server, db, runUUID, synthJob.ID)
 	newSynth, err := db.GetSynthesisJob(newUUID)

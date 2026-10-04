@@ -40,12 +40,8 @@ func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
 		log.Printf("cancel cascade: lookup CI panel for synthesis %d: %v", job.ID, err)
 		return
 	}
-	if err := s.db.MarkPanelRetired(panel.ID); err != nil {
+	if err := s.db.RetirePanelAndDeleteAttempt(panel.ID); err != nil {
 		log.Printf("cancel cascade: retire CI panel %d: %v", panel.ID, err)
-	}
-	if err := s.db.DeleteReviewAttempt(panel.GithubRepo, panel.PRNumber, panel.HeadSHA); err != nil {
-		log.Printf("cancel cascade: delete CI review attempt for %s#%d@%s: %v",
-			panel.GithubRepo, panel.PRNumber, panel.HeadSHA, err)
 	}
 }
 

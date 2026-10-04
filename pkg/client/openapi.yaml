@@ -2102,6 +2102,9 @@ components:
           type: integer
         healthy:
           type: boolean
+        ready:
+          description: Daemon can process work; CI review failures remain unhealthy while recovery runs
+          type: boolean
         recent_errors:
           items:
             $ref: "#/components/schemas/ErrorEntry"
@@ -2114,6 +2117,7 @@ components:
           type: string
       required:
         - healthy
+        - ready
         - uptime
         - version
         - components

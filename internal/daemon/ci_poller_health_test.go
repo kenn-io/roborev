@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +60,7 @@ func TestHealthCIPollerRepositoryFailureAndRecovery(t *testing.T) {
 		assert := assert.New(t)
 		assert.Equal([]string{"acme/api", "acme/web"}, visited)
 		assert.False(health.Healthy)
+		assert.False(health.Ready, "repository polling failure blocks activation")
 		assert.Contains(health.Components, storage.ComponentHealth{
 			Name: "ci", Healthy: false, Message: "polling failed for acme/api",
 		})
@@ -73,6 +73,7 @@ func TestHealthCIPollerRepositoryFailureAndRecovery(t *testing.T) {
 	h.Poller.poll(context.Background())
 	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.True(t, health.Healthy)
+	assert.True(t, health.Ready)
 	assert.Contains(t, health.Components, storage.ComponentHealth{
 		Name: "ci", Healthy: true, Message: "running",
 	})
@@ -156,6 +157,7 @@ func TestHealthCIPollerReviewRecovery(t *testing.T) {
 		health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 		assert.False(health.Healthy,
 			"a running retry must retain its previous failure")
+		assert.True(health.Ready, "a running recovery must not fail deployment readiness")
 		assert.Len(health.RecentErrors, 1, "retries continue the same failure without recording a fresh alert")
 	}
 	assert.Empty(*comments, "failed runs produce no review")
@@ -722,10 +724,11 @@ func TestHealthCIPollerCleanupNonPullRequestTarget(t *testing.T) {
 			}
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
 			require.NoError(t, err)
-			_, panelErr := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
+			panel, panelErr := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
 			if tc.wantCleanup {
 				assert.Nil(attempt, "confirmed issue must no longer reserve a review attempt")
-				require.ErrorIs(t, panelErr, sql.ErrNoRows)
+				require.NoError(t, panelErr)
+				assert.NotNil(panel.RetiredAt)
 				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID))
 				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID))
 			} else {
@@ -739,7 +742,7 @@ func TestHealthCIPollerCleanupNonPullRequestTarget(t *testing.T) {
 }
 
 func TestHealthCIPollerClosedPRCleanupFailure(t *testing.T) {
-	for _, failure := range []string{"lookup", "parent cancellation", "member cancellation", "mapping deletion", "attempt deletion"} {
+	for _, failure := range []string{"lookup", "parent cancellation", "member cancellation", "mapping retirement", "attempt deletion"} {
 		t.Run(failure, func(t *testing.T) {
 			assert := assert.New(t)
 			h, server := newCIHealthHarness(t)
@@ -770,9 +773,9 @@ func TestHealthCIPollerClosedPRCleanupFailure(t *testing.T) {
 				trigger = `CREATE TRIGGER fail_cleanup BEFORE UPDATE OF status ON review_jobs
 					WHEN OLD.panel_role = 'member' AND NEW.status = 'canceled'
 					BEGIN SELECT RAISE(FAIL, 'cancel unavailable'); END`
-			case "mapping deletion":
-				trigger = `CREATE TRIGGER fail_cleanup BEFORE DELETE ON ci_pr_panels
-					BEGIN SELECT RAISE(FAIL, 'delete unavailable'); END`
+			case "mapping retirement":
+				trigger = `CREATE TRIGGER fail_cleanup BEFORE UPDATE OF retired_at ON ci_pr_panels
+					BEGIN SELECT RAISE(FAIL, 'retire unavailable'); END`
 			case "attempt deletion":
 				trigger = `CREATE TRIGGER fail_cleanup BEFORE DELETE ON ci_pr_review_attempts
 					BEGIN SELECT RAISE(FAIL, 'delete unavailable'); END`
@@ -795,7 +798,7 @@ func TestHealthCIPollerClosedPRCleanupFailure(t *testing.T) {
 			if failure == "lookup" || failure == "parent cancellation" || failure == "member cancellation" {
 				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, members[0].ID))
 			}
-			if failure == "member cancellation" || failure == "mapping deletion" {
+			if failure == "member cancellation" {
 				attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
 				require.NoError(t, err)
 				assert.Nil(attempt, "the cancellation event has removed the attempt")
@@ -810,8 +813,9 @@ func TestHealthCIPollerClosedPRCleanupFailure(t *testing.T) {
 			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 			assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID))
 			assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID))
-			_, err = h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
-			require.ErrorIs(t, err, sql.ErrNoRows)
+			panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
+			require.NoError(t, err)
+			assert.NotNil(panel.RetiredAt)
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
 			require.NoError(t, err)
 			assert.Nil(attempt)

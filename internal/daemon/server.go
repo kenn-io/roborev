@@ -3725,7 +3725,10 @@ func (s *Server) humaGetHealth(
 		})
 	}
 
+	ready := allHealthy
 	if s.ciPoller != nil {
+		ciReady, _ := s.ciPoller.ReadinessCheck()
+		ready = ready && ciReady
 		ciHealthy, ciMessage := s.ciPoller.HealthCheck()
 		if !ciHealthy {
 			allHealthy = false
@@ -3759,6 +3762,7 @@ func (s *Server) humaGetHealth(
 
 	return &HealthOutput{Body: storage.HealthStatus{
 		Healthy:      allHealthy,
+		Ready:        ready,
 		Uptime:       uptimeStr,
 		Version:      version.Version,
 		Components:   components,

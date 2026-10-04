@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -156,11 +155,9 @@ func TestClaimPanelForPostingRace(t *testing.T) {
 	assert.Equal(t, 1, boolCount(results, true), "exactly one poster wins")
 }
 
-// TestGetPendingPanelPRsAndDelete covers F13: GetPendingPanelPRs returns only
-// the distinct (github_repo, pr_number) pairs with un-posted panel runs for the
-// queried repo, and DeleteCIPanel removes a single mapping row. The query is
-// DISTINCT with no ORDER BY, so results are compared order-independently.
-func TestGetPendingPanelPRsAndDelete(t *testing.T) {
+// GetPendingPanelPRs returns distinct PRs with unposted panels for one repo.
+// Results have no guaranteed order.
+func TestGetPendingPanelPRs(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
@@ -170,7 +167,7 @@ func TestGetPendingPanelPRsAndDelete(t *testing.T) {
 	// different repo proves the github_repo filter excludes it.
 	postedID := seedPanelRow(t, db, "o/r", 1, "sha1")
 	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
-	pendingID2 := seedPanelRow(t, db, "o/r", 2, "sha2")
+	seedPanelRow(t, db, "o/r", 2, "sha2")
 	seedPanelRow(t, db, "o/r", 3, "sha3")
 	seedPanelRow(t, db, "x/y", 9, "sha9")
 
@@ -184,17 +181,6 @@ func TestGetPendingPanelPRsAndDelete(t *testing.T) {
 	}
 	sort.Ints(got)
 	assert.Equal([]int{2, 3}, got, "only pending PRs for o/r")
-
-	// Deleting a pending row removes its PR from the pending set.
-	require.NoError(t, db.DeleteCIPanel(pendingID2))
-	refs, err = db.GetPendingPanelPRs("o/r")
-	require.NoError(t, err)
-	got = got[:0]
-	for _, r := range refs {
-		got = append(got, r.PRNumber)
-	}
-	assert.NotContains(got, 2, "deleted PR no longer pending")
-	assert.Equal([]int{3}, got, "only PR 3 remains pending")
 }
 
 // TestGetActivePanelsForPR covers supersede + closed-PR cleanup support: the
@@ -316,38 +302,6 @@ func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testi
 	rows, err = db.GetTimedOutPanels("o/r", 5*time.Minute)
 	require.NoError(t, err)
 	assert.Empty(rows, "restart recovery clears running-member timeout clock")
-}
-
-// TestDeleteCIPanelByRun covers F13: deleting by panel_run_uuid removes the
-// mapping row. seedPanelRow sets panel_run_uuid to "run-"+headSHA.
-func TestDeleteCIPanelByRun(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	t.Cleanup(func() { db.Close() })
-
-	seedPanelRow(t, db, "o/r", 4, "runsha")
-
-	require.NoError(t, db.DeleteCIPanelByRun(testUUID("run-runsha")))
-
-	_, err := db.GetCIPanelByPRSHA("o/r", 4, "runsha")
-	require.ErrorIs(t, err, sql.ErrNoRows, "row gone after delete by run uuid")
-}
-
-func TestDeleteCIPanelByRunDoesNotClaimUnmappedPanel(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	t.Cleanup(func() { db.Close() })
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID: repo.ID, GitRef: "manual", Agent: "test",
-		PanelRunUUID: testUUIDPtr("manual-run"), PanelRole: PanelRoleMember,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, db.DeleteCIPanelByRun(testUUID("manual-run")))
-	var source sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT source FROM review_jobs WHERE id = ?`, job.ID).Scan(&source))
-	assert.False(t, source.Valid, "an unmapped user panel must remain non-CI")
 }
 
 func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
@@ -590,7 +544,7 @@ func TestCreateCIPanelRunReclaimsRetiredSameHead(t *testing.T) {
 	secondPanel, err := db.GetActiveCIPanelByPRSHA("o/r", 6, "headsha")
 	require.NoError(t, err)
 	assert.NotEqual(firstPanel.PanelRunUUID, secondPanel.PanelRunUUID)
-	assert.Equal(1, countCIPanels(t, db, "o/r", 6), "retired mapping is reclaimed")
+	assert.Equal(2, countCIPanels(t, db, "o/r", 6), "retired mapping retains review history")
 }
 
 func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
@@ -720,12 +674,11 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	_, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	// Call sequence: call 1 = preserve retired-row ownership, call 2 = retired-row
-	// cleanup, call 3 = INSERT OR IGNORE mapping, call 4 = reserve attempt row,
-	// calls 5..len+4 = member inserts, call len+5 = synthesis insert. Failing on
+	// Call sequence: call 1 = INSERT OR IGNORE mapping, call 2 = reserve attempt,
+	// calls 3..len+2 = member inserts, call len+3 = synthesis insert. Failing on
 	// the synthesis insert proves the mapping row, the reserved attempt row, AND
 	// every member job row roll back together.
-	failing := &failingExecer{inner: conn, failAt: len(members) + 5}
+	failing := &failingExecer{inner: conn, failAt: len(members) + 3}
 	_, _, _, err = db.createCIPanelRunTx(ctx, failing, "o/r", 11, "atomicsha", members, synthesis, machineID, time.Now())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "insert panel synthesis")

@@ -131,8 +131,7 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   attempt_count INTEGER,
   synthesis_agent TEXT,
   synthesis_model TEXT,
-  allow_stale_post INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(github_repo, pr_number, head_sha)
+  allow_stale_post INTEGER NOT NULL DEFAULT 0
 );
 
 -- ci_pr_review_attempts holds local CI-poller retry state keyed by
@@ -1225,6 +1224,10 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("add allow_stale_post column: %w", err)
 		}
+	}
+
+	if err := db.migrateCIPanelHistory(); err != nil {
+		return fmt.Errorf("migrate CI panel history: %w", err)
 	}
 
 	// Run sync-related migrations
