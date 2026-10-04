@@ -933,14 +933,12 @@ func resolveRerunOpts(
 		job.BackupModel = job.BudgetOriginalBackupModel
 	}
 	resolutionPath := job.RepoPath
-	if job.WorktreePath != "" {
-		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
-		if worktreePath == "" {
-			if !job.IsGoalReviewJob() {
-				return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
-			}
-		} else {
-			resolutionPath = worktreePath
+	if job.IsGoalReviewJob() {
+		resolutionPath = GoalReviewConfigRepoPath(job)
+	} else if job.WorktreePath != "" {
+		resolutionPath = validatedWorktreePath(job.WorktreePath, job.RepoPath)
+		if resolutionPath == "" {
+			return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
 		}
 	}
 

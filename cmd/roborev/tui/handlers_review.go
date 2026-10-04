@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -216,7 +217,9 @@ func rerunAgentEligible(job *storage.ReviewJob) bool {
 
 func (m model) availableRerunAgents(job *storage.ReviewJob) ([]string, error) {
 	repoPath := job.RepoPath
-	if job.WorktreePath != "" {
+	if job.IsGoalReviewJob() {
+		repoPath = daemon.GoalReviewConfigRepoPath(job)
+	} else if job.WorktreePath != "" {
 		repoPath = job.WorktreePath
 	}
 	repoCfg, err := config.LoadRepoConfig(repoPath)
