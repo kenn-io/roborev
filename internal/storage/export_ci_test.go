@@ -162,7 +162,7 @@ func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
 	require.True(t, runCreated)
 	panel, err := db.GetCIPanelByPRSHA("o/r", 70, "sha-cascade-pre")
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted, "", ""))
 	// Simulate a row finalized before the snapshot columns existed: clear
 	// the snapshot so only the live synthesis job carries the model.
 	_, err = db.Exec(`UPDATE ci_pr_panels
@@ -216,7 +216,7 @@ func seedPostedPanel(t *testing.T, db *DB, pr int, sha, outcome string) *CIPanel
 	require.NoError(t, err)
 	require.True(t, created)
 	panel, _ := seedPanelRunForRepo(t, db, repo.ID, "o/r", pr, sha)
-	require.NoError(t, db.MarkPanelPosted(panel.ID, outcome))
+	require.NoError(t, db.MarkPanelPosted(panel.ID, outcome, "", ""))
 	got, err := db.GetCIPanelByPRSHA("o/r", pr, sha)
 	require.NoError(t, err)
 	return got
@@ -327,7 +327,7 @@ func TestExportCIMetricsSurvivesCascadeRepoDeletion(t *testing.T) {
 
 	panel, err := db.GetCIPanelByPRSHA("o/r", 42, "sha-cascade")
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted))
+	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted, "", ""))
 
 	require.NoError(t, db.DeleteRepo(repo.ID, true))
 

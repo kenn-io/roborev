@@ -102,7 +102,7 @@ func TestReconcilePanelPostingNoop(t *testing.T) {
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 22, "headrec333", "base..headrec333",
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding T"}})
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding T.")
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
 
 	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
 

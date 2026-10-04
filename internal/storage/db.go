@@ -131,7 +131,9 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   attempt_count INTEGER,
   synthesis_agent TEXT,
   synthesis_model TEXT,
-  allow_stale_post INTEGER NOT NULL DEFAULT 0
+  allow_stale_post INTEGER NOT NULL DEFAULT 0,
+  final_status_state TEXT NOT NULL DEFAULT '',
+  final_status_description TEXT NOT NULL DEFAULT ''
 );
 
 -- ci_pr_review_attempts holds local CI-poller retry state keyed by
@@ -1228,6 +1230,18 @@ func (db *DB) migrate() error {
 
 	if err := db.migrateCIPanelHistory(); err != nil {
 		return fmt.Errorf("migrate CI panel history: %w", err)
+	}
+	// Final status delivery was added after panel history. Existing history
+	// tables need the same columns as fresh databases, without a rebuild.
+	for _, name := range []string{"final_status_state", "final_status_description"} {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_panels') WHERE name = ?`, name).Scan(&count); err != nil {
+			return fmt.Errorf("check %s column: %w", name, err)
+		}
+		if count == 0 {
+			if _, err := db.Exec(`ALTER TABLE ci_pr_panels ADD COLUMN ` + name + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add %s column: %w", name, err)
+			}
+		}
 	}
 
 	// Run sync-related migrations

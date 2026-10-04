@@ -118,6 +118,12 @@ exhausted retries set error. Canceling a rerun or its automatic retry preserves
 the delivered review and does not cause the normal poll to review that commit
 again.
 
+If GitHub rejects a final status after accepting the review comment, polling
+retries the status without posting the comment again, including after a daemon
+restart. Retry follows normal repository discovery and configuration; removing a
+repository from polling stops its status retries. A newer run or a successful
+skip supersedes an undelivered final status from the previous run.
+
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a
 configured skip label. This waives review while the label remains. Skipping

@@ -34,7 +34,7 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 			} else {
 				h.markJobFailed(t, synth.ID, "no member output")
 			}
-			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome))
+			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome, "", ""))
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 
@@ -188,7 +188,7 @@ func TestCIPanelRerunDoesNotPostToAdvancedHead(t *testing.T) {
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "old-head", "base..old-head",
 		[]jobSpec{{Agent: "test", Status: "failed", Error: "model unavailable"}})
 	h.markJobFailed(t, synth.ID, "no member output")
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted, "", ""))
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
@@ -236,7 +236,7 @@ func TestCIPollerRestartKeepsNonFailureOutcomesTerminal(t *testing.T) {
 			// Prior attempts may have failed even when the final outcome is empty.
 			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 7, "head-a", "genuine", "old failure",
 				&panel.PanelRunUUID, time.Now(), true))
-			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, tc.outcome))
+			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, tc.outcome, "", ""))
 			require.NoError(t, h.Poller.Start())
 			h.Poller.Stop()
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
@@ -260,7 +260,7 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 			if successorState == "done" {
 				panel, err := h.DB.GetCIPanelByRunUUID(*rerun.Body.RunUUID)
 				require.NoError(t, err)
-				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted))
+				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted, "", ""))
 			}
 			// API cancellation broadcasts asynchronously; its event can arrive
 			// after a rerun has taken ownership of the same PR HEAD.
