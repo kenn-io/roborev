@@ -633,7 +633,8 @@ func (db *DB) claimJobAttempt(
 	// This prevents race conditions where two workers select the same job
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?
+		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
+		    session_isolated = 0
 		WHERE id = (
 			SELECT id FROM review_jobs
 			WHERE status = 'queued'
@@ -849,6 +850,28 @@ func (db *DB) MarkClassifyAgentInvoked(
 		  AND status = 'running'
 		  AND worker_id = ?
 	`, agent, nullString(model), cmdLine, jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// IsolateJobSession clears inherited resume metadata and marks this attempt's
+// session ineligible for reuse, including sessions later found by usage backfill.
+func (db *DB) IsolateJobSession(jobID int64, workerID string) error {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    session_isolated = 1, updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
 	if err != nil {
 		return err
 	}

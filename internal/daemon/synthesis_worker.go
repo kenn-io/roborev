@@ -395,11 +395,26 @@ func (wp *WorkerPool) runSynthesisAgent(
 		// Synthesis follows the same isolation policy as its member reviews.
 		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
 			checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
+			if err != nil {
+				return reviewpkg.SynthesisCheckout{}, err
+			}
+			configRepoPath := ""
+			if checkout.isolatedLocalReview {
+				if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
+					checkout.cleanup()
+					return reviewpkg.SynthesisCheckout{}, fmt.Errorf("clear synthesis session: %w", err)
+				}
+				job.SessionID = ""
+				job.ResumeSourceJobUUID = nil
+				checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+				configRepoPath = checkout.resolvedConfigRepoPath()
+			}
 			return reviewpkg.SynthesisCheckout{
-				RepoPath: checkout.agentRepoPath,
-				GitRef:   job.GitRef,
-				Cleanup:  checkout.cleanup,
-			}, err
+				RepoPath:       checkout.agentRepoPath,
+				ConfigRepoPath: configRepoPath,
+				GitRef:         job.GitRef,
+				Cleanup:        checkout.cleanup,
+			}, nil
 		},
 	})
 	sessionWriter.Flush()

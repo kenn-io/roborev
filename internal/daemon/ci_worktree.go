@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/roborev/internal/procutil"
 )
 
+// The CI names and on-disk markers are also used by opt-in local exact
+// checkouts, so both paths share startup recovery without a layout migration.
 const (
 	ciWorktreeDirName    = "ci-worktrees"
 	ciWorktreePrefix     = "roborev-ci-"

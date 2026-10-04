@@ -96,3 +96,44 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestSynthesisUsesConfigPathResolvedWithCheckout(t *testing.T) {
+	repo := t.TempDir()
+	testutil.InitTestGitRepo(t, repo)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, ".roborev.toml"),
+		[]byte("max_prompt_size=64\nsnapshot_dir='review-snapshots'\n"),
+		0o600,
+	))
+	caller := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(caller, ".roborev.toml"),
+		[]byte("max_prompt_size=128\n"),
+		0o600,
+	))
+	reviews := []ReviewResult{{Status: ResultDone, Output: strings.Repeat("finding ", 100)}}
+	fullPrompt := BuildSynthesisPrompt(reviews, "")
+	a := &fileSynthesisAgent{}
+	a.self = a
+	a.read = func(gotRepo, prompt string) (string, error) {
+		assert.Equal(t, repo, gotRepo)
+		assert.Contains(t, prompt, "Read the complete task prompt")
+		files, err := filepath.Glob(filepath.Join(repo, "review-snapshots", "*", "prompt.md"))
+		require.NoError(t, err)
+		require.Len(t, files, 1)
+		content, err := os.ReadFile(files[0])
+		require.NoError(t, err)
+		assert.Equal(t, fullPrompt, string(content))
+		return `{"schema_version":2,"summary":"combined","verdict":"pass","findings":[]}`, nil
+	}
+
+	_, err := RunSynthesisAgent(context.Background(), a, reviews, fullPrompt, "", nil, SynthesisHooks{
+		ConfigRepoPath: caller,
+		GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
+		Checkout: func() (SynthesisCheckout, error) {
+			require.NoError(t, os.RemoveAll(caller))
+			return SynthesisCheckout{RepoPath: repo, ConfigRepoPath: repo}, nil
+		},
+	})
+	require.NoError(t, err)
+}

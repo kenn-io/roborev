@@ -991,9 +991,10 @@ overrides the global setting, including an explicit `false`. The default is
 - Commit reviews, range reviews, and their panel synthesis jobs use a checkout
     at the reviewed commit (the head of the range). This includes post-commit
     reviews.
-- Agents and temporary prompt files use the daemon-owned checkout. The original
-    linked worktree can be removed while the agent runs. The detached checkout
-    still shares the repository's Git objects; keep that object store available.
+- Agents, prompt Git reads, and temporary prompt files use the daemon-owned
+    checkout. The original linked worktree can be removed while the agent runs.
+    The detached checkout still shares the repository's Git objects; keep that
+    object store available.
 - The job keeps its original repository, branch, and worktree identity. Internal
     checkout paths are not substituted into events or filtering.
 - Review configuration still comes from the source checkout. If that checkout is
@@ -1003,6 +1004,17 @@ overrides the global setting, including an explicit `false`. The default is
 - Each attempt gets its own checkout, removed after success, failure, or
     cancellation. Daemon startup cleans up checkouts left by an interrupted
     daemon.
+
+Isolated attempts start fresh agent sessions even when `reuse_review_session` is
+enabled. Their sessions remain available for usage accounting but are never
+reused by later reviews, including after isolation is disabled. Each retry or
+backup-agent attempt resolves `isolate_reviews` again; a later attempt that runs
+without isolation can produce a reusable session.
+
+After preparing the checkout, the daemon resolves the configuration path again
+so it can use the main repository if the source worktree was removed during
+setup. Configuration changes apply to subsequent attempts without restarting the
+daemon.
 
 Queued jobs and retries still need the repository path recorded on the job. For
 a worktree linked to a main checkout, keep that main checkout available. For a

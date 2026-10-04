@@ -545,19 +545,55 @@ func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
 }
 
 type preparedJobCheckout struct {
-	// promptRepoPath is the trusted checkout used for prompt-side config,
-	// excludes, max-prompt sizing, and snapshot_dir config.
+	// promptRepoPath is the checkout used for prompt Git reads. Local isolated
+	// reviews use the daemon-owned detached checkout here.
 	promptRepoPath string
+	// configRepoPath is the checkout used to resolve repo-local review policy
+	// and configuration. It may be the caller worktree while that checkout is
+	// valid, then the main repo if the caller has gone away.
+	configRepoPath string
 	// agentRepoPath is the checkout used as the agent cwd.
 	agentRepoPath string
 	// snapshotTarget controls where oversized diff snapshot files are written.
-	// Isolated jobs write them into the exact agent checkout while resolving
-	// snapshot_dir from the trusted prompt checkout.
+	// Isolated jobs write snapshots into the agent checkout and resolve
+	// snapshot_dir from the trusted config checkout.
 	snapshotTarget prompt.SnapshotTarget
 	// eventWorktreePath is the caller-provided worktree path safe to expose
 	// to event consumers and hooks. Internal checkouts must stay private.
-	eventWorktreePath string
-	cleanup           func()
+	eventWorktreePath   string
+	cleanup             func()
+	isolatedLocalReview bool
+}
+
+func (checkout preparedJobCheckout) resolvedConfigRepoPath() string {
+	if checkout.configRepoPath != "" {
+		return checkout.configRepoPath
+	}
+	return checkout.promptRepoPath
+}
+
+func cleanupStaleSnapshotsForJob(
+	builder *prompt.Builder,
+	checkout preparedJobCheckout,
+	repoID int64,
+) error {
+	if checkout.isolatedLocalReview {
+		builder = builder.ForRepo(checkout.resolvedConfigRepoPath(), repoID)
+	}
+	return builder.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge)
+}
+
+func (wp *WorkerPool) refreshIsolatedReviewConfigPath(
+	workerID string,
+	checkout preparedJobCheckout,
+	job *storage.ReviewJob,
+) preparedJobCheckout {
+	if !checkout.isolatedLocalReview {
+		return checkout
+	}
+	checkout.configRepoPath = resolveEffectiveRepoPath(workerID, job)
+	checkout.snapshotTarget.ConfigRepoPath = checkout.configRepoPath
+	return checkout
 }
 
 func (wp *WorkerPool) prepareJobCheckout(
@@ -568,10 +604,11 @@ func (wp *WorkerPool) prepareJobCheckout(
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
-	checkout := preparedJobCheckout{promptRepoPath: job.RepoPath}
+	checkout := preparedJobCheckout{promptRepoPath: job.RepoPath, configRepoPath: job.RepoPath}
 	if !requiresCIWorktree {
 		repoPath := resolveEffectiveRepoPath(workerID, job)
 		checkout.promptRepoPath = repoPath
+		checkout.configRepoPath = repoPath
 		checkout.agentRepoPath = repoPath
 		if job.WorktreePath != "" && repoPath == job.WorktreePath {
 			checkout.eventWorktreePath = job.WorktreePath
@@ -583,14 +620,18 @@ func (wp *WorkerPool) prepareJobCheckout(
 		if !committedReview || !config.ResolveIsolateReviews(repoPath, cfg) {
 			return checkout, nil
 		}
+		checkout.isolatedLocalReview = true
 	}
 	agentRepoPath, cleanup, err := wp.createExactCheckout(ctx, workerID, job)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
 	checkout.agentRepoPath = agentRepoPath
+	if checkout.isolatedLocalReview {
+		checkout.promptRepoPath = agentRepoPath
+	}
 	checkout.snapshotTarget = prompt.SnapshotTarget{
-		RepoPath: agentRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+		RepoPath: agentRepoPath, ConfigRepoPath: checkout.configRepoPath,
 	}
 	checkout.cleanup = cleanup
 	return checkout, nil
@@ -604,7 +645,7 @@ func (wp *WorkerPool) promptBuilderForJob(
 ) (*prompt.Builder, error) {
 	builder := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
 	if job.IsCIReview() && strings.TrimSpace(job.CIBaseBranch) != "" {
-		repoConfig, err := loadCIRepoConfig(checkout.promptRepoPath)
+		repoConfig, err := loadCIRepoConfig(checkout.resolvedConfigRepoPath())
 		if err != nil {
 			if !config.IsConfigParseError(err) {
 				return nil, fmt.Errorf("load CI review config: %w", err)
@@ -629,10 +670,11 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
 		WithContext(ctx).
 		ForRepo(checkout.promptRepoPath, job.RepoID).
+		WithConfigRepoPath(checkout.resolvedConfigRepoPath()).
 		WithStructuredOutput(reviewJobUsesStructuredOutput(job))
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
-			kata.NewCLIClient(checkout.promptRepoPath),
+			kata.NewCLIClient(checkout.resolvedConfigRepoPath()),
 		)
 	}
 	return builder
@@ -923,8 +965,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// CI panel jobs and opted-in local reviews run in detached worktrees.
-	// Prompt config stays tied to the source checkout, while snapshots are
-	// written where the agent can read them.
 	checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
 	if checkout.cleanup != nil {
 		defer checkout.cleanup()
@@ -934,11 +974,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare checkout: %v", err))
 		return
 	}
+	// Session resume can retain the old checkout cwd. Clear both persisted and
+	// in-memory metadata before capturing a fresh session for this attempt.
+	if checkout.isolatedLocalReview {
+		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("clear review session: %v", err))
+			return
+		}
+		job.SessionID = ""
+		job.ResumeSourceJobUUID = nil
+	}
+	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
 	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
-	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
+	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
 	var reviewPrompt string
@@ -954,7 +1005,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		promptToPersist = storedPromptValue
 		var cleanup func()
 		excludes := config.ResolveExcludePatterns(
-			ctx, checkout.promptRepoPath, cfg, job.ReviewType,
+			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 		)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
 			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
@@ -994,7 +1045,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
 		if effectiveMinSeverity == "" && job.FrozenExperimentPlan == nil {
-			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.promptRepoPath, cfg)
+			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.resolvedConfigRepoPath(), cfg)
 			if resErr != nil {
 				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
 				wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
@@ -1015,7 +1066,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
 			excludes := config.ResolveExcludePatterns(
-				ctx, checkout.promptRepoPath, cfg, job.ReviewType,
+				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			reviewPrompt, err = pb.Build(
 				job.GitRef, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
@@ -1076,7 +1127,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job,
 		cfg,
 	)
-	if job.SessionID != "" {
+	if job.SessionID != "" || checkout.isolatedLocalReview {
 		if sa, ok := a.(agent.SessionAgent); ok {
 			a = sa.WithSessionID(job.SessionID)
 		}
@@ -1172,7 +1223,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
 		reviewPrompt, job.GitRef, cfg.ReviewContextCount, prompt.SnapshotTarget{
-			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
 		},
 	)
 	if priorErr != nil {
@@ -1185,7 +1236,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	reviewPrompt = priorResult.Prompt
 
 	preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
-		RepoPath: reviewRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+		RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
 	})
 	if prepareErr != nil {
 		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
