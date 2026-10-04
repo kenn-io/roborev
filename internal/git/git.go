@@ -2522,9 +2522,14 @@ func readGitConfig(repoPath, key string) string {
 func GetMergeBase(repoPath, ref1, ref2 string) (string, error) {
 	cmd := newGitCmd("merge-base", ref1, ref2)
 	cmd.Dir = repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("git merge-base: %w: %s", err, msg)
+		}
 		return "", fmt.Errorf("git merge-base: %w", err)
 	}
 

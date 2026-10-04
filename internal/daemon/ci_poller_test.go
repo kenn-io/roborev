@@ -95,7 +95,7 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 func (h *ciPollerHarness) stubProcessPRGit() {
 	stubCIPollerGitHubSideEffects(h.Poller)
 	h.Poller.gitFetchFn = func(context.Context, string, []string) error { return nil }
-	h.Poller.gitFetchPRHeadFn = func(context.Context, string, int, []string) error { return nil }
+	h.Poller.gitFetchPRHeadFn = func(context.Context, string, string, []string) error { return nil }
 	h.Poller.mergeBaseFn = func(_, _, ref2 string) (string, error) { return "base-" + ref2, nil }
 	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
 }
@@ -2368,7 +2368,7 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	p.gitFetchFn = func(context.Context, string, []string) error {
 		return nil
 	}
-	p.gitFetchPRHeadFn = func(context.Context, string, int, []string) error {
+	p.gitFetchPRHeadFn = func(context.Context, string, string, []string) error {
 		return nil
 	}
 	p.mergeBaseFn = func(_, _, ref2 string) (string, error) {
@@ -3861,7 +3861,7 @@ func newCIPanelGitHarness(t *testing.T) (*CIPoller, *storage.DB, *storage.Repo, 
 
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 	p.gitFetchFn = func(context.Context, string, []string) error { return nil }
-	p.gitFetchPRHeadFn = func(context.Context, string, int, []string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, string, []string) error { return nil }
 	p.agentResolverFn = func(name string) (string, error) { return name, nil }
 	p.isPROpenFn = func(string, int) bool { return true }
 	stubCIPollerGitHubSideEffects(p)
