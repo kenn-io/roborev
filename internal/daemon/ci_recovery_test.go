@@ -299,6 +299,11 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 	for _, outcome := range []string{storage.PanelOutcomeNoReviewPosted, storage.PanelOutcomeAbandoned} {
 		t.Run(outcome, func(t *testing.T) {
 			h, server := newCIHealthHarness(t)
+			h.stubProcessPRGit()
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+				return []ghPR{{Number: 7, HeadRefOid: "head-a", BaseRefName: "main"}}, nil
+			}
 			comments := h.CaptureComments()
 			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 				[]jobSpec{{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}})
@@ -308,11 +313,11 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 			} else {
 				h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 			}
-			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			h.Poller.poll(context.Background())
 			require.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
-			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			h.Poller.poll(context.Background())
 			assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 				"queueing a rerun does not deliver a review")
 
@@ -324,7 +329,7 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 			h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
 			h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
 			require.Len(t, *comments, 1)
-			require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", nil, h.Cfg))
+			h.Poller.poll(context.Background())
 			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 		})
 	}
