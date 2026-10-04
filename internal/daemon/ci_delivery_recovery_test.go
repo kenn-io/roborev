@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -140,6 +141,65 @@ func TestCIPanelFinalStatusDoesNotOverwriteSkip(t *testing.T) {
 	h.Poller.poll(context.Background())
 	assert.Equal(1, finalAttempts, "a successful skip supersedes the queued error")
 	assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review skipped: label skip-review"}}, statuses)
+}
+
+func TestCIPanelCanceledSuccessorRejectsFreshRerunRequest(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
+	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
+	var statuses []capturedStatus
+	failCancellation := true
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		if desc == "Review canceled" && failCancellation {
+			return errors.New("GitHub unavailable")
+		}
+		statuses = append(statuses, capturedStatus{repo, sha, state, desc})
+		return nil
+	}
+	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+	server.SetCIPoller(h.Poller)
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	firstID, secondID := testUUID("first-rerun"), testUUID("second-rerun")
+	firstRequest := &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID, RequestID: &firstID}}
+	first, err := server.humaRerunJob(context.Background(), firstRequest)
+	require.NoError(t, err)
+	_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: first.Body.JobID}})
+	require.NoError(t, err)
+	canceled, err := h.DB.GetJobByID(first.Body.JobID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusCanceled, canceled.Status)
+	active, err := h.DB.GetCIPanelBySynthesisJobID(canceled.ID)
+	require.NoError(t, err)
+	require.Nil(t, active.RetiredAt, "failed cancellation delivery still owns the target")
+
+	request := []byte(fmt.Sprintf(`{"job_id":%d,"request_id":%q}`, synth.ID, secondID))
+	response := serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	_, found, err := h.DB.GetRerunRequest(secondID, synth.ID)
+	require.NoError(t, err)
+	assert.False(found, "a rejected request must remain available for retry")
+	replayed, err := server.humaRerunJob(context.Background(), firstRequest)
+	require.NoError(t, err)
+	assert.Equal(first.Body.JobID, replayed.Body.JobID, "accepted request replay retains its original result")
+
+	failCancellation = false
+	h.Poller.handleReviewCanceled(ciEvent(canceled.ID, "review.canceled"))
+	response = serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var next RerunJobOutput
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &next.Body))
+	assert.NotEqual(canceled.ID, next.Body.JobID, "retry must create fresh work after cancellation finishes")
+	job, err := h.DB.GetJobByID(next.Body.JobID)
+	require.NoError(t, err)
+	assert.Equal(storage.JobStatusQueued, job.Status)
+	assert.Equal([]capturedStatus{
+		{Repo: "acme/api", SHA: "head-a", State: "pending", Desc: "Review in progress"},
+		{Repo: "acme/api", SHA: "head-a", State: "error", Desc: "Review canceled"},
+		{Repo: "acme/api", SHA: "head-a", State: "pending", Desc: "Review in progress"},
+	}, statuses)
 }
 
 func TestCIPanelCancellationRecoveryAfterRestart(t *testing.T) {

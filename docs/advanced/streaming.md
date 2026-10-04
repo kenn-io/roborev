@@ -124,6 +124,10 @@ unfinished review delivery, including for repositories removed from polling. If
 a final status write fails, polling retries it without posting the review
 comment again. A newer rerun supersedes any undelivered status from the old run.
 
+A fresh rerun request for the original review returns a conflict while its
+canceled successor still owns the target. Retry the request after cancellation
+delivery finishes.
+
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a
 configured skip label. This waives review while the label remains. Skipping
