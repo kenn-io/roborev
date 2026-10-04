@@ -83,6 +83,7 @@ type Builder struct {
 	ctx            context.Context
 	repoPath       string
 	configRepoPath string
+	planSkillRoot  string
 	repoID         int64
 	kataClient     kata.Client
 	// structuredOutput appends the JSON output instruction to built-in
@@ -165,6 +166,14 @@ func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
+	return &next
+}
+
+// WithPlanSkillRoot sets the local skill directory used when assembling a
+// plan prompt from another checkout, such as a detached target-branch worktree.
+func (b *Builder) WithPlanSkillRoot(repoPath string) *Builder {
+	next := *b
+	next.planSkillRoot = repoPath
 	return &next
 }
 
@@ -1334,7 +1343,7 @@ If they were rejected for being over-engineered, keep it simpler.
 
 const UserCommentsHeader = `## User Comments
 
-The following comments were left by the developer on this review.
+The following comments were left by the developer on this or a related review.
 Take them into account when applying fixes — they may flag false
 positives, provide additional context, or request specific approaches.
 
@@ -1344,15 +1353,17 @@ func IsToolResponse(r storage.Response) bool {
 	return strings.HasPrefix(r.Responder, "roborev-")
 }
 
-func SplitResponses(responses []storage.Response) (toolAttempts, userComments []storage.Response) {
+func SplitResponses(responses []storage.Response) (toolAttempts, userComments, plans []storage.Response) {
 	for _, r := range storage.PromptTrustedResponses(responses) {
-		if IsToolResponse(r) {
+		if r.Responder == "roborev-plan" {
+			plans = append(plans, r)
+		} else if IsToolResponse(r) {
 			toolAttempts = append(toolAttempts, r)
 		} else {
 			userComments = append(userComments, r)
 		}
 	}
-	return toolAttempts, userComments
+	return toolAttempts, userComments, plans
 }
 
 func FormatToolAttempts(attempts []storage.Response) string {
@@ -1397,7 +1408,8 @@ func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []
 	)
 
 	if len(previousAttempts) > 0 {
-		toolAttempts, userComments := SplitResponses(previousAttempts)
+		toolAttempts, userComments, plans := SplitResponses(previousAttempts)
+		view.PreviousPlans = FormatPlans(plans)
 		if len(toolAttempts) > 0 {
 			view.ToolAttempts = make([]addressAttemptView, 0, len(toolAttempts))
 			for _, attempt := range toolAttempts {

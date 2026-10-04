@@ -228,7 +228,9 @@ Examples:
 			}
 			if review.Job != nil {
 				if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
-					fmt.Printf("Tokens: %s\n", tu.FormatSummary())
+					if summary := tu.FormatSummary(); summary != "" {
+						fmt.Printf("Tokens: %s\n", summary)
+					}
 				}
 			}
 			if s := review.FileCoverage.FormatSummary(); s != "" {

@@ -250,11 +250,15 @@ func (m model) renderReviewView() string {
 
 	// Render inline fix panel when open
 	if m.reviewFixPanelOpen {
+		planState := "off"
+		if m.fixPlanFirst {
+			planState = "on"
+		}
 		innerWidth := max(m.width-4, 18) // box inner width; total visual width = innerWidth+2 (borders)
 
 		if m.reviewFixPanelFocused {
 			// Label line
-			label := "Fix: enter instructions (or leave blank for default)"
+			label := "Fix: enter instructions | Plan first: " + planState
 			if runewidth.StringWidth(label) > m.width-1 {
 				label = runewidth.Truncate(label, m.width-1, "")
 			}
@@ -285,11 +289,11 @@ func (m model) renderReviewView() string {
 				b.WriteString(line)
 				b.WriteString("\x1b[K\n")
 			}
-			b.WriteString(helpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
+			b.WriteString(helpStyle.Render("ctrl+p: plan | tab: scroll review | enter: submit | esc: cancel"))
 			b.WriteString("\x1b[K\n")
 		} else {
 			// Label line (dimmed)
-			b.WriteString(statusStyle.Render("Fix (Tab to focus)"))
+			b.WriteString(statusStyle.Render("Fix (Tab to focus) | Plan first: " + planState))
 			b.WriteString("\x1b[K\n")
 
 			inputDisplay := m.fixPromptText

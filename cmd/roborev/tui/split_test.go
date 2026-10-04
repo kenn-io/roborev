@@ -8355,3 +8355,26 @@ func TestResizeDuringTransientViewResumesPaneLogOnReturn(t *testing.T) {
 	assert.False(got.paneLogPaused)
 	assert.NotNil(cmd2, "the resumed tail's first fetch must be dispatched")
 }
+
+func TestFixPanelPaneLinesShowsPlanFirstStateAndToggleHint(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := splitModel(withReview(splitTestReview()))
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+
+	lines := m.renderReviewFixPanelPaneLines(96)
+	assert.Len(lines, reviewFixPanelPaneReserve)
+	assert.Contains(lines[0], "Plan first: off")
+	assert.Contains(lines[4], "ctrl+p: plan")
+
+	m.fixPlanFirst = true
+	lines = m.renderReviewFixPanelPaneLines(96)
+	assert.Contains(lines[0], "Plan first: on")
+
+	m.reviewFixPanelFocused = false
+	lines = m.renderReviewFixPanelPaneLines(96)
+	assert.Len(lines, reviewFixPanelPaneReserve)
+	assert.Contains(lines[0], "Plan first: on")
+	assert.NotContains(lines[4], "ctrl+p: plan")
+}

@@ -86,6 +86,83 @@ func TestTokenCostReconcilerDiscoversPersistedCandidateAtStartup(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 }
 
+func TestTokenCostReconcilerAggregatesPlanPhaseSessions(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"total_output_tokens":40,"provider_session_ids":["planner-session","implementation-session"]}`)
+	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	var fetchedSessions []string
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+		fetchedSessions = append(fetchedSessions, sessionID)
+		costs := map[string]float64{"planner-session": 0.13, "implementation-session": 0.29}
+		return &tokens.Usage{CostUSD: costs[sessionID], HasCost: true}, nil
+	}
+
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	require.NoError(t, err)
+	assert.True(t, resolved)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, fetchedSessions)
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, usage.ProviderSessionIDs)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestTokenCostReconcilerPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"total_output_tokens":40,"provider_session_ids":["planner-session","implementation-session"],"expected_provider_sessions":2}`)
+	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+		if sessionID == "planner-session" {
+			return &tokens.Usage{CostUSD: 0.13, HasCost: true}, nil
+		}
+		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
+	}
+
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	require.NoError(t, err)
+	assert.True(t, resolved)
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestTokenCostReconcilerDoesNotPriceMissingPlanSession(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"provider_session_ids":["implementation-session"],"expected_provider_sessions":2}`)
+	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	fetches := 0
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		fetches++
+		return &tokens.Usage{CostUSD: 0.29, HasCost: true}, nil
+	}
+
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	require.NoError(t, err)
+	assert.False(t, resolved)
+	assert.Zero(t, fetches)
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.False(t, usage.HasCost)
+}
+
 func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
@@ -133,6 +210,58 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 		return updated.SessionID == "recovered-session" &&
 			usage != nil && usage.HasCost
 	}, time.Second, 5*time.Millisecond)
+}
+
+func TestTokenCostReconcilerPreservesExpectedSessionsFromPlannerOnlyLog(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	saved, err := tc.DB.SaveRunningJobTokenUsage(
+		job.ID, testWorkerID, job.StartedAtRaw,
+		`{"thread_id":"planner-session","provider_session_ids":["planner-session"],`+
+			`"expected_provider_sessions":2}`,
+	)
+	require.NoError(t, err)
+	assert.True(t, saved)
+	require.NoError(t, tc.DB.CancelJob(job.ID))
+	released, err := tc.DB.ReleaseCanceledJob(job.ID, testWorkerID)
+	require.NoError(t, err)
+	assert.True(t, released)
+	writeCodexUsageLog(t, job, "planner-session", 100, 0, 15)
+
+	// Reconciliation's startup pass recovers the planner-only log after the
+	// canceled attempt has been released from its former worker.
+	tc.Pool.recoverTokenUsageLogs(context.Background())
+
+	recovered, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "planner-session", recovered.SessionID)
+	usage := tokens.ParseJSON(recovered.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, []string{"planner-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+
+	fetches := 0
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+		fetches++
+		assert.Equal(t, "planner-session", sessionID)
+		return &tokens.Usage{HasCost: true, CostUSD: 0.13}, nil
+	}
+	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	require.NoError(t, err)
+	assert.False(t, resolved)
+	assert.Zero(t, fetches)
+
+	unchanged, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage = tokens.ParseJSON(unchanged.TokenUsage)
+	require.NotNil(t, usage)
+	assert.False(t, usage.HasCost)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
 }
 
 func TestTokenCostReconcilerRejectsJobLogFromPriorAttempt(t *testing.T) {

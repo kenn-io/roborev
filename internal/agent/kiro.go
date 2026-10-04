@@ -142,6 +142,15 @@ func (a *KiroAgent) buildArgs(agenticMode bool) []string {
 
 func (a *KiroAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Kiro's representative read-only planning command.
+func (a *KiroAgent) PlanningCommandLine() string {
+	return a.commandLine(false)
+}
+
+func (a *KiroAgent) commandLine(agenticMode bool) string {
 	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ") + " -- <prompt>"
 }
@@ -154,7 +163,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		)
 	}
 
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	// kiro-cli chat --no-interactive [--trust-all-tools] <prompt>
 	// The prompt is passed as a positional argument

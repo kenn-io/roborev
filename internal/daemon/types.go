@@ -688,6 +688,7 @@ type RemapOutput struct {
 
 // FixJobRequest is the request body for POST /api/job/fix.
 type FixJobRequest struct {
+	PlanFirst   bool   `json:"plan_first,omitempty"`
 	ParentJobID int64  `json:"parent_job_id"`
 	Prompt      string `json:"prompt,omitempty"`
 	GitRef      string `json:"git_ref,omitempty"`

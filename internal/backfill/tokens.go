@@ -100,6 +100,15 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 	if merged.EventOffset == 0 {
 		merged.EventOffset = existing.EventOffset
 	}
+	merged.ProviderSessionIDs = mergeProviderSessionIDs(
+		existing.ProviderSessionIDs, merged.ProviderSessionIDs,
+	)
+	if merged.ExpectedProviderSessions < existing.ExpectedProviderSessions {
+		merged.ExpectedProviderSessions = existing.ExpectedProviderSessions
+	}
+	if merged.ExpectedProviderSessions < len(merged.ProviderSessionIDs) {
+		merged.ExpectedProviderSessions = len(merged.ProviderSessionIDs)
+	}
 	// Keep whichever side actually carries dollars rather than the freshest one:
 	// a re-fetch can come back unpriced (agentsview flagging has_cost with no
 	// amount), and letting that overwrite a real recorded figure would lose
@@ -115,6 +124,27 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 		merged.HasCost = true
 	}
 	return &merged
+}
+
+func mergeProviderSessionIDs(existing, fetched []string) []string {
+	if len(existing)+len(fetched) == 0 {
+		return nil
+	}
+	merged := make([]string, 0, len(existing)+len(fetched))
+	seen := make(map[string]struct{}, len(existing)+len(fetched))
+	for _, sessionIDs := range [][]string{existing, fetched} {
+		for _, sessionID := range sessionIDs {
+			if sessionID == "" {
+				continue
+			}
+			if _, ok := seen[sessionID]; ok {
+				continue
+			}
+			seen[sessionID] = struct{}{}
+			merged = append(merged, sessionID)
+		}
+	}
+	return merged
 }
 
 // mergeMissingTokenUsage treats the persisted row as authoritative after a
@@ -152,6 +182,12 @@ func mergeMissingTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.
 	}
 	if merged.EventOffset == 0 {
 		merged.EventOffset = fetched.EventOffset
+	}
+	if len(merged.ProviderSessionIDs) == 0 {
+		merged.ProviderSessionIDs = append([]string(nil), fetched.ProviderSessionIDs...)
+	}
+	if merged.ExpectedProviderSessions == 0 {
+		merged.ExpectedProviderSessions = fetched.ExpectedProviderSessions
 	}
 	if !merged.HasCost && fetched.HasCost {
 		merged.CostUSD = fetched.CostUSD
@@ -290,10 +326,99 @@ func StoreCapturedTokenUsage(
 	return stored, anySaved, nil
 }
 
+// TokenUsageProviderSessions returns the distinct provider sessions represented
+// by a candidate and the number of phases expected in its aggregate.
+func TokenUsageProviderSessions(candidate storage.TokenCostCandidate) ([]string, int) {
+	var sessionIDs []string
+	expectedSessions := 0
+	if usage := tokens.ParseJSON(candidate.TokenUsage); usage != nil {
+		sessionIDs = append(sessionIDs, usage.ProviderSessionIDs...)
+		expectedSessions = usage.ExpectedProviderSessions
+	}
+	sessionIDs = append(sessionIDs, candidate.SessionID)
+	seen := make(map[string]bool, len(sessionIDs))
+	unique := sessionIDs[:0]
+	for _, sessionID := range sessionIDs {
+		if sessionID == "" || seen[sessionID] {
+			continue
+		}
+		seen[sessionID] = true
+		unique = append(unique, sessionID)
+	}
+	if expectedSessions < len(unique) {
+		expectedSessions = len(unique)
+	}
+	return unique, expectedSessions
+}
+
+// AggregateTokenUsages sums usage values while preserving the metadata carried
+// by the last non-empty phase. HasCost is true only when every supplied phase
+// has a recorded cost. Token counts are kept only when every phase has count
+// data, so a cost-only phase cannot make the aggregate look like a complete
+// count total.
+func AggregateTokenUsages(usages []*tokens.Usage) *tokens.Usage {
+	aggregate := &tokens.Usage{}
+	allPriced := len(usages) > 0
+	allHaveTokenCounts := len(usages) > 0
+	hasUsage := false
+	for _, usage := range usages {
+		if usage == nil {
+			allPriced = false
+			allHaveTokenCounts = false
+			continue
+		}
+		if !usage.HasCost {
+			allPriced = false
+		} else {
+			aggregate.CostUSD += usage.CostUSD
+		}
+		if !hasTokenCounts(*usage) {
+			allHaveTokenCounts = false
+		}
+		aggregate.InputTokens += usage.InputTokens
+		aggregate.CachedInputTokens += usage.CachedInputTokens
+		aggregate.CacheCreationTokens += usage.CacheCreationTokens
+		aggregate.OutputTokens += usage.OutputTokens
+		if usage.PeakContextTokens > aggregate.PeakContextTokens {
+			aggregate.PeakContextTokens = usage.PeakContextTokens
+		}
+		if usage.UsageSource != "" {
+			aggregate.UsageSource = usage.UsageSource
+		}
+		if usage.ThreadID != "" {
+			aggregate.ThreadID = usage.ThreadID
+		}
+		aggregate.EventOffset = usage.EventOffset
+		hasUsage = hasUsage || usage.HasUsageData()
+	}
+	if !hasUsage {
+		return nil
+	}
+	if !allHaveTokenCounts {
+		aggregate.InputTokens = 0
+		aggregate.CachedInputTokens = 0
+		aggregate.CacheCreationTokens = 0
+		aggregate.OutputTokens = 0
+		aggregate.PeakContextTokens = 0
+	}
+	aggregate.HasCost = allPriced
+	return aggregate
+}
+
+func hasTokenCounts(usage tokens.Usage) bool {
+	return usage.InputTokens != 0 ||
+		usage.CachedInputTokens != 0 ||
+		usage.CacheCreationTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.PeakContextTokens != 0
+}
+
 func ApplyTokenUsage(
 	db *storage.DB, sessions []SessionUsage, dryRun bool,
 ) (TokenSummary, error) {
-	candidates := make(map[string]storage.TokenCostCandidate)
+	candidates := make(map[int64]storage.TokenCostCandidate)
+	candidatesBySession := make(map[string]int64)
+	ambiguousSessions := make(map[string]bool)
 	var cursor int64
 	for {
 		page, err := db.ListTokenCostCandidates(cursor, 1000, time.Time{})
@@ -304,17 +429,31 @@ func ApplyTokenUsage(
 			break
 		}
 		for _, candidate := range page {
-			candidates[candidate.SessionID] = candidate
+			candidates[candidate.JobID] = candidate
+			sessionIDs, _ := TokenUsageProviderSessions(candidate)
+			for _, sessionID := range sessionIDs {
+				if previous, ok := candidatesBySession[sessionID]; ok && previous != candidate.JobID {
+					ambiguousSessions[sessionID] = true
+					continue
+				}
+				candidatesBySession[sessionID] = candidate.JobID
+			}
 		}
 		cursor = page[len(page)-1].JobID
 	}
 
 	summary := TokenSummary{
 		Total:   len(sessions),
-		Results: make([]TokenResult, 0, len(sessions)),
+		Results: make([]TokenResult, len(sessions)),
 	}
+	type usageImportGroup struct {
+		candidate storage.TokenCostCandidate
+		usageByID map[string]*tokens.Usage
+		indexes   []int
+	}
+	groups := make(map[int64]*usageImportGroup)
 	seen := make(map[string]bool)
-	for _, session := range sessions {
+	for index, session := range sessions {
 		result := TokenResult{SessionID: session.SessionID}
 		switch {
 		case session.SessionID == "":
@@ -332,48 +471,101 @@ func ApplyTokenUsage(
 			summary.Skipped++
 		default:
 			seen[session.SessionID] = true
-			job, ok := candidates[session.SessionID]
+			jobID, ok := candidatesBySession[session.SessionID]
 			if !ok {
 				result.Status = ResultSkipped
 				result.Reason = "no eligible job"
 				summary.Skipped++
-				summary.Results = append(summary.Results, result)
+			} else if ambiguousSessions[session.SessionID] {
+				result.Status = ResultSkipped
+				result.Reason = "ambiguous eligible job"
+				summary.Skipped++
+			} else {
+				job := candidates[jobID]
+				result.JobID = job.JobID
+				result.Agent = job.Agent
+				group := groups[jobID]
+				if group == nil {
+					group = &usageImportGroup{
+						candidate: job,
+						usageByID: make(map[string]*tokens.Usage),
+					}
+					groups[jobID] = group
+				}
+				group.usageByID[session.SessionID] = session.Usage
+				group.indexes = append(group.indexes, index)
+			}
+		}
+		summary.Results[index] = result
+	}
+
+	for _, group := range groups {
+		sessionIDs, expected := TokenUsageProviderSessions(group.candidate)
+		if expected > len(sessionIDs) || len(group.usageByID) != expected {
+			markImportGroup(summary.Results, group.indexes, ResultSkipped,
+				"incomplete provider session set", "")
+			summary.Skipped += len(group.indexes)
+			continue
+		}
+		phaseUsages := make([]*tokens.Usage, 0, expected)
+		complete := true
+		for _, sessionID := range sessionIDs {
+			usage, ok := group.usageByID[sessionID]
+			if !ok {
+				complete = false
+				break
+			}
+			phaseUsages = append(phaseUsages, usage)
+		}
+		if !complete {
+			markImportGroup(summary.Results, group.indexes, ResultSkipped,
+				"incomplete provider session set", "")
+			summary.Skipped += len(group.indexes)
+			continue
+		}
+		aggregate := AggregateTokenUsages(phaseUsages)
+		if aggregate == nil {
+			markImportGroup(summary.Results, group.indexes, ResultSkipped,
+				"no usage", "")
+			summary.Skipped += len(group.indexes)
+			continue
+		}
+		aggregate.ThreadID = group.candidate.SessionID
+		aggregate.ProviderSessionIDs = sessionIDs
+		aggregate.ExpectedProviderSessions = expected
+		merged := MergeTokenUsage(group.candidate.TokenUsage, aggregate)
+		if !dryRun {
+			stored, updated, err := StoreMergedTokenUsage(
+				db, CapturedUsage{
+					JobID:             group.candidate.JobID,
+					SessionID:         group.candidate.SessionID,
+					ExistingJSON:      group.candidate.TokenUsage,
+					ExpectedStartedAt: group.candidate.StartedAtRaw,
+				}, aggregate, true,
+			)
+			if err != nil {
+				markImportGroup(summary.Results, group.indexes, ResultFailed, err.Error(), "")
+				summary.Failed += len(group.indexes)
 				continue
 			}
-
-			merged := MergeTokenUsage(job.TokenUsage, session.Usage)
-			result.JobID = job.JobID
-			result.Agent = job.Agent
-			result.Summary = merged.FormatSummary()
-			if !dryRun {
-				stored, updated, err := StoreMergedTokenUsage(
-					db, CapturedUsage{
-						JobID:             job.JobID,
-						SessionID:         job.SessionID,
-						ExistingJSON:      job.TokenUsage,
-						ExpectedStartedAt: job.StartedAtRaw,
-					}, session.Usage, true,
-				)
-				if err != nil {
-					result.Status = ResultFailed
-					result.Reason = err.Error()
-					summary.Failed++
-					summary.Results = append(summary.Results, result)
-					continue
-				}
-				if !updated {
-					result.Status = ResultSkipped
-					result.Reason = "no longer eligible"
-					summary.Skipped++
-					summary.Results = append(summary.Results, result)
-					continue
-				}
-				result.Summary = stored.FormatSummary()
+			if !updated {
+				markImportGroup(summary.Results, group.indexes, ResultSkipped,
+					"no longer eligible", "")
+				summary.Skipped += len(group.indexes)
+				continue
 			}
-			result.Status = ResultUpdated
-			summary.Updated++
+			merged = stored
 		}
-		summary.Results = append(summary.Results, result)
+		markImportGroup(summary.Results, group.indexes, ResultUpdated, "", merged.FormatSummary())
+		summary.Updated += len(group.indexes)
 	}
 	return summary, nil
+}
+
+func markImportGroup(results []TokenResult, indexes []int, status, reason, summary string) {
+	for _, index := range indexes {
+		results[index].Status = status
+		results[index].Reason = reason
+		results[index].Summary = summary
+	}
 }

@@ -79,18 +79,29 @@ func (a *DroidAgent) CommandName() string {
 
 func (a *DroidAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.buildArgs(agenticMode)
+	return a.commandLine(agenticMode, false)
+}
+
+// PlanningCommandLine returns Droid's representative read-only planning command.
+func (a *DroidAgent) PlanningCommandLine() string {
+	return a.commandLine(false, true)
+}
+
+func (a *DroidAgent) commandLine(agenticMode, planning bool) string {
+	args := a.buildArgs(agenticMode, planning)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *DroidAgent) buildArgs(agenticMode bool) []string {
+func (a *DroidAgent) buildArgs(agenticMode, planning bool) []string {
 	args := []string{"exec", "--tag", "roborev"}
 
-	// Set autonomy level based on agentic mode
-	if agenticMode {
-		args = append(args, "--auto", "medium")
-	} else {
-		args = append(args, "--auto", "low")
+	// Droid defaults to read-only. Even --auto low permits file edits.
+	if !planning {
+		if agenticMode {
+			args = append(args, "--auto", "medium")
+		} else {
+			args = append(args, "--auto", "low")
+		}
 	}
 
 	// Set reasoning effort if specified
@@ -103,9 +114,9 @@ func (a *DroidAgent) buildArgs(agenticMode bool) []string {
 
 func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
-	args := a.buildArgs(agenticMode)
+	args := a.buildArgs(agenticMode, planningReadOnly(ctx))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath

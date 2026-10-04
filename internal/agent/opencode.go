@@ -94,12 +94,21 @@ func (a *OpenCodeAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(args, " ")
 }
 
+// PlanningCommandLine returns OpenCode's representative read-only planning command.
+func (a *OpenCodeAgent) PlanningCommandLine() string {
+	args := append(a.buildArgs(), "--agent", "plan")
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *OpenCodeAgent) Review(
 	ctx context.Context,
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
 	args := a.buildArgs()
+	if planningReadOnly(ctx) {
+		args = append(args, "--agent", "plan")
+	}
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "opencode",

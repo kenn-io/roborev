@@ -119,6 +119,14 @@ func TestClaudeBuildArgs(t *testing.T) {
 	})
 }
 
+func TestClaudePlanningCommandLine(t *testing.T) {
+	withUnsafeAgents(t, true)
+	a := NewClaudeAgent("claude").WithAgentic(true).WithReasoning(ReasoningThorough).(*ClaudeAgent)
+	a.SessionID = "implementation-session"
+
+	assert.Equal(t, "claude -p --verbose --output-format stream-json --effort high --allowedTools Read,Glob,Grep --permission-mode plan --tools Read,Glob,Grep --disallowedTools mcp__*", a.PlanningCommandLine())
+}
+
 func TestParseModel(t *testing.T) {
 	valid := []struct {
 		name        string

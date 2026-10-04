@@ -51,6 +51,46 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 	assert.Equal(t, jobs[0].ID, candidates[0].JobID)
 }
 
+func TestSaveRunningJobTokenUsageRequiresCurrentWorkerAttempt(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, jobs := seedJobs(t, db, filepath.Join(t.TempDir(), "running-token-usage"), 1)
+	job, err := db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Equal(t, jobs[0].ID, job.ID)
+
+	saved, err := db.SaveRunningJobTokenUsage(
+		job.ID, "stale-worker", job.StartedAtRaw, `{"provider_session_ids":["planner"]}`,
+	)
+	require.NoError(t, err)
+	assert.False(t, saved)
+
+	saved, err = db.SaveRunningJobTokenUsage(
+		job.ID, "worker-a", job.StartedAtRaw, `{"provider_session_ids":["planner"]}`,
+	)
+	require.NoError(t, err)
+	assert.True(t, saved)
+
+	retried, err := db.RetryJob(job.ID, "worker-a", 3, 0)
+	require.NoError(t, err)
+	assert.True(t, retried)
+	newAttempt, err := db.ClaimJob("worker-b")
+	require.NoError(t, err)
+	require.NotNil(t, newAttempt)
+	require.Equal(t, job.ID, newAttempt.ID)
+
+	saved, err = db.SaveRunningJobTokenUsage(
+		job.ID, "worker-a", job.StartedAtRaw, `{"provider_session_ids":["stale-planner"]}`,
+	)
+	require.NoError(t, err)
+	assert.False(t, saved)
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.TokenUsage)
+}
+
 func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

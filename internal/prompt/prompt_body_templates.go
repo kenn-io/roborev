@@ -57,6 +57,7 @@ type addressAttemptView = AddressAttemptTemplateContext
 
 type addressPromptView struct {
 	ProjectGuidelines *markdownSectionView
+	PreviousPlans     string
 	ToolAttempts      []addressAttemptView
 	UserComments      []addressAttemptView
 	SeverityFilter    string
@@ -224,6 +225,7 @@ func templateContextFromAddressView(view addressPromptView) TemplateContext {
 	return TemplateContext{
 		Address: &AddressTemplateContext{
 			ProjectGuidelines: markdownSectionFromView(view.ProjectGuidelines),
+			PreviousPlans:     view.PreviousPlans,
 			ToolAttempts:      toolAttempts,
 			UserComments:      userComments,
 			SeverityFilter:    view.SeverityFilter,

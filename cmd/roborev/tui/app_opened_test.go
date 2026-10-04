@@ -323,11 +323,11 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(entered) }, 5*time.Second, 10*time.Millisecond)
 
-	jobsBefore := d.jobFetches.Load()
-	p.Send(tickMsg(time.Now()))
+	// The startup fetch must run while telemetry is held. A refresh tick can be
+	// skipped until that fetch completes, so it cannot signal startup here.
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool {
-		return d.jobFetches.Load() > jobsBefore && !isClosed(release)
+		return d.jobFetches.Load() > 0 && !isClosed(release)
 	}, 5*time.Second, 10*time.Millisecond)
 
 	p.Quit()

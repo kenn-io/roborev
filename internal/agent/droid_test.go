@@ -54,7 +54,7 @@ func TestDroidBuildArgs(t *testing.T) {
 				a = tt.setup(a)
 			}
 
-			args := a.buildArgs(tt.agentic)
+			args := a.buildArgs(tt.agentic, false)
 
 			for _, want := range tt.wantArgs {
 				assertContainsArg(t, args, want)
@@ -69,8 +69,15 @@ func TestDroidBuildArgs(t *testing.T) {
 func TestDroidCommandLineUsesBuildArgs(t *testing.T) {
 	a := NewDroidAgent("droid").WithReasoning(ReasoningThorough).WithAgentic(true).(*DroidAgent)
 
-	want := strings.Join(a.buildArgs(true), " ")
+	want := strings.Join(a.buildArgs(true, false), " ")
 	assert.Equal(t, "droid "+want, a.CommandLine())
+}
+
+func TestDroidPlanningCommandLine(t *testing.T) {
+	withUnsafeAgents(t, true)
+	a := NewDroidAgent("droid").WithAgentic(true).WithReasoning(ReasoningThorough).(*DroidAgent)
+
+	assert.Equal(t, "droid exec --tag roborev --reasoning-effort high", a.PlanningCommandLine())
 }
 
 func TestDroidName(t *testing.T) {

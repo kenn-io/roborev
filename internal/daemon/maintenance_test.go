@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -165,6 +166,206 @@ func TestBackfillTokensRejectsLogFromPriorCanceledAttempt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, updated.TokenUsage)
 	assert.Empty(t, updated.SessionID)
+}
+
+func TestBackfillTokensAggregatesPlanPhaseSessions(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "plan-usage", "test", "plan usage", time.Now())
+	require.NoError(t, err)
+	job := enqueuePlanUsageCandidate(t, db, repo.ID, commit.ID)
+
+	requested, usageServer := configurePlanUsageEndpoint(t, server, map[string]string{
+		"planner-session": `{"session_id":"planner-session","agent":"codex",` +
+			`"has_token_data":true,"input_tokens":100,"total_output_tokens":15,` +
+			`"has_cost":true,"cost_usd":0.13}`,
+		"implementation-session": `{"session_id":"implementation-session","agent":"codex",` +
+			`"has_token_data":true,"input_tokens":200,"total_output_tokens":25,` +
+			`"has_cost":true,"cost_usd":0.29}`,
+	})
+	t.Cleanup(usageServer.Close)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var report ScanTokenUsageReport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Updated)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, *requested)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestBackfillTokensPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "plan-usage", "test", "plan usage", time.Now())
+	require.NoError(t, err)
+	job := enqueuePlanUsageCandidate(t, db, repo.ID, commit.ID)
+	require.NoError(t, db.SaveJobTokenUsage(job.ID, "implementation-session",
+		`{"input_tokens":300,"total_output_tokens":40,`+
+			`"provider_session_ids":["planner-session","implementation-session"],`+
+			`"expected_provider_sessions":2}`))
+
+	requested, usageServer := configurePlanUsageEndpoint(t, server, map[string]string{
+		"planner-session": `{"session_id":"planner-session","agent":"codex",` +
+			`"has_token_data":false,"has_cost":true,"cost_usd":0.13}`,
+		"implementation-session": `{"session_id":"implementation-session","agent":"codex",` +
+			`"has_token_data":true,"input_tokens":200,"total_output_tokens":25,` +
+			`"has_cost":true,"cost_usd":0.29}`,
+	})
+	t.Cleanup(usageServer.Close)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var report ScanTokenUsageReport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Updated)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, *requested)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestBackfillTokensIgnoresPartialPlanLogCountsWhenFetchingCost(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "plan-log-usage", "test", "plan log usage", time.Now())
+	require.NoError(t, err)
+	job := enqueuePlanUsageCandidate(t, db, repo.ID, commit.ID)
+	writeCodexUsageLog(t, job, "implementation-session", 200, 0, 25)
+
+	requested, usageServer := configurePlanUsageEndpoint(t, server, map[string]string{
+		"planner-session": `{"session_id":"planner-session","agent":"codex",` +
+			`"has_token_data":false,"has_cost":true,"cost_usd":0.13}`,
+		"implementation-session": `{"session_id":"implementation-session","agent":"codex",` +
+			`"has_token_data":true,"input_tokens":200,"total_output_tokens":25,` +
+			`"has_cost":true,"cost_usd":0.29}`,
+	})
+	t.Cleanup(usageServer.Close)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var report ScanTokenUsageReport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Updated)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, *requested)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestBackfillTokensDoesNotPriceIncompletePlanPhaseSessions(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, dir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "plan-usage", "test", "plan usage", time.Now())
+	require.NoError(t, err)
+	job := enqueuePlanUsageCandidate(t, db, repo.ID, commit.ID)
+	require.NoError(t, db.SaveJobTokenUsage(job.ID, "implementation-session",
+		`{"input_tokens":300,"total_output_tokens":40,`+
+			`"provider_session_ids":["implementation-session","planner-session"],`+
+			`"expected_provider_sessions":2}`))
+
+	requested, usageServer := configurePlanUsageEndpoint(t, server, map[string]string{
+		"implementation-session": `{"session_id":"implementation-session","agent":"codex",` +
+			`"has_token_data":true,"input_tokens":200,"total_output_tokens":25,` +
+			`"has_cost":true,"cost_usd":0.29}`,
+	})
+	t.Cleanup(usageServer.Close)
+
+	response := maintenanceRequest(t, server, "/api/maintenance/tokens/backfill", map[string]any{"dry_run": false})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var report ScanTokenUsageReport
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
+	assert.Equal(t, 0, report.Updated)
+	assert.Equal(t, 1, report.Skipped)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, *requested)
+
+	unchanged, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(unchanged.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
+	assert.Zero(t, usage.CostUSD)
+}
+
+func enqueuePlanUsageCandidate(t *testing.T, db *storage.DB, repoID, commitID int64) *storage.ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repoID, CommitID: commitID, GitRef: "plan-usage",
+		Agent: "codex",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("plan-usage-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "plan-usage-worker", "codex review"))
+	require.NoError(t, db.SaveJobSessionID(job.ID, "plan-usage-worker", "implementation-session"))
+	require.NoError(t, testutil.CompleteReviewFixture(
+		db, job.ID, "codex", "prompt", "No issues found.",
+	))
+	require.NoError(t, db.SaveJobTokenUsage(job.ID, "implementation-session",
+		`{"input_tokens":300,"total_output_tokens":40,`+
+			`"provider_session_ids":["planner-session","implementation-session"],`+
+			`"expected_provider_sessions":2}`))
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	return updated
+}
+
+func configurePlanUsageEndpoint(
+	t *testing.T, server *Server, responses map[string]string,
+) (*[]string, *httptest.Server) {
+	t.Helper()
+	var requested []string
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessionID := strings.TrimPrefix(r.URL.Path, "/usage/")
+		requested = append(requested, sessionID)
+		body, ok := responses[sessionID]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, body)
+	}))
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = usageServer.URL + "/usage/{session_id}"
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg = cfg
+	server.configWatcher.cfgMu.Unlock()
+	return &requested, usageServer
 }
 
 func enqueueCompleteJob(

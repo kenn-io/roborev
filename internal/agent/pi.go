@@ -113,6 +113,12 @@ func (a *PiAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(args, " ")
 }
 
+// PlanningCommandLine returns Pi's representative read-only planning command.
+func (a *PiAgent) PlanningCommandLine() string {
+	args := append(a.buildArgs("", false), "--no-extensions")
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *PiAgent) buildArgs(sessionPath string, agenticMode bool) []string {
 	args := slices.Clone(a.LaunchArgs)
 	args = append(args, "-p", "--mode", "json")
@@ -374,8 +380,11 @@ func (a *PiAgent) Review(
 	}
 
 	sessionPath := resolvePiSessionPath(a.SessionID)
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(sessionPath, agenticMode)
+	if planningReadOnly(ctx) {
+		args = append(args, "--no-extensions")
+	}
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

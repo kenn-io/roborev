@@ -5,6 +5,15 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**New features**
+
+- Plan fixes before implementation with `roborev fix --plan` or
+    `roborev refine --plan`. Use `--plan-only` to print and store plans without
+    editing code. Background fix requests and the TUI fix panel can also plan
+    before implementation.
+
 ## 0.71.0
 
 <small>2026-10-03</small>

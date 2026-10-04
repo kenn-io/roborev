@@ -105,6 +105,23 @@ type Agent interface {
 	CommandLine() string
 }
 
+type planningCommandLineProvider interface {
+	PlanningCommandLine() string
+}
+
+// CommandLineForPlanning returns the representative command line used for a
+// read-only planning pass, without applying the global unsafe-agent override.
+func CommandLineForPlanning(a Agent) string {
+	planningAgent := a.WithAgentic(false)
+	if sessionAgent, ok := planningAgent.(SessionAgent); ok {
+		planningAgent = sessionAgent.WithSessionID("")
+	}
+	if provider, ok := planningAgent.(planningCommandLineProvider); ok {
+		return provider.PlanningCommandLine()
+	}
+	return planningAgent.CommandLine()
+}
+
 // CommandAgent is an agent that uses an external command
 type CommandAgent interface {
 	Agent

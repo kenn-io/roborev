@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/cenkalti/backoff/v7"
+	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -692,7 +693,11 @@ func reviewJobUsesStructuredOutput(job *storage.ReviewJob) bool {
 // cost-eligibility signal (and stores the command line for TUI display); a
 // failed write only under-reports cost, so it is logged, not fatal.
 func (wp *WorkerPool) markAgentInvoked(workerID string, job *storage.ReviewJob, a agent.Agent) {
-	if err := wp.db.MarkJobAgentInvoked(job.ID, workerID, a.CommandLine()); err != nil {
+	wp.markAgentInvokedWithCommandLine(workerID, job, a.CommandLine())
+}
+
+func (wp *WorkerPool) markAgentInvokedWithCommandLine(workerID string, job *storage.ReviewJob, commandLine string) {
+	if err := wp.db.MarkJobAgentInvoked(job.ID, workerID, commandLine); err != nil {
 		log.Printf("[%s] Error marking agent invoked for job %d: %v", workerID, job.ID, err)
 	}
 }
@@ -869,7 +874,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Get timeout from config (per-repo or global, default 30 minutes), then
 	// overlay any frozen panel-member timeout captured at enqueue time.
 	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, cfg)
-	timeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
+	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
+	timeoutDuration := jobTimeoutDuration
+	var planningTimeout time.Duration
+	planningPrompt := ""
+	storedPromptValue := job.Prompt
+	var planningDecodeErr error
+	if job.IsFixJob() {
+		planningPrompt, storedPromptValue, _, planningDecodeErr = prompt.DecodeFixPlan(job.Prompt)
+		if planningDecodeErr == nil && planningPrompt != "" {
+			// Give plan-first fixes a second per-job timeout budget for planning.
+			// The worker's cancellation context still covers the entire job.
+			planningTimeout = jobTimeoutDuration
+			timeoutDuration += planningTimeout
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 
@@ -996,7 +1015,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
-	storedPromptValue := job.Prompt
+	if job.IsFixJob() {
+		if planningDecodeErr != nil {
+			wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, job.Agent, planningDecodeErr.Error())
+			return
+		}
+	}
 	if job.PromptPrebuilt && storedPromptValue != "" {
 		// CI-enqueued review with prebuilt prompt (includes PR
 		// discussion context and system prompt). Use as-is so the
@@ -1022,9 +1046,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
-			reviewPrompt = preamble + "\n" + job.Prompt
+			reviewPrompt = preamble + "\n" + storedPromptValue
 		} else {
-			reviewPrompt = job.Prompt
+			reviewPrompt = storedPromptValue
 		}
 		promptToPersist = job.Prompt
 	} else if job.UsesStoredPrompt() {
@@ -1189,9 +1213,24 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
+	var planningUsageCapture *tokens.CodexUsageCaptureWriter
+	var implementationUsageCapture *tokens.CodexUsageCaptureWriter
+	var planningSessionWriter *agent.SessionCaptureWriter
+	var plannerInvoked, implementationInvoked bool
+	if planningPrompt != "" {
+		planningUsageCapture = tokens.NewCodexUsageCaptureWriter()
+		implementationUsageCapture = tokens.NewCodexUsageCaptureWriter()
+		agentOutput = io.MultiWriter(jobLog, outputWriter, implementationUsageCapture)
+	}
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
+		}
+		if planningPrompt != "" && implementationInvoked {
+			wp.persistPlanTokenUsageForRunningAttempt(workerID, job, []planTokenPhase{
+				{invoked: plannerInvoked, sessionID: planningSessionWriter.SessionID(), logUsage: planningUsageCapture.Usage()},
+				{invoked: true, implementation: true, sessionID: sessionID, logUsage: implementationUsageCapture.Usage()},
+			}, false)
 		}
 	})
 	agentOutput = sessionWriter
@@ -1235,32 +1274,81 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	reviewPrompt = priorResult.Prompt
 
-	preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
-		RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
-	})
-	if prepareErr != nil {
-		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
-		return
+	var fixPlan string
+	defer func() {
+		if planningPrompt == "" || (!plannerInvoked && !implementationInvoked) {
+			return
+		}
+		var plannerSessionID string
+		var plannerLogUsage *tokens.Usage
+		if planningSessionWriter != nil {
+			plannerSessionID = planningSessionWriter.SessionID()
+			plannerLogUsage = planningUsageCapture.Usage()
+		}
+		wp.capturePlanTokenUsageForTerminalAttempt(
+			context.Background(), workerID, job, []planTokenPhase{
+				{invoked: plannerInvoked, sessionID: plannerSessionID, logUsage: plannerLogUsage},
+				{invoked: implementationInvoked, implementation: true, sessionID: sessionWriter.SessionID(), logUsage: implementationUsageCapture.Usage()},
+			},
+		)
+	}()
+	implementationRef := job.GitRef
+	if planningPrompt != "" {
+		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
+		if err == nil {
+			planningSessionWriter = agent.NewSessionCaptureWriter(
+				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil,
+			)
+			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
+				ctx, planningTimeout, workerID, a, job, reviewRepoPath,
+				planningPrompt, reviewPrompt, pb, checkout.resolvedConfigRepoPath(),
+				planningSessionWriter, func() { plannerInvoked = true },
+			)
+			planningSessionWriter.Flush()
+			planningUsageCapture.Flush()
+		}
 	}
-	if preparedPrompt.Cleanup != nil {
-		defer preparedPrompt.Cleanup()
+	if err == nil {
+		err = ctx.Err()
 	}
-	reviewPrompt = preparedPrompt.Prompt
-
-	// Record that an agent is being invoked, now that all pre-agent gates
-	// (prompt preparation, worktree creation) have passed.
-	wp.markAgentInvoked(workerID, job, a)
+	if plannerInvoked {
+		wp.persistPlanTokenUsageForRunningAttempt(workerID, job, []planTokenPhase{
+			{invoked: true, sessionID: planningSessionWriter.SessionID(), logUsage: planningUsageCapture.Usage()},
+			{implementation: true},
+		}, err != nil)
+	}
+	if err == nil {
+		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
+			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
+		})
+		if prepareErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
+			return
+		}
+		if preparedPrompt.Cleanup != nil {
+			defer preparedPrompt.Cleanup()
+		}
+		reviewPrompt = preparedPrompt.Prompt
+		wp.markAgentInvoked(workerID, job, a)
+		if planningPrompt != "" {
+			implementationInvoked = true
+			wp.persistPlanTokenUsageForRunningAttempt(workerID, job, []planTokenPhase{
+				{invoked: plannerInvoked, sessionID: planningSessionWriter.SessionID(), logUsage: planningUsageCapture.Usage()},
+				{invoked: true, implementation: true},
+			}, false)
+		}
+	}
 
 	// Tasks and fixes use free-form output. Reviews and compact jobs validate
 	// the same JSON document before completing.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
-	if job.IsTaskJob() || job.IsFixJob() {
+	if err == nil && (job.IsTaskJob() || job.IsFixJob()) {
 		agentReview.Output, err = a.Review(
-			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
+			ctx, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
 		)
-	} else {
+	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
 			effectiveMinSeverity, agentOutput,
@@ -1268,6 +1356,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	output := agentReview.Output
 	sessionWriter.Flush()
+	if implementationUsageCapture != nil {
+		implementationUsageCapture.Flush()
+	}
+	if planningPrompt != "" && implementationInvoked {
+		wp.persistPlanTokenUsageForRunningAttempt(workerID, job, []planTokenPhase{
+			{invoked: plannerInvoked, sessionID: planningSessionWriter.SessionID(), logUsage: planningUsageCapture.Usage()},
+			{invoked: true, implementation: true, sessionID: sessionWriter.SessionID(), logUsage: implementationUsageCapture.Usage()},
+		}, true)
+	}
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
 		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
@@ -1301,7 +1398,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			timeoutErr := fmt.Sprintf(
 				"%s %s",
 				agentTimeoutErrorPrefix,
-				timeoutDuration.Round(time.Second),
+				jobTimeoutDuration.Round(time.Second),
 			)
 			log.Printf("[%s] Job %d timed out: %v", workerID, job.ID, err)
 			wp.failOrRetryAgentContext(ctx, workerID, job, agentName, timeoutErr)
@@ -1314,6 +1411,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
 		return
+	}
+
+	if fixPlan != "" {
+		output = "## Plan\n\n" + fixPlan + "\n\n## Implementation\n\n" + output
 	}
 
 	// For fix jobs, capture the patch from the worktree. Patch capture
@@ -1395,7 +1496,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
-		wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		if planningPrompt == "" {
+			wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		}
 		wp.invalidateBudgetSpend()
 
 		// Member done — release the panel synthesis once all members are terminal.

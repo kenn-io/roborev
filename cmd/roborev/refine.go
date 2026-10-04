@@ -34,6 +34,8 @@ var postCommitWaitDelay = 1 * time.Second
 
 // refineOptions groups all CLI parameters for the refine command.
 type refineOptions struct {
+	plan              bool
+	planOnly          bool
 	agentName         string
 	model             string
 	reasoning         string
@@ -119,6 +121,12 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				)
 			}
 
+			if opts.list && (opts.plan || opts.planOnly) {
+				return fmt.Errorf("--list cannot be used with --plan or --plan-only")
+			}
+			if opts.planOnly {
+				return runRefinePlanOnly(cmd, opts)
+			}
 			if opts.list {
 				return runRefineList(cmd, opts)
 			}
@@ -142,6 +150,8 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard (default), thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
+	cmd.Flags().BoolVar(&opts.plan, "plan", false, "plan each fix before implementing")
+	cmd.Flags().BoolVar(&opts.planOnly, "plan-only", false, "print and store plans for existing failed reviews without edits or new reviews")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().IntVar(&opts.maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress agent output, show elapsed time instead")
@@ -456,6 +466,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	// Track current failed review - when a fix fails, we continue fixing it
 	// before moving on to the next oldest failed commit
 	var currentFailedReview *storage.Review
+	var carriedAttempts []storage.Response
+	var chainHead string
 	// Track reviews we've given up on this run to avoid re-selecting them
 	skippedReviews := make(map[int64]bool)
 
@@ -570,6 +582,13 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			fmt.Printf("Addressing review (job %d)...\n", currentFailedReview.JobID)
 		}
 
+		if opts.plan && len(carriedAttempts) > 0 {
+			if !refineReviewIncludes(ctx, repoPath, currentFailedReview, chainHead) {
+				carriedAttempts = nil
+				chainHead = ""
+			}
+		}
+
 		// Get previous attempts for context (including legacy commit-based)
 		var reviewCommitID int64
 		var reviewGitRef string
@@ -580,6 +599,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if err != nil {
 			return fmt.Errorf("fetch previous comments: %w", err)
 		}
+		// Keep earlier reviews in the prompt without posting their comments again.
+		previousAttempts = append(carriedAttempts, previousAttempts...)
 
 		// Build address prompt
 		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
@@ -603,8 +624,33 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return dirtyRefineSubmodulesError(dirtySubmodules)
 		}
 
+		if opts.plan {
+			planningPrompt, planErr := builder.BuildPlanPrompt(currentFailedReview, previousAttempts, minSev)
+			if planErr != nil {
+				return planErr
+			}
+			planCmd := &cobra.Command{}
+			planCmd.SetContext(ctx)
+			planCmd.SetOut(os.Stdout)
+			addressPrompt, planErr = planFixAtRevision(ctx, planCmd, repoPath, headBefore, addressAgent, planningPrompt, addressPrompt, []int64{currentFailedReview.JobID}, fixOptions{quiet: opts.quiet}, cfg)
+			if planErr != nil {
+				fmt.Printf("Planning error: %v\n", planErr)
+				if _, stateChanged := errors.AsType[*planningStateError](planErr); stateChanged {
+					return fmt.Errorf("planning cannot continue: %w", planErr)
+				}
+				fmt.Println("Will retry in next iteration")
+				continue
+			}
+			// The newly persisted plan is part of the next re-review's history.
+			previousAttempts, err = client.GetAllCommentsForJob(currentFailedReview.JobID, reviewCommitID, reviewGitRef)
+			if err != nil {
+				return err
+			}
+			previousAttempts = append(carriedAttempts, previousAttempts...)
+		}
+
 		// Create temp worktree to isolate agent from user's working tree
-		wt, err := createRefineWorktree(ctx, repoPath)
+		wt, err := createRefineWorktreeAtRef(ctx, repoPath, headBefore)
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}
@@ -621,6 +667,16 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if dirtySubmodules := dirtyRefineSubmodules(submodulesBeforeAgent); len(dirtySubmodules) > 0 {
 			_ = wt.Close(ctx)
 			return dirtyRefineSubmodulesError(dirtySubmodules)
+		}
+
+		var cleanupPrompt func()
+		if opts.plan {
+			prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
+			if prepareErr != nil {
+				_ = wt.Close(ctx)
+				return prepareErr
+			}
+			addressPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
 		}
 
 		// Determine output writer
@@ -642,9 +698,12 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if liveTimer {
 			timer.startLive(fmt.Sprintf("Addressing review (job %d)...", currentFailedReview.JobID))
 		}
-		fixCtx, fixCancel := context.WithTimeout(ctx, 1*time.Hour)
+		fixCtx, fixCancel := withAgentCallTimeout(ctx)
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
+		if cleanupPrompt != nil {
+			cleanupPrompt()
+		}
 		if fmtr != nil {
 			fmtr.Flush()
 		}
@@ -689,6 +748,11 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		if agentErr != nil {
 			_ = wt.Close(ctx)
+			if opts.plan {
+				if saveErr := client.AddComment(currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Implementation failed: %v\n\n%s", agentErr, output)); saveErr != nil {
+					return saveErr
+				}
+			}
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -767,6 +831,11 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
+		if opts.plan {
+			carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
+			chainHead = newCommit
+		}
+
 		// Close old review
 		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
@@ -791,6 +860,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		verdict := review.Verdict()
 		if verdict == "P" {
+			carriedAttempts = nil
+			chainHead = ""
 			fmt.Println("New commit passed review!")
 			if err := client.MarkReviewClosed(review.JobID); err != nil {
 				fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
@@ -1037,6 +1108,10 @@ func runRefineAllBranches(
 			Context:    ctx,
 			WorkingDir: repoPath,
 		}, branchOpts); err != nil {
+			if _, changed := errors.AsType[*planningStateError](err); changed {
+				// Preserve caller changes, including their current branch.
+				return err
+			}
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)
@@ -1386,7 +1461,11 @@ func refineGitRunner() gitcmd.Runner {
 
 // createRefineWorktree creates the detached worktree refine runs the agent in.
 func createRefineWorktree(ctx context.Context, repoPath string) (*gitworktree.Worktree, error) {
-	return gitworktree.Create(ctx, repoPath, "HEAD", gitworktree.Options{
+	return createRefineWorktreeAtRef(ctx, repoPath, "HEAD")
+}
+
+func createRefineWorktreeAtRef(ctx context.Context, repoPath, ref string) (*gitworktree.Worktree, error) {
+	return gitworktree.Create(ctx, repoPath, ref, gitworktree.Options{
 		Prefix:         "roborev-worktree-",
 		InitSubmodules: true,
 		PullLFS:        true,

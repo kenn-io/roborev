@@ -50,7 +50,9 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 		verdictParts = append(verdictParts, closedStyle.Render("[CLOSED]"))
 	}
 	if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
-		verdictParts = append(verdictParts, statusStyle.Render("["+tu.FormatSummary()+"]"))
+		if summary := tu.FormatSummary(); summary != "" {
+			verdictParts = append(verdictParts, statusStyle.Render("["+summary+"]"))
+		}
 	}
 	if s := review.FileCoverage.FormatSummary(); s != "" {
 		verdictParts = append(verdictParts, statusStyle.Render("["+s+"]"))
@@ -128,10 +130,14 @@ func (m model) renderReviewPaneBody(innerW, innerH int) []string {
 func (m model) renderReviewFixPanelPaneLines(innerW int) []string {
 	boxW := max(innerW-2, 10) // box inner width; total visual width = boxW+2 (borders)
 	trunc := func(s string) string { return xansi.Truncate(s, innerW, "") }
+	planState := "off"
+	if m.fixPlanFirst {
+		planState = "on"
+	}
 
 	var out []string
 	if m.reviewFixPanelFocused {
-		label := "Fix: enter instructions (or leave blank for default)"
+		label := "Fix: enter instructions | Plan first: " + planState
 		if runewidth.StringWidth(label) > innerW {
 			label = runewidth.Truncate(label, innerW, "")
 		}
@@ -158,9 +164,9 @@ func (m model) renderReviewFixPanelPaneLines(innerW int) []string {
 		for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 			out = append(out, trunc(line))
 		}
-		out = append(out, trunc(helpStyle.Render("tab: scroll review | enter: submit | esc: cancel")))
+		out = append(out, trunc(helpStyle.Render("ctrl+p: plan | tab: scroll review | enter: submit | esc: cancel")))
 	} else {
-		out = append(out, trunc(statusStyle.Render("Fix (Tab to focus)")))
+		out = append(out, trunc(statusStyle.Render("Fix (Tab to focus) | Plan first: "+planState)))
 
 		inputDisplay := m.fixPromptText
 		if inputDisplay == "" {

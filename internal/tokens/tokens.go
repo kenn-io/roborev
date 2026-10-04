@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json/jsontext"
@@ -13,7 +12,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -47,6 +48,12 @@ type Usage struct {
 	UsageSource string  `json:"usage_source,omitempty"`
 	ThreadID    string  `json:"thread_id,omitempty"`
 	EventOffset int64   `json:"event_offset,omitempty"`
+	// ProviderSessionIDs lists fresh sessions whose usage is included in this
+	// aggregate, so delayed cost reconciliation can price every phase.
+	ProviderSessionIDs []string `json:"provider_session_ids,omitempty"`
+	// ExpectedProviderSessions prevents partial aggregates from being marked
+	// priced when a phase did not emit a session ID.
+	ExpectedProviderSessions int `json:"expected_provider_sessions,omitempty"`
 }
 
 // FetchConfig configures session usage lookup. When Endpoint is set,
@@ -454,7 +461,7 @@ func ParseJSON(data string) *Usage {
 			u.HasCost = false
 		}
 	}
-	if !u.HasUsageData() {
+	if !u.HasUsageData() && len(u.ProviderSessionIDs) == 0 && u.ExpectedProviderSessions == 0 {
 		return nil
 	}
 	return &u
@@ -484,66 +491,153 @@ func ParseCodexUsageFile(path string) (*Usage, error) {
 	return ParseCodexUsageJSONL(f)
 }
 
-// ParseCodexUsageJSONL extracts the final Codex turn.completed usage event
-// from an event stream. Non-JSON lines and unrelated JSON events are ignored.
-func ParseCodexUsageJSONL(r io.Reader) (*Usage, error) {
-	type codexUsageEvent struct {
-		Type     string `json:"type"`
-		ThreadID string `json:"thread_id,omitempty"`
-		Usage    struct {
-			InputTokens int64 `json:"input_tokens"`
-			// OpenAI's input_tokens is inclusive of cached_input_tokens; the
-			// two are not disjoint. Stored as-is to stay faithful to the
-			// source event.
-			CachedInputTokens     int64 `json:"cached_input_tokens"`
-			CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
-			OutputTokens          int64 `json:"output_tokens"`
-		} `json:"usage,omitempty"`
-	}
+type codexUsageEvent struct {
+	Type     string `json:"type"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Usage    struct {
+		InputTokens int64 `json:"input_tokens"`
+		// OpenAI's input_tokens is inclusive of cached_input_tokens; the
+		// two are not disjoint. Stored as-is to stay faithful to the
+		// source event.
+		CachedInputTokens     int64 `json:"cached_input_tokens"`
+		CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
+		OutputTokens          int64 `json:"output_tokens"`
+	} `json:"usage,omitempty"`
+}
 
-	reader := bufio.NewReader(r)
-	var offset int64
-	var threadID string
-	var usage *Usage
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			trimmed := bytes.TrimSpace(line)
-			if len(trimmed) > 0 {
-				var ev codexUsageEvent
-				if json.Unmarshal(trimmed, &ev) == nil {
-					if ev.ThreadID != "" {
-						threadID = ev.ThreadID
+// CodexUsageCaptureWriter keeps the last turn.completed usage event written
+// to it without retaining the full event stream. Flush processes a trailing
+// line that does not end in a newline.
+type CodexUsageCaptureWriter struct {
+	mu            sync.Mutex
+	pending       []byte
+	offset        int64
+	threadID      string
+	usage         *Usage
+	usageByThread map[string]*Usage
+}
+
+// NewCodexUsageCaptureWriter starts a streaming capture of Codex usage events.
+func NewCodexUsageCaptureWriter() *CodexUsageCaptureWriter {
+	return &CodexUsageCaptureWriter{}
+}
+
+func (w *CodexUsageCaptureWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	written := len(p)
+	for len(p) > 0 {
+		lineEnd := bytes.IndexByte(p, '\n')
+		if lineEnd < 0 {
+			w.pending = append(w.pending, p...)
+			break
+		}
+		lineEnd++
+		line := p[:lineEnd]
+		if len(w.pending) > 0 {
+			w.pending = append(w.pending, line...)
+			line = w.pending
+		}
+		w.captureLine(line)
+		w.pending = w.pending[:0]
+		p = p[lineEnd:]
+	}
+	return written, nil
+}
+
+// Flush captures a final event when the stream ended without a newline.
+func (w *CodexUsageCaptureWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) == 0 {
+		return
+	}
+	w.captureLine(w.pending)
+	w.pending = w.pending[:0]
+}
+
+// Usage returns the aggregated usage captured for each thread in the stream.
+func (w *CodexUsageCaptureWriter) Usage() *Usage {
+	return w.aggregateUsage()
+}
+
+func (w *CodexUsageCaptureWriter) aggregateUsage() *Usage {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.usageByThread) == 0 {
+		return nil
+	}
+	aggregate := &Usage{}
+	for _, usage := range w.usageByThread {
+		aggregate.InputTokens += usage.InputTokens
+		aggregate.CachedInputTokens += usage.CachedInputTokens
+		aggregate.CacheCreationTokens += usage.CacheCreationTokens
+		aggregate.OutputTokens += usage.OutputTokens
+		if usage.PeakContextTokens > aggregate.PeakContextTokens {
+			aggregate.PeakContextTokens = usage.PeakContextTokens
+		}
+	}
+	if w.usage != nil {
+		aggregate.ThreadID = w.usage.ThreadID
+		aggregate.EventOffset = w.usage.EventOffset
+		aggregate.UsageSource = w.usage.UsageSource
+	}
+	aggregate.ProviderSessionIDs = make([]string, 0, len(w.usageByThread))
+	for sessionID := range w.usageByThread {
+		if sessionID != "" {
+			aggregate.ProviderSessionIDs = append(aggregate.ProviderSessionIDs, sessionID)
+		}
+	}
+	sort.Strings(aggregate.ProviderSessionIDs)
+	aggregate.ExpectedProviderSessions = len(w.usageByThread)
+	return aggregate
+}
+
+func (w *CodexUsageCaptureWriter) captureLine(line []byte) {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) > 0 {
+		var ev codexUsageEvent
+		if json.Unmarshal(trimmed, &ev) == nil {
+			if ev.ThreadID != "" {
+				w.threadID = ev.ThreadID
+			}
+			if ev.Type == "turn.completed" {
+				u := Usage{
+					InputTokens:         ev.Usage.InputTokens,
+					CachedInputTokens:   ev.Usage.CachedInputTokens,
+					CacheCreationTokens: ev.Usage.CacheWriteInputTokens,
+					OutputTokens:        ev.Usage.OutputTokens,
+					UsageSource:         "job_log_turn_completed",
+					ThreadID:            w.threadID,
+					EventOffset:         w.offset,
+				}
+				if ev.ThreadID != "" {
+					u.ThreadID = ev.ThreadID
+				}
+				if u.HasUsageData() {
+					w.usage = &u
+					if w.usageByThread == nil {
+						w.usageByThread = make(map[string]*Usage)
 					}
-					if ev.Type == "turn.completed" {
-						u := Usage{
-							InputTokens:         ev.Usage.InputTokens,
-							CachedInputTokens:   ev.Usage.CachedInputTokens,
-							CacheCreationTokens: ev.Usage.CacheWriteInputTokens,
-							OutputTokens:        ev.Usage.OutputTokens,
-							UsageSource:         "job_log_turn_completed",
-							ThreadID:            threadID,
-							EventOffset:         offset,
-						}
-						if ev.ThreadID != "" {
-							u.ThreadID = ev.ThreadID
-						}
-						if u.HasUsageData() {
-							usage = &u
-						}
-					}
+					w.usageByThread[u.ThreadID] = &u
 				}
 			}
-			offset += int64(len(line))
 		}
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			return usage, nil
-		}
+	}
+	w.offset += int64(len(line))
+}
+
+// ParseCodexUsageJSONL extracts the final Codex turn.completed usage event
+// for each thread in an event stream and aggregates their usage. Non-JSON lines
+// and unrelated JSON events are ignored.
+func ParseCodexUsageJSONL(r io.Reader) (*Usage, error) {
+	capture := NewCodexUsageCaptureWriter()
+	if _, err := io.Copy(capture, r); err != nil {
 		return nil, err
 	}
+	capture.Flush()
+	return capture.aggregateUsage(), nil
 }
 
 // ToJSON serializes token usage to JSON for database storage.

@@ -99,6 +99,15 @@ func (a *GeminiAgent) CommandNames() []string {
 
 func (a *GeminiAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Gemini's representative read-only planning command.
+func (a *GeminiAgent) PlanningCommandLine() string {
+	return a.commandLine(false)
+}
+
+func (a *GeminiAgent) commandLine(agenticMode bool) string {
 	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
@@ -112,7 +121,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("antigravity CLI does not support explicit Gemini model selection; remove the model override or configure gemini_cmd to the legacy gemini CLI")
 	}
 
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(agenticMode)
 
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)

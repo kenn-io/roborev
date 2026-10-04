@@ -19,9 +19,12 @@ var (
 	copilotStreamOffSupport          sync.Map
 	copilotJSONOutputSupport         sync.Map
 	copilotDisableBuiltInMCPsSupport sync.Map
+	copilotAvailableToolsSupport     sync.Map
 )
 
 var errNoCopilotJSON = errors.New("no valid copilot JSON events parsed from output")
+
+const copilotPlanningTools = "view,glob,grep,skill"
 
 // copilotSupportsAllowAllTools checks whether the copilot binary supports
 // the --allow-all-tools flag needed for non-interactive tool approval.
@@ -86,6 +89,21 @@ func copilotSupportsDisableBuiltInMCPs(ctx context.Context, command string) (boo
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
 	copilotDisableBuiltInMCPsSupport.Store(command, supported)
+	return supported, nil
+}
+
+func copilotSupportsAvailableTools(ctx context.Context, command string) (bool, error) {
+	if cached, ok := copilotAvailableToolsSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(ctx, cmd)
+	output, err := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), "--available-tools")
+	if err != nil && !supported {
+		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+	}
+	copilotAvailableToolsSupport.Store(command, supported)
 	return supported, nil
 }
 
@@ -175,12 +193,36 @@ func (a *CopilotAgent) CommandName() string {
 
 func (a *CopilotAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Copilot's representative read-only planning command.
+func (a *CopilotAgent) PlanningCommandLine() string {
+	return a.Command + " " + strings.Join(a.planningArgs(true, true, true, true), " ")
+}
+
+func (a *CopilotAgent) planningArgs(includePermissions, includeStreamOff, includeJSONOutput, includeDisableBuiltInMCPs bool) []string {
+	args := a.commandArgs(false, includePermissions, includeStreamOff, includeJSONOutput, includeDisableBuiltInMCPs)
+	return append(args, "--available-tools="+copilotPlanningTools)
+}
+
+func (a *CopilotAgent) commandLine(agenticMode bool) string {
 	args := a.commandArgs(agenticMode, false, false, false, false)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	planningMode := planningReadOnly(ctx)
+	if planningMode {
+		supported, err := copilotSupportsAvailableTools(ctx, a.Command)
+		if err != nil {
+			return "", fmt.Errorf("check Copilot planning tool restrictions: %w", err)
+		}
+		if !supported {
+			return "", errors.New("copilot planning requires --available-tools support to keep the planner read-only")
+		}
+	}
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	supportsAllowAllTools, err := copilotSupportsAllowAllTools(ctx, a.Command)
 	if err != nil {
@@ -202,13 +244,18 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 		log.Printf("copilot: cannot detect --disable-builtin-mcps support: %v", err)
 	}
 
-	args := a.commandArgs(
-		agenticMode,
-		supportsAllowAllTools,
-		supportsStreamOff,
-		supportsJSONOutput,
-		supportsDisableBuiltInMCPs,
-	)
+	var args []string
+	if planningMode {
+		args = a.planningArgs(supportsAllowAllTools, supportsStreamOff, supportsJSONOutput, supportsDisableBuiltInMCPs)
+	} else {
+		args = a.commandArgs(
+			agenticMode,
+			supportsAllowAllTools,
+			supportsStreamOff,
+			supportsJSONOutput,
+			supportsDisableBuiltInMCPs,
+		)
+	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Stdin = strings.NewReader(prompt)

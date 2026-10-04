@@ -344,6 +344,11 @@ Press `Enter` on a job to view its review.
 | `?` | Show all commands |
 | `Esc`, `q` | Back to queue |
 
+In the inline fix panel, press `Ctrl+P` to toggle **Plan first**, then `Enter`
+to submit. Planning runs in a separate disposable worktree and stores its text
+before implementation starts. Completed results show Plan and Implementation
+sections. The toggle resets when you submit or close the panel.
+
 ## Background Tasks
 
 The TUI includes an optional workflow for running fix jobs, applying patches,

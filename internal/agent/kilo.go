@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -96,6 +97,10 @@ func (a *KiloAgent) kiloVariant() string {
 }
 
 func (a *KiloAgent) buildArgs() []string {
+	return a.buildArgsForAgentic(a.Agentic || AllowUnsafeAgents())
+}
+
+func (a *KiloAgent) buildArgsForAgentic(agenticMode bool) []string {
 	args := []string{"run", "--format", "json"}
 	if a.SessionID != "" {
 		args = append(args, "--session", a.SessionID)
@@ -103,7 +108,7 @@ func (a *KiloAgent) buildArgs() []string {
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
-	if a.Agentic || AllowUnsafeAgents() {
+	if agenticMode {
 		args = append(args, "--auto")
 	}
 	if variant := a.kiloVariant(); variant != "" {
@@ -116,6 +121,12 @@ func (a *KiloAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(a.buildArgs(), " ")
 }
 
+// PlanningCommandLine returns Kilo's representative read-only planning command.
+func (a *KiloAgent) PlanningCommandLine() string {
+	args := append(a.buildArgsForAgentic(false), "--agent", "plan")
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 // Review runs kilo with --format json and parses the JSONL stream
 // (same envelope as opencode: {"type":"...","part":{"type":"text","text":"..."}}).
 func (a *KiloAgent) Review(
@@ -123,10 +134,15 @@ func (a *KiloAgent) Review(
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
+	args := a.buildArgs()
+	if planningReadOnly(ctx) {
+		args = slices.DeleteFunc(args, func(arg string) bool { return arg == "--auto" })
+		args = append(args, "--agent", "plan")
+	}
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:          "kilo",
 		Command:       a.Command,
-		Args:          a.buildArgs(),
+		Args:          args,
 		Dir:           repoPath,
 		Stdin:         strings.NewReader(prompt),
 		Output:        output,
