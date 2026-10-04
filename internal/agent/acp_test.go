@@ -1289,3 +1289,12 @@ func TestACPTerminalOnlyLimitsOutputWhenRequested(t *testing.T) {
 		})
 	}
 }
+
+func TestACPAgentErrorIncludesAgentStderr(t *testing.T) {
+	cmd := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho 'acp boot failed: missing credentials' >&2\nexit 3\n")
+
+	_, err := NewACPAgent(cmd).Review(context.Background(), t.TempDir(), "HEAD", "review", nil)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "acp boot failed: missing credentials")
+}
