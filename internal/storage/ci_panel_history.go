@@ -32,7 +32,8 @@ func (db *DB) migrateCIPanelHistory() error {
 			attempt_count INTEGER,
 			synthesis_agent TEXT,
 			synthesis_model TEXT,
-			allow_stale_post INTEGER NOT NULL DEFAULT 0
+			allow_stale_post INTEGER NOT NULL DEFAULT 0,
+			pending_status_needed INTEGER NOT NULL DEFAULT 0
 		)`); err != nil {
 			return err
 		}

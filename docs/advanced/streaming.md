@@ -112,10 +112,13 @@ cannot be rerun. Recovery leaves previous runs available for inspection, and
 health stays unhealthy until a usable review is posted.
 
 The latest requested run determines review status and health. Queueing a CI
-rerun sets the commit status to pending, replacing any previous success. If the
-rerun fails, the status becomes error. Canceling a rerun sets an error status
-with "Review canceled". It does not discard a previously delivered review or
-cause the normal poll to review that commit again.
+rerun sets the commit status to pending, replacing any previous success. If
+GitHub rejects that write, the daemon retries it on subsequent polls while the
+run is active, including after a restart. A completed or canceled run cannot be
+set back to pending. If the rerun fails, the status becomes error. Canceling a
+rerun sets an error status with "Review canceled". It does not discard a
+previously delivered review or cause the normal poll to review that commit
+again.
 
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a

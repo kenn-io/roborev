@@ -48,8 +48,8 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO ci_pr_panels
-		(github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, source.GithubRepo, source.PRNumber, source.HeadSHA,
+		(github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at, pending_status_needed)
+		VALUES (?, ?, ?, ?, ?, ?, 1)`, source.GithubRepo, source.PRNumber, source.HeadSHA,
 		synth.PanelRunUUID, synth.ID, now.Format(time.RFC3339)); err != nil {
 		return err
 	}
@@ -602,6 +602,34 @@ func (db *DB) GetTimedOutPanels(githubRepo string, maxAge time.Duration) ([]CIPa
 		panels = append(panels, *panel)
 	}
 	return panels, rows.Err()
+}
+
+// GetCIPanelPendingStatusJobs returns active reruns whose pending status has not
+// been delivered. Retired and posted runs must never restore a pending status.
+func (db *DB) GetCIPanelPendingStatusJobs() ([]int64, error) {
+	rows, err := db.Query(`SELECT synthesis_job_id FROM ci_pr_panels
+		WHERE pending_status_needed = 1 AND synthesis_job_id IS NOT NULL
+		  AND posted_at IS NULL AND retired_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		jobIDs = append(jobIDs, id)
+	}
+	return jobIDs, rows.Err()
+}
+
+// MarkCIPanelPendingStatusSent acknowledges pending publication while the
+// caller still holds the posting claim that orders GitHub status writes.
+func (db *DB) MarkCIPanelPendingStatusSent(id int64) error {
+	_, err := db.Exec(`UPDATE ci_pr_panels SET pending_status_needed = 0 WHERE id = ?`, id)
+	return err
 }
 
 // GetUnpostedTerminalPanels returns panel rows whose synthesis job is terminal

@@ -92,6 +92,83 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 	}
 }
 
+func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  []string
+	}{
+		{"active", []string{"success", "pending"}},
+		{"no token", []string{"success", "pending"}},
+		{"done", []string{"success", "success"}},
+		{"canceled", []string{"success", "error"}},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			if tc.state == "no token" {
+				installFakeGHAuthToken(t, "")
+				t.Setenv("GH_TOKEN", "")
+				t.Setenv("GITHUB_TOKEN", "")
+			}
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.CaptureComments()
+			var states []string
+			failPending := true
+			setStatus := func(repo, sha, state, desc string) error {
+				assert.Equal(t, "acme/api", repo)
+				assert.Equal(t, "head-a", sha)
+				if state == "pending" && failPending {
+					if tc.state == "no token" {
+						return h.Poller.setCommitStatus(repo, sha, state, desc)
+					}
+					return errors.New("GitHub unavailable")
+				}
+				states = append(states, state)
+				return nil
+			}
+			h.Poller.setCommitStatusFn = setStatus
+			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+				[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
+			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+			h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+			server.SetCIPoller(h.Poller)
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			require.NoError(t, err)
+			require.Equal(t, []string{"success"}, states, "the failed write left the old status on GitHub")
+			switch tc.state {
+			case "done":
+				members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
+				require.NoError(t, err)
+				for _, member := range members {
+					h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
+				}
+				h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
+				h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
+			case "canceled":
+				_, err := server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
+				require.NoError(t, err)
+			}
+
+			var dbPath string
+			require.NoError(t, h.DB.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
+			require.NoError(t, server.Close())
+			require.NoError(t, h.DB.Close())
+			db, err := storage.Open(dbPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			poller := NewCIPoller(db, NewStaticConfig(h.Cfg), nil)
+			poller.setCommitStatusFn = setStatus
+			failPending = false
+			// The delivery target remains valid even with no configured poll repos.
+			h.Cfg.CI.Repos = nil
+			poller.poll(context.Background())
+			assert.Equal(t, tc.want, states)
+			poller.poll(context.Background())
+			assert.Equal(t, tc.want, states, "successful and terminal writes must not retry")
+		})
+	}
+}
+
 func TestCIPanelPendingStatusOrdersDelivery(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	comments := h.CaptureComments()

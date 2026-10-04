@@ -429,6 +429,9 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 
 func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
+	// Explicit reruns retain their delivery target even if the repository is
+	// removed from polling. Retry their pending status independently of discovery.
+	p.retryPendingPanelStatuses()
 
 	// Resolve quiet hours once per cycle so an invalid config logs one
 	// warning per poll, not one per PR.
@@ -2303,6 +2306,17 @@ func (p *CIPoller) routePanelEvent(jobID int64) {
 	p.postPanelRun(context.Background(), row)
 }
 
+func (p *CIPoller) retryPendingPanelStatuses() {
+	jobIDs, err := p.db.GetCIPanelPendingStatusJobs()
+	if err != nil {
+		log.Printf("CI poller: error listing pending status deliveries: %v", err)
+		return
+	}
+	for _, id := range jobIDs {
+		p.setPanelPending(id)
+	}
+}
+
 // setPanelPending publishes the stored CI target for a newly queued rerun.
 // The posting claim orders this write before final delivery. A completion
 // that races the claim is delivered here, even if the repo is no longer polled.
@@ -2325,6 +2339,8 @@ func (p *CIPoller) setPanelPending(jobID int64) {
 	}
 	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending", "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	} else if err := p.db.MarkCIPanelPendingStatusSent(row.ID); err != nil {
+		log.Printf("CI poller: error acknowledging pending status for panel %d: %v", row.ID, err)
 	}
 	p.releasePanelClaim(row.ID)
 	job, err := p.db.GetJobByID(jobID)
@@ -3743,7 +3759,7 @@ func truncateUTF8(text string, maxBytes int) string {
 // setCommitStatus posts a commit status check via the GitHub API.
 func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error {
 	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
-		return nil
+		return errors.New("GitHub authentication unavailable")
 	}
 	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
