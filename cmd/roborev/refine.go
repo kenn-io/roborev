@@ -1108,6 +1108,10 @@ func runRefineAllBranches(
 			Context:    ctx,
 			WorkingDir: repoPath,
 		}, branchOpts); err != nil {
+			if _, changed := errors.AsType[*planningStateError](err); changed {
+				// Preserve caller changes, including their current branch.
+				return err
+			}
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)
