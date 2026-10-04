@@ -212,20 +212,26 @@ func TestCIPanelRerunDoesNotPostToAdvancedHead(t *testing.T) {
 
 func TestCIPollerRestartKeepsNonFailureOutcomesTerminal(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		member  jobSpec
-		outcome string
+		name            string
+		member          jobSpec
+		outcome         string
+		advisoryFailure bool
 	}{
-		{"empty", jobSpec{Agent: "test", Status: "done", Output: " "}, storage.PanelOutcomeNoReviewPosted},
-		{"no verdict", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted},
-		{"unreadable", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "unable to read the diff"}, storage.PanelOutcomeNoReviewPosted},
-		{"timeout", jobSpec{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}, storage.PanelOutcomeNoReviewPosted},
-		{"posted", jobSpec{Agent: "test", Status: "done", Output: "No issues found."}, storage.PanelOutcomeReviewPosted},
-		{"inaccessible", jobSpec{Agent: "test", Status: "failed", Error: "model unavailable"}, storage.PanelOutcomeAbandoned},
+		{"empty", jobSpec{Agent: "test", Status: "done", Output: " "}, storage.PanelOutcomeNoReviewPosted, false},
+		{"no verdict", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted, false},
+		{"unreadable", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "unable to read the diff"}, storage.PanelOutcomeNoReviewPosted, false},
+		{"timeout", jobSpec{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}, storage.PanelOutcomeNoReviewPosted, false},
+		{"posted", jobSpec{Agent: "test", Status: "done", Output: "No issues found."}, storage.PanelOutcomeReviewPosted, false},
+		{"inaccessible", jobSpec{Agent: "test", Status: "failed", Error: "model unavailable"}, storage.PanelOutcomeAbandoned, false},
+		{"no verdict with advisory failure", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{tc.member})
+			members := []jobSpec{tc.member}
+			if tc.advisoryFailure {
+				members = append(members, jobSpec{Agent: "test", Status: "failed", Error: "model unavailable", NonVoting: true})
+			}
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", members)
 			h.markJobFailed(t, synth.ID, "no member output")
 			// Prior attempts may have failed even when the final outcome is empty.
 			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 7, "head-a", "genuine", "old failure",

@@ -80,7 +80,7 @@ type panelPostTarget struct {
 const (
 	// panelPostingStaleWindow bounds how long a posting claim is honored before
 	// a recovery sweep may reclaim it (a crashed poster's lease).
-	panelPostingStaleWindow = 5 * time.Minute
+	panelPostingStaleWindow = storage.PanelPostingStaleWindow
 )
 
 // CIPoller polls GitHub for open PRs and enqueues security reviews.
@@ -549,7 +549,7 @@ func (p *CIPoller) reconcileRetryHealth(ghRepo string, prs []ghPR, cfg *config.C
 			if pr.HeadRefOid != attempt.HeadSHA || skip {
 				var err error
 				if pr.HeadRefOid == attempt.HeadSHA {
-					err = p.skipLabeledPR(ghRepo, pr, label)
+					err = p.skipLabeledPR(ghRepo, pr, label, &attempt)
 				} else {
 					err = p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA)
 				}
@@ -615,7 +615,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			return fmt.Errorf("check skipped review attempt: %w", err)
 		}
 		if attempt != nil && attempt.State == "deferred" {
-			return p.skipLabeledPR(ghRepo, pr, label)
+			return p.skipLabeledPR(ghRepo, pr, label, attempt)
 		}
 	}
 	// Skip if this HEAD already has a panel run.
@@ -627,7 +627,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		return p.skipLabeledPR(ghRepo, pr, label)
+		return p.skipLabeledPR(ghRepo, pr, label, nil)
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
@@ -846,7 +846,14 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 	}
 }
 
-func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) error {
+func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected *storage.ReviewAttempt) error {
+	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
+	if err != nil {
+		return fmt.Errorf("claim skipped review: %w", err)
+	}
+	if panelID != 0 {
+		defer p.releasePanelClaim(panelID)
+	}
 	description := fmt.Sprintf("Review skipped: label %s", label)
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
@@ -2953,7 +2960,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
 	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		if err := p.skipLabeledPR(ghRepo, pr, label); err != nil {
+		if err := p.skipLabeledPR(ghRepo, pr, label, attempt); err != nil {
 			log.Printf("CI poller: error skipping deferred attempt for %s#%d@%s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
 			p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
