@@ -829,11 +829,24 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	log.Printf("CI poller: created panel run for %s#%d (HEAD=%s, %d members, range=%s)",
 		ghRepo, pr.Number, headShort, len(members), gitRef)
 
-	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", "Review in progress"); err != nil {
+	if err := p.setPendingReviewStatus(ghRepo, pr.Number, pr.HeadRefOid, "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
 	}
 
 	return true, nil
+}
+
+// Reruns and their retries keep a delivered result visible. Canceling a retry
+// must not leave pending behind when the prior review suppresses further work.
+func (p *CIPoller) setPendingReviewStatus(ghRepo string, prNumber int, sha, description string) error {
+	posted, err := p.db.HasPostedCIReview(ghRepo, prNumber, sha)
+	if err != nil {
+		return err
+	}
+	if posted {
+		return nil
+	}
+	return p.callSetCommitStatus(ghRepo, sha, "pending", description)
 }
 
 // setNoAgentStatus sets an "error" commit status telling the PR author the
@@ -2574,8 +2587,8 @@ func (p *CIPoller) deferGenuinePanel(row *storage.CIPanel, attempt *storage.Revi
 	p.recordDeferral(row, attempt, "genuine", excerpt, now, true)
 }
 
-// recordDeferral defers the HEAD's attempt to the next backoff, sets a
-// non-blocking pending status, and retires the panel run without posting.
+// recordDeferral defers the HEAD's attempt to the next backoff, sets pending
+// when no review has been delivered, and retires the panel run without posting.
 // errClass is "transient" or "genuine"; bumpGenuine increments the
 // consecutive-genuine streak (genuine) or resets it (transient). Retiring the
 // run removes it from the active set without a comment; the attempt row (not the
@@ -2589,7 +2602,7 @@ func (p *CIPoller) recordDeferral(
 		log.Printf("CI poller: error deferring %s attempt for %s#%d@%s: %v",
 			errClass, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending",
+	if err := p.setPendingReviewStatus(row.GithubRepo, row.PRNumber, row.HeadSHA,
 		"Review pending — provider unavailable, retrying"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v",
 			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)

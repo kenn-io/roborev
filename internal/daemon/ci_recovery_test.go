@@ -278,25 +278,54 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 }
 
 func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
-	for _, posted := range []bool{false, true} {
-		t.Run(fmt.Sprintf("posted=%t", posted), func(t *testing.T) {
+	for _, scenario := range []string{"unreviewed", "reviewed", "reviewed retry"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			posted := scenario != "unreviewed"
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+			h.Cfg.CI.Agents = []string{"test"}
+			h.stubProcessPRGit()
+			h.CaptureComments()
+			statuses := h.CaptureCommitStatuses()
+			pr := ghPR{Number: 7, HeadRefOid: "head-a", BaseRefName: "main"}
+			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 				[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 			if posted {
-				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
+				h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 			}
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
-			_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
+			cancelID := rerun.Body.JobID
+			if scenario == "reviewed retry" {
+				members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
+				require.NoError(t, err)
+				for _, member := range members {
+					h.markJobFailed(t, member.ID, "model unavailable")
+				}
+				h.markJobFailed(t, rerun.Body.JobID, "no member output")
+				h.Poller.handleReviewFailed(ciEvent(rerun.Body.JobID, "review.failed"))
+				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
+				require.NoError(t, err)
+				require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+				retry, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 7, "head-a")
+				require.NoError(t, err)
+				require.NotEqual(t, *rerun.Body.RunUUID, retry.PanelRunUUID)
+				cancelID = *retry.SynthesisJobID
+			}
+			_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: cancelID}})
 			require.NoError(t, err)
 
-			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"})
+			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", pr)
 			require.NoError(t, err)
-			assert.Equal(t, posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
+			assert.Equal(posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
+			if posted {
+				require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review complete"}}, *statuses,
+					"reruns and automatic retries must preserve the delivered status when canceled")
+			}
 		})
 	}
 }
