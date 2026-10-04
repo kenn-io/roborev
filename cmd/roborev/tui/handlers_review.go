@@ -281,12 +281,12 @@ func (m model) handleRerunAgentPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.closeRerunAgentPicker()
 		return m, nil
-	case "up", "k", "ctrl+p":
+	case "up", "k":
 		if m.rerunAgentSelected > 0 {
 			m.rerunAgentSelected--
 		}
 		return m, nil
-	case "down", "j", "ctrl+n":
+	case "down", "j":
 		if m.rerunAgentSelected < len(m.rerunAgentOptions)-1 {
 			m.rerunAgentSelected++
 		}
@@ -452,6 +452,7 @@ func (m model) handleFixKey() (tea.Model, tea.Cmd) {
 		// Open inline fix panel within review view
 		m.fixPromptJobID = job.ID
 		m.fixPromptText = ""
+		m.fixPlanFirst = false
 		m.reviewFixPanelOpen = true
 		m.reviewFixPanelFocused = true
 		return m, nil
@@ -460,6 +461,7 @@ func (m model) handleFixKey() (tea.Model, tea.Cmd) {
 	// Fetch the review and open the inline fix panel when it loads
 	m.fixPromptJobID = job.ID
 	m.fixPromptText = ""
+	m.fixPlanFirst = false
 	m.reviewFixPanelPending = true
 	m.fixPromptFollowRetried = false
 	// The origin of this fix REQUEST, for the consume-time view-switch
@@ -480,12 +482,16 @@ func (m model) handleFixKey() (tea.Model, tea.Cmd) {
 // handleReviewFixPanelKey handles key input when the inline fix panel is focused.
 func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "ctrl+p":
+		m.fixPlanFirst = !m.fixPlanFirst
+		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
 		m.reviewFixPanelOpen = false
 		m.reviewFixPanelFocused = false
 		m.fixPromptText = ""
+		m.fixPlanFirst = false
 		m.fixPromptJobID = 0
 		// Complete the reset to match fixPromptSeq's doc claim (tui.go):
 		// "reset alongside fixPromptJobID wherever that is." These three
@@ -507,6 +513,7 @@ func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.reviewFixPanelOpen = false
 			m.reviewFixPanelFocused = false
 			m.fixPromptText = ""
+			m.fixPlanFirst = false
 			m.fixPromptJobID = 0
 			m.fixPromptOrigin = 0
 			m.fixPromptSeq = 0
@@ -516,15 +523,17 @@ func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		jobID := m.fixPromptJobID
 		prompt := m.fixPromptText
+		planFirst := m.fixPlanFirst
 		m.reviewFixPanelOpen = false
 		m.reviewFixPanelFocused = false
 		m.fixPromptText = ""
+		m.fixPlanFirst = false
 		m.fixPromptJobID = 0
 		m.fixPromptOrigin = 0
 		m.fixPromptSeq = 0
 		m.fixPromptFollowRetried = false
 		m.currentView = viewTasks
-		return m, m.triggerFix(jobID, prompt, "")
+		return m, m.triggerFix(jobID, prompt, "", planFirst)
 	case "backspace":
 		if len(m.fixPromptText) > 0 {
 			runes := []rune(m.fixPromptText)
@@ -625,6 +634,7 @@ func (m *model) closeFixPanel() {
 	m.reviewFixPanelFocused = false
 	m.reviewFixPanelPending = false
 	m.fixPromptText = ""
+	m.fixPlanFirst = false
 	m.fixPromptJobID = 0
 	m.fixPromptOrigin = 0
 	m.fixPromptFollowRetried = false

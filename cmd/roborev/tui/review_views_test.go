@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -150,6 +151,67 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 			return false
 		}, "Expected to return to viewReview after 'q', got %d", m2.currentView)
 	}
+}
+
+func TestTUICommitMessagePageNavigation(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewCommitMsg
+	m.width = 50
+	m.height = 12
+	m.commitMsgContent = strings.Repeat("commit message line\n", 80)
+	visibleLines := max(m.height-4, 1)
+	maxScroll := max(len(wrapText(m.commitMsgContent, max(20, min(m.width-4, 100))))-visibleLines, 0)
+
+	m, _ = pressSpecial(m, tea.KeyPgDown)
+	assert.Equal(t, visibleLines, m.commitMsgScroll, "page down moves one visible page")
+
+	for range 100 {
+		m, _ = pressSpecial(m, tea.KeyPgDown)
+	}
+	assert.Equal(t, maxScroll, m.commitMsgScroll, "page down clamps at the last visible page")
+
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+	assert.Equal(t, max(maxScroll-visibleLines, 0), m.commitMsgScroll, "page up moves back one visible page")
+}
+
+func TestTUIPatchPageDownClampsScroll(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewPatch
+	m.height = 20
+	m.patchText = strings.Repeat("patch line\n", 50)
+	visibleLines := max(m.height-4, 1)
+	maxScroll := max(len(strings.Split(m.patchText, "\n"))-visibleLines, 0)
+
+	for range 100 {
+		m, _ = pressSpecial(m, tea.KeyPgDown)
+	}
+	assert.Equal(maxScroll, m.patchScroll, "PgDn clamps at the last patch page")
+
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+	assert.Equal(max(maxScroll-visibleLines, 0), m.patchScroll, "PgUp moves back one page from the bottom")
+}
+
+func TestTUIPatchPageUpClampsOverscroll(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewPatch
+	m.height = 20
+	m.patchText = strings.Repeat("patch line\n", 50)
+	visibleLines := max(m.height-4, 1)
+	maxScroll := max(len(strings.Split(m.patchText, "\n"))-visibleLines, 0)
+
+	for range 100 {
+		m, _ = pressSpecial(m, tea.KeyDown)
+	}
+	assert.Greater(m.patchScroll, maxScroll, "Down can move the raw offset past the rendered bottom")
+
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+	assert.Equal(max(maxScroll-visibleLines, 0), m.patchScroll,
+		"PgUp starts from the rendered bottom after arrow-key overscroll")
 }
 
 func TestTUICtrlDQuitsFromQueueView(t *testing.T) {

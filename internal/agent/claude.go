@@ -114,6 +114,15 @@ func (a *ClaudeAgent) CommandName() string {
 
 func (a *ClaudeAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Claude's representative read-only planning command.
+func (a *ClaudeAgent) PlanningCommandLine() string {
+	return a.commandLine(false)
+}
+
+func (a *ClaudeAgent) commandLine(agenticMode bool) string {
 	args := a.buildArgs(agenticMode, true)
 	return a.Command + " " + strings.Join(args, " ")
 }
@@ -299,7 +308,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)

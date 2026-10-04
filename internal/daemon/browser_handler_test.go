@@ -18,9 +18,25 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestProjectBrowserReviewJobDisplaysFixPlanPrompt(t *testing.T) {
+	t.Parallel()
+	job := storage.ReviewJob{
+		JobType: storage.JobTypeFix,
+		Prompt:  prompt.EncodeFixPlan("planning instructions", "implementation instructions"),
+	}
+
+	projected := projectBrowserReviewJob(job)
+
+	assert.Equal(t,
+		"## Planning Prompt\n\nplanning instructions\n\n## Implementation Prompt\n\nimplementation instructions",
+		projected.Prompt,
+	)
+}
 
 func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *BrowserSessionManager) {
 	t.Helper()

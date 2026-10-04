@@ -27,6 +27,8 @@ For a one-shot fix without re-review, see
 roborev refine                       # Fix failed reviews using default agent
 roborev refine --agent claude-code   # Use specific agent
 roborev refine --max-iterations 5    # Limit iterations (default: 10)
+roborev refine --plan                # Plan each fix before implementation
+roborev refine --plan-only           # Print plans for existing failed reviews
 roborev refine --quiet               # Show elapsed time instead of agent output
 roborev refine --reasoning thorough  # Thorough reasoning (slower, more accurate)
 roborev refine --since abc123        # Refine commits since a specific commit
@@ -95,6 +97,8 @@ those values directly with Git's `--author` and `--trailer` options. See
 |------|-------------|
 | `--agent <name>` | Agent to use for fixes |
 | `--model <model>` | Model for agent |
+| `--plan` | Run a read-only planning phase before each fix |
+| `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
@@ -109,6 +113,19 @@ those values directly with Git's `--author` and `--trailer` options. See
 
 Some flags are mutually exclusive: `--all-branches` cannot be combined with
 `--branch` or `--since`, and `--list` cannot be combined with `--since`.
+
+With `--plan`, each iteration first uses a fresh read-only agent session in a
+disposable worktree, stores the plan on the review, and passes it into the fix.
+Implementation follows your existing agent permission settings. Re-review
+attempts retain prior plans and implementation output.
+
+`--plan-only` takes a finite snapshot of completed failed reviews. It prints and
+stores their plans, including with `--quiet`, without editing, committing,
+enqueueing reviews, or closing reviews. With `--all-branches`, planning uses
+detached worktrees without checking out those branches. Planning flags cannot be
+combined with `--list`. Refine planning also has a clean-working-tree
+precondition; see the
+[refine command options](/docs/commands/#auto-fix-agentic-loop) for details.
 
 ## Targeting
 

@@ -950,6 +950,31 @@ func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) e
 	return err
 }
 
+// SaveRunningJobTokenUsage persists phase usage metadata while its attempt is
+// still running. ExpectedStartedAt and workerID prevent a stale worker from
+// exposing usage metadata for a retried attempt.
+func (db *DB) SaveRunningJobTokenUsage(
+	jobID int64, workerID, expectedStartedAt, tokenUsageJSON string,
+) (bool, error) {
+	if tokenUsageJSON == "" {
+		return false, nil
+	}
+	now := time.Now().Format(time.RFC3339)
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET token_usage = ?, updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ? AND started_at = ?
+	`, tokenUsageJSON, now, jobID, workerID, expectedStartedAt)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 // TokenUsageWrite describes a guarded token-usage write for one job attempt.
 // ExpectedTokenUsage is the usage snapshot the row must still hold (the
 // compare half of the compare-and-swap). ExpectedStartedAt, when non-empty,

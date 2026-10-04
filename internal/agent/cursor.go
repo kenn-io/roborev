@@ -67,6 +67,15 @@ func (a *CursorAgent) CommandName() string {
 
 func (a *CursorAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Cursor's representative read-only planning command.
+func (a *CursorAgent) PlanningCommandLine() string {
+	return a.commandLine(false)
+}
+
+func (a *CursorAgent) commandLine(agenticMode bool) string {
 	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
@@ -92,7 +101,7 @@ func (a *CursorAgent) buildArgs(agenticMode bool) []string {
 }
 
 func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	args := a.buildArgs(agenticMode)
 

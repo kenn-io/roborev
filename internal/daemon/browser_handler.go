@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -274,13 +275,17 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 	if job.Status == storage.JobStatusFailed {
 		errorMessage = job.Error
 	}
+	displayPrompt := job.Prompt
+	if job.IsFixJob() {
+		displayPrompt = prompt.DisplayFixPlanPrompt(displayPrompt)
+	}
 	return browserReviewJob{
 		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
 		JobType: job.JobType, Status: job.Status, Error: errorMessage,
-		EnqueuedAt: job.EnqueuedAt,
-		StartedAt:  job.StartedAt, FinishedAt: job.FinishedAt, Prompt: job.Prompt,
+		EnqueuedAt: job.EnqueuedAt, StartedAt: job.StartedAt,
+		FinishedAt: job.FinishedAt, Prompt: displayPrompt,
 		RetryCount: job.RetryCount, Agentic: job.Agentic,
 		PromptPrebuilt: job.PromptPrebuilt, ReviewType: job.ReviewType,
 		PatchID: job.PatchID, OutputPrefix: job.OutputPrefix,

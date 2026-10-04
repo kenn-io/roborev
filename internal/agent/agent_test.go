@@ -371,6 +371,44 @@ var agentFixtures = []agentTestDef{
 	{"grok", func(s string) Agent { return NewGrokAgent(s) }, "-m", "", "grok-4.5", false, false},
 }
 
+func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
+	withUnsafeAgents(t, true)
+	tests := []struct {
+		name     string
+		agent    Agent
+		unsafe   string
+		readOnly string
+	}{
+		{"claude", NewClaudeAgent("claude"), claudeDangerousFlag, "--allowedTools Read,Glob,Grep"},
+		{"codex", NewCodexAgent("codex"), codexDangerousFlag, "--sandbox read-only"},
+		{"copilot", NewCopilotAgent("copilot"), "", "--available-tools=view,glob,grep,skill"},
+		{"cursor", NewCursorAgent("cursor"), "--force", "--mode plan"},
+		{"droid", NewDroidAgent("droid"), "--auto medium", "--auto low"},
+		{"gemini", NewGeminiAgent("gemini"), "--approval-mode yolo", "--approval-mode plan"},
+		{"grok", NewGrokAgent("grok"), "--always-approve", "--sandbox read-only"},
+		{"kilo", NewKiloAgent("kilo"), "--auto", "--agent plan"},
+		{"kiro", NewKiroAgent("kiro"), "--trust-all-tools", "--no-interactive"},
+		{"opencode", NewOpenCodeAgent("opencode"), "--write", "--agent plan"},
+		{"pi", NewPiAgent("pi"), "--write", "--tools " + piReadOnlyTools},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			commandLine := CommandLineForPlanning(tt.agent)
+			if tt.unsafe != "" {
+				assert.NotContains(t, commandLine, tt.unsafe)
+			}
+			assert.Contains(t, commandLine, tt.readOnly)
+		})
+	}
+}
+
+func TestCommandLineForPlanningClearsSession(t *testing.T) {
+	agentWithSession := NewCodexAgent("codex").WithSessionID("previous-session")
+	commandLine := CommandLineForPlanning(agentWithSession)
+	assert.NotContains(t, commandLine, "resume")
+	assert.NotContains(t, commandLine, "previous-session")
+}
+
 func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
 	t.Helper()
 	for token := range strings.FieldsSeq(cmdLine) {

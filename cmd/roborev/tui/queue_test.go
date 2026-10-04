@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/helplayout"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -407,6 +408,23 @@ func TestTUITasksMouseClickSelectsRow(t *testing.T) {
 
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 4))
 	assert.Equal(t, 1, m2.fixSelectedIdx)
+}
+
+func TestTasksVisibleWindowMatchesRenderedHelpLayout(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	fullTaskHelpRows := [][]helplayout.HelpItem{
+		{{Key: "enter", Description: "view"}, {Key: "P", Description: "parent"}, {Key: "p", Description: "patch"}, {Key: "A", Description: "apply"}, {Key: "l", Description: "log"}},
+		{{Key: "x", Description: "cancel"}, {Key: "o", Description: "options"}, {Key: "?", Description: "help"}, {Key: "T/esc", Description: "back"}},
+	}
+	for _, width := range []int{64, 80, 100, 120, 140, 160} {
+		m := newTuiModel("http://localhost")
+		m.width = width
+		m.height = 24
+		wantVisibleRows := max(m.height-(6+len(convertAndReflowHelpRows(fullTaskHelpRows, m.width))), 1)
+		gotVisibleRows, _, _ := m.tasksVisibleWindow(50)
+		assert.Equalf(wantVisibleRows, gotVisibleRows, "visible job rows at width %d", width)
+	}
 }
 
 func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
@@ -1338,10 +1356,11 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
 	t.Parallel()
+	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
-	m.height = 16 // five visible rows after queue chrome
+	m.height = 15
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -1358,22 +1377,17 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
+	pageSize := m.queueVisibleRows()
+	visibleRows := m.visibleQueueRows()
+	expectedPageIdx := min(pageSize, len(visibleRows)-1)
 
 	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	assert.Equal(t, 6, m2.selectedIdx,
-
-		"pgdown: expected selectedIdx=6 (skipped hidden idx 5), got %d",
-		m2.selectedIdx)
-
-	assert.EqualValues(t, 7, m2.selectedJobID)
+	assert.Equal(expectedPageIdx, m2.selectedRowIndex(m2.visibleQueueRows()), "PgDn advances by one visible page")
+	assert.Equal(visibleRows[expectedPageIdx].job.ID, m2.selectedJobID)
 
 	m3, _ := pressSpecial(m2, tea.KeyPgUp)
-	assert.Equal(t, 0, m3.selectedIdx,
-
-		"pgup: expected selectedIdx=0 (back to newest), got %d",
-		m3.selectedIdx)
-
-	assert.EqualValues(t, 1, m3.selectedJobID)
+	assert.Equal(0, m3.selectedRowIndex(m3.visibleQueueRows()), "PgUp returns to the newest visible row")
+	assert.EqualValues(1, m3.selectedJobID)
 }
 
 func TestTUIResizeBehavior(t *testing.T) {

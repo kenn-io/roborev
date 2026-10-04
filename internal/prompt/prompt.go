@@ -75,15 +75,16 @@ type HistoricalReviewContext struct {
 
 // Builder constructs review prompts
 type Builder struct {
-	db         *storage.DB
-	globalCfg  *config.Config // optional global config for exclude patterns
-	repoCfg    *config.RepoConfig
-	repoCfgSet bool
-	repoCfgRef string
-	ctx        context.Context
-	repoPath   string
-	repoID     int64
-	kataClient kata.Client
+	db            *storage.DB
+	globalCfg     *config.Config // optional global config for exclude patterns
+	repoCfg       *config.RepoConfig
+	repoCfgSet    bool
+	repoCfgRef    string
+	planSkillRoot string
+	ctx           context.Context
+	repoPath      string
+	repoID        int64
+	kataClient    kata.Client
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
@@ -148,6 +149,14 @@ func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
+	return &next
+}
+
+// WithPlanSkillRoot sets the local skill directory used when assembling a
+// plan prompt from another checkout, such as a detached target-branch worktree.
+func (b *Builder) WithPlanSkillRoot(repoPath string) *Builder {
+	next := *b
+	next.planSkillRoot = repoPath
 	return &next
 }
 

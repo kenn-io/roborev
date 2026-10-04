@@ -3,7 +3,10 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,6 +34,61 @@ func TestCopilotSupportsAllowAllTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, supported)
 	})
+}
+
+func TestCopilotPlanningRestrictsTools(t *testing.T) {
+	skipIfWindows(t)
+	withUnsafeAgents(t, true)
+	assert := assert.New(t)
+
+	repoPath := newPlanTestRepo(t)
+	tmpDir := t.TempDir()
+	argsPath := filepath.Join(tmpDir, "args.txt")
+	writeAttemptPath := filepath.Join(tmpDir, "write-attempt")
+	script := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+*--help*) printf '%%s\n' '--allow-all-tools --available-tools --stream --output-format --disable-builtin-mcps'; exit 0;;
+esac
+printf '%%s\n' "$@" > %q
+tools="bash,write,apply_patch,edit,create,custom-mcp"
+for arg do
+  case "$arg" in --available-tools=*) tools="${arg#--available-tools=}";; esac
+done
+case ",$tools," in
+  *,bash,*|*,write,*|*,apply_patch,*|*,edit,*|*,create,*|*,custom-mcp,*)
+    touch %q
+    ;;
+esac
+printf 'Read-only plan\n'
+`, argsPath, writeAttemptPath)
+	command := writeTempCommand(t, script)
+	a := NewCopilotAgent(command).WithAgentic(true)
+
+	result, err := RunPlan(context.Background(), a, repoPath, "HEAD", "plan", io.Discard, nil)
+
+	require.NoError(t, err)
+	assert.Equal("Read-only plan", result)
+	_, statErr := os.Stat(writeAttemptPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+	args := readFileContent(t, argsPath)
+	assert.Contains(args, "--allow-all-tools\n")
+	assert.Contains(args, "--available-tools=view,glob,grep,skill")
+}
+
+func TestCopilotPlanningFailsClosedWithoutAvailableTools(t *testing.T) {
+	skipIfWindows(t)
+	withUnsafeAgents(t, true)
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput:  "--allow-all-tools\n--stream\n--output-format\n--disable-builtin-mcps",
+		CaptureArgs: true,
+	})
+	ctx := context.WithValue(context.Background(), planningContextKey{}, true)
+	_, err := NewCopilotAgent(mock.CmdPath).Review(ctx, t.TempDir(), "HEAD", "plan", nil)
+
+	require.ErrorContains(t, err, "--available-tools")
+	_, statErr := os.Stat(mock.ArgsFile)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestCopilotSupportsStreamOff(t *testing.T) {

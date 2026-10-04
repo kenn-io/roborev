@@ -267,13 +267,28 @@ func (wp *WorkerPool) reconcileTokenCostJob(
 func (wp *WorkerPool) reconcileTokenCostCandidate(
 	ctx context.Context, candidate storage.TokenCostCandidate,
 ) (bool, error) {
-	fetched, err := wp.fetchTokenUsage(ctx, candidate.SessionID)
-	if err != nil {
-		return false, err
-	}
-	if backfill.NeedsTokenCostBackfill(tokens.ToJSON(fetched)) {
+	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
+	if expectedSessions > len(sessionIDs) {
 		return false, nil
 	}
+	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
+		if err != nil {
+			return false, err
+		}
+		if backfill.NeedsTokenCostBackfill(tokens.ToJSON(fetched)) {
+			return false, nil
+		}
+		fetchedSessions = append(fetchedSessions, fetched)
+	}
+	fetched := aggregateTokenUsages(fetchedSessions)
+	if fetched == nil {
+		return false, nil
+	}
+	fetched.ThreadID = candidate.SessionID
+	fetched.ProviderSessionIDs = sessionIDs
+	fetched.ExpectedProviderSessions = expectedSessions
 	merged := backfill.MergeTokenUsage(candidate.TokenUsage, fetched)
 	if backfill.NeedsTokenCostBackfill(tokens.ToJSON(merged)) {
 		return false, nil
@@ -296,4 +311,8 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 		wp.budgetRouter.Invalidate()
 	}
 	return updated, nil
+}
+
+func tokenUsageProviderSessions(candidate storage.TokenCostCandidate) ([]string, int) {
+	return backfill.TokenUsageProviderSessions(candidate)
 }

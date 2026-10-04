@@ -1031,7 +1031,7 @@ default_model = "gpt-5.5"  # Default LLM
 default_backup_model = "claude-sonnet-4-20250514"  # Model paired with default_backup_agent
 server_addr = "127.0.0.1:7373"
 max_workers = 4
-job_timeout_minutes = 30          # Per-job timeout in minutes
+job_timeout_minutes = 30          # Per-job timeout in minutes; plan-first background fixes add an equal planning budget
 hook_timeout_seconds = 30         # Post-commit hook request timeout (0 = platform default: 3, 30 on Windows)
 agent_quota_cooldown = "30m"      # Maximum quota cooldown after agent limits
 review_guidelines = "Global review instructions for every repo."
@@ -1063,7 +1063,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
-| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
+| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |

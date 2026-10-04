@@ -324,10 +324,13 @@ func (m model) submitComment(jobID int64, text string) tea.Cmd {
 }
 
 // triggerFix triggers a background fix job for a parent review.
-func (m model) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
+func (m model) triggerFix(parentJobID int64, prompt, gitRef string, planFirst bool) tea.Cmd {
 	return func() tea.Msg {
 		req := daemonclient.FixJobRequest{
 			ParentJobID: parentJobID,
+		}
+		if planFirst {
+			req.PlanFirst = &planFirst
 		}
 		if prompt != "" {
 			req.Prompt = &prompt

@@ -178,6 +178,32 @@ func TestMergeTokenUsageKeepsExplicitZeroCost(t *testing.T) {
 	assert.Zero(t, merged.CostUSD)
 }
 
+func TestMergeTokenUsagePreservesProviderSessionIDs(t *testing.T) {
+	existing := `{"input_tokens":12,"provider_session_ids":["planner-session","implementation-session"]}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	merged := MergeTokenUsage(existing, fetched)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, merged.ProviderSessionIDs)
+	assert.Equal(t, merged.ProviderSessionIDs, tokens.ParseJSON(tokens.ToJSON(merged)).ProviderSessionIDs)
+
+	conflictMerge := mergeMissingTokenUsage(existing, fetched)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, conflictMerge.ProviderSessionIDs)
+}
+
+func TestMergeTokenUsagePreservesCompletePhaseMetadataFromPartialLog(t *testing.T) {
+	existing := `{"provider_session_ids":["planner-session","implementation-session"],` +
+		`"expected_provider_sessions":2}`
+	fetched := &tokens.Usage{
+		ThreadID:                 "planner-session",
+		ProviderSessionIDs:       []string{"planner-session"},
+		ExpectedProviderSessions: 1,
+	}
+
+	merged := MergeTokenUsage(existing, fetched)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, merged.ProviderSessionIDs)
+	assert.Equal(t, 2, merged.ExpectedProviderSessions)
+}
+
 func TestNeedsTokenUsageBackfill(t *testing.T) {
 	assert := assert.New(t)
 
@@ -335,4 +361,153 @@ func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *te
 	assert.Equal(t, int64(91), got.EventOffset)
 	assert.True(t, got.HasCost)
 	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestApplyTokenUsageAggregatesPlanPhaseSessions(t *testing.T) {
+	db, job := newPlanTokenCostCandidate(t)
+
+	summary, err := ApplyTokenUsage(db, []SessionUsage{
+		{SessionID: "planner-session", Usage: &tokens.Usage{
+			InputTokens: 100, OutputTokens: 15, CostUSD: 0.13, HasCost: true,
+		}},
+		{SessionID: "implementation-session", Usage: &tokens.Usage{
+			InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true,
+		}},
+	}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Updated)
+	require.Len(t, summary.Results, 2)
+	assert.Equal(t, ResultUpdated, summary.Results[0].Status)
+	assert.Equal(t, ResultUpdated, summary.Results[1].Status)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.Equal(t, []string{"planner-session", "implementation-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestApplyTokenUsagePreservesStoredCountsWhenPlanPhaseHasNoCounts(t *testing.T) {
+	db, job := newPlanTokenCostCandidate(t)
+
+	summary, err := ApplyTokenUsage(db, []SessionUsage{
+		{SessionID: "planner-session", Usage: &tokens.Usage{
+			CostUSD: 0.13, HasCost: true,
+		}},
+		{SessionID: "implementation-session", Usage: &tokens.Usage{
+			InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true,
+		}},
+	}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Updated)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestAggregateTokenUsagesDoesNotSumPartialCountSnapshots(t *testing.T) {
+	usage := AggregateTokenUsages([]*tokens.Usage{
+		{CostUSD: 0.13, HasCost: true},
+		{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true},
+	})
+	require.NotNil(t, usage)
+	assert.Zero(t, usage.InputTokens)
+	assert.Zero(t, usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestApplyTokenUsageSkipsIncompletePlanPhaseSessions(t *testing.T) {
+	db, job := newPlanTokenCostCandidate(t)
+
+	summary, err := ApplyTokenUsage(db, []SessionUsage{{
+		SessionID: "implementation-session",
+		Usage: &tokens.Usage{
+			InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true,
+		},
+	}}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 0, summary.Updated)
+	assert.Equal(t, 1, summary.Skipped)
+	require.Len(t, summary.Results, 1)
+	assert.Equal(t, ResultSkipped, summary.Results[0].Status)
+
+	unchanged, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(unchanged.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
+	assert.Zero(t, usage.CostUSD)
+}
+
+func TestApplyTokenUsagePricesOnlyWhenEveryPlanPhaseIsPriced(t *testing.T) {
+	db, job := newPlanTokenCostCandidate(t)
+
+	summary, err := ApplyTokenUsage(db, []SessionUsage{
+		{SessionID: "planner-session", Usage: &tokens.Usage{
+			InputTokens: 100, OutputTokens: 15, CostUSD: 0.13, HasCost: true,
+		}},
+		{SessionID: "implementation-session", Usage: &tokens.Usage{
+			InputTokens: 200, OutputTokens: 25,
+		}},
+	}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Updated)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
+	assert.InDelta(t, 0.13, usage.CostUSD, 1e-9)
+}
+
+func newPlanTokenCostCandidate(t *testing.T) (*storage.DB, *storage.ReviewJob) {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "plan-usage", "test", "plan usage", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "codex",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("plan-usage-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "plan-usage-worker", "codex review"))
+	require.NoError(t, db.SaveJobSessionID(job.ID, "plan-usage-worker", "implementation-session"))
+	require.NoError(t, testutil.CompleteReviewFixture(
+		db, job.ID, "codex", "prompt", "No issues found.",
+	))
+	require.NoError(t, db.SaveJobTokenUsage(job.ID, "implementation-session",
+		`{"input_tokens":300,"total_output_tokens":40,`+
+			`"provider_session_ids":["planner-session","implementation-session"],`+
+			`"expected_provider_sessions":2}`))
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	candidates, err := db.ListTokenCostCandidates(0, 10, time.Time{})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1, "fixture must be eligible for token backfill")
+	return db, updated
 }

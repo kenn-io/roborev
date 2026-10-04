@@ -79,6 +79,15 @@ func (a *DroidAgent) CommandName() string {
 
 func (a *DroidAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode)
+}
+
+// PlanningCommandLine returns Droid's representative read-only planning command.
+func (a *DroidAgent) PlanningCommandLine() string {
+	return a.commandLine(false)
+}
+
+func (a *DroidAgent) commandLine(agenticMode bool) string {
 	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
@@ -103,7 +112,7 @@ func (a *DroidAgent) buildArgs(agenticMode bool) []string {
 
 func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	args := a.buildArgs(agenticMode)
 

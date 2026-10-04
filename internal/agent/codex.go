@@ -170,10 +170,19 @@ func (a *CodexAgent) CommandName() string {
 
 func (a *CodexAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	return a.commandLine(agenticMode, CodexSandboxDisabled())
+}
+
+// PlanningCommandLine returns Codex's representative read-only planning command.
+func (a *CodexAgent) PlanningCommandLine() string {
+	return a.commandLine(false, false)
+}
+
+func (a *CodexAgent) commandLine(agenticMode, sandboxBroken bool) string {
 	args := a.commandArgs(codexArgOptions{
 		agenticMode:   agenticMode,
 		autoApprove:   !agenticMode,
-		sandboxBroken: CodexSandboxDisabled(),
+		sandboxBroken: sandboxBroken,
 		preview:       true,
 	}, runtime.GOOS)
 	return a.Command + " " + strings.Join(args, " ")
@@ -394,8 +403,11 @@ func (a *CodexAgent) review(
 	repoPath, commitSHA, prompt, schemaPath string,
 	output io.Writer,
 ) (string, error) {
-	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	sandboxBroken := CodexSandboxDisabled()
+	if planningReadOnly(ctx) && sandboxBroken {
+		return "", fmt.Errorf("planning requires the Codex read-only sandbox; sandbox is disabled")
+	}
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
 	if a.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
@@ -447,7 +459,6 @@ func (a *CodexAgent) review(
 
 	// Use codex exec with --json for JSONL streaming output
 	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
-	sandboxBroken := CodexSandboxDisabled()
 	if sandboxBroken && autoApprove {
 		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
 	}

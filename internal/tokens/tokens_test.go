@@ -200,6 +200,55 @@ func TestParseCodexUsageJSONL(t *testing.T) {
 	assert.Positive(t, usage.EventOffset)
 }
 
+func TestParseCodexUsageJSONLAggregatesDistinctSessions(t *testing.T) {
+	log := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"planner-session"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":15}}`,
+		`{"type":"thread.started","thread_id":"implementation-session"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":200,"output_tokens":25}}`,
+	}, "\n")
+
+	usage, err := ParseCodexUsageJSONL(strings.NewReader(log))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.InputTokens)
+	assert.Equal(t, int64(40), usage.OutputTokens)
+	assert.Equal(t, "implementation-session", usage.ThreadID)
+	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+}
+
+func TestCodexUsageCaptureWriterMatchesJSONLParser(t *testing.T) {
+	log := strings.Join([]string{
+		`not json`,
+		`{"type":"thread.started","thread_id":"thread-123"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":34,"output_tokens":5}}`,
+	}, "\n")
+	want, err := ParseCodexUsageJSONL(strings.NewReader(log))
+	require.NoError(t, err)
+
+	capture := NewCodexUsageCaptureWriter()
+	for offset := 0; offset < len(log); offset += 7 {
+		end := min(offset+7, len(log))
+		written, err := capture.Write([]byte(log[offset:end]))
+		require.NoError(t, err)
+		assert.Equal(t, end-offset, written)
+	}
+	capture.Flush()
+
+	assert.Equal(t, want, capture.Usage())
+}
+
+func TestParseJSONPreservesProviderSessionsBeforeUsageIsIndexed(t *testing.T) {
+	usage := ParseJSON(`{"provider_session_ids":["planner-session"],"expected_provider_sessions":2}`)
+	require.NotNil(t, usage)
+	assert.False(t, usage.HasUsageData())
+	assert.Equal(t, []string{"planner-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions)
+}
+
 // Codex reports cache-creation tokens separately from cache reads. The field
 // exists as of codex-cli 0.146.0 and must not be folded into
 // cached_input_tokens, which counts cache *reads*.

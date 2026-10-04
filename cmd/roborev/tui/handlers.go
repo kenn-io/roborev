@@ -193,23 +193,21 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleQuitKey()
 	case "home", "g":
 		return m.handleHomeKey()
-	case "end", "G":
-		return m.handleEndKey()
-	case "up", "ctrl+p":
+	case "up":
 		return m.handleUpKey()
 	case "j":
 		return m.handlePrevKey()
 	case "left":
 		return m.handleLeftKey()
-	case "down", "ctrl+n":
+	case "down":
 		return m.handleDownKey()
 	case "k":
 		return m.handleNextKey()
 	case "right":
 		return m.handleRightKey()
-	case "pgup", "u":
+	case "pgup":
 		return m.handlePageUpKey()
-	case "pgdown", "d":
+	case "pgdown":
 		return m.handlePageDownKey()
 	case "space":
 		return m.handleToggleExpand()
@@ -237,7 +235,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBranchFilterOpenKey()
 	case "h":
 		return m.handleHideClosedKey()
-	case "U":
+	case "u":
 		m.releaseNotesFromView = m.currentView
 		m.currentView = viewReleaseNotes
 		m.releaseNotesScroll = 0
@@ -845,29 +843,45 @@ func (m model) prevFixLog() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handlePageUpKey() (tea.Model, tea.Cmd) {
-	pageSize, maxScroll := m.navigationBounds()
 	switch m.currentView {
 	case viewQueue:
+		pageSize := m.queueVisibleRows()
+		if m.splitActive() {
+			pageSize = m.queuePaneRowCapacity()
+		}
 		return m.moveQueueSelection(-pageSize), nil
 	case viewReview:
-		m.reviewScroll = max(0, min(m.reviewScroll, maxScroll)-pageSize)
+		pageSize := m.reviewPageSize()
+		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+			m.reviewScroll = m.mdCache.lastReviewMaxScroll
+		}
+		m.reviewScroll = max(0, m.reviewScroll-pageSize)
 		return m, tea.ClearScreen
 	case viewKindPrompt:
-		m.promptScroll = max(0, min(m.promptScroll, maxScroll)-pageSize)
+		pageSize := m.promptPageSize()
+		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
+			m.promptScroll = m.mdCache.lastPromptMaxScroll
+		}
+		m.promptScroll = max(0, m.promptScroll-pageSize)
 		return m, tea.ClearScreen
 	case viewCommitMsg:
-		m.commitMsgScroll = max(0, min(m.commitMsgScroll, maxScroll)-pageSize)
+		pageSize := m.commitMsgVisibleLines()
+		m.commitMsgScroll = max(0, min(m.commitMsgScroll, m.commitMsgMaxScroll())-pageSize)
 		return m, tea.ClearScreen
 	case viewHelp:
-		m.helpScroll = max(0, min(m.helpScroll, maxScroll)-pageSize)
+		pageSize := m.helpPageSize()
+		m.helpScroll = max(0, min(m.helpScroll, m.helpMaxScroll())-pageSize)
 	}
 	return m, nil
 }
 
 func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
-	pageSize, maxScroll := m.navigationBounds()
 	switch m.currentView {
 	case viewQueue:
+		pageSize := m.queueVisibleRows()
+		if m.splitActive() {
+			pageSize = m.queuePaneRowCapacity()
+		}
 		rows := m.visibleQueueRows()
 		idx := m.selectedRowIndex(rows)
 		reachedEnd := idx >= 0 && idx+pageSize >= len(rows)
@@ -880,16 +894,26 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case viewReview:
-		m.reviewScroll = min(maxScroll, m.reviewScroll+pageSize)
+		pageSize := m.reviewPageSize()
+		m.reviewScroll += pageSize
+		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+			m.reviewScroll = m.mdCache.lastReviewMaxScroll
+		}
 		return m, tea.ClearScreen
 	case viewKindPrompt:
-		m.promptScroll = min(maxScroll, m.promptScroll+pageSize)
+		pageSize := m.promptPageSize()
+		m.promptScroll += pageSize
+		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
+			m.promptScroll = m.mdCache.lastPromptMaxScroll
+		}
 		return m, tea.ClearScreen
 	case viewCommitMsg:
-		m.commitMsgScroll = min(maxScroll, m.commitMsgScroll+pageSize)
+		pageSize := m.commitMsgVisibleLines()
+		m.commitMsgScroll = min(m.commitMsgScroll+pageSize, m.commitMsgMaxScroll())
 		return m, tea.ClearScreen
 	case viewHelp:
-		m.helpScroll = min(m.helpScroll+pageSize, maxScroll)
+		pageSize := m.helpPageSize()
+		m.helpScroll = min(m.helpScroll+pageSize, m.helpMaxScroll())
 	}
 	return m, nil
 }

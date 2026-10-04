@@ -103,7 +103,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list jobs", err)
 	}
-	agentsviewCandidates := make(map[int64]bool)
+	agentsviewCandidates := make(map[int64]storage.TokenCostCandidate)
 	var cursor int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -117,7 +117,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 			break
 		}
 		for _, candidate := range page {
-			agentsviewCandidates[candidate.JobID] = true
+			agentsviewCandidates[candidate.JobID] = candidate
 		}
 		cursor = page[len(page)-1].JobID
 	}
@@ -136,13 +136,97 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		if logErr != nil {
 			log.Printf("job %d: parse job log: %v", job.ID, logErr)
 		}
+		candidate, hasCandidate := agentsviewCandidates[job.ID]
 		var fetchedUsage *tokens.Usage
 		var fetchErr error
-		if agentsviewCandidates[job.ID] {
-			fetchedUsage, fetchErr = tokens.FetchForSessionWithConfig(ctx, job.SessionID, fetchConfig)
+		var providerSessionIDs []string
+		expectedProviderSessions := 0
+		if hasCandidate {
+			providerSessionIDs, expectedProviderSessions = backfill.TokenUsageProviderSessions(candidate)
+			if expectedProviderSessions <= len(providerSessionIDs) {
+				phaseUsages := make([]*tokens.Usage, 0, expectedProviderSessions)
+				complete := true
+				for _, sessionID := range providerSessionIDs {
+					phaseUsage, err := tokens.FetchForSessionWithConfig(ctx, sessionID, fetchConfig)
+					if err != nil {
+						fetchErr = err
+						complete = false
+						break
+					}
+					if phaseUsage == nil {
+						complete = false
+						break
+					}
+					phaseUsages = append(phaseUsages, phaseUsage)
+				}
+				if complete && len(phaseUsages) == expectedProviderSessions {
+					fetchedUsage = backfill.AggregateTokenUsages(phaseUsages)
+					if fetchedUsage != nil {
+						fetchedUsage.ThreadID = candidate.SessionID
+						fetchedUsage.ProviderSessionIDs = providerSessionIDs
+						fetchedUsage.ExpectedProviderSessions = expectedProviderSessions
+					}
+				}
+			}
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if hasCandidate && expectedProviderSessions > 1 {
+			logCoversProviderSessions := logUsageCoversProviderSessions(
+				logUsage, providerSessionIDs, expectedProviderSessions,
+			)
+			if !logCoversProviderSessions {
+				logUsage = nil
+			}
+			if fetchedUsage == nil {
+				if logUsage == nil {
+					if fetchErr != nil {
+						log.Printf("job %d: fetch error: %v", job.ID, fetchErr)
+						report.Failed++
+					} else {
+						report.Skipped++
+					}
+					continue
+				}
+				logUsage.ProviderSessionIDs = providerSessionIDs
+				logUsage.ExpectedProviderSessions = expectedProviderSessions
+			} else if fetchErr != nil {
+				log.Printf("job %d: fetch error: %v", job.ID, fetchErr)
+			}
+
+			usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), fetchedUsage)
+			if usage == nil {
+				report.Skipped++
+				continue
+			}
+			usage.ProviderSessionIDs = providerSessionIDs
+			usage.ExpectedProviderSessions = expectedProviderSessions
+			usage.ThreadID = candidate.SessionID
+			mergedUsage := backfill.MergeTokenUsage(job.TokenUsage, usage)
+			if !input.Body.DryRun {
+				stored, saved, err := backfill.StoreMergedTokenUsage(s.db, backfill.CapturedUsage{
+					JobID:             job.ID,
+					SessionID:         candidate.SessionID,
+					ExistingJSON:      job.TokenUsage,
+					ExpectedStartedAt: job.StartedAtRaw,
+				}, usage, true)
+				if err != nil {
+					log.Printf("job %d: save error: %v", job.ID, err)
+					report.Failed++
+					continue
+				}
+				if !saved {
+					report.Skipped++
+					continue
+				}
+				mergedUsage = stored
+			}
+			report.Updated++
+			report.Jobs = append(report.Jobs, ScannedTokenUsage{
+				JobID: job.ID, Agent: job.Agent, Summary: mergedUsage.FormatSummary(),
+			})
+			continue
 		}
 		if fetchErr != nil {
 			log.Printf("job %d: fetch error: %v", job.ID, fetchErr)
@@ -180,6 +264,27 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		report.Jobs = append(report.Jobs, ScannedTokenUsage{JobID: job.ID, Agent: job.Agent, Summary: mergedUsage.FormatSummary()})
 	}
 	return out, nil
+}
+
+func logUsageCoversProviderSessions(
+	usage *tokens.Usage, sessionIDs []string, expected int,
+) bool {
+	if usage == nil || expected > len(sessionIDs) {
+		return false
+	}
+	loggedSessions := make(map[string]bool, len(usage.ProviderSessionIDs)+1)
+	for _, sessionID := range usage.ProviderSessionIDs {
+		loggedSessions[sessionID] = true
+	}
+	if usage.ThreadID != "" {
+		loggedSessions[usage.ThreadID] = true
+	}
+	for _, sessionID := range sessionIDs {
+		if !loggedSessions[sessionID] {
+			return false
+		}
+	}
+	return len(loggedSessions) >= expected
 }
 
 // LegacyMaintenanceTarget selects the daemon database or a PostgreSQL archive.

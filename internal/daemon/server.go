@@ -1370,6 +1370,14 @@ func stripJobPrompts(jobs []storage.ReviewJob) {
 	}
 }
 
+func renderFixPlanPrompts(jobs []storage.ReviewJob) {
+	for i := range jobs {
+		if jobs[i].IsFixJob() {
+			jobs[i].Prompt = prompt.DisplayFixPlanPrompt(jobs[i].Prompt)
+		}
+	}
+}
+
 func (s *Server) humaListJobs(
 	ctx context.Context, input *ListJobsInput,
 ) (*ListJobsOutput, error) {
@@ -1409,6 +1417,7 @@ func (s *Server) humaListJobs(
 		resp := &ListJobsOutput{}
 		job.WebURL = s.reviewBrowserURL(job.ID)
 		resp.Body.Jobs = []storage.ReviewJob{*job}
+		renderFixPlanPrompts(resp.Body.Jobs)
 		attachPanelSummaries(s.db, resp.Body.Jobs)
 		if input.OmitPrompt == "true" {
 			stripJobPrompts(resp.Body.Jobs)
@@ -1591,6 +1600,7 @@ func (s *Server) humaListJobs(
 		}
 		nextCursor = &encoded
 	}
+	renderFixPlanPrompts(jobs)
 
 	if input.OmitPrompt == "true" {
 		stripJobPrompts(jobs)
@@ -3369,6 +3379,8 @@ func (s *Server) humaFixJob(
 	}
 
 	fixPrompt := ""
+	var planReview *storage.Review
+	var planComments []storage.Response
 	if req.StaleJobID > 0 {
 		staleJob, err := s.db.GetJobByID(req.StaleJobID)
 		if err != nil {
@@ -3463,6 +3475,7 @@ func (s *Server) humaFixJob(
 		fixPrompt = buildFixPromptWithInstructions(
 			review.Output, req.Prompt, fixMinSev, comments, reviewedRef,
 		)
+		planReview, planComments = review, comments
 	}
 
 	cfg := s.configWatcher.Config()
@@ -3549,6 +3562,20 @@ func (s *Server) humaFixJob(
 	var commitID int64
 	if parentJob.CommitID != nil {
 		commitID = *parentJob.CommitID
+	}
+
+	if req.PlanFirst {
+		findings := fixPrompt
+		if planReview != nil {
+			review := *planReview
+			review.Job = parentJob
+			findings = prompt.FixPlanReviewContext(resolutionPath, &review)
+		}
+		planningPrompt, planErr := prompt.BuildFixPlanPrompt(resolutionPath, cfg, findings, fixMinSev, planComments, req.Prompt)
+		if planErr != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: fmt.Sprintf("build fix plan: %v", planErr)})
+		}
+		fixPrompt = prompt.EncodeFixPlan(planningPrompt, fixPrompt)
 	}
 
 	job, err := s.db.EnqueueJob(storage.EnqueueOpts{
