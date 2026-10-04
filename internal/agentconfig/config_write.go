@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pathresolve"
 )
 
@@ -53,7 +54,7 @@ func Write(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temporary agent config: %w", err)
 	}
-	if err := replaceFile(tmpPath, writePath); err != nil {
+	if err := atomicfile.Replace(tmpPath, writePath); err != nil {
 		return fmt.Errorf("replace agent config %s: %w", path, err)
 	}
 	return nil
