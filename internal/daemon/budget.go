@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -99,7 +100,8 @@ func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.Repo
 		if err != nil {
 			continue
 		}
-		if agent.ValidateStructuredReviewSelection(reviewType, candidate) != nil {
+		if agent.ValidateStructuredReviewSelection(reviewType, candidate) != nil ||
+			(reviewType == config.ReviewTypeGoal && goalreview.ValidateAgent(candidate) != nil) {
 			continue
 		}
 		if r.coolingDown != nil && r.coolingDown(candidate.Name()) {

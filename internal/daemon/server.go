@@ -99,7 +99,6 @@ type Server struct {
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
 	goalGate                *goalGate
-	goalReviewRunner        goalReviewRunner // Test-only schema adapter; nil in production.
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -188,7 +187,7 @@ func newServerWithLogs(
 
 	s := &Server{
 		authKey:            cfg.AuthKey,
-		goalGate:           newGoalGate(cfg.MaxWorkers),
+		goalGate:           newGoalGate(),
 		db:                 db,
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,

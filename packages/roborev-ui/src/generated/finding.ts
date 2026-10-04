@@ -4,6 +4,7 @@
 import type { Location } from "./location";
 
 export interface Finding {
+  fix: string;
   location: Location;
   message: string;
   severity: string;

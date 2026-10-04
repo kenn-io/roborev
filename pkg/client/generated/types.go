@@ -1952,6 +1952,7 @@ type FailureStats struct {
 }
 
 type Finding struct {
+	Fix      string   `json:"fix" validate:"required"`
 	Location Location `json:"location"`
 	Message  string   `json:"message" validate:"required"`
 	Severity string   `json:"severity" validate:"required"`
@@ -1959,6 +1960,9 @@ type Finding struct {
 
 func (f Finding) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Fix, "required"); err != nil {
+		errors = errors.Append("Fix", err)
+	}
 	if v, ok := any(f.Location).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Location", err)

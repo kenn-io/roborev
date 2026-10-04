@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 func registerGoalReviewPi(t *testing.T, cfg *config.Config) {
@@ -320,6 +321,7 @@ func TestGoalWorkerFrozenEvidence(t *testing.T) {
 	review, err := c.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "No issues found.", review.Output)
+	assert.NotEmpty(t, review.StructuredOutput, "goal findings must retain their structured representation")
 	assert.Equal(t, job.Prompt, review.Prompt)
 	for range 2 {
 		var event Event
@@ -329,4 +331,38 @@ func TestGoalWorkerFrozenEvidence(t *testing.T) {
 		}
 		require.Contains(t, event.Type, "goal_review.", "missing goal lifecycle event")
 	}
+}
+
+func TestGoalWorkerRecordsUsageAndFindings(t *testing.T) {
+	c := newWorkerTestContext(t, 1)
+	registerGoalReviewPi(t, c.Pool.cfgGetter.Config())
+	snapshot := goalreview.Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []goalreview.Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\n"}}}
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, Agent: "pi", GitRef: snapshot.ID(), JobType: storage.JobTypeGoalReview, ReviewType: "goal", Prompt: goalreview.BuildPrompt(snapshot), PromptPrebuilt: true})
+	require.NoError(t, err)
+	c.Pool.goalReviewRunner = func(_ context.Context, _ agent.Agent, _ string, _ goalreview.Snapshot, _ prompt.SnapshotResult, out io.Writer) ([]goalreview.Finding, error) {
+		_, err := io.WriteString(out, `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Checking goal evidence"}],"usage":{"input":100,"output":20,"cacheRead":10,"cacheWrite":5,"cost":{"total":0.25}}}}`+"\n")
+		return []goalreview.Finding{{Severity: "high", Message: "Missing failure behavior", Fix: "Specify the response to invalid input.", Location: goalreview.Location{File: "spec.md", Line: 1}}}, err
+	}
+	claimed, err := c.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	c.Pool.processJob(testWorkerID, claimed)
+	stored, err := c.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(stored.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(100), usage.InputTokens)
+	assert.Equal(t, int64(20), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
+	spend, err := c.DB.GetBudgetSpend(time.Now())
+	require.NoError(t, err)
+	assert.InDelta(t, 0.25, spend.TotalUSD, 1e-9)
+	review, err := c.DB.GetReviewByJobIDWithFindingCounts(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, review.Job.FindingCounts)
+	assert.Equal(t, 1, review.Job.FindingCounts.High)
+	log, err := os.ReadFile(JobLogPath(job.ID))
+	require.NoError(t, err)
+	assert.Contains(t, string(log), "Checking goal evidence")
 }

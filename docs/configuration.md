@@ -476,11 +476,13 @@ project = "myproj"
 ### Superpowers Intent Reviews
 
 The repo-only `[goal_review]` settings select Superpowers design specs and
-linked implementation plans. They enable automatic checkout-scoped reviews when
-the selected artifacts or open Kata graph change. The synchronous candidate gate
-operates independently of automatic polling; its mode is global-only so a
-checkout cannot disable its own gate. See
-[Superpowers Intent Reviews](/docs/integrations/goal-review/) for gate policy.
+linked implementation plans. Configure the registered main checkout to enable
+automatic reviews across its worktrees when the selected artifacts or open Kata
+graph change. Manual reviews use the requested checkout's configuration. The
+synchronous candidate gate operates independently of automatic polling; its mode
+is global-only so a checkout cannot disable its own gate. See
+[Engineering with Superpowers and Kata](/docs/integrations/goal-review/) for
+gate policy.
 
 ```toml
 # .roborev.toml
@@ -495,8 +497,8 @@ Manual reviews use `roborev review --type goal`. These reviews require a
 complete snapshot and fail when a bound Kata project is unavailable. Prompts
 above the inline budget use complete file handoff through the agent adapter;
 Roborev does not trim or reject them for size. See
-[Superpowers Intent Reviews](/docs/integrations/goal-review/) for artifact
-selection, supported agents and the versioned candidate-gate API.
+[Engineering with Superpowers and Kata](/docs/integrations/goal-review/) for
+artifact selection, supported agents and the versioned candidate-gate API.
 
 ### Kata Integration
 
@@ -1120,7 +1122,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
-| `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Superpowers Intent Reviews](/docs/integrations/goal-review/) | Yes |
+| `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |
 | `refine_min_severity` | string | - | Default minimum severity for `refine`: `critical`, `high`, `medium`, or `low` | Yes |

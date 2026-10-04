@@ -219,7 +219,8 @@ func TestBudgetRoutingPreservesGoalReviewAgent(t *testing.T) {
 
 	assert := assert.New(t)
 	require.True(t, proceed)
-	assert.Nil(selected)
+	require.NotNil(t, selected)
+	assert.Equal("pi", selected.Name())
 	assert.Equal("pi", job.Agent)
 	assert.False(job.BudgetRoutingLocked)
 	stored, err := ctx.DB.GetJobByID(job.ID)
@@ -610,4 +611,44 @@ func TestBudgetRoutingInvalidatesSpendAfterSynthesisCompletionWithoutUsage(t *te
 	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", selected.Name())
+}
+
+func TestBudgetRoutingSelectsSupportedGoalReviewer(t *testing.T) {
+	c := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	cfg.PiCmd, cfg.ClaudeCodeCmd, cfg.GrokCmd = executable, executable, executable
+	for _, a := range []agent.Agent{agent.NewPiAgent(executable), agent.NewClaudeAgent(executable), &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}} {
+		original, err := agent.Get(a.Name())
+		require.NoError(t, err)
+		agent.Register(a)
+		t.Cleanup(func() { agent.Register(original) })
+	}
+	cfg.Budget = config.BudgetConfig{
+		Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100,
+		AgentCosts: config.BudgetAgentCosts{"pi": 15, "claude-code": 5, "grok": 1},
+	}
+	c.reconfigurePool(cfg)
+	now := time.Now().UTC()
+	c.Pool.budgetRouter.now = func() time.Time { return now }
+	prior, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, GitRef: "HEAD", Agent: "test"})
+	require.NoError(t, err)
+	stamp := now.Format(time.RFC3339)
+	_, err = c.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, stamp, stamp, prior.ID)
+	require.NoError(t, err)
+	queued, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, Agent: "pi", GitRef: "snapshot-digest", JobType: storage.JobTypeGoalReview, ReviewType: config.ReviewTypeGoal})
+	require.NoError(t, err)
+	job, err := c.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Equal(t, queued.ID, job.ID)
+	selected, proceed := c.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
+	require.True(t, proceed)
+	require.NotNil(t, selected)
+	assert.Equal(t, "claude-code", selected.Name(), "cheaper agents without the goal contract must be excluded")
+	stored, err := c.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", stored.Agent)
+	assert.True(t, stored.BudgetRoutingLocked)
 }

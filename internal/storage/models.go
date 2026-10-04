@@ -222,8 +222,8 @@ func (j ReviewJob) IsTaskJob() bool {
 }
 
 // UsesStoredPrompt returns true if this job type uses a pre-stored prompt
-// (task, insights, compact, or fix). These job types have prompts built at enqueue
-// time, not constructed by the worker from git data.
+// (goal review, task, insights, compact, or fix). These jobs capture their prompt
+// at enqueue time instead of constructing it from Git data in the worker.
 func (j ReviewJob) UsesStoredPrompt() bool {
 	return j.IsGoalReviewJob() || j.JobType == JobTypeTask ||
 		j.JobType == JobTypeInsights ||
@@ -231,9 +231,9 @@ func (j ReviewJob) UsesStoredPrompt() bool {
 		j.JobType == JobTypeFix
 }
 
-// IsReviewJob returns true if this is an actual code review
-// (single commit, range, or dirty) rather than a task, insights,
-// compact, or fix job. The legacy fallback uses positive review
+// IsReviewJob returns true for code reviews (single commit, range, or dirty)
+// and goal reviews, rather than task, insights, compact, or fix jobs.
+// The legacy fallback uses positive review
 // signals (CommitID, dirty ref, range ref) to avoid misclassifying
 // old stored-prompt jobs that happen to have a GitRef.
 func (j ReviewJob) IsReviewJob() bool {

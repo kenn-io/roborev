@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,7 +16,8 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
-	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type GoalGateRequest struct {
@@ -47,15 +48,14 @@ type goalGateOutput struct {
 type goalGate struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	slots  chan struct{}
 	mu     sync.Mutex
 	closed bool
 	wg     sync.WaitGroup
 }
 
-func newGoalGate(workers int) *goalGate {
+func newGoalGate() *goalGate {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &goalGate{ctx: ctx, cancel: cancel, slots: make(chan struct{}, max(workers, 1))}
+	return &goalGate{ctx: ctx, cancel: cancel}
 }
 
 func (g *goalGate) admit() (func(), error) {
@@ -64,13 +64,8 @@ func (g *goalGate) admit() (func(), error) {
 	if g.closed || g.ctx.Err() != nil {
 		return nil, fmt.Errorf("goal review gate is draining")
 	}
-	select {
-	case g.slots <- struct{}{}:
-	default:
-		return nil, fmt.Errorf("goal review gate is full")
-	}
 	g.wg.Add(1)
-	return func() { <-g.slots; g.wg.Done() }, nil
+	return g.wg.Done, nil
 }
 
 func (g *goalGate) stop() {
@@ -166,25 +161,20 @@ func (s *Server) humaGoalGate(ctx context.Context, input *goalGateInput) (*goalG
 		}
 	}
 	response.SnapshotID = snapshot.ID()
-	prepared, err := prompt.NewBuilderWithConfig(s.db, cfg).ForRepo(root, 0).Prepare(
-		goalreview.BuildPrompt(snapshot),
-		prompt.SnapshotTarget{RepoPath: root, ConfigRepoPath: root},
-	)
+	output, err := s.enqueueGoalReviewWithConfig(runCtx, EnqueueRequest{
+		RepoPath: root, ReviewType: config.ReviewTypeGoal, Source: "goal_gate",
+	}, root, &snapshot)
 	if err != nil {
 		return completedError(err)
 	}
-	if prepared.Cleanup != nil {
-		defer prepared.Cleanup()
+	created, ok := output.Body.(EnqueueCreatedResponse)
+	if output.Status != http.StatusCreated || !ok || created.ReviewJob == nil {
+		if failure, ok := output.Body.(ErrorResponse); ok {
+			return completedError(fmt.Errorf("%s", failure.Error))
+		}
+		return completedError(fmt.Errorf("enqueue goal review: HTTP %d", output.Status))
 	}
-	a, _, err := goalreview.ResolveAgent(root, cfg, goalreview.AgentOptions{})
-	if err != nil {
-		return completedError(err)
-	}
-	runner := s.goalReviewRunner
-	if runner == nil {
-		runner = goalreview.RunPrepared
-	}
-	response.Findings, err = runner(runCtx, a, root, snapshot, prepared, io.Discard)
+	response.Findings, err = s.waitGoalReview(runCtx, created.ID, snapshot)
 	if err != nil {
 		return completedError(err)
 	}
@@ -195,6 +185,49 @@ func (s *Server) humaGoalGate(ctx context.Context, input *goalGateInput) (*goalG
 		response.Blocked = response.Mode == "block"
 	}
 	return &goalGateOutput{Status: http.StatusOK, Body: response}, nil
+}
+
+// waitGoalReview keeps the HTTP contract synchronous while the ordinary worker
+// pool owns execution, concurrency, retries and accounting.
+func (s *Server) waitGoalReview(ctx context.Context, jobID int64, snapshot goalreview.Snapshot) ([]goalreview.Finding, error) {
+	subscriber, events := s.broadcaster.Subscribe("")
+	defer s.broadcaster.Unsubscribe(subscriber)
+	// Events are best-effort; polling also catches a dropped completion event.
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			_, cancelErr := s.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: jobID}})
+			return nil, errors.Join(err, cancelErr)
+		}
+		job, err := s.db.GetJobByID(jobID)
+		if err != nil {
+			return nil, err
+		}
+		switch job.Status {
+		case storage.JobStatusDone:
+			review, err := s.db.GetReviewByJobID(jobID)
+			if err != nil {
+				return nil, err
+			}
+			raw, err := json.Marshal(review.StructuredOutput)
+			if err != nil {
+				return nil, err
+			}
+			document, err := structuredreview.Decode(raw)
+			if err != nil {
+				return nil, err
+			}
+			return goalreview.FindingsFromDocument(document, snapshot), nil
+		case storage.JobStatusFailed, storage.JobStatusCanceled:
+			return nil, fmt.Errorf("goal review %s: %s", job.Status, job.Error)
+		}
+		select {
+		case <-ctx.Done():
+		case <-events:
+		case <-ticker.C:
+		}
+	}
 }
 
 // GoalReview evaluates the synchronous gate. It respects the caller's context

@@ -2,11 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 // goalReviewRunner is set only by package tests. Production leaves it nil and
@@ -145,7 +149,16 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	if runner == nil {
 		runner = goalreview.RunPrepared
 	}
-	findings, err := runner(ctx, a, root, snapshot, prepared, io.Discard)
+	outputWriter := wp.outputBuffers.Writer(job.ID, GetNormalizer(a.Name()))
+	defer outputWriter.Flush()
+	jobLog := newAgentJobLogWriter(job.ID, a.Name())
+	defer func() {
+		if err := jobLog.Close(); err != nil {
+			log.Printf("[%s] close goal review log: %v", workerID, err)
+		}
+		wp.captureGoalUsage(workerID, job, a.Name())
+	}()
+	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(jobLog, outputWriter))
 	if ctx.Err() != nil {
 		if current, getErr := wp.db.GetJobByID(job.ID); getErr == nil && current.Status == storage.JobStatusCanceled {
 			event.Type = "goal_review.canceled"
@@ -165,9 +178,15 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		return
 	}
 	output := goalreview.Render(findings)
+	document := goalreview.Document(findings)
+	raw, err := json.Marshal(document)
+	if err != nil {
+		fail(err)
+		return
+	}
 	var completeErr error
 	if wp.runAttemptTransition(workerID, job, func() {
-		completeErr = wp.db.CompleteJob(job.ID, a.Name(), job.Prompt, output)
+		completeErr = wp.db.CompleteJobResult(job.ID, a.Name(), job.Prompt, storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)})
 	}) {
 		return
 	}
@@ -186,4 +205,37 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	event.Verdict = string(verdict)
 	event.Findings = output
 	wp.broadcaster.Broadcast(event)
+}
+
+// Goal reviewers disable session persistence, so their own output is the
+// source of usage. Store only the terminal attempt that produced this log.
+func (wp *WorkerPool) captureGoalUsage(workerID string, job *storage.ReviewJob, agentName string) {
+	file, err := os.Open(JobLogPath(job.ID))
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		log.Printf("[%s] open goal review usage log: %v", workerID, err)
+		return
+	}
+	defer file.Close()
+	usage, err := tokens.ParseSchemaUsage(agentName, file)
+	if err != nil {
+		log.Printf("[%s] read goal review usage: %v", workerID, err)
+		return
+	}
+	if usage == nil {
+		return
+	}
+	updated, err := wp.db.BackfillJobTokenUsageIfCurrent(storage.TokenUsageWrite{
+		JobID: job.ID, SessionID: usage.ThreadID,
+		ExpectedTokenUsage: job.TokenUsage, ExpectedStartedAt: job.StartedAtRaw,
+		TokenUsageJSON: tokens.ToJSON(usage),
+	})
+	if err != nil {
+		log.Printf("[%s] save goal review usage: %v", workerID, err)
+	}
+	if updated {
+		wp.invalidateBudgetSpend()
+	}
 }

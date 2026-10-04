@@ -2088,6 +2088,8 @@ components:
     Finding:
       additionalProperties: false
       properties:
+        fix:
+          type: string
         location:
           $ref: "#/components/schemas/Location"
         message:
@@ -2097,6 +2099,7 @@ components:
       required:
         - severity
         - message
+        - fix
         - location
       type: object
     FindingCounts:

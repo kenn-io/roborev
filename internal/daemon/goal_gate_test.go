@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -30,9 +31,10 @@ func TestGoalGateModes(t *testing.T) {
 			repo := testutil.NewGitRepo(t)
 			goalArtifacts(t, repo.Path())
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n[goal_review]\nenabled = false\n"), 0o600))
-			server.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+			server.workerPool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 				return goalreview.Check(snapshot), nil
 			})
+			server.workerPool.Start()
 			// A mechanical finding survives the injected semantic result.
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), "docs/superpowers/plans/feature.md"), []byte("**Spec:** docs/superpowers/specs/feature-design.md\n### Task 1: Change\n"), 0o600))
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/goal-review", GoalGateRequest{RepoPath: repo.Path()})
@@ -85,10 +87,11 @@ func TestGoalGateFailsClosedForCheckoutGateOverride(t *testing.T) {
 	goalArtifacts(t, repo.Path())
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n[goal_review.kata_gate]\ndefault = \"off\"\n"), 0o600))
 	runCount := 0
-	server.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 		runCount++
 		return []goalreview.Finding{{Severity: "medium", Message: "incomplete intent", Location: goalreview.Location{File: "spec.md"}}}, nil
 	})
+	server.workerPool.Start()
 
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/goal-review", GoalGateRequest{RepoPath: repo.Path()}))
@@ -113,7 +116,7 @@ func TestGoalGateAcceptsPromptAboveInlineBudget(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), "docs/superpowers/specs/feature-design.md"), []byte(largeSpec), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"),
 		[]byte("review_agent = \"pi\"\n"), 0o600))
-	server.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, prepared prompt.SnapshotResult) ([]goalreview.Finding, error) {
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, prepared prompt.SnapshotResult) ([]goalreview.Finding, error) {
 		complete := prepared.Prompt
 		if prepared.FilePath != "" {
 			data, readErr := os.ReadFile(prepared.FilePath)
@@ -123,6 +126,7 @@ func TestGoalGateAcceptsPromptAboveInlineBudget(t *testing.T) {
 		assert.Contains(t, complete, marker)
 		return nil, nil
 	})
+	server.workerPool.Start()
 
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/goal-review", GoalGateRequest{RepoPath: repo.Path()}))
@@ -141,10 +145,11 @@ func TestGoalGateHonorsConfiguredJobTimeout(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n"), 0o600))
 	var deadline time.Time
 	var hasDeadline bool
-	server.goalReviewRunner = goalReviewTestRunner(func(ctx context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(ctx context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 		deadline, hasDeadline = ctx.Deadline()
 		return nil, nil
 	})
+	server.workerPool.Start()
 
 	w := httptest.NewRecorder()
 	started := time.Now()
@@ -177,11 +182,12 @@ func TestGoalGateCancelsAdmittedRequests(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"),
 				[]byte("review_agent = \"pi\"\n"), 0o600))
 			started := make(chan struct{})
-			server.goalReviewRunner = goalReviewTestRunner(func(ctx context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+			server.workerPool.goalReviewRunner = goalReviewTestRunner(func(ctx context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 				close(started)
 				<-ctx.Done()
 				return nil, ctx.Err()
 			})
+			server.workerPool.Start()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/goal-review", GoalGateRequest{RepoPath: repo.Path()}).WithContext(ctx)
@@ -192,7 +198,6 @@ func TestGoalGateCancelsAdmittedRequests(t *testing.T) {
 				server.httpServer.Handler.ServeHTTP(w, req)
 			}()
 			<-started
-			require.Eventually(t, func() bool { return len(server.goalGate.slots) == 1 }, 5*time.Second, time.Millisecond)
 			if shutdown {
 				server.goalGate.stop()
 			} else {
@@ -206,7 +211,6 @@ func TestGoalGateCancelsAdmittedRequests(t *testing.T) {
 					return false
 				}
 			}, 5*time.Second, time.Millisecond)
-			assert.Empty(t, server.goalGate.slots)
 			var response GoalGateResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 			assert.Equal(t, "error", response.Status)
@@ -244,12 +248,10 @@ func TestGoalGateErrorsAndAdmission(t *testing.T) {
 	assert.Equal(t, 503, w.Code, w.Body.String())
 }
 
-func TestGoalGateCapacityCancellation(t *testing.T) {
-	gate := newGoalGate(1)
+func TestGoalGateStopsAdmission(t *testing.T) {
+	gate := newGoalGate()
 	release, err := gate.admit()
 	require.NoError(t, err)
-	_, err = gate.admit()
-	require.Error(t, err)
 	release()
 	release, err = gate.admit()
 	require.NoError(t, err)
@@ -305,9 +307,10 @@ func TestGoalGateCandidateIsInMemory(t *testing.T) {
 	goalArtifacts(t, repo.Path())
 	require.NoError(t, os.Remove(filepath.Join(repo.Path(), "docs/superpowers/plans/feature.md")))
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n"), 0o600))
-	server.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, _ goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 		return nil, nil
 	})
+	server.workerPool.Start()
 	evaluate := func(candidate *goalreview.Candidate) GoalGateResponse {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -330,31 +333,69 @@ func TestGoalGateCandidateIsInMemory(t *testing.T) {
 	assert.Equal(t, before, after)
 	jobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
-	assert.Empty(t, jobs, "gate must not enqueue background jobs")
+	require.Len(t, jobs, 3, "each evaluation must be recorded in the shared job queue")
+	for _, job := range jobs {
+		assert.Equal(t, "goal_gate", job.Source)
+		assert.Equal(t, "done", string(job.Status))
+	}
 }
 
-func TestGoalGateHTTPAdmissionAndBodyLimit(t *testing.T) {
+func TestGoalGateRejectsAdmissionDuringShutdown(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
 	goalArtifacts(t, repo.Path())
-	var releases []func()
-	for range cap(server.goalGate.slots) {
-		release, err := server.goalGate.admit()
-		require.NoError(t, err)
-		releases = append(releases, release)
-	}
-	t.Cleanup(func() {
-		for _, release := range releases {
-			release()
-		}
-	})
+	server.goalGate.stop()
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost,
 		"/api/goal-review", GoalGateRequest{RepoPath: repo.Path()}))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	var response GoalGateResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Equal(t, 1, response.Version)
+	assert.Equal(t, "error", response.Status)
+	assert.True(t, response.Blocked)
+}
+
+func TestGoalGateWaitsForWorkerAndCancelsQueuedJob(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	registerGoalReviewPi(t, server.configWatcher.Config())
+	repo := testutil.NewGitRepo(t)
+	goalArtifacts(t, repo.Path())
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n"), 0o600))
+	called := make(chan struct{}, 1)
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(context.Context, goalreview.Snapshot, prompt.SnapshotResult) ([]goalreview.Finding, error) {
+		called <- struct{}{}
+		return nil, nil
+	})
+	// Leave the workers stopped: admission must wait for shared worker capacity.
+	subscriber, events := server.broadcaster.Subscribe("")
+	defer server.broadcaster.Unsubscribe(subscriber)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/goal-review", GoalGateRequest{RepoPath: repo.Path()}).WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.httpServer.Handler.ServeHTTP(w, req)
+	}()
+	var event Event
+	// Admission runs Git subprocesses and SQLite work outside virtual time.
+	select {
+	case event = <-events:
+	case <-time.After(5 * time.Second):
+	}
+	require.Equal(t, "goal_review.enqueued", event.Type)
+	queued, err := db.GetJobByID(event.JobID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, queued.Status)
+	assert.Empty(t, called, "gate must not execute an agent outside the worker pool")
+	cancel()
+	<-done
+	canceled, err := db.GetJobByID(event.JobID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, canceled.Status)
+	var response GoalGateResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	assert.Equal(t, "error", response.Status)
 	assert.True(t, response.Blocked)
 }
@@ -367,7 +408,7 @@ func TestGoalGatePreservesCandidateLargerThanOneMiB(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_agent = \"pi\"\n"), 0o600))
 	candidateBody := strings.Repeat("complete proposed requirement ", 40000) + "final requirement line"
 	var capturedBody string
-	server.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+	server.workerPool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 		for _, issue := range snapshot.Issues {
 			if issue.ShortID == "proposed" {
 				capturedBody = issue.Body
@@ -375,6 +416,7 @@ func TestGoalGatePreservesCandidateLargerThanOneMiB(t *testing.T) {
 		}
 		return nil, nil
 	})
+	server.workerPool.Start()
 	request := GoalGateRequest{
 		RepoPath:  repo.Path(),
 		Candidate: &goalreview.Candidate{Title: "Proposed task", Body: candidateBody},

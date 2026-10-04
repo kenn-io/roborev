@@ -51,17 +51,18 @@ integration points used by this loop; they can also be used directly.
 
 ## Review a spec or plan
 
-After brainstorming writes the spec, run:
+Choose `pi` or `claude-code` as your configured `review_agent`, or pass
+`--agent` explicitly. After brainstorming writes the spec, run:
 
 ```bash
-roborev review --type goal --agent pi --wait \
+roborev review --type goal --wait \
   --spec docs/superpowers/specs/feature-design.md
 ```
 
 After writing-plans creates the linked implementation plan, run:
 
 ```bash
-roborev review --type goal --agent pi --wait \
+roborev review --type goal --wait \
   --plan docs/superpowers/plans/feature.md
 ```
 
@@ -134,14 +135,13 @@ artifact selectors.
 
 Either CLI/API path replaces the configured pair as a unit. Blank explicit
 paths, ambiguous discovery, unreadable files, and invalid UTF-8 are errors. Long
-specs and plans are normal: there is no 4,000-character constraint. The shared
-prompt builder uses `max_prompt_size` as the inline budget. Larger complete
-prompts use file handoff through the agent adapter; Roborev does not trim
-documents or the graph.
+specs and plans are supported. The shared prompt builder uses `max_prompt_size`
+as the inline budget. Larger complete prompts use file handoff through the agent
+adapter; Roborev does not trim documents or the graph.
 
 ## Automatic review
 
-Configure the checkout's `.roborev.toml`:
+Configure `.roborev.toml` in the registered repository's main checkout:
 
 ```toml
 review_agent = "pi"
@@ -160,12 +160,26 @@ watch = ["goal", "kata_graph"]
 | `goal_review.plan_file` | Omitted | Explicit plan path; otherwise discover by spec linkage |
 | `goal_review.watch` | `["goal", "kata_graph"]` | Watch artifact intent, the open graph, or both; `[]` disables polling |
 
-The daemon polls registered repositories and their live worktrees every 30
-seconds. Each checkout has separate pending state. It reviews the initial
+The watcher uses the main checkout's configuration and Kata binding for all its
+worktrees. Artifact paths resolve inside each worktree. Manual reviews and gate
+requests use the requested checkout's configuration and binding instead.
+
+Every 30 seconds, the daemon checks registered repository configuration.
+Disabled repositories skip Git worktree discovery and Kata capture. Each enabled
+checkout captures its artifacts and open Kata graph, then compares the selected
+watched content with its last review. Enqueueing reuses that capture.
+
+Each checkout has separate pending state. The watcher reviews the initial
 snapshot, coalesces edits while a review is pending, and retries capture or
-enqueue errors. A linked plan appearing changes the review stage. Checkbox
-status changes alone do not enqueue another review; task or command edits do.
-Deleted or ambiguous artifacts produce visible errors.
+enqueue errors. Completed reviews prevent unchanged snapshots from being
+reviewed again after a daemon restart. Candidate gate jobs do not affect this
+comparison. A linked plan appearing changes the review stage. Checkbox status
+changes alone do not enqueue another review; task or command edits do.
+
+With automatic discovery, no spec means the watcher waits for one to appear.
+Ambiguous discovery and missing explicitly configured files produce visible
+errors. The watcher reports an unchanged error once, then reports it again only
+if the error changes or the checkout recovers and later fails.
 
 These are optional integration points after brainstorming and writing-plans, for
 both inline and subagent-driven execution. No installed Superpowers skills or
@@ -188,10 +202,21 @@ every other feature: drift findings require an explicit relationship to these
 artifacts. Closed or external link targets remain references. Absent Kata
 binding means an empty graph; a bound but unavailable ledger causes an error.
 
-Findings point to a captured spec/plan line or a supplied Kata short ID.
-Mechanical plan findings cannot be discarded by the semantic reviewer. Goal jobs
-emit `goal_review.*` events, so existing `review.*` hooks do not file those
-findings back into Kata and trigger another intent review.
+Each finding includes severity, a problem, a concrete fix, and an optional
+location in the captured evidence. An invalid line number loses its line anchor;
+an unknown file or Kata ID loses its location. The finding remains visible.
+Malformed results or missing problem/fix text still fail validation. Mechanical
+plan findings cannot be discarded by the semantic reviewer.
+
+Queued goal reviews retain structured findings and severity counts, stream agent
+output, and record reported token usage and cost. Missing cost telemetry remains
+unknown. Goal jobs participate in daily budget routing, restricted to supported
+goal reviewers. The existing soft-budget and retained-attempt accounting rules
+apply.
+
+Goal jobs emit `goal_review.*` events. Custom command hooks can subscribe to
+these events explicitly. Existing `review.*` hooks and built-in Kata/Beads hooks
+do not handle goal events, avoiding feedback into the reviewed task graph.
 
 ## Candidate gate for downstream integrations
 
@@ -208,7 +233,8 @@ fails with a global-only configuration error. The gate returns a blocking error
 response rather than accepting the checkout's policy.
 
 `POST /api/goal-review` evaluates the current graph or a proposed Kata edit
-synchronously, without writing Kata or creating a queued job:
+synchronously. It captures the proposed graph without writing Kata, enqueues a
+goal review with source `goal_gate`, and waits for the result:
 
 ```json
 {
@@ -237,12 +263,13 @@ findings/errors without blocking. Off performs no capture or agent call.
 Disabling the watcher does not disable the candidate gate.
 
 Completed evaluations, including capture/reviewer errors, return HTTP 200.
-Malformed inputs return 400; full admission or shutdown returns 503. The
-endpoint has no 1 MiB body cap, so complete candidate task bodies reach the
-review. At most `max_workers` gates run concurrently, separately from the job
-queue. Reviews use the configured job timeout and cancel on disconnect or daemon
-shutdown. The Go client's `HTTPClient.GoalReview(ctx, request)` preserves its
-caller context rather than imposing the ordinary ten-second HTTP timeout.
+Malformed inputs return 400; shutdown returns 503. Complete candidate task
+bodies reach the review. Gate jobs share the ordinary worker pool, retries,
+logs, budget routing, and usage accounting. They appear in review history. The
+configured job timeout bounds the gate request, including time waiting in the
+queue. Disconnect or daemon shutdown cancels queued or running gate jobs. The Go
+client's `HTTPClient.GoalReview(ctx, request)` preserves its caller context
+rather than imposing the ordinary ten-second HTTP timeout.
 
 A pass applies only to its snapshot ID, which includes both artifacts and the
 candidate graph. Downstream Kata hooks must serialize review-and-commit or
