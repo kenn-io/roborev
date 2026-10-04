@@ -61,6 +61,7 @@ func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview
 	if err != nil {
 		return err
 	}
+	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	repo, err := config.LoadRepoConfig(root)
 	if err != nil {
 		return err

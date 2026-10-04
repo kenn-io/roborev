@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 func registerGoalReviewPi(t *testing.T) {
@@ -160,6 +162,44 @@ func TestGoalReviewCLI(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, output.String(), "No issues found.")
 	})
+}
+
+func TestGoalReviewLocalClaudeUsesConfiguredAPIKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script")
+	}
+	dataDir := testenv.SetDataDir(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	originalKey := agent.AnthropicAPIKey()
+	agent.SetAnthropicAPIKey("")
+	t.Cleanup(func() { agent.SetAnthropicAPIKey(originalKey) })
+
+	keyFile := filepath.Join(dataDir, "received-key")
+	t.Setenv("GOAL_REVIEW_KEY_FILE", keyFile)
+	claude := filepath.Join(dataDir, "claude")
+	require.NoError(t, os.WriteFile(claude, []byte(`#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo 'usage: claude --tools --bare'
+  exit 0
+fi
+cat >/dev/null
+printf '%s' "$ANTHROPIC_API_KEY" > "$GOAL_REVIEW_KEY_FILE"
+printf '%s\n' '{"type":"result","result":"{\"findings\":[]}"}'
+`), 0o700))
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(
+		"claude_code_cmd = "+strconv.Quote(claude)+"\nanthropic_api_key = \"configured-test-key\"\n"), 0o600))
+	repo := NewGitTestRepo(t)
+	spec := "design.md"
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, spec), []byte("# Feature\n"), 0o600))
+	cmd, output := newTestCmd(t)
+	cmd.SetContext(t.Context())
+
+	err := runGoalReview(cmd, repo.Dir, goalreview.AgentOptions{Agent: "claude"}, true, false, false, &spec, nil)
+	require.NoError(t, err)
+	key, err := os.ReadFile(keyFile)
+	require.NoError(t, err)
+	assert.Equal(t, "configured-test-key", string(key))
+	assert.Contains(t, output.String(), "No issues found.")
 }
 
 func TestGoalReviewSelectionReplacesConfiguredPair(t *testing.T) {
