@@ -11,6 +11,7 @@ import (
 func TestLatestCompletedGoalReviewScopesCheckoutAndExcludesCandidates(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
+	defer db.Close()
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)
 	linked := filepath.Join(t.TempDir(), "linked")
