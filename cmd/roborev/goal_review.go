@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,14 +16,11 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // goalReviewRunner keeps CLI flow tests independent of an installed agent CLI.
 type goalReviewRunner func(context.Context, agent.Agent, string, goalreview.Snapshot, prompt.SnapshotResult, io.Writer) ([]goalreview.Finding, error)
-
-func goalReviewDaemonHTTPClient(ep daemon.DaemonEndpoint) *http.Client {
-	return ep.HTTPClient(0)
-}
 
 func runGoalReview(cmd *cobra.Command, root string, options goalreview.AgentOptions, local, wait, quiet bool, spec, plan *string) error {
 	return runGoalReviewWithRunner(cmd, root, options, local, wait, quiet, spec, plan, goalreview.RunPrepared)
@@ -40,12 +36,7 @@ func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, ep.BaseURL()+"/api/enqueue", bytes.NewReader(data))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := goalReviewDaemonHTTPClient(ep).Do(req)
+		resp, err := ep.APIClient(0).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(data))
 		if err != nil {
 			return err
 		}

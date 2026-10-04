@@ -554,8 +554,8 @@ func (m model) fetchBranchesForRepo(
 // Backfill runs once per TUI session (branchBackfillDone), so the
 // repeated lookup cost for skipped rows is bounded.
 func backfillBranchValue(job storage.ReviewJob, machineID *uuid.UUID) (string, bool) {
-	// Mark task jobs (run, analyze, custom) or dirty jobs with no-branch sentinel
-	if job.IsTaskJob() || job.IsDirtyJob() {
+	// These jobs have no commit from which to derive a branch.
+	if job.IsTaskJob() || job.IsDirtyJob() || job.IsGoalReviewJob() {
 		return branchNone, true
 	}
 	// Mark remote jobs with no-branch sentinel (can't look up)
@@ -960,6 +960,9 @@ func reviewBranchName(job *storage.ReviewJob) string {
 	if job.Branch != "" {
 		return job.Branch
 	}
+	if job.IsGoalReviewJob() {
+		return ""
+	}
 	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {
 		if branch := git.GetBranchName(job.RepoPath, job.GitRef); branch != "" {
 			return branch
@@ -1328,10 +1331,17 @@ func (m model) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {
 // fetchCommitMsg fetches commit message(s) for a job.
 // For single commits, returns the commit message.
 // For ranges, returns all commit messages in the range.
-// For dirty reviews or prompt jobs, returns an error.
+// For goal reviews, dirty reviews, or prompt jobs, returns an error.
 func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
+		if job.IsGoalReviewJob() {
+			return commitMsgMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("no commit message for goal reviews"),
+			}
+		}
+
 		// Handle task jobs first (run, analyze, custom labels)
 		// Check this before dirty to handle backward compatibility with older run jobs
 		if job.IsTaskJob() {

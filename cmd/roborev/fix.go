@@ -1378,8 +1378,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	}
 
 	batchAddr := getDaemonEndpoint().BaseURL()
-	var entries []batchEntry
-	for _, id := range jobIDs {
+	// Validate every job before reading reviews or closing passing jobs.
+	jobs := make([]*storage.ReviewJob, len(jobIDs))
+	for i, id := range jobIDs {
 		job, err := fetchJob(ctx, batchAddr, id)
 		if err != nil {
 			if daemon.IsDaemonAccessError(err) || opts.planOnly {
@@ -1390,12 +1391,24 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			}
 			continue
 		}
+		if job.IsGoalReviewJob() {
+			return fmt.Errorf("job %d: goal reviews cannot be fixed as code", id)
+		}
 		if job.Status != storage.JobStatusDone {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d (status: %s)\n", id, job.Status)
 			}
 			continue
 		}
+		jobs[i] = job
+	}
+
+	var entries []batchEntry
+	for i, job := range jobs {
+		if job == nil {
+			continue
+		}
+		id := jobIDs[i]
 		review, err := fetchReview(ctx, batchAddr, id)
 		if err != nil {
 			if daemon.IsDaemonAccessError(err) || opts.planOnly {

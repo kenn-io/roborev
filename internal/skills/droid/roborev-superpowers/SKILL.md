@@ -32,15 +32,18 @@ stages and preserve their human decision points unless already waived by the use
 If Superpowers, Kata, or a goal-capable reviewer is unavailable, report the
 missing prerequisite and the work that remains unverified.
 
+Select a configured Pi (`pi`) or supported bare-mode Claude (`claude`) reviewer
+and use its name as `<reviewer>` below. The implementing agent can be Codex or
+another agent; goal review currently supports only Pi and Claude.
+
 ## Connect intent to tracked work
 
 1. Use Superpowers brainstorming to establish the intended outcome, constraints,
    non-goals, and observable success criteria. Keep its spec authoritative.
 2. Search Kata first; reuse or create a parent for this outcome. Record the spec
    path, attention state, and existing branch when applicable. Review the spec
-   with `roborev review --type goal --agent pi --wait --spec <spec-path>`.
-   Quote paths as shell arguments. Select a configured Pi or supported bare-mode
-   Claude reviewer; the implementing agent can be Codex or another agent.
+   with `roborev review --type goal --agent <reviewer> --wait --spec <spec-path>`.
+   Quote paths as shell arguments.
 3. Resolve findings against the captured artifacts. Correct incomplete intent or
    explain a false positive with evidence. A changed requirement returns to
    brainstorming and the user's decision; it is not an implementation shortcut.
@@ -53,7 +56,7 @@ missing prerequisite and the work that remains unverified.
 5. Review the linked plan and the populated open graph together:
 
    ```bash
-   roborev review --type goal --agent pi --wait \
+   roborev review --type goal --agent <reviewer> --wait \
      --spec docs/superpowers/specs/feature-design.md \
      --plan docs/superpowers/plans/feature.md
    ```

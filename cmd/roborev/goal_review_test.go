@@ -3,13 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func registerGoalReviewPi(t *testing.T) {
@@ -34,10 +40,79 @@ func registerGoalReviewPi(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("pi_cmd = "+strconv.Quote(executable)+"\n"), 0o600))
 }
 
-func TestGoalReviewEnqueueClientDoesNotAddFixedTimeout(t *testing.T) {
-	ep, err := daemon.ParseEndpoint("127.0.0.1:7373")
-	require.NoError(t, err)
-	assert.Zero(t, goalReviewDaemonHTTPClient(ep).Timeout)
+func TestGoalReviewDaemonEnqueue(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		status int
+	}{
+		{"slow capture", false, http.StatusCreated},
+		{"caller cancellation", true, http.StatusCreated},
+		{"rejected input", false, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+				requests := make(chan daemon.EnqueueRequest, 1)
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/ping" {
+						newMockRefineState().handlePing(w, r)
+						return
+					}
+					assert.Equal("/api/enqueue", r.URL.Path)
+					assert.Equal(http.MethodPost, r.Method)
+					assert.Equal("application/json", r.Header.Get("Content-Type"))
+					assert.Equal("Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", r.Header.Get("Authorization"))
+					var captured daemon.EnqueueRequest
+					assert.NoError(json.NewDecoder(r.Body).Decode(&captured))
+					requests <- captured
+					if tc.status != http.StatusCreated {
+						http.Error(w, "invalid goal selection", tc.status)
+						return
+					}
+					if tc.cancel {
+						<-r.Context().Done()
+						return
+					}
+					time.Sleep(31 * time.Second)
+					respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 7, Agent: "claude", JobType: storage.JobTypeGoalReview})
+				}))
+				originalTransport := http.DefaultTransport
+				http.DefaultTransport = server.Client().Transport
+				t.Cleanup(func() { http.DefaultTransport = originalTransport })
+				patchServerAddr(t, "http://127.0.0.1:7373")
+				cmd, output := newTestCmd(t)
+				ctx := t.Context()
+				if tc.cancel {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, time.Second)
+					defer cancel()
+				}
+				cmd.SetContext(ctx)
+				root := t.TempDir()
+				err := runGoalReview(cmd, root,
+					goalreview.AgentOptions{Agent: "claude", Model: "review-model", Provider: "anthropic", Reasoning: "thorough"},
+					false, false, false, new("chosen spec.md"), new("chosen plan.md"))
+				require.Len(t, requests, 1)
+				assert.Equal(daemon.EnqueueRequest{
+					RepoPath: root, ReviewType: config.ReviewTypeGoal,
+					Agent: "claude", Model: "review-model", Provider: "anthropic", Reasoning: "thorough",
+					SpecFile: new("chosen spec.md"), PlanFile: new("chosen plan.md"),
+				}, <-requests)
+				switch {
+				case tc.cancel:
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+				case tc.status != http.StatusCreated:
+					require.ErrorContains(t, err, "goal review failed: invalid goal selection")
+				default:
+					require.NoError(t, err)
+					assert.Contains(output.String(), "job 7")
+				}
+			})
+		})
+	}
 }
 
 func goalReviewTestRunner(run func(goalreview.Snapshot, prompt.SnapshotResult) ([]goalreview.Finding, error)) goalReviewRunner {

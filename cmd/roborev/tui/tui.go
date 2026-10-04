@@ -1077,8 +1077,8 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 		}
 	}
 
-	// For task jobs (run, analyze, custom) or dirty jobs, no branch makes sense
-	if job.IsTaskJob() || job.IsDirtyJob() {
+	// These jobs have no commit from which to derive a branch.
+	if job.IsTaskJob() || job.IsDirtyJob() || job.IsGoalReviewJob() {
 		return ""
 	}
 

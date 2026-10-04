@@ -62,7 +62,7 @@ func displayReasoning(reasoning string) string {
 // from task or custom-prompt parents (and syntheses of prompt panels)
 // reuse the parent's prompt-word ref.
 func detachedBranchLabel(job storage.ReviewJob) string {
-	if job.Branch != "" || job.IsDirtyJob() || job.IsCIReview() {
+	if job.Branch != "" || job.IsDirtyJob() || job.IsCIReview() || job.IsGoalReviewJob() {
 		return ""
 	}
 	if !job.IsReviewJob() && !job.IsFixJob() && !job.IsSynthesisJob() {
