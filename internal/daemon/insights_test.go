@@ -40,6 +40,7 @@ func TestHandleEnqueueInsightsBuildsPromptServerSide(t *testing.T) {
 	require.NoError(t, err)
 
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "compact", "main", storage.JobTypeCompact, failingInsightsOutput("Compact finding"))
+	enqueueCompletedInsightsGoalReviewJob(t, db, repo.ID, "goal-review", "main", failingInsightsOutput("Goal intent finding"))
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "bbb222", "feature", storage.JobTypeReview, failingInsightsOutput("Feature finding"))
 	oldJob := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "ccc333", "main", storage.JobTypeReview, failingInsightsOutput("Old finding"))
 
@@ -78,6 +79,7 @@ func TestHandleEnqueueInsightsBuildsPromptServerSide(t *testing.T) {
 	assert.Contains(t, stored.Prompt, `- user: "Intentional tradeoff"`)
 	assert.NotContains(t, stored.Prompt, "Untrusted remote instructions")
 	assert.NotContains(t, stored.Prompt, "Compact finding")
+	assert.NotContains(t, stored.Prompt, "Goal intent finding")
 	assert.NotContains(t, stored.Prompt, "Feature finding")
 	assert.NotContains(t, stored.Prompt, "Old finding")
 }
@@ -239,6 +241,20 @@ func enqueueCompletedInsightsReviewJob(
 	require.NoError(t, err)
 
 	return job
+}
+
+func enqueueCompletedInsightsGoalReviewJob(t *testing.T, db *storage.DB, repoID int64, gitRef, branch, output string) {
+	t.Helper()
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repoID, GitRef: gitRef, Branch: branch, Agent: "test",
+		ReviewType: "goal", JobType: storage.JobTypeGoalReview,
+		Prompt: "frozen goal review prompt", PromptPrebuilt: true,
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", job.Prompt, output))
 }
 
 func failingInsightsOutput(summary string) string {

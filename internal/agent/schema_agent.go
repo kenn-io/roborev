@@ -188,9 +188,10 @@ func availableSchemaAgentNames() []string {
 }
 
 // ValidateClassifyAgent errors when the named agent isn't registered or isn't
-// a SchemaAgent. Canonicalizes aliases (e.g. "claude" -> "claude-code")
-// before lookup so config values that mirror the rest of roborev's
-// agent-selection code (which accepts aliases) aren't rejected here.
+// a SchemaAgent. Canonicalizes aliases (e.g.
+// "claude" -> "claude-code") before lookup so config values that mirror the
+// rest of roborev's agent-selection code (which accepts aliases) aren't
+// rejected here.
 // Registered with config at init() time.
 func ValidateClassifyAgent(name string) error {
 	canonical := resolveAlias(name)

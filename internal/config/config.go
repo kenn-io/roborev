@@ -407,6 +407,8 @@ type Config struct {
 
 	// Kata task-context integration for review prompts
 	KataContext KataContextConfig `toml:"kata_context"`
+	// Candidate-gate policy. Keep this global so checkout config cannot weaken it.
+	GoalReview GoalReviewPolicyConfig `toml:"goal_review"`
 
 	// Diff exclusion patterns (filenames or glob patterns to exclude from review diffs)
 	ExcludePatterns []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs globally."`
@@ -568,6 +570,14 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 			return err
 		}
 		if err := global.Budget.Validate(); err != nil {
+			return err
+		}
+		if err := validateGoalReviewGate(global.GoalReview.KataGate); err != nil {
+			return err
+		}
+	}
+	if repo, ok := cfg.(*RepoConfig); ok {
+		if err := validateGoalReview(repo.GoalReview); err != nil {
 			return err
 		}
 	}
@@ -857,6 +867,9 @@ type RepoConfig struct {
 
 	// Kata task-context integration for review prompts (per-repo)
 	KataContext KataContextConfig `toml:"kata_context"`
+
+	// Superpowers intent and open Kata graph review (per-repo, opt-in).
+	GoalReview GoalReviewConfig `toml:"goal_review"`
 
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size" comment:"Maximum prompt size for this repo before falling back to file paths."` // Max prompt size in bytes before falling back to paths (overrides global default)
@@ -1361,6 +1374,12 @@ func validateRepoConfigScope(md toml.MetaData) error {
 		return fmt.Errorf(
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
 			"fix_guidelines",
+		)
+	}
+	if md.IsDefined("goal_review", "kata_gate") {
+		return fmt.Errorf(
+			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"goal_review.kata_gate",
 		)
 	}
 	return nil
@@ -2359,7 +2378,32 @@ func filterUnintendedZeroRepoConfigKeys(
 		!explicit["review_guidelines"] {
 		data = removeTopLevelTOMLAssignment(data, "review_guidelines")
 	}
+	if cfg.GoalReview.Watch == nil &&
+		!rawKeyPresent(raw, "goal_review.watch") &&
+		!explicit["goal_review.watch"] {
+		data = removeTOMLSectionAssignment(data, "goal_review", "watch")
+	}
 	return data
+}
+
+func removeTOMLSectionAssignment(data []byte, section, key string) []byte {
+	lines := strings.SplitAfter(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	inSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inSection = trimmed == "["+section+"]"
+		}
+		if inSection && strings.HasPrefix(trimmed, key+" =") {
+			for len(kept) > 0 && strings.HasPrefix(strings.TrimSpace(kept[len(kept)-1]), "#") {
+				kept = kept[:len(kept)-1]
+			}
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return []byte(strings.Join(kept, ""))
 }
 
 func removeTopLevelTOMLAssignment(data []byte, key string) []byte {

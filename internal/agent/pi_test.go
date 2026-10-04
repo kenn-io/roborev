@@ -155,6 +155,7 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 			withoutLaunch: base.classifyArgs("prompt.md", "result.json", schema),
 			withLaunch:    configured.classifyArgs("prompt.md", "result.json", schema),
 			managed: []string{
+				"--mode", "json",
 				"--no-session", "--no-extensions", "--no-builtin-tools", "--no-skills",
 				"--no-prompt-templates", "--no-themes", "--no-context-files",
 				"--extension", config.DefaultPiJSONSchemaExtension,
@@ -243,6 +244,7 @@ args_file=%q
 prompt_file=%q
 : > "$args_file"
 json_output=""
+mode=""
 prev=""
 for arg in "$@"; do
   printf '%%s\n' "$arg" >> "$args_file"
@@ -252,13 +254,20 @@ for arg in "$@"; do
   if [ "$prev" = "--json-output" ]; then
     json_output="$arg"
   fi
+  if [ "$prev" = "--mode" ]; then
+    mode="$arg"
+  fi
   prev="$arg"
 done
 if [ -z "$json_output" ]; then
   echo "missing --json-output" >&2
   exit 2
 fi
-echo "pi progress"
+if [ "$mode" = "json" ]; then
+  echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":10,"cost":{"total":0.25}}}}'
+else
+  echo "pi progress"
+fi
 printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 `, argsFile, promptFile)
 
@@ -273,7 +282,7 @@ printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 	result, err := agent.ClassifyWithSchema(context.Background(), t.TempDir(), "HEAD", "classify me", schema, &output)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"design_review":false,"reason":"pi schema"}`, string(result))
-	assert.Contains(t, output.String(), "pi progress")
+	assert.JSONEq(t, `{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":10,"cost":{"total":0.25}}}}`, output.String())
 
 	args := readLineFile(t, argsFile)
 	for _, want := range []string{
@@ -299,6 +308,7 @@ printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 		assert.Contains(t, args, want)
 	}
 	assert.Equal(t, string(schema), argAfter(args, "--json-schema"))
+	assert.Equal(t, "json", argAfter(args, "--mode"))
 	assert.Contains(t, argAfter(args, "--json-output"), "result.json")
 	assert.Equal(t, "classify me", strings.TrimSpace(readTextFile(t, promptFile)))
 }

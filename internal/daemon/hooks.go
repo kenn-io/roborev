@@ -141,8 +141,8 @@ func (hr *HookRunner) handleEvent(event Event) {
 	if event.SuppressHooks {
 		return
 	}
-	// Only handle review events
-	if !strings.HasPrefix(event.Type, "review.") {
+	// Goal reviews use their own event names and require explicit hooks.
+	if !strings.HasPrefix(event.Type, "review.") && !strings.HasPrefix(event.Type, "goal_review.") {
 		return
 	}
 
@@ -230,7 +230,7 @@ func HookEventFires(pattern string) bool {
 }
 
 // matchEvent checks if an event type matches a hook's event pattern.
-// Supports exact match and "review.*" wildcard.
+// Supports exact matches and event-family wildcards such as "review.*".
 func matchEvent(pattern, eventType string) bool {
 	if pattern == eventType {
 		return true

@@ -1,16 +1,20 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -883,6 +887,44 @@ func TestClaudeClassifyWithSchemaKeepsStreamError(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), weeklyLimit)
+}
+
+func TestClaudeClassifyStreamsProgressBeforeExit(t *testing.T) {
+	release := filepath.Join(t.TempDir(), "release")
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; --help) echo 'usage: claude --tools'; exit 0;; esac
+echo '{"type":"system","session_id":"session-a"}'
+while [ ! -f %q ]; do sleep 0.01; done
+echo '{"type":"result","result":"{\"findings\":[]}","usage":{"input_tokens":100,"output_tokens":10},"total_cost_usd":0.25}'
+`, release)
+	a := NewClaudeAgent(writeTempCommand(t, script))
+	// The subprocess waits for the reader to receive progress before it exits.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	reader, writer := io.Pipe()
+	result := make(chan jsontext.Value, 1)
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		_ = reader.Close()
+		<-done
+	}()
+	repoPath := t.TempDir()
+	go func() {
+		defer close(done)
+		value, err := a.ClassifyWithSchema(ctx, repoPath, "HEAD", "review", jsontext.Value(`{"type":"object"}`), writer)
+		_ = writer.CloseWithError(err)
+		result <- value
+	}()
+	progress := bufio.NewReader(reader)
+	line, err := progress.ReadString('\n')
+	require.NoError(t, err)
+	require.NoError(t, ctx.Err(), "progress must arrive while the command is running")
+	assert.JSONEq(t, `{"type":"system","session_id":"session-a"}`, line)
+	require.NoError(t, os.WriteFile(release, nil, 0o600))
+	remaining, err := io.ReadAll(progress)
+	require.NoError(t, err)
+	assert.Contains(t, string(remaining), `"total_cost_usd":0.25`)
+	assert.JSONEq(t, `{"findings":[]}`, string(<-result))
 }
 
 func TestClaudeSchemaWaitErrorKeepsStderrAndExitError(t *testing.T) {

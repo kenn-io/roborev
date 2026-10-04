@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
@@ -114,8 +115,9 @@ type WorkerPool struct {
 	retryBackoff time.Duration
 
 	// Test hooks for deterministic synchronization (nil in production)
-	testHookAfterSecondCheck    func() // Called after second runningJobs check, before second DB lookup
-	testHookCooldownLockUpgrade func() // Called between RUnlock and Lock in isAgentCoolingDown
+	testHookAfterSecondCheck    func()           // Called after second runningJobs check, before second DB lookup
+	testHookCooldownLockUpgrade func()           // Called between RUnlock and Lock in isAgentCoolingDown
+	goalReviewRunner            goalReviewRunner // Test-only schema adapter; nil in production.
 }
 
 // NewWorkerPool creates a new worker pool
@@ -873,7 +875,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Get timeout from config (per-repo or global, default 30 minutes), then
 	// overlay any frozen panel-member timeout captured at enqueue time.
-	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, cfg)
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
+	timeoutMinutes := config.ResolveJobTimeout(configRoot, cfg)
 	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
@@ -973,6 +979,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			workerID, canonicalAgent, job.ID)
 		wp.failCooldownOrFailoverContext(ctx, workerID, job, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
+		return
+	}
+
+	if job.IsGoalReviewJob() {
+		wp.processGoalReview(ctx, workerID, job, cfg)
 		return
 	}
 
@@ -1872,8 +1883,12 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		"", job.RepoPath, cfg, failoverWorkflow(job), "",
+		"", configRoot, cfg, failoverWorkflow(job), "",
 	)
 	if err != nil {
 		return ""
@@ -1885,8 +1900,11 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	// Resolve exactly the configured backup using the config-aware path so
 	// command overrides and configured ACP aliases participate in failover
 	// without falling through to unrelated agents.
-	resolved, err := agent.GetAvailableExactWithConfig(job.RepoPath, backup, cfg)
+	resolved, err := agent.GetAvailableExactWithConfig(configRoot, backup, cfg)
 	if err != nil {
+		return ""
+	}
+	if job.IsGoalReviewJob() && goalreview.ValidateAgent(resolved) != nil {
 		return ""
 	}
 	if resolution.AgentMatches(resolved.Name(), job.Agent) {
@@ -1911,8 +1929,12 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		"", job.RepoPath, cfg, failoverWorkflow(job), "",
+		"", configRoot, cfg, failoverWorkflow(job), "",
 	)
 	if err != nil {
 		return ""
@@ -1938,7 +1960,7 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		}
 	}
 	wp.broadcaster.Broadcast(Event{
-		Type:         "review.failed",
+		Type:         jobEventType(job, "failed"),
 		TS:           time.Now(),
 		JobID:        job.ID,
 		JobUUID:      job.UUID,

@@ -35,6 +35,7 @@ var (
 	claudeDangerousSupport sync.Map
 	claudeEffortSupport    sync.Map
 	claudeToolsSupport     sync.Map
+	claudeBareSupport      sync.Map
 )
 
 // NewClaudeAgent creates a new Claude Code agent
@@ -306,6 +307,21 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 	}
 	supported := strings.Contains(string(output), "--tools")
 	claudeToolsSupport.Store(command, supported)
+	return supported
+}
+
+func claudeSupportsBareFlag(ctx context.Context, command string) bool {
+	if cached, ok := claudeBareSupport.Load(command); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(ctx, cmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	supported := strings.Contains(string(output), "--bare")
+	claudeBareSupport.Store(command, supported)
 	return supported
 }
 
@@ -732,6 +748,23 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
+	return a.classifyWithSchema(ctx, repoPath, gitRef, prompt, schema, out, false)
+}
+
+// ClassifyGoalWithSchema suppresses lifecycle hooks and ambient configuration.
+// Bare mode requires configured API-key or proxy credentials; OAuth is not read.
+func (a *ClaudeAgent) ClassifyGoalWithSchema(ctx context.Context, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer) (jsontext.Value, error) {
+	return a.classifyWithSchema(ctx, repoPath, gitRef, prompt, schema, out, true)
+}
+
+// ValidateGoalReview checks the configured model, credentials, and CLI
+// capabilities used by ClassifyGoalWithSchema without starting a review.
+func (a *ClaudeAgent) ValidateGoalReview(ctx context.Context) error {
+	_, err := a.schemaEnv(ctx, nil, true)
+	return err
+}
+
+func (a *ClaudeAgent) schemaEnv(ctx context.Context, baseEnv []string, isolated bool) ([]string, error) {
 	// Refuse to run if the installed claude binary doesn't recognize
 	// `--tools` — without that flag, classifyArgs's deny-all is silently
 	// dropped and the model would have file/shell access against
@@ -743,10 +776,38 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	if err != nil {
 		return nil, err
 	}
+	if isolated {
+		if !claudeSupportsBareFlag(ctx, a.Command) {
+			return nil, fmt.Errorf("claude goal review requires --bare support; upgrade Claude or use Pi")
+		}
+		if baseURL == "" && AnthropicAPIKey() == "" {
+			return nil, fmt.Errorf("claude goal review requires a configured Anthropic API key or proxy model; OAuth is unavailable in isolated bare mode")
+		}
+	}
+	env, err := buildClaudeEnv(baseEnv, model, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	if isolated && baseURL != "" {
+		// Use only the explicitly configured proxy token, never a native key.
+		for _, entry := range env {
+			if token, ok := strings.CutPrefix(entry, "ANTHROPIC_AUTH_TOKEN="); ok {
+				env = append(env, "ANTHROPIC_API_KEY="+token)
+				break
+			}
+		}
+	}
+	return env, nil
+}
+
+func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer, isolated bool) (jsontext.Value, error) {
 	args := a.classifyArgs(schema)
+	if isolated {
+		args = append(args, "--bare", "--strict-mcp-config", "--mcp-config", `{ "mcpServers": {} }`, "--no-session-persistence")
+	}
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	env, err := a.schemaEnv(ctx, cmd.Environ(), isolated)
 	if err != nil {
 		return nil, err
 	}
@@ -765,13 +826,15 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
-	buf, readErr := io.ReadAll(stdout)
+	var stream io.Reader = stdout
+	if out != nil {
+		stream = io.TeeReader(stdout, out)
+	}
+	buf, readErr := io.ReadAll(stream)
 	if readErr != nil {
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("read stdout: %w", readErr)
-	}
-	if out != nil {
-		_, _ = out.Write(buf)
 	}
 	if err := cmd.Wait(); err != nil {
 		return nil, a.schemaWaitError(err, buf, stderr.String())

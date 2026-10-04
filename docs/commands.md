@@ -83,6 +83,7 @@ roborev review --dirty           # Review working tree
 roborev review --type security   # Security-focused review
 roborev review --type design     # Design-focused review
 roborev review --type lookahead  # Time-series look-ahead bias review
+roborev review --type goal       # Superpowers spec/plan and open Kata graph
 
 # Review panels
 roborev review --branch --panel branch_final  # Run a named review panel
@@ -97,7 +98,9 @@ roborev review --branch --panel none          # Force single-agent review
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
-| `--type <type>` | Review type (`security`, `design`, `lookahead`); changes system prompt |
+| `--type <type>` | Review type (`security`, `design`, `lookahead`, `goal`); `goal` reviews Superpowers intent artifacts |
+| `--spec <path>` | Design spec for `--type goal`; omit for unambiguous discovery |
+| `--plan <path>` | Linked implementation plan for `--type goal` |
 | `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Legacy shorthand for `--reasoning fast` |
 | `--min-severity <level>` | Lowest severity that fails the review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
@@ -106,6 +109,11 @@ roborev review --branch --panel none          # Force single-agent review
 | `--repo <path>` | Specify repository path |
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
+
+For spec-only review, linked plan selection, automatic polling and the Kata
+candidate gate, see
+[Superpowers Intent Reviews](/docs/integrations/goal-review/). Goal reviews
+support Pi and Claude Code and reject commit selectors and panels.
 
 ## Waiting for Reviews
 

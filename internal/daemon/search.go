@@ -92,7 +92,8 @@ func (s *Server) startSearch(ctx context.Context) {
 
 func isSearchWakeEvent(eventType string) bool {
 	switch eventType {
-	case "review.completed", "review.closed", "review.reopened", "review.remapped", "review.commented":
+	case "review.completed", "review.closed", "review.reopened", "review.remapped", "review.commented",
+		"goal_review.completed", "goal_review.closed", "goal_review.reopened", "goal_review.commented":
 		return true
 	default:
 		return false

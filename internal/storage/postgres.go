@@ -874,7 +874,7 @@ const pgUpsertReviewSQL = `
 				THEN NULL ELSE $7::boolean END,
 			$8, $9, $10, $11, $12, clock_timestamp()
  WHERE $8::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
- AND j.job_type IN ('review','range','dirty','synthesis','compact'))
+ AND j.job_type IN ('review','range','dirty','synthesis','compact','goal_review'))
  ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
  output = EXCLUDED.output,
@@ -1239,7 +1239,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		JOIN review_jobs j ON j.uuid = r.job_uuid
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
-		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact'))
+		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
 		AND (r.updated_at > $3 OR (r.updated_at = $3 AND r.id > $4))
 		ORDER BY r.updated_at, r.id
 		LIMIT $5

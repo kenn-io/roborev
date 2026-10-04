@@ -395,6 +395,13 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 	first, err := db.ClaimJob("first-worker")
 	require.NoError(t, err)
 	require.Equal(t, jobs[0].ID, first.ID)
+	// Use a fixed prior-attempt time so session-history uniqueness does not
+	// depend on the host clock's resolution between two immediate claims.
+	_, err = db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		"2000-01-01T00:00:00.000000000Z", first.ID,
+	)
+	require.NoError(t, err)
 	require.NoError(t, db.MarkJobAgentInvoked(first.ID, "first-worker", "codex review"))
 	require.NoError(t, db.SaveJobSessionID(first.ID, "first-worker", "reused-session"))
 	retried, err := db.RetryJob(first.ID, "first-worker", 3, 0)
@@ -443,6 +450,13 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 	first, err := db.ClaimJob("first-worker")
 	require.NoError(t, err)
 	require.Equal(t, job.ID, first.ID)
+	// Use a fixed prior-attempt time so session-history uniqueness does not
+	// depend on the host clock's resolution between two immediate claims.
+	_, err = db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		"2000-01-01T00:00:00.000000000Z", first.ID,
+	)
+	require.NoError(t, err)
 	require.NoError(t, db.MarkJobAgentInvoked(first.ID, "first-worker", "codex review"))
 	retried, err := db.RetryJob(first.ID, "first-worker", 3, 0)
 	require.NoError(t, err)

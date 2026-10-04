@@ -21,10 +21,12 @@ export interface EnqueueRequest {
   model?: string;
   output_prefix?: string;
   panel?: string;
+  plan_file?: string;
   provider?: string;
   reasoning?: string;
   repo_path: string;
   review_type?: string;
   since?: string;
   source?: string;
+  spec_file?: string;
 }

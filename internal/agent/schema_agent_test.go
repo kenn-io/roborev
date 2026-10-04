@@ -100,7 +100,7 @@ func TestValidateClassifyAgent_NotRegistered(t *testing.T) {
 }
 
 func TestValidateClassifyAgent_NotSchema(t *testing.T) {
-	err := ValidateClassifyAgent("test")
+	err := ValidateClassifyAgent("codex")
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "structured output")
 }

@@ -73,7 +73,7 @@ func registerReviewTypeCompletion(cmd *cobra.Command) {
 	if err := cmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		globalCfg, _ := config.LoadGlobal()
 		repoCfg, _, _ := loadCommandRepoConfig(cmd)
-		types := config.ReviewTypesFromConfig(repoCfg, globalCfg)
+		types := append(config.ReviewTypesFromConfig(repoCfg, globalCfg), config.ReviewTypeGoal)
 		completions := make([]cobra.Completion, len(types))
 		for i, t := range types {
 			completions[i] = cobra.Completion(t)

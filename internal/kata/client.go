@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -140,7 +141,12 @@ type listEnvelope struct {
 }
 
 type showEnvelope struct {
-	Issue  Issue `json:"issue"`
+	Issue Issue `json:"issue"`
+	Links []struct {
+		Type string   `json:"type"`
+		From LinkPeer `json:"from"`
+		To   LinkPeer `json:"to"`
+	} `json:"links"`
 	Labels []struct {
 		Label string `json:"label"`
 	} `json:"labels"`
@@ -159,13 +165,44 @@ func (c *CLIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
 	if status == "" {
 		status = "open"
 	}
-	out, err := c.run(ctx, c, []string{"list", "--json", "--status", status}, nil)
+	args := []string{"list", "--json", "--status", status}
+	if opts.Unlimited {
+		args = append(args, "--limit", "0")
+	}
+	out, err := c.run(ctx, c, args, nil)
 	if err != nil {
 		return nil, err
 	}
 	var env listEnvelope
 	if err := json.Unmarshal(out, &env); err != nil {
 		return nil, fmt.Errorf("parse kata list: %w", err)
+	}
+	if opts.Unlimited {
+		var raw struct {
+			Issues *[]map[string]jsontext.Value `json:"issues"`
+		}
+		if err := json.Unmarshal(out, &raw); err != nil {
+			return nil, err
+		}
+		if raw.Issues == nil {
+			return nil, fmt.Errorf("kata list requires an issues array for complete graph capture")
+		}
+		for i, row := range *raw.Issues {
+			if _, complete := row["body"]; complete {
+				continue
+			}
+			detail, err := c.Show(ctx, env.Issues[i].ShortID)
+			if err != nil {
+				return nil, err
+			}
+			if detail.ShortID != env.Issues[i].ShortID {
+				return nil, fmt.Errorf("kata show returned a different issue")
+			}
+			if detail.QualifiedID == "" {
+				detail.QualifiedID = env.Issues[i].QualifiedID
+			}
+			env.Issues[i] = detail
+		}
 	}
 	return env.Issues, nil
 }
@@ -182,12 +219,78 @@ func (c *CLIClient) Show(ctx context.Context, ref string) (Issue, error) {
 		return Issue{}, fmt.Errorf("parse kata show: %w", err)
 	}
 	iss := env.Issue
+	if len(env.Links) > 0 {
+		currentID, err := c.qualifiedShownIssueID(ctx, ref, iss)
+		if err != nil {
+			return Issue{}, err
+		}
+		iss.QualifiedID = currentID
+		for _, link := range env.Links {
+			fromID := qualifiedLinkPeerID(link.From)
+			toID := qualifiedLinkPeerID(link.To)
+			outgoing := fromID == currentID
+			if !outgoing && toID != currentID {
+				return Issue{}, fmt.Errorf("kata show returned a link that cannot be resolved against %q", currentID)
+			}
+			if fromID == "" || toID == "" {
+				return Issue{}, fmt.Errorf("kata show returned a link without a qualified issue identity")
+			}
+			peer := link.From
+			if outgoing {
+				peer = link.To
+			}
+			switch link.Type {
+			case "parent":
+				if outgoing {
+					iss.Parent = &peer
+				}
+			case "blocks":
+				if outgoing {
+					iss.Blocks = append(iss.Blocks, peer)
+				} else {
+					iss.BlockedBy = append(iss.BlockedBy, peer)
+				}
+			case "related":
+				iss.Related = append(iss.Related, peer)
+			}
+		}
+	}
 	for _, l := range env.Labels {
 		if l.Label != "" {
 			iss.Labels = append(iss.Labels, l.Label)
 		}
 	}
 	return iss, nil
+}
+
+func (c *CLIClient) qualifiedShownIssueID(ctx context.Context, ref string, iss Issue) (string, error) {
+	if iss.QualifiedID != "" {
+		return iss.QualifiedID, nil
+	}
+	if project, shortID, qualified := strings.Cut(ref, "#"); qualified {
+		if project == "" || shortID == "" || (iss.ShortID != "" && shortID != iss.ShortID) {
+			return "", fmt.Errorf("kata show returned an issue that does not match %q", ref)
+		}
+		return ref, nil
+	}
+	binding, err := c.Binding(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve Kata issue link direction: %w", err)
+	}
+	if binding.Project == "" || iss.ShortID == "" {
+		return "", fmt.Errorf("resolve Kata issue link direction: workspace binding and issue ID are required")
+	}
+	return binding.Project + "#" + iss.ShortID, nil
+}
+
+func qualifiedLinkPeerID(peer LinkPeer) string {
+	if peer.QualifiedID != "" {
+		return peer.QualifiedID
+	}
+	if peer.Project != "" && peer.ShortID != "" {
+		return peer.Project + "#" + peer.ShortID
+	}
+	return ""
 }
 
 // Create files an issue, piping the body over stdin via --body-stdin.

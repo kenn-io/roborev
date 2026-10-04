@@ -20,7 +20,11 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() {
 		return nil, true
 	}
-	repoCfg, err := config.LoadRepoConfig(job.RepoPath)
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = GoalReviewConfigRepoPath(job)
+	}
+	repoCfg, err := config.LoadRepoConfig(configRoot)
 	if err != nil {
 		if job.UsesStoredPrompt() {
 			// Budget substitution must not require config that ordinary
@@ -35,26 +39,42 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 	if job.IsReviewJob() || job.JobType == storage.JobTypeCompact {
 		reviewType = job.ReviewType
 	}
-	selected, err := wp.budgetRouter.ResolveAgent(job.Agent, repoCfg, cfg, reviewType)
+	// A backup model is paired deliberately with that adapter. All other
+	// substitutions keep the selected adapter's own default model/provider.
+	resolution, resolveErr := agent.ResolveWorkflowConfigFromConfig(job.Agent, repoCfg, cfg, failoverWorkflow(job), job.Reasoning)
+	modelForAgent := func(name string) string {
+		if agent.CanonicalName(job.Agent) == name {
+			return job.Model
+		}
+		if resolveErr != nil {
+			return ""
+		}
+		if job.BackupAgent != "" {
+			if resolution.AgentMatches(name, job.BackupAgent) {
+				return job.BackupModel
+			}
+		} else if resolution.UsesBackupAgent(name) {
+			return budgetBackupModel(resolution, name)
+		}
+		return ""
+	}
+	var eligible func(agent.Agent) bool
+	if job.IsGoalReviewJob() {
+		eligible = func(candidate agent.Agent) bool {
+			if claude, ok := candidate.WithModel(modelForAgent(candidate.Name())).(*agent.ClaudeAgent); ok {
+				return claude.ValidateGoalReview(ctx) == nil
+			}
+			return true
+		}
+	}
+	selected, err := wp.budgetRouter.ResolveAgent(job.Agent, repoCfg, cfg, reviewType, eligible)
 	if err != nil {
 		return nil, true
 	} // Existing resolution reports agent errors.
 	if agent.CanonicalName(job.Agent) == selected.Name() {
 		return selected, true
 	}
-	model := ""
-	// A backup model is paired deliberately with that adapter. All other
-	// substitutions keep the selected adapter's own default model/provider.
-	resolution, err := agent.ResolveWorkflowConfigFromConfig(job.Agent, repoCfg, cfg, failoverWorkflow(job), job.Reasoning)
-	if err == nil {
-		if job.BackupAgent != "" {
-			if resolution.AgentMatches(selected.Name(), job.BackupAgent) {
-				model = job.BackupModel
-			}
-		} else if resolution.UsesBackupAgent(selected.Name()) {
-			model = budgetBackupModel(resolution, selected.Name())
-		}
-	}
+	model := modelForAgent(selected.Name())
 	fallbackAgent, fallbackModel := "", ""
 	if backupAgent := wp.resolveBackupAgent(job); backupAgent != "" &&
 		agent.CanonicalName(backupAgent) == selected.Name() {

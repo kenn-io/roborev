@@ -1515,7 +1515,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
 	// only for review jobs so they rebuild from current git/config state.
-	// Stored-prompt jobs (task, compact, fix, insights) keep their prompt
+	// Stored-prompt jobs (task, compact, fix, insights, goal_review) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
 	// synced_at is cleared because this attempt's cost metadata is cleared: if
@@ -1538,7 +1538,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    backup_model = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_model ELSE backup_model END,
 		    budget_original_agent = '', budget_original_backup_agent = '', budget_original_backup_model = '',
 		    prompt_prebuilt = 0,
-		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
+		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights', 'goal_review') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
 		    updated_at = ?
 		WHERE id = ?

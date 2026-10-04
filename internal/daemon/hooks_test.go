@@ -470,6 +470,42 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 	assert.FileExists(t, markerFile)
 }
 
+func TestHookRunnerGoalReviewEvents(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	goalMarker := filepath.Join(tmpDir, "goal-hook")
+	codeMarker := filepath.Join(tmpDir, "code-hook")
+	events := make(chan Event, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event Event
+		assert.NoError(json.NewDecoder(r.Body).Decode(&event))
+		events <- event
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	hr, broadcaster := setupRunner(t, &config.Config{Hooks: []config.HookConfig{
+		{Event: "goal_review.completed", Command: touchCmd(goalMarker)},
+		{Event: "goal_review.*", Type: "webhook", URL: server.URL},
+		{Event: "review.*", Command: touchCmd(codeMarker)},
+	}})
+	broadcaster.Broadcast(Event{
+		Type: "goal_review.completed", JobID: 7, Repo: tmpDir,
+		SHA: strings.Repeat("a", 64), Verdict: "F", Findings: "Missing acceptance criteria",
+	})
+	hr.WaitUntilIdle()
+	assert.FileExists(goalMarker)
+	assert.NoFileExists(codeMarker)
+	require.Len(t, events, 1)
+	event := <-events
+	assert.Equal("goal_review.completed", event.Type)
+	assert.EqualValues(7, event.JobID)
+	assert.Equal("Missing acceptance criteria", event.Findings)
+
+	assert.Empty(beadsCommand(event), "code-review issue hooks do not process intent findings")
+	_, create := kataCreateRequest(config.HookConfig{Type: "kata"}, event)
+	assert.False(create, "goal-review findings must not feed back into the watched task graph")
+}
+
 func TestHookRunnerWorkingDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "pwd-test")

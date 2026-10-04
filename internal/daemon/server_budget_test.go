@@ -31,7 +31,7 @@ func TestRerunRefreshesBudgetSpend(t *testing.T) {
 		agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":1}' WHERE id=?`,
 		now.Format(time.RFC3339), now.Format(time.RFC3339), job.ID)
 	require.NoError(t, err)
-	before, err := server.workerPool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	before, err := server.workerPool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	require.Equal(t, "gemini", before.Name())
 
