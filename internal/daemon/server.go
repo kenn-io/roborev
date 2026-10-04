@@ -993,7 +993,7 @@ func resolveRerunOpts(
 				"resolve selected agent %q: %w", selectedAgent, err,
 			)
 		}
-		if job.JobType == storage.JobTypeClassify && !agent.IsProductionSchemaAgent(selected) {
+		if job.JobType == storage.JobTypeClassify && !agent.IsSchemaAgent(selected) {
 			return storage.ReenqueueOpts{}, fmt.Errorf(
 				"classifier reruns require a production SchemaAgent, got %q", selectedAgent,
 			)

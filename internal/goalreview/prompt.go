@@ -31,7 +31,7 @@ Review these eight criteria with concrete evidence:
 8. Plan tasks covering the authoritative spec, compatible producer/consumer interfaces, and related Kata work matching intent.
 Only judge Kata drift where artifact references, named issues, or graph links establish a relation to this feature. Unrelated open work is not drift.
 Spec sections are flexible. Older plans need not use every new heading; empty Review Focus is valid. Do not infer human approval, executed tests or code conformance.
-Return exactly one JSON object {"findings": [...]} with severity high/medium/low, a concrete message, and location {file,line} in a captured artifact OR {kata_id} for a supplied short ID. Use [] when there are no semantic findings. Mechanical findings are retained independently.
+Return exactly one JSON object {"findings": [...]} with severity high/medium/low, a concrete message and fix, and location {file,line} in a captured artifact OR {kata_id} for a supplied short ID. Use [] when there are no semantic findings. Mechanical findings are retained independently.
 `)
 	prompt.WriteString("Known mechanical findings: " + string(checks) + "\n")
 	prompt.WriteString(snapshotStart + string(data) + snapshotEnd)

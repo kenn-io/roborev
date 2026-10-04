@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type Location struct {
@@ -17,6 +20,7 @@ type Location struct {
 type Finding struct {
 	Severity string   `json:"severity"`
 	Message  string   `json:"message"`
+	Fix      string   `json:"fix"`
 	Location Location `json:"location"`
 }
 
@@ -91,40 +95,18 @@ func ParseResult(raw string, snapshot Snapshot) ([]Finding, error) {
 		return nil, fmt.Errorf("goal review result requires a findings array")
 	}
 	findings := *result.Findings
-	for _, finding := range findings {
+	for i := range findings {
+		finding := &findings[i]
 		if finding.Severity != "high" && finding.Severity != "medium" && finding.Severity != "low" {
 			return nil, fmt.Errorf("invalid finding severity")
 		}
 		if strings.TrimSpace(finding.Message) == "" {
 			return nil, fmt.Errorf("empty finding message")
 		}
-		location := finding.Location
-		if location.KataID != "" {
-			if location.File != "" || location.Line != 0 {
-				return nil, fmt.Errorf("finding must have one location")
-			}
-			known := false
-			for _, issue := range snapshot.Issues {
-				if issue.ShortID == location.KataID {
-					known = true
-					break
-				}
-			}
-			if !known {
-				return nil, fmt.Errorf("unknown Kata finding location")
-			}
-		} else {
-			valid := false
-			for _, artifact := range snapshot.Artifacts {
-				if artifact.Path == location.File && location.Line > 0 && location.Line <= len(strings.Split(artifact.Content, "\n")) {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return nil, fmt.Errorf("unknown artifact or out-of-range finding line")
-			}
+		if strings.TrimSpace(finding.Fix) == "" {
+			return nil, fmt.Errorf("empty finding fix")
 		}
+		finding.Location = normalizeLocation(finding.Location, snapshot)
 	}
 	findings = append(findings, Check(snapshot)...)
 	slices.SortFunc(findings, func(a, b Finding) int {
@@ -141,9 +123,97 @@ func ParseResult(raw string, snapshot Snapshot) ([]Finding, error) {
 		if n := strings.Compare(a.Location.KataID, b.Location.KataID); n != 0 {
 			return n
 		}
-		return strings.Compare(a.Message, b.Message)
+		if n := strings.Compare(a.Message, b.Message); n != 0 {
+			return n
+		}
+		return strings.Compare(a.Fix, b.Fix)
 	})
 	return slices.Compact(findings), nil
+}
+
+// A bad model anchor does not invalidate the finding itself. Keep a known
+// artifact when only its line is invalid; discard unknown or ambiguous anchors.
+func normalizeLocation(location Location, snapshot Snapshot) Location {
+	if location.KataID != "" {
+		if location.File != "" || location.Line != 0 {
+			return Location{}
+		}
+		for _, issue := range snapshot.Issues {
+			if issue.ShortID == location.KataID {
+				return location
+			}
+		}
+		return Location{}
+	}
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Path == location.File {
+			if location.Line < 1 || location.Line > strings.Count(artifact.Content, "\n")+1 {
+				location.Line = 0
+			}
+			return location
+		}
+	}
+	return Location{}
+}
+
+func formatLocation(location Location) string {
+	if location.File != "" {
+		if location.Line > 0 {
+			return fmt.Sprintf("%s:%d", location.File, location.Line)
+		}
+		return location.File
+	}
+	if location.KataID != "" {
+		return "Kata " + location.KataID
+	}
+	return ""
+}
+
+// Document preserves goal findings in the canonical stored review format.
+func Document(findings []Finding) structuredreview.Document {
+	doc := structuredreview.Document{
+		SchemaVersion: structuredreview.SchemaVersion,
+		Summary:       "Goal review complete.",
+		Verdict:       structuredreview.VerdictPass,
+		Findings:      make([]structuredreview.Finding, len(findings)),
+	}
+	if len(findings) > 0 {
+		doc.Verdict = structuredreview.VerdictFail
+	}
+	for i, finding := range findings {
+		doc.Findings[i] = structuredreview.Finding{
+			Severity: finding.Severity,
+			Problem:  finding.Message,
+			Fix:      finding.Fix,
+			Location: formatLocation(finding.Location),
+		}
+	}
+	return doc
+}
+
+// FindingsFromDocument restores goal locations against the frozen evidence.
+// The caller must decode and validate the stored document first.
+func FindingsFromDocument(doc structuredreview.Document, snapshot Snapshot) []Finding {
+	findings := make([]Finding, len(doc.Findings))
+	for i, finding := range doc.Findings {
+		location := normalizeLocation(Location{File: finding.Location}, snapshot)
+		if location.File == "" {
+			if id, ok := strings.CutPrefix(finding.Location, "Kata "); ok {
+				location = Location{KataID: id}
+			} else if colon := strings.LastIndexByte(finding.Location, ':'); colon >= 0 {
+				if line, err := strconv.Atoi(finding.Location[colon+1:]); err == nil {
+					location = Location{File: finding.Location[:colon], Line: line}
+				}
+			}
+		}
+		findings[i] = Finding{
+			Severity: finding.Severity,
+			Message:  finding.Problem,
+			Fix:      finding.Fix,
+			Location: normalizeLocation(location, snapshot),
+		}
+	}
+	return findings
 }
 
 func Render(findings []Finding) string {
@@ -152,11 +222,11 @@ func Render(findings []Finding) string {
 	}
 	var result strings.Builder
 	for _, finding := range findings {
-		location := finding.Location.KataID
-		if finding.Location.File != "" {
-			location = fmt.Sprintf("%s:%d", finding.Location.File, finding.Location.Line)
+		location := formatLocation(finding.Location)
+		if location != "" {
+			location += ": "
 		}
-		fmt.Fprintf(&result, "- %s: %s: %s\n", finding.Severity, location, strings.ReplaceAll(finding.Message, "\n", " "))
+		fmt.Fprintf(&result, "- %s: %s%s Fix: %s\n", finding.Severity, location, strings.ReplaceAll(finding.Message, "\n", " "), strings.ReplaceAll(finding.Fix, "\n", " "))
 	}
 	return strings.TrimSpace(result.String())
 }

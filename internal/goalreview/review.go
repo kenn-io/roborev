@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 )
 
-var resultSchema = jsontext.Value(`{"type":"object","required":["findings"],"additionalProperties":false,"properties":{"findings":{"type":"array","items":{"type":"object","required":["severity","message","location"],"additionalProperties":false,"properties":{"severity":{"type":"string","enum":["high","medium","low"]},"message":{"type":"string"},"location":{"type":"object","additionalProperties":false,"properties":{"file":{"type":"string"},"line":{"type":"integer"},"kata_id":{"type":"string"}}}}}}}}`)
+var resultSchema = jsontext.Value(`{"type":"object","required":["findings"],"additionalProperties":false,"properties":{"findings":{"type":"array","items":{"type":"object","required":["severity","message","fix","location"],"additionalProperties":false,"properties":{"severity":{"type":"string","enum":["high","medium","low"]},"message":{"type":"string"},"fix":{"type":"string","minLength":1},"location":{"type":"object","additionalProperties":false,"properties":{"file":{"type":"string"},"line":{"type":"integer"},"kata_id":{"type":"string"}}}}}}}}`)
 
 // ValidateAgent admits concrete adapters whose schema path disables tools.
 // Name strings and SchemaAgent membership alone do not establish isolation.

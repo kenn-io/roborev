@@ -109,17 +109,7 @@ func IsSchemaAgent(a Agent) bool {
 	return ok
 }
 
-// IsProductionSchemaAgent excludes the built-in test double even though it
-// implements SchemaAgent for unit tests. A configured classifier must make a
-// real decision from its input.
-func IsProductionSchemaAgent(a Agent) bool {
-	if _, ok := a.(*TestAgent); ok {
-		return false
-	}
-	return IsSchemaAgent(a)
-}
-
-// GetAvailableSchemaExactWithConfig resolves exactly the requested production
+// GetAvailableSchemaExactWithConfig resolves exactly the requested
 // schema-capable agent and checks availability using the same config-aware
 // command override rules as normal review execution.
 func GetAvailableSchemaExactWithConfig(name string, cfg *config.Config) (SchemaAgent, error) {
@@ -129,9 +119,6 @@ func GetAvailableSchemaExactWithConfig(name string, cfg *config.Config) (SchemaA
 	registryMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("classifier %q not registered", name)
-	}
-	if _, testAgent := a.(*TestAgent); testAgent {
-		return nil, fmt.Errorf("classify_agent %q is test-only", name)
 	}
 	if !IsSchemaAgent(a) {
 		return nil, fmt.Errorf("classify_agent %q is not a SchemaAgent", name)
@@ -193,7 +180,7 @@ func availableSchemaAgentNames() []string {
 	names := make([]string, 0, len(registry))
 	for _, name := range fallbackAgentOrder {
 		a, ok := registry[name]
-		if ok && IsProductionSchemaAgent(a) {
+		if ok && IsSchemaAgent(a) {
 			names = append(names, name)
 		}
 	}
@@ -201,8 +188,7 @@ func availableSchemaAgentNames() []string {
 }
 
 // ValidateClassifyAgent errors when the named agent isn't registered or isn't
-// a production SchemaAgent. The built-in test double is excluded even though
-// it implements SchemaAgent for unit tests. Canonicalizes aliases (e.g.
+// a SchemaAgent. Canonicalizes aliases (e.g.
 // "claude" -> "claude-code") before lookup so config values that mirror the
 // rest of roborev's agent-selection code (which accepts aliases) aren't
 // rejected here.
@@ -215,17 +201,13 @@ func ValidateClassifyAgent(name string) error {
 		registryMu.RUnlock()
 		return fmt.Errorf("unknown agent %q", name)
 	}
-	if IsProductionSchemaAgent(a) {
+	if IsSchemaAgent(a) {
 		registryMu.RUnlock()
 		return nil
 	}
-	if _, testAgent := a.(*TestAgent); testAgent {
-		registryMu.RUnlock()
-		return fmt.Errorf("agent %q is test-only and cannot be used as a classifier", name)
-	}
 	var valid []string
 	for n, r := range registry {
-		if IsProductionSchemaAgent(r) {
+		if IsSchemaAgent(r) {
 			valid = append(valid, n)
 		}
 	}

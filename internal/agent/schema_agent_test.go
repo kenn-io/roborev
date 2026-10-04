@@ -56,7 +56,7 @@ func (f *fakeSchemaAgent) ClassifyWithSchema(
 
 func TestIsSchemaAgent(t *testing.T) {
 	var a Agent = NewTestAgent()
-	assert.True(t, IsSchemaAgent(a))
+	assert.False(t, IsSchemaAgent(a))
 
 	var s Agent = &fakeSchemaAgent{TestAgent: NewTestAgent()}
 	assert.True(t, IsSchemaAgent(s))
@@ -125,20 +125,6 @@ func TestValidateClassifyAgent_CodexRejected(t *testing.T) {
 
 func TestValidateClassifyAgent_PiAccepted(t *testing.T) {
 	require.NoError(t, ValidateClassifyAgent("pi"))
-}
-
-func TestTestAgentIsNotAdmittedAsProductionClassifier(t *testing.T) {
-	assert.False(t, IsProductionSchemaAgent(NewTestAgent()))
-	repoPath := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
-		[]byte("classify_agent = \"test\"\n"), 0o600))
-
-	_, err := config.ResolveClassifyAgent("", repoPath, &config.Config{})
-	require.ErrorContains(t, err, "test-only")
-
-	_, err = GetAvailableSchemaExactWithConfig("test", config.DefaultConfig())
-	require.ErrorContains(t, err, "test-only")
-	assert.NotContains(t, availableSchemaAgentNames(), "test")
 }
 
 func TestGetAvailableSchemaExactWithConfigUsesCommandOverride(t *testing.T) {

@@ -811,13 +811,15 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
-	buf, readErr := io.ReadAll(stdout)
+	var stream io.Reader = stdout
+	if out != nil {
+		stream = io.TeeReader(stdout, out)
+	}
+	buf, readErr := io.ReadAll(stream)
 	if readErr != nil {
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("read stdout: %w", readErr)
-	}
-	if out != nil {
-		_, _ = out.Write(buf)
 	}
 	if err := cmd.Wait(); err != nil {
 		return nil, a.schemaWaitError(err, buf, stderr.String())

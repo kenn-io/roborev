@@ -190,6 +190,7 @@ func (a *PiAgent) thinkingLevel() string {
 func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema jsontext.Value) []string {
 	args := slices.Clone(a.LaunchArgs)
 	args = append(args,
+		"--mode", "json",
 		"--no-session",
 		"--no-extensions",
 		"--no-builtin-tools",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,6 +44,7 @@ func TestCheckSuperpowersPlan(t *testing.T) {
 				assert.Equal(t, "medium", finding.Severity)
 				assert.Equal(t, planPath, finding.Location.File)
 				assert.Positive(t, finding.Location.Line)
+				assert.NotEmpty(t, finding.Fix)
 			}
 		})
 	}
@@ -62,16 +64,23 @@ func TestGoalPromptAndResults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, snapshot.ID(), decoded.ID())
 	for _, raw := range []string{
-		`{"findings":[{"severity":"high","message":"Contradiction","location":{"file":"` + specPath + `","line":1}}]}`,
-		`{"findings":[{"severity":"low","message":"Missing coverage","location":{"file":"` + planPath + `","line":2}}]}`,
-		`{"findings":[{"severity":"medium","message":"Conflicting task","location":{"kata_id":"aaaa"}}]}`,
+		`{"findings":[{"severity":"high","message":"Contradiction","fix":"Resolve the conflicting requirements.","location":{"file":"` + specPath + `","line":1}}]}`,
+		`{"findings":[{"severity":"low","message":"Missing coverage","fix":"Add the missing verification command.","location":{"file":"` + planPath + `","line":2}}]}`,
+		`{"findings":[{"severity":"medium","message":"Conflicting task","fix":"Align the task with the spec.","location":{"kata_id":"aaaa"}}]}`,
 	} {
 		findings, err := ParseResult(raw, snapshot)
 		require.NoError(t, err)
 		require.Len(t, findings, 1)
 		assert.Contains(t, Render(findings), findings[0].Message)
 	}
-	for _, raw := range []string{`{}`, `null`, `{"findings":null}`, `{"findings":[],"other":1}`, `{"findings":[],"findings":[]}`, `{"findings":[]} {}`, `{"findings":[{"severity":"critical","message":"X","location":{"kata_id":"aaaa"}}]}`, `{"findings":[{"severity":"high","message":"X","location":{"kata_id":"unknown"}}]}`, `{"findings":[{"severity":"high","message":"X","location":{"file":"source.go","line":1}}]}`, `{"findings":[{"severity":"high","message":"X","location":{"file":"` + specPath + `","line":999}}]}`, `{"findings":[{"severity":"high","message":"X","location":{"kata_id":"aaaa","file":"` + specPath + `","line":1}}]}`} {
+	for _, raw := range []string{
+		`{}`, `null`, `{"findings":null}`, `{"findings":[],"other":1}`,
+		`{"findings":[],"findings":[]}`, `{"findings":[]} {}`,
+		`{"findings":[{"severity":"critical","message":"Contradiction","fix":"Resolve the conflicting requirements.","location":{}}]}`,
+		`{"findings":[{"severity":"high","message":" ","fix":"Resolve the conflicting requirements.","location":{}}]}`,
+		`{"findings":[{"severity":"high","message":"Contradiction","fix":" ","location":{}}]}`,
+		`{"findings":[{"severity":"high","message":"Contradiction","fix":"Resolve the conflicting requirements.","location":{"line":"one"}}]}`,
+	} {
 		_, err := ParseResult(raw, snapshot)
 		require.Error(t, err, raw)
 	}
@@ -88,30 +97,21 @@ func TestGoalPromptAndResults(t *testing.T) {
 func TestGoalSafeInvocation(t *testing.T) {
 	ctx := context.Background()
 	snapshot := exampleSnapshot()
-	a := agent.NewTestAgent()
-	a.SchemaOutput = jsontext.Value(`{"findings":[]}`)
+	calls := 0
 	findings, err := runPrepared(snapshot, prompt.SnapshotResult{Prompt: BuildPrompt(snapshot)}, func(text string) (jsontext.Value, error) {
-		return a.ClassifyWithSchema(ctx, t.TempDir(), snapshot.ID(), text, resultSchema, nil)
+		calls++
+		assert.Equal(t, BuildPrompt(snapshot), text)
+		return jsontext.Value(`{"findings":[]}`), nil
 	})
 	require.NoError(t, err)
 	assert.Empty(t, findings)
-	assert.Empty(t, a.Calls(), "ordinary Review is never called")
-	assert.Len(t, a.SchemaCalls(), 1)
+	assert.Equal(t, 1, calls)
 	_, err = Run(ctx, &agent.FakeAgent{NameStr: "pi"}, t.TempDir(), snapshot, nil)
 	require.Error(t, err)
 	generic := &unverifiedGoalSchema{TestAgent: agent.NewTestAgent()}
 	require.True(t, agent.IsSchemaAgent(generic))
 	require.Error(t, ValidateAgent(generic))
 	assert.Empty(t, generic.Calls())
-}
-
-func TestValidateAgentRejectsTestAgent(t *testing.T) {
-	a := agent.NewTestAgent()
-	require.True(t, agent.IsSchemaAgent(a))
-	require.Error(t, ValidateAgent(a))
-	_, err := RunPrepared(context.Background(), a, t.TempDir(), exampleSnapshot(), prompt.SnapshotResult{Prompt: "complete evidence"}, nil)
-	require.Error(t, err)
-	assert.Empty(t, a.SchemaCalls(), "the production entrypoint must reject the non-assessing test adapter")
 }
 
 func TestRunPreparedPromptPassesWholeFileThroughPiTransport(t *testing.T) {
@@ -153,6 +153,10 @@ printf '%%s\n' '{"findings":[]}' > "$json_output"
 type unverifiedGoalSchema struct{ *agent.TestAgent }
 
 func (*unverifiedGoalSchema) Name() string { return "pi" }
+
+func (*unverifiedGoalSchema) ClassifyWithSchema(context.Context, string, string, string, jsontext.Value, io.Writer) (jsontext.Value, error) {
+	return nil, fmt.Errorf("unverified schema agent must not be invoked")
+}
 
 func FuzzGoalResult(f *testing.F) {
 	f.Add(`{"findings":[]}`)

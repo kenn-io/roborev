@@ -19,13 +19,6 @@ type TestAgentCall struct {
 	Prompt    string
 }
 
-// TestAgentSchemaCall records the prompt and deadline passed to a schema call.
-type TestAgentSchemaCall struct {
-	Prompt      string
-	Deadline    time.Time
-	HasDeadline bool
-}
-
 // TestAgent is a mock agent for testing that returns predictable output.
 //
 // Each Review() call emits a synthetic session event as the first line
@@ -34,12 +27,11 @@ type TestAgentSchemaCall struct {
 // new ID like "test-session-1". Resumed calls (SessionID != "") echo
 // the incoming ID. Counters are per-instance.
 type TestAgent struct {
-	Delay        time.Duration  // Optional simulated processing delay
-	Output       string         // Fixed output to return
-	SchemaOutput jsontext.Value // Optional raw output override for schema-classification tests.
-	Fail         bool           // If true, returns an error
-	Reasoning    ReasoningLevel // Reasoning level (for testing)
-	SessionID    string         // Incoming session ID for resume; "" = fresh
+	Delay     time.Duration  // Optional simulated processing delay
+	Output    string         // Fixed output to return
+	Fail      bool           // If true, returns an error
+	Reasoning ReasoningLevel // Reasoning level (for testing)
+	SessionID string         // Incoming session ID for resume; "" = fresh
 
 	// shared across clones produced by With* methods so the counter and
 	// recording are consistent regardless of which clone Review() is called on.
@@ -47,10 +39,9 @@ type TestAgent struct {
 }
 
 type testAgentState struct {
-	mu          sync.Mutex
-	counter     int
-	calls       []TestAgentCall
-	schemaCalls []TestAgentSchemaCall
+	mu      sync.Mutex
+	counter int
+	calls   []TestAgentCall
 }
 
 // NewTestAgent creates a new test agent with its own per-instance counter.
@@ -64,13 +55,12 @@ func NewTestAgent() *TestAgent {
 
 func (a *TestAgent) clone() *TestAgent {
 	return &TestAgent{
-		Delay:        a.Delay,
-		Output:       a.Output,
-		SchemaOutput: a.SchemaOutput,
-		Fail:         a.Fail,
-		Reasoning:    a.Reasoning,
-		SessionID:    a.SessionID,
-		state:        a.state,
+		Delay:     a.Delay,
+		Output:    a.Output,
+		Fail:      a.Fail,
+		Reasoning: a.Reasoning,
+		SessionID: a.SessionID,
+		state:     a.state,
 	}
 }
 
@@ -105,47 +95,6 @@ func (a *TestAgent) CommandLine() string {
 
 func (a *TestAgent) Name() string {
 	return "test"
-}
-
-// ClassifyWithSchema provides a tool-free structured test path without changing
-// ordinary Review output, session recording, or simulated failure behavior.
-// Its default matches the design-review classifier; other schemas can override
-// SchemaOutput in tests.
-func (a *TestAgent) ClassifyWithSchema(ctx context.Context, _, _, prompt string, _ jsontext.Value, _ io.Writer) (jsontext.Value, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	call := TestAgentSchemaCall{Prompt: prompt}
-	call.Deadline, call.HasDeadline = ctx.Deadline()
-	a.state.mu.Lock()
-	a.state.schemaCalls = append(a.state.schemaCalls, call)
-	a.state.mu.Unlock()
-	if a.Delay > 0 {
-		timer := time.NewTimer(a.Delay)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if a.Fail {
-		return nil, fmt.Errorf("test agent configured to fail")
-	}
-	if a.SchemaOutput == nil {
-		return jsontext.Value(`{"design_review":false,"reason":"test agent"}`), nil
-	}
-	return a.SchemaOutput, nil
-}
-
-// SchemaCalls returns a copy of every structured classification invocation
-// recorded by this agent and its clones.
-func (a *TestAgent) SchemaCalls() []TestAgentSchemaCall {
-	a.state.mu.Lock()
-	defer a.state.mu.Unlock()
-	out := make([]TestAgentSchemaCall, len(a.state.schemaCalls))
-	copy(out, a.state.schemaCalls)
-	return out
 }
 
 // Calls returns a copy of every Review invocation recorded by this
