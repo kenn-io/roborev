@@ -430,7 +430,8 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
 	// Explicit reruns retain their delivery target even if the repository is
-	// removed from polling. Retry their pending status independently of discovery.
+	// removed from polling. Retry status delivery independently of discovery.
+	p.retryFinalPanelStatuses()
 	p.retryPendingPanelStatuses()
 
 	// Resolve quiet hours once per cycle so an invalid config logs one
@@ -851,6 +852,27 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 }
 
 func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) error {
+	// A final write already in flight must finish before the skip replaces it.
+	panel, err := p.db.GetCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if panel != nil && panel.PostedAt != nil && panel.RetiredAt == nil {
+		pending, err := p.db.HasCIPanelFinalStatus(panel.ID)
+		if err != nil {
+			return err
+		}
+		if pending {
+			won, err := p.db.ClaimPanelFinalStatus(panel.ID, panelPostingStaleWindow)
+			if err != nil {
+				return err
+			}
+			if !won {
+				return fmt.Errorf("panel %d status delivery in progress", panel.ID)
+			}
+			defer p.releasePanelClaim(panel.ID)
+		}
+	}
 	description := fmt.Sprintf("Review skipped: label %s", label)
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
@@ -2319,6 +2341,50 @@ func (p *CIPoller) retryPendingPanelStatuses() {
 	}
 }
 
+func (p *CIPoller) retryFinalPanelStatuses() {
+	statuses, err := p.db.GetCIPanelFinalStatuses()
+	if err != nil {
+		log.Printf("CI poller: error listing final status deliveries: %v", err)
+		return
+	}
+	for _, status := range statuses {
+		p.deliverPanelFinalStatus(status)
+	}
+}
+
+func (p *CIPoller) deliverPanelFinalStatus(status storage.CIPanelFinalStatus) {
+	won, err := p.db.ClaimPanelFinalStatus(status.PanelID, panelPostingStaleWindow)
+	if err != nil {
+		log.Printf("CI poller: error claiming panel %d final status: %v", status.PanelID, err)
+		return
+	}
+	if !won {
+		return
+	}
+	defer p.releasePanelClaim(status.PanelID)
+	if err := p.callSetCommitStatus(status.GithubRepo, status.HeadSHA, status.State, status.Description); err != nil {
+		log.Printf("CI poller: failed to set final status for %s@%s: %v", status.GithubRepo, gitpkg.ShortSHA(status.HeadSHA), err)
+		return
+	}
+	if err := p.db.MarkCIPanelFinalStatusSent(status.PanelID); err != nil {
+		log.Printf("CI poller: error acknowledging panel %d final status: %v", status.PanelID, err)
+	}
+}
+
+// finalizePanelStatus records comment delivery and the final status intent
+// together, so a failed status write never requires another PR comment.
+func (p *CIPoller) finalizePanelStatus(row *storage.CIPanel, outcome, state, description string) {
+	if err := p.db.MarkPanelPosted(row.ID, outcome, state, description); err != nil {
+		log.Printf("CI poller: error finalizing panel %d: %v", row.ID, err)
+		p.releasePanelClaim(row.ID)
+		return
+	}
+	p.deliverPanelFinalStatus(storage.CIPanelFinalStatus{
+		PanelID: row.ID, GithubRepo: row.GithubRepo, HeadSHA: row.HeadSHA,
+		State: state, Description: description,
+	})
+}
+
 // setPanelPending publishes the stored CI target for a newly queued rerun.
 // The posting claim orders this write before final delivery. A completion
 // that races the claim is delivered here, even if the repo is no longer polled.
@@ -2605,28 +2671,15 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 	}
 
 	state, desc := panelCommitStatus(members)
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, state, desc); err != nil {
-		// Comment already posted: a status failure is log-only, never re-post.
-		log.Printf("CI poller: failed to set %s status for %s@%s: %v",
-			state, row.GithubRepo, row.HeadSHA, err)
-	}
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeReviewPosted); err != nil {
-		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeReviewPosted, state, desc)
 	log.Printf("CI poller: posted panel comment on %s#%d (panel %d, %d members)",
 		row.GithubRepo, row.PRNumber, row.ID, len(members))
 }
 
 // finalizePanelWithoutReview records a failed status without creating a PR
-// comment. Status write errors are log-only, as they are after posting a review.
+// comment. Failed status delivery remains eligible for polling recovery.
 func (p *CIPoller) finalizePanelWithoutReview(row *storage.CIPanel, statusDesc string) {
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); err != nil {
-		log.Printf("CI poller: failed to set error status for %s@%s: %v",
-			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-	}
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeNoReviewPosted); err != nil {
-		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeNoReviewPosted, "error", statusDesc)
 }
 
 // deferTransientPanel handles an all-transient panel (no successful member, ≥1
@@ -2732,15 +2785,9 @@ func (p *CIPoller) handlePanelPostError(row *storage.CIPanel, postErr error) {
 }
 
 func (p *CIPoller) abandonPanelPost(row *storage.CIPanel, statusDesc, reason string) {
-	if statusErr := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); statusErr != nil {
-		log.Printf("CI poller: failed to set error status for %s@%s: %v",
-			row.GithubRepo, row.HeadSHA, statusErr)
-	}
 	log.Printf("CI poller: abandoning panel %d for %s %s#%d",
 		row.ID, reason, row.GithubRepo, row.PRNumber)
-	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeAbandoned); err != nil {
-		log.Printf("CI poller: error finalizing abandoned panel %d: %v", row.ID, err)
-	}
+	p.finalizePanelStatus(row, storage.PanelOutcomeAbandoned, "error", statusDesc)
 }
 
 // releasePanelClaim clears a panel's posting lease so a later sweep retries.

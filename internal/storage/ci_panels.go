@@ -41,6 +41,15 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 		(active.ID != source.ID || active.PostingClaimedAt != nil) {
 		return ErrCIPanelActive
 	}
+	if active != nil && active.PostedAt != nil && active.PostingClaimedAt != nil {
+		var statusPending bool
+		if err := conn.QueryRowContext(ctx, `SELECT final_status_state != '' FROM ci_pr_panels WHERE id = ?`, active.ID).Scan(&statusPending); err != nil {
+			return err
+		}
+		if statusPending {
+			return ErrCIPanelActive
+		}
+	}
 	if _, err := conn.ExecContext(ctx, `UPDATE ci_pr_panels
 		SET retired_at = ?, posting_claimed_at = NULL
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
@@ -363,15 +372,15 @@ func (db *DB) ClaimPanelForPosting(id int64, staleWindow time.Duration) (bool, e
 	return n == 1, err
 }
 
-// ReleasePanelPostClaim clears an unposted row's lease so it can be reclaimed,
-// e.g. when a poster fails before posting and wants another to retry.
+// ReleasePanelPostClaim clears the delivery lease, including a final-status
+// lease on an already-posted panel, so another publisher can retry.
 func (db *DB) ReleasePanelPostClaim(id int64) error {
-	_, err := db.Exec(`UPDATE ci_pr_panels SET posting_claimed_at = NULL WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, id)
+	_, err := db.Exec(`UPDATE ci_pr_panels SET posting_claimed_at = NULL WHERE id = ? AND retired_at IS NULL`, id)
 	return err
 }
 
 // MarkPanelPosted finalizes the run: in one atomic transaction it finalizes
-// the panel row — permanently barring further posting claims and stamping the
+// the panel row — permanently barring further comment posting and stamping the
 // terminal outcome, a snapshot of first_attempt_at/attempt from the
 // operational attempt row, and a snapshot of the synthesis job's agent/model —
 // then marks the HEAD's review attempt terminal (state='done', mirroring
@@ -383,9 +392,10 @@ func (db *DB) ReleasePanelPostClaim(id int64) error {
 // error returned instead of also marking the attempt done. Both snapshots
 // matter because closed-PR cleanup later deletes attempt rows and cascade
 // repo deletion deletes review_jobs rows; the panel row is the durable record
-// of terminal metrics. The attempt row may already be gone (deleted by
-// closed-PR cleanup); zero rows affected there is not an error.
-func (db *DB) MarkPanelPosted(id int64, outcome string) error {
+// of terminal metrics. The final status is queued atomically with finalization;
+// an empty status means no delivery is needed. The attempt row may already be
+// gone (deleted by closed-PR cleanup); zero rows affected there is not an error.
+func (db *DB) MarkPanelPosted(id int64, outcome, status, description string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("mark panel posted: begin: %w", err)
@@ -394,7 +404,8 @@ func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 
 	res, err := tx.Exec(`
 		UPDATE ci_pr_panels
-		SET posted_at = datetime('now'),
+		SET posted_at = datetime('now'), posting_claimed_at = NULL,
+		    final_status_state = ?, final_status_description = ?,
 		    outcome = ?,
 		    first_attempt_at = (
 		        SELECT a.first_attempt_at FROM ci_pr_review_attempts a
@@ -410,7 +421,7 @@ func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 		        SELECT j.agent FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id),
 		    synthesis_model = (
 		        SELECT j.model FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id)
-		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, outcome, id)
+		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, status, description, outcome, id)
 	if err != nil {
 		return fmt.Errorf("mark panel posted: finalize panel: %w", err)
 	}
@@ -436,6 +447,63 @@ func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 		return fmt.Errorf("mark panel posted: commit: %w", err)
 	}
 	return nil
+}
+
+// CIPanelFinalStatus is an undelivered commit status for a finalized panel.
+type CIPanelFinalStatus struct {
+	PanelID     int64
+	GithubRepo  string
+	HeadSHA     string
+	State       string
+	Description string
+}
+
+// HasCIPanelFinalStatus reports whether the panel still needs final delivery.
+func (db *DB) HasCIPanelFinalStatus(id int64) (bool, error) {
+	var pending bool
+	err := db.QueryRow(`SELECT final_status_state != '' FROM ci_pr_panels WHERE id = ?`, id).Scan(&pending)
+	return pending, err
+}
+
+// GetCIPanelFinalStatuses includes posted panels but excludes superseded runs.
+func (db *DB) GetCIPanelFinalStatuses() ([]CIPanelFinalStatus, error) {
+	rows, err := db.Query(`SELECT id, github_repo, head_sha, final_status_state, final_status_description
+		FROM ci_pr_panels WHERE posted_at IS NOT NULL AND retired_at IS NULL AND final_status_state != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var statuses []CIPanelFinalStatus
+	for rows.Next() {
+		var status CIPanelFinalStatus
+		if err := rows.Scan(&status.PanelID, &status.GithubRepo, &status.HeadSHA, &status.State, &status.Description); err != nil {
+			return nil, err
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses, rows.Err()
+}
+
+// ClaimPanelFinalStatus orders final delivery against explicit reruns. A stale
+// claim is recoverable after the prior publisher exits without acknowledging it.
+func (db *DB) ClaimPanelFinalStatus(id int64, staleWindow time.Duration) (bool, error) {
+	res, err := db.Exec(`UPDATE ci_pr_panels SET posting_claimed_at = datetime('now')
+		WHERE id = ? AND posted_at IS NOT NULL AND retired_at IS NULL AND final_status_state != ''
+		  AND (posting_claimed_at IS NULL OR datetime(posting_claimed_at) < datetime('now', ?))`,
+		id, fmt.Sprintf("-%d seconds", int64(staleWindow.Seconds())))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// MarkCIPanelFinalStatusSent acknowledges delivery and releases ownership together.
+func (db *DB) MarkCIPanelFinalStatusSent(id int64) error {
+	_, err := db.Exec(`UPDATE ci_pr_panels
+		SET final_status_state = '', final_status_description = '', posting_claimed_at = NULL
+		WHERE id = ?`, id)
+	return err
 }
 
 // MarkPanelRetired makes an abandoned panel row non-postable while retaining its

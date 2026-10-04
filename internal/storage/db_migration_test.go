@@ -56,13 +56,20 @@ func TestCIPanelHistoryMigration(t *testing.T) {
 	for range 2 {
 		db, err := Open(dbPath)
 		require.NoError(t, err)
-		var outcome string
+		var outcome, finalState, finalDescription string
 		var count int
 		var pendingStatus bool
-		require.NoError(t, db.QueryRow(`SELECT outcome, attempt_count, pending_status_needed FROM ci_pr_panels WHERE id = 1`).Scan(&outcome, &count, &pendingStatus))
+		require.NoError(t, db.QueryRow(`SELECT outcome, attempt_count, pending_status_needed,
+			final_status_state, final_status_description FROM ci_pr_panels WHERE id = 1`).
+			Scan(&outcome, &count, &pendingStatus, &finalState, &finalDescription))
 		assert.Equal(t, "no_review_posted", outcome)
 		assert.Equal(t, 3, count)
 		assert.False(t, pendingStatus, "existing panels do not need a new pending status")
+		assert.Empty(t, finalState, "existing panels must not replay final statuses")
+		assert.Empty(t, finalDescription)
+		statuses, err := db.GetCIPanelFinalStatuses()
+		require.NoError(t, err)
+		assert.Empty(t, statuses, "historical panels must not replay final statuses")
 		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, pending_status_needed)
 			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000002', 42, 1)`)
 		require.NoError(t, err, "retired history must not occupy the active review slot")
@@ -72,6 +79,12 @@ func TestCIPanelHistoryMigration(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
 			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000003')`)
 		require.Error(t, err, "only one active panel may own a PR HEAD")
+		panel, err := db.GetCIPanelByPRSHA("acme/api", 7, "head-a")
+		require.NoError(t, err)
+		require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted, "success", "Review complete"))
+		statuses, err = db.GetCIPanelFinalStatuses()
+		require.NoError(t, err)
+		assert.Equal(t, []CIPanelFinalStatus{{PanelID: panel.ID, GithubRepo: "acme/api", HeadSHA: "head-a", State: "success", Description: "Review complete"}}, statuses)
 		_, err = db.Exec(`DELETE FROM ci_pr_panels WHERE id != 1`)
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
