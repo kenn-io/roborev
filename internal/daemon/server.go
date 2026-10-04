@@ -113,6 +113,7 @@ var (
 var (
 	getSystemdListenerForServer      = getSystemdListener
 	listenAuxiliaryEndpointForServer = listenAuxiliaryEndpoint
+	cleanupStaleCIWorktreesForServer = cleanupStaleCIWorktrees
 )
 
 // ServerOption customizes a daemon server before it starts.
@@ -296,6 +297,12 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Printf("Warning: failed to reset stale jobs: %v", err)
 	}
 
+	// Finish filesystem and git cleanup before binding the listener so it does
+	// not consume the CLI's bounded wait for runtime publication.
+	if err := cleanupStaleCIWorktreesForServer(ctx); err != nil {
+		log.Printf("Warning: failed to clean up stale CI worktrees: %v", err)
+	}
+
 	// Start config watcher for hot-reloading
 	if err := s.configWatcher.Start(ctx); err != nil {
 		log.Printf("Warning: failed to start config watcher: %v", err)
@@ -359,10 +366,6 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		serveErrCh <- s.httpServer.Serve(serveListener)
 	}()
-
-	if err := cleanupStaleCIWorktrees(ctx); err != nil {
-		log.Printf("Warning: failed to clean up stale CI worktrees: %v", err)
-	}
 
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()

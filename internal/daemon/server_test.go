@@ -383,6 +383,69 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
 }
 
+func TestServerWaitsForWorktreeCleanupBeforeListening(t *testing.T) {
+	testenv.SetDataDir(t)
+	orphan := filepath.Join(ciWorktreeParentDir(), "roborev-ci-orphan")
+	require.NoError(t, os.MkdirAll(orphan, 0o700))
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	cleanupStarted := make(chan struct{})
+	cleanupReleased := make(chan struct{})
+	releaseCleanup := sync.OnceFunc(func() { close(cleanupReleased) })
+	previousCleanup := cleanupStaleCIWorktreesForServer
+	cleanupStaleCIWorktreesForServer = func(ctx context.Context) error {
+		close(cleanupStarted)
+		<-cleanupReleased
+		return previousCleanup(ctx)
+	}
+	t.Cleanup(func() { cleanupStaleCIWorktreesForServer = previousCleanup })
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.AuthKey = strings.Repeat("a", 64)
+	cfg.ServerAddr = address
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() {
+		releaseCleanup()
+		require.NoError(t, server.Close())
+	})
+	startErrCh := make(chan error, 1)
+	go func() { startErrCh <- server.Start(t.Context()) }()
+
+	// Startup performs real filesystem and SQLite work before reaching cleanup.
+	require.Eventually(t, func() bool {
+		select {
+		case <-cleanupStarted:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+	conn, dialErr := net.DialTimeout("tcp", address, time.Second)
+	if conn != nil {
+		require.NoError(t, conn.Close())
+	}
+	_, runtimeErr := ReadRuntime()
+	releaseCleanup()
+
+	var info *RuntimeInfo
+	// Wall-clock wait: real listener startup and runtime-file publication.
+	require.Eventually(t, func() bool {
+		info, err = ReadRuntime()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	require.Error(t, dialErr, "pending cleanup must not occupy an undiscoverable authenticated endpoint")
+	require.ErrorIs(t, runtimeErr, os.ErrNotExist)
+	assert.NoDirExists(t, orphan)
+	_, err = probeRuntimeRecordWithKey(t.Context(), info.Endpoint(), cfg.AuthKey)
+	require.NoError(t, err)
+	stopTestServer(t, server, startErrCh)
+}
+
 func TestServerStartStopsAuthenticatedListenerWhenRuntimePublicationFails(t *testing.T) {
 	dataDir := testenv.SetDataDir(t)
 	runtimeDir := filepath.Join(dataDir, "runtime")
