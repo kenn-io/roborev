@@ -96,6 +96,61 @@ func TestClaimPanelForPosting(t *testing.T) {
 	assert.False(t, got4, "posted row never claims again")
 }
 
+func TestFinalStatusAcknowledgmentKeepsPublicationClaim(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		skip    bool
+	}{
+		{"final status", PanelOutcomeReviewPosted, false},
+		{"skip review", PanelOutcomeReviewPosted, true},
+		{"skip failure", PanelOutcomeNoReviewPosted, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			id := seedPanelRow(t, db, "acme/api", 7, "head-a")
+			require.NoError(t, db.MarkPanelPosted(id, tc.outcome, "error", "Review failed"))
+
+			func() {
+				if !tc.skip {
+					claimed, err := db.ClaimPanelFinalStatus(id, PanelPostingStaleWindow)
+					require.NoError(t, err)
+					require.True(t, claimed)
+				} else {
+					claimed, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+					require.NoError(t, err)
+					require.Equal(t, id, claimed)
+				}
+				defer func() { require.NoError(t, db.ReleasePanelPostClaim(id)) }()
+				if tc.skip {
+					require.NoError(t, db.DeleteReviewAttempt("acme/api", 7, "head-a"))
+				}
+				require.NoError(t, db.MarkCIPanelFinalStatusSent(id))
+
+				// Try to start another publisher after acknowledgment but before
+				// deferred cleanup. It must not acquire a lease cleanup could erase.
+				competingSkip := make(chan error, 1)
+				go func() {
+					_, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+					competingSkip <- err
+				}()
+				assert.ErrorIs(<-competingSkip, ErrCIPanelActive)
+			}()
+
+			claimed, err := db.ClaimPanelForSkip("acme/api", 7, "head-a", nil)
+			require.NoError(t, err, "the next publisher can claim after cleanup")
+			assert.Equal(id, claimed)
+			pending, err := db.GetCIPanelFinalStatuses("acme/api")
+			require.NoError(t, err)
+			assert.Empty(pending, "acknowledgment still clears the delivery intent")
+		})
+	}
+}
+
 // TestClaimPanelForPostingStaleReclaim proves the stale-window reclaim works,
 // which directly guards timestamp-format correctness: backdating the claim to be
 // older than staleWindow makes it reclaimable, while a fresh claim does not.

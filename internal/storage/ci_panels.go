@@ -541,10 +541,11 @@ func (db *DB) ClaimPanelFinalStatus(id int64, staleWindow time.Duration) (bool, 
 	return n == 1, err
 }
 
-// MarkCIPanelFinalStatusSent acknowledges delivery and releases ownership together.
+// MarkCIPanelFinalStatusSent acknowledges delivery while retaining the caller's
+// publication lease. The caller releases it once, after finishing its cleanup.
 func (db *DB) MarkCIPanelFinalStatusSent(id int64) error {
 	_, err := db.Exec(`UPDATE ci_pr_panels
-		SET final_status_state = '', final_status_description = '', posting_claimed_at = NULL
+		SET final_status_state = '', final_status_description = ''
 		WHERE id = ?`, id)
 	return err
 }
