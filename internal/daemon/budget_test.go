@@ -56,7 +56,7 @@ func TestBudgetRoutingZones(t *testing.T) {
 			cfg.Budget = config.BudgetConfig{Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100, AgentCosts: tc.costs}
 			source := &budgetSpendStub{spend: storage.CostAggregate{TotalUSD: tc.usd, JobsWithCost: 1}}
 			router := NewBudgetRouter(source, nil)
-			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got.Name())
 		})
@@ -72,29 +72,29 @@ func TestBudgetCacheReloadAndRollover(t *testing.T) {
 	router := NewBudgetRouter(source, nil)
 	now := time.Date(2026, 1, 2, 23, 59, 55, 0, time.UTC)
 	router.now = func() time.Time { return now }
-	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", got.Name())
 	changed := *cfg
 	changed.Budget.DailyLimitCents = 1000
-	got, err = router.ResolveAgent("codex", nil, &changed, config.ReviewTypeDefault)
+	got, err = router.ResolveAgent("codex", nil, &changed, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", got.Name())
 	assert.Equal(t, 1, source.calls)
 	source.spend = storage.CostAggregate{}
 	now = now.Add(5 * time.Second)
-	got, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	got, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", got.Name())
 	assert.Equal(t, 2, source.calls)
 	source.spend = storage.CostAggregate{TotalUSD: 5, JobsWithCost: 1}
 	now = now.Add(10 * time.Second)
-	got, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	got, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", got.Name())
 	assert.Equal(t, 3, source.calls)
 	router.Invalidate()
-	_, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	_, err = router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 4, source.calls)
 }
@@ -120,7 +120,7 @@ func TestBudgetFallbacksAndConcurrentCache(t *testing.T) {
 			local.Budget.Enabled = !tc.disabled
 			source := &budgetSpendStub{spend: tc.spend, err: tc.err}
 			router := NewBudgetRouter(source, func(name string) bool { return tc.cooldown && name == "gemini" })
-			got, err := router.ResolveAgent("codex", nil, &local, config.ReviewTypeDefault)
+			got, err := router.ResolveAgent("codex", nil, &local, config.ReviewTypeDefault, nil)
 			require.NoError(t, err)
 			assert.Equal(t, "codex", got.Name())
 			if tc.disabled {
@@ -138,7 +138,7 @@ func TestBudgetFallbacksAndConcurrentCache(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 			results <- outcome{selected: got, err: err}
 		})
 	}
@@ -179,7 +179,7 @@ func TestBudgetFractionalBoundaries(t *testing.T) {
 			cfg.Budget = config.BudgetConfig{Enabled: true, DailyLimitCents: tc.limit, ReserveFloorCents: tc.reserve, AgentCosts: costs}
 			router := NewBudgetRouter(&budgetSpendStub{spend: storage.CostAggregate{TotalUSD: tc.usd, JobsWithCost: 1}}, nil)
 			cfg.GeminiCmd = "go"
-			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+			got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got.Name())
 		})
@@ -202,7 +202,7 @@ func TestBudgetRoutingWithZeroThresholdOnEmptyDay(t *testing.T) {
 	}
 	router := NewBudgetRouter(&budgetSpendStub{}, nil)
 
-	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", got.Name())
 }
@@ -223,7 +223,7 @@ func TestBudgetRoutingDoesNotSelectTestAgent(t *testing.T) {
 	}
 	router := NewBudgetRouter(&budgetSpendStub{spend: storage.CostAggregate{TotalUSD: 5, JobsWithCost: 1, JobsTotal: 1}}, nil)
 
-	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	got, err := router.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", got.Name())
 }

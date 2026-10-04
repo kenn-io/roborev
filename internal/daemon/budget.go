@@ -62,8 +62,9 @@ func (r *BudgetRouter) dailySpend() (storage.CostAggregate, error) {
 // ResolveAgent preserves the configured agent below the reserve threshold,
 // scores quality/cost inside the reserve, and chooses the cheapest at the cap.
 // The caller resolves the configured choice, which gets twice the quality
-// weight of alternatives. Model pairing remains the worker's concern.
-func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.RepoConfig, cfg *config.Config, reviewType string) (agent.Agent, error) {
+// weight of alternatives. The worker may filter candidates using their effective
+// execution settings before the router scores them.
+func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.RepoConfig, cfg *config.Config, reviewType string, eligible func(agent.Agent) bool) (agent.Agent, error) {
 	preferred := func() (agent.Agent, error) {
 		return agent.GetAvailableExactWithConfigFromConfig(repoCfg, configuredAgent, cfg)
 	}
@@ -101,7 +102,8 @@ func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.Repo
 			continue
 		}
 		if agent.ValidateStructuredReviewSelection(reviewType, candidate) != nil ||
-			(reviewType == config.ReviewTypeGoal && goalreview.ValidateAgent(candidate) != nil) {
+			(reviewType == config.ReviewTypeGoal && goalreview.ValidateAgent(candidate) != nil) ||
+			(eligible != nil && !eligible(candidate)) {
 			continue
 		}
 		if r.coolingDown != nil && r.coolingDown(candidate.Name()) {

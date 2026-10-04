@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -67,7 +69,7 @@ func configureUnpricedBudgetRouting(t *testing.T, tc *workerTestContext) (*confi
 	tc.reconfigurePool(cfg)
 	now := time.Now().UTC()
 	tc.Pool.budgetRouter.now = func() time.Time { return now }
-	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", selected.Name())
 	return cfg, now
@@ -363,7 +365,7 @@ func TestBudgetReconciliationInvalidatesCachedSpend(t *testing.T) {
 	job := seedTokenCostCandidate(t, tc, "budget-session", `{"total_output_tokens":1}`)
 	now := time.Now()
 	tc.Pool.budgetRouter.now = func() time.Time { return now }
-	before, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	before, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", before.Name())
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
@@ -372,7 +374,7 @@ func TestBudgetReconciliationInvalidatesCachedSpend(t *testing.T) {
 	updated, err := tc.Pool.reconcileTokenCostJob(context.Background(), job.ID)
 	require.NoError(t, err)
 	require.True(t, updated)
-	after, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	after, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", after.Name())
 }
@@ -500,7 +502,7 @@ func TestBudgetRoutingInvalidatesSpendAfterUnpricedAgentFailure(t *testing.T) {
 	// Let the candidate back into selection so this assertion isolates spend
 	// cache freshness from the quota cooldown applied by the failed attempt.
 	tc.Pool.cooldownAgent("gemini", time.Now().Add(-time.Second))
-	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", selected.Name())
 }
@@ -526,7 +528,7 @@ func TestBudgetRoutingInvalidatesSpendAfterUnpricedAgentCancellation(t *testing.
 
 	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, "codex")
 	require.NoError(t, tc.DB.MarkJobAgentInvoked(job.ID, testWorkerID, "budget-test-agent"))
-	before, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	before, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "gemini", before.Name())
 
@@ -538,7 +540,7 @@ func TestBudgetRoutingInvalidatesSpendAfterUnpricedAgentCancellation(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, 1, spend.JobsTotal)
 	assert.Zero(t, spend.JobsWithCost)
-	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", selected.Name())
 }
@@ -574,7 +576,7 @@ func TestBudgetRoutingInvalidatesSpendAfterClassifierSkip(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, spend.JobsTotal)
 			assert.Zero(t, spend.JobsWithCost)
-			selected, err := ctx.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+			selected, err := ctx.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 			require.NoError(t, err)
 			assert.Equal(t, "codex", selected.Name())
 		})
@@ -608,47 +610,90 @@ func TestBudgetRoutingInvalidatesSpendAfterSynthesisCompletionWithoutUsage(t *te
 	require.NoError(t, err)
 	assert.Equal(t, 1, spend.JobsTotal)
 	assert.Zero(t, spend.JobsWithCost)
-	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault)
+	selected, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", selected.Name())
 }
 
-func TestBudgetRoutingSelectsSupportedGoalReviewer(t *testing.T) {
-	c := newWorkerTestContext(t, 1)
-	cfg := config.DefaultConfig()
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	cfg.PiCmd, cfg.ClaudeCodeCmd, cfg.GrokCmd = executable, executable, executable
-	for _, a := range []agent.Agent{agent.NewPiAgent(executable), agent.NewClaudeAgent(executable), &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}} {
-		original, err := agent.Get(a.Name())
-		require.NoError(t, err)
-		agent.Register(a)
-		t.Cleanup(func() { agent.Register(original) })
+func TestBudgetRoutingSelectsEligibleGoalReviewer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("controlled capability probe uses a POSIX shell")
 	}
-	cfg.Budget = config.BudgetConfig{
-		Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100,
-		AgentCosts: config.BudgetAgentCosts{"pi": 15, "claude-code": 5, "grok": 1},
+	for _, tc := range []struct {
+		name, help, key, backupAgent, backupModel, jobBackupAgent, jobBackupModel, want, wantModel string
+		source                                                                                     string
+		linkedWorktree                                                                             bool
+	}{
+		{name: "native key", help: "--tools --bare", key: "synthetic-key", want: "claude-code"},
+		{name: "missing native key", help: "--tools --bare", want: "pi"},
+		{name: "missing bare capability", help: "--tools", key: "synthetic-key", want: "pi"},
+		{name: "missing tools capability", help: "--bare", key: "synthetic-key", want: "pi"},
+		{name: "paired proxy model", help: "--tools --bare", backupAgent: "claude-code", backupModel: "review@https://proxy.example.com", want: "claude-code", wantModel: "review@https://proxy.example.com"},
+		{name: "job proxy model wins", help: "--tools --bare", backupAgent: "claude-code", backupModel: "native", jobBackupAgent: "claude-code", jobBackupModel: "review@https://proxy.example.com", want: "claude-code", wantModel: "review@https://proxy.example.com"},
+		{name: "job native model wins", help: "--tools --bare", backupAgent: "claude-code", backupModel: "review@https://proxy.example.com", jobBackupAgent: "claude-code", jobBackupModel: "native", want: "pi"},
+		{name: "malformed paired model", help: "--tools --bare", key: "synthetic-key", backupAgent: "claude-code", backupModel: "native@", want: "pi"},
+		{name: "unpaired proxy model", help: "--tools --bare", backupAgent: "grok", backupModel: "review@https://proxy.example.com", want: "pi"},
+		{name: "manual uses linked worktree proxy", help: "--tools --bare", linkedWorktree: true, source: "manual", want: "claude-code", wantModel: "review@https://proxy.example.com"},
+		{name: "watcher uses main repo native model", help: "--tools --bare", linkedWorktree: true, source: "goal_watch", want: "pi"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			var worktreePath string
+			if tc.linkedWorktree {
+				worktreePath = filepath.Join(t.TempDir(), "linked")
+				c.GitRepo.RunGit("worktree", "add", "--detach", worktreePath)
+				require.NoError(t, os.WriteFile(filepath.Join(c.TmpDir, ".roborev.toml"), []byte("review_backup_agent = \"claude-code\"\nreview_backup_model = \"native\"\n"), 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".roborev.toml"), []byte("review_backup_agent = \"claude-code\"\nreview_backup_model = \"review@https://proxy.example.com\"\n"), 0o600))
+			}
+			probeLog := filepath.Join(t.TempDir(), "probe.log")
+			command := filepath.Join(t.TempDir(), "claude")
+			script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  *etxtbsy*) exit 0 ;;
+  --help) printf '%%s\n' %q; printf 'probe\n' >> %q; exit 0 ;;
+  *) exit 9 ;;
+esac
+`, tc.help, probeLog)
+			require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
+			cfg.PiCmd, cfg.ClaudeCodeCmd, cfg.GrokCmd = command, command, command
+			for _, a := range []agent.Agent{agent.NewPiAgent(command), agent.NewClaudeAgent(command), &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}} {
+				original, err := agent.Get(a.Name())
+				require.NoError(t, err)
+				agent.Register(a)
+				t.Cleanup(func() { agent.Register(original) })
+			}
+			previousKey := agent.AnthropicAPIKey()
+			agent.SetAnthropicAPIKey(tc.key)
+			t.Cleanup(func() { agent.SetAnthropicAPIKey(previousKey) })
+			t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", "")
+			cfg.DefaultBackupAgent, cfg.DefaultBackupModel = tc.backupAgent, tc.backupModel
+			cfg.Budget = config.BudgetConfig{
+				Enabled: true, DailyLimitCents: 0,
+				AgentCosts: config.BudgetAgentCosts{"pi": 15, "claude-code": 5, "grok": 1},
+			}
+			c.reconfigurePool(cfg)
+			queued, err := c.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: c.Repo.ID, Agent: "pi", GitRef: "snapshot-digest", JobType: storage.JobTypeGoalReview, ReviewType: config.ReviewTypeGoal,
+				BackupAgent: tc.jobBackupAgent, BackupModel: tc.jobBackupModel,
+				Source: tc.source, WorktreePath: worktreePath,
+			})
+			require.NoError(t, err)
+			job, err := c.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			require.Equal(t, queued.ID, job.ID)
+			selected, proceed := c.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
+			require.True(t, proceed)
+			require.NotNil(t, selected)
+			assert := assert.New(t)
+			assert.Equal(tc.want, selected.Name())
+			stored, err := c.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(tc.want, stored.Agent)
+			assert.Equal(tc.wantModel, stored.Model)
+			assert.Equal(tc.want == "claude-code", stored.BudgetRoutingLocked)
+			assert.FileExists(probeLog, "candidate capabilities must be checked before budget substitution")
+		})
 	}
-	c.reconfigurePool(cfg)
-	now := time.Now().UTC()
-	c.Pool.budgetRouter.now = func() time.Time { return now }
-	prior, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, GitRef: "HEAD", Agent: "test"})
-	require.NoError(t, err)
-	stamp := now.Format(time.RFC3339)
-	_, err = c.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, stamp, stamp, prior.ID)
-	require.NoError(t, err)
-	queued, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, Agent: "pi", GitRef: "snapshot-digest", JobType: storage.JobTypeGoalReview, ReviewType: config.ReviewTypeGoal})
-	require.NoError(t, err)
-	job, err := c.DB.ClaimJob(testWorkerID)
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	require.Equal(t, queued.ID, job.ID)
-	selected, proceed := c.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
-	require.True(t, proceed)
-	require.NotNil(t, selected)
-	assert.Equal(t, "claude-code", selected.Name(), "cheaper agents without the goal contract must be excluded")
-	stored, err := c.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "claude-code", stored.Agent)
-	assert.True(t, stored.BudgetRoutingLocked)
 }

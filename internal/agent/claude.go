@@ -757,7 +757,14 @@ func (a *ClaudeAgent) ClassifyGoalWithSchema(ctx context.Context, repoPath, gitR
 	return a.classifyWithSchema(ctx, repoPath, gitRef, prompt, schema, out, true)
 }
 
-func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer, isolated bool) (jsontext.Value, error) {
+// ValidateGoalReview checks the configured model, credentials, and CLI
+// capabilities used by ClassifyGoalWithSchema without starting a review.
+func (a *ClaudeAgent) ValidateGoalReview(ctx context.Context) error {
+	_, err := a.schemaEnv(ctx, nil, true)
+	return err
+}
+
+func (a *ClaudeAgent) schemaEnv(ctx context.Context, baseEnv []string, isolated bool) ([]string, error) {
 	// Refuse to run if the installed claude binary doesn't recognize
 	// `--tools` — without that flag, classifyArgs's deny-all is silently
 	// dropped and the model would have file/shell access against
@@ -777,13 +784,7 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 			return nil, fmt.Errorf("claude goal review requires a configured Anthropic API key or proxy model; OAuth is unavailable in isolated bare mode")
 		}
 	}
-	args := a.classifyArgs(schema)
-	if isolated {
-		args = append(args, "--bare", "--strict-mcp-config", "--mcp-config", `{ "mcpServers": {} }`, "--no-session-persistence")
-	}
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	env, err := buildClaudeEnv(baseEnv, model, baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -795,6 +796,20 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 				break
 			}
 		}
+	}
+	return env, nil
+}
+
+func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer, isolated bool) (jsontext.Value, error) {
+	args := a.classifyArgs(schema)
+	if isolated {
+		args = append(args, "--bare", "--strict-mcp-config", "--mcp-config", `{ "mcpServers": {} }`, "--no-session-persistence")
+	}
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	env, err := a.schemaEnv(ctx, cmd.Environ(), isolated)
+	if err != nil {
+		return nil, err
 	}
 	cmd.Env = env
 	configureSubprocess(ctx, cmd)
