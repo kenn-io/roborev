@@ -23,7 +23,7 @@ func TestWorkerIsolatedCheckoutCleanupOnFailureOrCancel(t *testing.T) {
 			assert := assert.New(t)
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			tc := newWorkerTestContext(t, 1)
-			tc.Pool.cfgGetter.Config().ReviewInWorktree = new(true)
+			tc.Pool.cfgGetter.Config().IsolateReviews = true
 			var path string
 			var jobID int64
 			var cancellationDelivered bool

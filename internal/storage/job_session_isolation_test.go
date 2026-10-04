@@ -56,7 +56,7 @@ func TestIsolatedSessionsExcludedFromReuse(t *testing.T) {
 				claimed, err := db.ClaimJob("worker")
 				require.NoError(t, err)
 				require.Equal(t, isolated.ID, claimed.ID)
-				require.NoError(t, db.ClearJobSession(isolated.ID, "worker"))
+				require.NoError(t, db.IsolateJobSession(isolated.ID, "worker"))
 				if !backfill {
 					require.NoError(t, db.SaveJobSessionID(isolated.ID, "worker", "isolated-session"))
 				}
@@ -102,25 +102,36 @@ func TestIsolatedSessionsExcludedFromReuse(t *testing.T) {
 	}
 }
 
-func TestClearJobSessionRollsBackWhenProvenanceFails(t *testing.T) {
+func TestSessionIsolationMigration(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-provenance")
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-migration")
 	claimJob(t, db, "worker")
-	source := uuid.New()
-	_, err := db.Exec(`UPDATE review_jobs SET session_id='prior-session', session_resumed=1, resume_source_job_uuid=? WHERE id=?`, source, job.ID)
+	require.NoError(t, db.SaveJobSessionID(job.ID, "worker", "existing-session"))
+	require.NoError(t, db.Close())
+
+	raw, err := openRawDB(dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TRIGGER reject_provenance BEFORE INSERT ON daemon_state
-		BEGIN SELECT RAISE(ABORT, 'synthetic provenance failure'); END`)
+	_, err = raw.Exec("ALTER TABLE review_jobs DROP COLUMN session_isolated")
 	require.NoError(t, err)
-	require.ErrorContains(t, db.ClearJobSession(job.ID, "worker"), "synthetic provenance failure")
-	got, err := db.GetJobByID(job.ID)
+	require.NoError(t, raw.Close())
+
+	db, err = Open(dbPath)
 	require.NoError(t, err)
-	assert.Equal("prior-session", got.SessionID)
-	assert.Equal(&source, got.ResumeSourceJobUUID)
-	var resumed int
-	require.NoError(t, db.QueryRow("SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
-	assert.Equal(1, resumed)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var isolated bool
+	require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
+	assert.False(t, isolated, "migration preserves eligibility of existing sessions")
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "existing-session", stored.SessionID)
+	require.NoError(t, db.IsolateJobSession(job.ID, "worker"))
+	require.NoError(t, db.Close())
+
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
+	assert.True(t, isolated, "reopening preserves the attempt's isolation marker")
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClearJobSession(t *testing.T) {
+func TestIsolateJobSession(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, worker string
@@ -32,9 +32,12 @@ func TestClearJobSession(t *testing.T) {
 			if tc.canceled {
 				require.NoError(t, db.CancelJob(job.ID))
 			}
-			err = db.ClearJobSession(job.ID, tc.worker)
+			err = db.IsolateJobSession(job.ID, tc.worker)
+			var isolated bool
+			require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
 			if tc.wantErr {
 				require.ErrorIs(t, err, sql.ErrNoRows)
+				assert.False(t, isolated)
 				got, err := db.GetJobByID(job.ID)
 				require.NoError(t, err)
 				assert.Equal(t, "old-session", got.SessionID)
@@ -42,6 +45,7 @@ func TestClearJobSession(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.True(t, isolated)
 			got, err := db.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Empty(t, got.SessionID)

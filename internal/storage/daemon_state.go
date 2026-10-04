@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	isolatedReviewSessionStatePrefix = "isolated_review_session:"
-	queuePausedStateKey              = "queue_paused"
-	shutdownDrainingStateKey         = "shutdown_draining"
+	queuePausedStateKey      = "queue_paused"
+	shutdownDrainingStateKey = "shutdown_draining"
 )
 
 // IsQueuePaused returns whether daemon workers should stop claiming new jobs.

@@ -439,7 +439,6 @@ max_chars = 50000
 | `review_min_severity` | string | Lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
-| `review_in_worktree` | bool | Run committed daemon reviews in temporary detached checkouts (default: `false`). See [Isolated review checkouts](#isolated-review-checkouts) |
 | `reuse_review_session` | bool | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) |
 | `reuse_review_session_lookback` | int | Max recent session candidates to consider (default: unlimited). See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) |
 | `review_agent_<level>` | string | Agent to use for reviews at specific reasoning level |
@@ -1129,44 +1128,6 @@ install or update the pre-push hook.
 When `post_commit_review = "branch"` is also set, the batch size controls when a
 review is queued, while the review still covers the entire branch.
 
-### Isolated review checkouts
-
-Set `review_in_worktree = true` to run committed daemon reviews in temporary
-detached checkouts owned by the daemon. This lets you remove the linked worktree
-that queued a review while its agent is still running:
-
-```bash
-# This repository
-roborev config set review_in_worktree true
-
-# All repositories, unless overridden locally
-roborev config set review_in_worktree true --global
-```
-
-The default is `false`; a repository's explicit `false` overrides the global
-setting. Restart the daemon after changing global configuration with
-`roborev daemon restart`.
-
-Each checkout contains the reviewed commit, or the head of a reviewed range,
-including submodules and LFS files. The option applies to every committed review
-type and committed review panel synthesis. Dirty reviews, prompt jobs such as
-`roborev analyze`, compact jobs, fixes, and `roborev review --local` keep their
-existing execution paths. CI reviews already use detached checkouts and are
-unaffected by this option.
-
-Jobs, events, hooks, and worktree filters retain the originating repository and
-worktree paths. Review policy keeps its existing sources and precedence;
-oversized prompt and prior-review snapshots are placed in the agent checkout.
-The daemon removes the checkout after each attempt and recovers abandoned
-checkouts at startup. Isolated reviews start fresh agent sessions even when
-`reuse_review_session` is enabled. Sessions from isolated attempts are excluded
-from future reuse, even after isolation is disabled.
-
-The option is resolved again for each retry or backup-agent attempt. If the
-originating worktree is gone, the main repository and global configuration
-apply. Set the option globally or in the main repository when it should remain
-enabled after an ephemeral worktree and its local config are removed.
-
 ### Auto-Close Passing Reviews
 
 By default, all reviews remain open in the queue until you explicitly close
@@ -1205,9 +1166,10 @@ overrides the global setting, including an explicit `false`. The default is
 - Commit reviews, range reviews, and their panel synthesis jobs use a checkout
     at the reviewed commit (the head of the range). This includes post-commit
     reviews.
-- Agents and temporary prompt files use the daemon-owned checkout. The original
-    linked worktree can be removed while the agent runs. The detached checkout
-    still shares the repository's Git objects; keep that object store available.
+- Agents, prompt Git reads, and temporary prompt files use the daemon-owned
+    checkout. The original linked worktree can be removed while the agent runs.
+    The detached checkout still shares the repository's Git objects; keep that
+    object store available.
 - The job keeps its original repository, branch, and worktree identity. Internal
     checkout paths are not substituted into events or filtering.
 - Review configuration still comes from the source checkout. If that checkout is
@@ -1217,6 +1179,17 @@ overrides the global setting, including an explicit `false`. The default is
 - Each attempt gets its own checkout, removed after success, failure, or
     cancellation. Daemon startup cleans up checkouts left by an interrupted
     daemon.
+
+Isolated attempts start fresh agent sessions even when `reuse_review_session` is
+enabled. Their sessions remain available for usage accounting but are never
+reused by later reviews, including after isolation is disabled. Each retry or
+backup-agent attempt resolves `isolate_reviews` again; a later attempt that runs
+without isolation can produce a reusable session.
+
+After preparing the checkout, the daemon resolves the configuration path again
+so it can use the main repository if the source worktree was removed during
+setup. Configuration changes apply to subsequent attempts without restarting the
+daemon.
 
 Queued jobs and retries still need the repository path recorded on the job. For
 a worktree linked to a main checkout, keep that main checkout available. For a
@@ -1285,7 +1258,6 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
 | `review_context_count` | int | 3 | Recent reviews to include as context | Yes |
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
-| `review_in_worktree` | bool | false | Run committed daemon reviews in temporary detached checkouts. See [Isolated review checkouts](#isolated-review-checkouts) | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |

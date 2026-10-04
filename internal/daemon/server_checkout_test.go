@@ -20,7 +20,7 @@ func TestHandleEnqueueIsolationDisablesReuse(t *testing.T) {
 	sha := repo.CommitFile("file.txt", "base\n", "base")
 	cfg := server.configWatcher.Config()
 	cfg.ReuseReviewSession = new(true)
-	cfg.ReviewInWorktree = new(true)
+	cfg.IsolateReviews = true
 	stored, err := db.GetOrCreateRepo(repo.Path(), config.ResolveRepoIdentity(repo.Path(), nil))
 	require.NoError(t, err)
 	commit, err := db.GetOrCreateCommit(stored.ID, sha, "Author", "Subject", time.Now())
@@ -39,7 +39,7 @@ func TestHandleEnqueueIsolationDisablesReuse(t *testing.T) {
 	testutil.DecodeJSON(t, w, &job)
 	assert.Empty(t, job.SessionID)
 	assert.Nil(t, job.ResumeSourceJobUUID)
-	cfg.ReviewInWorktree = new(false)
+	cfg.IsolateReviews = false
 	w = httptest.NewRecorder()
 	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{RepoPath: repo.Path(), GitRef: "HEAD", Branch: "main", Agent: "test"})
 	server.httpServer.Handler.ServeHTTP(w, req)

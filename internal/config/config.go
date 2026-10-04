@@ -349,8 +349,7 @@ type Config struct {
 
 	AllowUnsafeAgents   *bool `toml:"allow_unsafe_agents"`   // nil = not set, allows commands to choose their own default
 	DisableCodexSandbox bool  `toml:"disable_codex_sandbox"` // use --full-auto instead of --sandbox read-only (for systems where bwrap is broken)
-	ReviewInWorktree    *bool `toml:"review_in_worktree" comment:"Run committed daemon reviews in a temporary detached checkout."`
-	ReuseReviewSession  *bool `toml:"reuse_review_session"` // nil = not set; when true, reuse prior branch review sessions when possible
+	ReuseReviewSession  *bool `toml:"reuse_review_session"`  // nil = not set; when true, reuse prior branch review sessions when possible
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -700,7 +699,6 @@ type RepoConfig struct {
 	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary diff and prior-review snapshots."`
 	PostCommitReview                string                          `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
-	ReviewInWorktree                *bool                           `toml:"review_in_worktree" comment:"Run committed daemon reviews in a temporary detached checkout for this repo."`
 	ReuseReviewSession              *bool                           `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback      int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 	Experiments                     map[string]ExperimentDefinition `toml:"experiments"`
@@ -1432,27 +1430,6 @@ func ResolvePostCommitBatchSizeWithError(repoPath string) (int, error) {
 	return cfg.PostCommitBatchSize, nil
 }
 
-// ResolveReviewInWorktree resolves whether committed daemon reviews use an
-// isolated checkout. Invalid repo configuration is reported to the caller.
-func ResolveReviewInWorktree(repoPath string, globalCfg *Config) (bool, error) {
-	repoCfg, err := LoadRepoConfig(repoPath)
-	if err != nil {
-		return false, err
-	}
-	return ResolveReviewInWorktreeFromConfig(repoCfg, globalCfg), nil
-}
-
-// ResolveReviewInWorktreeFromConfig applies repo > global > default false.
-func ResolveReviewInWorktreeFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
-	if repoCfg != nil && repoCfg.ReviewInWorktree != nil {
-		return *repoCfg.ReviewInWorktree
-	}
-	if globalCfg != nil && globalCfg.ReviewInWorktree != nil {
-		return *globalCfg.ReviewInWorktree
-	}
-	return false
-}
-
 // ResolveReuseReviewSession returns whether reviews should try to resume a
 // prior session from the same branch. Priority: repo > global > default false.
 func ResolveReuseReviewSession(repoPath string, globalCfg *Config) bool {
@@ -1790,15 +1767,16 @@ func ResolveAgentQuotaCooldown(globalCfg *Config) time.Duration {
 // ResolveIsolateReviews returns whether committed reviews use daemon-owned
 // checkouts. Per-repo config overrides global; isolation is off by default.
 func ResolveIsolateReviews(repoPath string, globalCfg *Config) bool {
-	var repoVal *bool
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		repoVal = repoCfg.IsolateReviews
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveIsolateReviewsFromConfig(repoCfg, globalCfg)
+}
+
+// ResolveIsolateReviewsFromConfig applies repo > global > default false.
+func ResolveIsolateReviewsFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if repoCfg != nil && repoCfg.IsolateReviews != nil {
+		return *repoCfg.IsolateReviews
 	}
-	var globalVal bool
-	if globalCfg != nil {
-		globalVal = globalCfg.IsolateReviews
-	}
-	return resolveBool(globalVal, repoVal)
+	return globalCfg != nil && globalCfg.IsolateReviews
 }
 
 // ResolveAutoClosePassingReviews returns whether passing reviews should

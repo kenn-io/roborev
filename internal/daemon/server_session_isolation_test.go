@@ -36,7 +36,7 @@ func TestHandleEnqueueNeverReusesIsolatedSource(t *testing.T) {
 			caller := filepath.Join(t.TempDir(), "caller")
 			repo.Run("worktree", "add", "-b", "feature/session", caller, sha)
 			cfg := server.configWatcher.Config()
-			cfg.ReviewInWorktree = new(true)
+			cfg.IsolateReviews = true
 			cfg.ReuseReviewSession = new(true)
 			stored, err := db.GetOrCreateRepo(repo.Path())
 			require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestHandleEnqueueNeverReusesIsolatedSource(t *testing.T) {
 				input.DiffContent = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-base\n+changed\n"
 				input.DirtyFiles = []string{"file.txt"}
 			} else {
-				cfg.ReviewInWorktree = new(false)
+				cfg.IsolateReviews = false
 			}
 			enqueue := func() storage.ReviewJob {
 				w := httptest.NewRecorder()

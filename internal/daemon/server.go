@@ -1105,7 +1105,7 @@ func findCompatibleReusableSession(
 	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange
 	if committedReview && opts.Source != storage.JobSourceCI && opts.CIBaseBranch == "" &&
 		opts.GitRef != "dirty" && opts.DiffContent == "" &&
-		config.ResolveReviewInWorktreeFromConfig(repoCfg, globalCfg) {
+		config.ResolveIsolateReviewsFromConfig(repoCfg, globalCfg) {
 		return "", nil
 	}
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||

@@ -556,8 +556,7 @@ type preparedJobCheckout struct {
 	agentRepoPath string
 	// snapshotTarget controls where oversized diff snapshot files are written.
 	// Isolated jobs write snapshots into the agent checkout and resolve
-	// snapshot_dir from the trusted config checkout. review_in_worktree also
-	// reads prompt Git data from that agent checkout.
+	// snapshot_dir from the trusted config checkout.
 	snapshotTarget prompt.SnapshotTarget
 	// eventWorktreePath is the caller-provided worktree path safe to expose
 	// to event consumers and hooks. Internal checkouts must stay private.
@@ -611,33 +610,8 @@ func (wp *WorkerPool) prepareJobCheckout(
 		checkout.promptRepoPath = repoPath
 		checkout.configRepoPath = repoPath
 		checkout.agentRepoPath = repoPath
-		if !job.IsCIReview() {
+		if job.WorktreePath != "" && repoPath == job.WorktreePath {
 			checkout.eventWorktreePath = job.WorktreePath
-		}
-		// review_in_worktree runs the agent and prompt Git reads in a detached
-		// checkout. Repo config stays on the caller checkout, then the main repo
-		// if that caller is gone.
-		committedSynthesis := job.IsSynthesisJob() &&
-			(job.CommitID != nil || strings.Contains(job.GitRef, ".."))
-		if !job.IsCIReview() && (job.IsReviewJob() || committedSynthesis) &&
-			!job.IsDirtyJob() && job.GitRef != "dirty" && job.DiffContent == nil {
-			enabled, configErr := config.ResolveReviewInWorktree(repoPath, cfg)
-			if configErr != nil {
-				return preparedJobCheckout{}, fmt.Errorf("resolve review_in_worktree: %w", configErr)
-			}
-			if enabled {
-				path, cleanup, createErr := wp.createExactCheckout(ctx, workerID, job)
-				if createErr != nil {
-					return preparedJobCheckout{}, createErr
-				}
-				checkout.promptRepoPath = path
-				checkout.configRepoPath = repoPath
-				checkout.agentRepoPath = path
-				checkout.snapshotTarget = prompt.SnapshotTarget{RepoPath: path, ConfigRepoPath: repoPath}
-				checkout.cleanup = cleanup
-				checkout.isolatedLocalReview = true
-				return checkout, nil
-			}
 		}
 		// Dirty panels have synthesis jobs with a "dirty" ref, even though
 		// IsDirtyJob only identifies the member jobs themselves.
@@ -646,14 +620,18 @@ func (wp *WorkerPool) prepareJobCheckout(
 		if !committedReview || !config.ResolveIsolateReviews(repoPath, cfg) {
 			return checkout, nil
 		}
+		checkout.isolatedLocalReview = true
 	}
 	agentRepoPath, cleanup, err := wp.createExactCheckout(ctx, workerID, job)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
 	checkout.agentRepoPath = agentRepoPath
+	if checkout.isolatedLocalReview {
+		checkout.promptRepoPath = agentRepoPath
+	}
 	checkout.snapshotTarget = prompt.SnapshotTarget{
-		RepoPath: agentRepoPath, ConfigRepoPath: checkout.promptRepoPath,
+		RepoPath: agentRepoPath, ConfigRepoPath: checkout.configRepoPath,
 	}
 	checkout.cleanup = cleanup
 	return checkout, nil
@@ -999,7 +977,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Session resume can retain the old checkout cwd. Clear both persisted and
 	// in-memory metadata before capturing a fresh session for this attempt.
 	if checkout.isolatedLocalReview {
-		if err := wp.db.ClearJobSession(job.ID, workerID); err != nil {
+		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("clear review session: %v", err))
 			return
 		}
@@ -1850,10 +1828,25 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 
 // broadcastFailed sends a review.failed event for a job
 func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
-	event := eventForJob("review.failed", job, job.ID)
-	event.Agent = agentName
-	event.Error = errorMsg
-	wp.broadcaster.Broadcast(event)
+	wtPath := ""
+	if job.WorktreePath != "" {
+		if _, err := os.Stat(job.WorktreePath); err == nil {
+			wtPath = job.WorktreePath
+		}
+	}
+	wp.broadcaster.Broadcast(Event{
+		Type:         "review.failed",
+		TS:           time.Now(),
+		JobID:        job.ID,
+		JobUUID:      job.UUID,
+		Repo:         job.RepoPath,
+		RepoName:     job.RepoName,
+		SHA:          job.GitRef,
+		Branch:       job.HookBranch(),
+		Agent:        agentName,
+		Error:        errorMsg,
+		WorktreePath: wtPath,
+	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's
 	// synthesis here. No-op for non-member and synthesis jobs (role gate).

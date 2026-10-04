@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -318,11 +319,19 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
 		workerID, job.ID, job.RepoName, job.PanelName)
 
-	event := eventForJob("review.completed", job, job.ID)
-	event.Agent = agentName
-	event.Verdict = string(verdict)
-	event.Findings = output
-	wp.broadcaster.Broadcast(event)
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		JobUUID:  job.UUID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
+		Agent:    agentName,
+		Verdict:  string(verdict),
+		Findings: output,
+	})
 }
 
 // runSynthesisAgent invokes the configured agent read-only (non-agentic) to
@@ -345,9 +354,16 @@ func (wp *WorkerPool) runSynthesisAgent(
 		return reviewpkg.SynthesisDocument{}, "", "", err
 	}
 
-	event := eventForJob("review.started", job, job.ID)
-	event.Agent = agentName
-	wp.broadcaster.Broadcast(event)
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.started",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
+		Agent:    agentName,
+	})
 
 	normalizer := GetNormalizer(agentName)
 	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
@@ -384,7 +400,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 			}
 			configRepoPath := ""
 			if checkout.isolatedLocalReview {
-				if err := wp.db.ClearJobSession(job.ID, workerID); err != nil {
+				if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
 					checkout.cleanup()
 					return reviewpkg.SynthesisCheckout{}, fmt.Errorf("clear synthesis session: %w", err)
 				}

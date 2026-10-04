@@ -20,7 +20,7 @@ import (
 func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
-	tc.Pool.cfgGetter.Config().ReviewInWorktree = new(true)
+	tc.Pool.cfgGetter.Config().IsolateReviews = true
 	tc.GitRepo.CommitFile("marker.txt", "reviewed\n", "head")
 	caller := filepath.Join(t.TempDir(), "caller")
 	tc.GitRepo.Run("worktree", "add", "--detach", caller, "HEAD")
@@ -68,7 +68,6 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	_, err = tc.DB.Exec("UPDATE review_jobs SET session_id='old-synthesis-session',session_resumed=1,resume_source_job_uuid=uuid WHERE id=?", synth.ID)
 	require.NoError(t, err)
 	synth.SessionID = "old-synthesis-session"
-	_, events := tc.Broadcaster.Subscribe("")
 	go func() { defer close(done); tc.Pool.processJob(testWorkerID, synth) }()
 	t.Cleanup(func() {
 		select {
@@ -108,13 +107,4 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	assert.Zero(t, resumed)
 	assert.Equal(t, caller, got.WorktreePath)
 	assert.NoDirExists(t, path)
-	for range 2 {
-		var event Event
-		select {
-		case event = <-events:
-		case <-time.After(5 * time.Second):
-		}
-		require.NotEmpty(t, event.Type)
-		assert.Equal(t, caller, event.WorktreePath)
-	}
 }

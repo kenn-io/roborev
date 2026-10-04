@@ -65,7 +65,8 @@ func TestPrepareJobCheckoutIsolationPolicy(t *testing.T) {
 				t.Cleanup(checkout.cleanup)
 			}
 			assert.Equal(source, checkout.eventWorktreePath)
-			assert.Equal(source, checkout.promptRepoPath)
+			assert.Equal(source, checkout.configRepoPath)
+			assert.Equal(checkout.agentRepoPath, checkout.promptRepoPath)
 			if tt.isolated {
 				assert.NotEqual(source, checkout.agentRepoPath)
 				assert.Equal(head, strings.TrimSpace(repo.Run("-C", checkout.agentRepoPath, "rev-parse", "HEAD")))
@@ -235,14 +236,13 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 	}{
 		{name: "default", kind: storage.JobTypeReview, ref: head},
 		{name: "global enabled", kind: storage.JobTypeReview, ref: head, global: true, isolate: true},
-		{name: "repo enabled", kind: storage.JobTypeReview, ref: head, repoConfig: "review_in_worktree=true", isolate: true},
-		{name: "repo disabled", kind: storage.JobTypeReview, ref: head, global: true, repoConfig: "review_in_worktree=false"},
+		{name: "repo enabled", kind: storage.JobTypeReview, ref: head, repoConfig: "isolate_reviews=true", isolate: true},
+		{name: "repo disabled", kind: storage.JobTypeReview, ref: head, global: true, repoConfig: "isolate_reviews=false"},
 		{name: "range", kind: storage.JobTypeRange, ref: base + ".." + head, global: true, isolate: true},
 		{name: "legacy commit", ref: head, global: true, isolate: true, legacy: true},
 		{name: "committed synthesis", kind: storage.JobTypeSynthesis, ref: head, global: true, isolate: true, legacy: true},
 		{name: "range synthesis", kind: storage.JobTypeSynthesis, ref: base + ".." + head, global: true, isolate: true},
 		{name: "dirty synthesis", kind: storage.JobTypeSynthesis, ref: "dirty", global: true},
-		{name: "prompt synthesis", kind: storage.JobTypeSynthesis, ref: "analysis", global: true},
 		{name: "dirty", kind: storage.JobTypeDirty, ref: "dirty", global: true},
 		{name: "task", kind: storage.JobTypeTask, ref: "analysis", global: true},
 		{name: "compact", kind: storage.JobTypeCompact, ref: "compact", global: true},
@@ -252,7 +252,7 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 			path := filepath.Join(caller, ".roborev.toml")
 			require.NoError(t, os.WriteFile(path, []byte(tc.repoConfig), 0o600))
 			cfg := config.DefaultConfig()
-			cfg.ReviewInWorktree = &tc.global
+			cfg.IsolateReviews = tc.global
 			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 			job := &storage.ReviewJob{ID: 42, RepoPath: repo.Path(), WorktreePath: caller, GitRef: tc.ref, JobType: tc.kind}
 			if tc.legacy {
@@ -290,7 +290,7 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 	}
 	t.Run("invalid ref fails without fallback", func(t *testing.T) {
 		cfg := config.DefaultConfig()
-		cfg.ReviewInWorktree = new(true)
+		cfg.IsolateReviews = true
 		pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 		_, err := pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{RepoPath: repo.Path(), GitRef: strings.Repeat("a", 40), JobType: storage.JobTypeReview}, cfg)
 		require.Error(t, err)
@@ -300,7 +300,7 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 	})
 	t.Run("canceled checkout", func(t *testing.T) {
 		cfg := config.DefaultConfig()
-		cfg.ReviewInWorktree = new(true)
+		cfg.IsolateReviews = true
 		pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -309,13 +309,6 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 		dirs, err := staleCIWorktreeDirs(ciWorktreeParentDir())
 		require.NoError(t, err)
 		assert.Empty(t, dirs)
-	})
-	t.Run("invalid config fails", func(t *testing.T) {
-		require.NoError(t, os.WriteFile(filepath.Join(caller, ".roborev.toml"), []byte("review_in_worktree=["), 0o600))
-		cfg := config.DefaultConfig()
-		pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
-		_, err := pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{RepoPath: repo.Path(), WorktreePath: caller, GitRef: head, JobType: storage.JobTypeReview}, cfg)
-		require.Error(t, err)
 	})
 }
 
@@ -338,7 +331,7 @@ func testIsolatedReviewCallerRemoval(t *testing.T, prebuilt bool) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
 	cfg := tc.Pool.cfgGetter.Config()
-	cfg.ReviewInWorktree = new(true)
+	cfg.IsolateReviews = true
 	cfg.DefaultMaxPromptSize = 10000
 	cfg.ReviewContextCount = 3
 	base := tc.GitRepo.CommitFile("marker.txt", "old\n", "base")
@@ -495,7 +488,7 @@ func testIsolatedReviewCallerRemoval(t *testing.T, prebuilt bool) {
 func TestWorkerIsolatedReviewStartsFreshSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
-	tc.Pool.cfgGetter.Config().ReviewInWorktree = new(true)
+	tc.Pool.cfgGetter.Config().IsolateReviews = true
 	sha := tc.GitRepo.HeadSHA()
 	job := tc.createJob(t, sha)
 	source := uuid.New()
@@ -522,7 +515,7 @@ func TestLocalReviewCheckoutRetryAfterCallerRemoval(t *testing.T) {
 	caller := filepath.Join(t.TempDir(), "caller")
 	repo.Run("worktree", "add", "--detach", caller, sha)
 	cfg := config.DefaultConfig()
-	cfg.ReviewInWorktree = new(true)
+	cfg.IsolateReviews = true
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{ID: 42, RepoPath: repo.Path(), WorktreePath: caller, GitRef: sha, JobType: storage.JobTypeReview}
 	first, err := pool.prepareJobCheckout(t.Context(), testWorkerID, job, cfg)
@@ -537,13 +530,13 @@ func TestLocalReviewCheckoutRetryAfterCallerRemoval(t *testing.T) {
 	assert.NotEqual(t, first.agentRepoPath, retry.agentRepoPath)
 	assert.Equal(t, retry.agentRepoPath, retry.promptRepoPath)
 	assert.Equal(t, repo.Path(), retry.configRepoPath)
-	assert.Equal(t, caller, retry.eventWorktreePath)
-	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("review_in_worktree=false"), 0o600))
+	assert.Empty(t, retry.eventWorktreePath)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("isolate_reviews=false"), 0o600))
 	disabled, err := pool.prepareJobCheckout(t.Context(), testWorkerID, job, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, repo.Path(), disabled.agentRepoPath)
 	assert.Nil(t, disabled.cleanup)
-	assert.Equal(t, caller, disabled.eventWorktreePath)
+	assert.Empty(t, disabled.eventWorktreePath)
 }
 
 func TestIsolatedReviewPromptBuildSurvivesCallerRemoval(t *testing.T) {
@@ -562,7 +555,7 @@ func TestIsolatedReviewPromptBuildSurvivesCallerRemoval(t *testing.T) {
 	))
 
 	cfg := config.DefaultConfig()
-	cfg.ReviewInWorktree = new(true)
+	cfg.IsolateReviews = true
 	cfg.DefaultMaxPromptSize = 4096
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{
@@ -607,7 +600,7 @@ func TestIsolatedReviewCleanupUsesCallerCheckout(t *testing.T) {
 	repo.Run("worktree", "add", "--detach", caller, head)
 
 	cfg := config.DefaultConfig()
-	cfg.ReviewInWorktree = new(true)
+	cfg.IsolateReviews = true
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{
 		RepoID:       42,
@@ -629,18 +622,4 @@ func TestIsolatedReviewCleanupUsesCallerCheckout(t *testing.T) {
 	builder := pool.basePromptBuilderForJob(t.Context(), checkout, job, cfg)
 	require.NoError(t, cleanupStaleSnapshotsForJob(builder, checkout, job.RepoID))
 	assert.NoDirExists(t, staleSnapshot)
-}
-
-func TestLocalReviewEventsPreserveRemovedCaller(t *testing.T) {
-	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
-	_, events := pool.broadcaster.Subscribe("")
-	caller := filepath.Join(t.TempDir(), "removed-caller")
-	job := &storage.ReviewJob{ID: 42, RepoPath: t.TempDir(), WorktreePath: caller, GitRef: "head", JobType: storage.JobTypeReview}
-	canceled := eventForJob("review.canceled", job, job.ID)
-	assert.Equal(t, caller, canceled.WorktreePath)
-	pool.broadcastFailed(job, "test", "provider unavailable")
-	failed := <-events
-	assert.Equal(t, caller, failed.WorktreePath)
-	job.Source = storage.JobSourceCI
-	assert.Empty(t, eventForJob("review.canceled", job, job.ID).WorktreePath)
 }
