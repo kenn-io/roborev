@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -25,29 +26,33 @@ type goalWatchInput struct {
 type goalCheckout struct {
 	root       string
 	configRoot string
+	err        error
 }
 type goalWatchDeps struct {
 	checkouts func(context.Context) ([]goalCheckout, error)
 	inspect   func(context.Context, goalCheckout) (goalWatchInput, error)
 	pending   func(string, []string) ([]string, error)
+	completed func(string, []string) (string, error)
 	enqueue   func(context.Context, goalCheckout, goalreview.Snapshot) (string, error)
 	report    func(string, error)
 }
 type goalWatcher struct {
 	deps         goalWatchDeps
 	fingerprints map[string]string
+	errors       map[string]string
 }
 
 func newGoalWatcher(deps goalWatchDeps) *goalWatcher {
-	return &goalWatcher{deps: deps, fingerprints: map[string]string{}}
+	return &goalWatcher{deps: deps, fingerprints: map[string]string{}, errors: map[string]string{}}
 }
 
 func (w *goalWatcher) poll(ctx context.Context) {
 	checkouts, err := w.deps.checkouts(ctx)
 	if err != nil {
-		w.deps.report("", err)
+		w.report("", err)
 		return
 	}
+	w.report("", nil)
 	seen := map[string]bool{}
 	for _, checkout := range checkouts {
 		root := checkout.root
@@ -55,42 +60,72 @@ func (w *goalWatcher) poll(ctx context.Context) {
 			return
 		}
 		seen[root] = true
-		input, err := w.deps.inspect(ctx, checkout)
-		if err != nil {
-			w.deps.report(root, err)
-			continue
+		err := checkout.err
+		if err == nil {
+			err = w.pollCheckout(ctx, checkout)
 		}
-		if !input.enabled || len(input.watch) == 0 {
-			delete(w.fingerprints, root)
-			continue
-		}
-		hash := input.snapshot.WatchID(input.watch)
-		if hash == w.fingerprints[root] {
-			continue
-		}
-		pending, err := w.deps.pending(root, input.watch)
-		if err != nil {
-			w.deps.report(root, err)
-			continue
-		}
-		if slices.Contains(pending, hash) {
-			w.fingerprints[root] = hash
-			continue
-		}
-		if len(pending) > 0 {
-			continue
-		}
-		admitted, err := w.deps.enqueue(ctx, checkout, input.snapshot)
-		if err != nil {
-			w.deps.report(root, err)
-			continue
-		}
-		w.fingerprints[root] = admitted
+		w.report(root, err)
 	}
 	for root := range w.fingerprints {
 		if !seen[root] {
 			delete(w.fingerprints, root)
 		}
+	}
+	for root := range w.errors {
+		if !seen[root] {
+			delete(w.errors, root)
+		}
+	}
+}
+
+func (w *goalWatcher) pollCheckout(ctx context.Context, checkout goalCheckout) error {
+	root := checkout.root
+	input, err := w.deps.inspect(ctx, checkout)
+	if err != nil {
+		return err
+	}
+	if !input.enabled || len(input.watch) == 0 {
+		delete(w.fingerprints, root)
+		return nil
+	}
+	if _, loaded := w.fingerprints[root]; !loaded {
+		completed, err := w.deps.completed(root, input.watch)
+		if err != nil {
+			return err
+		}
+		w.fingerprints[root] = completed
+	}
+	hash := input.snapshot.WatchID(input.watch)
+	if hash == w.fingerprints[root] {
+		return nil
+	}
+	pending, err := w.deps.pending(root, input.watch)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(pending, hash) {
+		w.fingerprints[root] = hash
+		return nil
+	}
+	if len(pending) > 0 {
+		return nil
+	}
+	admitted, err := w.deps.enqueue(ctx, checkout, input.snapshot)
+	if err != nil {
+		return err
+	}
+	w.fingerprints[root] = admitted
+	return nil
+}
+
+func (w *goalWatcher) report(root string, err error) {
+	if err == nil {
+		delete(w.errors, root)
+		return
+	}
+	if message := err.Error(); message != w.errors[root] {
+		w.errors[root] = message
+		w.deps.report(root, err)
 	}
 }
 
@@ -121,13 +156,22 @@ func (s *Server) goalCheckouts(ctx context.Context) ([]goalCheckout, error) {
 		if _, err := os.Stat(repo.RootPath); os.IsNotExist(err) {
 			continue
 		}
+		repoConfig, err := config.LoadRepoConfig(repo.RootPath)
+		if err != nil {
+			checkouts = append(checkouts, goalCheckout{root: repo.RootPath, err: err})
+			continue
+		}
+		cfg := config.ResolveGoalReview(repoConfig)
+		if !cfg.Enabled || len(cfg.Watch) == 0 {
+			continue
+		}
 		cmd := exec.CommandContext(ctx, "git", "-C", repo.RootPath, "worktree", "list", "--porcelain", "-z")
 		out, err := cmd.Output()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			s.reportGoalWatchError(repo.RootPath, fmt.Errorf("list goal review checkouts: %w", err))
+			checkouts = append(checkouts, goalCheckout{root: repo.RootPath, err: fmt.Errorf("list goal review checkouts: %w", err)})
 			continue
 		}
 		for block := range strings.SplitSeq(string(out), "\x00\x00") {
@@ -160,6 +204,9 @@ func (s *Server) goalPending(root string, watch []string) ([]string, error) {
 			return nil, err
 		}
 		for _, job := range jobs {
+			if job.Source == "goal_gate" {
+				continue
+			}
 			checkout := job.RepoPath
 			if job.WorktreePath != "" {
 				checkout = job.WorktreePath
@@ -179,6 +226,21 @@ func (s *Server) goalPending(root string, watch []string) ([]string, error) {
 	return pending, nil
 }
 
+func (s *Server) goalCompleted(root string, watch []string) (string, error) {
+	job, err := s.db.LatestCompletedGoalReview(filepath.Clean(root))
+	if err != nil || job == nil {
+		return "", err
+	}
+	snapshot, err := goalreview.ParseSnapshot(job.Prompt)
+	if err != nil {
+		return "", fmt.Errorf("parse completed goal review %d snapshot: %w", job.ID, err)
+	}
+	if snapshot.ID() != job.GitRef {
+		return "", fmt.Errorf("completed goal review %d snapshot digest mismatch", job.ID)
+	}
+	return snapshot.WatchID(watch), nil
+}
+
 func (s *Server) startGoalWatcher(ctx context.Context) {
 	s.goalWatchMu.Lock()
 	defer s.goalWatchMu.Unlock()
@@ -189,7 +251,12 @@ func (s *Server) startGoalWatcher(ctx context.Context) {
 	done := make(chan struct{})
 	s.goalWatchCancel = cancel
 	s.goalWatchDone = done
-	watcher := newGoalWatcher(goalWatchDeps{
+	watcher := s.newGoalWatcher()
+	go func() { defer close(done); watcher.run(watchCtx) }()
+}
+
+func (s *Server) newGoalWatcher() *goalWatcher {
+	return newGoalWatcher(goalWatchDeps{
 		checkouts: s.goalCheckouts,
 		inspect: func(ctx context.Context, checkout goalCheckout) (goalWatchInput, error) {
 			repo, err := config.LoadRepoConfig(checkout.configRoot)
@@ -206,11 +273,15 @@ func (s *Server) startGoalWatcher(ctx context.Context) {
 				return input, err
 			}
 			input.snapshot, err = goalreview.Capture(ctx, checkout.root, selection, kata.NewCLIClient(checkout.configRoot))
+			if errors.Is(err, goalreview.ErrNoSpecs) {
+				return goalWatchInput{}, nil
+			}
 			return input, err
 		},
-		pending: s.goalPending,
-		enqueue: func(ctx context.Context, checkout goalCheckout, _ goalreview.Snapshot) (string, error) {
-			output, err := s.enqueueGoalReviewWithConfig(ctx, EnqueueRequest{RepoPath: checkout.root, ReviewType: config.ReviewTypeGoal, Source: "goal_watch"}, checkout.configRoot)
+		pending:   s.goalPending,
+		completed: s.goalCompleted,
+		enqueue: func(ctx context.Context, checkout goalCheckout, snapshot goalreview.Snapshot) (string, error) {
+			output, err := s.enqueueGoalReviewWithConfig(ctx, EnqueueRequest{RepoPath: checkout.root, ReviewType: config.ReviewTypeGoal, Source: "goal_watch"}, checkout.configRoot, &snapshot)
 			if err != nil {
 				return "", err
 			}
@@ -221,10 +292,6 @@ func (s *Server) startGoalWatcher(ctx context.Context) {
 			if !ok || created.ReviewJob == nil {
 				return "", fmt.Errorf("unexpected goal enqueue response")
 			}
-			snapshot, err := goalreview.ParseSnapshot(created.Prompt)
-			if err != nil {
-				return "", err
-			}
 			repo, err := config.LoadRepoConfig(checkout.configRoot)
 			if err != nil {
 				return "", err
@@ -233,7 +300,6 @@ func (s *Server) startGoalWatcher(ctx context.Context) {
 		},
 		report: s.reportGoalWatchError,
 	})
-	go func() { defer close(done); watcher.run(watchCtx) }()
 }
 
 func (s *Server) stopGoalWatcher() {

@@ -25,10 +25,10 @@ import (
 type goalReviewRunner func(context.Context, agent.Agent, string, goalreview.Snapshot, prompt.SnapshotResult, io.Writer) ([]goalreview.Finding, error)
 
 func (s *Server) enqueueGoalReview(ctx context.Context, req EnqueueRequest) (*RawJSONOutput, error) {
-	return s.enqueueGoalReviewWithConfig(ctx, req, "")
+	return s.enqueueGoalReviewWithConfig(ctx, req, "", nil)
 }
 
-func (s *Server) enqueueGoalReviewWithConfig(ctx context.Context, req EnqueueRequest, configRoot string) (*RawJSONOutput, error) {
+func (s *Server) enqueueGoalReviewWithConfig(ctx context.Context, req EnqueueRequest, configRoot string, captured *goalreview.Snapshot) (*RawJSONOutput, error) {
 	bad := func(err error) (*RawJSONOutput, error) {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
@@ -46,17 +46,22 @@ func (s *Server) enqueueGoalReviewWithConfig(ctx context.Context, req EnqueueReq
 	if err != nil {
 		return bad(err)
 	}
-	repoConfig, err := config.LoadRepoConfig(configRoot)
-	if err != nil {
-		return bad(err)
-	}
-	selection, err := goalreview.Select(repoConfig, req.SpecFile, req.PlanFile)
-	if err != nil {
-		return bad(err)
-	}
-	snapshot, err := goalreview.Capture(ctx, root, selection, kata.NewCLIClient(configRoot))
-	if err != nil {
-		return bad(err)
+	var snapshot goalreview.Snapshot
+	if captured != nil {
+		snapshot = *captured
+	} else {
+		repoConfig, err := config.LoadRepoConfig(configRoot)
+		if err != nil {
+			return bad(err)
+		}
+		selection, err := goalreview.Select(repoConfig, req.SpecFile, req.PlanFile)
+		if err != nil {
+			return bad(err)
+		}
+		snapshot, err = goalreview.Capture(ctx, root, selection, kata.NewCLIClient(configRoot))
+		if err != nil {
+			return bad(err)
+		}
 	}
 	cfg := s.configWatcher.Config()
 	a, reasoning, err := goalreview.ResolveAgent(configRoot, cfg, goalreview.AgentOptions{Agent: req.Agent, Model: req.Model, Provider: req.Provider, Reasoning: req.Reasoning})

@@ -31,6 +31,15 @@ const (
 )
 
 func TestResolveArtifacts(t *testing.T) {
+	t.Run("empty discovery is distinguishable from a missing explicit spec", func(t *testing.T) {
+		root := t.TempDir()
+		_, err := ResolveArtifacts(root, Selection{})
+		require.ErrorIs(t, err, ErrNoSpecs)
+		_, err = ResolveArtifacts(root, Selection{SpecFile: "missing.md"})
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrNoSpecs)
+	})
+
 	t.Run("long spec only then linked plan", func(t *testing.T) {
 		root := t.TempDir()
 		content := "# Feature\n" + strings.Repeat("x", 4001)

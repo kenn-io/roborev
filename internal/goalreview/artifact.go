@@ -2,6 +2,7 @@
 package goalreview
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -11,6 +12,10 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+// ErrNoSpecs means automatic discovery found no spec. Explicit missing paths
+// and ambiguous selections remain errors for both manual and watched reviews.
+var ErrNoSpecs = errors.New("found 0 Superpowers specs; supply --spec")
 
 type Selection struct {
 	SpecFile string
@@ -76,6 +81,9 @@ func ResolveArtifacts(root string, selection Selection) (Artifacts, error) {
 		paths, err := filepath.Glob(filepath.Join(root, "docs/superpowers/specs/*-design.md"))
 		if err != nil {
 			return result, err
+		}
+		if len(paths) == 0 {
+			return result, ErrNoSpecs
 		}
 		if len(paths) != 1 {
 			return result, fmt.Errorf("found %d Superpowers specs; supply --spec", len(paths))

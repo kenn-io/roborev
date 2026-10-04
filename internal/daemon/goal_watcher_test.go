@@ -55,6 +55,7 @@ func TestGoalWatchCoalescesAndRetries(t *testing.T) {
 		inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
 			return goalWatchInput{enabled: enabled, watch: []string{"goal", "kata_graph"}, snapshot: snapshot}, captureErr
 		},
+		completed: func(string, []string) (string, error) { return "", nil },
 		pending: func(string, []string) ([]string, error) {
 			if pending {
 				return []string{pendingHash}, nil
@@ -109,6 +110,7 @@ func TestGoalWatchDoesNotEnqueueSnapshotAlreadyPendingAtStartup(t *testing.T) {
 		inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
 			return goalWatchInput{enabled: true, watch: []string{"goal"}, snapshot: snapshot}, nil
 		},
+		completed: func(string, []string) (string, error) { return "", nil },
 		pending: func(string, []string) ([]string, error) {
 			if pending {
 				return []string{pendingHash}, nil
@@ -132,6 +134,159 @@ func TestGoalWatchDoesNotEnqueueSnapshotAlreadyPendingAtStartup(t *testing.T) {
 	assert.Equal(t, 1, enqueued, "the changed snapshot should be reviewed after the pending one finishes")
 }
 
+func TestGoalWatchDoesNotRepeatCompletedSnapshotAfterRestart(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	snapshot := goalreview.Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []goalreview.Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\n"}}}
+	deps := goalWatchDeps{
+		checkouts: func(context.Context) ([]goalCheckout, error) {
+			return []goalCheckout{{root: repo.Path(), configRoot: repo.Path()}}, nil
+		},
+		inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
+			return goalWatchInput{enabled: true, watch: []string{"goal"}, snapshot: snapshot}, nil
+		},
+		pending:   server.goalPending,
+		completed: server.goalCompleted,
+		enqueue: func(_ context.Context, _ goalCheckout, snapshot goalreview.Snapshot) (string, error) {
+			_, err := db.EnqueueJob(storage.EnqueueOpts{
+				RepoID: registered.ID, Agent: "pi", GitRef: snapshot.ID(), ReviewType: "goal",
+				JobType: storage.JobTypeGoalReview, Prompt: goalreview.BuildPrompt(snapshot), PromptPrebuilt: true,
+			})
+			return snapshot.WatchID([]string{"goal"}), err
+		},
+		report: func(_ string, err error) { require.NoError(t, err) },
+	}
+	newGoalWatcher(deps).poll(context.Background())
+	job, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.NoError(t, db.CompleteJob(job.ID, "pi", job.Prompt, "No findings."))
+
+	watcher := newGoalWatcher(deps)
+	watcher.poll(context.Background())
+	jobs, err := db.ListJobs("", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
+	require.NoError(t, err)
+	assert.Len(t, jobs, 1, "restarting must not review unchanged completed evidence again")
+	snapshot.Artifacts[0].Content += "New requirement\n"
+	watcher.poll(context.Background())
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, snapshot.ID(), jobs[0].GitRef, "changed evidence still needs review")
+}
+
+func TestGoalWatchReportsErrorAgainOnlyAfterRecovery(t *testing.T) {
+	for _, stage := range []string{"checkouts", "inspect", "pending", "enqueue"} {
+		t.Run(stage, func(t *testing.T) {
+			failure := errors.New("service unavailable")
+			var reported []error
+			deps := goalWatchDeps{
+				checkouts: func(context.Context) ([]goalCheckout, error) {
+					if stage == "checkouts" && failure != nil {
+						return nil, failure
+					}
+					return []goalCheckout{{root: "checkout"}}, nil
+				},
+				inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
+					input := goalWatchInput{enabled: true, watch: []string{"goal"}, snapshot: goalreview.Snapshot{Source: "superpowers"}}
+					if stage == "inspect" {
+						return input, failure
+					}
+					return input, nil
+				},
+				completed: func(string, []string) (string, error) { return "", nil },
+				pending: func(string, []string) ([]string, error) {
+					if stage == "pending" {
+						return nil, failure
+					}
+					return nil, nil
+				},
+				enqueue: func(context.Context, goalCheckout, goalreview.Snapshot) (string, error) {
+					if stage == "enqueue" {
+						return "", failure
+					}
+					return "", nil
+				},
+				report: func(_ string, err error) { reported = append(reported, err) },
+			}
+			watcher := newGoalWatcher(deps)
+			watcher.poll(context.Background())
+			watcher.poll(context.Background())
+			assert.Len(t, reported, 1)
+			failure = nil
+			watcher.poll(context.Background())
+			failure = errors.New("service unavailable")
+			watcher.poll(context.Background())
+			watcher.poll(context.Background())
+			assert.Len(t, reported, 2)
+		})
+	}
+}
+
+func TestGoalWatchSkipsDiscoveryWhenDisabled(t *testing.T) {
+	for _, contents := range []string{"", "[goal_review]\nenabled = false\nwatch = [\"goal\"]\n", "[goal_review]\nenabled = true\nwatch = []\n"} {
+		t.Run(contents, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".roborev.toml"), []byte(contents), 0o600))
+			_, err := db.GetOrCreateRepo(root)
+			require.NoError(t, err)
+			roots, err := server.goalCheckouts(context.Background())
+			require.NoError(t, err)
+			assert.Empty(t, roots)
+			assert.Empty(t, server.errorLog.Recent(), "disabled repositories must not run git discovery")
+		})
+	}
+}
+
+func TestGoalWatchWaitsForAutoDiscoveredSpec(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	registerGoalReviewPi(t, server.configWatcher.Config())
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile(".roborev.toml", "review_agent = \"pi\"\n[goal_review]\nenabled = true\nwatch = [\"goal\"]\n", "configure watcher")
+	_, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	watcher := server.newGoalWatcher()
+	watcher.poll(context.Background())
+	assert.Empty(t, server.errorLog.Recent(), "no auto-discovered spec means the watcher is idle")
+	jobs, err := db.ListJobs("", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	manual, err := server.enqueueGoalReview(context.Background(), EnqueueRequest{RepoPath: repo.Path()})
+	require.NoError(t, err)
+	assert.Equal(t, 400, manual.Status, "manual review still needs a spec")
+	goalArtifacts(t, repo.Path())
+	watcher.poll(context.Background())
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
+	require.NoError(t, err)
+	assert.Len(t, jobs, 1)
+}
+
+func TestGoalWatchEnqueuesInspectedSnapshot(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	registerGoalReviewPi(t, server.configWatcher.Config())
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile(".roborev.toml", "review_agent = \"pi\"\n[goal_review]\nenabled = true\nwatch = [\"goal\"]\n", "configure watcher")
+	goalArtifacts(t, repo.Path())
+	_, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	watcher := server.newGoalWatcher()
+	enqueue := watcher.deps.enqueue
+	watcher.deps.enqueue = func(ctx context.Context, checkout goalCheckout, snapshot goalreview.Snapshot) (string, error) {
+		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), "docs/superpowers/specs/feature-design.md"), []byte("# Changed after inspection\n"), 0o600))
+		return enqueue(ctx, checkout, snapshot)
+	}
+	watcher.poll(context.Background())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	snapshot, err := goalreview.ParseSnapshot(jobs[0].Prompt)
+	require.NoError(t, err)
+	require.Contains(t, snapshot.Artifacts, goalreview.Artifact{Kind: "spec", Path: "docs/superpowers/specs/feature-design.md", Content: "# Feature\n"})
+}
+
 func TestGoalPendingReturnsFrozenSnapshotWatchID(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
@@ -141,6 +296,11 @@ func TestGoalPendingReturnsFrozenSnapshotWatchID(t *testing.T) {
 	_, err = db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: registered.ID, Agent: "pi", GitRef: snapshot.ID(), ReviewType: "goal",
 		JobType: storage.JobTypeGoalReview, Prompt: goalreview.BuildPrompt(snapshot), PromptPrebuilt: true,
+	})
+	require.NoError(t, err)
+	_, err = db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: registered.ID, Agent: "pi", GitRef: "hypothetical", ReviewType: "goal",
+		JobType: storage.JobTypeGoalReview, Prompt: "Candidate evidence", PromptPrebuilt: true, Source: "goal_gate",
 	})
 	require.NoError(t, err)
 
@@ -159,7 +319,8 @@ func TestGoalWatchInspectUsesCallerContextWithoutAddingDeadline(t *testing.T) {
 			_, deadlineAdded = ctx.Deadline()
 			return goalWatchInput{}, nil
 		},
-		pending: func(string, []string) ([]string, error) { return nil, nil },
+		completed: func(string, []string) (string, error) { return "", nil },
+		pending:   func(string, []string) ([]string, error) { return nil, nil },
 		enqueue: func(context.Context, goalCheckout, goalreview.Snapshot) (string, error) {
 			return "", nil
 		},
@@ -173,29 +334,33 @@ func TestGoalWatchInspectUsesCallerContextWithoutAddingDeadline(t *testing.T) {
 func TestGoalWatchDiscoversWorktreesDespiteInvalidRepo(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	invalid := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(invalid, ".roborev.toml"), []byte("[goal_review]\nenabled = true\nwatch = [\"goal\"]\n"), 0o600))
 	_, err := db.GetOrCreateRepo(invalid)
 	require.NoError(t, err)
 	repo := testutil.NewGitRepo(t)
+	repo.CommitFile(".roborev.toml", "[goal_review]\nenabled = true\nwatch = [\"goal\"]\n", "configure watcher")
 	_, err = db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	repo.RunGit("commit", "--allow-empty", "-m", "Initial test commit")
 	linked := filepath.Join(t.TempDir(), "linked")
 	repo.RunGit("worktree", "add", "--detach", linked)
-	subscriberID, events := server.broadcaster.Subscribe("")
-	defer server.broadcaster.Unsubscribe(subscriberID)
 	roots, err := server.goalCheckouts(context.Background())
 	require.NoError(t, err)
+	var discovered []string
+	for _, checkout := range roots {
+		if checkout.err == nil {
+			discovered = append(discovered, checkout.root)
+		}
+	}
 	assert.ElementsMatch(t,
 		canonicalGoalCheckoutPaths(t, []string{repo.Path(), linked}),
-		canonicalGoalCheckoutPaths(t, goalCheckoutPaths(roots)),
+		canonicalGoalCheckoutPaths(t, discovered),
 	)
-	var event Event
-	select {
-	case event = <-events:
-	case <-time.After(time.Second):
-	}
-	assert.Equal(t, "goal_review.watch_error", event.Type)
-	assert.Equal(t, filepath.ToSlash(invalid), event.Repo)
+	watcher := server.newGoalWatcher()
+	watcher.poll(context.Background())
+	watcher.poll(context.Background())
+	require.Len(t, server.errorLog.Recent(), 1, "a persistent git discovery error should be reported once")
+	assert.Contains(t, server.errorLog.Recent()[0].Message, "list goal review checkouts")
 }
 
 func TestGoalWatchUsesRegisteredCheckoutConfig(t *testing.T) {
@@ -302,7 +467,8 @@ func TestGoalWatchStagesAndCheckboxes(t *testing.T) {
 		inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
 			return goalWatchInput{enabled: true, watch: []string{"goal"}, snapshot: snapshot}, nil
 		},
-		pending: func(string, []string) ([]string, error) { return nil, nil },
+		completed: func(string, []string) (string, error) { return "", nil },
+		pending:   func(string, []string) ([]string, error) { return nil, nil },
 		enqueue: func(_ context.Context, checkout goalCheckout, s goalreview.Snapshot) (string, error) {
 			calls[checkout.root]++
 			return s.WatchID([]string{"goal"}), nil
@@ -335,7 +501,8 @@ func TestGoalWatchSelectedComponents(t *testing.T) {
 				inspect: func(context.Context, goalCheckout) (goalWatchInput, error) {
 					return goalWatchInput{enabled: true, watch: watch, snapshot: snapshot}, nil
 				},
-				pending: func(string, []string) ([]string, error) { return nil, nil },
+				completed: func(string, []string) (string, error) { return "", nil },
+				pending:   func(string, []string) ([]string, error) { return nil, nil },
 				enqueue: func(_ context.Context, _ goalCheckout, s goalreview.Snapshot) (string, error) {
 					calls++
 					return s.WatchID(watch), nil
@@ -373,6 +540,7 @@ func TestGoalWatchSkipsBareRepositoryAndKeepsLinkedCheckout(t *testing.T) {
 	repo.RunGit("commit", "--allow-empty", "-m", "Initial test commit")
 	bare := filepath.Join(t.TempDir(), "bare.git")
 	repo.RunGit("clone", "--bare", repo.Path(), bare)
+	require.NoError(t, os.WriteFile(filepath.Join(bare, ".roborev.toml"), []byte("[goal_review]\nenabled = true\nwatch = [\"goal\"]\n"), 0o600))
 	linked := filepath.Join(t.TempDir(), "linked")
 	repo.RunGit("-C", bare, "worktree", "add", "--detach", linked)
 	_, err := db.GetOrCreateRepo(bare)
