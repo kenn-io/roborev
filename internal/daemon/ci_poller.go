@@ -2283,6 +2283,40 @@ func (p *CIPoller) routePanelEvent(jobID int64) {
 	p.postPanelRun(context.Background(), row)
 }
 
+// setPanelPending publishes the stored CI target for a newly queued rerun.
+// The posting claim orders this write before final delivery. A completion
+// that races the claim is delivered here, even if the repo is no longer polled.
+func (p *CIPoller) setPanelPending(jobID int64) {
+	row, err := p.db.GetCIPanelBySynthesisJobID(jobID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return // local panel
+	}
+	if err != nil {
+		log.Printf("CI poller: error checking CI panel for rerun %d: %v", jobID, err)
+		return
+	}
+	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
+	if err != nil {
+		log.Printf("CI poller: error claiming panel %d for pending status: %v", row.ID, err)
+		return
+	}
+	if !won {
+		return // already delivered, retired, or being posted
+	}
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending", "Review in progress"); err != nil {
+		log.Printf("CI poller: failed to set pending status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+	p.releasePanelClaim(row.ID)
+	job, err := p.db.GetJobByID(jobID)
+	if err != nil {
+		log.Printf("CI poller: error checking rerun %d after pending status: %v", jobID, err)
+		return
+	}
+	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
+		p.postPanelRun(context.Background(), row)
+	}
+}
+
 func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
 	if err != nil {
