@@ -74,7 +74,10 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 					if phase == "done" {
 						require.NoError(t, err)
 						require.Zero(t, skipCalls, "completed attempts use the health reconciliation skip path")
-						err = h.Poller.reconcileRetryHealth("acme/api", []ghPR{pr}, h.Cfg)
+						h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+							return []ghPR{pr}, nil
+						}
+						err = h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg)
 					}
 					if ordering == "skip first" {
 						require.NoError(t, err)
