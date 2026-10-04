@@ -875,7 +875,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Get timeout from config (per-repo or global, default 30 minutes), then
 	// overlay any frozen panel-member timeout captured at enqueue time.
-	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, cfg)
+	configRoot := job.RepoPath
+	if job.IsGoalReviewJob() {
+		configRoot = goalReviewConfigRepoPath(job)
+	}
+	timeoutMinutes := config.ResolveJobTimeout(configRoot, cfg)
 	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
