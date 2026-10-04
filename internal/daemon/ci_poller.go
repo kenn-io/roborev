@@ -1646,7 +1646,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git rev-list: %w", err)
+		return nil, fmt.Errorf("git rev-list: %w", procutil.WithStderr(err))
 	}
 	var shas []string
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
@@ -1843,8 +1843,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	)
 	procutil.HideConsole(cfgCmd)
 	cfgCmd.Env = append(os.Environ(), "LC_ALL=C")
-	cfgOut, err := cfgCmd.CombinedOutput()
-	if err != nil {
+	if _, err := cfgCmd.Output(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			code := exitErr.ExitCode()
 			// Exit 1 = key not found in config.
@@ -1855,7 +1854,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 			// repo itself is absent/broken, not on operational
 			// failures like corrupted or unreadable config.
 			if code == 128 {
-				msg := strings.ToLower(string(cfgOut))
+				msg := strings.ToLower(string(exitErr.Stderr))
 				notRepo := strings.Contains(
 					msg, "git repository",
 				)
@@ -1868,7 +1867,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 			}
 		}
 		return false, fmt.Errorf(
-			"check origin for %s: %w", path, err,
+			"check origin for %s: %w", path, procutil.WithStderr(err),
 		)
 	}
 
@@ -1880,7 +1879,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	out, err := urlCmd.Output()
 	if err != nil {
 		return false, fmt.Errorf(
-			"get origin URL for %s: %w", path, err,
+			"get origin URL for %s: %w", path, procutil.WithStderr(err),
 		)
 	}
 	got := ownerRepoFromURLForBase(strings.TrimSpace(string(out)), rawBaseURL)
@@ -1897,7 +1896,7 @@ func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
 	procutil.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("get origin URL for %s: %w", path, err)
+		return fmt.Errorf("get origin URL for %s: %w", path, procutil.WithStderr(err))
 	}
 	current := strings.TrimSpace(string(out))
 	if current == want {
