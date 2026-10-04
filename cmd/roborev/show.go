@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -110,12 +111,21 @@ Examples:
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// Ensure daemon is running (and restart if version mismatch)
+			ep := getDaemonEndpoint()
+			if ep.IsRemote() {
+				if !forceJobID || len(args) != 1 {
+					return usageErr(cmd, fmt.Errorf("remote show requires --job with a numeric job ID"))
+				}
+				id, err := strconv.ParseInt(args[0], 10, 64)
+				if err != nil || id <= 0 {
+					return usageErr(cmd, fmt.Errorf("remote show requires a positive numeric job ID"))
+				}
+			}
+			// Ensure daemon is running (and restart if version mismatch).
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
-
-			ep := getDaemonEndpoint()
+			ep = getDaemonEndpoint()
 			addr := ep.BaseURL()
 			client := ep.HTTPClient(5 * time.Second)
 
@@ -197,8 +207,20 @@ Examples:
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
+			} else if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
+			}
+
+			var allComments []storage.Response
+			if ep.IsRemote() {
+				// Remote job comments already include eligible legacy comments.
+				allComments, err = getCommentsForJob(review.JobID)
+				if err != nil {
+					return err
+				}
 			}
 
 			if jsonOutput {
@@ -208,8 +230,10 @@ Examples:
 					Comments []storage.Response `json:"comments,omitempty"`
 					Panel    *showPanelBlock    `json:"panel,omitempty"`
 				}
-				out := reviewWithComments{Review: review}
-				out.Comments = fetchShowComments(client, addr, review)
+				out := reviewWithComments{Review: review, Comments: allComments}
+				if !ep.IsRemote() {
+					out.Comments = fetchShowComments(client, addr, review)
+				}
 				if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != nil {
 					if members, err := fetchPanelMembers(client, addr, *review.Job.PanelRunUUID); err == nil && len(members) > 0 {
 						block := buildShowPanelBlock(review.JobID, *review.Job.PanelRunUUID, review.Job.PanelName, members)
@@ -249,7 +273,10 @@ Examples:
 			}
 
 			// Fetch and display comments (including legacy commit-based)
-			if allComments := fetchShowComments(client, addr, review); len(allComments) > 0 {
+			if !ep.IsRemote() {
+				allComments = fetchShowComments(client, addr, review)
+			}
+			if len(allComments) > 0 {
 				fmt.Println()
 				fmt.Println("--- Comments ---")
 				for _, r := range allComments {

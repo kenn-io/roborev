@@ -62,6 +62,18 @@ Examples:
 				return usageErr(cmd, fmt.Errorf("--job requires a job ID argument"))
 			}
 
+			if getDaemonEndpoint().IsRemote() {
+				if !forceJobID || len(args) == 0 || shaFlag != "" {
+					return usageErr(cmd, fmt.Errorf("remote wait requires --job with numeric job IDs"))
+				}
+				for _, arg := range args {
+					id, err := strconv.ParseInt(arg, 10, 64)
+					if err != nil || id <= 0 {
+						return usageErr(cmd, fmt.Errorf("remote wait requires positive numeric job IDs"))
+					}
+				}
+			}
+
 			// Multiple args: wait for all concurrently
 			if len(args) > 1 {
 				return waitMultiple(ctx, cmd, args, forceJobID, quiet)

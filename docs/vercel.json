@@ -342,6 +342,16 @@
       "permanent": true
     },
     {
+      "source": "/advanced/request-signing/",
+      "destination": "/docs/advanced/request-signing/",
+      "permanent": true
+    },
+    {
+      "source": "/advanced/request-signing.md",
+      "destination": "/docs/advanced/request-signing.md",
+      "permanent": true
+    },
+    {
       "source": "/advanced/streaming/",
       "destination": "/docs/advanced/streaming/",
       "permanent": true

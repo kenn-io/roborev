@@ -449,7 +449,7 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
-	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
 	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
@@ -462,7 +462,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
-	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

@@ -55,26 +55,30 @@ Examples:
 			}
 
 			ctx := cmd.Context()
+			ep := getDaemonEndpoint()
+			if ep.IsRemote() && (repoPath != "" || len(analysisFiles) > 0) {
+				return usageErr(cmd, fmt.Errorf("remote list uses server repository grants; local path filters are unavailable"))
+			}
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
-
-			ep := getDaemonEndpoint()
+			// Local startup or restart may select a new daemon address.
+			ep = getDaemonEndpoint()
 
 			// Auto-resolve repo from cwd when not specified.
 			// Use worktree root for branch detection, main repo root for API queries
 			// (daemon stores jobs under the main repo path).
 			localRepoPath := repoPath
-			if localRepoPath == "" {
+			if localRepoPath == "" && !ep.IsRemote() {
 				if root, err := gitrepo.Root(ctx, "."); err == nil {
 					localRepoPath = root
 				}
 			}
-			if repoPath == "" {
+			if repoPath == "" && !ep.IsRemote() {
 				if root, err := gitrepo.MainRoot(ctx, "."); err == nil {
 					repoPath = root
 				}
-			} else {
+			} else if repoPath != "" {
 				// Normalize explicit --repo to main repo root so worktree
 				// paths match the daemon's stored repo path.
 				if root, err := gitrepo.MainRoot(ctx, repoPath); err == nil {
@@ -88,7 +92,7 @@ Examples:
 
 			// Workspace mode: not in a git repo and no --repo specified
 			var repoPrefix string
-			if repoPath == "" && localRepoPath == "" {
+			if repoPath == "" && localRepoPath == "" && !ep.IsRemote() {
 				if abs, err := filepath.Abs("."); err == nil {
 					repoPrefix = filepath.ToSlash(abs)
 				}

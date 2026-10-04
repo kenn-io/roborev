@@ -193,6 +193,8 @@ type Config struct {
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
+	Remote                     RemoteConfig                    `toml:"remote"`
+	RemoteClient               RemoteClientConfig              `toml:"remote_client"`
 	ServerAddr                 string                          `toml:"server_addr"`
 	MaxWorkers                 int                             `toml:"max_workers"`
 	ReviewContextCount         int                             `toml:"review_context_count"`
@@ -1028,6 +1030,9 @@ func normalizeGlobalConfig(cfg *Config) error {
 		return err
 	}
 	if err := validateSearchConfig(cfg.Search); err != nil {
+		return err
+	}
+	if err := validateRemoteConfig(cfg.Remote); err != nil {
 		return err
 	}
 	return normalizeWebConfig(&cfg.Web, cfg.AuthKey)

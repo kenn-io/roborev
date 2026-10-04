@@ -1795,6 +1795,8 @@ type listJobsOptions struct {
 	hideClassifyJobs   bool
 	repoPrefix         string
 	repoPaths          []string
+	repoIDs            []int64
+	repoIDsSet         bool
 	beforeCursor       *int64
 	beforePosition     *jobListPosition
 	panelRun           uuid.UUID
@@ -1909,6 +1911,15 @@ func WithRepoPrefix(prefix string) ListJobsOption {
 	}
 }
 
+// WithRepoIDs intersects every query filter with stable repository identities.
+// An explicitly empty set denies all rows, including aggregate counts.
+func WithRepoIDs(ids []int64) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.repoIDs = append([]int64(nil), ids...)
+		o.repoIDsSet = true
+	}
+}
+
 // WithRepoPaths filters jobs to the given set of repo root paths via an
 // IN clause. Used for display names that map to multiple repos, so the
 // daemon scopes the query server-side instead of returning every job for
@@ -1984,6 +1995,19 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
 		args = append(args, o.repoPrefix)
 	}
+	if o.repoIDsSet {
+		if len(o.repoIDs) == 0 {
+			conditions = append(conditions, "0=1")
+		} else {
+			placeholders := make([]string, len(o.repoIDs))
+			for i, id := range o.repoIDs {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			conditions = append(conditions, "j.repo_id IN ("+strings.Join(placeholders, ",")+")")
+		}
+	}
+
 	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
 		args = append(args, o.gitRef)
