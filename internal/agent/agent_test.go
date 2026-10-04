@@ -379,11 +379,11 @@ func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
 		unsafe   string
 		readOnly string
 	}{
-		{"claude", NewClaudeAgent("claude"), claudeDangerousFlag, "--allowedTools Read,Glob,Grep"},
+		{"claude", NewClaudeAgent("claude"), claudeDangerousFlag, "--permission-mode plan --tools Read,Glob,Grep --disallowedTools mcp__*"},
 		{"codex", NewCodexAgent("codex"), codexDangerousFlag, "--sandbox read-only"},
 		{"copilot", NewCopilotAgent("copilot"), "", "--available-tools=view,glob,grep,skill"},
 		{"cursor", NewCursorAgent("cursor"), "--force", "--mode plan"},
-		{"droid", NewDroidAgent("droid"), "--auto medium", "--auto low"},
+		{"droid", NewDroidAgent("droid"), "--auto", "droid exec --tag roborev"},
 		{"gemini", NewGeminiAgent("gemini"), "--approval-mode yolo", "--approval-mode plan"},
 		{"grok", NewGrokAgent("grok"), "--always-approve", "--sandbox read-only"},
 		{"kilo", NewKiloAgent("kilo"), "--auto", "--agent plan"},

@@ -90,7 +90,7 @@ func TestRunPlanFreshSession(t *testing.T) {
 func TestPlanningOverridesUnsafeMode(t *testing.T) {
 	SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-	for _, name := range []string{"cursor", "codex", "claude", "gemini", "copilot", "pi", "opencode", "kilo", "grok"} {
+	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok"} {
 		t.Run(name, func(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
 			argsPath := filepath.Join(t.TempDir(), "args")
@@ -104,6 +104,8 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				a = NewCodexAgent(command)
 			case "claude":
 				a = NewClaudeAgent(command)
+			case "droid":
+				a = NewDroidAgent(command)
 			case "gemini":
 				a = NewGeminiAgent(command)
 			case "copilot":
@@ -131,6 +133,12 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--mode\nplan\n")
 			case "codex":
 				assert.Contains(t, args, "--sandbox\nread-only\n")
+			case "claude":
+				assert.Contains(t, args, "--permission-mode\nplan\n")
+				assert.Contains(t, args, "--tools\nRead,Glob,Grep\n")
+				assert.Contains(t, args, "--disallowedTools\nmcp__*\n")
+			case "droid":
+				assert.NotContains(t, args, "--auto")
 			case "pi":
 				assert.Contains(t, args, "--tools\nread,grep,find,ls\n")
 				assert.Equal(t, 1, strings.Count(args, "--tools\n"))

@@ -119,7 +119,7 @@ func (a *ClaudeAgent) CommandLine() string {
 
 // PlanningCommandLine returns Claude's representative read-only planning command.
 func (a *ClaudeAgent) PlanningCommandLine() string {
-	return a.commandLine(false)
+	return a.Command + " " + strings.Join(a.buildPlanningArgs(true), " ")
 }
 
 func (a *ClaudeAgent) commandLine(agenticMode bool) string {
@@ -246,10 +246,18 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 		args = append(args, claudeDangerousFlag)
 		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
-		// Review mode: read-only tools only (no Bash to prevent arbitrary command execution)
+		// Review mode: preapprove read-only tools.
 		args = append(args, "--allowedTools", "Read,Glob,Grep")
 	}
 	return args
+}
+
+func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
+	a = a.clone(withClonedSessionID(""))
+	args := a.buildArgs(false, includeEffort)
+	// --allowedTools only preapproves tools. Limit built-ins and MCP tools
+	// separately, and override any configured default permission mode.
+	return append(args, "--permission-mode", "plan", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
 }
 
 func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
@@ -325,6 +333,9 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	// Build args - always uses stdin piping + stream-json for non-interactive execution
 	args := a.buildArgs(agenticMode, includeEffort)
+	if planningReadOnly(ctx) {
+		args = a.buildPlanningArgs(includeEffort)
+	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
