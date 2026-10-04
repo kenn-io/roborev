@@ -91,7 +91,8 @@ func batchPlanningContext(repoPath string, entries []batchEntry) string {
 		review := *entry.review
 		review.Job = entry.job
 		fmt.Fprintf(&findings, "## Job %d\n\n%s\n\n", entry.jobID, prompt.FixPlanReviewContext(repoPath, &review))
-		attempts, comments := prompt.SplitResponses(entry.comments)
+		attempts, comments, plans := prompt.SplitResponses(entry.comments)
+		findings.WriteString(prompt.FormatPlans(plans))
 		findings.WriteString(prompt.FormatToolAttempts(attempts))
 		findings.WriteString(prompt.FormatUserComments(comments))
 	}

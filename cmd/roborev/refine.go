@@ -583,13 +583,10 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		}
 
 		if opts.plan && len(carriedAttempts) > 0 {
-			if refineReviewIncludes(ctx, repoPath, currentFailedReview, chainHead) {
-				if err := carryRefineHistory(client, currentFailedReview.JobID, carriedAttempts); err != nil {
-					return err
-				}
+			if !refineReviewIncludes(ctx, repoPath, currentFailedReview, chainHead) {
+				carriedAttempts = nil
+				chainHead = ""
 			}
-			carriedAttempts = nil
-			chainHead = ""
 		}
 
 		// Get previous attempts for context (including legacy commit-based)
@@ -602,6 +599,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if err != nil {
 			return fmt.Errorf("fetch previous comments: %w", err)
 		}
+		// Keep earlier reviews in the prompt without posting their comments again.
+		previousAttempts = append(carriedAttempts, previousAttempts...)
 
 		// Build address prompt
 		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
@@ -647,6 +646,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			if err != nil {
 				return err
 			}
+			previousAttempts = append(carriedAttempts, previousAttempts...)
 		}
 
 		// Create temp worktree to isolate agent from user's working tree

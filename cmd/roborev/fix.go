@@ -1656,9 +1656,10 @@ func buildBatchPromptFooter(metadata config.FixCommitMetadata, fixGuidelines str
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
-	toolAttempts, userComments := prompt.SplitResponses(e.comments)
+	toolAttempts, userComments, plans := prompt.SplitResponses(e.comments)
 	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, gitrepo.ShortSHA(e.job.GitRef), e.review.Output))
 	size += len(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
+	size += len(prompt.FormatPlans(plans))
 	size += len(prompt.FormatToolAttempts(toolAttempts))
 	size += len(prompt.FormatUserComments(userComments))
 	return size
@@ -1735,11 +1736,12 @@ func buildBatchFixPromptWithMetadata(
 	}
 
 	for i, e := range entries {
-		toolAttempts, userComments := prompt.SplitResponses(e.comments)
+		toolAttempts, userComments, plans := prompt.SplitResponses(e.comments)
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, gitrepo.ShortSHA(e.job.GitRef))
 		sb.WriteString(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
+		sb.WriteString(prompt.FormatPlans(plans))
 		sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
 		sb.WriteString(prompt.FormatUserComments(userComments))
 	}
@@ -1923,7 +1925,7 @@ func buildGenericFixPromptWithMetadataForRef(
 	metadata config.FixCommitMetadata,
 	fixGuidelines, reviewedRef string,
 ) string {
-	toolAttempts, userComments := prompt.SplitResponses(responses)
+	toolAttempts, userComments, plans := prompt.SplitResponses(responses)
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
@@ -1934,6 +1936,7 @@ func buildGenericFixPromptWithMetadataForRef(
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
 	sb.WriteString("\n\n")
+	sb.WriteString(prompt.FormatPlans(plans))
 	sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
 	sb.WriteString(prompt.FormatUserComments(userComments))
 	sb.WriteString("## Restoration History\n\n")

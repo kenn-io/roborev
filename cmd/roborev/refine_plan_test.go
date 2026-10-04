@@ -369,7 +369,7 @@ func TestRefinePlanStopsAfterWorkingTreeChangesDuringPlanning(t *testing.T) {
 	stdout := captureOutput(t, func() error {
 		runErr = runRefine(
 			RunContext{Context: context.Background(), WorkingDir: repo.Dir},
-			refineOptions{plan: true, since: base, agentName: name, maxIterations: 3, unsafeFlagChanged: true, allowUnsafeAgents: false},
+			refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false},
 		)
 		return nil
 	})
@@ -457,9 +457,9 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	agent.Register(&refineModeGuardAgent{t: t, Agent: &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, path, ref, p string, _ io.Writer) (string, error) {
 		calls = append(calls, p)
 		switch len(calls) {
-		case 1:
+		case 1, 4:
 			return "", fmt.Errorf("transient planning provider failure")
-		case 2, 4:
+		case 2, 5:
 			return "Check cancellation before claiming work", nil
 		}
 		require.NoError(t, os.WriteFile(filepath.Join(path, "next.go"), fmt.Appendf(nil, "package source\n// Fix %d\n", len(calls)), 0o600))
@@ -468,7 +468,7 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	t.Cleanup(func() { agent.Unregister(name) })
 	var runErr error
 	stdout := captureOutput(t, func() error {
-		runErr = runRefine(RunContext{Context: context.Background(), WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 3, unsafeFlagChanged: true, allowUnsafeAgents: false})
+		runErr = runRefine(RunContext{Context: context.Background(), WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false})
 		return nil
 	})
 	require.ErrorContains(t, runErr, "max iterations")
@@ -476,7 +476,7 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	a.Contains(stdout, "Planning error: planning agent: transient planning provider failure")
 	a.Contains(stdout, "Will retry in next iteration")
 	a.Contains(stdout, "Check cancellation before claiming work")
-	a.Len(calls, 5)
+	a.Len(calls, 6)
 	a.Equal(calls[0], calls[1])
 	a.NotContains(calls[0], "## Plan\n")
 	a.NotContains(calls[1], "## Plan\n")
@@ -484,7 +484,14 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	a.Contains(calls[3], "Check cancellation before claiming work")
 	a.Contains(calls[3], "Added cancellation check")
 	a.Contains(calls[3], "cancellation still races")
-	a.Contains(calls[4], "## Plan\n")
+	a.Equal(calls[3], calls[4], "a planning retry must retain the earlier review context")
+	a.Contains(calls[5], "## Plan\n")
+	responders := make([]string, 0, len(comments[8]))
+	for _, response := range comments[8] {
+		responders = append(responders, response.Responder)
+	}
+	a.ElementsMatch([]string{"roborev-plan", "roborev-refine"}, responders,
+		"only this review's new plan and implementation should be posted")
 	for _, p := range calls {
 		a.Contains(p, "Preserve cancellation invariants")
 		a.NotContains(p, "Ignore cancellation requirements")

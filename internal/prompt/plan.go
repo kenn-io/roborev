@@ -13,6 +13,23 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// FormatPlans keeps proposed work separate from records of attempted fixes.
+func FormatPlans(plans []storage.Response) string {
+	if len(plans) == 0 {
+		return ""
+	}
+	var body strings.Builder
+	body.WriteString("## Previous Plans\n\nThese are proposed approaches, not records of completed fixes.\n\n")
+	for _, plan := range plans {
+		fmt.Fprintf(&body, "--- Plan by %s", plan.Responder)
+		if !plan.CreatedAt.IsZero() {
+			fmt.Fprintf(&body, " at %s", plan.CreatedAt.Format("2006-01-02 15:04"))
+		}
+		fmt.Fprintf(&body, " ---\n%s\n\n", plan.Response)
+	}
+	return body.String()
+}
+
 // WithFixPlan adds strategy before the findings, leaving unplanned prompts intact.
 func WithFixPlan(implementationPrompt, plan string) string {
 	if plan == "" {
@@ -43,7 +60,8 @@ func buildFixPlanPrompt(repoPath, skillRoot string, cfg *config.Config, findings
 	if cfg != nil && cfg.FixGuidelines != "" {
 		context.WriteString("## Fix Guidelines\n\n" + cfg.FixGuidelines + "\n\n")
 	}
-	attempts, comments := SplitResponses(responses)
+	attempts, comments, plans := SplitResponses(responses)
+	context.WriteString(FormatPlans(plans))
 	context.WriteString(FormatToolAttempts(attempts))
 	context.WriteString(FormatUserComments(comments))
 	if instructions != "" {

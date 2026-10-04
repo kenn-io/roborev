@@ -33,6 +33,21 @@ func TestFixPlanFlags(t *testing.T) {
 	}
 }
 
+func TestFixPromptsSeparatePreviousPlans(t *testing.T) {
+	assert := assert.New(t)
+	responses := []storage.Response{{Responder: "roborev-plan", Response: "Proposed cancellation check"}}
+	entry := batchEntry{jobID: 7, job: &storage.ReviewJob{ID: 7}, review: &storage.Review{Output: "Missing cancellation"}, comments: responses}
+	for _, body := range []string{
+		buildGenericFixPrompt("Missing cancellation", "", responses),
+		buildBatchFixPrompt([]batchEntry{entry}, ""),
+	} {
+		assert.Contains(body, "## Previous Plans")
+		assert.Contains(body, "Proposed cancellation check")
+		assert.NotContains(body, "## Previous Addressing Attempts")
+		assert.NotContains(body, "## User Comments")
+	}
+}
+
 func newPlanTestRepo(t *testing.T, files map[string]string) *TestGitRepo {
 	t.Helper()
 	repo := createTestRepo(t, files)

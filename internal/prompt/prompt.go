@@ -1323,7 +1323,7 @@ If they were rejected for being over-engineered, keep it simpler.
 
 const UserCommentsHeader = `## User Comments
 
-The following comments were left by the developer on this review.
+The following comments were left by the developer on this or a related review.
 Take them into account when applying fixes — they may flag false
 positives, provide additional context, or request specific approaches.
 
@@ -1333,15 +1333,17 @@ func IsToolResponse(r storage.Response) bool {
 	return strings.HasPrefix(r.Responder, "roborev-")
 }
 
-func SplitResponses(responses []storage.Response) (toolAttempts, userComments []storage.Response) {
+func SplitResponses(responses []storage.Response) (toolAttempts, userComments, plans []storage.Response) {
 	for _, r := range storage.PromptTrustedResponses(responses) {
-		if IsToolResponse(r) {
+		if r.Responder == "roborev-plan" {
+			plans = append(plans, r)
+		} else if IsToolResponse(r) {
 			toolAttempts = append(toolAttempts, r)
 		} else {
 			userComments = append(userComments, r)
 		}
 	}
-	return toolAttempts, userComments
+	return toolAttempts, userComments, plans
 }
 
 func FormatToolAttempts(attempts []storage.Response) string {
@@ -1386,7 +1388,8 @@ func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []
 	)
 
 	if len(previousAttempts) > 0 {
-		toolAttempts, userComments := SplitResponses(previousAttempts)
+		toolAttempts, userComments, plans := SplitResponses(previousAttempts)
+		view.PreviousPlans = FormatPlans(plans)
 		if len(toolAttempts) > 0 {
 			view.ToolAttempts = make([]addressAttemptView, 0, len(toolAttempts))
 			for _, attempt := range toolAttempts {

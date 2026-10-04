@@ -336,6 +336,7 @@ type GenericFallbackContext struct {
 
 type AddressTemplateContext struct {
 	ProjectGuidelines *MarkdownSection
+	PreviousPlans     string
 	ToolAttempts      []AddressAttemptTemplateContext
 	UserComments      []AddressAttemptTemplateContext
 	SeverityFilter    string

@@ -35,6 +35,23 @@ func TestFixPlanContext(t *testing.T) {
 	a.NotContains(p, "## Superpowers")
 }
 
+func TestStoredPlansAreNotImplementationAttempts(t *testing.T) {
+	assert := assert.New(t)
+	b := NewBuilder(nil).ForRepo(t.TempDir(), 0)
+	responses := []storage.Response{{Responder: "roborev-plan", Response: "Proposed cancellation check"}}
+	review := &storage.Review{JobID: 7, Output: "Missing cancellation check"}
+	address, err := b.BuildAddressPrompt(review, responses, "")
+	require.NoError(t, err)
+	planning, err := b.BuildPlanPrompt(review, responses, "")
+	require.NoError(t, err)
+	for _, body := range []string{address, planning} {
+		assert.Contains(body, "## Previous Plans")
+		assert.Contains(body, "Proposed cancellation check")
+		assert.NotContains(body, "## Previous Addressing Attempts")
+		assert.NotContains(body, "## User Comments")
+	}
+}
+
 func TestFixPlanSuperpowersSymlinks(t *testing.T) {
 	repo := t.TempDir()
 	for _, name := range []string{"brainstorming", "writing-plans"} {

@@ -50,7 +50,9 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 		verdictParts = append(verdictParts, closedStyle.Render("[CLOSED]"))
 	}
 	if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
-		verdictParts = append(verdictParts, statusStyle.Render("["+tu.FormatSummary()+"]"))
+		if summary := tu.FormatSummary(); summary != "" {
+			verdictParts = append(verdictParts, statusStyle.Render("["+summary+"]"))
+		}
 	}
 	if s := review.FileCoverage.FormatSummary(); s != "" {
 		verdictParts = append(verdictParts, statusStyle.Render("["+s+"]"))

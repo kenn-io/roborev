@@ -582,7 +582,7 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
-| `--plan` | Produce and store a read-only plan before each fix |
+| `--plan` | Produce and store a plan before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
 | `--branch <name>` | Validate current branch before refining |
@@ -599,7 +599,9 @@ and does not queue re-reviews. With `--all-branches`, it analyzes local branch
 heads in detached worktrees without switching your checkout. Plans are printed
 even with `--quiet`. `--list` cannot be combined with either planning flag.
 Refine planning requires a clean working tree with no rebase in progress. Commit
-or stash changes, and finish or abort any rebase before planning.
+or stash changes, and finish or abort any rebase before planning. During the
+same refine run, later fixes receive earlier plans, implementation results, and
+trusted comments as context. Comments remain attached to their original reviews.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
@@ -634,7 +636,7 @@ roborev fix --min-severity medium  # Skip low-severity findings
 | `--quiet` | Suppress agent output |
 | `--branch <name>` | Filter by branch (default: current branch) |
 | `--all-branches` | Include open jobs from all branches |
-| `--plan` | Produce and store a read-only plan before each fix or batch |
+| `--plan` | Produce and store a plan before each fix or batch |
 | `--plan-only` | Print and store plans without editing, committing, enqueueing, or closing reviews |
 | `--batch` | Concatenate multiple reviews into a single agent prompt instead of fixing one at a time |
 | `--batch-size <n>` | Pack up to N reviews into each agent invocation, bounded by `max_prompt_size`. Multiple invocations are issued when more than N reviews are open. Mutually exclusive with `--batch` and `--list`. |
@@ -644,22 +646,32 @@ roborev fix --min-severity medium  # Skip low-severity findings
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
 Planned fixes require a clean working tree. Each planning call uses a fresh
-session in a disposable worktree with read-only agent settings. The plan covers
-root causes, file/function changes, their order, and verification risks. It is
-stored as a `roborev-plan` comment and included before the findings during
-implementation. Batch mode shares one plan across the batch's reviews.
-`--plan-only` takes one snapshot of open jobs and exits; plans still print with
-`--quiet`. Planning errors stop implementation. Both phases use the complete
-prompt file transport when their context exceeds the configured inline
-threshold. `--list` is incompatible with either flag, and `--resume` is
-incompatible with `--plan-only`. With `--plan --resume`, only implementation
-resumes a session.
+session in a disposable worktree using the agent's planning or read-only
+controls. For example, Claude uses plan permission mode with only Read, Glob,
+and Grep tools and MCP tools disabled; Droid runs without an `--auto` permission
+level. These controls depend on the agent. The worktree and Git state checks do
+not provide filesystem isolation for writes outside the worktree or changes to
+shared Git metadata.
 
-When the repository has both Superpowers `brainstorming` and `writing-plans`
-skills under `.agents/skills`, `.claude/skills`, or `.pi/skills`, planning
-includes their design and ordered-step discipline. Namespaced directories and
-symlinks are supported. Superpowers is optional, and skill discovery does not
-enable planning by itself.
+The plan covers root causes, file/function changes, their order, and
+verification risks. It is stored as a `roborev-plan` comment and included before
+the findings during implementation. Later fix prompts list stored plans under
+**Previous Plans**, separately from implementation attempts. Batch mode shares
+one plan across the batch's reviews. `--plan-only` takes one snapshot of open
+jobs and exits; plans still print with `--quiet`. Plan-only processing stops at
+the first job or planning error; remaining reviews stay open. Planning errors
+stop implementation. Both phases use the complete prompt file transport when
+their context exceeds the configured inline threshold. `--list` is incompatible
+with either flag, and `--resume` is incompatible with `--plan-only`. With
+`--plan --resume`, only implementation resumes a session.
+
+Planning adds Superpowers guidance when it finds both `brainstorming` and
+`writing-plans` skills in immediate subdirectories of the repository's
+`.agents/skills`, `.claude/skills`, or `.pi/skills`. Each subdirectory must
+contain a `SKILL.md` declaring the skill name; flat namespaced directories and
+symlinks work. Discovery does not search nested namespace directories or
+user-level plugin installations. Superpowers is optional, and discovering it
+does not enable planning by itself.
 
 For background fixes, set `plan_first: true` on `POST /api/job/fix`. In the TUI,
 press `F` to open the fix panel and `Ctrl+P` to toggle **Plan first** before
@@ -837,6 +849,13 @@ default-visible "Cost" column with the per-job estimate. The cost column stays
 blank for unpriced models and for jobs whose usage has not yet been fetched. The
 tilde marks the value as a model-pricing estimate rather than a billed amount.
 AgentsView versions without cost support still provide token counts.
+
+Background fixes with **Plan first** track separate planning and implementation
+sessions. The job's usage combines both phases. Cost remains unpriced until all
+expected sessions have pricing data; the daemon's reconciliation and
+`backfill-tokens` fetch every recorded session. Session IDs alone do not produce
+a usage summary. This accounting also preserves usage for a failed or canceled
+attempt when a phase has already run.
 
 Fresh agent sessions can finish before agentsview has indexed their final usage.
 roborev briefly retries a missing session lookup before storing the job-log

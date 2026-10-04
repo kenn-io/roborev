@@ -11,21 +11,10 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
-
-// carryRefineHistory preserves the attempt chain when re-review creates a new job.
-func carryRefineHistory(client daemon.Client, jobID int64, history []storage.Response) error {
-	for _, response := range storage.PromptTrustedResponses(history) {
-		if err := client.AddComment(jobID, response.Responder, response.Response); err != nil {
-			return fmt.Errorf("carry refine history: %w", err)
-		}
-	}
-	return nil
-}
 
 // refineReviewIncludes tests whether a re-review covers the last implemented fix.
 func refineReviewIncludes(ctx context.Context, repoPath string, review *storage.Review, sha string) bool {

@@ -52,11 +52,24 @@ func TestReviewFixPlanningReset(t *testing.T) {
 }
 
 func TestReviewFixPlanResultRendering(t *testing.T) {
+	assert := assert.New(t)
 	t.Parallel()
 	m := initTestModel(withCurrentView(viewReview), withReview(&storage.Review{JobID: 7, Output: "## Plan\n\nCheck cancellation before claiming work\n\n## Implementation\n\nAdded cancellation check"}))
 	m.width = 110
 	m.height = 35
 	rendered := m.renderReviewView()
-	assert.Contains(t, rendered, "Check cancellation before claiming work")
-	assert.Contains(t, rendered, "Added cancellation check")
+	assert.Contains(rendered, "Check cancellation before claiming work")
+	assert.Contains(rendered, "Added cancellation check")
+	assert.Contains(rendered, "Plan")
+	assert.Contains(rendered, "Implementation")
+}
+
+func TestReviewPaneOmitsMetadataOnlyUsage(t *testing.T) {
+	t.Parallel()
+	job := makeJob(7)
+	job.TokenUsage = `{"cost_usd":0,"provider_session_ids":["planner-session","implementation-session"],"expected_provider_sessions":2}`
+	m := initTestModel(withReview(&storage.Review{JobID: 7, Job: &job, Output: "Fix completed"}))
+	header := m.reviewPaneHeaderLines(200)
+	require.Greater(t, len(header), 1)
+	assert.NotContains(t, header[1], "[]")
 }

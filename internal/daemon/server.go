@@ -1290,7 +1290,7 @@ func parseDuration(s string) (time.Duration, error) {
 // findings, optional user-provided instructions, and any comments/responses
 // (split into tool attempts and user comments for proper framing).
 func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity string, responses []storage.Response, reviewedRef string) string {
-	toolAttempts, userComments := prompt.SplitResponses(responses)
+	toolAttempts, userComments, plans := prompt.SplitResponses(responses)
 	p := "# Fix Request\n\n" +
 		"An analysis was performed and produced the following findings:\n\n"
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
@@ -1298,6 +1298,7 @@ func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity 
 	}
 	p += "## Analysis Findings\n\n" +
 		reviewOutput + "\n\n"
+	p += prompt.FormatPlans(plans)
 	p += prompt.FormatToolAttempts(toolAttempts)
 	p += prompt.FormatUserComments(userComments)
 	p += "## Restoration History\n\n" +

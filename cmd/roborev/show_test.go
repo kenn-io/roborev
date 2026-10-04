@@ -138,6 +138,28 @@ func TestShowOutputFormat(t *testing.T) {
 	}
 }
 
+func TestShowTokenUsageSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name, usage, want string
+	}{
+		{"sessions only", `{"cost_usd":0,"provider_session_ids":["plan","fix"],"expected_provider_sessions":2}`, ""},
+		{"priced", `{"cost_usd":0.42,"has_cost":true}`, "Tokens: ~$0.42"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockReviewDaemon(t, storage.Review{
+				ID: 1, JobID: 42, Output: "Fix completed", Agent: "test",
+				Job: &storage.ReviewJob{ID: 42, TokenUsage: tc.usage},
+			})
+			output := runShowCmd(t, "--job", "42")
+			if tc.want == "" {
+				assert.NotContains(t, output, "Tokens:")
+			} else {
+				assert.Contains(t, output, tc.want)
+			}
+		})
+	}
+}
+
 func TestShowOutsideGitRepo(t *testing.T) {
 	t.Run("no args outside git repo returns guidance error", func(t *testing.T) {
 		nonGitDir := t.TempDir()
