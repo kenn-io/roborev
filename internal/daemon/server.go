@@ -2360,6 +2360,8 @@ func (s *Server) humaCancelJob(
 	}
 	s.workerPool.cancelJob(input.Body.JobID, true)
 
+	s.retireCIPanelForCanceledSynthesis(job)
+
 	// Cancel the synthesis parent BEFORE cascading to its members. A running
 	// member that observes cancellation can release the synthesis gate; if that
 	// raced ahead of the parent's own cancel, a worker could still claim and
@@ -2368,7 +2370,6 @@ func (s *Server) humaCancelJob(
 	// already-terminal row.
 	canceledMembers := s.cascadeCancelPanelMembers(job, true)
 	s.releaseSynthesisIfCanceledMember(job)
-	s.retireCIPanelForCanceledSynthesis(job)
 
 	if job == nil {
 		job, _ = s.db.GetJobByID(input.Body.JobID)

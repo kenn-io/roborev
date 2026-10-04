@@ -79,7 +79,9 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 	require.NotNil(t, page.Jobs[0].ResumeSourceJobUUID)
 	assert.Equal(t, testUUID("source-job-uuid"), *page.Jobs[0].ResumeSourceJobUUID)
 
-	require.NoError(t, db.DeleteCIPanelByRun(testUUID("run-mapped-panel")))
+	panel, err := db.GetCIPanelByRunUUID(testUUID("run-mapped-panel"))
+	require.NoError(t, err)
+	require.NoError(t, db.MarkPanelRetired(panel.ID))
 	page, err = db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, reviewJobUUIDs(job), costJobUUIDs(page.Jobs))

@@ -1588,13 +1588,8 @@ func lookupPanelRerunBySource(
 	}, sourceJobID int64,
 ) (RerunRequestResult, bool, error) {
 	var result RerunRequestResult
-	var canceledCI bool
 	err := q.QueryRowContext(ctx, `
-		SELECT rr.result_job_id, NULLIF(rr.panel_run_uuid, ''), EXISTS (
-			SELECT 1 FROM ci_pr_panels p
-			JOIN review_jobs j ON j.id = p.synthesis_job_id
-			WHERE p.panel_run_uuid = rr.panel_run_uuid AND j.status = 'canceled'
-		)
+		SELECT rr.result_job_id, NULLIF(rr.panel_run_uuid, '')
 		FROM rerun_requests rr
 		WHERE rr.source_job_id = ?
 		  AND COALESCE(rr.panel_run_uuid, '') != ''
@@ -1613,17 +1608,12 @@ func lookupPanelRerunBySource(
 		  ))
 		ORDER BY rr.created_at DESC, rr.result_job_id DESC
 		LIMIT 1
-	`, sourceJobID).Scan(&result.JobID, &result.PanelRunUUID, &canceledCI)
+	`, sourceJobID).Scan(&result.JobID, &result.PanelRunUUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RerunRequestResult{}, false, nil
 	}
 	if err != nil {
 		return RerunRequestResult{}, false, err
-	}
-	// Cancellation delivery or stopping workers can retain a CI successor.
-	// Reject fresh requests instead of binding them to work that cannot run.
-	if canceledCI {
-		return RerunRequestResult{}, false, ErrCIPanelActive
 	}
 	return result, true, nil
 }

@@ -206,9 +206,6 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*Re
 			fmt.Sprintf("enqueue rerun panel: %v", err))
 	}
 	if !replayed {
-		if s.ciPoller != nil {
-			s.ciPoller.setPanelPending(synthJob.ID)
-		}
 		s.broadcastRerunEnqueued(synthJob.ID, synthJob.UUID, job)
 	}
 

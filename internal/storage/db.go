@@ -130,10 +130,7 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   attempt_count INTEGER,
   synthesis_agent TEXT,
   synthesis_model TEXT,
-  allow_stale_post INTEGER NOT NULL DEFAULT 0,
-  pending_status_needed INTEGER NOT NULL DEFAULT 0,
-  final_status_state TEXT NOT NULL DEFAULT '',
-  final_status_description TEXT NOT NULL DEFAULT ''
+  allow_stale_post INTEGER NOT NULL DEFAULT 0
 );
 
 -- ci_pr_review_attempts holds local CI-poller retry state keyed by

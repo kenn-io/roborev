@@ -2957,7 +2957,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 72, "same-sha")
 	require.NoError(t, err)
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
@@ -2988,7 +2988,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 73, "reviewed-sha")
 	require.NoError(t, err)
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(

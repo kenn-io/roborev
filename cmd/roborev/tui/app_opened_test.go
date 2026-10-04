@@ -324,10 +324,9 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	require.Eventually(t, func() bool { return isClosed(entered) }, 5*time.Second, 10*time.Millisecond)
 
 	jobsBefore := d.jobFetches.Load()
+	p.Send(tickMsg(time.Now()))
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool {
-		// Startup may still be loading jobs and intentionally skip a tick.
-		p.Send(tickMsg(time.Now()))
 		return d.jobFetches.Load() > jobsBefore && !isClosed(release)
 	}, 5*time.Second, 10*time.Millisecond)
 

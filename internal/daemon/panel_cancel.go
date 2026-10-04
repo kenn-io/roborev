@@ -32,10 +32,6 @@ func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
 	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == nil {
 		return
 	}
-	if s.ciPoller != nil {
-		s.ciPoller.handleReviewCanceled(Event{Type: "review.canceled", JobID: job.ID})
-		return
-	}
 	panel, err := s.db.GetCIPanelBySynthesisJobID(job.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return

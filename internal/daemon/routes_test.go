@@ -679,7 +679,7 @@ func TestHumaExportCIMetrics(t *testing.T) {
 	require.True(t, ok)
 	panel, err := db.GetCIPanelByPRSHA("o/r", 5, "headsha5")
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
+	require.NoError(t, db.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 
 	rr := serveHuma(t, srv, http.MethodGet, "/api/export/ci-metrics", nil)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

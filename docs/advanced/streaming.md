@@ -111,22 +111,11 @@ commit before posting. A historical CI run whose delivery target is missing
 cannot be rerun. Recovery leaves previous runs available for inspection, and
 health stays unhealthy until a usable review is posted.
 
-The latest requested run determines review status and health. Queueing a CI
-rerun sets the commit status to pending, replacing any previous success. If
-GitHub rejects that write, the daemon retries it on subsequent polls while the
-run is active, including after a restart. A completed or canceled run cannot be
-set back to pending. If the rerun fails, the status becomes error. Canceling a
-rerun sets an error status with "Review canceled". If that write fails, polling
-retries it until delivered or superseded by a newer run. It does not discard a
-previously delivered review or cause the normal poll to review that commit
-again. After a restart, polling also recovers interrupted cancellation and
-unfinished review delivery, including for repositories removed from polling. If
-a final status write fails, polling retries it without posting the review
-comment again. A newer rerun supersedes any undelivered status from the old run.
-
-A fresh rerun request for the original review returns a conflict while its
-canceled successor still owns the target. Retry the request after cancellation
-delivery finishes.
+The latest requested run determines review status and health. Starting a rerun
+leaves the previous GitHub status in place until it produces a result. A failed
+rerun can set pending during automatic retries and error when retries stop.
+Canceling a rerun does not discard a previously delivered review or cause the
+normal poll to review that commit again.
 
 An unresolved PR also clears from health when it closes, advances to a new
 commit, or gets a skip label. To acknowledge a failure after retries stop, add a

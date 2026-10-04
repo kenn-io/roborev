@@ -31,23 +31,16 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 				[]jobSpec{spec})
 			if outcome == storage.PanelOutcomeReviewPosted {
 				h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
-				h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-				require.Len(t, *statuses, 1)
-				require.Equal(t, "success", (*statuses)[0].State)
-				*comments = nil
-				*statuses = nil
 			} else {
 				h.markJobFailed(t, synth.ID, "no member output")
-				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome, "", ""))
 			}
+			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, outcome))
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-			server.SetCIPoller(h.Poller)
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 
 			request := []byte(fmt.Sprintf(`{"job_id":%d,"request_id":%q}`, synth.ID, testUUID("ci-rerun")))
 			response := serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			require.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "reviewed-head", State: "pending", Desc: "Review in progress"}}, *statuses)
 			var rerun RerunJobOutput
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rerun.Body))
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "reviewed-head")
@@ -74,12 +67,8 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 			require.Len(t, *comments, 1, "CI rerun must reach the GitHub publisher")
 			assert.Equal(t, "acme/api", (*comments)[0].Repo)
 			assert.Equal(t, 7, (*comments)[0].PR)
-			require.Len(t, *statuses, 2)
-			assert.Equal(t, "reviewed-head", (*statuses)[1].SHA)
-			assert.Equal(t, "success", (*statuses)[1].State)
-			replayed = serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)
-			require.Equal(t, http.StatusOK, replayed.Code)
-			assert.Len(t, *statuses, 2, "replaying a delivered rerun must not restore pending")
+			require.Len(t, *statuses, 1)
+			assert.Equal(t, "reviewed-head", (*statuses)[0].SHA)
 			assert.Contains(t, (*comments)[0].Body, "No issues found.")
 			original, err := h.DB.GetCIPanelByRunUUID(panel.PanelRunUUID)
 			require.NoError(t, err)
@@ -90,124 +79,6 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 			assert.Empty(t, failures, "historical failures must not obscure delivered recovery")
 		})
 	}
-}
-
-func TestCIPanelRerunRetriesPendingStatusAfterRestart(t *testing.T) {
-	for _, tc := range []struct {
-		state string
-		want  []string
-	}{
-		{"active", []string{"success", "pending"}},
-		{"no token", []string{"success", "pending"}},
-		{"done", []string{"success", "success"}},
-		{"done undelivered", []string{"success", "success"}},
-		{"done final status fails", []string{"success"}},
-		{"canceled", []string{"success", "error"}},
-	} {
-		t.Run(tc.state, func(t *testing.T) {
-			if tc.state == "no token" {
-				installFakeGHAuthToken(t, "")
-				t.Setenv("GH_TOKEN", "")
-				t.Setenv("GITHUB_TOKEN", "")
-			}
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			comments := h.CaptureComments()
-			var states []string
-			failPending := true
-			failFinal := false
-			setStatus := func(repo, sha, state, desc string) error {
-				assert.Equal(t, "acme/api", repo)
-				assert.Equal(t, "head-a", sha)
-				if state == "pending" && failPending {
-					if tc.state == "no token" {
-						return h.Poller.setCommitStatus(repo, sha, state, desc)
-					}
-					return errors.New("GitHub unavailable")
-				}
-				if state == "success" && failFinal {
-					return errors.New("GitHub unavailable")
-				}
-				states = append(states, state)
-				return nil
-			}
-			h.Poller.setCommitStatusFn = setStatus
-			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
-				[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
-			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
-			h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-			server.SetCIPoller(h.Poller)
-			t.Cleanup(func() { require.NoError(t, server.Close()) })
-			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
-			require.NoError(t, err)
-			require.Equal(t, []string{"success"}, states, "the failed write left the old status on GitHub")
-			failFinal = tc.state == "done final status fails"
-			switch tc.state {
-			case "done", "done undelivered", "done final status fails":
-				members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
-				require.NoError(t, err)
-				for _, member := range members {
-					h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
-				}
-				h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
-				if tc.state == "done" {
-					h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
-				}
-			case "canceled":
-				_, err := server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
-				require.NoError(t, err)
-			}
-
-			var dbPath string
-			require.NoError(t, h.DB.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
-			require.NoError(t, server.Close())
-			require.NoError(t, h.DB.Close())
-			db, err := storage.Open(dbPath)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, db.Close()) })
-			poller := NewCIPoller(db, NewStaticConfig(h.Cfg), nil)
-			poller.setCommitStatusFn = setStatus
-			poller.postPRCommentFn = h.Poller.postPRCommentFn
-			poller.prPostTargetFn = h.Poller.prPostTargetFn
-			failPending = false
-			// The delivery target remains valid even with no configured poll repos.
-			h.Cfg.CI.Repos = nil
-			poller.poll(context.Background())
-			assert.Equal(t, tc.want, states)
-			poller.poll(context.Background())
-			assert.Equal(t, tc.want, states, "successful and terminal writes must not retry")
-			if tc.state == "done undelivered" || tc.state == "done final status fails" {
-				assert.Len(t, *comments, 2, "recover the rerun without reposting either review")
-			}
-		})
-	}
-}
-
-func TestCIPanelPendingStatusOrdersDelivery(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	comments := h.CaptureComments()
-	_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "reviewed-head", "base..reviewed-head",
-		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
-	var states []string
-	h.Poller.setCommitStatusFn = func(repo, sha, state, _ string) error {
-		assert.Equal(t, "acme/api", repo)
-		assert.Equal(t, "reviewed-head", sha)
-		if state == "pending" {
-			// A worker can finish while the pending GitHub request is in flight.
-			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
-			h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
-			assert.Empty(t, *comments, "delivery must wait for the pending write")
-		}
-		states = append(states, state)
-		return nil
-	}
-	h.Poller.setPanelPending(synth.ID)
-	require.Len(t, *comments, 1)
-	require.Equal(t, []string{"pending", "success"}, states)
-
-	// A pending write arriving after delivery must not replace the final status.
-	h.Poller.setPanelPending(synth.ID)
-	assert.Equal(t, []string{"pending", "success"}, states)
 }
 
 func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
@@ -317,7 +188,7 @@ func TestCIPanelRerunDoesNotPostToAdvancedHead(t *testing.T) {
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "old-head", "base..old-head",
 		[]jobSpec{{Agent: "test", Status: "failed", Error: "model unavailable"}})
 	h.markJobFailed(t, synth.ID, "no member output")
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted, "", ""))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted))
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
@@ -359,7 +230,7 @@ func TestCIPollerRestartKeepsNonFailureOutcomesTerminal(t *testing.T) {
 			// Prior attempts may have failed even when the final outcome is empty.
 			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 7, "head-a", "genuine", "old failure",
 				&panel.PanelRunUUID, time.Now(), true))
-			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, tc.outcome, "", ""))
+			require.NoError(t, h.DB.MarkPanelPosted(panel.ID, tc.outcome))
 			require.NoError(t, h.Poller.Start())
 			h.Poller.Stop()
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
@@ -373,26 +244,22 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 	for _, successorState := range []string{"pending", "done"} {
 		t.Run(successorState, func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			statuses := h.CaptureCommitStatuses()
 			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 				[]jobSpec{{Agent: "test", Status: "failed", Error: "model unavailable"}})
 			h.markJobCanceled(t, synth.ID, "canceled by user")
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-			server.SetCIPoller(h.Poller)
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			if successorState == "done" {
 				panel, err := h.DB.GetCIPanelByRunUUID(*rerun.Body.RunUUID)
 				require.NoError(t, err)
-				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted, "", ""))
+				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted))
 			}
 			// API cancellation broadcasts asynchronously; its event can arrive
 			// after a rerun has taken ownership of the same PR HEAD.
 			h.Poller.handleReviewCanceled(ciEvent(synth.ID, "review.canceled"))
 			server.retireCIPanelForCanceledSynthesis(synth)
-			require.Len(t, *statuses, 1, "old cancellation must not replace the successor's status")
-			assert.Equal(t, "pending", (*statuses)[0].State)
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
 			require.NoError(t, err)
 			require.NotNil(t, attempt, "old cancellation must not remove the successor's attempt")
@@ -408,25 +275,18 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 	for _, posted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("posted=%t", posted), func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			statuses := h.CaptureCommitStatuses()
 			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 				[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 			h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 			if posted {
-				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
+				require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 			}
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-			server.SetCIPoller(h.Poller)
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
 			require.NoError(t, err)
-			h.Poller.handleReviewCanceled(ciEvent(rerun.Body.JobID, "review.canceled"))
-			assert.Equal(t, []capturedStatus{
-				{Repo: "acme/api", SHA: "head-a", State: "pending", Desc: "Review in progress"},
-				{Repo: "acme/api", SHA: "head-a", State: "error", Desc: "Review canceled"},
-			}, *statuses)
 
 			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"})
 			require.NoError(t, err)
@@ -475,33 +335,6 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 	}
 }
 
-func TestCIPanelCancellationDuringPendingStatus(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
-		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
-	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-	server.SetCIPoller(h.Poller)
-	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	var statuses []capturedStatus
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		if state == "pending" {
-			// The pending request is still in flight when the API cancels the job.
-			_, err := server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: synth.ID}})
-			require.NoError(t, err)
-		}
-		statuses = append(statuses, capturedStatus{Repo: repo, SHA: sha, State: state, Desc: desc})
-		return nil
-	}
-	h.Poller.setPanelPending(synth.ID)
-	assert.Equal(t, []capturedStatus{
-		{Repo: "acme/api", SHA: "head-a", State: "pending", Desc: "Review in progress"},
-		{Repo: "acme/api", SHA: "head-a", State: "error", Desc: "Review canceled"},
-	}, statuses)
-	panel, err := h.DB.GetCIPanelBySynthesisJobID(synth.ID)
-	require.NoError(t, err)
-	assert.NotNil(t, panel.RetiredAt)
-}
-
 func TestCIPanelRerunAfterClosedPRCleanup(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	comments := h.CaptureComments()
@@ -535,7 +368,10 @@ func TestCIPanelRerunRejectsMissingDeliveryTarget(t *testing.T) {
 		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 	// Older closed-PR cleanup removed mappings but preserved CI job ownership.
-	require.NoError(t, h.DB.DeleteCIPanel(panel.ID))
+	_, err := h.DB.Exec(`UPDATE review_jobs SET source = ? WHERE panel_run_uuid = ?`, storage.JobSourceCI, panel.PanelRunUUID)
+	require.NoError(t, err)
+	_, err = h.DB.Exec(`DELETE FROM ci_pr_panels WHERE id = ?`, panel.ID)
+	require.NoError(t, err)
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 	response := serveHuma(t, server, http.MethodPost, "/api/job/rerun",

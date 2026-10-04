@@ -429,10 +429,6 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 
 func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
-	// Explicit reruns retain their delivery target even if the repository is
-	// removed from polling. Retry status delivery independently of discovery.
-	p.retryFinalPanelStatuses()
-	p.retryPendingPanelStatuses()
 
 	// Resolve quiet hours once per cycle so an invalid config logs one
 	// warning per poll, not one per PR.
@@ -469,7 +465,6 @@ func (p *CIPoller) poll(ctx context.Context) {
 			log.Printf("CI poller: error polling %s: %v", ghRepo, err)
 		}
 	}
-	p.reconcileUnpolledPanelPosting(ctx, repos)
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
@@ -852,27 +847,6 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 }
 
 func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) error {
-	// A final write already in flight must finish before the skip replaces it.
-	panel, err := p.db.GetCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if panel != nil && panel.PostedAt != nil && panel.RetiredAt == nil {
-		pending, err := p.db.HasCIPanelFinalStatus(panel.ID)
-		if err != nil {
-			return err
-		}
-		if pending {
-			won, err := p.db.ClaimPanelFinalStatus(panel.ID, panelPostingStaleWindow)
-			if err != nil {
-				return err
-			}
-			if !won {
-				return fmt.Errorf("panel %d status delivery in progress", panel.ID)
-			}
-			defer p.releasePanelClaim(panel.ID)
-		}
-	}
 	description := fmt.Sprintf("Review skipped: label %s", label)
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
@@ -2274,8 +2248,8 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 	p.notifyDiscordCIJobFailed(event)
 }
 
-// handleReviewCanceled sets an error status and retires an active CI panel
-// for a canceled synthesis parent. Supersede/closed-PR cleanup normally makes
+// handleReviewCanceled retires an active CI panel mapping for a canceled
+// synthesis parent without posting. Supersede/closed-PR cleanup normally makes
 // the mapping non-postable before canceling, but direct user/API cancellation
 // can otherwise leave an active unposted row that suppresses future polls.
 func (p *CIPoller) handleReviewCanceled(event Event) {
@@ -2290,27 +2264,6 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 		log.Printf("CI poller: error checking canceled CI panel for job %d: %v", event.JobID, err)
 		return
 	}
-	if row.RetiredAt != nil {
-		// Cleanup can retire the panel before the cancellation event arrives.
-		// Finish deleting its attempt without changing any successor's status.
-		p.retirePanelAndDeleteAttempt(row, "canceled")
-		return
-	}
-	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
-	if err != nil {
-		log.Printf("CI poller: error claiming canceled panel %d: %v", row.ID, err)
-		return
-	}
-	if !won {
-		return // already finalized, or pending publication still owns the claim
-	}
-	defer p.releasePanelClaim(row.ID)
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", "Review canceled"); err != nil {
-		log.Printf("CI poller: failed to set canceled status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-		return // retain the canceled panel so polling can retry delivery
-	}
-	// Keep ownership through the status write so a successor cannot publish
-	// pending and then have its status overwritten by this cancellation.
 	p.retirePanelAndDeleteAttempt(row, "canceled")
 }
 
@@ -2328,109 +2281,6 @@ func (p *CIPoller) routePanelEvent(jobID int64) {
 		return
 	}
 	p.postPanelRun(context.Background(), row)
-}
-
-func (p *CIPoller) retryPendingPanelStatuses() {
-	jobIDs, err := p.db.GetCIPanelPendingStatusJobs()
-	if err != nil {
-		log.Printf("CI poller: error listing pending status deliveries: %v", err)
-		return
-	}
-	for _, id := range jobIDs {
-		p.setPanelPending(id)
-	}
-}
-
-func (p *CIPoller) retryFinalPanelStatuses() {
-	statuses, err := p.db.GetCIPanelFinalStatuses()
-	if err != nil {
-		log.Printf("CI poller: error listing final status deliveries: %v", err)
-		return
-	}
-	for _, status := range statuses {
-		p.deliverPanelFinalStatus(status)
-	}
-}
-
-func (p *CIPoller) deliverPanelFinalStatus(status storage.CIPanelFinalStatus) {
-	won, err := p.db.ClaimPanelFinalStatus(status.PanelID, panelPostingStaleWindow)
-	if err != nil {
-		log.Printf("CI poller: error claiming panel %d final status: %v", status.PanelID, err)
-		return
-	}
-	if !won {
-		return
-	}
-	defer p.releasePanelClaim(status.PanelID)
-	if err := p.callSetCommitStatus(status.GithubRepo, status.HeadSHA, status.State, status.Description); err != nil {
-		log.Printf("CI poller: failed to set final status for %s@%s: %v", status.GithubRepo, gitpkg.ShortSHA(status.HeadSHA), err)
-		return
-	}
-	if err := p.db.MarkCIPanelFinalStatusSent(status.PanelID); err != nil {
-		log.Printf("CI poller: error acknowledging panel %d final status: %v", status.PanelID, err)
-	}
-}
-
-// finalizePanelStatus records comment delivery and the final status intent
-// together, so a failed status write never requires another PR comment.
-func (p *CIPoller) finalizePanelStatus(row *storage.CIPanel, outcome, state, description string) {
-	if err := p.db.MarkPanelPosted(row.ID, outcome, state, description); err != nil {
-		log.Printf("CI poller: error finalizing panel %d: %v", row.ID, err)
-		p.releasePanelClaim(row.ID)
-		return
-	}
-	p.deliverPanelFinalStatus(storage.CIPanelFinalStatus{
-		PanelID: row.ID, GithubRepo: row.GithubRepo, HeadSHA: row.HeadSHA,
-		State: state, Description: description,
-	})
-}
-
-// setPanelPending publishes the stored CI target for a newly queued rerun.
-// The posting claim orders this write before final delivery. A completion
-// that races the claim is delivered here, even if the repo is no longer polled.
-func (p *CIPoller) setPanelPending(jobID int64) {
-	row, err := p.db.GetCIPanelBySynthesisJobID(jobID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return // local panel
-	}
-	if err != nil {
-		log.Printf("CI poller: error checking CI panel for rerun %d: %v", jobID, err)
-		return
-	}
-	won, err := p.db.ClaimPanelForPosting(row.ID, panelPostingStaleWindow)
-	if err != nil {
-		log.Printf("CI poller: error claiming panel %d for pending status: %v", row.ID, err)
-		return
-	}
-	if !won {
-		return // already delivered, retired, or being posted
-	}
-	job, err := p.db.GetJobByID(jobID)
-	if err != nil {
-		log.Printf("CI poller: error checking rerun %d before pending status: %v", jobID, err)
-		p.releasePanelClaim(row.ID)
-		return
-	}
-	// A delayed pending write must not precede recovery of a terminal result.
-	if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
-		if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending", "Review in progress"); err != nil {
-			log.Printf("CI poller: failed to set pending status for %s@%s: %v", row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
-		} else if err := p.db.MarkCIPanelPendingStatusSent(row.ID); err != nil {
-			log.Printf("CI poller: error acknowledging pending status for panel %d: %v", row.ID, err)
-		}
-	}
-	p.releasePanelClaim(row.ID)
-	job, err = p.db.GetJobByID(jobID)
-	if err != nil {
-		log.Printf("CI poller: error checking rerun %d after pending status: %v", jobID, err)
-		return
-	}
-	switch job.Status {
-	case storage.JobStatusDone, storage.JobStatusFailed:
-		p.postPanelRun(context.Background(), row)
-	case storage.JobStatusCanceled:
-		p.handleReviewCanceled(Event{Type: "review.canceled", JobID: jobID})
-	}
 }
 
 func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
@@ -2671,15 +2521,28 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 	}
 
 	state, desc := panelCommitStatus(members)
-	p.finalizePanelStatus(row, storage.PanelOutcomeReviewPosted, state, desc)
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, state, desc); err != nil {
+		// Comment already posted: a status failure is log-only, never re-post.
+		log.Printf("CI poller: failed to set %s status for %s@%s: %v",
+			state, row.GithubRepo, row.HeadSHA, err)
+	}
+	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeReviewPosted); err != nil {
+		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
+	}
 	log.Printf("CI poller: posted panel comment on %s#%d (panel %d, %d members)",
 		row.GithubRepo, row.PRNumber, row.ID, len(members))
 }
 
 // finalizePanelWithoutReview records a failed status without creating a PR
-// comment. Failed status delivery remains eligible for polling recovery.
+// comment. Status write errors are log-only, as they are after posting a review.
 func (p *CIPoller) finalizePanelWithoutReview(row *storage.CIPanel, statusDesc string) {
-	p.finalizePanelStatus(row, storage.PanelOutcomeNoReviewPosted, "error", statusDesc)
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); err != nil {
+		log.Printf("CI poller: failed to set error status for %s@%s: %v",
+			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeNoReviewPosted); err != nil {
+		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
+	}
 }
 
 // deferTransientPanel handles an all-transient panel (no successful member, ≥1
@@ -2785,9 +2648,15 @@ func (p *CIPoller) handlePanelPostError(row *storage.CIPanel, postErr error) {
 }
 
 func (p *CIPoller) abandonPanelPost(row *storage.CIPanel, statusDesc, reason string) {
+	if statusErr := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); statusErr != nil {
+		log.Printf("CI poller: failed to set error status for %s@%s: %v",
+			row.GithubRepo, row.HeadSHA, statusErr)
+	}
 	log.Printf("CI poller: abandoning panel %d for %s %s#%d",
 		row.ID, reason, row.GithubRepo, row.PRNumber)
-	p.finalizePanelStatus(row, storage.PanelOutcomeAbandoned, "error", statusDesc)
+	if err := p.db.MarkPanelPosted(row.ID, storage.PanelOutcomeAbandoned); err != nil {
+		log.Printf("CI poller: error finalizing abandoned panel %d: %v", row.ID, err)
+	}
 }
 
 // releasePanelClaim clears a panel's posting lease so a later sweep retries.
@@ -3417,28 +3286,7 @@ func (p *CIPoller) attemptStuck(attempt *storage.ReviewAttempt) (bool, error) {
 	return isRerunnableStatus(synth.Status), nil // retired + terminal synthesis: stuck
 }
 
-// reconcileUnpolledPanelPosting recovers stored delivery targets outside the
-// current polling set. Configured repositories keep their normal ordering:
-// processPR can retain quiet-hours snapshots before posting checks their heads.
-func (p *CIPoller) reconcileUnpolledPanelPosting(ctx context.Context, repos []string) {
-	rows, err := p.db.GetUnpostedTerminalPanels("")
-	if err != nil {
-		log.Printf("CI poller: error listing unposted terminal panels: %v", err)
-		return
-	}
-	reconciled := make(map[string]bool, len(repos))
-	for _, repo := range repos {
-		reconciled[repo] = true
-	}
-	for _, row := range rows {
-		if !reconciled[row.GithubRepo] {
-			p.reconcilePanelPosting(ctx, row.GithubRepo)
-			reconciled[row.GithubRepo] = true
-		}
-	}
-}
-
-// reconcilePanelPosting finishes any terminal-but-unposted panel run for ghRepo
+// reconcilePanelPosting posts any terminal-but-unposted panel run for ghRepo
 // whose synthesis event was dropped (crash/restart or lost delivery). It reuses
 // postPanelRun, so the posting CAS makes it idempotent with the event-driven
 // path and it also reclaims a claim whose holder crashed mid-post.
@@ -3452,16 +3300,7 @@ func (p *CIPoller) reconcilePanelPosting(ctx context.Context, ghRepo string) {
 		return
 	}
 	for i := range rows {
-		job, err := p.db.GetJobByID(*rows[i].SynthesisJobID)
-		if err != nil {
-			log.Printf("CI poller: error checking terminal panel %d: %v", rows[i].ID, err)
-			continue
-		}
-		if job.Status == storage.JobStatusCanceled {
-			p.handleReviewCanceled(Event{Type: "review.canceled", JobID: job.ID})
-		} else {
-			p.postPanelRun(ctx, &rows[i])
-		}
+		p.postPanelRun(ctx, &rows[i])
 	}
 	log.Printf("CI poller: reconciled %d unposted terminal panel run(s) for %s", len(rows), ghRepo)
 }
@@ -3847,7 +3686,7 @@ func truncateUTF8(text string, maxBytes int) string {
 // setCommitStatus posts a commit status check via the GitHub API.
 func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error {
 	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
-		return errors.New("GitHub authentication unavailable")
+		return nil
 	}
 	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
