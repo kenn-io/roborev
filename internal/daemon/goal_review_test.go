@@ -320,7 +320,8 @@ func TestGoalWorkerFrozenEvidence(t *testing.T) {
 	assert.Equal(t, storage.JobStatusDone, completed.Status)
 	review, err := c.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "No issues found.", review.Output)
+	assert.Contains(t, review.Output, "No issues found.")
+	assert.Equal(t, storage.VerdictPass, review.Verdict())
 	assert.NotEmpty(t, review.StructuredOutput, "goal findings must retain their structured representation")
 	assert.Equal(t, job.Prompt, review.Prompt)
 	for range 2 {

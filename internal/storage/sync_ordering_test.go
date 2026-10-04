@@ -846,12 +846,19 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 
 func TestGetReviewsToSyncSkipsMarkdown(t *testing.T) {
 	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("markdown-sync")
-	require.NoError(t, h.db.MarkJobSynced(job.ID))
-	_, err := h.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Legacy Markdown' WHERE job_id = ?`, job.ID)
-	require.NoError(t, err)
-	reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-	require.NoError(t, err)
-	assert.Empty(t, reviews)
+	for _, jobType := range []string{JobTypeReview, JobTypeGoalReview} {
+		t.Run(jobType, func(t *testing.T) {
+			t.Parallel()
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("markdown-sync")
+			require.NoError(t, h.db.MarkJobSynced(job.ID))
+			_, err := h.db.Exec(`UPDATE review_jobs SET job_type = ? WHERE id = ?`, jobType, job.ID)
+			require.NoError(t, err)
+			_, err = h.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Legacy Markdown' WHERE job_id = ?`, job.ID)
+			require.NoError(t, err)
+			reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+			require.NoError(t, err)
+			assert.Empty(t, reviews)
+		})
+	}
 }

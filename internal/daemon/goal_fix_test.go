@@ -24,7 +24,7 @@ func TestGoalReviewCannotParentCodeFix(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.ClaimJob(testWorkerID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "frozen prompt", "- medium: spec.md:1: Clarify the requirement"))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "frozen prompt", "- medium: spec.md:1: Clarify the requirement"))
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", FixJobRequest{ParentJobID: job.ID}))
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())

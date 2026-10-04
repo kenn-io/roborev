@@ -36,7 +36,7 @@ func TestLatestCompletedGoalReviewScopesCheckoutAndExcludesCandidates(t *testing
 			require.NoError(t, err)
 			require.NotNil(t, claimed)
 			require.Equal(t, job.ID, claimed.ID)
-			require.NoError(t, db.CompleteJob(job.ID, "test", job.Prompt, "No findings."))
+			require.NoError(t, completeReviewFixture(db, job.ID, "test", job.Prompt, "No issues found."))
 		}
 		if tc.ref == "latest" {
 			expectedMain = job.ID

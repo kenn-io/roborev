@@ -162,7 +162,7 @@ func TestGoalWatchDoesNotRepeatCompletedSnapshotAfterRestart(t *testing.T) {
 	job, err := db.ClaimJob("worker")
 	require.NoError(t, err)
 	require.NotNil(t, job)
-	require.NoError(t, db.CompleteJob(job.ID, "pi", job.Prompt, "No findings."))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "pi", job.Prompt, "No issues found."))
 
 	watcher := newGoalWatcher(deps)
 	watcher.poll(context.Background())

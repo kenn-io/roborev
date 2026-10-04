@@ -21,7 +21,7 @@ var ErrLegacyReviewMigration = errors.New("review requires legacy JSON migration
 
 func requiresReviewDocument(jobType string) bool {
 	switch jobType {
-	case "", JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis, JobTypeCompact:
+	case "", JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis, JobTypeCompact, JobTypeGoalReview:
 		return true
 	default:
 		return false
