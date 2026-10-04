@@ -1775,15 +1775,16 @@ func ResolveAgentQuotaCooldown(globalCfg *Config) time.Duration {
 // ResolveIsolateReviews returns whether committed reviews use daemon-owned
 // checkouts. Per-repo config overrides global; isolation is off by default.
 func ResolveIsolateReviews(repoPath string, globalCfg *Config) bool {
-	var repoVal *bool
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		repoVal = repoCfg.IsolateReviews
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveIsolateReviewsFromConfig(repoCfg, globalCfg)
+}
+
+// ResolveIsolateReviewsFromConfig applies repo > global > default false.
+func ResolveIsolateReviewsFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if repoCfg != nil && repoCfg.IsolateReviews != nil {
+		return *repoCfg.IsolateReviews
 	}
-	var globalVal bool
-	if globalCfg != nil {
-		globalVal = globalCfg.IsolateReviews
-	}
-	return resolveBool(globalVal, repoVal)
+	return globalCfg != nil && globalCfg.IsolateReviews
 }
 
 // ResolveAutoClosePassingReviews returns whether passing reviews should

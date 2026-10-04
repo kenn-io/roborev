@@ -16,7 +16,10 @@ The CI poller runs inside the roborev daemon. On each interval it:
     every page even when a repo has more than 100 open PRs
 1. Skips PRs that have already been reviewed at their current HEAD SHA, subject
     to throttling and deferred retry state
-1. Fetches the PR head commit (including fork-based PRs)
+1. Fetches the exact head commit the GitHub API reports, by SHA, so fork PRs
+    work even when GitHub's `refs/pull/<N>/head` still points at an older
+    commit. If that commit cannot be fetched, daemon health reports the PR as
+    failed and the next poll tries again
 1. Computes the frozen merge-base range (`base..head`) and includes human PR
     discussion from trusted collaborators in the review prompt
 1. Loads `.roborev.toml` from the repo's default branch, then resolves either

@@ -60,6 +60,13 @@ func newGitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
 	return gitRunner.Command(ctx, "", args...)
 }
 
+// gitOutput runs cmd and returns its stdout. When git fails, the error carries
+// git's stderr instead of only the exit status.
+func gitOutput(cmd *exec.Cmd) ([]byte, error) {
+	out, err := cmd.Output()
+	return out, procutil.WithStderr(err)
+}
+
 // gitLocalEnvKeys matches the local repository environment reported by
 // `git rev-parse --local-env-vars` for current Git releases, plus
 // GIT_INTERNAL_SUPER_PREFIX which Git uses internally for submodule context.
@@ -317,7 +324,7 @@ func GetCommitInfoCtx(ctx context.Context, repoPath, sha string) (*CommitInfo, e
 	cmd := newGitCmdContext(ctx, "log", "-1", "--format=%H"+rs+"%an"+rs+"%s"+rs+"%aI"+rs+"%b", sha)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git log: %w", err)
 	}
@@ -397,7 +404,7 @@ func localBranchNames(
 	args = append(args, "refs/heads")
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("list local branches: %w", err)
 	}
@@ -515,7 +522,7 @@ func nearestBranch(ctx context.Context, repoPath, sha string, candidates []strin
 func FirstParentDistance(ctx context.Context, repoPath, tip, sha string) (dist int, onChain bool, err error) {
 	cmd := newGitCmdContext(ctx, "rev-list", "--count", "--first-parent", tip+".."+sha)
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return 0, false, fmt.Errorf("count first-parent range %s..%s: %w", tip, sha, err)
 	}
@@ -526,7 +533,7 @@ func FirstParentDistance(ctx context.Context, repoPath, tip, sha string) (dist i
 
 	cmd = newGitCmdContext(ctx, "rev-parse", "--verify", fmt.Sprintf("%s~%d", sha, n))
 	cmd.Dir = repoPath
-	out, err = cmd.Output()
+	out, err = gitOutput(cmd)
 	if err != nil {
 		return 0, false, fmt.Errorf("resolve %s~%d: %w", sha, n, err)
 	}
@@ -562,7 +569,7 @@ func IgnorePatternForDir(repoPath, dir string) (pattern string, probe string, er
 // the path to exist or be tracked in the index.
 func CheckIgnoreNoIndex(repoPath, path string) (bool, error) {
 	cmd := newGitCmd("-C", repoPath, "check-ignore", "--quiet", "--no-index", path)
-	err := cmd.Run()
+	_, err := gitOutput(cmd)
 	if err == nil {
 		return true, nil
 	}
@@ -594,7 +601,7 @@ func HasTrackedFilesUnder(repoPath, path string) (bool, error) {
 		return false, fmt.Errorf("path must be under the repo root: %s", path)
 	}
 	cmd := newGitCmd("-C", repoPath, "ls-files", "--", filepath.ToSlash(rel))
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return false, fmt.Errorf("git ls-files: %w", err)
 	}
@@ -667,7 +674,7 @@ func ValidateRepoLocalPathNoSymlinks(repoPath, path string) error {
 
 func infoExcludePath(repoPath string) (string, error) {
 	cmd := newGitCmd("-C", repoPath, "rev-parse", "--git-path", "info/exclude")
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse info/exclude: %w", err)
 	}
@@ -817,7 +824,7 @@ func refExists(repoPath, fullRef string) bool {
 func listRemotes(repoPath string) ([]string, error) {
 	cmd := newGitCmd("remote")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git remote: %w", err)
 	}
@@ -843,7 +850,7 @@ func GetDiffCtx(
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git show: %w", err)
 	}
@@ -882,7 +889,7 @@ func GetFilesChangedCtx(
 	cmd := newGitCmdContext(ctx, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git diff-tree: %w", err)
 	}
@@ -903,7 +910,7 @@ func GetStat(repoPath, sha string) (string, error) {
 	cmd := newGitCmd("show", "--stat", sha, "--format=")
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git show --stat: %w", err)
 	}
@@ -945,7 +952,7 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	cmd := newGitCmdContext(ctx, "rev-parse", ref)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse: %w", err)
 	}
@@ -960,7 +967,7 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 	cmd := newGitCmd("merge-base", "--is-ancestor", ancestor, descendant)
 	cmd.Dir = repoPath
-	err := cmd.Run()
+	_, err := gitOutput(cmd)
 	if err == nil {
 		return true, nil
 	}
@@ -1020,7 +1027,7 @@ func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, he
 	}
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git rev-list branch lineage: %w", err)
 	}
@@ -1101,7 +1108,7 @@ func GetRepoRoot(path string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--show-toplevel")
 	cmd.Dir = path
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
@@ -1196,7 +1203,7 @@ func cleanEvalPath(p string) string {
 func ResolveGitDir(repoPath string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--git-dir")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-dir: %w", err)
 	}
@@ -1212,7 +1219,7 @@ func ResolveGitDir(repoPath string) (string, error) {
 func ResolveGitCommonDir(repoPath string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--git-common-dir")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
@@ -1233,7 +1240,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	// For worktrees: --git-dir returns worktree-specific dir, --git-common-dir returns main repo's .git
 	gitDirCmd := newGitCmd("rev-parse", "--git-dir")
 	gitDirCmd.Dir = path
-	gitDirOut, err := gitDirCmd.Output()
+	gitDirOut, err := gitOutput(gitDirCmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-dir: %w", err)
 	}
@@ -1241,7 +1248,7 @@ func GetMainRepoRoot(path string) (string, error) {
 
 	commonDirCmd := newGitCmd("rev-parse", "--git-common-dir")
 	commonDirCmd.Dir = path
-	commonDirOut, err := commonDirCmd.Output()
+	commonDirOut, err := gitOutput(commonDirCmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
@@ -1280,7 +1287,7 @@ func GetMainRepoRoot(path string) (string, error) {
 
 		// Submodule worktree - read core.worktree from config
 		cmd := newGitCmd("config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
-		out, err := cmd.Output()
+		out, err := gitOutput(cmd)
 		if err != nil {
 			return "", fmt.Errorf("git config core.worktree for submodule worktree: %w", err)
 		}
@@ -1385,7 +1392,7 @@ func GetParentCommitsCtx(ctx context.Context, repoPath, sha string, count int) (
 	cmd := newGitCmdContext(ctx, "log", "--format=%H", "-n", fmt.Sprintf("%d", count), "--skip=1", sha)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git log: %w", err)
 	}
@@ -1406,7 +1413,7 @@ func GetCommitParents(repoPath, sha string) ([]string, error) {
 	cmd := newGitCmd("show", "-s", "--format=%P", sha)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git show parents: %w", err)
 	}
@@ -1438,7 +1445,7 @@ func GetRangeCommitsCtx(ctx context.Context, repoPath, rangeRef string) ([]strin
 	cmd := newGitCmdContext(ctx, "log", "--format=%H", "--reverse", rangeRef)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git log range: %w", err)
 	}
@@ -1473,7 +1480,7 @@ func GetRangeDiffCtx(
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git diff range: %w", err)
 	}
@@ -1504,7 +1511,7 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 	cmd := newGitCmd("status", "--porcelain")
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
 	}
@@ -1518,7 +1525,7 @@ func GetDirtyFilesChanged(repoPath string) ([]string, error) {
 	cmd := newGitCmd("status", "--porcelain=v1", "-uall")
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git status: %w", err)
 	}
@@ -1593,7 +1600,7 @@ func GetDirtyDiff(
 		// Get staged changes vs empty tree
 		cmd = newGitCmd(diffArgs("diff", "--cached", EmptyTreeSHA)...)
 		cmd.Dir = repoPath
-		stagedOut, err := cmd.Output()
+		stagedOut, err := gitOutput(cmd)
 		if err != nil {
 			return "", fmt.Errorf("git diff --cached: %w", err)
 		}
@@ -1604,7 +1611,7 @@ func GetDirtyDiff(
 		// Get unstaged changes (working tree vs index)
 		cmd = newGitCmd(diffArgs("diff")...)
 		cmd.Dir = repoPath
-		unstagedOut, err := cmd.Output()
+		unstagedOut, err := gitOutput(cmd)
 		if err != nil {
 			return "", fmt.Errorf("git diff: %w", err)
 		}
@@ -1631,7 +1638,7 @@ func GetDirtyDiff(
 	cmd = newGitCmd(lsArgs...)
 	cmd.Dir = repoPath
 
-	untrackedOut, err := cmd.Output()
+	untrackedOut, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git ls-files: %w", err)
 	}
@@ -1796,7 +1803,7 @@ func DiffPathsCtx(ctx context.Context, repoPath, gitRef string, pathspec []strin
 	args = append(args, pathspec...)
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git diff paths: %w", err)
 	}
@@ -1931,7 +1938,7 @@ func GetRangeFilesChangedCtx(
 	cmd := newGitCmdContext(ctx, "diff", "--name-only", rangeRef)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --name-only: %w", err)
 	}
@@ -2037,7 +2044,7 @@ func WorktreePathForBranch(repoPath, branch string) (string, bool, error) {
 	defer cancel()
 
 	cmd := newGitCmdContext(ctx, "-C", repoPath, "worktree", "list", "--porcelain")
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", false, fmt.Errorf("git worktree list: %w", err)
 	}
@@ -2124,7 +2131,7 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		"config", "--local", "core.hooksPath", abs,
 	)
 	set.Dir = repoPath
-	if err := set.Run(); err != nil {
+	if _, err := gitOutput(set); err != nil {
 		return fmt.Errorf(
 			"update core.hooksPath to absolute: %w", err,
 		)
@@ -2161,7 +2168,7 @@ func GetHooksPath(repoPath string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--git-path", "hooks")
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf(
 			"git rev-parse --git-path hooks: %w", err,
@@ -2304,7 +2311,7 @@ func GetUpstream(repoPath, ref string) (string, error) {
 	)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		// Exit code 128 covers both "no upstream configured" and "upstream
 		// configured but ref not resolvable" (git varies between versions).
@@ -2522,9 +2529,14 @@ func readGitConfig(repoPath, key string) string {
 func GetMergeBase(repoPath, ref1, ref2 string) (string, error) {
 	cmd := newGitCmd("merge-base", ref1, ref2)
 	cmd.Dir = repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("git merge-base: %w: %s", err, msg)
+		}
 		return "", fmt.Errorf("git merge-base: %w", err)
 	}
 
@@ -2536,7 +2548,7 @@ func CommitCount(repoPath, rev string) (int, error) {
 	cmd := newGitCmd("rev-list", "--count", rev)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return 0, fmt.Errorf("git rev-list --count %s: %w", rev, err)
 	}
@@ -2555,7 +2567,7 @@ func IsRootCommit(repoPath, rev string) (bool, error) {
 	cmd := newGitCmd("cat-file", "commit", rev)
 	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return false, fmt.Errorf("git cat-file commit %s: %w", rev, err)
 	}
@@ -2699,12 +2711,12 @@ func CheckoutBranch(repoPath, branch string) error {
 func ResetWorkingTree(repoPath string) error {
 	// Reset staged changes
 	resetCmd := newGitCmd("-C", repoPath, "reset", "--hard", "HEAD")
-	if err := resetCmd.Run(); err != nil {
+	if _, err := gitOutput(resetCmd); err != nil {
 		return fmt.Errorf("git reset --hard: %w", err)
 	}
 	// Clean untracked files
 	cleanCmd := newGitCmd("-C", repoPath, "clean", "-fd")
-	if err := cleanCmd.Run(); err != nil {
+	if _, err := gitOutput(cleanCmd); err != nil {
 		return fmt.Errorf("git clean: %w", err)
 	}
 	return nil

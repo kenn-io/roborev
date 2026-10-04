@@ -213,6 +213,7 @@ func (db *DB) FindReusableSessionCandidates(
 		  AND COALESCE(j.panel_role, '') = ''
 		  AND j.session_id IS NOT NULL
 		  AND j.session_id <> ''
+		  AND j.session_isolated = 0
 		  AND COALESCE(NULLIF(j.review_type, ''), 'default') = ?
 		  AND COALESCE(j.worktree_path, '') = ?
 		ORDER BY ` + sqliteNormalizedTimestampExpr("COALESCE(j.finished_at, j.updated_at, j.enqueued_at)") + ` DESC, j.id DESC`
@@ -308,6 +309,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND COALESCE(NULLIF(j.job_type, ''), 'review') IN ('review', 'range', 'dirty')
 		  AND j.session_id IS NOT NULL
 		  AND j.session_id <> ''
+		  AND j.session_isolated = 0
 		  AND EXISTS (SELECT 1 FROM reviews rv WHERE rv.job_id = j.id)`
 	args := []any{
 		q.RepoID, q.Branch, q.Source, q.Agent, q.Model, q.Provider,

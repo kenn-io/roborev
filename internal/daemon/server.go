@@ -1100,6 +1100,14 @@ func findCompatibleReusableSession(
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
 ) (string, *uuid.UUID) {
+	// A resumed agent session may retain the caller's cwd. Isolated committed
+	// reviews always start fresh; dirty and CI session policies are unchanged.
+	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange
+	if committedReview && opts.Source != storage.JobSourceCI && opts.CIBaseBranch == "" &&
+		opts.GitRef != "dirty" && opts.DiffContent == "" &&
+		config.ResolveIsolateReviewsFromConfig(repoCfg, globalCfg) {
+		return "", nil
+	}
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||

@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	robogit "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/storage"
 	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
@@ -577,7 +578,7 @@ func dirtyPatchFiles(repoPath string, files []string) ([]string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "diff", "--name-only", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git diff: %w", err)
+		return nil, fmt.Errorf("git diff: %w", procutil.WithStderr(err))
 	}
 	dirty := map[string]bool{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {

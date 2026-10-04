@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   ci_base_branch TEXT,
   session_id TEXT,
   session_resumed INTEGER NOT NULL DEFAULT 0,
+  session_isolated INTEGER NOT NULL DEFAULT 0,
   resume_source_job_uuid TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
@@ -1457,6 +1458,19 @@ func (db *DB) migrate() error {
 				GROUP BY session_id HAVING COUNT(*) > 1
 			)`); err != nil {
 			return fmt.Errorf("mark legacy reused sessions: %w", err)
+		}
+	}
+
+	// Session reuse is local to the machine that ran the attempt. Keep this
+	// marker SQLite-only, like session_resumed, and reset it when claiming a
+	// new attempt. Usage backfill may populate session_id after completion.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_isolated'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check session_isolated column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN session_isolated INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add session_isolated column: %w", err)
 		}
 	}
 

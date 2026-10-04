@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/roborev/internal/procutil"
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
@@ -351,7 +353,7 @@ func antigravityPromptViaFlag(ctx context.Context, command string) bool {
 	configureCapabilityProbe(ctx, cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", err)
+		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", procutil.WithStderr(err))
 		return true
 	}
 	return antigravityVersionUsesPromptFlag(string(out))

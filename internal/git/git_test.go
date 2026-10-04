@@ -3602,3 +3602,15 @@ func TestIsRootCommit_UnknownRev(t *testing.T) {
 	_, err := IsRootCommit(repo.Dir, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 	require.Error(t, err)
 }
+
+func TestGitErrorsIncludeGitStderr(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+
+	_, err := ResolveSHA(repo.Dir, "no-such-ref")
+
+	// git names the bad revision only on stderr; the exit status alone
+	// would read "exit status 128".
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "'no-such-ref'")
+}

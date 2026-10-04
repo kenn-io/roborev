@@ -205,10 +205,9 @@ func (a *ACPAgent) withPlanningMode() *ACPAgent {
 
 func (a *ACPAgent) runPrompt(
 	ctx context.Context, repoPath, prompt string, output io.Writer,
-) (string, error) {
+) (_ string, err error) {
 	// Set timeout context
 	var cancel context.CancelFunc
-	var err error
 	ctx, cancel = context.WithTimeout(ctx, a.Timeout)
 	defer cancel()
 
@@ -222,6 +221,20 @@ func (a *ACPAgent) runPrompt(
 	if isCIReview(ctx) {
 		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), repoPath)
 	}
+
+	// Keep the agent's stderr so a crash or startup failure explains itself
+	// instead of surfacing only as a closed ACP connection. This defer runs
+	// after the cleanup defer below has waited for the process, so the buffer
+	// is complete and no longer being written. WaitDelay stops a descendant
+	// that inherited stderr from holding that wait open.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.WaitDelay = streamingCLIWaitDelay
+	defer func() {
+		if msg := strings.TrimSpace(stderr.String()); err != nil && msg != "" {
+			err = fmt.Errorf("%w\nstderr: %s", err, msg)
+		}
+	}()
 
 	// Set up stdio pipes for communication with the agent
 	var stdinPipe io.WriteCloser

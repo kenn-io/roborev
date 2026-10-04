@@ -52,6 +52,21 @@ type ciConfigurationError struct {
 func (e *ciConfigurationError) Error() string { return e.err.Error() }
 func (e *ciConfigurationError) Unwrap() error { return e.err }
 
+// ciPRHeadError reports that the head commit the GitHub API returned for a PR
+// is not in the local clone. It is a failure of that PR, not of the repository.
+type ciPRHeadError struct {
+	prNumber int
+	headSHA  string
+	err      error
+}
+
+func (e *ciPRHeadError) Error() string {
+	return fmt.Sprintf("PR #%d head commit %s is not available locally: %v",
+		e.prNumber, e.headSHA, e.err)
+}
+
+func (e *ciPRHeadError) Unwrap() error { return e.err }
+
 // ghPRAuthor represents the author of a GitHub pull request.
 type ghPRAuthor struct {
 	Login string `json:"login"`
@@ -98,7 +113,7 @@ type CIPoller struct {
 	listTrustedActorsFn func(context.Context, string) (map[string]struct{}, error)
 	listPRDiscussionFn  func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
 	gitFetchFn          func(context.Context, string, []string) error
-	gitFetchPRHeadFn    func(context.Context, string, int, []string) error
+	gitFetchPRHeadFn    func(context.Context, string, string, []string) error
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (ciRepoConfigSource, error)
@@ -461,11 +476,21 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 		processingErrors = append(processingErrors, err)
 	}
 	p.expireTimedOutPanels(ghRepo, cfg)
+	// A missing head commit belongs to its PR; it must not mark the repository
+	// unhealthy or block the other PRs.
+	unavailableHeads := make(map[ciPollTarget]bool)
 	for _, pr := range prs {
-		if err := p.processPR(ctx, ghRepo, pr, cfg); err != nil {
-			log.Printf("CI poller: error processing %s#%d: %v", ghRepo, pr.Number, err)
-			processingErrors = append(processingErrors, fmt.Errorf("PR #%d: %w", pr.Number, err))
+		err := p.processPR(ctx, ghRepo, pr, cfg)
+		if err == nil {
+			continue
 		}
+		log.Printf("CI poller: error processing %s#%d: %v", ghRepo, pr.Number, err)
+		if _, ok := errors.AsType[*ciPRHeadError](err); ok {
+			p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, err)
+			unavailableHeads[ciPollTarget{repo: ghRepo, prNumber: pr.Number, headSHA: pr.HeadRefOid}] = true
+			continue
+		}
+		processingErrors = append(processingErrors, fmt.Errorf("PR #%d: %w", pr.Number, err))
 	}
 
 	// Crash/stuck reconcile: re-arm any attempt stranded in 'pending' with no live
@@ -491,7 +516,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	// run that just went terminal this poll gets its recovery pass on the next one
 	// (never mid-enqueue); the posting CAS keeps it idempotent with the event path.
 	p.reconcilePanelPosting(ctx, ghRepo)
-	if err := p.reconcileRetryHealth(ghRepo, prs, cfg); err != nil {
+	if err := p.reconcileRetryHealth(ghRepo, prs, cfg, unavailableHeads); err != nil {
 		processingErrors = append(processingErrors, err)
 	}
 	return errors.Join(processingErrors...)
@@ -499,8 +524,12 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 
 // reconcileRetryHealth restores persisted failures after restart and checks
 // failed attempts even after the PR advances to a newer head. Worker events may
-// have completed or removed an attempt since the last poll.
-func (p *CIPoller) reconcileRetryHealth(ghRepo string, prs []ghPR, cfg *config.Config) error {
+// have completed or removed an attempt since the last poll. unavailableHeads
+// holds heads that failed to enqueue during this poll; they have no attempt
+// row yet, so they stay failed until a later poll enqueues or retires them.
+func (p *CIPoller) reconcileRetryHealth(
+	ghRepo string, prs []ghPR, cfg *config.Config, unavailableHeads map[ciPollTarget]bool,
+) error {
 	attempts, err := p.db.GetFailedReviewAttempts(ghRepo)
 	if err != nil {
 		return err
@@ -546,6 +575,10 @@ func (p *CIPoller) reconcileRetryHealth(ghRepo string, prs []ghPR, cfg *config.C
 		}
 	}
 	p.mu.Unlock()
+	for target := range unavailableHeads {
+		failed[target] = true
+		targets[target] = true
+	}
 
 	for target, reported := range targets {
 		if failed[target] {
@@ -667,9 +700,8 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	if err := p.callGitFetch(ctx, ghRepo, repo.RootPath); err != nil {
 		return false, fmt.Errorf("git fetch: %w", err)
 	}
-	if err := p.callGitFetchPRHead(ctx, ghRepo, repo.RootPath, pr.Number); err != nil {
-		// Continue — the head commit may already be reachable from a normal fetch.
-		log.Printf("CI poller: warning: could not fetch PR head for %s#%d: %v", ghRepo, pr.Number, err)
+	if err := p.callGitFetchPRHead(ctx, ghRepo, repo.RootPath, pr.HeadRefOid); err != nil {
+		return false, &ciPRHeadError{prNumber: pr.Number, headSHA: pr.HeadRefOid, err: err}
 	}
 
 	baseRef := "origin/" + pr.BaseRefName
@@ -1614,7 +1646,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git rev-list: %w", err)
+		return nil, fmt.Errorf("git rev-list: %w", procutil.WithStderr(err))
 	}
 	var shas []string
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
@@ -1811,8 +1843,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	)
 	procutil.HideConsole(cfgCmd)
 	cfgCmd.Env = append(os.Environ(), "LC_ALL=C")
-	cfgOut, err := cfgCmd.CombinedOutput()
-	if err != nil {
+	if _, err := cfgCmd.Output(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			code := exitErr.ExitCode()
 			// Exit 1 = key not found in config.
@@ -1823,7 +1854,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 			// repo itself is absent/broken, not on operational
 			// failures like corrupted or unreadable config.
 			if code == 128 {
-				msg := strings.ToLower(string(cfgOut))
+				msg := strings.ToLower(string(exitErr.Stderr))
 				notRepo := strings.Contains(
 					msg, "git repository",
 				)
@@ -1836,7 +1867,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 			}
 		}
 		return false, fmt.Errorf(
-			"check origin for %s: %w", path, err,
+			"check origin for %s: %w", path, procutil.WithStderr(err),
 		)
 	}
 
@@ -1848,7 +1879,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	out, err := urlCmd.Output()
 	if err != nil {
 		return false, fmt.Errorf(
-			"get origin URL for %s: %w", path, err,
+			"get origin URL for %s: %w", path, procutil.WithStderr(err),
 		)
 	}
 	got := ownerRepoFromURLForBase(strings.TrimSpace(string(out)), rawBaseURL)
@@ -1865,7 +1896,7 @@ func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
 	procutil.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("get origin URL for %s: %w", path, err)
+		return fmt.Errorf("get origin URL for %s: %w", path, procutil.WithStderr(err))
 	}
 	current := strings.TrimSpace(string(out))
 	if current == want {
@@ -2167,19 +2198,37 @@ func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
 	return nil
 }
 
-// gitFetchPRHead fetches the head commit for a GitHub PR. This is needed
-// for fork-based PRs where the head commit isn't in the normal fetch refs.
-func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int, env []string) error {
+// gitFetchPRHead makes the PR head commit the GitHub API reported available in
+// the local clone. Fork heads are not in the normal fetch refs, so it fetches
+// the commit by SHA. It does not use pull/<N>/head: GitHub can leave that ref
+// on an older commit for hours after a fork force-push.
+func gitFetchPRHead(ctx context.Context, repoPath, headSHA string, env []string) error {
 	unlock := lockGitMetadata(repoPath)
 	defer unlock()
-	ref := fmt.Sprintf("pull/%d/head", prNumber)
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "origin", ref, "--quiet")
+	if gitHasCommit(ctx, repoPath, headSHA, env) == nil {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet", "origin", headSHA)
 	procutil.HideConsole(cmd)
 	if env != nil {
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, string(out))
+		return fmt.Errorf("git fetch origin %s: %w: %s", headSHA, err, strings.TrimSpace(string(out)))
+	}
+	return gitHasCommit(ctx, repoPath, headSHA, env)
+}
+
+// gitHasCommit reports, with git's diagnostics, whether sha names a commit
+// present in the repository.
+func gitHasCommit(ctx context.Context, repoPath, sha string, env []string) error {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-e", sha+"^{commit}")
+	procutil.HideConsole(cmd)
+	if env != nil {
+		cmd.Env = env
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git cat-file -e %s: %w: %s", sha, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -3382,12 +3431,12 @@ func (p *CIPoller) callGitFetch(ctx context.Context, ghRepo, repoPath string) er
 	return gitFetchCtx(ctx, repoPath, env)
 }
 
-func (p *CIPoller) callGitFetchPRHead(ctx context.Context, ghRepo, repoPath string, prNumber int) error {
+func (p *CIPoller) callGitFetchPRHead(ctx context.Context, ghRepo, repoPath, headSHA string) error {
 	env := p.gitEnvForRepo(ghRepo)
 	if p.gitFetchPRHeadFn != nil {
-		return p.gitFetchPRHeadFn(ctx, repoPath, prNumber, env)
+		return p.gitFetchPRHeadFn(ctx, repoPath, headSHA, env)
 	}
-	return gitFetchPRHead(ctx, repoPath, prNumber, env)
+	return gitFetchPRHead(ctx, repoPath, headSHA, env)
 }
 
 func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, error) {

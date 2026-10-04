@@ -75,16 +75,17 @@ type HistoricalReviewContext struct {
 
 // Builder constructs review prompts
 type Builder struct {
-	db            *storage.DB
-	globalCfg     *config.Config // optional global config for exclude patterns
-	repoCfg       *config.RepoConfig
-	repoCfgSet    bool
-	repoCfgRef    string
-	planSkillRoot string
-	ctx           context.Context
-	repoPath      string
-	repoID        int64
-	kataClient    kata.Client
+	db             *storage.DB
+	globalCfg      *config.Config // optional global config for exclude patterns
+	repoCfg        *config.RepoConfig
+	repoCfgSet     bool
+	repoCfgRef     string
+	ctx            context.Context
+	repoPath       string
+	configRepoPath string
+	planSkillRoot  string
+	repoID         int64
+	kataClient     kata.Client
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
@@ -131,8 +132,24 @@ func (b *Builder) WithContext(ctx context.Context) *Builder {
 func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 	next := *b
 	next.repoPath = repoPath
+	next.configRepoPath = repoPath
 	next.repoID = repoID
 	return &next
+}
+
+// WithConfigRepoPath resolves repo-local review policy and configuration
+// from configRepoPath while keeping Git reads scoped to the ForRepo checkout.
+func (b *Builder) WithConfigRepoPath(configRepoPath string) *Builder {
+	next := *b
+	next.configRepoPath = configRepoPath
+	return &next
+}
+
+func (b *Builder) resolvedConfigRepoPath() string {
+	if b.configRepoPath != "" {
+		return b.configRepoPath
+	}
+	return b.repoPath
 }
 
 // WithStructuredOutput returns a builder that tells built-in review prompts
@@ -177,7 +194,7 @@ func (b *Builder) WithRepoConfig(
 
 // resolveMaxPromptSize returns the effective prompt budget from config.
 func (b *Builder) resolveMaxPromptSize() int {
-	return config.ResolveMaxPromptSize(b.repoPath, b.globalCfg)
+	return config.ResolveMaxPromptSize(b.resolvedConfigRepoPath(), b.globalCfg)
 }
 
 // resolveExcludes returns the merged exclude patterns for a repo.
@@ -187,7 +204,7 @@ func (b *Builder) resolveExcludes(
 	reviewType string,
 ) []string {
 	return config.ResolveExcludePatterns(
-		b.context(), b.repoPath, b.globalCfg, reviewType,
+		b.context(), b.resolvedConfigRepoPath(), b.globalCfg, reviewType,
 	)
 }
 
@@ -328,7 +345,7 @@ func (b *Builder) resolveSnapshotTarget(target SnapshotTarget) (string, string, 
 	}
 	configRepoPath := target.ConfigRepoPath
 	if configRepoPath == "" {
-		configRepoPath = repoPath
+		configRepoPath = b.resolvedConfigRepoPath()
 	}
 	configuredRoot, err := config.ResolveSnapshotDir(configRepoPath)
 	if err != nil {
@@ -462,11 +479,14 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 	if olderThan <= 0 {
 		olderThan = DefaultStaleSnapshotAge
 	}
-	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
+	repoPath, snapshotRoot, err := b.resolveSnapshotTarget(SnapshotTarget{
+		RepoPath:       b.repoPath,
+		ConfigRepoPath: b.resolvedConfigRepoPath(),
+	})
 	if err != nil {
-		return fmt.Errorf("resolve snapshot dir: %w", err)
+		return err
 	}
-	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
+	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(snapshotRoot)
@@ -501,7 +521,7 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 			errs = append(errs, fmt.Errorf("stat snapshot marker %s: %w", path, err))
 			continue
 		}
-		hasTrackedFiles, err := git.HasTrackedFilesUnder(b.repoPath, path)
+		hasTrackedFiles, err := git.HasTrackedFilesUnder(repoPath, path)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("check tracked files under snapshot dir %s: %w", path, err))
 			continue
@@ -570,7 +590,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
 
 	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
-		LoadGuidelinesLocal(b.repoPath, b.globalCfg),
+		LoadGuidelinesLocal(b.resolvedConfigRepoPath(), b.globalCfg),
 	)
 
 	// Uncommitted changes have no commit messages, so "current" mode has no
@@ -856,7 +876,7 @@ func selectRichestRangePromptView(limit int, view TemplateContext, variants []di
 
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext))
 	if err != nil {
 		return "", err
 	}
@@ -916,7 +936,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext))
 	if err != nil {
 		return "", err
 	}
@@ -1065,7 +1085,7 @@ func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, e
 	if b.kataClient == nil {
 		return nil, nil
 	}
-	kc := config.ResolveKataContext(b.repoPath, b.globalCfg)
+	kc := config.ResolveKataContext(b.resolvedConfigRepoPath(), b.globalCfg)
 	if kc.Mode == config.KataModeOff {
 		return nil, nil
 	}
@@ -1074,7 +1094,7 @@ func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, e
 		return nil, fmt.Errorf("resolve kata context: %w", err)
 	}
 	for _, err := range res.Errs {
-		log.Printf("kata context (repo %s, mode %s): %v", b.repoPath, kc.Mode, err)
+		log.Printf("kata context (repo %s, mode %s): %v", b.resolvedConfigRepoPath(), kc.Mode, err)
 	}
 	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode), nil
 }
@@ -1384,7 +1404,7 @@ func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []
 	}
 
 	view.ProjectGuidelines = buildProjectGuidelinesSectionView(
-		LoadGuidelinesLocal(b.repoPath, b.globalCfg),
+		LoadGuidelinesLocal(b.resolvedConfigRepoPath(), b.globalCfg),
 	)
 
 	if len(previousAttempts) > 0 {

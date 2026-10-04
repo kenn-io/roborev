@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func newCIHealthHarness(t *testing.T) (*ciPollerHarness, *Server) {
@@ -1010,4 +1014,81 @@ func TestHealthCIPollerStopped(t *testing.T) {
 	assert.Contains(t, health.Components, storage.ComponentHealth{
 		Name: "ci", Healthy: false, Message: "not running",
 	})
+}
+
+// A fork force-push can leave GitHub's refs/pull/<N>/head on the old commit
+// while the API reports the new one. The poller must review the API head.
+func TestHealthCIPollerForkHeadWithStalePullRef(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		headPublished bool
+	}{
+		{name: "head fetchable by SHA", headPublished: true},
+		{name: "head unavailable", headPublished: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h, server := newCIHealthHarness(t)
+			h.Cfg.CI.Repos = []string{"acme/api"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
+
+			upstream := testutil.NewBareTestRepo(t)
+			fork := testutil.NewBareTestRepo(t)
+			dev := testutil.NewTestRepoWithCommit(t)
+			base := dev.HeadSHA()
+			dev.Run("push", "--quiet", upstream.Root, "HEAD:refs/heads/main")
+			dev.Run("push", "--quiet", fork.Root, "HEAD:refs/heads/main")
+			dev.CheckoutNewBranch("feature")
+			oldHead := dev.CommitFile("feature.txt", "first try\n", "feature: first try")
+			dev.Run("push", "--quiet", fork.Root, "HEAD:refs/heads/feature")
+			dev.Run("push", "--quiet", upstream.Root, "HEAD:refs/pull/7/head")
+			dev.CheckoutNewBranch("rewrite", base)
+			newHead := dev.CommitFile("feature.txt", "second try\n", "feature: second try")
+			if tc.headPublished {
+				dev.Run("push", "--quiet", "--force", fork.Root, "HEAD:refs/heads/feature")
+			}
+			// GitHub serves fork objects from the upstream repository, but the
+			// pull ref still names the commit from before the force-push.
+			require.NoError(t, os.WriteFile(
+				filepath.Join(upstream.Root, "objects", "info", "alternates"),
+				[]byte(filepath.Join(fork.Root, "objects")+"\n"), 0o644))
+			dev.Run("clone", "--quiet", "--no-local", upstream.Root, h.RepoPath)
+			require.Equal(t, oldHead,
+				strings.Fields(dev.Run("ls-remote", upstream.Root, "refs/pull/7/head"))[0])
+
+			pr := ghPR{Number: 7, HeadRefOid: newHead, HeadRefName: "feature", BaseRefName: "main"}
+			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+				return []ghPR{pr}, nil
+			}
+
+			for range 2 {
+				h.Poller.poll(context.Background())
+			}
+			health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+
+			if tc.headPublished {
+				assert.True(health.Healthy)
+				panel, err := h.DB.GetCIPanelByPRSHA("acme/api", pr.Number, newHead)
+				require.NoError(t, err)
+				members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+				require.NoError(t, err)
+				require.NotEmpty(t, members)
+				for _, m := range members {
+					assert.Equal(base+".."+newHead, m.GitRef)
+				}
+				return
+			}
+
+			// The missing head fails its PR, not the repository, and stays
+			// failed across polls until the commit can be fetched.
+			assert.False(health.Healthy)
+			assert.Contains(health.Components, storage.ComponentHealth{
+				Name: "ci", Healthy: false, Message: "review failed for acme/api#7",
+			})
+			err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
+			assert.ErrorContains(err, "PR #7 head commit "+newHead+" is not available locally")
+		})
+	}
 }
