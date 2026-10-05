@@ -1893,12 +1893,14 @@ func findOpenFailedReviewIDs(
 		if !countsAsFailedReview(job) {
 			continue
 		}
+		if job.Verdict == nil || !strings.EqualFold(*job.Verdict, "F") {
+			continue
+		}
+		// The reachability check can run git, so only failing reviews reach it.
 		if !failedReviewCountsForHead(branch, head, job, lineageMatches) {
 			continue
 		}
-		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
-			ids[job.ID] = struct{}{}
-		}
+		ids[job.ID] = struct{}{}
 	}
 	return ids, true
 }

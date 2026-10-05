@@ -344,6 +344,30 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	assert.LessOrEqual(gitCalls(), 5, "detached HEAD reachability should be computed once instead of spawning git per review")
 }
 
+func TestCountOpenFailedReviewsSkipsReachabilityForPassingReviews(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+
+	closed := false
+	verdict := "P"
+	jobs := make([]storage.ReviewJob, 0, 25)
+	for i := range 25 {
+		ref := repo.CommitFile(fmt.Sprintf("file-%02d.txt", i), "content\n", "commit")
+		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref[:12]})
+	}
+	repo.CheckoutDetached()
+	head := repo.HeadSHA()
+	gitCalls := countGitProcesses(t)
+
+	count, ok := countOpenFailedReviews(
+		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
+	)
+
+	assert.True(ok)
+	assert.Equal(0, count)
+	assert.Equal(0, gitCalls(), "passing reviews should not start git for the reachability check")
+}
+
 // countGitProcesses puts a counting git wrapper first on PATH for the rest of
 // the test and returns a function that reports how many git processes started.
 func countGitProcesses(t *testing.T) func() int {
@@ -351,6 +375,7 @@ func countGitProcesses(t *testing.T) func() int {
 	gitPath, err := exec.LookPath("git")
 	require.NoError(t, err)
 	countPath := filepath.Join(t.TempDir(), "git-count")
+	require.NoError(t, os.WriteFile(countPath, nil, 0o600))
 	wrapperDir := t.TempDir()
 	wrapperPath := filepath.Join(wrapperDir, "git")
 	shellQuote := func(path string) string {
