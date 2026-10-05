@@ -1,4 +1,5 @@
 minimum_prek_version = "0.3.6"
+default_install_hook_types = ["pre-commit", "pre-push"]
 
 [[repos]]
 repo = "local"
@@ -9,6 +10,7 @@ name = "git test isolation"
 language = "system"
 entry = "make test-git-isolation"
 pass_filenames = false
+stages = ["pre-push"]
 always_run = true
 
 [[repos.hooks]]
@@ -17,6 +19,7 @@ name = "golangci-lint"
 language = "system"
 entry = "make lint-ci"
 pass_filenames = false
+stages = ["pre-push"]
 always_run = true
 
 [[repos.hooks]]
@@ -25,6 +28,7 @@ name = "markdown format"
 language = "system"
 entry = "make markdown-ci"
 pass_filenames = false
+stages = ["pre-push"]
 always_run = true
 
 [[repos.hooks]]
@@ -50,6 +54,7 @@ language = "system"
 entry = "bun run web:check"
 files = "^(package\\.json|bun\\.lock|web/|packages/roborev-ui/)"
 pass_filenames = false
+stages = ["pre-push"]
 
 [[repos.hooks]]
 id = "web-test"
@@ -58,3 +63,4 @@ language = "system"
 entry = "bun run web:test"
 files = "^(package\\.json|bun\\.lock|web/|packages/roborev-ui/)"
 pass_filenames = false
+stages = ["pre-push"]
