@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pathresolve"
 )
 
@@ -243,7 +244,7 @@ func writeSettingsJSON(path string, doc map[string]any) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, target); err != nil {
+	if err := atomicfile.Replace(tmpPath, target); err != nil {
 		return err
 	}
 	cleanup = false

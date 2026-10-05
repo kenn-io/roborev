@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/atomicfile"
 
 	"go.kenn.io/roborev/internal/git"
 )
@@ -185,7 +186,7 @@ func savePostCommitBatchState(path string, state postCommitBatchState) error {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return fmt.Errorf("secure state: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := atomicfile.Replace(tmpPath, path); err != nil {
 		return fmt.Errorf("replace state: %w", err)
 	}
 	return nil

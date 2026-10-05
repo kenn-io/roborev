@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pathresolve"
 )
 
@@ -133,7 +134,7 @@ func writeTextFileAtomically(path string, content []byte) error {
 		return err
 	}
 
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := atomicfile.Replace(tempPath, path); err != nil {
 		return err
 	}
 	removeTemp = false

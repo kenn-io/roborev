@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"go.kenn.io/kit/atomicfile"
 	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
 
@@ -134,7 +135,7 @@ func (s *StateStore) saveLocked() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close agent hook state temp: %w", err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := atomicfile.Replace(tmpPath, s.path); err != nil {
 		return fmt.Errorf("replace agent hook state: %w", err)
 	}
 	ok = true
