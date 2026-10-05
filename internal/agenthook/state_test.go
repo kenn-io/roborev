@@ -368,6 +368,40 @@ func TestCountOpenFailedReviewsSkipsReachabilityForPassingReviews(t *testing.T) 
 	assert.Equal(0, gitCalls(), "passing reviews should not start git for the reachability check")
 }
 
+func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	base := repo.CommitFile("base.txt", "base\n", "base")
+	repo.Run("tag", "-a", "reachable", "-m", "reachable")
+	reachableTag := repo.Run("rev-parse", "reachable")
+	mainBranch := repo.Run("branch", "--show-current")
+	repo.CheckoutNewBranch("side")
+	repo.CommitFile("side.txt", "side\n", "side")
+	repo.Run("tag", "-a", "unrelated", "-m", "unrelated")
+	unrelatedTag := repo.Run("rev-parse", "unrelated")
+	repo.Run("checkout", mainBranch)
+	repo.CommitFile("main.txt", "main\n", "main")
+	repo.CheckoutDetached()
+
+	closed := false
+	verdict := "F"
+	job := func(id int64, ref string) storage.ReviewJob {
+		return storage.ReviewJob{ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref}
+	}
+	ids, ok := findOpenFailedReviewIDs(
+		context.Background(),
+		reviewSourceWithJobs(
+			job(1, reachableTag),
+			job(2, base+".."+reachableTag),
+			job(3, unrelatedTag),
+		),
+		repo.Path(), "", repo.HeadSHA(),
+	)
+
+	assert.True(ok)
+	assert.Equal(reviewIDSet{1: {}, 2: {}}, ids, "reviews of reachable annotated tags count; unrelated tags do not")
+}
+
 // countGitProcesses puts a counting git wrapper first on PATH for the rest of
 // the test and returns a function that reports how many git processes started.
 func countGitProcesses(t *testing.T) func() int {

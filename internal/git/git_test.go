@@ -2949,6 +2949,32 @@ func TestRefMatchesBranchLineage(t *testing.T) {
 		assert.True(t, matcher.Matches(previousFeatureSHA[:12]+"..HEAD"))
 	})
 
+	t.Run("head ancestry resolves annotated tags in one batch", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("base.txt", "base", "base commit")
+		baseSHA := repo.HeadSHA()
+		repo.Run("tag", "-a", "reachable", "-m", "reachable")
+		reachableTag := repo.Run("rev-parse", "reachable")
+		repo.Run("checkout", "-b", "side")
+		repo.CommitFile("side.txt", "side", "side commit")
+		sideSHA := repo.HeadSHA()
+		repo.Run("checkout", "-")
+		repo.CommitFile("main.txt", "main", "main commit")
+		headSHA := repo.HeadSHA()
+
+		matcher, err := NewHeadAncestryMatcherCtx(context.Background(), repo.Dir, headSHA)
+		require.NoError(t, err)
+		refs := []string{reachableTag, baseSHA + ".." + reachableTag, baseSHA[:12], sideSHA, "no-such-ref"}
+		require.NoError(t, matcher.ResolveRefs(context.Background(), refs))
+
+		assert.True(t, matcher.Matches(headSHA))
+		assert.True(t, matcher.Matches(reachableTag))
+		assert.True(t, matcher.Matches(baseSHA+".."+reachableTag))
+		assert.True(t, matcher.Matches(baseSHA[:12]))
+		assert.False(t, matcher.Matches(sideSHA))
+		assert.False(t, matcher.Matches("no-such-ref"))
+	})
+
 	t.Run("missing default branch fails closed", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/trunk")

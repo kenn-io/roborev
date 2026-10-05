@@ -1869,20 +1869,7 @@ func findOpenFailedReviewIDs(
 	if !ok {
 		return nil, false
 	}
-	var lineageMatcher *roborevgit.BranchLineageMatcher
-	lineageMatcherLoaded := false
-	lineageMatches := func(ref string) bool {
-		if !lineageMatcherLoaded {
-			lineageMatcherLoaded = true
-			if branch == "" {
-				lineageMatcher, _ = roborevgit.NewHeadAncestryMatcherCtx(ctx, repoRoot, head)
-			} else {
-				lineageMatcher, _ = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
-			}
-		}
-		return lineageMatcher != nil && lineageMatcher.Matches(ref)
-	}
-	ids := make(reviewIDSet, len(jobs))
+	failed := make([]storage.ReviewJob, 0, len(jobs))
 	for _, job := range jobs {
 		if job.Status != "" && job.Status != storage.JobStatusDone {
 			continue
@@ -1896,13 +1883,52 @@ func findOpenFailedReviewIDs(
 		if job.Verdict == nil || !strings.EqualFold(*job.Verdict, "F") {
 			continue
 		}
-		// The reachability check can run git, so only failing reviews reach it.
-		if !failedReviewCountsForHead(branch, head, job, lineageMatches) {
-			continue
+		failed = append(failed, job)
+	}
+	var lineageMatcher *roborevgit.BranchLineageMatcher
+	lineageMatcherLoaded := false
+	lineageMatches := func(ref string) bool {
+		if !lineageMatcherLoaded {
+			lineageMatcherLoaded = true
+			lineageMatcher = loadFailedReviewMatcher(ctx, repoRoot, branch, head, failed)
 		}
-		ids[job.ID] = struct{}{}
+		return lineageMatcher != nil && lineageMatcher.Matches(ref)
+	}
+	ids := make(reviewIDSet, len(failed))
+	for _, job := range failed {
+		if failedReviewCountsForHead(branch, head, job, lineageMatches) {
+			ids[job.ID] = struct{}{}
+		}
 	}
 	return ids, true
+}
+
+// loadFailedReviewMatcher builds the commit set for the current checkout and
+// resolves every failed review ref against it with one more git process. It
+// returns nil when either step fails, so no ref matches.
+func loadFailedReviewMatcher(
+	ctx context.Context,
+	repoRoot, branch, head string,
+	failed []storage.ReviewJob,
+) *roborevgit.BranchLineageMatcher {
+	var matcher *roborevgit.BranchLineageMatcher
+	var err error
+	if branch == "" {
+		matcher, err = roborevgit.NewHeadAncestryMatcherCtx(ctx, repoRoot, head)
+	} else {
+		matcher, err = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
+	}
+	if err != nil {
+		return nil
+	}
+	refs := make([]string, 0, len(failed))
+	for _, job := range failed {
+		refs = append(refs, job.GitRef)
+	}
+	if err := matcher.ResolveRefs(ctx, refs); err != nil {
+		return nil
+	}
+	return matcher
 }
 
 // failedReviewCountsForHead reports whether an open failed review returned by
