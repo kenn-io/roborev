@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/atomicfile"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -62,7 +64,7 @@ func WriteTUIRuntime(info TUIRuntimeInfo) error {
 		return err
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := atomicfile.Replace(tmpPath, path); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {

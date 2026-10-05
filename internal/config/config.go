@@ -21,6 +21,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
+	"go.kenn.io/kit/atomicfile"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agentname"
@@ -2240,7 +2241,7 @@ func SaveGlobalTo(path string, cfg *Config) error {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return atomicfile.Replace(tmpPath, path)
 }
 
 // defaultHooksExample is appended (commented) only when creating the global
@@ -2294,7 +2295,7 @@ func WriteDefaultGlobalConfigTo(path string, cfg *Config) error {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return atomicfile.Replace(tmpPath, path)
 }
 
 // SaveRepoConfigTo saves a per-repo configuration to a specific path.
@@ -2345,7 +2346,7 @@ func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys
 	if err := os.Chmod(tmpPath, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return atomicfile.Replace(tmpPath, path)
 }
 
 func filterUnintendedZeroRepoConfigKeys(
