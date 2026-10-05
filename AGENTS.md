@@ -183,11 +183,11 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 - On Windows, repo-wide and daemon/CLI package tests can take several minutes.
   Use command wrapper timeouts of at least 10 minutes for `go test ./...` and
   at least 5 minutes for `go test ./internal/daemon` or `go test ./cmd/roborev`.
-- Pre-commit hooks in this repo are managed with `prek`; run `prek install` after cloning or `make install-hooks` as a wrapper.
-- The local pre-commit hook is a `prek` system hook that runs the non-mutating `make lint-ci` target with `always_run`, so it executes on every commit without rewriting files.
-- Format Zensical Markdown sources with `make markdown`; prose wraps at 80 columns while tables remain unchanged. The non-mutating `make markdown-ci` check runs in `prek` and CI.
-- Use `prek run --all-files` to execute the hooks manually. Run `make lint` only when you explicitly want golangci-lint to apply fixes.
-- Useful build/lint checks: `go build ./...`, `make lint`, `make lint-ci`, `prek run --all-files`
+- Git hooks in this repo are managed with `prek`; run `prek install` after cloning or `make install-hooks` as a wrapper. It installs pre-commit and pre-push hooks.
+- Whole-repo checks (`make lint-ci`, `make test-git-isolation`, `make markdown-ci`, `bun run web:check`, `bun run web:test`) run as pre-push hooks, so commits stay fast. Pre-commit runs only the file-scoped Renovate and Actions checks.
+- Format Zensical Markdown sources with `make markdown`; prose wraps at 80 columns while tables remain unchanged. The non-mutating `make markdown-ci` check runs in the `prek` pre-push hook and CI.
+- Use `prek run --all-files --hook-stage pre-push` to execute the push hooks manually. Run `make lint` only when you explicitly want golangci-lint to apply fixes.
+- Useful build/lint checks: `go build ./...`, `make lint`, `make lint-ci`, `prek run --all-files --hook-stage pre-push`
 
 Test conventions:
 
@@ -204,7 +204,7 @@ Test conventions:
 - In tests with more than three assertions, prefer `assert := assert.New(t)` to make grouped assertions cleaner.
 - Test packages that run git or use git repo helpers from `internal/testutil`
   must define `TestMain` and call `testenv.RunIsolatedMain`; the
-  `test-git-isolation` pre-commit hook enforces this.
+  `test-git-isolation` pre-push hook enforces this.
 - `assert.True*` / `require.True*` / `assert.False*` / `require.False*` should only be used for actual boolean values (fields, return values); never use them as comparisons (e.g., `assert.True(t, x == y)` should be `assert.Equal(t, y, x)`).
 - Do not use `assert.Fail`/`require.Fail` in tests.
 - Prefer `assert.Equal` for explicit expectations.

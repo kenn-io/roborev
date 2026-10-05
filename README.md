@@ -186,18 +186,19 @@ or build with `make install` for the embedded browser application.
 
 ## Developer Setup
 
-This repo uses [`prek`](https://prek.j178.dev/) for local pre-commit checks.
-The hooks are local system hooks. They run a fast Git-test isolation guard,
-`make lint-ci` for non-mutating Go lint, and `make markdown-ci` for non-mutating
-Zensical Markdown formatting checks. These hooks use `always_run = true`, so
-they run on every commit. The Renovate config validator runs when
-`renovate.json` changes.
+This repo uses [`prek`](https://prek.j178.dev/) for local Git hooks. Commits
+run only the Renovate config validator and actionlint, and only when
+`renovate.json` or a workflow file changes. The whole-repo checks run on push:
+a Git-test isolation guard, `make lint-ci` for non-mutating Go lint,
+`make markdown-ci` for Zensical Markdown formatting, and the web check and test
+scripts when web files change. If you installed the hooks before, rerun
+`prek install` to add the pre-push hook.
 
 ```bash
 brew install prek uv  # or use your preferred install method
 mise use --global npm:renovate@latest
-prek install          # install the local git hook
-prek run --all-files  # run the configured checks manually
+prek install          # install the pre-commit and pre-push hooks
+prek run --all-files --hook-stage pre-push  # run the push checks manually
 ```
 
 Use `make lint` when you explicitly want golangci-lint to apply fixes. Use

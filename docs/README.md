@@ -99,7 +99,8 @@ make markdown
 ```
 
 The formatter wraps prose at 80 columns and leaves Markdown tables unchanged.
-Use `make markdown-ci` for the non-mutating check run by `prek` and CI.
+Use `make markdown-ci` for the non-mutating check run by the `prek` pre-push
+hook and CI.
 
 `make docs-check` hydrates assets, runs a strict Zensical build, checks generated
 links/assets/metadata, verifies public Markdown source files, and validates

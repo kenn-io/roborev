@@ -290,7 +290,7 @@ check-actions:
 	fi
 	actionlint
 
-# Install pre-commit hooks via prek.
+# Install pre-commit and pre-push hooks via prek.
 install-hooks:
 	@if ! command -v prek >/dev/null 2>&1; then \
 		echo "prek not found. Install with: brew install prek" >&2; \
