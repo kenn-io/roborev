@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -45,7 +46,9 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	authKey                 string // Immutable startup credential.
+	authKey                 string                 // Immutable startup credential.
+	daemonTLS               config.DaemonTLSConfig // Immutable startup TLS settings.
+	tcpTLS                  bool                   // The TCP API listener requires mutual TLS.
 	db                      *storage.DB
 	configWatcher           *ConfigWatcher
 	broadcaster             Broadcaster
@@ -190,6 +193,7 @@ func newServerWithLogs(
 	s := &Server{
 		authKey:            cfg.AuthKey,
 		goalGate:           newGoalGate(),
+		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,
@@ -249,6 +253,14 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
+	listenerTLS, err := s.listenerTLSConfig(ep)
+	if err != nil {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return err
+	}
+
 	// Clean up any zombie daemons first (there can be only one)
 	if cleaned := CleanupZombieDaemons(ep); cleaned > 0 {
 		log.Printf("Cleaned up %d zombie daemon(s)", cleaned)
@@ -270,7 +282,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Check if a responsive daemon is still running after cleanup.
 	info, discoveryErr := getAnyRunningDaemonContext(ctx, func(ctx context.Context, endpoint DaemonEndpoint) (*PingInfo, error) {
-		return probeRuntimeRecordWithKey(ctx, endpoint, s.authKey)
+		return probeRuntimeRecordWithAuth(ctx, endpoint, s.startupAuth())
 	})
 	if IsDaemonAccessError(discoveryErr) {
 		if listener != nil {
@@ -344,10 +356,15 @@ func (s *Server) Start(ctx context.Context) error {
 	s.endpoint = ep
 	s.endpointMu.Unlock()
 
+	serveListener := listener
+	if listenerTLS != nil {
+		serveListener = tls.NewListener(listener, listenerTLS)
+		s.tcpTLS = true
+	}
 	serveErrCh := make(chan error, 1)
 	log.Printf("Starting HTTP server on %s", ep)
 	go func() {
-		serveErrCh <- s.httpServer.Serve(listener)
+		serveErrCh <- s.httpServer.Serve(serveListener)
 	}()
 
 	if err := cleanupStaleCIWorktrees(ctx); err != nil {
@@ -358,7 +375,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.workerPool.Start()
 	s.startSearch(ctx)
 
-	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.authKey)
+	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.startupAuth())
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -389,7 +406,7 @@ func (s *Server) Start(ctx context.Context) error {
 				auxServeErrCh <- s.httpServer.Serve(auxListener)
 			}()
 			auxReady, auxExited, readyErr := waitForServerReady(
-				ctx, *candidate, 2*time.Second, auxServeErrCh, s.authKey,
+				ctx, *candidate, 2*time.Second, auxServeErrCh, s.startupAuth(),
 			)
 			if readyErr != nil || !auxReady {
 				_ = auxListener.Close()
@@ -523,7 +540,7 @@ func (s *Server) stopPanelSweep() {
 	}
 }
 
-func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error, startupKey string) (bool, bool, error) {
+func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error, startup config.ClientAuth) (bool, bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -542,7 +559,7 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 			return false, true, err
 		default:
 		}
-		client := ep.HTTPClientWithAuthKey(200*time.Millisecond, startupKey)
+		client := ep.readinessHTTPClient(200*time.Millisecond, startup)
 		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client); err == nil {
 			return true, false, nil
 		} else {
@@ -3849,18 +3866,43 @@ func (s *Server) humaPing(
 		Service: daemonServiceName,
 		Version: version.Version,
 		PID:     os.Getpid(),
-		MCPURL:  mcpURLForEndpoint(s.mcpEnabled, ep),
+		MCPURL:  mcpURLForEndpoint(s.mcpEnabled, ep, s.tcpTLS),
 	}}, nil
 }
 
 // mcpURLForEndpoint returns the advertised streamable HTTP MCP endpoint.
 // It is empty when MCP is disabled or the API listener is not TCP, since
 // MCP clients cannot dial a Unix socket URL.
-func mcpURLForEndpoint(enabled bool, ep DaemonEndpoint) string {
+func mcpURLForEndpoint(enabled bool, ep DaemonEndpoint, mutualTLS bool) string {
 	if !enabled || ep.Network != "tcp" || ep.Address == "" {
 		return ""
 	}
+	if mutualTLS {
+		return "https://" + ep.Address + mcpserver.HTTPPath
+	}
 	return ep.BaseURL() + mcpserver.HTTPPath
+}
+
+// startupAuth is the credential and TLS settings this daemon started with.
+func (s *Server) startupAuth() config.ClientAuth {
+	return config.ClientAuth{Key: s.authKey, TLS: s.daemonTLS}
+}
+
+// listenerTLSConfig returns mutual TLS settings for a TCP API listener, or
+// nil when the listener serves plain HTTP. Without Unix sockets, clients
+// would refuse to send auth_key, so an authenticated daemon needs mutual TLS
+// or the explicit insecure opt-in.
+func (s *Server) listenerTLSConfig(ep DaemonEndpoint) (*tls.Config, error) {
+	if ep.IsUnix() {
+		return nil, nil
+	}
+	if s.daemonTLS.Enabled() {
+		return serverTLSConfig(s.daemonTLS)
+	}
+	if s.authKey != "" && !s.daemonTLS.Insecure && !unixSocketsSupported {
+		return nil, errors.New("auth_key on a TCP listener without Unix sockets requires [daemon_tls] or daemon_tls.insecure = true")
+	}
+	return nil, nil
 }
 
 // humaShutdown requests a graceful daemon shutdown. This is the only

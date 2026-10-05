@@ -167,6 +167,52 @@ type WebConfig struct {
 	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }
 
+// DaemonTLSConfig enables mutual TLS on the daemon's TCP API listener with
+// operator-supplied certificates. Clients send auth_key over TCP only when
+// mutual TLS is configured or Insecure is set; the Unix socket needs neither.
+type DaemonTLSConfig struct {
+	CAFile         string `toml:"ca_file" comment:"Absolute path to the CA certificate that signs the daemon and client certificates. Setting it enables mutual TLS on the daemon's TCP listener. Requires daemon restart."`
+	CertFile       string `toml:"cert_file" comment:"Absolute path to the daemon's TLS server certificate."`
+	KeyFile        string `toml:"key_file" comment:"Absolute path to the daemon's TLS server private key."`
+	ClientCertFile string `toml:"client_cert_file" comment:"Absolute path to the client certificate roborev commands present to the daemon."`
+	ClientKeyFile  string `toml:"client_key_file" comment:"Absolute path to the private key for client_cert_file."`
+	Insecure       bool   `toml:"insecure" comment:"Send auth_key over plaintext TCP when mutual TLS is not configured. Another local account can impersonate the daemon and capture the key."`
+}
+
+// Enabled reports whether mutual TLS is configured.
+func (c DaemonTLSConfig) Enabled() bool {
+	return c.CAFile != ""
+}
+
+// Validate rejects partial mutual TLS settings. The daemon checks cert_file
+// and key_file when it starts, because a client-only config omits them.
+func (c DaemonTLSConfig) Validate() error {
+	for _, file := range []struct{ key, path string }{
+		{"ca_file", c.CAFile},
+		{"cert_file", c.CertFile},
+		{"key_file", c.KeyFile},
+		{"client_cert_file", c.ClientCertFile},
+		{"client_key_file", c.ClientKeyFile},
+	} {
+		if file.path != "" && !filepath.IsAbs(file.path) {
+			return fmt.Errorf("daemon_tls.%s must be an absolute path", file.key)
+		}
+	}
+	if !c.Enabled() {
+		if c.CertFile != "" || c.KeyFile != "" || c.ClientCertFile != "" || c.ClientKeyFile != "" {
+			return errors.New("daemon_tls.ca_file is required when certificate files are set")
+		}
+		return nil
+	}
+	if c.ClientCertFile == "" || c.ClientKeyFile == "" {
+		return errors.New("daemon_tls.client_cert_file and client_key_file are required with ca_file")
+	}
+	if (c.CertFile == "") != (c.KeyFile == "") {
+		return errors.New("daemon_tls.cert_file and key_file must be set together")
+	}
+	return nil
+}
+
 // MCPConfig controls the Model Context Protocol endpoint served by
 // the daemon.
 type MCPConfig struct {
@@ -195,6 +241,7 @@ type Config struct {
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
 	Remote                     RemoteConfig                    `toml:"remote"`
 	RemoteClient               RemoteClientConfig              `toml:"remote_client"`
+	DaemonTLS                  DaemonTLSConfig                 `toml:"daemon_tls"`
 	ServerAddr                 string                          `toml:"server_addr"`
 	MaxWorkers                 int                             `toml:"max_workers"`
 	ReviewContextCount         int                             `toml:"review_context_count"`
@@ -567,6 +614,9 @@ func walkAgentReferences(value reflect.Value, path string, visit func(path, name
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if global, ok := cfg.(*Config); ok {
 		if err := ValidateAuthKey(global.AuthKey); err != nil {
+			return err
+		}
+		if err := global.DaemonTLS.Validate(); err != nil {
 			return err
 		}
 		if err := global.Budget.Validate(); err != nil {

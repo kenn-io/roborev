@@ -14,6 +14,10 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+// unixSocketsSupported reports whether the daemon can serve its private
+// Unix socket next to a TCP listener.
+const unixSocketsSupported = true
+
 func listenUnixEndpoint(ep DaemonEndpoint) (net.Listener, error) {
 	socketDir := filepath.Dir(ep.Address)
 	if err := os.MkdirAll(socketDir, 0o700); err != nil {

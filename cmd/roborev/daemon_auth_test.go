@@ -23,6 +23,14 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 )
 
+// writeTCPAuthConfig opts into sending auth_key over the plain TCP test
+// servers that key-handling tests use. The transport rule has its own tests.
+func writeTCPAuthConfig(t *testing.T, key string) {
+	t.Helper()
+	contents := "auth_key = \"" + key + "\"\n[daemon_tls]\ninsecure = true\n"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(contents), 0o600))
+}
+
 func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 	for _, tc := range []struct{ name, contents string }{
 		{"syntax", `auth_key = secret-never-print`},
@@ -49,7 +57,7 @@ func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 
 func TestAuthCLIJobLookup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -67,14 +75,14 @@ func TestAuthCLIJobLookup(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	assert.EqualValues(t, 23, job.ID)
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"`), 0o600))
+	writeTCPAuthConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
 	_, err = findJobForCommit(t.TempDir(), "abc123")
 	require.ErrorContains(t, err, "401 Unauthorized")
 }
 
 func TestAuthExplicitURLHelpers(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	var recovered atomic.Bool
 	patchFixDaemonRetryForTest(t, func() error {
 		recovered.Store(true)
@@ -263,7 +271,7 @@ func TestAuthFixRecoveryStopsOnAccessErrors(t *testing.T) {
 func TestAuthHookKeepsCapturedEndpoint(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	repo.CommitFile("file.txt", "content", "initial")
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	var received atomic.Bool
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		received.Store(true)
@@ -299,7 +307,7 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+				writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == tc.path && (!tc.legacy || r.URL.Query().Get("commit_id") != "") {
@@ -336,7 +344,7 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 
 func TestAuthStartUsesAuthenticatedDiscovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)

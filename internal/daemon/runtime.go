@@ -355,27 +355,30 @@ func listLegacyRuntimes() []*RuntimeInfo {
 }
 
 func probeRuntimeRecord(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
-	key, err := loadClientAuthKey()
+	clientAuth, err := loadClientAuth()
 	if err != nil {
 		return nil, err
 	}
-	return probeRuntimeRecordWithKey(ctx, ep, key)
+	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
 }
 
-func probeRuntimeRecordWithKey(ctx context.Context, ep DaemonEndpoint, key string) (*PingInfo, error) {
+func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	return probeDaemonHTTP(ctx, ep, time.Second, ep.HTTPClientWithAuthKey(time.Second, key))
+	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
+	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
-// IsDaemonAccessError reports credential, configuration, and local permission
-// errors that must not trigger daemon recovery or stale-runtime cleanup.
+// IsDaemonAccessError reports credential, configuration, transport-security,
+// and local permission errors that must not trigger daemon recovery or
+// stale-runtime cleanup.
 func IsDaemonAccessError(err error) bool {
 	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
+		errors.Is(err, ErrPlaintextAuthTransport) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
@@ -424,7 +427,7 @@ func discoverRuntimeRecords(
 // GetAnyRunningDaemonContext returns info about a responsive daemon.
 // Returns os.ErrNotExist if no responsive daemon is found.
 func GetAnyRunningDaemonContext(ctx context.Context) (*RuntimeInfo, error) {
-	if _, err := loadClientAuthKey(); err != nil {
+	if _, err := loadClientAuth(); err != nil {
 		return nil, err
 	}
 	return getAnyRunningDaemonContext(ctx, probeRuntimeEndpoint)
@@ -602,7 +605,15 @@ func KillDaemon(info *RuntimeInfo) error {
 		return nil
 	}
 
+	// Prefer the private Unix socket: it carries auth_key without TLS, and
+	// daemons since v0.65.0 publish one next to their TCP listener.
 	ep := info.Endpoint()
+	for _, candidate := range info.Endpoints() {
+		if candidate.IsUnix() {
+			ep = candidate
+			break
+		}
+	}
 
 	// Remove only this process's runtime record. The endpoint may already belong
 	// to a service-manager replacement.

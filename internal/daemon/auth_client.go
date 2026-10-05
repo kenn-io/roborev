@@ -16,18 +16,21 @@ import (
 // ErrClientConfig means the global configuration could not be loaded.
 var ErrClientConfig = errors.New("cannot load daemon client config")
 
-func loadClientAuthKey() (string, error) {
-	key, err := config.LoadGlobalAuthKey()
+func loadClientAuth() (config.ClientAuth, error) {
+	clientAuth, err := config.LoadGlobalClientAuth()
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrClientConfig, err)
+		return config.ClientAuth{}, fmt.Errorf("%w: %w", ErrClientConfig, err)
 	}
-	return key, nil
+	return clientAuth, nil
 }
 
-// HTTPClientWithAuthKey uses an explicit startup key for daemon readiness.
-// Ordinary CLI and TUI clients use HTTPClient to load the global key instead.
-func (e DaemonEndpoint) HTTPClientWithAuthKey(timeout time.Duration, key string) *http.Client {
-	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) { return key, nil })
+// readinessHTTPClient probes a listener this process just bound. No other
+// process can hold that endpoint, so the key is sent over any transport.
+// Ordinary CLI and TUI clients use HTTPClient instead.
+func (e DaemonEndpoint) readinessHTTPClient(timeout time.Duration, startup config.ClientAuth) *http.Client {
+	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout, startup.TLS), func() (string, error) {
+		return startup.Key, nil
+	})
 }
 
 // WithAccessError prevents an endpoint-selection failure from falling back to

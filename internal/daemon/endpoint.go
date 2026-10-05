@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -90,16 +92,26 @@ func (e DaemonEndpoint) BaseURL() string {
 	return e.kitEndpoint().BaseURL()
 }
 
+// ErrPlaintextAuthTransport means a client refused to send auth_key to a TCP
+// endpoint that could be impersonated by another local account.
+var ErrPlaintextAuthTransport = errors.New(
+	"refusing to send auth_key over plaintext TCP; use the daemon's Unix socket, configure [daemon_tls], or set daemon_tls.insecure = true",
+)
+
 // HTTPClient returns an http.Client configured for this endpoint's transport.
+// It reads auth_key for every request and [daemon_tls] when it is built.
 func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 	if e.IsRemote() {
 		return e.remoteHTTPClient(timeout)
 	}
-	client := auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) {
+	// A load error here reappears from the per-request key load below.
+	settings, _ := loadClientAuth()
+	client := e.authClient(timeout, settings.TLS, func() (string, error) {
 		if e.accessErr != nil {
 			return "", e.accessErr
 		}
-		return loadClientAuthKey()
+		current, err := loadClientAuth()
+		return current.Key, err
 	})
 	if obs := clientResponseObserver.Load(); obs != nil {
 		transport := client.Transport
@@ -111,11 +123,51 @@ func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 	return client
 }
 
-func (e DaemonEndpoint) transportClient(timeout time.Duration) *http.Client {
-	return e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
+// authClient sends auth_key only over a transport that stops another local
+// account from impersonating the daemon: the private Unix socket, mutual TLS,
+// or TCP with an explicit daemon_tls.insecure opt-in.
+func (e DaemonEndpoint) authClient(
+	timeout time.Duration,
+	tlsSettings config.DaemonTLSConfig,
+	key func() (string, error),
+) *http.Client {
+	protected := e.IsUnix() || tlsSettings.Enabled() || tlsSettings.Insecure
+	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout, tlsSettings), func() (string, error) {
+		value, err := key()
+		if err == nil && value != "" && !protected {
+			return "", ErrPlaintextAuthTransport
+		}
+		return value, err
+	})
+}
+
+func (e DaemonEndpoint) transportClient(timeout time.Duration, tlsSettings config.DaemonTLSConfig) *http.Client {
+	client := e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
 		Timeout:           timeout,
 		DisableKeepAlives: e.IsUnix(),
 	})
+	if e.IsUnix() || !tlsSettings.Enabled() {
+		return client
+	}
+	tlsConfig, err := clientTLSConfig(tlsSettings)
+	transport, ok := client.Transport.(*http.Transport)
+	if err != nil || !ok {
+		if err == nil {
+			err = errors.New("unsupported daemon transport")
+		}
+		client.Transport = errorTransport{err: fmt.Errorf("%w: %w", ErrClientConfig, err)}
+		return client
+	}
+	// The shared daemon kit builds http:// endpoint URLs, so TLS wraps each TCP
+	// connection when it is dialed. The dialer verifies the address's host.
+	transport.DialContext = (&tls.Dialer{Config: tlsConfig}).DialContext
+	return client
+}
+
+type errorTransport struct{ err error }
+
+func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
 }
 
 // clientResponseObserver, when set by the CLI, sees each response a client from HTTPClient receives.

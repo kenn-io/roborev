@@ -164,10 +164,11 @@ func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
 	require := require.New(t)
 	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/roborev.sock"}
-	assert.Equal("http://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcp))
-	assert.Empty(mcpURLForEndpoint(false, tcp))
-	assert.Empty(mcpURLForEndpoint(true, unix))
-	assert.Empty(mcpURLForEndpoint(true, DaemonEndpoint{}))
+	assert.Equal("http://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcp, false))
+	assert.Equal("https://127.0.0.1:7373/mcp", mcpURLForEndpoint(true, tcp, true))
+	assert.Empty(mcpURLForEndpoint(false, tcp, false))
+	assert.Empty(mcpURLForEndpoint(true, unix, false))
+	assert.Empty(mcpURLForEndpoint(true, DaemonEndpoint{}, false))
 
 	server, _ := newMCPTestServer(t, true)
 	server.endpointMu.Lock()

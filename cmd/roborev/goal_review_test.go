@@ -56,7 +56,7 @@ func TestGoalReviewDaemonEnqueue(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+				writeTCPAuthConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 				requests := make(chan daemon.EnqueueRequest, 1)
 				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == "/api/ping" {

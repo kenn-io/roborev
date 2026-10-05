@@ -314,7 +314,10 @@ func ensureDaemon() error {
 		}
 		return nil
 	}
-	if daemon.IsDaemonAccessError(probeErr) {
+	// The default address is only a guess when no runtime record exists, so a
+	// refusal to send auth_key there does not block startup. The start lock
+	// in startDaemon still finds a daemon that publishes its record meanwhile.
+	if daemon.IsDaemonAccessError(probeErr) && !errors.Is(probeErr, daemon.ErrPlaintextAuthTransport) {
 		return fmt.Errorf("probe daemon: %w", probeErr)
 	}
 

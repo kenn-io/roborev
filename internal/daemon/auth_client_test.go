@@ -31,13 +31,21 @@ func writeAuthClientConfig(t *testing.T, key string) {
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
 }
 
+// writeTCPAuthClientConfig opts into sending auth_key over the plain TCP test
+// servers that key-handling tests use. The transport rule has its own tests.
+func writeTCPAuthClientConfig(t *testing.T, key string) {
+	t.Helper()
+	contents := "auth_key = \"" + key + "\"\n[daemon_tls]\ninsecure = true\n"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(contents), 0o600))
+}
+
 func TestAuthEndpointClientAndProbe(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	httpServer := httptest.NewServer(s.httpServer.Handler)
 	defer httpServer.Close()
 	ep := authEndpoint(t, httpServer.URL)
-	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	writeTCPAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
 	client := ep.HTTPClient(time.Second)
 	req, err := http.NewRequest(http.MethodGet, ep.BaseURL()+"/api/ping", nil)
@@ -50,7 +58,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	ping, err := ProbeDaemon(ep, time.Second)
 	require.NoError(t, err)
 	assert.True(t, ping.OK)
-	writeAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	writeTCPAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
 	resp, err = client.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -64,7 +72,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 
 func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	writeTCPAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	received := 0
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { received++; w.WriteHeader(http.StatusOK) }))
 	defer target.Close()
@@ -81,6 +89,24 @@ func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	resp.Body.Close()
 	assert.Equal(t, http.StatusTemporaryRedirect, resp.StatusCode)
 	assert.Zero(t, received)
+}
+
+func TestAuthClientKeepsKeyOffPlainTCP(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Post(
+		server.URL+"/api/enqueue", "application/json", strings.NewReader(`{"repo_path":"/synthetic/repo"}`),
+	)
+	assert.Nil(t, resp)
+	require.ErrorIs(t, err, ErrPlaintextAuthTransport)
+	assert.Zero(t, requests.Load(), "neither the key nor the request body may reach a TCP listener")
 }
 
 func TestAuthClientConfigFailureIsTerminal(t *testing.T) {
@@ -104,9 +130,9 @@ listen = "0.0.0.0:7373"
 `
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(configText), 0o600))
 
-	key, err := loadClientAuthKey()
+	clientAuth, err := loadClientAuth()
 	require.NoError(t, err)
-	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", key)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", clientAuth.Key)
 }
 
 func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
@@ -116,7 +142,7 @@ func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
 	} {
 		t.Run(setting, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"+setting), 0o600))
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"+setting+"\n[daemon_tls]\ninsecure = true\n"), 0o600))
 			_, err := config.LoadGlobal()
 			require.Error(t, err, "fixture must fail full config validation")
 			s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
@@ -162,7 +188,7 @@ func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
-	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
 	require.NoError(t, err)
 	assert.True(t, ready)
 	assert.False(t, exited)
@@ -186,7 +212,7 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 	for _, state := range []string{"dead", "reused", "live"} {
 		t.Run(state, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+			writeTCPAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
