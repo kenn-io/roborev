@@ -1869,16 +1869,7 @@ func findOpenFailedReviewIDs(
 	if !ok {
 		return nil, false
 	}
-	var lineageMatcher *roborevgit.BranchLineageMatcher
-	lineageMatcherLoaded := false
-	lineageMatches := func(ref string) bool {
-		if !lineageMatcherLoaded {
-			lineageMatcherLoaded = true
-			lineageMatcher, _ = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
-		}
-		return lineageMatcher != nil && lineageMatcher.Matches(ref)
-	}
-	ids := make(reviewIDSet, len(jobs))
+	failed := make([]storage.ReviewJob, 0, len(jobs))
 	for _, job := range jobs {
 		if job.Status != "" && job.Status != storage.JobStatusDone {
 			continue
@@ -1889,14 +1880,55 @@ func findOpenFailedReviewIDs(
 		if !countsAsFailedReview(job) {
 			continue
 		}
-		if !failedReviewCountsForHead(repoRoot, branch, head, job, lineageMatches) {
+		if job.Verdict == nil || !strings.EqualFold(*job.Verdict, "F") {
 			continue
 		}
-		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
+		failed = append(failed, job)
+	}
+	var lineageMatcher *roborevgit.BranchLineageMatcher
+	lineageMatcherLoaded := false
+	lineageMatches := func(ref string) bool {
+		if !lineageMatcherLoaded {
+			lineageMatcherLoaded = true
+			lineageMatcher = loadFailedReviewMatcher(ctx, repoRoot, branch, head, failed)
+		}
+		return lineageMatcher != nil && lineageMatcher.Matches(ref)
+	}
+	ids := make(reviewIDSet, len(failed))
+	for _, job := range failed {
+		if failedReviewCountsForHead(branch, head, job, lineageMatches) {
 			ids[job.ID] = struct{}{}
 		}
 	}
 	return ids, true
+}
+
+// loadFailedReviewMatcher builds the commit set for the current checkout and
+// resolves every failed review ref against it with one more git process. It
+// returns nil when either step fails, so no ref matches.
+func loadFailedReviewMatcher(
+	ctx context.Context,
+	repoRoot, branch, head string,
+	failed []storage.ReviewJob,
+) *roborevgit.BranchLineageMatcher {
+	var matcher *roborevgit.BranchLineageMatcher
+	var err error
+	if branch == "" {
+		matcher, err = roborevgit.NewHeadAncestryMatcherCtx(ctx, repoRoot, head)
+	} else {
+		matcher, err = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
+	}
+	if err != nil {
+		return nil
+	}
+	refs := make([]string, 0, len(failed))
+	for _, job := range failed {
+		refs = append(refs, job.GitRef)
+	}
+	if err := matcher.ResolveRefs(ctx, refs); err != nil {
+		return nil
+	}
+	return matcher
 }
 
 // failedReviewCountsForHead reports whether an open failed review returned by
@@ -1904,6 +1936,8 @@ func findOpenFailedReviewIDs(
 // branchful queries also return branchless jobs, so the reachability gate used
 // for detached HEAD must apply to those too - otherwise a stale or unrelated
 // detached review would prompt $roborev-fix on a branch it does not belong to.
+// lineageMatches tests refs against one cached commit set: the commits
+// reachable from HEAD on detached HEAD, or the branch lineage on a branch.
 //
 //   - On detached HEAD, reviews reachable from HEAD are ours, even when they
 //     carry a branch label created after the worktree started detached.
@@ -1912,32 +1946,21 @@ func findOpenFailedReviewIDs(
 //   - On a branch, branchless repo-level or dirty reviews still count, matching
 //     the long-standing reminder behavior. Branchless concrete refs count only
 //     when they belong to the current branch lineage and are not trunk history.
-func failedReviewCountsForHead(repoRoot, branch, head string, job storage.ReviewJob, lineageMatches func(string) bool) bool {
+func failedReviewCountsForHead(branch, head string, job storage.ReviewJob, lineageMatches func(string) bool) bool {
+	ref := strings.TrimSpace(job.GitRef)
 	if branch == "" {
-		return head != "" && detachedReviewMatches(repoRoot, head, job)
+		if head == "" || ref == "" || ref == "dirty" {
+			return false
+		}
+		return ref == head || lineageMatches(ref)
 	}
 	if strings.TrimSpace(job.Branch) != "" {
 		return true
 	}
-	ref := strings.TrimSpace(job.GitRef)
 	if ref == "" || ref == "dirty" || head == "" {
 		return true
 	}
 	return lineageMatches != nil && lineageMatches(ref)
-}
-
-func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {
-	ref := strings.TrimSpace(job.GitRef)
-	if ref == "" || ref == "dirty" {
-		return false
-	}
-	if ref == head {
-		return true
-	}
-	if _, end, ok := roborevgit.ParseRange(ref); ok {
-		return refReachableFromHead(repoRoot, strings.TrimSpace(end), head)
-	}
-	return refReachableFromHead(repoRoot, ref, head)
 }
 
 func refReachableFromHead(repoRoot, ref, head string) bool {

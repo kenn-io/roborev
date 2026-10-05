@@ -1025,11 +1025,27 @@ func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, he
 	if !IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
 		args = append(args, "--not", defaultBranch)
 	}
+	return newRevListMatcher(ctx, repoPath, "branch lineage", args)
+}
+
+// NewHeadAncestryMatcherCtx builds a matcher whose commit set is every commit
+// reachable from head, so Matches reports whether a ref is head or one of its
+// ancestors. It answers IsAncestor for a batch of refs with one git process
+// instead of one process per ref.
+func NewHeadAncestryMatcherCtx(ctx context.Context, repoPath, head string) (*BranchLineageMatcher, error) {
+	head = strings.TrimSpace(head)
+	if repoPath == "" || head == "" {
+		return nil, fmt.Errorf("repo path and head are required")
+	}
+	return newRevListMatcher(ctx, repoPath, "head ancestry", []string{"rev-list", head})
+}
+
+func newRevListMatcher(ctx context.Context, repoPath, what string, args []string) (*BranchLineageMatcher, error) {
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
 	out, err := gitOutput(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("git rev-list branch lineage: %w", err)
+		return nil, fmt.Errorf("git rev-list %s: %w", what, err)
 	}
 	commits := make(map[string]struct{})
 	for commit := range strings.FieldsSeq(string(out)) {
@@ -1042,27 +1058,85 @@ func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, he
 	}, nil
 }
 
+// ResolveRefs peels refs to commit IDs with one git process and caches the
+// results for Matches. Without it, Matches starts one git process for each
+// abbreviated or symbolic ref, and rejects full object IDs outside the commit
+// set, such as the object ID of an annotated tag. Range refs use their end ref.
+func (m *BranchLineageMatcher) ResolveRefs(ctx context.Context, refs []string) error {
+	if m == nil {
+		return nil
+	}
+	pending := make([]string, 0, len(refs))
+	queued := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		ref = lineageMatchRef(ref)
+		// cat-file reads one name per line, so a ref containing a newline
+		// cannot be sent; Matches resolves any such ref on its own. The -Z
+		// option would lift this, but it needs a newer Git than roborev requires.
+		if ref == "" || strings.Contains(ref, "\n") {
+			continue
+		}
+		if _, ok := m.commits[ref]; ok {
+			continue
+		}
+		if _, ok := m.resolvedCommit[ref]; ok {
+			continue
+		}
+		if _, ok := queued[ref]; ok {
+			continue
+		}
+		queued[ref] = struct{}{}
+		pending = append(pending, ref)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	var input strings.Builder
+	for _, ref := range pending {
+		input.WriteString(ref)
+		input.WriteString("^{commit}\n")
+	}
+	cmd := newGitCmdContext(ctx, "cat-file", "--batch-check=%(objectname)")
+	cmd.Dir = m.repoPath
+	cmd.Stdin = strings.NewReader(input.String())
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("git cat-file resolve refs: %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
+	if len(lines) != len(pending) {
+		return fmt.Errorf("git cat-file resolve refs: got %d results for %d refs", len(lines), len(pending))
+	}
+	for i, ref := range pending {
+		// Refs git cannot resolve come back as "<name> missing" or
+		// "<name> ambiguous"; cache those as unresolved.
+		commit := strings.TrimSpace(lines[i])
+		if !isFullObjectID(commit) {
+			commit = ""
+		}
+		m.resolvedCommit[ref] = commit
+	}
+	return nil
+}
+
 // Matches reports whether ref belongs to the cached branch lineage. Range refs
 // are matched by their end ref, preserving RefMatchesBranchLineage behavior.
 func (m *BranchLineageMatcher) Matches(ref string) bool {
 	if m == nil {
 		return false
 	}
-	ref = strings.TrimSpace(ref)
-	if _, end, ok := ParseRange(ref); ok {
-		ref = strings.TrimSpace(end)
-	}
+	ref = lineageMatchRef(ref)
 	if ref == "" {
 		return false
 	}
 	if _, ok := m.commits[ref]; ok {
 		return true
 	}
-	if isFullObjectID(ref) {
-		return false
-	}
 	commit, ok := m.resolvedCommit[ref]
 	if !ok {
+		if isFullObjectID(ref) {
+			return false
+		}
 		var err error
 		commit, err = ResolveSHA(m.repoPath, ref)
 		if err != nil {
@@ -1076,6 +1150,14 @@ func (m *BranchLineageMatcher) Matches(ref string) bool {
 	}
 	_, ok = m.commits[commit]
 	return ok
+}
+
+func lineageMatchRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if _, end, ok := ParseRange(ref); ok {
+		ref = strings.TrimSpace(end)
+	}
+	return ref
 }
 
 func isFullObjectID(ref string) bool {

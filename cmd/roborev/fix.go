@@ -710,6 +710,13 @@ func filterReachableJobs(
 		if !lineageMatcherLoaded {
 			lineageMatcherLoaded = true
 			lineageMatcher, _ = git.NewBranchLineageMatcherCtx(ctx, worktreeRoot, matchBranch, "HEAD")
+			refs := make([]string, 0, len(jobs))
+			for _, j := range jobs {
+				refs = append(refs, j.GitRef)
+			}
+			if lineageMatcher != nil && lineageMatcher.ResolveRefs(ctx, refs) != nil {
+				lineageMatcher = nil
+			}
 		}
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
