@@ -1874,7 +1874,11 @@ func findOpenFailedReviewIDs(
 	lineageMatches := func(ref string) bool {
 		if !lineageMatcherLoaded {
 			lineageMatcherLoaded = true
-			lineageMatcher, _ = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
+			if branch == "" {
+				lineageMatcher, _ = roborevgit.NewHeadAncestryMatcherCtx(ctx, repoRoot, head)
+			} else {
+				lineageMatcher, _ = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
+			}
 		}
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
@@ -1889,7 +1893,7 @@ func findOpenFailedReviewIDs(
 		if !countsAsFailedReview(job) {
 			continue
 		}
-		if !failedReviewCountsForHead(repoRoot, branch, head, job, lineageMatches) {
+		if !failedReviewCountsForHead(branch, head, job, lineageMatches) {
 			continue
 		}
 		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
@@ -1904,6 +1908,8 @@ func findOpenFailedReviewIDs(
 // branchful queries also return branchless jobs, so the reachability gate used
 // for detached HEAD must apply to those too - otherwise a stale or unrelated
 // detached review would prompt $roborev-fix on a branch it does not belong to.
+// lineageMatches tests refs against one cached commit set: the commits
+// reachable from HEAD on detached HEAD, or the branch lineage on a branch.
 //
 //   - On detached HEAD, reviews reachable from HEAD are ours, even when they
 //     carry a branch label created after the worktree started detached.
@@ -1912,32 +1918,21 @@ func findOpenFailedReviewIDs(
 //   - On a branch, branchless repo-level or dirty reviews still count, matching
 //     the long-standing reminder behavior. Branchless concrete refs count only
 //     when they belong to the current branch lineage and are not trunk history.
-func failedReviewCountsForHead(repoRoot, branch, head string, job storage.ReviewJob, lineageMatches func(string) bool) bool {
+func failedReviewCountsForHead(branch, head string, job storage.ReviewJob, lineageMatches func(string) bool) bool {
+	ref := strings.TrimSpace(job.GitRef)
 	if branch == "" {
-		return head != "" && detachedReviewMatches(repoRoot, head, job)
+		if head == "" || ref == "" || ref == "dirty" {
+			return false
+		}
+		return ref == head || lineageMatches(ref)
 	}
 	if strings.TrimSpace(job.Branch) != "" {
 		return true
 	}
-	ref := strings.TrimSpace(job.GitRef)
 	if ref == "" || ref == "dirty" || head == "" {
 		return true
 	}
 	return lineageMatches != nil && lineageMatches(ref)
-}
-
-func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {
-	ref := strings.TrimSpace(job.GitRef)
-	if ref == "" || ref == "dirty" {
-		return false
-	}
-	if ref == head {
-		return true
-	}
-	if _, end, ok := roborevgit.ParseRange(ref); ok {
-		return refReachableFromHead(repoRoot, strings.TrimSpace(end), head)
-	}
-	return refReachableFromHead(repoRoot, ref, head)
 }
 
 func refReachableFromHead(repoRoot, ref, head string) bool {

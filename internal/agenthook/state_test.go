@@ -293,7 +293,6 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 
 func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("base.txt", "base\n", "base")
 	repo.CheckoutNewBranch("feature/lineage")
@@ -310,8 +309,47 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
+	gitCalls := countGitProcesses(t)
+
+	count, ok := countOpenFailedReviews(
+		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+	)
+
+	assert.True(ok)
+	assert.Equal(len(jobs), count)
+	assert.LessOrEqual(gitCalls(), 5, "lineage context should be built once instead of spawning git per branchless job")
+}
+
+func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+
+	closed := false
+	verdict := "F"
+	jobs := make([]storage.ReviewJob, 0, 25)
+	for i := range 25 {
+		ref := repo.CommitFile(fmt.Sprintf("file-%02d.txt", i), "content\n", "commit")
+		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
+	}
+	repo.CheckoutDetached()
+	head := repo.HeadSHA()
+	gitCalls := countGitProcesses(t)
+
+	count, ok := countOpenFailedReviews(
+		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
+	)
+
+	assert.True(ok)
+	assert.Equal(len(jobs), count)
+	assert.LessOrEqual(gitCalls(), 5, "detached HEAD reachability should be computed once instead of spawning git per review")
+}
+
+// countGitProcesses puts a counting git wrapper first on PATH for the rest of
+// the test and returns a function that reports how many git processes started.
+func countGitProcesses(t *testing.T) func() int {
+	t.Helper()
 	gitPath, err := exec.LookPath("git")
-	require.NoError(err)
+	require.NoError(t, err)
 	countPath := filepath.Join(t.TempDir(), "git-count")
 	wrapperDir := t.TempDir()
 	wrapperPath := filepath.Join(wrapperDir, "git")
@@ -326,18 +364,13 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		wrapperPath += ".cmd"
 		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
 	}
-	require.NoError(os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	count, ok := countOpenFailedReviews(
-		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
-	)
-
-	assert.True(ok)
-	assert.Equal(len(jobs), count)
-	gitCalls, err := os.ReadFile(countPath)
-	require.NoError(err)
-	assert.LessOrEqual(strings.Count(string(gitCalls), "x"), 5, "lineage context should be built once instead of spawning git per branchless job")
+	return func() int {
+		calls, err := os.ReadFile(countPath)
+		require.NoError(t, err)
+		return strings.Count(string(calls), "x")
+	}
 }
 
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {

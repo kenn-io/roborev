@@ -1025,11 +1025,27 @@ func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, he
 	if !IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
 		args = append(args, "--not", defaultBranch)
 	}
+	return newRevListMatcher(ctx, repoPath, "branch lineage", args)
+}
+
+// NewHeadAncestryMatcherCtx builds a matcher whose commit set is every commit
+// reachable from head, so Matches reports whether a ref is head or one of its
+// ancestors. It answers IsAncestor for a batch of refs with one git process
+// instead of one process per ref.
+func NewHeadAncestryMatcherCtx(ctx context.Context, repoPath, head string) (*BranchLineageMatcher, error) {
+	head = strings.TrimSpace(head)
+	if repoPath == "" || head == "" {
+		return nil, fmt.Errorf("repo path and head are required")
+	}
+	return newRevListMatcher(ctx, repoPath, "head ancestry", []string{"rev-list", head})
+}
+
+func newRevListMatcher(ctx context.Context, repoPath, what string, args []string) (*BranchLineageMatcher, error) {
 	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
 	out, err := gitOutput(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("git rev-list branch lineage: %w", err)
+		return nil, fmt.Errorf("git rev-list %s: %w", what, err)
 	}
 	commits := make(map[string]struct{})
 	for commit := range strings.FieldsSeq(string(out)) {
