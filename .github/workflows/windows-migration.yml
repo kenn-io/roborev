@@ -17,6 +17,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+  GOPROXY: https://proxy.golang.org|direct
+
 jobs:
   go-changes:
     runs-on: namespace-profile-linux-4cpu

@@ -15,7 +15,12 @@ RUN bun run web:build
 
 FROM golang:1.27.0-alpine AS builder
 
+RUN apk add --no-cache git
+
 WORKDIR /src
+
+# "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+ENV GOPROXY="https://proxy.golang.org|direct"
 
 # Copy go mod files first for caching
 COPY go.mod go.sum ./
