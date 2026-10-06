@@ -1082,3 +1082,20 @@ func TestKillDaemonDoesNotStopAnotherDaemonOnThePort(t *testing.T) {
 	assert.Zero(t, shutdowns.Load())
 	assert.NoFileExists(t, runtimePath)
 }
+
+func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
+	testenv.SetDataDir(t)
+	// Reserve a loopback port and close it so nothing answers there.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
+
+	// The recorded process is alive, so a failed probe proves nothing.
+	err = KillDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: address, SourcePath: runtimePath})
+	require.Error(t, err)
+	assert.FileExists(t, runtimePath)
+}

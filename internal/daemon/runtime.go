@@ -684,6 +684,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	// published endpoint. When the PID is known, only that process may get
 	// the shutdown request: another daemon can take over a freed TCP port.
 	selected, answeredByOther := false, map[DaemonEndpoint]bool{}
+	var probeErr error
 	for _, candidate := range info.PreferredEndpoints() {
 		ping, err := ProbeDaemon(candidate, 2*time.Second)
 		if errors.Is(err, ErrDaemonAccessDenied) || err == nil && (info.PID <= 0 || ping.PID == info.PID) {
@@ -692,11 +693,19 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 		if err == nil {
 			answeredByOther[candidate] = true
+		} else {
+			probeErr = err
 		}
 	}
 	if !selected && info.PID > 0 {
 		if identity == processUnknown {
-			// Nothing proves this record's process is a roborev daemon.
+			if len(answeredByOther) == 0 {
+				// The process is alive, but nothing proves what it is. Keep
+				// the record so the daemon stays discoverable.
+				return probeErr
+			}
+			// A different daemon answers the published endpoints, so this
+			// record no longer describes a reachable roborev daemon.
 			removeRuntimeFile()
 			return nil
 		}
