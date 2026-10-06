@@ -730,6 +730,7 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 	var validEventsParsed bool
 	agentMessages := newTrailingReviewText()
 	var streamFailure error
+	var turnFailed bool
 
 	err := scanStreamJSONLines(r, sw, func(line string) error {
 		var ev codexEvent
@@ -739,6 +740,17 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 
 				if streamFailure == nil {
 					streamFailure = codexFailureEventError(ev)
+				}
+				switch ev.Type {
+				case "turn.failed":
+					turnFailed = true
+				case "turn.completed":
+					// Codex reports reconnect attempts as error events and
+					// keeps the turn running. Only turn.failed is terminal,
+					// so a completed turn has recovered from earlier errors.
+					if !turnFailed {
+						streamFailure = nil
+					}
 				}
 
 				if isCodexToolEvent(ev) {

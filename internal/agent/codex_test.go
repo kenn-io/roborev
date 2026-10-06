@@ -544,6 +544,49 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			notWantErr: errNoCodexJSON,
 		},
 		{
+			name: "RecoveredReconnectReturnsReview",
+			input: buildStream(
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: Incomplete response returned, reason: unknown)"}`,
+				`{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before completion: Incomplete response returned, reason: unknown)"}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"s\",\"verdict\":\"pass\",\"findings\":[]}"}}`,
+				jsonTurnCompleted,
+			),
+			want:             `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`,
+			finalMessageOnly: true,
+		},
+		{
+			name: "ReconnectWithoutCompletionReturnsError",
+			input: buildStream(
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: Incomplete response returned, reason: unknown)"}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"partial"}}`,
+			),
+			wantErr: errCodexStreamFailed,
+		},
+		{
+			name: "ReconnectThenTurnFailedReturnsError",
+			input: buildStream(
+				jsonTurnStarted,
+				`{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: Access denied.)"}`,
+				`{"type":"turn.failed","error":{"message":"stream disconnected before completion: Access denied."}}`,
+				jsonTurnCompleted,
+			),
+			wantErr: errCodexStreamFailed,
+		},
+		{
+			name: "ErrorAfterCompletedTurnReturnsError",
+			input: buildStream(
+				jsonTurnStarted,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"review"}}`,
+				jsonTurnCompleted,
+				`{"type":"error","message":"stream error"}`,
+			),
+			wantErr: errCodexStreamFailed,
+		},
+		{
 			name: "IgnoresNonMessageItems",
 			input: buildStream(
 				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
