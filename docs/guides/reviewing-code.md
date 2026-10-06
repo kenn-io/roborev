@@ -360,6 +360,12 @@ If a valid candidate is found, its session ID is passed to the agent, which
 resumes the prior conversation. If no candidate qualifies, the review starts
 fresh as usual.
 
+Only one running review resumes a given session at a time. Reviews queued close
+together on one branch can be assigned the same session. When a worker starts a
+review whose session another running review is already resuming, the new review
+starts a fresh session instead. Agents such as Codex reject a second concurrent
+writer on the same conversation.
+
 ### Supported Agents
 
 Session reuse requires agent-side support for resuming conversations. The
