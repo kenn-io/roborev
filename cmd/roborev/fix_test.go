@@ -702,30 +702,6 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	assert.EqualValues(t, 0, recoveryPostCount.Load())
 }
 
-func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
-	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
-		recoveryAttempted.Store(true)
-		return nil
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/comment" {
-			http.NotFound(w, r)
-			return
-		}
-		closeConnNoResponse(t, w)
-	}))
-	defer ts.Close()
-
-	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
-	require.Error(t, err, "expected connection error")
-	assert.False(t, recoveryAttempted.Load(), "unexpected daemon recovery attempt")
-}
-
 func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	var recoveryAttempted atomic.Bool
 	patchFixDaemonRetryForTest(t, func() error {

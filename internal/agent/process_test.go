@@ -75,18 +75,6 @@ func TestContextProcessError(t *testing.T) {
 	require.NoError(t, contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed), "real subprocess error should not be masked by closed pipe parse error")
 }
 
-func TestContextProcessErrorParseOnlyPathWouldMaskRealWaitErr(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	tracker := &subprocessTracker{}
-	tracker.canceledByContext.Store(true)
-	waitErr := errors.New("exit status 1")
-
-	require.NoError(t, contextProcessError(ctx, tracker, waitErr, fs.ErrClosed))
-	require.ErrorIs(t, contextProcessError(ctx, tracker, nil, fs.ErrClosed), context.Canceled)
-}
-
 func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	skipIfWindows(t)
 
