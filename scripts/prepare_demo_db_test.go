@@ -488,28 +488,43 @@ func runPrepareDemoDB(t *testing.T, tempDir, sourceDB string) string {
 
 func runPrepareDemoDBWithTerms(t *testing.T, tempDir, sourceDB, termsFile string) string {
 	t.Helper()
+	requireMise(t)
 
-	script := readShellScript(t, filepath.Join("..", "docs", "screenshots", "prepare-demo-db.sh"))
-	scriptPath := filepath.Join(tempDir, "prepare-demo-db.sh")
-	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
-
+	scriptPath := filepath.Join("..", "docs", "screenshots", "prepare-demo-db.sh")
 	homeDir := filepath.Join(tempDir, "maintainer-home")
 	require.NoError(t, os.MkdirAll(homeDir, 0o755))
 
+	// Keep the real HOME so mise and uv find their own configuration and
+	// caches. ROBOREV_DOCS_HOME isolates the redacted home directory and the
+	// default private terms file instead.
 	environment := "export TMPDIR=" + shellQuote(bashPath(t, tempDir)) +
 		" ROBOREV_DOCS_SOURCE_DB=" + shellQuote(bashPath(t, sourceDB)) +
-		" HOME=" + shellQuote(bashPath(t, homeDir))
+		" ROBOREV_DOCS_HOME=" + shellQuote(bashPath(t, homeDir))
 	if termsFile != "" {
 		environment += " KENN_PRIVATE_TERMS_FILE=" + shellQuote(bashPath(t, termsFile))
 	}
 	cmd := exec.Command(
 		"bash",
-		"-lc",
-		environment+"; exec "+shellQuote(bashPath(t, scriptPath)),
+		"-c",
+		environment+"; exec bash "+shellQuote(bashPath(t, scriptPath)),
 	)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 	return filepath.Join(tempDir, "roborev-demo-data", "reviews.db")
+}
+
+// requireMise skips when mise is missing locally, because prepare-demo-db.sh
+// gets uv from the repo's mise.lock. CI installs mise, so a missing binary
+// there is a failure.
+func requireMise(t *testing.T) {
+	t.Helper()
+
+	_, err := exec.LookPath("mise")
+	if err == nil {
+		return
+	}
+	require.Empty(t, os.Getenv("CI"), "CI must install mise for the demo database tests: %v", err)
+	t.Skip("mise is not on PATH; prepare-demo-db.sh needs it to run the pinned uv")
 }
 
 func readScreenshotDemoText(t *testing.T, dbPath string) string {
