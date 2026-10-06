@@ -10,11 +10,11 @@ ACP_TEST_MODE ?=
 ACP_TEST_MODEL ?=
 CODEX_SKILL_EVAL_MODELS ?= gpt-5.6-sol
 
-# Pinned golangci-lint version. Single source of truth: CI reads it via
-# `make print-golangci-lint-version` (see .github/workflows/ci.yml), and
-# `make lint`/`make lint-ci` refuse to run unless the local binary matches.
+# Pinned golangci-lint version. Single source of truth is .custom-gcl.yml: CI
+# reads it via `make print-golangci-lint-version` (see .github/workflows/ci.yml),
+# and `make lint`/`make lint-ci` refuse to run unless the local binary matches.
 # A mismatched version can silently apply different formatting/fixes.
-GOLANGCI_LINT_VERSION := 2.13.1
+GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: v//p' .custom-gcl.yml)
 
 # Keep the golangci-lint cache per-checkout. The default user-global cache
 # stores raw linter findings keyed by package content with absolute file
@@ -267,7 +267,7 @@ check-golangci-lint:
 print-golangci-lint-version:
 	@echo "$(GOLANGCI_LINT_VERSION)"
 
-# golangci-lint with kit's kennlint plugin; rebuilt only when the plugin pin changes.
+# golangci-lint with kit's kennlint plugin; rebuilt when .custom-gcl.yml changes.
 CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
 
 $(CUSTOM_GCL): .custom-gcl.yml

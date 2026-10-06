@@ -952,10 +952,12 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	acceptShutdown := sync.OnceFunc(func() { close(accept) })
 	defer acceptShutdown()
 
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
 	done := make(chan error, 1)
-	go func() { done <- requestGracefulDaemonShutdown(t.Context(), ep, dead.Load) }()
+	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
 	returnedEarly := false
 	var earlyResult error
 	select {

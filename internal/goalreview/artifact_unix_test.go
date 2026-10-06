@@ -43,5 +43,5 @@ func TestFIFOArtifactDoesNotBlockCapture(t *testing.T) {
 		}
 		require.True(t, unblocked, "capture failed to exit after FIFO unblocked")
 	}
-	assert.True(t, returned, "non-regular artifact blocks cancellation until a separate writer opens it")
+	assert.True(t, returned, "non-regular artifact blocks Capture until a separate writer opens it")
 }

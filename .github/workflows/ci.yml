@@ -43,6 +43,8 @@ jobs:
               - 'mise.toml'
               - 'mise.lock'
               - 'docs/screenshots/prepare-demo-db.sh'
+              - '.custom-gcl.yml'
+              - '.golangci.yml'
             lint:
               - '*.go'
               - '**/*.go'
@@ -50,6 +52,8 @@ jobs:
               - 'go.sum'
               - 'go.work'
               - 'go.work.sum'
+              - '.custom-gcl.yml'
+              - '.golangci.yml'
               - 'docs/**/*.md'
               - 'docs/zensical.toml'
               - 'docs/pyproject.toml'

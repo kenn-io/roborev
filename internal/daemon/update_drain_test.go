@@ -225,7 +225,7 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 		defer server.workerPool.runningJobsMu.Unlock()
 		_, targeted := server.workerPool.updateInterruptTargets[targetID]
 		return !targeted
-	}, reloadTimeout, 10*time.Millisecond)
+	}, 5*time.Second, 10*time.Millisecond)
 
 	_, err = conn.ExecContext(context.Background(), "ROLLBACK")
 	require.NoError(t, err)
