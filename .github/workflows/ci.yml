@@ -210,7 +210,7 @@ jobs:
           cache: go
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5  # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca  # v5.1.1
 
       - name: Build
         run: go build ./...
@@ -348,7 +348,7 @@ jobs:
           cache: go
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5  # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca  # v5.1.1
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
