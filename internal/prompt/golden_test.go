@@ -110,6 +110,54 @@ func TestGoldenPrompt_SingleReviewDefault(t *testing.T) {
 	assertGolden(t, scrubDynamic(prompt), "single_review_default.golden")
 }
 
+func TestGoldenPrompt_SingleWithToolchain(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.writeFile("go.mod", "module example.com/app\n\ngo 1.27.0\n")
+	r.git("add", "go.mod")
+	r.git("commit", "-m", "add go.mod")
+	sha := r.commitFile("main.go", "package main\n\nfunc main() {}\n", "add main")
+
+	b := NewBuilder(nil)
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_with_toolchain.golden")
+}
+
+// TestSinglePromptStatesGoToolchainVersion reproduces issue #1202: when the
+// change touches Go files, the prompt must state the Go version declared by
+// the repository's go.mod as an explicit fact, instead of relying on the
+// reviewer choosing to consult the manifest and recalling recent features
+// correctly.
+func TestSinglePromptStatesGoToolchainVersion(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.writeFile("go.mod", "module example.com/app\n\ngo 1.27.0\n")
+	r.git("add", "go.mod")
+	r.git("commit", "-m", "add go.mod")
+	sha := r.commitFile("main.go", "package main\n\nfunc main() {}\n", "add main")
+
+	prompt, err := NewBuilder(nil).ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "This project uses Go 1.27.0")
+}
+
+// TestSinglePromptOmitsToolchainWithoutGoChanges locks the gating: a
+// repository may declare a toolchain, but changes that touch no Go files
+// carry no version-gated findings, so the fact stays out of the prompt.
+func TestSinglePromptOmitsToolchainWithoutGoChanges(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.writeFile("go.mod", "module example.com/app\n\ngo 1.27.0\n")
+	r.git("add", "go.mod")
+	r.git("commit", "-m", "add go.mod")
+	sha := r.commitFile("notes.md", "hello world\n", "add notes")
+
+	prompt, err := NewBuilder(nil).ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assert.NotContains(t, prompt, "This project uses Go")
+}
+
 func TestGoldenPrompt_SingleReviewCodex(t *testing.T) {
 	r := newGoldenTestRepo(t)
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")

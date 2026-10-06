@@ -62,6 +62,7 @@ type ReviewOptionalContext struct {
 	KataContext           *MarkdownSection
 	AdditionalContext     string
 	DependencyMetadata    string
+	Toolchain             string
 	PreviousReviews       []PreviousReviewTemplateContext
 	InRangeReviews        []InRangeReviewTemplateContext
 	PriorRangeReviewsFile string
@@ -98,6 +99,7 @@ func (o ReviewOptionalContext) IsEmpty() bool {
 		o.KataContext == nil &&
 		o.AdditionalContext == "" &&
 		o.DependencyMetadata == "" &&
+		o.Toolchain == "" &&
 		len(o.PreviousReviews) == 0 &&
 		len(o.InRangeReviews) == 0 &&
 		o.PriorRangeReviewsFile == "" &&
@@ -136,6 +138,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.ProjectGuidelines = nil
 	case o.KataContext != nil:
 		o.KataContext = nil
+	case o.Toolchain != "":
+		o.Toolchain = ""
 	default:
 		return false
 	}
