@@ -134,6 +134,7 @@ func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalCont
 		KataContext:           markdownSectionFromView(view.KataContext),
 		AdditionalContext:     view.AdditionalContext,
 		DependencyMetadata:    view.DependencyMetadata,
+		Toolchain:             view.Toolchain,
 		PreviousReviews:       previousReviewsFromView(view.PreviousReviews),
 		InRangeReviews:        inRangeReviewsFromView(view.InRangeReviews),
 		PriorRangeReviewsFile: view.PriorRangeReviewsFile,
