@@ -446,17 +446,9 @@ jobs:
         with:
           version: ${{ steps.golangci.outputs.version }}
 
+      # Reuse the custom binary the previous step built; the action would build a Windows binary here.
       - name: golangci-lint for Windows
-        if: needs.go-changes.outputs.changed == 'true' && hashFiles('.custom-gcl.yml') == ''
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
-        env:
-          GOOS: windows
-        with:
-          version: ${{ steps.golangci.outputs.version }}
-
-      # With a plugin build, reuse the binary the previous step built; the action would build it for Windows.
-      - name: custom golangci-lint for Windows
-        if: needs.go-changes.outputs.changed == 'true' && hashFiles('.custom-gcl.yml') != ''
+        if: needs.go-changes.outputs.changed == 'true'
         env:
           GOOS: windows
         run: ./custom-gcl run ./...

@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,9 +38,7 @@ trigger_paths = ["["]
 `), 0o644))
 
 	cmd := daemonRunCmd()
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	defer cancel()
-	cmd.SetContext(ctx)
+	cmd.SetContext(t.Context())
 	cmd.SetArgs([]string{
 		"--db", filepath.Join(tmp, "reviews.db"),
 		"--config", configPath,

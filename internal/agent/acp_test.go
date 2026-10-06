@@ -604,7 +604,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		select {
 		case <-term.context.Done():
 			require.Condition(t, func() bool { return false }, "terminal context canceled by request context cancellation")
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond): //nolint:kennlint // shows the terminal context is not canceled; the running sleep command keeps it alive
 
 		}
 

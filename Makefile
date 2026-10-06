@@ -267,12 +267,18 @@ check-golangci-lint:
 print-golangci-lint-version:
 	@echo "$(GOLANGCI_LINT_VERSION)"
 
-lint: check-golangci-lint
-	golangci-lint run --fix ./...
+# golangci-lint with kit's kennlint plugin; rebuilt only when the plugin pin changes.
+CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
+
+$(CUSTOM_GCL): .custom-gcl.yml
+	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl --version v$(GOLANGCI_LINT_VERSION)
+
+lint: check-golangci-lint $(CUSTOM_GCL)
+	"$(CUSTOM_GCL)" run --fix ./...
 
 # Lint Go code without fixing (for CI)
-lint-ci: check-golangci-lint
-	golangci-lint run ./...
+lint-ci: check-golangci-lint $(CUSTOM_GCL)
+	"$(CUSTOM_GCL)" run ./...
 
 # Validate Renovate config.
 check-renovate-config:

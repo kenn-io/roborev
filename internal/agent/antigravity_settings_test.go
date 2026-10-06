@@ -91,7 +91,7 @@ func TestEnsureAntigravityReviewPermissionsWaitsForConcurrentWriter(t *testing.T
 	case err := <-done:
 		completed = true
 		require.NoError(t, err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // shows the write does not finish; the held settings lock keeps it blocked
 	}
 	require.False(t, completed)
 

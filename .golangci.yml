@@ -13,12 +13,20 @@ linters:
     - forbidigo
     - govet
     - ineffassign
+    - kennlint
     - modernize
     - paralleltest
     - staticcheck
     - testifylint
     - unused
   settings:
+    custom:
+      kennlint:
+        type: module
+        description: Kit deadlinetest, sub-second wall-clock budgets in tests outside synctest.
+        original-url: go.kenn.io/kit/lint
+        settings:
+          disable: [errtext, nohttpmux, rowserrcheck, sleeptest, sqlcheck, sqlclosecheck, testifyhelper]
     paralleltest:
       # Subtests inside a parallel test share its fixture, so only top-level tests must opt in.
       ignore-missing-subtests: true

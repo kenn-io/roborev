@@ -275,7 +275,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	// but good practice if waitForAnalysisJob used the global.
 	// Here waitForAnalysisJob takes the url arg.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the job stays queued, so only the context ends the poll
 	defer cancel()
 
 	_, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), 42)

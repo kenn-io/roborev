@@ -479,7 +479,7 @@ exit 0
 `)
 
 	a := NewCodexAgent(cmdPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the fake codex runs for 200ms, past it
 	defer cancel()
 
 	start := time.Now()

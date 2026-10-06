@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,8 +35,9 @@ func TestAuthProtectsAllRoutes(t *testing.T) {
 	for _, path := range paths {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			t.Run(method+path, func(t *testing.T) {
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-				defer cancel()
+				// A canceled context keeps streaming routes from holding the subtest open.
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
 				r := httptest.NewRequest(method, path, strings.NewReader(`{"anything":true}`)).WithContext(ctx)
 				w := httptest.NewRecorder()
 				s.httpServer.Handler.ServeHTTP(w, r)
