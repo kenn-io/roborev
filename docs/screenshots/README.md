@@ -16,6 +16,11 @@ inside Docker against the reduced copy.
 
 ## Generate Screenshots
 
+The host step needs [mise](https://mise.jdx.dev/). `prepare-demo-db.sh`
+installs the uv version pinned in the root `mise.toml` and `mise.lock`, and uv
+supplies a managed Python 3.14. The script does not use the `python3` on your
+`PATH`.
+
 From the repository root:
 
 ```bash
@@ -23,7 +28,8 @@ make docs-screenshots
 ```
 
 Set `ROBOREV_DOCS_SOURCE_DB` to use a source other than
-`~/.roborev/reviews.db`. The output is written to the ignored
+`~/.roborev/reviews.db`. Set `ROBOREV_DOCS_HOME` to redact a home directory
+other than `$HOME`; the private terms file default moves with it. The output is written to the ignored
 `docs/assets/generated/` directory.
 
 Terminal captures use tmux and Freeze. The browser capture uses Playwright with

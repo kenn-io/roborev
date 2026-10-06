@@ -40,6 +40,9 @@ jobs:
               - 'go.sum'
               - 'go.work'
               - 'go.work.sum'
+              - 'mise.toml'
+              - 'mise.lock'
+              - 'docs/screenshots/prepare-demo-db.sh'
             lint:
               - '*.go'
               - '**/*.go'
@@ -206,6 +209,9 @@ jobs:
         with:
           cache: go
 
+      # prepare-demo-db.sh tests run the uv pinned in mise.lock.
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5  # v5.0.0
+
       - name: Build
         run: go build ./...
 
@@ -340,6 +346,9 @@ jobs:
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9  # v1
         with:
           cache: go
+
+      # prepare-demo-db.sh tests run the uv pinned in mise.lock.
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5  # v5.0.0
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here

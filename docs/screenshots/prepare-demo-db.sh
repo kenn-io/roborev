@@ -3,6 +3,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DEMO_PYTHON="3.14"
 SOURCE_DB="${ROBOREV_DOCS_SOURCE_DB:-${ROBOREV_DATA_DIR:-$HOME/.roborev}/reviews.db}"
 DEMO_DIR="${TMPDIR:-/tmp}/roborev-demo-data"
 DEST_DB="$DEMO_DIR/reviews.db"
@@ -13,8 +16,9 @@ if [[ ! -f "$SOURCE_DB" ]]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: python3 is required to sanitize and copy screenshot data" >&2
+if ! command -v mise >/dev/null 2>&1; then
+  echo "Error: mise is required to run the uv version pinned in $REPO_ROOT/mise.lock" >&2
+  echo "Install it from https://mise.jdx.dev/getting-started.html" >&2
   exit 1
 fi
 
@@ -26,7 +30,15 @@ echo "Destination: $DEST_DB"
 echo ""
 
 export SOURCE_DB DEST_DB
-python3 <<'PY'
+# Run the sanitizer with the uv pinned in the repo's mise.lock and a uv-managed
+# Python, not whatever python3 is first on PATH. mise exec does not install
+# missing tools, so install first. mise -C changes the working directory, so
+# uv --directory restores it for relative paths in the environment.
+mise -C "$REPO_ROOT" install --quiet uv
+mise -C "$REPO_ROOT" exec -- uv run \
+  --directory "$PWD" --no-project --no-config \
+  --managed-python --python "$DEMO_PYTHON" \
+  python - <<'PY'
 import json
 import os
 import pathlib
@@ -41,12 +53,13 @@ review_statuses = ("done",)
 limit = int(os.environ.get("ROBOREV_DOCS_REVIEW_LIMIT", "1000"))
 source_db = os.environ["SOURCE_DB"]
 dest_db = os.environ["DEST_DB"]
-home = str(pathlib.Path.home())
-home_name = pathlib.Path.home().name
+home_path = pathlib.Path(os.environ.get("ROBOREV_DOCS_HOME") or pathlib.Path.home())
+home = str(home_path)
+home_name = home_path.name
 private_terms_path = pathlib.Path(
     os.environ.get(
         "KENN_PRIVATE_TERMS_FILE",
-        pathlib.Path.home() / ".config" / "kenn" / "private-terms.txt",
+        home_path / ".config" / "kenn" / "private-terms.txt",
     )
 )
 private_terms = []
