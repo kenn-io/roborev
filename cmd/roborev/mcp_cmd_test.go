@@ -111,11 +111,13 @@ func stubMCPStatusDiscovery(
 	probe func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error),
 ) {
 	t.Helper()
-	origList, origProbe := mcpStatusListRuntimes, mcpStatusProbe
+	origList, origProbe, origStale := mcpStatusListRuntimes, mcpStatusProbe, mcpStatusRuntimeStale
 	mcpStatusListRuntimes = func() ([]*daemon.RuntimeInfo, error) { return runtimes, nil }
 	mcpStatusProbe = probe
+	// Synthetic PIDs are not real processes; tests opt into staleness.
+	mcpStatusRuntimeStale = func(*daemon.RuntimeInfo) bool { return false }
 	t.Cleanup(func() {
-		mcpStatusListRuntimes, mcpStatusProbe = origList, origProbe
+		mcpStatusListRuntimes, mcpStatusProbe, mcpStatusRuntimeStale = origList, origProbe, origStale
 	})
 	patchServerAddr(t, "")
 }
@@ -207,6 +209,26 @@ func TestMCPStatusProbesSocketFirst(t *testing.T) {
 	assert.Equal(t, []mcpListenerStatus{{
 		PID: 11, Transport: "http", URL: "http://127.0.0.1:7373/mcp", BackendURL: "http://127.0.0.1:7373",
 	}}, listeners)
+}
+
+func TestMCPStatusSkipsStaleRecordsBeforeProbing(t *testing.T) {
+	var probed []string
+	stubMCPStatusDiscovery(t,
+		[]*daemon.RuntimeInfo{
+			{PID: 11, Network: "tcp", Address: "127.0.0.1:7373"},
+			{PID: 12, Network: "tcp", Address: "127.0.0.1:7374"},
+		},
+		func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			probed = append(probed, ep.Address)
+			return &daemon.PingInfo{OK: true, PID: 12, MCPURL: "http://127.0.0.1:7374/mcp"}, nil
+		})
+	// PID 11 crashed; another account may now hold its port.
+	mcpStatusRuntimeStale = func(rt *daemon.RuntimeInfo) bool { return rt.PID == 11 }
+
+	listeners, err := discoverMCPListeners(time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"127.0.0.1:7374"}, probed, "a stale record's port must not receive the key")
+	assert.Len(t, listeners, 1)
 }
 
 func TestMCPStatusReportsEmptyListWithoutListeners(t *testing.T) {

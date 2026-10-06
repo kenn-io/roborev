@@ -1567,18 +1567,17 @@ those three. If a file is missing or does not match, the daemon refuses to
 start, and `roborev doctor` reports which file failed to load.
 
 The daemon reads `[daemon_tls]` only when it starts, but commands read it every
-time. On Windows, stop the daemon before you add, remove or change
-`[daemon_tls]`, then start it again:
+time. Stop the daemon before you add, remove or change `[daemon_tls]`, then
+start it again:
 
 1. Run `roborev daemon stop`.
 1. Edit `[daemon_tls]`.
 1. Run `roborev daemon start`.
 
 If you change the settings first, commands and the running daemon disagree about
-TLS. Windows has no Unix socket to fall back on, so `daemon stop` and
-`daemon restart` cannot reach the daemon. On Linux and macOS, commands stop the
-daemon through its Unix socket, so `roborev daemon restart` after the change is
-enough.
+TLS, and requests over TCP fail. `daemon stop` and `daemon restart` then work
+only through the daemon's Unix socket. Windows has no socket, and on Linux and
+macOS the socket can be missing.
 
 ### Persistent Daemon
 

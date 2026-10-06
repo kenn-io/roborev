@@ -556,6 +556,12 @@ func IsDaemonAlive(ep DaemonEndpoint) bool {
 
 // hasStaleProcess rejects dead or reused PIDs before sending credentials.
 // An unknown identity is not proof of a mismatch; older records may lack it.
+// Stale reports that the recorded process exited or its PID now belongs to
+// another process, so the record's endpoints must not receive credentials.
+func (r *RuntimeInfo) Stale() bool {
+	return r.hasStaleProcess()
+}
+
 func (r *RuntimeInfo) hasStaleProcess() bool {
 	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
 		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
@@ -655,38 +661,58 @@ func KillDaemon(info *RuntimeInfo) error {
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
 	}
+	// Reject dead and reused PIDs before any endpoint receives credentials.
 	if info.hasStaleProcess() {
 		removeRuntimeFile()
 		return nil
 	}
-	// Prefer the private Unix socket so auth_key stays off TCP. A cleaner can
-	// delete the socket file while the daemon runs, so fall back to the next
-	// published endpoint that answers.
-	for _, candidate := range info.PreferredEndpoints() {
-		if _, err := ProbeDaemon(candidate, 2*time.Second); err == nil || errors.Is(err, ErrDaemonAccessDenied) {
-			ep = candidate
-			break
-		}
-	}
-	if confirmedDead() {
-		removeRuntimeFile()
-		return nil
-	}
+	identity := processUnknown
 	if info.PID > 0 {
-		switch identifyProcess(info.PID) {
-		case processNotRoborev:
+		if !isProcessAlive(info.PID) {
 			removeRuntimeFile()
 			return nil
-		case processUnknown:
-			ping, err := ProbeDaemon(ep, 2*time.Second)
-			if err != nil {
-				return err
-			}
-			if ping.PID != info.PID {
-				removeRuntimeFile()
-				return nil
+		}
+		identity = identifyProcess(info.PID)
+		if identity == processNotRoborev {
+			removeRuntimeFile()
+			return nil
+		}
+	}
+
+	// Prefer the private Unix socket so auth_key stays off TCP. A cleaner can
+	// delete the socket file while the daemon runs, so fall back to the next
+	// published endpoint. When the PID is known, only that process may get
+	// the shutdown request: another daemon can take over a freed TCP port.
+	selected, answeredByOther := false, map[DaemonEndpoint]bool{}
+	for _, candidate := range info.PreferredEndpoints() {
+		ping, err := ProbeDaemon(candidate, 2*time.Second)
+		if errors.Is(err, ErrDaemonAccessDenied) || err == nil && (info.PID <= 0 || ping.PID == info.PID) {
+			ep, selected = candidate, true
+			break
+		}
+		if err == nil {
+			answeredByOther[candidate] = true
+		}
+	}
+	if !selected && info.PID > 0 {
+		if identity == processUnknown {
+			// Nothing proves this record's process is a roborev daemon.
+			removeRuntimeFile()
+			return nil
+		}
+		// The process is roborev but did not answer yet; keep the published
+		// endpoint that no other daemon claimed and let shutdown retry.
+		ep = DaemonEndpoint{}
+		for _, candidate := range info.PreferredEndpoints() {
+			if !answeredByOther[candidate] {
+				ep = candidate
+				break
 			}
 		}
+	}
+	if info.PID <= 0 && confirmedDead() {
+		removeRuntimeFile()
+		return nil
 	}
 
 	// Request graceful shutdown within one shared preparation budget. Once the

@@ -25,6 +25,7 @@ type mcpListenerStatus struct {
 var (
 	mcpStatusListRuntimes = daemon.ListAllRuntimes
 	mcpStatusProbe        = daemon.ProbeDaemonPing
+	mcpStatusRuntimeStale = (*daemon.RuntimeInfo).Stale
 )
 
 func mcpStatusCmd() *cobra.Command {
@@ -70,6 +71,11 @@ func discoverMCPListeners(timeout time.Duration) ([]mcpListenerStatus, error) {
 			return nil, fmt.Errorf("list daemon runtimes: %w", err)
 		}
 		for _, rt := range runtimes {
+			// A crashed daemon's freed port could now belong to another
+			// account, and the probe carries auth_key.
+			if mcpStatusRuntimeStale(rt) {
+				continue
+			}
 			// Probe the private socket first so auth_key stays off TCP.
 			targets = append(targets, target{
 				endpoints:   rt.PreferredEndpoints(),

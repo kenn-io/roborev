@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -60,8 +61,9 @@ func TestAuthKeyMalformedConfigDoesNotExposeSecret(t *testing.T) {
 }
 
 func TestDaemonTLSConfigRejectsPartialSettings(t *testing.T) {
-	// {pki} expands to an absolute directory for the host OS. TOML literal
-	// strings keep Windows backslashes intact.
+	// '{pki}name' becomes a TOML string holding an absolute path for the host
+	// OS. The directory name has an apostrophe so quoting is exercised.
+	pkiPath := regexp.MustCompile(`'\{pki\}([^']*)'`)
 	for _, tc := range []struct {
 		name    string
 		section string
@@ -80,8 +82,13 @@ client_key_file = '{pki}client-key.pem'`, wantErr: "cert_file and key_file must 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			pki := t.TempDir() + string(filepath.Separator)
-			contents := "[daemon_tls]\n" + strings.ReplaceAll(tc.section, "{pki}", pki) + "\n"
+			pki := filepath.Join(t.TempDir(), "user's pki")
+			section := pkiPath.ReplaceAllStringFunc(tc.section, func(match string) string {
+				encoded, ok := encodeTOMLOverrideValue(filepath.Join(pki, pkiPath.FindStringSubmatch(match)[1]))
+				require.True(t, ok)
+				return encoded
+			})
+			contents := "[daemon_tls]\n" + section + "\n"
 			require.NoError(t, os.WriteFile(GlobalConfigPath(), []byte(contents), 0o600))
 			_, err := LoadGlobalClientAuth()
 			if tc.wantErr == "" {

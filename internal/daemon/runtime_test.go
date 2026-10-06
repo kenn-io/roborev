@@ -1038,3 +1038,47 @@ func TestKillDaemonDoesNotRemoveReusedUnixSocket(t *testing.T) {
 	assert.NoFileExists(t, runtimePath)
 	assert.FileExists(t, socketPath)
 }
+
+func TestKillDaemonSendsNoRequestToNonRoborevPID(t *testing.T) {
+	testenv.SetDataDir(t)
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w, `{"ok":true,"service":"roborev"}`)
+	}))
+	defer server.Close()
+	// A legacy record has no process identity, so only identifyProcess can
+	// tell that the PID now belongs to another program.
+	mockIdentifyProcess(t, func(int) processIdentity { return processNotRoborev })
+	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
+
+	require.NoError(t, KillDaemon(&RuntimeInfo{
+		PID: os.Getpid(), Network: "tcp", Address: server.Listener.Addr().String(), SourcePath: runtimePath,
+	}))
+	assert.Zero(t, requests.Load(), "the endpoint must not receive the key")
+	assert.NoFileExists(t, runtimePath)
+}
+
+func TestKillDaemonDoesNotStopAnotherDaemonOnThePort(t *testing.T) {
+	testenv.SetDataDir(t)
+	var shutdowns atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/shutdown" {
+			shutdowns.Add(1)
+		}
+		fmt.Fprint(w, `{"ok":true,"service":"roborev","pid":1}`)
+	}))
+	defer server.Close()
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
+
+	// The recorded process lives, but a different daemon answers its port.
+	require.NoError(t, KillDaemon(&RuntimeInfo{
+		PID: os.Getpid(), Network: "tcp", Address: server.Listener.Addr().String(), SourcePath: runtimePath,
+	}))
+	assert.Zero(t, shutdowns.Load())
+	assert.NoFileExists(t, runtimePath)
+}

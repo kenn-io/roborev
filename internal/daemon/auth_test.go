@@ -38,7 +38,9 @@ func TestAuthProtectsAllRoutes(t *testing.T) {
 	}
 	for _, path := range paths {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
-			if method == http.MethodGet && livenessRoutes[path] {
+			// Listed here, not read from livenessRoutes, so a route added to
+			// that map by mistake still fails this test.
+			if method == http.MethodGet && (path == "/api/ping" || path == "/api/health") {
 				continue // TestAuthLivenessRoutesWithoutCredentials covers these.
 			}
 			t.Run(method+path, func(t *testing.T) {
@@ -135,6 +137,7 @@ func TestAuthLivenessRoutesWithoutCredentials(t *testing.T) {
 	assert.True(t, ping.OK)
 	assert.Equal(t, os.Getpid(), ping.PID)
 
+	s.errorLog.LogError("worker", "synthetic failure in /synthetic/repo", 0)
 	w = get("/api/health")
 	require.Equal(t, http.StatusOK, w.Code)
 	open := decodeHealth(w)
@@ -145,8 +148,9 @@ func TestAuthLivenessRoutesWithoutCredentials(t *testing.T) {
 
 	full := decodeHealth(get("/api/health", "Bearer "+key))
 	assert.NotEmpty(t, full.Components)
+	require.NotEmpty(t, full.RecentErrors, "the key reveals the recent error")
+	assert.Equal(t, "synthetic failure in /synthetic/repo", full.RecentErrors[0].Message)
 
 	// A wrong key is still rejected, so roborev clients can report it.
 	assert.Equal(t, http.StatusUnauthorized, get("/api/ping", "Bearer fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210").Code)
-	assert.Equal(t, http.StatusUnauthorized, get("/api/status").Code)
 }
