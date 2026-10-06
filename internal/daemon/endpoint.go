@@ -26,6 +26,7 @@ type DaemonEndpoint struct {
 	Network   string // "tcp" or "unix"
 	remoteURL string // Explicit HTTPS URL; never used for local discovery.
 	accessErr error  // A terminal discovery error; never persisted.
+	guessed   bool   // A default address no running daemon published.
 	Address   string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
 }
 
@@ -92,11 +93,19 @@ func (e DaemonEndpoint) BaseURL() string {
 	return e.kitEndpoint().BaseURL()
 }
 
-// ErrPlaintextAuthTransport means a client refused to send auth_key to a TCP
-// endpoint that could be impersonated by another local account.
-var ErrPlaintextAuthTransport = errors.New(
-	"refusing to send auth_key over plaintext TCP; use the daemon's Unix socket, configure [daemon_tls], or set daemon_tls.insecure = true",
+// ErrGuessedEndpointAuth means a client refused to send auth_key over plain
+// TCP to a default address that no running daemon published. While the
+// daemon is stopped, another local account could listen there.
+var ErrGuessedEndpointAuth = errors.New(
+	"no running daemon published this address; refusing to send auth_key over plain TCP to a default address",
 )
+
+// AsGuess marks a default address used when no runtime record names a
+// running daemon. Clients do not send auth_key to it over plain TCP.
+func (e DaemonEndpoint) AsGuess() DaemonEndpoint {
+	e.guessed = true
+	return e
+}
 
 // HTTPClient returns an http.Client configured for this endpoint's transport.
 // It reads auth_key for every request and [daemon_tls] when it is built.
@@ -123,19 +132,19 @@ func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 	return client
 }
 
-// authClient sends auth_key only over a transport that stops another local
-// account from impersonating the daemon: the private Unix socket, mutual TLS,
-// or TCP with an explicit daemon_tls.insecure opt-in.
+// authClient sends auth_key over plain TCP only to an address a running
+// daemon published or the user chose. A guessed default address gets the key
+// only over the private Unix socket or mutual TLS.
 func (e DaemonEndpoint) authClient(
 	timeout time.Duration,
 	tlsSettings config.DaemonTLSConfig,
 	key func() (string, error),
 ) *http.Client {
-	protected := e.IsUnix() || tlsSettings.Enabled() || tlsSettings.Insecure
+	protected := !e.guessed || e.IsUnix() || tlsSettings.Enabled()
 	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout, tlsSettings), func() (string, error) {
 		value, err := key()
 		if err == nil && value != "" && !protected {
-			return "", ErrPlaintextAuthTransport
+			return "", ErrGuessedEndpointAuth
 		}
 		return value, err
 	})

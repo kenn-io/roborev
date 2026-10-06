@@ -3889,20 +3889,12 @@ func (s *Server) startupAuth() config.ClientAuth {
 }
 
 // listenerTLSConfig returns mutual TLS settings for a TCP API listener, or
-// nil when the listener serves plain HTTP. Without Unix sockets, clients
-// would refuse to send auth_key, so an authenticated daemon needs mutual TLS
-// or the explicit insecure opt-in.
+// nil when the listener serves plain HTTP.
 func (s *Server) listenerTLSConfig(ep DaemonEndpoint) (*tls.Config, error) {
-	if ep.IsUnix() {
+	if ep.IsUnix() || !s.daemonTLS.Enabled() {
 		return nil, nil
 	}
-	if s.daemonTLS.Enabled() {
-		return serverTLSConfig(s.daemonTLS)
-	}
-	if s.authKey != "" && !s.daemonTLS.Insecure && !unixSocketsSupported {
-		return nil, errors.New("auth_key on a TCP listener without Unix sockets requires [daemon_tls] or daemon_tls.insecure = true")
-	}
-	return nil, nil
+	return serverTLSConfig(s.daemonTLS)
 }
 
 // humaShutdown requests a graceful daemon shutdown. This is the only

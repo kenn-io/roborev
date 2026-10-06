@@ -67,7 +67,6 @@ func TestDaemonTLSConfigRejectsPartialSettings(t *testing.T) {
 		section string
 		wantErr string
 	}{
-		{name: "insecure only", section: "insecure = true"},
 		{name: "client only", section: `ca_file = '{pki}ca.pem'
 client_cert_file = '{pki}client.pem'
 client_key_file = '{pki}client-key.pem'`},

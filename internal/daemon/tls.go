@@ -61,3 +61,20 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 	}
 	return pool, nil
 }
+
+// CheckTLSFiles loads the certificate files [daemon_tls] names, so a missing
+// or mismatched file is reported before the daemon or a command fails on it.
+func CheckTLSFiles(c config.DaemonTLSConfig) error {
+	if !c.Enabled() {
+		return nil
+	}
+	if _, err := clientTLSConfig(c); err != nil {
+		return err
+	}
+	if c.CertFile != "" {
+		if _, err := serverTLSConfig(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}

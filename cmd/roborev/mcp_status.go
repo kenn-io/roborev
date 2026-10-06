@@ -55,44 +55,54 @@ has [mcp] enabled.`,
 // discoverMCPListeners probes every recorded daemon (or only the --server
 // endpoint when set) and keeps the ones advertising an MCP URL.
 func discoverMCPListeners(timeout time.Duration) ([]mcpListenerStatus, error) {
-	var endpoints []daemon.DaemonEndpoint
-	expectedPIDs := map[daemon.DaemonEndpoint]int{}
+	type target struct {
+		endpoints   []daemon.DaemonEndpoint // Probe order.
+		backend     daemon.DaemonEndpoint
+		expectedPID int
+	}
+	var targets []target
 	if serverAddr != "" {
-		endpoints = append(endpoints, getDaemonEndpoint())
+		ep := getDaemonEndpoint()
+		targets = append(targets, target{endpoints: []daemon.DaemonEndpoint{ep}, backend: ep})
 	} else {
 		runtimes, err := mcpStatusListRuntimes()
 		if err != nil {
 			return nil, fmt.Errorf("list daemon runtimes: %w", err)
 		}
 		for _, rt := range runtimes {
-			ep := rt.Endpoint()
-			endpoints = append(endpoints, ep)
-			expectedPIDs[ep] = rt.PID
+			// Probe the private socket first so auth_key stays off TCP.
+			targets = append(targets, target{
+				endpoints:   rt.PreferredEndpoints(),
+				backend:     rt.Endpoint(),
+				expectedPID: rt.PID,
+			})
 		}
 	}
 
 	listeners := []mcpListenerStatus{}
 	seen := map[string]bool{}
-	for _, ep := range endpoints {
-		probe, err := mcpStatusProbe(ep, timeout)
-		if err != nil || probe.MCPURL == "" {
-			continue
+	for _, tg := range targets {
+		for _, ep := range tg.endpoints {
+			probe, err := mcpStatusProbe(ep, timeout)
+			if err != nil {
+				continue
+			}
+			// A stale runtime record can point at a port now owned by a
+			// different daemon; only trust responders that match the record.
+			if tg.expectedPID != 0 && probe.PID != tg.expectedPID {
+				continue
+			}
+			if probe.MCPURL != "" && !seen[probe.MCPURL] {
+				seen[probe.MCPURL] = true
+				listeners = append(listeners, mcpListenerStatus{
+					PID:        probe.PID,
+					Transport:  "http",
+					URL:        probe.MCPURL,
+					BackendURL: tg.backend.BaseURL(),
+				})
+			}
+			break
 		}
-		// A stale runtime record can point at a port now owned by a
-		// different daemon; only trust responders that match the record.
-		if expected, ok := expectedPIDs[ep]; ok && expected != 0 && probe.PID != expected {
-			continue
-		}
-		if seen[probe.MCPURL] {
-			continue
-		}
-		seen[probe.MCPURL] = true
-		listeners = append(listeners, mcpListenerStatus{
-			PID:        probe.PID,
-			Transport:  "http",
-			URL:        probe.MCPURL,
-			BackendURL: ep.BaseURL(),
-		})
 	}
 	return listeners, nil
 }

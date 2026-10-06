@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 )
 
 func checkDoctorGlobalConfig(env *doctorEnv) []doctorCheck {
@@ -41,6 +42,26 @@ func checkDoctorGlobalConfig(env *doctorEnv) []doctorCheck {
 		out = append(out, unknownKeysCheck("config.global_unknown_keys", env.globalPath, unknown))
 	}
 	return out
+}
+
+// checkDoctorDaemonTLS loads the [daemon_tls] certificate files. With a bad
+// file the daemon refuses to start and commands cannot connect, which would
+// otherwise only show up as "daemon is not running".
+func checkDoctorDaemonTLS(env *doctorEnv) []doctorCheck {
+	if env.globalErr != nil || !env.global.DaemonTLS.Enabled() {
+		return nil
+	}
+	c := doctorCheck{ID: "config.daemon_tls", Category: "config"}
+	if err := daemon.CheckTLSFiles(env.global.DaemonTLS); err != nil {
+		c.Status = doctorFail
+		c.Summary = "daemon_tls certificates do not load; the daemon will not start and commands cannot connect"
+		c.Details = []string{err.Error()}
+		c.Fix = "check the [daemon_tls] file paths and that each certificate matches its key and is signed by ca_file"
+		return []doctorCheck{c}
+	}
+	c.Status = doctorOK
+	c.Summary = "daemon_tls certificates load"
+	return []doctorCheck{c}
 }
 
 func unknownKeysCheck(id, path string, keys []string) doctorCheck {

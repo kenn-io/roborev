@@ -124,12 +124,14 @@ func defaultDaemonEndpoint() daemon.DaemonEndpoint {
 	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 }
 
+// fallbackDaemonEndpoint is used when no runtime record names a running
+// daemon. It is only a guess, so clients keep auth_key off it over plain TCP.
 func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 	exe, err := os.Executable()
 	if err == nil && shouldRefuseAutoStartDaemon(exe) {
-		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
+		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}.AsGuess()
 	}
-	return defaultDaemonEndpoint()
+	return defaultDaemonEndpoint().AsGuess()
 }
 
 // validateServerFlag parses and validates the --server flag value.
@@ -314,10 +316,7 @@ func ensureDaemon() error {
 		}
 		return nil
 	}
-	// The default address is only a guess when no runtime record exists, so a
-	// refusal to send auth_key there does not block startup. The start lock
-	// in startDaemon still finds a daemon that publishes its record meanwhile.
-	if daemon.IsDaemonAccessError(probeErr) && !errors.Is(probeErr, daemon.ErrPlaintextAuthTransport) {
+	if daemon.IsDaemonAccessError(probeErr) {
 		return fmt.Errorf("probe daemon: %w", probeErr)
 	}
 

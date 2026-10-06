@@ -277,8 +277,8 @@ func TestEnsureDaemonDefaultProbeErrors(t *testing.T) {
 		},
 		{
 			// The default address is only a guess without a runtime record.
-			name:       "plaintext key refusal starts a daemon",
-			probeErr:   daemon.ErrPlaintextAuthTransport,
+			name:       "guessed address key refusal starts a daemon",
+			probeErr:   daemon.ErrGuessedEndpointAuth,
 			wantStarts: 1,
 		},
 	} {

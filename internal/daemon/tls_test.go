@@ -134,3 +134,18 @@ func TestAuthMutualTLSOnTCPListener(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestCheckTLSFiles(t *testing.T) {
+	pki := newTestPKI(t)
+	require.NoError(t, CheckTLSFiles(pki))
+	require.NoError(t, CheckTLSFiles(config.DaemonTLSConfig{}), "nothing to load without ca_file")
+
+	mismatched := pki
+	mismatched.KeyFile = pki.ClientKeyFile
+	require.ErrorContains(t, CheckTLSFiles(mismatched), "load daemon_tls server certificate")
+
+	notPEM := pki
+	notPEM.CAFile = filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(notPEM.CAFile, []byte("not a certificate"), 0o600))
+	require.ErrorContains(t, CheckTLSFiles(notPEM), "contains no PEM certificates")
+}

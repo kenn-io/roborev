@@ -115,6 +115,16 @@ func (r RuntimeInfo) Endpoints() []DaemonEndpoint {
 	return append(endpoints, alternate)
 }
 
+// PreferredEndpoints returns the published endpoints with the private Unix
+// socket first, so auth_key stays off TCP while the socket works.
+func (r RuntimeInfo) PreferredEndpoints() []DaemonEndpoint {
+	endpoints := r.Endpoints()
+	if len(endpoints) == 2 && endpoints[1].IsUnix() {
+		endpoints[0], endpoints[1] = endpoints[1], endpoints[0]
+	}
+	return endpoints
+}
+
 // PingInfo is the minimal daemon identity payload used for liveness probes.
 type PingInfo struct {
 	OK      bool   `json:"ok"`
@@ -373,12 +383,10 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
-// IsDaemonAccessError reports credential, configuration, transport-security,
-// and local permission errors that must not trigger daemon recovery or
-// stale-runtime cleanup.
+// IsDaemonAccessError reports credential, configuration, and local permission
+// errors that must not trigger daemon recovery or stale-runtime cleanup.
 func IsDaemonAccessError(err error) bool {
 	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
-		errors.Is(err, ErrPlaintextAuthTransport) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
@@ -399,7 +407,7 @@ func discoverRuntimeRecords(
 			continue
 		}
 		primary := info.Endpoint()
-		for _, ep := range info.Endpoints() {
+		for _, ep := range info.PreferredEndpoints() {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -605,15 +613,7 @@ func KillDaemon(info *RuntimeInfo) error {
 		return nil
 	}
 
-	// Prefer the private Unix socket: it carries auth_key without TLS, and
-	// daemons since v0.65.0 publish one next to their TCP listener.
 	ep := info.Endpoint()
-	for _, candidate := range info.Endpoints() {
-		if candidate.IsUnix() {
-			ep = candidate
-			break
-		}
-	}
 
 	// Remove only this process's runtime record. The endpoint may already belong
 	// to a service-manager replacement.
@@ -634,7 +634,20 @@ func KillDaemon(info *RuntimeInfo) error {
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
 	}
-	if info.hasStaleProcess() || confirmedDead() {
+	if info.hasStaleProcess() {
+		removeRuntimeFile()
+		return nil
+	}
+	// Prefer the private Unix socket so auth_key stays off TCP. A cleaner can
+	// delete the socket file while the daemon runs, so fall back to the next
+	// published endpoint that answers.
+	for _, candidate := range info.PreferredEndpoints() {
+		if _, err := ProbeDaemon(candidate, 2*time.Second); err == nil || errors.Is(err, ErrDaemonAccessDenied) {
+			ep = candidate
+			break
+		}
+	}
+	if confirmedDead() {
 		removeRuntimeFile()
 		return nil
 	}

@@ -168,15 +168,13 @@ type WebConfig struct {
 }
 
 // DaemonTLSConfig enables mutual TLS on the daemon's TCP API listener with
-// operator-supplied certificates. Clients send auth_key over TCP only when
-// mutual TLS is configured or Insecure is set; the Unix socket needs neither.
+// operator-supplied certificates.
 type DaemonTLSConfig struct {
 	CAFile         string `toml:"ca_file" comment:"Absolute path to the CA certificate that signs the daemon and client certificates. Setting it enables mutual TLS on the daemon's TCP listener. Requires daemon restart."`
 	CertFile       string `toml:"cert_file" comment:"Absolute path to the daemon's TLS server certificate."`
 	KeyFile        string `toml:"key_file" comment:"Absolute path to the daemon's TLS server private key."`
 	ClientCertFile string `toml:"client_cert_file" comment:"Absolute path to the client certificate roborev commands present to the daemon."`
 	ClientKeyFile  string `toml:"client_key_file" comment:"Absolute path to the private key for client_cert_file."`
-	Insecure       bool   `toml:"insecure" comment:"Send auth_key over plaintext TCP when mutual TLS is not configured. Another local account can impersonate the daemon and capture the key."`
 }
 
 // Enabled reports whether mutual TLS is configured.

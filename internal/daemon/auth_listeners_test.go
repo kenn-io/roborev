@@ -40,33 +40,30 @@ func TestAuthStartupAndBothListeners(t *testing.T) {
 	require.Equal(t, "tcp", tcp.Network)
 	require.Equal(t, "unix", unix.Network)
 
-	// Without an opt-in, clients keep the key off TCP and discovery uses the socket.
+	// Discovery prefers the socket, so the key stays off TCP while it works.
 	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	resp, err := tcp.HTTPClient(time.Second).Get(tcp.BaseURL() + "/api/ping")
-	assert.Nil(t, resp)
-	require.ErrorIs(t, err, ErrPlaintextAuthTransport)
 	discovered, err := GetAnyRunningDaemon()
 	require.NoError(t, err)
 	assert.Equal(t, unix, discovered.Endpoint())
 
-	// Both listeners enforce the key. The TCP check uses the insecure opt-in.
-	for _, tc := range []struct {
-		endpoint DaemonEndpoint
-		write    func(*testing.T, string)
-	}{
-		{endpoint: unix, write: writeAuthClientConfig},
-		{endpoint: tcp, write: writeTCPAuthClientConfig},
-	} {
-		tc.write(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
-		resp, err := tc.endpoint.HTTPClient(time.Second).Get(tc.endpoint.BaseURL() + "/api/ping")
+	// Both published listeners accept the key and enforce it.
+	for _, ep := range []DaemonEndpoint{unix, tcp} {
+		writeAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+		resp, err := ep.HTTPClient(time.Second).Get(ep.BaseURL() + "/api/ping")
 		require.NoError(t, err)
 		resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-		tc.write(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-		ping, err := ProbeDaemon(tc.endpoint, time.Second)
+		writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		ping, err := ProbeDaemon(ep, time.Second)
 		require.NoError(t, err)
 		assert.True(t, ping.OK)
 	}
+
+	// With the socket gone, discovery falls back to the published TCP endpoint.
+	require.NoError(t, os.Remove(unix.Address))
+	discovered, err = GetAnyRunningDaemon()
+	require.NoError(t, err)
+	assert.Equal(t, tcp, discovered.Endpoint())
 }
 
 func TestAuthKillDaemonStopsThroughUnixSocket(t *testing.T) {
@@ -114,4 +111,42 @@ func TestAuthKillDaemonStopsThroughUnixSocket(t *testing.T) {
 	require.NoError(t, KillDaemon(info))
 	assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", <-shutdownAuth)
 	assert.Zero(t, tcpRequests.Load())
+}
+
+func TestAuthKillDaemonFallsBackToTCPWhenSocketIsGone(t *testing.T) {
+	testenv.SetDataDir(t)
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	shutdownAuth := make(chan string, 1)
+	var tcpServer *http.Server
+	tcpServer = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ping":
+			fmt.Fprint(w, `{"ok":true,"service":"roborev"}`)
+		case "/api/shutdown":
+			shutdownAuth <- r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			go func() { _ = tcpServer.Close() }()
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go func() { _ = tcpServer.Serve(listener) }()
+	t.Cleanup(func() { _ = tcpServer.Close() })
+
+	// A cleaner removed the socket file while the daemon kept running.
+	socketDir, err := os.MkdirTemp("", "rr-gone")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	info := &RuntimeInfo{
+		Network:          "tcp",
+		Address:          listener.Addr().String(),
+		AlternateNetwork: "unix",
+		AlternateAddress: filepath.Join(socketDir, "d.sock"),
+	}
+	require.Len(t, info.Endpoints(), 2, "the record must list the missing socket")
+	require.NoError(t, KillDaemon(info))
+	assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", <-shutdownAuth)
 }

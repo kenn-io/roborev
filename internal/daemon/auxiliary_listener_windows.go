@@ -7,10 +7,6 @@ import (
 	"net"
 )
 
-// unixSocketsSupported reports whether the daemon can serve its private
-// Unix socket next to a TCP listener.
-const unixSocketsSupported = false
-
 var errUnixSocketsUnsupported = errors.New("unix sockets are not supported on Windows")
 
 func listenUnixEndpoint(DaemonEndpoint) (net.Listener, error) {

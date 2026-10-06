@@ -5,7 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -155,6 +161,52 @@ func TestMCPStatusListsAdvertisedListeners(t *testing.T) {
 	cmd.SetArgs([]string{"status"})
 	require.NoError(cmd.Execute())
 	assert.Equal("MCP http://127.0.0.1:7373/mcp (pid 11, daemon http://127.0.0.1:7373)\n", out.String())
+}
+
+func TestMCPStatusListsAuthenticatedDaemon(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "`+key+`"`), 0o600))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+key {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":11,"mcp_url":"http://%s/mcp"}`, r.Host)
+	}))
+	defer server.Close()
+	address := strings.TrimPrefix(server.URL, "http://")
+	stubMCPStatusDiscovery(t, []*daemon.RuntimeInfo{{PID: 11, Network: "tcp", Address: address}}, daemon.ProbeDaemonPing)
+
+	listeners, err := discoverMCPListeners(time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, []mcpListenerStatus{{
+		PID: 11, Transport: "http", URL: server.URL + "/mcp", BackendURL: server.URL,
+	}}, listeners)
+}
+
+func TestMCPStatusProbesSocketFirst(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket endpoints are not published on Windows")
+	}
+	var probed []string
+	stubMCPStatusDiscovery(t,
+		[]*daemon.RuntimeInfo{{
+			PID: 11, Network: "tcp", Address: "127.0.0.1:7373",
+			AlternateNetwork: "unix", AlternateAddress: "/tmp/rr-mcp-status/d.sock",
+		}},
+		func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+			probed = append(probed, ep.Address)
+			return &daemon.PingInfo{OK: true, PID: 11, MCPURL: "http://127.0.0.1:7373/mcp"}, nil
+		})
+
+	listeners, err := discoverMCPListeners(time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/tmp/rr-mcp-status/d.sock"}, probed, "the socket answers, so TCP is never probed")
+	assert.Equal(t, []mcpListenerStatus{{
+		PID: 11, Transport: "http", URL: "http://127.0.0.1:7373/mcp", BackendURL: "http://127.0.0.1:7373",
+	}}, listeners)
 }
 
 func TestMCPStatusReportsEmptyListWithoutListeners(t *testing.T) {
