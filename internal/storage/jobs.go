@@ -704,6 +704,10 @@ func (db *DB) claimJobAttempt(
 // writer on a thread. The claim transaction serializes this check, so exactly
 // one running job resumes a session and the others start fresh. The job stays
 // eligible as a future reuse source for the fresh session it captures.
+//
+// A canceled job keeps its worker_id until the worker sees its agent exit and
+// calls ReleaseCanceledJob, so it still counts as the session's writer until
+// then.
 func releaseContestedSession(
 	ctx context.Context, conn *sql.Conn, job *ReviewJob, nowStr string,
 ) error {
@@ -716,7 +720,8 @@ func releaseContestedSession(
 		    updated_at = ?, synced_at = NULL
 		WHERE id = ? AND EXISTS (
 			SELECT 1 FROM review_jobs other
-			WHERE other.status = 'running'
+			WHERE (other.status = 'running'
+			       OR (other.status = 'canceled' AND COALESCE(other.worker_id, '') <> ''))
 			  AND other.id <> review_jobs.id
 			  AND other.session_id = review_jobs.session_id
 		)
