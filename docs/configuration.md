@@ -1503,9 +1503,19 @@ With `[daemon_tls]` configured, use `https://` and add
 
 `ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
 override. Missing or incorrect credentials return HTTP 401. Query-string keys
-are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
-Roborev clients scope keys to their configured endpoint and do not follow
-redirects.
+are not accepted.
+
+Two routes answer callers that send no key, so a monitor or another account can
+confirm that the daemon is running:
+
+- `GET /api/ping` returns the service name, version, process ID and MCP URL.
+- `GET /api/health` returns only `healthy`, `ready`, `uptime` and `version`.
+    Component details and recent errors can contain paths and agent output, so
+    they need the key.
+
+A caller that sends a wrong key still gets HTTP 401 on these routes. Go
+consumers can use `client.NewWithAuthKey(baseURL, key)`. Roborev clients scope
+keys to their configured endpoint and do not follow redirects.
 
 This is a local shared-key mechanism. It does not isolate processes that already
 run as the daemon owner's account or can read its config.
@@ -1522,7 +1532,8 @@ Roborev clients choose a transport in this order:
     when the daemon publishes it.
 - **Mutual TLS over TCP.** With `[daemon_tls]` configured, the daemon requires
     TLS and a client certificate signed by your CA on its TCP listener, and
-    clients trust only that CA.
+    clients trust only that CA. Callers without a client certificate can still
+    reach the ping and health routes described above.
 - **Plain TCP to a known address.** Otherwise clients send the key over plain
     TCP, but only to an address a running daemon published or a `--server`
     address you give. This covers Windows, a socket file that was removed, and

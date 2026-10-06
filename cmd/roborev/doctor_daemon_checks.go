@@ -17,7 +17,7 @@ func checkDoctorDaemon(env *doctorEnv) []doctorCheck {
 		}
 		if daemon.IsDaemonAccessError(env.pingErr) {
 			c.Summary = "cannot reach the daemon: access denied"
-			c.Fix = "check auth_key in the global config; if roborev runs in a sandbox, allow loopback or Unix socket access and retry"
+			c.Fix = "check auth_key and [daemon_tls] in the global config; if roborev runs in a sandbox, allow loopback or Unix socket access and retry"
 		}
 		return []doctorCheck{c}
 	}

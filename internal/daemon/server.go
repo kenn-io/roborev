@@ -225,7 +225,7 @@ func newServerWithLogs(
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
-		Handler: withAuthentication(mux, cfg.AuthKey),
+		Handler: withAPIAuthentication(mux, cfg.AuthKey),
 	}
 
 	return s
@@ -3843,6 +3843,18 @@ func (s *Server) humaGetHealth(
 		searchHealth = searchHealthFromSnapshot(s.searchReconciler.Health())
 	}
 
+	if !callerVerified(ctx) {
+		// Component messages and recent errors can contain paths and agent
+		// output, so callers without credentials only learn that it runs.
+		return &HealthOutput{Body: storage.HealthStatus{
+			Healthy:      allHealthy,
+			Ready:        ready,
+			Uptime:       uptimeStr,
+			Version:      version.Version,
+			Components:   []storage.ComponentHealth{},
+			RecentErrors: []storage.ErrorEntry{},
+		}}, nil
+	}
 	return &HealthOutput{Body: storage.HealthStatus{
 		Healthy:      allHealthy,
 		Ready:        ready,

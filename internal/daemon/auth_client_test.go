@@ -204,8 +204,14 @@ func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
-	_, err := GetAnyRunningDaemonContext(context.Background())
-	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	// Ping answers callers without a key, so discovery finds the daemon and
+	// the first request that needs the key reports the denial.
+	info, err := GetAnyRunningDaemonContext(context.Background())
+	require.NoError(t, err)
+	resp, err := info.Endpoint().HTTPClient(time.Second).Get(server.URL + "/api/status")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	CleanupZombieDaemons(ep)
 	_, err = os.Stat(RuntimePathForPID(os.Getpid()))
 	assert.NoError(t, err)

@@ -3,6 +3,8 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -383,13 +385,32 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
-// IsDaemonAccessError reports credential, configuration, and local permission
-// errors that must not trigger daemon recovery or stale-runtime cleanup.
+// IsDaemonAccessError reports credential, configuration, TLS, and local
+// permission errors that must not trigger daemon recovery or stale-runtime
+// cleanup.
 func IsDaemonAccessError(err error) bool {
 	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
+		isTLSFailure(err) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
+}
+
+// isTLSFailure reports a handshake that reached a listener but failed
+// certificate checks on either side. Something is listening, so the daemon
+// must not be treated as stopped.
+func isTLSFailure(err error) bool {
+	var verification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	var recordHeader tls.RecordHeaderError
+	// crypto/tls reports an alert from the daemon, such as a rejected client
+	// certificate, as a "remote error" operation.
+	var op *net.OpError
+	return errors.As(err, &verification) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &invalid) || errors.As(err, &hostname) ||
+		errors.As(err, &recordHeader) || errors.As(err, &op) && op.Op == "remote error"
 }
 
 func discoverRuntimeRecords(

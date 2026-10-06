@@ -117,9 +117,10 @@ func TestAuthMutualTLSOnTCPListener(t *testing.T) {
 		_, err := ProbeDaemon(tcp, time.Second)
 		var verifyErr *tls.CertificateVerificationError
 		require.ErrorAs(t, err, &verifyErr)
+		assert.True(t, IsDaemonAccessError(err), "a certificate problem must not look like a stopped daemon")
 	})
 
-	t.Run("client without a certificate", func(t *testing.T) {
+	t.Run("client without a certificate reaches only liveness routes", func(t *testing.T) {
 		pool := x509.NewCertPool()
 		caPEM, err := os.ReadFile(daemonPKI.CAFile)
 		require.NoError(t, err)
@@ -127,11 +128,30 @@ func TestAuthMutualTLSOnTCPListener(t *testing.T) {
 		client := &http.Client{Timeout: time.Second, Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 		}}
-		resp, err := client.Get("https://" + tcp.Address + "/api/ping")
-		if resp != nil {
+		get := func(path string) int {
+			req, err := http.NewRequest(http.MethodGet, "https://"+tcp.Address+path, nil)
+			require.NoError(t, err)
+			// The key alone does not stand in for the client certificate.
+			req.Header.Set("Authorization", "Bearer "+key)
+			resp, err := client.Do(req)
+			require.NoError(t, err)
 			resp.Body.Close()
+			return resp.StatusCode
 		}
+		assert.Equal(t, http.StatusOK, get("/api/ping"))
+		assert.Equal(t, http.StatusOK, get("/api/health"))
+		assert.Equal(t, http.StatusUnauthorized, get("/api/status"))
+	})
+
+	t.Run("discovery over TCP reports a certificate problem", func(t *testing.T) {
+		// Without the socket, discovery can only reach the TLS listener.
+		require.Len(t, info.Endpoints(), 2)
+		require.NoError(t, os.Remove(info.Endpoints()[1].Address))
+		writeMutualTLSClientConfig(t, key, newTestPKI(t))
+		_, err := GetAnyRunningDaemon()
 		require.Error(t, err)
+		assert.True(t, IsDaemonAccessError(err))
+		assert.ErrorContains(t, err, "certificate")
 	})
 }
 

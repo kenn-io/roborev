@@ -26,9 +26,11 @@ func serverTLSConfig(c config.DaemonTLSConfig) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{certificate},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    pool,
-		MinVersion:   tls.VersionTLS12,
+		// Clients without a certificate may still reach the liveness routes;
+		// withAPIAuthentication requires a verified certificate elsewhere.
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  pool,
+		MinVersion: tls.VersionTLS12,
 	}, nil
 }
 

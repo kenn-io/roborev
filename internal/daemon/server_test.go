@@ -277,7 +277,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 	}
 }
 
-func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
+func TestServerStartRejectsExistingDaemonWithOtherKey(t *testing.T) {
 	testenv.SetDataDir(t)
 	existing := httptest.NewServer(newAuthTestServer(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210").httpServer.Handler)
 	defer existing.Close()
@@ -289,8 +289,9 @@ func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
 	server := NewServer(db, cfg, "")
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 
+	// Ping answers without the other daemon's key, so startup still finds it.
 	err := server.Start(t.Context())
-	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	require.ErrorContains(t, err, "daemon already running")
 	assert.FileExists(t, RuntimePath())
 	assert.Empty(t, server.endpoint.Address)
 }

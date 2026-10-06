@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -273,6 +275,12 @@ func TestEnsureDaemonDefaultProbeErrors(t *testing.T) {
 		{
 			name:          "access denied blocks startup",
 			probeErr:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES},
+			wantAccessErr: true,
+		},
+		{
+			// Something answered, but its certificate did not verify.
+			name:          "certificate failure blocks startup",
+			probeErr:      &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
 			wantAccessErr: true,
 		},
 		{
