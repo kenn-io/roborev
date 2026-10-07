@@ -186,74 +186,214 @@ func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := queryAnalyticsRows(tx, opts)
-	if err != nil {
+	aggregator := newAnalyticsAggregator(opts)
+	if err := queryAnalyticsRows(tx, opts, &aggregator); err != nil {
 		return nil, err
 	}
-	return aggregateAnalytics(rows, opts)
+	return aggregator.snapshot(), nil
+}
+
+// analyticsJobExprs are the values Analytics derives from each review_jobs
+// row. idx_review_jobs_analytics stores their results, so SQLite reads them
+// from the index instead of parsing timestamps and token_usage JSON for every
+// row. The index definition is built from the same strings because SQLite
+// only substitutes an indexed expression that matches exactly. Changing an
+// expression therefore needs a new index name: CREATE INDEX IF NOT EXISTS
+// keeps an existing index's old definition.
+var analyticsJobExprs = []string{
+	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.enqueued_at)) * 86400 AS REAL), 0)",
+	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL), 0)",
+	"CASE WHEN " + costEligible + " THEN 1 ELSE 0 END",
+	"CASE WHEN " + costEligible + " AND " + hasCost + " THEN 1 ELSE 0 END",
+	"CASE WHEN " + costEligible + " AND " + hasCost + " THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END",
+}
+
+// analyticsJobsIndexSQL creates the index that answers analyticsRowsQuery
+// without reading review_jobs rows. Most analytics columns are stored after
+// the large prompt column, so reading them from the table walks each
+// prompt's overflow pages. The leading datetime(finished_at), id key matches
+// the query's ORDER BY, so rows come out sorted.
+func analyticsJobsIndexSQL() string {
+	return `CREATE INDEX IF NOT EXISTS idx_review_jobs_analytics ON review_jobs(
+		datetime(finished_at), id, julianday(finished_at), repo_id, source, agent, model,
+		job_type, panel_role, status, finished_at, ` +
+		strings.ReplaceAll(strings.Join(analyticsJobExprs, ", "), "j.", "") + `)
+		WHERE finished_at IS NOT NULL`
 }
 
 // analyticsRowsQuery selects every finished job in the time window. Project
 // and source filters are applied in Go so the same rows also supply the filter
-// choices, which must list every value in the window. Every review_jobs column
-// read here must stay in idx_review_jobs_analytics: they are stored after the
-// large prompt column, and reading them from the table walks its overflow
-// pages.
+// choices, which must list every value in the window.
+//
+// The julianday() bounds are exact; they compare the mixed UTC and offset
+// timestamp formats in finished_at as instants. The datetime() bounds select a
+// superset of those rows (datetime truncates to whole seconds) so SQLite can
+// range-scan the index in ORDER BY order instead of sorting.
+//
+// Without ANALYZE statistics SQLite prefers the unique reviews(job_id) index,
+// which reads verdict_bool from the table past each review's large prompt.
+// INDEXED BY selects the covering index instead.
 func analyticsRowsQuery(opts AnalyticsOptions) (string, []any) {
-	conditions := []string{"j.finished_at IS NOT NULL"}
-	args := []any{}
+	conditions := make([]string, 1, 5)
+	conditions[0] = "j.finished_at IS NOT NULL"
+	args := make([]any, 0, 2)
 	if !opts.Since.IsZero() {
-		conditions = append(conditions, "julianday(j.finished_at) >= julianday(?)")
 		args = append(args, analyticsTime(opts.Since))
+		conditions = append(conditions,
+			"datetime(j.finished_at) >= datetime(?1)", "julianday(j.finished_at) >= julianday(?1)")
 	}
 	if !opts.Until.IsZero() {
-		conditions = append(conditions, "julianday(j.finished_at) < julianday(?)")
 		args = append(args, analyticsTime(opts.Until))
+		if len(args) == 1 {
+			conditions = append(conditions,
+				"datetime(j.finished_at) <= datetime(?1)", "julianday(j.finished_at) < julianday(?1)")
+		} else {
+			conditions = append(conditions,
+				"datetime(j.finished_at) <= datetime(?2)", "julianday(j.finished_at) < julianday(?2)")
+		}
 	}
-	return `
-		SELECT r.name, COALESCE(j.source, ''), COALESCE(j.agent, ''), COALESCE(j.model, ''),
-		       COALESCE(NULLIF(j.job_type, ''), 'review'), COALESCE(j.panel_role, ''),
-		       j.status, j.finished_at,
-		       COALESCE(CAST((julianday(j.finished_at) - julianday(j.enqueued_at)) * 86400 AS REAL), 0),
-		       COALESCE(CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL), 0),
-		       rv.verdict_bool, COALESCE(rv.closed, 0),
-		       CASE WHEN ` + costEligible + ` THEN 1 ELSE 0 END,
-		       CASE WHEN ` + costEligible + ` AND ` + hasCost + ` THEN 1 ELSE 0 END,
-		       CASE WHEN ` + costEligible + ` AND ` + hasCost + `
-		            THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		LEFT JOIN reviews rv ON rv.job_id = j.id
-		WHERE ` + strings.Join(conditions, " AND ") + `
+	return analyticsRowsSelect + strings.Join(conditions, " AND ") + `
 		ORDER BY datetime(j.finished_at), j.id`, args
 }
 
-func queryAnalyticsRows(q querier, opts AnalyticsOptions) ([]analyticsRow, error) {
+// analyticsRowsSelect is built once because analyticsJobExprs is long.
+var analyticsRowsSelect = `
+		SELECT r.name, COALESCE(j.source, ''), COALESCE(j.agent, ''), COALESCE(j.model, ''),
+		       COALESCE(NULLIF(j.job_type, ''), 'review'), COALESCE(j.panel_role, ''),
+		       j.status, j.finished_at, ` + strings.Join(analyticsJobExprs, ", ") + `,
+		       rv.verdict_bool, COALESCE(rv.closed, 0)
+		FROM review_jobs j
+		JOIN repos r ON r.id = j.repo_id
+		LEFT JOIN reviews rv INDEXED BY idx_reviews_job_verdict ON rv.job_id = j.id
+		WHERE `
+
+// queryAnalyticsRows adds each row in the window to aggregator.
+func queryAnalyticsRows(q querier, opts AnalyticsOptions, aggregator *analyticsAggregator) error {
 	query, args := analyticsRowsQuery(opts)
 	sqlRows, err := q.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer sqlRows.Close()
-	result := []analyticsRow{}
+	// Scan needs addresses, which moves the target to the heap. Reusing one
+	// target, created on the first row, keeps that to one allocation.
+	var scan *struct {
+		row      analyticsRow
+		finished string
+	}
 	for sqlRows.Next() {
-		var row analyticsRow
-		var finished string
+		if scan == nil {
+			scan = new(struct {
+				row      analyticsRow
+				finished string
+			})
+		}
+		row, finished := &scan.row, &scan.finished
 		if err := sqlRows.Scan(
 			&row.project, &row.source, &row.agent, &row.model, &row.jobType,
-			&row.panelRole, &row.status, &finished, &row.reviewDuration,
-			&row.attemptDuration, &row.verdict, &row.closed, &row.eligible,
-			&row.priced, &row.costUSD,
+			&row.panelRole, &row.status, finished, &row.reviewDuration,
+			&row.attemptDuration, &row.eligible, &row.priced, &row.costUSD,
+			&row.verdict, &row.closed,
 		); err != nil {
-			return nil, err
+			return err
 		}
-		row.finishedAt = parseSQLiteTime(finished).UTC()
-		result = append(result, row)
+		row.finishedAt = parseSQLiteTime(*finished).UTC()
+		aggregator.add(row)
 	}
-	return result, sqlRows.Err()
+	return sqlRows.Err()
 }
 
 func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
+	aggregator := newAnalyticsAggregator(opts)
+	for i := range rows {
+		aggregator.add(&rows[i])
+	}
+	return aggregator.snapshot(), nil
+}
+
+// analyticsAggregator folds rows into a snapshot one at a time, so a request
+// never holds every row in its window in memory.
+type analyticsAggregator struct {
+	opts           AnalyticsOptions
+	total          *analyticsAccumulator
+	projects       map[string]*analyticsAccumulator
+	sources        map[string]*analyticsAccumulator
+	agents         map[string]*analyticsAccumulator
+	models         map[string]*analyticsAccumulator
+	buckets        map[time.Time]*analyticsAccumulator
+	splitTotals    map[string]*analyticsAccumulator
+	splitBuckets   map[string]map[time.Time]*analyticsAccumulator
+	optionProjects map[string]struct{}
+	optionSources  map[string]struct{}
+	optionAgents   map[string]struct{}
+	optionModels   map[string]struct{}
+}
+
+func newAnalyticsAggregator(opts AnalyticsOptions) analyticsAggregator {
+	return analyticsAggregator{opts: opts, total: &analyticsAccumulator{}}
+}
+
+// init creates the maps on the first row, so an empty window allocates none;
+// reading a nil map is safe in snapshot.
+func (g *analyticsAggregator) init() {
+	g.projects, g.sources = map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
+	g.agents, g.models = map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
+	g.buckets = map[time.Time]*analyticsAccumulator{}
+	g.splitTotals = map[string]*analyticsAccumulator{}
+	g.splitBuckets = map[string]map[time.Time]*analyticsAccumulator{}
+	g.optionProjects, g.optionSources = map[string]struct{}{}, map[string]struct{}{}
+	g.optionAgents, g.optionModels = map[string]struct{}{}, map[string]struct{}{}
+}
+
+func (g *analyticsAggregator) add(row *analyticsRow) {
+	if g.projects == nil {
+		g.init()
+	}
+	opts := g.opts
+	g.optionProjects[row.project] = struct{}{}
+	g.optionSources[row.source] = struct{}{}
+	if row.agent != "" {
+		g.optionAgents[row.agent] = struct{}{}
+	}
+	if row.model != "" {
+		g.optionModels[row.model] = struct{}{}
+	}
+	if !containsAnalyticsValue(opts.Projects, row.project) || !containsAnalyticsValue(opts.Sources, row.source) {
+		return
+	}
+	logicalReview := isLogicalReview(row)
+	eligibleAttempt := row.eligible && matchesAnalyticsAttemptFilters(row, opts)
+	if !logicalReview && !eligibleAttempt {
+		return
+	}
+	bucketStart := analyticsBucketStart(row.finishedAt, opts.Bucket)
+	var accs [8]*analyticsAccumulator
+	shared := append(accs[:0], g.total, analyticsAccumulatorFor(g.projects, row.project),
+		analyticsAccumulatorFor(g.sources, row.source), analyticsAccumulatorForTime(g.buckets, bucketStart))
+	if opts.Split != "" {
+		key := analyticsSplitValue(row, opts.Split)
+		if g.splitBuckets[key] == nil {
+			g.splitBuckets[key] = map[time.Time]*analyticsAccumulator{}
+		}
+		shared = append(shared, analyticsAccumulatorFor(g.splitTotals, key),
+			analyticsAccumulatorForTime(g.splitBuckets[key], bucketStart))
+	}
+	if logicalReview {
+		for _, acc := range shared {
+			acc.addReview(row)
+		}
+	}
+	if eligibleAttempt {
+		attemptAccs := append(shared,
+			analyticsAccumulatorFor(g.agents, row.agent), analyticsAccumulatorFor(g.models, row.model))
+		for _, acc := range attemptAccs {
+			acc.addAttempt(row)
+		}
+	}
+}
+
+func (g *analyticsAggregator) snapshot() *AnalyticsSnapshot {
+	opts := g.opts
 	filters := AnalyticsFilters{
 		Until: opts.Until.UTC(), Projects: sortedUnique(opts.Projects),
 		Sources: sortedUnique(opts.Sources), Agents: sortedUnique(opts.Agents),
@@ -265,76 +405,14 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	}
 	snapshot := &AnalyticsSnapshot{
 		SchemaVersion: AnalyticsSchemaVersion, Filters: filters,
-		Projects: []AnalyticsProjectRow{},
-		Sources:  []AnalyticsDimensionRow{}, Agents: []AnalyticsDimensionRow{},
-		Models: []AnalyticsDimensionRow{}, SplitSeries: []AnalyticsSplitSeries{},
+		Projects: []AnalyticsProjectRow{}, SplitSeries: []AnalyticsSplitSeries{},
+		Options: AnalyticsFilterOptions{
+			Projects: sortedAnalyticsOptions(g.optionProjects), Sources: sortedAnalyticsOptions(g.optionSources),
+			Agents: sortedAnalyticsOptions(g.optionAgents), Models: sortedAnalyticsOptions(g.optionModels),
+		},
 	}
-	total := &analyticsAccumulator{}
-	projects := map[string]*analyticsAccumulator{}
-	sources := map[string]*analyticsAccumulator{}
-	agents := map[string]*analyticsAccumulator{}
-	models := map[string]*analyticsAccumulator{}
-	buckets := map[time.Time]*analyticsAccumulator{}
-	splitTotals := map[string]*analyticsAccumulator{}
-	splitBuckets := map[string]map[time.Time]*analyticsAccumulator{}
-	optionProjects := map[string]struct{}{}
-	optionSources := map[string]struct{}{}
-	optionAgents := map[string]struct{}{}
-	optionModels := map[string]struct{}{}
-
-	for _, row := range rows {
-		optionProjects[row.project] = struct{}{}
-		optionSources[row.source] = struct{}{}
-		if row.agent != "" {
-			optionAgents[row.agent] = struct{}{}
-		}
-		if row.model != "" {
-			optionModels[row.model] = struct{}{}
-		}
-		if !containsAnalyticsValue(opts.Projects, row.project) || !containsAnalyticsValue(opts.Sources, row.source) {
-			continue
-		}
-		logicalReview := isLogicalReview(row)
-		eligibleAttempt := row.eligible && matchesAnalyticsAttemptFilters(row, opts)
-		if !logicalReview && !eligibleAttempt {
-			continue
-		}
-		project := analyticsAccumulatorFor(projects, row.project)
-		source := analyticsAccumulatorFor(sources, row.source)
-		bucketStart := analyticsBucketStart(row.finishedAt, opts.Bucket)
-		bucket := analyticsAccumulatorForTime(buckets, bucketStart)
-		reviewAccs := []*analyticsAccumulator{total, project, source, bucket}
-		attemptAccs := []*analyticsAccumulator{total, project, source, bucket}
-		if opts.Split != "" {
-			key := analyticsSplitValue(row, opts.Split)
-			if splitBuckets[key] == nil {
-				splitBuckets[key] = map[time.Time]*analyticsAccumulator{}
-			}
-			splitTotal := analyticsAccumulatorFor(splitTotals, key)
-			splitBucket := analyticsAccumulatorForTime(splitBuckets[key], bucketStart)
-			reviewAccs = append(reviewAccs, splitTotal, splitBucket)
-			attemptAccs = append(attemptAccs, splitTotal, splitBucket)
-		}
-		if logicalReview {
-			for _, acc := range reviewAccs {
-				acc.addReview(row)
-			}
-		}
-		if eligibleAttempt {
-			attemptAccs = append(attemptAccs,
-				analyticsAccumulatorFor(agents, row.agent), analyticsAccumulatorFor(models, row.model))
-			for _, acc := range attemptAccs {
-				acc.addAttempt(row)
-			}
-		}
-	}
-
-	snapshot.Options = AnalyticsFilterOptions{
-		Projects: sortedAnalyticsOptions(optionProjects), Sources: sortedAnalyticsOptions(optionSources),
-		Agents: sortedAnalyticsOptions(optionAgents), Models: sortedAnalyticsOptions(optionModels),
-	}
-	snapshot.Summary = total.finish()
-	for key, acc := range projects {
+	snapshot.Summary = g.total.finish()
+	for key, acc := range g.projects {
 		snapshot.Projects = append(snapshot.Projects, AnalyticsProjectRow{Project: key, AnalyticsSummary: acc.finish()})
 	}
 	sort.Slice(snapshot.Projects, func(i, j int) bool {
@@ -343,18 +421,18 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		}
 		return snapshot.Projects[i].Project < snapshot.Projects[j].Project
 	})
-	snapshot.Sources = finishAnalyticsDimensions(sources)
-	snapshot.Agents = finishAnalyticsDimensions(agents)
-	snapshot.Models = finishAnalyticsDimensions(models)
-	seriesStart, seriesUntil := analyticsSeriesBounds(buckets, opts)
-	snapshot.TimeSeries = analyticsTimeSeries(buckets, seriesStart, seriesUntil, opts.Bucket)
-	for _, row := range finishAnalyticsDimensions(splitTotals) {
+	snapshot.Sources = finishAnalyticsDimensions(g.sources)
+	snapshot.Agents = finishAnalyticsDimensions(g.agents)
+	snapshot.Models = finishAnalyticsDimensions(g.models)
+	seriesStart, seriesUntil := analyticsSeriesBounds(g.buckets, opts)
+	snapshot.TimeSeries = analyticsTimeSeries(g.buckets, seriesStart, seriesUntil, opts.Bucket)
+	for _, row := range finishAnalyticsDimensions(g.splitTotals) {
 		snapshot.SplitSeries = append(snapshot.SplitSeries, AnalyticsSplitSeries{
 			Value: row.Value, Summary: row.AnalyticsSummary,
-			TimeSeries: analyticsTimeSeries(splitBuckets[row.Value], seriesStart, seriesUntil, opts.Bucket),
+			TimeSeries: analyticsTimeSeries(g.splitBuckets[row.Value], seriesStart, seriesUntil, opts.Bucket),
 		})
 	}
-	return snapshot, nil
+	return snapshot
 }
 
 // analyticsSeriesBounds returns the first bucket start and the exclusive end
@@ -399,7 +477,7 @@ func analyticsTimeSeries(
 	return series
 }
 
-func analyticsSplitValue(row analyticsRow, split AnalyticsSplit) string {
+func analyticsSplitValue(row *analyticsRow, split AnalyticsSplit) string {
 	switch split {
 	case AnalyticsSplitAgent:
 		return row.agent
@@ -424,7 +502,7 @@ func ValidAnalyticsSplit(split AnalyticsSplit) bool {
 	}
 }
 
-func (a *analyticsAccumulator) addReview(row analyticsRow) {
+func (a *analyticsAccumulator) addReview(row *analyticsRow) {
 	a.summary.Reviews.Total++
 	switch row.status {
 	case JobStatusDone, JobStatusApplied, JobStatusRebased:
@@ -456,7 +534,7 @@ func (a *analyticsAccumulator) addReview(row analyticsRow) {
 	}
 }
 
-func (a *analyticsAccumulator) addAttempt(row analyticsRow) {
+func (a *analyticsAccumulator) addAttempt(row *analyticsRow) {
 	a.summary.Attempts.Eligible++
 	a.summary.Cost.EligibleAttempts++
 	if row.attemptDuration >= 0 {
@@ -500,7 +578,7 @@ func analyticsPercentiles(values []float64) AnalyticsPercentiles {
 	}
 }
 
-func isLogicalReview(row analyticsRow) bool {
+func isLogicalReview(row *analyticsRow) bool {
 	if row.panelRole == PanelRoleMember {
 		return false
 	}
@@ -514,7 +592,7 @@ func isLogicalReview(row analyticsRow) bool {
 	}
 }
 
-func matchesAnalyticsAttemptFilters(row analyticsRow, opts AnalyticsOptions) bool {
+func matchesAnalyticsAttemptFilters(row *analyticsRow, opts AnalyticsOptions) bool {
 	return containsAnalyticsValue(opts.Agents, row.agent) && containsAnalyticsValue(opts.Models, row.model)
 }
 

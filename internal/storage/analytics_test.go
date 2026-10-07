@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -709,14 +708,15 @@ func TestGetAnalyticsWindowsOffsetTimestampsByInstant(t *testing.T) {
 	assert.Equal(t, 0, after.Summary.Reviews.Total)
 }
 
-func TestAnalyticsRowsQueryReadsOnlyTheAnalyticsIndex(t *testing.T) {
+func TestAnalyticsRowsQueryReadsOnlyAnalyticsIndexes(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	until := time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC)
 
-	// Analytics columns are stored after review_jobs.prompt, so reading them
-	// from the table walks every large prompt's overflow pages.
+	// Analytics columns are stored after the large prompt columns of
+	// review_jobs and reviews, so reading them from either table walks every
+	// prompt's overflow pages. Sorting would add a pass over every row.
 	for name, opts := range map[string]AnalyticsOptions{
 		"bounded":  {Since: until.AddDate(0, 0, -30), Until: until},
 		"all-time": {Until: until},
@@ -733,9 +733,10 @@ func TestAnalyticsRowsQueryReadsOnlyTheAnalyticsIndex(t *testing.T) {
 		}
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
-		assert.True(t, slices.ContainsFunc(details, func(detail string) bool {
-			return strings.Contains(detail, "USING COVERING INDEX idx_review_jobs_analytics")
-		}), "%s plan: %v", name, details)
+		plan := strings.Join(details, "\n")
+		assert.Contains(t, plan, "SEARCH j USING COVERING INDEX idx_review_jobs_analytics", name)
+		assert.Contains(t, plan, "USING COVERING INDEX idx_reviews_job_verdict", name)
+		assert.NotContains(t, plan, "TEMP B-TREE", name)
 	}
 }
 
@@ -752,4 +753,33 @@ func TestGetAnalyticsEncodesEmptyFilterOptionsAsArrays(t *testing.T) {
 	raw, err := json.Marshal(got.Options)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"projects":[],"sources":[],"agents":[],"models":[]}`, string(raw))
+}
+
+func TestGetAnalyticsAppliesEachOpenEndedBound(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	base := time.Date(2026, time.August, 6, 0, 0, 0, 0, time.UTC)
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+	for i, name := range []string{"first", "second", "third"} {
+		at := base.Add(time.Duration(i) * time.Hour)
+		seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+			name: name, jobType: JobTypeReview, status: JobStatusDone,
+			enqueuedAt: at, startedAt: at, finishedAt: at, verdict: new(1),
+		})
+	}
+
+	for name, tc := range map[string]struct {
+		opts AnalyticsOptions
+		want int
+	}{
+		"since only": {AnalyticsOptions{Since: base.Add(time.Hour), Bucket: AnalyticsBucketHour}, 2},
+		"until only": {AnalyticsOptions{Until: base.Add(time.Hour), Bucket: AnalyticsBucketHour}, 1},
+		"both":       {AnalyticsOptions{Since: base.Add(time.Hour), Until: base.Add(2 * time.Hour), Bucket: AnalyticsBucketHour}, 1},
+		"neither":    {AnalyticsOptions{Bucket: AnalyticsBucketHour}, 3},
+	} {
+		got, err := db.GetAnalytics(tc.opts)
+		require.NoError(t, err, name)
+		assert.Equal(t, tc.want, got.Summary.Reviews.Total, name)
+	}
 }

@@ -1452,18 +1452,16 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_started_session: %w", err)
 	}
 
-	// Analytics reads finished jobs by finished_at instant. Several columns it
-	// reads, such as source and token_usage, are stored after
-	// review_jobs.prompt, so reading them from the table walks each prompt's
-	// overflow pages; on long histories that walk dominated the request.
-	// Covering the query keeps it inside this small index, so the column list
-	// must match analyticsRowsQuery. julianday() compares the mixed UTC and
-	// offset timestamp formats stored in finished_at as instants.
-	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_analytics
-		ON review_jobs(julianday(finished_at), repo_id, status, agent, model, source,
-			job_type, panel_role, enqueued_at, started_at, finished_at, agent_invoked, token_usage)
-		WHERE finished_at IS NOT NULL`); err != nil {
+	// Analytics reads finished jobs and their review verdicts. Both indexes
+	// let it skip the large prompt columns stored before the values it needs;
+	// analyticsJobsIndexSQL explains the job index. analyticsRowsQuery names
+	// idx_reviews_job_verdict with INDEXED BY, so the two must stay in sync.
+	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
 		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
+	}
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_job_verdict
+		ON reviews(job_id, verdict_bool, closed)`); err != nil {
+		return fmt.Errorf("create idx_reviews_job_verdict: %w", err)
 	}
 
 	// A session present at enqueue time is a resumed provider session. Provider
