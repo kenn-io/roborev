@@ -1637,7 +1637,8 @@ architecture, and an anonymous install ID stored in the local database.
 
 Hiding or closing a browser tab, or exiting the TUI, reports `session_ended`
 with `surface` and `duration_bucket`: `under_1m`, `1_to_5m`, `5_to_30m`, or
-`over_30m`. Browser durations count each visible interval and exclude hidden time.
+`over_30m`. Browser durations count each visible interval and exclude hidden
+time.
 
 The web UI also asks the daemon to report an anonymous `app_opened` event when
 it loads and on the first window focus of each later UTC day. `roborev tui` asks
