@@ -150,7 +150,6 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 		assert.Equal("tui", properties[telemetry.PropertySurface])
 		assert.Equal(http.StatusAccepted, requests[i+1].code)
 	}
-
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -347,7 +346,7 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 			Event      string            `json:"event"`
 			Properties map[string]string `json:"properties"`
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&event))
 		if event.Event == telemetry.EventScreenViewed {
 			assert.Equal(t, "tui", event.Properties[telemetry.PropertySurface])
 			screens <- event.Properties[telemetry.PropertyScreen]

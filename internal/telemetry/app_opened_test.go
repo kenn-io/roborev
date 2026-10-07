@@ -274,7 +274,6 @@ func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
 			assert.ElementsMatch(t, []any{"queue", "review"}, []any{got[0].Properties[PropertyScreen], got[1].Properties[PropertyScreen]})
 		})
 	}
-
 }
 
 func TestScreenViewedUnacceptedClaims(t *testing.T) {
