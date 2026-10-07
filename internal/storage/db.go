@@ -1459,8 +1459,7 @@ func (db *DB) migrate() error {
 	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
 		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
 	}
-	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_job_verdict
-		ON reviews(job_id, verdict_bool, closed)`); err != nil {
+	if _, err = db.Exec(analyticsReviewsIndexSQL); err != nil {
 		return fmt.Errorf("create idx_reviews_job_verdict: %w", err)
 	}
 

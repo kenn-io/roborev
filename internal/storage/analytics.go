@@ -221,6 +221,11 @@ func analyticsJobsIndexSQL() string {
 		WHERE finished_at IS NOT NULL`
 }
 
+// analyticsReviewsIndexSQL creates the index analyticsRowsQuery reads review
+// verdicts from. verdict_bool and closed are stored after reviews.prompt.
+const analyticsReviewsIndexSQL = `CREATE INDEX IF NOT EXISTS idx_reviews_job_verdict
+	ON reviews(job_id, verdict_bool, closed)`
+
 // analyticsRowsQuery selects every finished job in the time window. Project
 // and source filters are applied in Go so the same rows also supply the filter
 // choices, which must list every value in the window.
