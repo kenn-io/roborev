@@ -2,11 +2,13 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -170,7 +172,8 @@ type analyticsAccumulator struct {
 	attemptDurations []float64
 }
 
-// GetAnalytics returns one coherent analytics snapshot from a SQLite read
+// GetAnalytics returns one coherent analytics snapshot. It runs a single
+// query, which SQLite reads from one snapshot without an explicit
 // transaction. Unlike GetCostAggregate, the time cut is finished_at because
 // this view accounts for work completed inside the selected window.
 func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
@@ -180,17 +183,63 @@ func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
 	if opts.Split != "" && !ValidAnalyticsSplit(opts.Split) {
 		return nil, fmt.Errorf("invalid analytics split %q", opts.Split)
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	aggregator := newAnalyticsAggregator(opts)
-	if err := queryAnalyticsRows(tx, opts, &aggregator); err != nil {
+	if err := queryAnalyticsRows(analyticsQuerier{db}, opts, &aggregator); err != nil {
 		return nil, err
 	}
 	return aggregator.snapshot(), nil
+}
+
+// analyticsStmts holds a prepared statement for each analytics query text.
+// modernc.org/sqlite prepares every Query from scratch, and planning this
+// query costs more than running it on a small window. A *sql.Stmt keeps one
+// prepared copy per pool connection, so calls stop re-preparing once each
+// connection has run the query. The map stays small because
+// analyticsRowsQuery builds one of four texts.
+type analyticsStmts struct {
+	mu    sync.Mutex
+	stmts map[string]*sql.Stmt
+}
+
+// stmt returns the prepared statement for query, preparing it on first use
+// so that preparation happens after Open's migrations.
+func (s *analyticsStmts) stmt(db *sql.DB, query string) (*sql.Stmt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stmt, ok := s.stmts[query]; ok {
+		return stmt, nil
+	}
+	stmt, err := db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	if s.stmts == nil {
+		s.stmts = make(map[string]*sql.Stmt)
+	}
+	s.stmts[query] = stmt
+	return stmt, nil
+}
+
+func (s *analyticsStmts) close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var errs []error
+	for _, stmt := range s.stmts {
+		errs = append(errs, stmt.Close())
+	}
+	s.stmts = nil
+	return errors.Join(errs...)
+}
+
+// analyticsQuerier runs analytics queries through db's prepared statements.
+type analyticsQuerier struct{ db *DB }
+
+func (q analyticsQuerier) Query(query string, args ...any) (*sql.Rows, error) {
+	stmt, err := q.db.analytics.stmt(q.db.DB, query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.Query(args...)
 }
 
 // analyticsJobExprs are the values Analytics derives from each review_jobs
@@ -273,7 +322,7 @@ var analyticsRowsSelect = `
 		WHERE `
 
 // queryAnalyticsRows adds each row in the window to aggregator.
-func queryAnalyticsRows(q querier, opts AnalyticsOptions, aggregator *analyticsAggregator) error {
+func queryAnalyticsRows(q analyticsQuerier, opts AnalyticsOptions, aggregator *analyticsAggregator) error {
 	query, args := analyticsRowsQuery(opts)
 	sqlRows, err := q.Query(query, args...)
 	if err != nil {

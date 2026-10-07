@@ -235,6 +235,12 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 
 type DB struct {
 	*sql.DB
+	analytics analyticsStmts
+}
+
+// Close closes the cached prepared statements and then the database.
+func (db *DB) Close() error {
+	return errors.Join(db.analytics.close(), db.DB.Close())
 }
 
 // DefaultDBPath returns the default database path
@@ -258,7 +264,7 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	wrapped := &DB{db}
+	wrapped := &DB{DB: db}
 
 	// Initialize schema (CREATE IF NOT EXISTS is idempotent)
 	if _, err := db.Exec(schema); err != nil {
@@ -335,7 +341,7 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 		}
 		return nil, openErr
 	}
-	return &DB{db}, nil
+	return &DB{DB: db}, nil
 }
 
 // migrate runs any needed migrations for existing databases

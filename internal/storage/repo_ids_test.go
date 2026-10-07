@@ -39,7 +39,7 @@ func TestMigrateRepoIDsPreservesHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
 	conn, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	db := &DB{conn}
+	db := &DB{DB: conn}
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	// Build the shipped schema before the forward repository ID migration.
 	_, err = db.Exec(schema)
