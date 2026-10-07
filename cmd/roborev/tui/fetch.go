@@ -407,6 +407,11 @@ func (m model) reportAppOpened() tea.Cmd {
 }
 
 func (m model) reportSessionEnded(elapsed time.Duration) {
+	select {
+	case <-m.ready:
+	default:
+		return
+	}
 	if !telemetry.EnabledFromEnv() {
 		return
 	}

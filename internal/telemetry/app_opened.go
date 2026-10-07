@@ -97,7 +97,7 @@ func PostAppOpened(ctx context.Context, client *http.Client, url, surface string
 
 // PostSessionEnded reports one completed interface lifetime.
 func PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
-	postEvent(ctx, client, url, EventSessionEnded, map[string]string{PropertySurface: surface, "duration_bucket": DurationBucket(elapsed)})
+	postEvent(ctx, client, url, EventSessionEnded, map[string]string{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
 }
 
 func postEvent(ctx context.Context, client *http.Client, url, event string, properties map[string]string) {
