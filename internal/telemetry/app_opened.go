@@ -40,8 +40,9 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
 		var skip bool
 		var finish func(bool)
+		var canonical []byte
 		if err == nil && len(body) <= appOpenedMaxBodyBytes {
-			skip, finish = l.alreadySentToday(reporter, body)
+			skip, finish, canonical = l.alreadySentToday(reporter, body)
 		}
 		if skip {
 			// Same answer kit gives a queued capture, so clients cannot tell a deduped open from a sent one.
@@ -51,6 +52,8 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 			return
 		}
 		if finish != nil {
+			r.Body = readCloser{Reader: bytes.NewReader(canonical), Closer: r.Body}
+			r.ContentLength = int64(len(canonical))
 			response := &captureResponse{ResponseWriter: w}
 			defer func() { finish(response.status == http.StatusAccepted) }()
 			capture.ServeHTTP(response, r)
@@ -66,26 +69,26 @@ type readCloser struct {
 }
 
 // alreadySentToday claims the request's daily key; screen claims finish after kit answers.
-func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bool, func(bool)) {
+func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bool, func(bool), []byte) {
 	var req struct {
 		Event      string         `json:"event"`
 		Properties map[string]any `json:"properties"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&req); err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 	// Kit rejects data after the JSON object; leave that answer to kit.
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return false, nil
+		return false, nil, nil
 	}
 	req.Event = strings.TrimSpace(req.Event)
 	if (req.Event != EventAppOpened && req.Event != EventScreenViewed) || !reporter.Enabled() {
-		return false, nil
+		return false, nil, nil
 	}
 	props, err := reporter.SanitizeProperties(req.Event, req.Properties)
 	if err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 	surface, _ := props[PropertySurface].(string)
 	clock := l.now
@@ -96,20 +99,26 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bo
 	if req.Event == EventScreenViewed {
 		screen, _ := props[PropertyScreen].(string)
 		if screen == "" {
-			return true, nil
+			return true, nil, nil
 		}
-		return l.claimScreen(screen, day)
+		req.Properties = props
+		canonical, err := json.Marshal(req)
+		if err != nil {
+			return true, nil, nil
+		}
+		skip, finish := l.claimScreen(screen, day)
+		return skip, finish, canonical
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.sent[surface] == day {
-		return true, nil
+		return true, nil, nil
 	}
 	if l.sent == nil {
 		l.sent = make(map[string]string)
 	}
 	l.sent[surface] = day
-	return false, nil
+	return false, nil, nil
 }
 
 // PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.

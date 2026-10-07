@@ -2,6 +2,8 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -234,6 +236,45 @@ func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
 	assert.Equal(t, EventAppOpened, got[2].Event)
 	assert.Equal(t, "reviews", got[3].Properties[PropertyScreen])
 	assert.NotContains(t, got[0].Properties, "path")
+	for i := range 8 {
+		t.Run(fmt.Sprint("padded aliases ", i), func(t *testing.T) {
+			reporter, messages := newPostHogStubReporter(t)
+			db := testutil.OpenTestDB(t)
+			limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+			body := `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
+			skip, finish, canonical := limiter.alreadySentToday(reporter, []byte(body))
+			require.False(t, skip)
+			require.NotNil(t, finish)
+			var normalized struct {
+				Properties map[string]any `json:"properties"`
+			}
+			require.NoError(t, json.Unmarshal(canonical, &normalized))
+			assert.NotContains(t, normalized.Properties, " screen ")
+			assert.NotContains(t, normalized.Properties, " surface ")
+			assert.NotContains(t, normalized.Properties, "path")
+			stored, err := db.GetSyncState("telemetry.screen." + normalized.Properties[PropertyScreen].(string))
+			require.NoError(t, err)
+			assert.Equal(t, now.UTC().Format(time.DateOnly), stored)
+			finish(false)
+			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			claimed := "review"
+			queueDay, err := db.GetSyncState("telemetry.screen.queue")
+			require.NoError(t, err)
+			if queueDay == now.UTC().Format(time.DateOnly) {
+				claimed = "queue"
+			}
+			for _, screen := range []string{"queue", "review"} {
+				ordinary := fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":%q,"surface":"tui"}}`, screen)
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, ordinary).Code)
+			}
+			require.NoError(t, reporter.Close())
+			got := messages()
+			require.Len(t, got, 2)
+			assert.Equal(t, claimed, got[0].Properties[PropertyScreen])
+			assert.ElementsMatch(t, []any{"queue", "review"}, []any{got[0].Properties[PropertyScreen], got[1].Properties[PropertyScreen]})
+		})
+	}
+
 }
 
 func TestScreenViewedUnacceptedClaims(t *testing.T) {
@@ -259,7 +300,7 @@ func TestScreenViewedUnacceptedClaims(t *testing.T) {
 				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
 			case "enqueue":
 				require.NoError(t, db.SetSyncState("telemetry.screen.queue", "2026-01-01"))
-				skip, finish := limiter.alreadySentToday(reporter, []byte(body))
+				skip, finish, _ := limiter.alreadySentToday(reporter, []byte(body))
 				require.False(t, skip)
 				require.NotNil(t, finish)
 				finish(false)
