@@ -711,6 +711,13 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 		// The process is roborev but did not answer yet; keep the published
 		// endpoint that no other daemon claimed and let shutdown retry.
+		//
+		// Known edge case, deliberately ignored: if the socket file was
+		// deleted (for example, logout removed XDG_RUNTIME_DIR) and the TCP
+		// ping also failed transiently, this picks the missing socket and
+		// shutdown retries only that endpoint until its budget runs out. That
+		// needs the loopback ping to a live daemon to fail at the same moment,
+		// and the cost is a failed stop that succeeds when run again.
 		ep = DaemonEndpoint{}
 		for _, candidate := range info.PreferredEndpoints() {
 			if !answeredByOther[candidate] {
