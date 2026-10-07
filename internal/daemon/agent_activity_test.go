@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -74,27 +73,15 @@ func (f *failingAgentTelemetry) Capture(event string, props map[string]any) erro
 	return errors.New("delivery failed")
 }
 
-func TestAgentActivityOptOutAndDeliveryFailure(t *testing.T) {
+func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	client := &failingAgentTelemetry{}
 	server.SetTelemetry(client)
-	server.recordAgentCall(context.Background())
+	t.Run("opted out", func(t *testing.T) {
+		server.recordAgentCall(t.Context())
+		assert.Empty(t, client.events)
+	})
 	client.enabled = true
-	for range 2 {
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
-		req.Header.Set("Content-Type", "application/json")
-		server.httpServer.Handler.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusAccepted, w.Code)
-	}
-	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
-}
-
-func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
-	server, _, _ := newTestServer(t)
-	reporter, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(t, err)
-	server.SetTelemetry(reporter)
 	for _, tc := range []struct {
 		contentType string
 		origin      string
@@ -111,6 +98,12 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 		req.Header.Set("Content-Type", tc.contentType)
 		req.Header.Set("Origin", tc.origin)
 		assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req).Code)
+		if tc.status == http.StatusAccepted {
+			assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req.Clone(t.Context())).Code)
+			assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
+		} else {
+			assert.Empty(t, client.events)
+		}
 	}
 }
 

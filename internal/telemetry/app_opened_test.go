@@ -47,11 +47,11 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 		for _, body := range []string{
 			`{"event":"app_opened","properties":{"surface":"cli"}}`,
 			`{"event":"app_opened","properties":{"surface":"cli"}}`,
-			`{"event":"app_opened","properties":{"surface":"tui"}}`,
+			`{"event":"app_opened","properties":{"surface":"tui","source":"web"}}`,
 			`{"event":"app_opened","properties":{"surface":"web"}}`,
 			`{"event":"app_opened","properties":{"surface":"tui"}}`,
 			"{\"event\":\"app_opened\",\"properties\":{\"surface\":\"cli\"}}  \n\t",
-			`{"event":"app_opened"}`,
+			`{"event":"app_opened","properties":{"surface":["tui"]}}`,
 			`{"event":"app_opened"}`,
 		} {
 			recorder := postThroughLimiter(limiter, reporter, body)
@@ -59,7 +59,15 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 			assert.JSONEq(`{"status":"queued"}`, recorder.Body.String(), body)
 		}
 		require.NoError(t, reporter.Close())
-		assert.Equal([]string{"app_opened:cli", "app_opened:tui", "app_opened:web", "app_opened:"}, surfacesOf(messages()))
+		sent := messages()
+		assert.Equal([]string{"app_opened:cli", "app_opened:tui", "app_opened:web", "app_opened:"}, surfacesOf(sent))
+		require.Len(t, sent, 4)
+		for _, message := range sent {
+			assert.Equal("anonymous-install-id", message.DistinctID)
+			assert.Equal("roborev", message.Properties["application"])
+			assert.Equal("daemon", message.Properties["source"])
+		}
+		assert.NotContains(sent[3].Properties, PropertySurface)
 	})
 
 	t.Run("next UTC day", func(t *testing.T) {
@@ -104,6 +112,16 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"disabled"}`, recorder.Body.String())
 
+	for _, body := range []string{
+		`{"event":"App_Opened"}`,
+		`{"event":""}`,
+		`{"event":"agent_active"}`,
+	} {
+		recorder := postThroughLimiter(limiter, optedOut, body)
+		assert.Equal(http.StatusBadRequest, recorder.Code)
+		assert.Contains(recorder.Body.String(), ErrUnsupportedEvent.Error())
+	}
+
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 	reporter, messages := newPostHogStubReporter(t)
@@ -113,7 +131,6 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	brokenRecorder := httptest.NewRecorder()
 	limiter.Handler(reporter).ServeHTTP(brokenRecorder, broken)
 	assert.Equal(http.StatusBadRequest, brokenRecorder.Code)
-	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":"page_viewed"}`).Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":`).Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, cli+`{"event":"app_opened"}`).Code)
 	oversized := `{"event":"app_opened","properties":{"surface":"cli"}}` + strings.Repeat(" ", appOpenedMaxBodyBytes)

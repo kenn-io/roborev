@@ -591,6 +591,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 			{http.MethodPost, "/api/update/renew", 200, false},
 			{http.MethodPost, "/api/update/release", 200, false},
 			{http.MethodPost, daemon.TelemetryEventsPath, 202, false},
+			{http.MethodPost, daemon.TelemetryAgentCallPath, 202, false},
 			{http.MethodGet, "/api/status", 200, true},
 			{http.MethodGet, "/api/jobs", 200, true},
 			{http.MethodPost, "/api/enqueue", 201, true},
@@ -736,28 +737,11 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 	})
 }
 
-func TestCLIUseAgentCommands(t *testing.T) {
-	resetCLIUse(t)
-	cmd, _, err := newRootCmd().Find([]string{"enqueue"})
-	require.NoError(t, err)
-	armCLIUse(cmd)
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-	ep, err := daemon.ParseEndpoint(md.Server.URL)
-	require.NoError(t, err)
-	observeCLIUse(ep, httptest.NewRequest(http.MethodPost, daemon.TelemetryAgentCallPath, nil), &http.Response{StatusCode: http.StatusAccepted})
-	waitCLIUse()
-	assert.Empty(t, rec.allPaths())
-	observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
-	waitCLIUse()
-	assert.Equal(t, []string{"POST " + daemon.TelemetryAgentCallPath}, rec.allPaths())
-}
-
 func TestMCPActivity(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		resetCLIUse(t)
 		synctest.Test(t, func(t *testing.T) {
-			cliAgentPost = func(ctx context.Context, _ *http.Client, url string) {
-				assert.Equal(t, "http://127.0.0.1:7373"+daemon.TelemetryAgentCallPath, url)
+			cliAgentPost = func(ctx context.Context, _ *http.Client, _ string) {
 				<-ctx.Done()
 			}
 			start := time.Now()

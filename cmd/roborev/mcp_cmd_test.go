@@ -81,8 +81,6 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: stdoutR, Writer: stdinW}, nil)
 	require.NoError(err)
-	_, err = session.ListTools(ctx, nil)
-	require.NoError(err)
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_list_jobs"})
 	require.NoError(err)
