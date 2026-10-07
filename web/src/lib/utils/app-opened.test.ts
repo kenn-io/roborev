@@ -148,28 +148,14 @@ describe("setupAppOpenedReporting", () => {
     }
   });
 
-  test("keeps visible time across shell recovery and excludes the recovery gap", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    const stop = setup();
-    now = 120_000;
-    stop();
-    now += 600_000;
-    setup();
-    now += 10_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const request = fetchMock.mock.calls[1]![0];
-    expect(JSON.parse(await request.text()).properties.duration_bucket).toBe(
-      "1_to_5m",
-    );
-  });
-
-  test.each([true, false])(
-    "flushes a hide during recovery once, remount hidden=%s",
-    async (remountHidden) => {
+  test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    "preserves recovery intervals, hide during gap=%s, remount hidden=%s",
+    async (hideDuringGap, remountHidden) => {
       let now = 0;
       let hidden = false;
       vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -177,16 +163,20 @@ describe("setupAppOpenedReporting", () => {
       const stop = setup();
       now = 120_000;
       stop();
-      now += 10_000;
-      hidden = true;
-      document.dispatchEvent(new Event("visibilitychange"));
-      globalThis.dispatchEvent(new Event("pagehide"));
+      if (hideDuringGap) {
+        hidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        globalThis.dispatchEvent(new Event("pagehide"));
+      }
       expect(fetchMock).toHaveBeenCalledTimes(1);
       now += 600_000;
       hidden = remountHidden;
-      document.dispatchEvent(new Event("visibilitychange"));
       sessionStorage.setItem("roborev.web.session", "recovered-session");
       setup();
+      if (!hideDuringGap) {
+        if (!remountHidden) now += 10_000;
+        globalThis.dispatchEvent(new Event("pagehide"));
+      }
       await settle();
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const request = fetchMock.mock.calls[1]![0];
@@ -196,44 +186,24 @@ describe("setupAppOpenedReporting", () => {
       expect(JSON.parse(await request.text()).properties.duration_bucket).toBe(
         "1_to_5m",
       );
-      if (remountHidden) globalThis.dispatchEvent(new Event("pagehide"));
-      else {
-        now += 10_000;
+      if (hideDuringGap && remountHidden) {
         globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
       }
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(remountHidden ? 2 : 3);
+      if (!hideDuringGap && remountHidden) {
+        hidden = false;
+        globalThis.dispatchEvent(new Event("pageshow"));
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(
+          JSON.parse(await fetchMock.mock.calls[2]![0].text()).properties
+            .duration_bucket,
+        ).toBe("under_1m");
+      }
     },
   );
-
-  test("ends a saved interval after remount while hidden and preserves a zero-length visible interval", async () => {
-    let now = 0;
-    let hidden = false;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-    const stop = setup();
-    now = 120_000;
-    stop();
-    hidden = true;
-    now += 600_000;
-    setup();
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(
-      JSON.parse(await fetchMock.mock.calls[1]![0].text()).properties
-        .duration_bucket,
-    ).toBe("1_to_5m");
-    hidden = false;
-    globalThis.dispatchEvent(new Event("pageshow"));
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(
-      JSON.parse(await fetchMock.mock.calls[2]![0].text()).properties
-        .duration_bucket,
-    ).toBe("under_1m");
-  });
 
   test("ignores focus later on the same UTC day", async () => {
     setup();
