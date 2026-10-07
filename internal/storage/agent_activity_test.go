@@ -13,6 +13,7 @@ import (
 )
 
 func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
@@ -58,6 +59,7 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 }
 
 func TestAgentActivityDatabaseCancellation(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -82,6 +84,7 @@ func TestAgentActivityDatabaseCancellation(t *testing.T) {
 }
 
 func TestAgentActivityBusyWriteCancellation(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	writer, err := db.Begin()
@@ -153,6 +156,7 @@ func (c *restoreFailureConn) Close() error {
 }
 
 func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	var path string
