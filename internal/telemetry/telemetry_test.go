@@ -276,6 +276,10 @@ func TestCaptureHandlerOptedOutAnswersDisabled(t *testing.T) {
 		{name: "allowed event", body: `{"event":"app_opened"}`, wantStatus: http.StatusAccepted, wantBody: `{"status":"disabled"}`},
 		{name: "wrong case", body: `{"event":"App_Opened"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
 		{name: "blank event", body: `{"event":""}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
+		{name: "daemon start", body: `{"event":"daemon_started"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
+		{name: "daemon heartbeat", body: `{"event":"daemon_active"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
+		{name: "agent activity", body: `{"event":"agent_active"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
+		{name: "agent volume", body: `{"event":"agent_call_count"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

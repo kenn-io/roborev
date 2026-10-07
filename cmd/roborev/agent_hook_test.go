@@ -92,34 +92,35 @@ func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) 
 }
 
 func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
+	resetCLIUse(t)
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	var gotPath string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/agent-hook/event" {
+			return false
+		}
 		_ = json.NewEncoder(w).Encode(agenthook.Response{
 			SessionID: "session-1", Triggered: true, FixSessionID: new(fixSessionID),
 			Reason: "Resolve reviews.",
 		})
-	}))
-	t.Cleanup(server.Close)
-	opts := agenthook.DefaultOptions()
-	opts.RoborevServerAddr = strings.TrimPrefix(server.URL, "http://")
+		return true
+	}}, nil)
+	address := strings.TrimPrefix(md.Server.URL, "http://")
 	var stdout bytes.Buffer
-
-	err := runAgentHook(
-		kitagenthook.AgentClaude,
-		opts,
-		strings.NewReader(`{"session_id":"session-1","hook_event_name":"Stop"}`),
-		&stdout,
-		io.Discard,
-	)
+	root := newRootCmd()
+	root.SetArgs([]string{"agent-hook", "run", "--agent", "claude", "--source=roborev-agent-hook", "--roborev-server", address})
+	root.SetIn(strings.NewReader(`{"session_id":"session-1","hook_event_name":"Stop"}`))
+	root.SetOut(&stdout)
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	waitCLIUse()
 
 	require.NoError(t, err)
-	assert.Equal(t, "/api/agent-hook/event", gotPath)
+	assert.Equal(t, []string{"POST /api/agent-hook/event"}, rec.businessPaths())
+	assert.Equal(t, []recordedTelemetry{{method: http.MethodPost, contentType: "application/json"}}, rec.telemetryPosts())
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	commands, err := kitagenthook.BuildCommand(
-		executable, "agent-hook", "fix-done", "--roborev-server", opts.RoborevServerAddr,
+		executable, "agent-hook", "fix-done", "--roborev-server", address,
 		fixSessionID.String(),
 	)
 	require.NoError(t, err)

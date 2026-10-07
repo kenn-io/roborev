@@ -1,11 +1,15 @@
 package telemetry
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +20,8 @@ import (
 )
 
 const (
+	// NotificationTimeout shares the CLI's existing one-second bound with MCP database work.
+	NotificationTimeout  = time.Second
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
 	GenericEnabledEnv    = kittelemetry.GenericTelemetryEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
@@ -97,9 +103,28 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
-// NewCaptureHandler lets the web UI report allowlisted events through reporter; a nil reporter admits none.
+// NewCaptureHandler accepts client product events. The daemon records agent activity itself.
 func NewCaptureHandler(reporter *Reporter) http.Handler {
-	return kittelemetry.NewPostHogCaptureHandler(reporter)
+	capture := kittelemetry.NewPostHogCaptureHandler(reporter)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if r.Method == http.MethodPost && err == nil && mediaType == "application/json" {
+			body, err := io.ReadAll(io.LimitReader(r.Body, appOpenedMaxBodyBytes+1))
+			r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
+			var event struct {
+				Event string `json:"event"`
+			}
+			if err == nil && len(body) <= appOpenedMaxBodyBytes && json.Unmarshal(body, &event) == nil {
+				switch strings.TrimSpace(event.Event) {
+				case EventAppOpened, EventSessionEnded, EventScreenViewed:
+				default:
+					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		capture.ServeHTTP(w, r)
+	})
 }
 
 func allowedEventOptions() []kittelemetry.PostHogOption {

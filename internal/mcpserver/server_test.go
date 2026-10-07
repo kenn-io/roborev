@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 type fakeBackend struct {
@@ -88,7 +90,11 @@ func (f *fakeBackend) Search(ctx context.Context, query SearchQuery) (storage.Se
 // connected client session.
 func connectSession(t *testing.T, backend Backend) *mcp.ClientSession {
 	t.Helper()
-	server := New(backend, "test")
+	return connectServer(t, New(backend, "test", nil))
+}
+
+func connectServer(t *testing.T, server *Server) *mcp.ClientSession {
+	t.Helper()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -103,6 +109,31 @@ func connectSession(t *testing.T, backend Backend) *mcp.ClientSession {
 		<-done
 	})
 	return session
+}
+
+func TestActivityDoesNotDelayTools(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		server := New(&fakeBackend{}, "test", func(ctx context.Context) {
+			ctx, cancel := context.WithTimeout(ctx, telemetry.NotificationTimeout)
+			defer cancel()
+			calls++
+			<-ctx.Done()
+		})
+		session := connectServer(t, server)
+		_, err := session.ListTools(t.Context(), nil)
+		require.NoError(t, err)
+		synctest.Wait()
+		assert.Zero(t, calls)
+		start := time.Now()
+		result := callTool(t, session, "roborev_status", nil)
+		require.False(t, result.IsError)
+		synctest.Wait()
+		assert.Equal(t, 1, calls)
+		assert.Zero(t, time.Since(start))
+		server.activity.Wait()
+		assert.Equal(t, telemetry.NotificationTimeout, time.Since(start))
+	})
 }
 
 func callTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {

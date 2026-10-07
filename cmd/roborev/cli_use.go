@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +81,7 @@ var agentUseCommands = map[string]bool{
 var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
-	cliUseTimeout = time.Second
+	cliUseTimeout = telemetry.NotificationTimeout
 	cliUsePost    = telemetry.PostAppOpened
 	cliAgentPost  = telemetry.PostAgentCall
 	cliUseOnce    sync.Once

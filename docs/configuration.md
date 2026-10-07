@@ -1738,9 +1738,10 @@ The daemon emits `agent_active` once per install per UTC day with
 with `11-100` and `over-100`. Use the highest bucket observed per install and
 UTC day for volume. The local daily count survives daemon restarts in the
 existing database, without a schema migration. These events add no `app_opened`
-events. Delivery is best effort; failed delivery isn't retried. Both opt-out
-variables apply. CLI and stdio MCP notifications use the existing CLI reporting
-timeout and never start a daemon just for telemetry.
+events. Each threshold claims one delivery attempt, even if capture fails.
+Delivery is best effort; failed delivery isn't retried. Both opt-out variables
+apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
+and never start a daemon just for telemetry.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

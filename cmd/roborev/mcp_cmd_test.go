@@ -91,13 +91,15 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(text, `"id":42`)
 	assert.NotContains(text, "secret")
-	require.Len(rec.telemetryPosts(), 1)
+	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
+	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 1 }, time.Second, time.Millisecond)
 	assert.Empty(rec.telemetryPosts()[0].body)
 	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_get_review"})
 	require.NoError(err)
 	assert.True(result.IsError)
-	assert.Len(rec.telemetryPosts(), 2)
+	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
+	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 2 }, time.Second, time.Millisecond)
 
 	require.NoError(session.Close())
 	_ = stdinW.Close()

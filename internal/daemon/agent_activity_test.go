@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 		}
 		if call == 10 {
 			// A new server reads the same durable state after restart.
-			server = &Server{db: db, telemetry: client, agentActivityNow: server.agentActivityNow}
+			server = &Server{db: db, telemetry: client, agentActivityGate: make(chan struct{}, 1), agentActivityNow: server.agentActivityNow}
 		}
 	}
 	assert.Equal([]string{telemetry.EventAgentActive, telemetry.EventAgentCallCount, telemetry.EventAgentCallCount}, client.events)
@@ -42,11 +43,26 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 		{telemetry.PropertyCallCountBucket: "11-100"},
 		{telemetry.PropertyCallCountBucket: "over-100"},
 	}, client.properties)
+	_, err := db.Exec(`CREATE TABLE agent_count_writes (value TEXT); CREATE TRIGGER audit_agent_count_update AFTER UPDATE ON sync_state BEGIN INSERT INTO agent_count_writes VALUES (NEW.value); END`)
+	require.NoError(t, err)
+	for range 3 {
+		server.recordAgentCall(t.Context())
+	}
+	stored, err := db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	var saturated agentActivityState
+	require.NoError(t, json.Unmarshal([]byte(stored), &saturated))
+	assert.Equal(uint64(101), saturated.Calls)
+	var writes int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
+	assert.Zero(writes)
+	_, err = db.Exec(`DROP TRIGGER audit_agent_count_update`)
+	require.NoError(t, err)
 	now = now.Add(time.Minute)
 	server.recordAgentCall(t.Context())
 	assert.Len(client.events, 4)
 	assert.Equal(telemetry.EventAgentActive, client.events[3])
-	stored, err := db.GetSyncState(agentActivityKey)
+	stored, err = db.GetSyncState(agentActivityKey)
 	require.NoError(t, err)
 	var state agentActivityState
 	require.NoError(t, json.Unmarshal([]byte(stored), &state))
@@ -55,8 +71,12 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 
 func TestAgentActivityConcurrentEntryPoints(t *testing.T) {
 	server, db, _ := newTestServer(t)
+	db.SetMaxOpenConns(1)
+	_, err := db.Exec(`PRAGMA synchronous = OFF`)
+	require.NoError(t, err)
 	client := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(client)
+	server.agentActivityNow = func() time.Time { return time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC) }
 	var wg sync.WaitGroup
 	for i := range 101 {
 		wg.Go(func() {
@@ -65,7 +85,9 @@ func TestAgentActivityConcurrentEntryPoints(t *testing.T) {
 				return
 			}
 			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil))
+			req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+			req.Header.Set("Content-Type", "application/json")
+			server.httpServer.Handler.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusAccepted, w.Code)
 		})
 	}
@@ -96,7 +118,9 @@ func TestAgentActivityOptOutAndDeliveryFailure(t *testing.T) {
 	client.enabled = true
 	for range 2 {
 		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil))
+		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req.Header.Set("Content-Type", "application/json")
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusAccepted, w.Code)
 	}
 	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
@@ -107,7 +131,24 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	reporter, err := telemetry.NewReporter(telemetry.Options{})
 	require.NoError(t, err)
 	server.SetTelemetry(reporter)
-	for _, event := range []string{telemetry.EventAgentActive, telemetry.EventAgentCallCount} {
+	for _, tc := range []struct {
+		contentType string
+		origin      string
+		status      int
+	}{
+		{"", "", http.StatusUnsupportedMediaType},
+		{"text/plain", "", http.StatusUnsupportedMediaType},
+		{"application/x-www-form-urlencoded", "", http.StatusUnsupportedMediaType},
+		{"application/json", "https://example.com", http.StatusForbidden},
+		{"application/json", "null", http.StatusForbidden},
+		{"application/json; charset=utf-8", "", http.StatusAccepted},
+	} {
+		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req.Header.Set("Content-Type", tc.contentType)
+		req.Header.Set("Origin", tc.origin)
+		assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req).Code)
+	}
+	for _, event := range []string{telemetry.EventAgentActive, telemetry.EventAgentCallCount, telemetry.EventDaemonActive, telemetry.EventDaemonStarted} {
 		w := serveTelemetryCapture(server.httpServer.Handler, newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"`+event+`"}`)))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	}
@@ -121,4 +162,85 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, serveTelemetryCapture(handler, req).Code)
 	server.httpServer.Handler = withAuthentication(server.httpServer.Handler, "test-auth-key")
 	assert.Equal(t, http.StatusUnauthorized, serveTelemetryCapture(server.httpServer.Handler, httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)).Code)
+}
+
+func TestAgentActivityCanceledWhileWaiting(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
+	synctest.Test(t, func(t *testing.T) {
+		server.agentActivityGate = make(chan struct{}, 1)
+		server.agentActivityGate <- struct{}{}
+		go server.recordAgentCall(t.Context())
+		synctest.Wait()
+		time.Sleep(telemetry.NotificationTimeout)
+		synctest.Wait()
+		<-server.agentActivityGate
+	})
+	server.agentActivityGate = make(chan struct{}, 1)
+	stored, err := db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	server.recordAgentCall(ctx)
+	stored, err = db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+}
+
+func TestAgentActivityDatabaseCancellation(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.recordAgentCall(ctx)
+	}()
+	// Wall-clock wait: database/sql waits for the held SQLite connection.
+	require.Eventually(t, func() bool { return db.Stats().WaitCount > 0 }, time.Second, time.Millisecond)
+	cancel()
+	<-done
+	require.NoError(t, conn.Close())
+	stored, err := db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+}
+
+func TestAgentActivityBusyWriteCancellation(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
+	writer, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+	require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.recordAgentCall(t.Context())
+	}()
+	// Wall-clock wait: SQLite's busy writer must honor the notification deadline.
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 2*telemetry.NotificationTimeout, time.Millisecond)
+	conn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	var busyTimeout int
+	require.NoError(t, conn.QueryRowContext(t.Context(), `PRAGMA busy_timeout`).Scan(&busyTimeout))
+	assert.Equal(t, 30000, busyTimeout)
+	require.NoError(t, conn.Close())
+	require.NoError(t, writer.Rollback())
+	stored, err := db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	assert.Empty(t, stored)
 }

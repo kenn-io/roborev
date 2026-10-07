@@ -42,16 +42,6 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		var finish func(bool)
 		var canonical []byte
 		if err == nil && len(body) <= appOpenedMaxBodyBytes {
-			var event struct {
-				Event string `json:"event"`
-			}
-			if json.Unmarshal(body, &event) == nil {
-				name := strings.TrimSpace(event.Event)
-				if name == EventAgentActive || name == EventAgentCallCount {
-					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
-					return
-				}
-			}
 			skip, finish, canonical = l.alreadySentToday(reporter, body)
 		}
 		if skip {

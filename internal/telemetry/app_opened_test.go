@@ -120,11 +120,11 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"queued"}`, recorder.Body.String())
 	daemonStarted := `{"event":"daemon_started","properties":{"repo_count":1}}`
-	assert.Equal(http.StatusAccepted, postThroughLimiter(limiter, reporter, daemonStarted).Code)
-	assert.Equal(http.StatusAccepted, postThroughLimiter(limiter, reporter, daemonStarted).Code)
+	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, daemonStarted).Code)
+	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, daemonStarted).Code)
 	require.NoError(t, reporter.Close())
 
-	assert.Equal([]string{"app_opened:cli", "daemon_started:", "daemon_started:"}, surfacesOf(messages()))
+	assert.Equal([]string{"app_opened:cli"}, surfacesOf(messages()))
 }
 
 func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {

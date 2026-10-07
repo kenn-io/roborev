@@ -82,7 +82,7 @@ type Server struct {
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
 	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
-	agentActivityMu         sync.Mutex
+	agentActivityGate       chan struct{}
 	agentActivityNow        func() time.Time
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
@@ -208,6 +208,7 @@ func newServerWithLogs(
 		releaseNotesNow:    time.Now,
 		searchNow:          time.Now,
 		telemetryStop:      make(chan struct{}),
+		agentActivityGate:  make(chan struct{}, 1),
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
