@@ -729,7 +729,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				if tt.wantErrMessage != "" {
-					assert.EqualError(t, err, tt.wantErrMessage)
+					require.EqualError(t, err, tt.wantErrMessage)
 				}
 				assert.Empty(t, result, "parseStreamJSON() result = %q, want empty string on error", result)
 			} else {
