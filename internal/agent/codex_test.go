@@ -946,6 +946,21 @@ func TestCodexDiagnosticCapturePreservesOutputAndClassifiesTail(t *testing.T) {
 	assert.Equal(t, LimitKindTransient, capture.Classification().Kind)
 }
 
+func TestCodexDiagnosticCapturePreservesDenialAcrossWrites(t *testing.T) {
+	capture := newCodexDiagnosticCapture()
+	for _, chunk := range []string{
+		"503 Service Unavailable\nstream disconnected before completion: Access ",
+		"denied: web search is not authorized for this identity.\n",
+	} {
+		_, err := capture.Write([]byte(chunk))
+		require.NoError(t, err)
+	}
+	assert.Equal(t, LimitKindPermanent, capture.Classification().Kind)
+	_, err := capture.Write([]byte("503 Service Unavailable"))
+	require.NoError(t, err)
+	assert.Equal(t, LimitKindPermanent, capture.Classification().Kind)
+}
+
 func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
 	a, _ := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput: "usage --sandbox",

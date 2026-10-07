@@ -3365,6 +3365,43 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
 }
 
+func TestCodexPermissionRefusalSkipsRetries(t *testing.T) {
+	const message = "stream disconnected before completion: Access denied: web search is not authorized for this identity."
+	for _, tt := range []struct {
+		name, backup string
+		wantStatus   storage.JobStatus
+	}{
+		{"with backup", "test", storage.JobStatusQueued},
+		{"without backup", "", storage.JobStatusFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.DefaultBackupAgent = tt.backup
+			tc.reconfigurePool(cfg)
+			job := tc.createAndClaimJobWithAgent(t, "permission-refusal", testWorkerID, "codex")
+			job.RepoPath = tc.TmpDir
+
+			tc.Pool.failOrRetryAgentExecutionContext(
+				context.Background(), testWorkerID, job, "codex", errors.New(message),
+			)
+
+			updated := tc.assertJobStatus(t, job.ID, tt.wantStatus)
+			assert := assert.New(t)
+			if tt.backup != "" {
+				assert.Equal(tt.backup, updated.Agent)
+			} else {
+				assert.Equal("agent: "+message, updated.Error)
+			}
+			retries, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(retries)
+			assert.False(tc.Pool.isAgentCoolingDown("codex"))
+			assert.NotContains(updated.Error, review.OutageErrorPrefix)
+		})
+	}
+}
+
 func TestUnavailableAgentErrorFailsWithoutRetry(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJobWithAgent(t, "unavailable-no-backup", testWorkerID, "codex")

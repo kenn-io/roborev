@@ -1718,6 +1718,9 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 			cls = *classificationOverride
 		}
 		switch cls.Kind {
+		case agent.LimitKindPermanent:
+			wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg)
+			return
 		case agent.LimitKindQuota, agent.LimitKindSession:
 			dur := wp.agentQuotaCooldown()
 			if cls.CooldownFor > 0 && cls.CooldownFor < dur {
