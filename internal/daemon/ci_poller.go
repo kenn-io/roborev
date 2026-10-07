@@ -397,7 +397,7 @@ func (p *CIPoller) healthCheck(readiness bool) (bool, string) {
 }
 
 // recordPollResult retains failures until the same repository or retry recovers. Keep
-// subprocess and provider diagnostics in the daemon log, not the health API.
+// raw subprocess and provider diagnostics out of the health API.
 func (p *CIPoller) recordPollResult(repo string, prNumber int, headSHA string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -412,6 +412,9 @@ func (p *CIPoller) recordPollResult(repo string, prNumber int, headSHA string, e
 	}
 	if prNumber != 0 {
 		message = fmt.Sprintf("review failed for %s#%d", repo, prNumber)
+	}
+	if detail := ghpkg.ReadErrorSummary(err); detail != "" {
+		message += ": " + detail
 	}
 	p.pollErrors[target] = message
 	if p.errorLog != nil {

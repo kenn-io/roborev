@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -42,9 +41,11 @@ func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, pr
 		PerPage:   100,
 	}
 	for {
-		issueComments, resp, err := c.api.Issues.ListComments(ctx, owner, repo, prNumber, issueOpts)
+		issueComments, resp, err := readGitHub(ctx, "list issue comments", func() ([]*googlegithub.IssueComment, *googlegithub.Response, error) {
+			return c.api.Issues.ListComments(ctx, owner, repo, prNumber, issueOpts)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list issue comments: %w", err)
+			return nil, err
 		}
 		for _, item := range issueComments {
 			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
@@ -65,9 +66,11 @@ func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, pr
 
 	reviewOpts := &googlegithub.ListOptions{PerPage: 100}
 	for {
-		reviews, resp, err := c.api.PullRequests.ListReviews(ctx, owner, repo, prNumber, reviewOpts)
+		reviews, resp, err := readGitHub(ctx, "list pull request reviews", func() ([]*googlegithub.PullRequestReview, *googlegithub.Response, error) {
+			return c.api.PullRequests.ListReviews(ctx, owner, repo, prNumber, reviewOpts)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list pull request reviews: %w", err)
+			return nil, err
 		}
 		for _, item := range reviews {
 			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
@@ -92,9 +95,11 @@ func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, pr
 		PerPage:   100,
 	}
 	for {
-		inlineComments, resp, err := c.api.PullRequests.ListComments(ctx, owner, repo, prNumber, inlineOpts)
+		inlineComments, resp, err := readGitHub(ctx, "list pull request comments", func() ([]*googlegithub.PullRequestComment, *googlegithub.Response, error) {
+			return c.api.PullRequests.ListComments(ctx, owner, repo, prNumber, inlineOpts)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list pull request comments: %w", err)
+			return nil, err
 		}
 		for _, item := range inlineComments {
 			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
@@ -142,9 +147,11 @@ func (c *Client) ListTrustedRepoCollaborators(ctx context.Context, ghRepo string
 	}
 	trusted := make(map[string]struct{})
 	for {
-		collaborators, resp, err := c.api.Repositories.ListCollaborators(ctx, owner, repo, opts)
+		collaborators, resp, err := readGitHub(ctx, "list collaborators", func() ([]*googlegithub.User, *googlegithub.Response, error) {
+			return c.api.Repositories.ListCollaborators(ctx, owner, repo, opts)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list collaborators: %w", err)
+			return nil, err
 		}
 		for _, item := range collaborators {
 			login := strings.ToLower(strings.TrimSpace(item.GetLogin()))

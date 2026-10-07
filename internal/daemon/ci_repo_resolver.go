@@ -70,7 +70,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 	r.mu.Unlock()
 
 	repos, degraded, err := r.expand(ctx, ci, tokenFn)
-	if err != nil {
+	if err != nil && !degraded {
 		return nil, err
 	}
 
@@ -83,7 +83,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 			copy(stale, r.cached)
 			r.mu.Unlock()
 			log.Printf("CI repo resolver: API degraded, using stale cache (%d repos)", len(stale))
-			return stale, errRepoDiscoveryIncomplete
+			return stale, errors.Join(errRepoDiscoveryIncomplete, err)
 		}
 		r.mu.Unlock()
 		// No stale cache for this key — return partial result.
@@ -99,7 +99,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 	result := make([]string, len(repos))
 	copy(result, repos)
 	if degraded {
-		return result, errRepoDiscoveryIncomplete
+		return result, errors.Join(errRepoDiscoveryIncomplete, err)
 	}
 	return result, nil
 }
@@ -122,6 +122,7 @@ func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
 func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, bool, error) {
 	var exact []string
 	var degraded bool
+	var discoveryErrors []error
 	// owner → list of full patterns like "owner/pattern"
 	wildcardsByOwner := make(map[string][]string)
 	exclusionPatterns := validExclusionPatterns(ci.ExcludeRepos)
@@ -155,6 +156,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 			}
 			log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using configured name)", e, canonicalErr)
 			degraded = true
+			discoveryErrors = append(discoveryErrors, canonicalErr)
 			canonical = e
 		}
 		lower := strings.ToLower(canonical)
@@ -183,6 +185,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 			}
 			log.Printf("CI repo resolver: failed to list repos for %q: %v (skipping wildcards for this owner)", owner, err)
 			degraded = true
+			discoveryErrors = append(discoveryErrors, err)
 			continue
 		}
 
@@ -238,7 +241,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 	result = append(result, wildcardResult...)
 	sort.Strings(result)
 
-	return result, degraded, nil
+	return result, degraded, errors.Join(discoveryErrors...)
 }
 
 // callListRepos invokes the GitHub client or the test seam to list repos for an owner.
