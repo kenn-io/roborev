@@ -31,6 +31,22 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 	assert.False(t, EnabledFromEnv())
 }
 
+func TestSessionEndedDurationBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		elapsed time.Duration
+		bucket  string
+	}{
+		{time.Minute - time.Nanosecond, "under_1m"},
+		{time.Minute, "1_to_5m"},
+		{2 * time.Minute, "1_to_5m"},
+		{5 * time.Minute, "5_to_30m"},
+		{30 * time.Minute, "5_to_30m"},
+		{30*time.Minute + time.Nanosecond, "over_30m"},
+	} {
+		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
+	}
+}
+
 func TestNewReporterDisabledByEnvDoesNotCreateInstallID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -174,9 +190,11 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name  string
-		value any
-		want  string
+		name     string
+		value    any
+		want     string
+		event    string
+		property string
 	}{
 		{name: "tui", value: "tui", want: "tui"},
 		{name: "web", value: "web", want: "web"},
@@ -189,16 +207,31 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 		{name: "number", value: 1.0},
 		{name: "bool", value: true},
 		{name: "nil", value: nil},
+		{name: "session under minute", event: EventSessionEnded, property: PropertyDurationBucket, value: DurationUnder1m, want: DurationUnder1m},
+		{name: "session one to five", event: EventSessionEnded, property: PropertyDurationBucket, value: Duration1To5m, want: Duration1To5m},
+		{name: "session five to thirty", event: EventSessionEnded, property: PropertyDurationBucket, value: Duration5To30m, want: Duration5To30m},
+		{name: "session over thirty", event: EventSessionEnded, property: PropertyDurationBucket, value: DurationOver30m, want: DurationOver30m},
+		{name: "session invalid bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: "invalid"},
+		{name: "session numeric bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: 120},
+		{name: "session rejects cli", event: EventSessionEnded, value: "cli"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			props, err := reporter.SanitizeProperties(EventAppOpened, map[string]any{PropertySurface: tt.value})
+			event, property := tt.event, tt.property
+			if event == "" {
+				event = EventAppOpened
+			}
+			if property == "" {
+				property = PropertySurface
+			}
+			props, err := reporter.SanitizeProperties(event, map[string]any{property: tt.value, "seconds": 120})
 			require.NoError(t, err)
+			assert.NotContains(t, props, "seconds")
 			if tt.want == "" {
-				assert.NotContains(t, props, PropertySurface)
+				assert.NotContains(t, props, property)
 				return
 			}
-			assert.Equal(t, tt.want, props[PropertySurface])
+			assert.Equal(t, tt.want, props[property])
 		})
 	}
 }

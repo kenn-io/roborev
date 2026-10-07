@@ -25,12 +25,18 @@ const (
 	EventDaemonStarted = "daemon_started"
 	EventDaemonActive  = "daemon_active"
 	EventAppOpened     = "app_opened"
+	EventSessionEnded  = "session_ended"
 
-	// PropertySurface names the interface that sent app_opened; values come only from the fixed list below.
-	PropertySurface = "surface"
-	SurfaceWeb      = "web"
-	SurfaceTUI      = "tui"
-	SurfaceCLI      = "cli"
+	// PropertySurface names the interface that sent a usage event.
+	PropertySurface        = "surface"
+	PropertyDurationBucket = "duration_bucket"
+	DurationUnder1m        = "under_1m"
+	Duration1To5m          = "1_to_5m"
+	Duration5To30m         = "5_to_30m"
+	DurationOver30m        = "over_30m"
+	SurfaceWeb             = "web"
+	SurfaceTUI             = "tui"
+	SurfaceCLI             = "cli"
 )
 
 var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
@@ -105,6 +111,23 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventAppOpened,
 			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
+		kittelemetry.WithAllowedEvent(EventSessionEnded,
+			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI)),
+			kittelemetry.AllowTelemetryProperty(PropertyDurationBucket, kittelemetry.AllowTelemetryStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+	}
+}
+
+// DurationBucket groups elapsed time without sending an exact duration.
+func DurationBucket(elapsed time.Duration) string {
+	switch {
+	case elapsed < time.Minute:
+		return DurationUnder1m
+	case elapsed < 5*time.Minute:
+		return Duration1To5m
+	case elapsed <= 30*time.Minute:
+		return Duration5To30m
+	default:
+		return DurationOver30m
 	}
 }
 

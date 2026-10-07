@@ -92,9 +92,18 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) boo
 
 // PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.
 func PostAppOpened(ctx context.Context, client *http.Client, url, surface string) {
+	postEvent(ctx, client, url, EventAppOpened, map[string]string{PropertySurface: surface})
+}
+
+// PostSessionEnded reports one completed interface lifetime.
+func PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
+	postEvent(ctx, client, url, EventSessionEnded, map[string]string{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
+}
+
+func postEvent(ctx context.Context, client *http.Client, url, event string, properties map[string]string) {
 	body, err := json.Marshal(map[string]any{
-		"event":      EventAppOpened,
-		"properties": map[string]string{PropertySurface: surface},
+		"event":      event,
+		"properties": properties,
 	})
 	if err != nil {
 		return

@@ -74,6 +74,19 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 	})
 }
 
+func TestSessionEndedBypassesDailyLimiter(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	limiter := &AppOpenedLimiter{}
+	for range 2 {
+		rec := postThroughLimiter(limiter, reporter, `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"1_to_5m"}}`)
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+	}
+	require.NoError(t, reporter.Close())
+	assert.Equal(t, []string{"session_ended:web", "session_ended:web"}, surfacesOf(messages()))
+}
+
 func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	assert := assert.New(t)
 	limiter := &AppOpenedLimiter{}
