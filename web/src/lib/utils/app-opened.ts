@@ -39,7 +39,41 @@ export function setupAppOpenedReporting(): () => void {
   loadReported = true;
   focusPending = false;
   if (report) reportAppOpened();
+  let started = document.hidden ? undefined : performance.now();
+  const end = () => {
+    if (started === undefined) return;
+    const elapsed = performance.now() - started;
+    started = undefined;
+    const duration =
+      elapsed < 60_000
+        ? "under_1m"
+        : elapsed < 300_000
+          ? "1_to_5m"
+          : elapsed <= 1_800_000
+            ? "5_to_30m"
+            : "over_30m";
+    void roborevFetch(telemetryEventsPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "session_ended",
+        properties: { surface: "web", duration_bucket: duration },
+      }),
+      keepalive: true,
+    }).catch(() => undefined);
+  };
+  const resume = () => {
+    if (!document.hidden && started === undefined) started = performance.now();
+  };
+  const visibility = () => (document.hidden ? end() : resume());
+  document.addEventListener("visibilitychange", visibility);
+  globalThis.addEventListener("pagehide", end);
+  globalThis.addEventListener("pageshow", resume);
   return () => {
     shellMounted = false;
+    started = undefined;
+    document.removeEventListener("visibilitychange", visibility);
+    globalThis.removeEventListener("pagehide", end);
+    globalThis.removeEventListener("pageshow", resume);
   };
 }

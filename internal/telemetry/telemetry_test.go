@@ -31,6 +31,39 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 	assert.False(t, EnabledFromEnv())
 }
 
+func TestSessionEndedPropertiesAndBuckets(t *testing.T) {
+	t.Setenv(EnabledEnv, "0")
+	reporter, err := NewReporter(Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		elapsed time.Duration
+		bucket  string
+	}{
+		{time.Minute - time.Nanosecond, "under_1m"}, {time.Minute, "1_to_5m"},
+		{2 * time.Minute, "1_to_5m"}, {5 * time.Minute, "5_to_30m"},
+		{30 * time.Minute, "5_to_30m"}, {30*time.Minute + time.Nanosecond, "over_30m"},
+	} {
+		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "tui", "duration_bucket": tc.bucket, "seconds": 120})
+		require.NoError(t, err)
+		assert.Equal(t, "tui", props["surface"])
+		assert.Equal(t, tc.bucket, props["duration_bucket"])
+		assert.NotContains(t, props, "seconds")
+	}
+	for _, bucket := range []any{"invalid", 120} {
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "cli", "duration_bucket": bucket})
+		require.NoError(t, err)
+		assert.NotContains(t, props, "surface")
+		assert.NotContains(t, props, "duration_bucket")
+	}
+	limiter := &AppOpenedLimiter{}
+	for range 2 {
+		rec := postThroughLimiter(limiter, reporter, `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"1_to_5m"}}`)
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+		assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
+	}
+}
+
 func TestNewReporterDisabledByEnvDoesNotCreateInstallID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

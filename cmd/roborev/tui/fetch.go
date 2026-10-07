@@ -406,6 +406,15 @@ func (m model) reportAppOpened() tea.Cmd {
 	}
 }
 
+func (m model) reportSessionEnded(elapsed time.Duration) {
+	if !telemetry.EnabledFromEnv() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
+}
+
 func (m model) fetchReleaseNotes() tea.Cmd {
 	return func() tea.Msg {
 		resp, err := newDaemonAPI(m.endpoint, m.client).ListReleasesRaw(m.apiContext())

@@ -48,6 +48,7 @@ describe("setupAppOpenedReporting", () => {
     document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   test("posts one app_opened event with session and CSRF headers on load", async () => {
@@ -64,6 +65,68 @@ describe("setupAppOpenedReporting", () => {
     expect(request.headers.get("X-Roborev-Web-Session")).toBe("tab-session");
     expect(request.headers.get("X-Roborev-CSRF")).toBe("csrf-value");
     expect(request.headers.get("Content-Type")).toBe("application/json");
+  });
+
+  test.each([
+    [59_999, "under_1m"],
+    [60_000, "1_to_5m"],
+    [120_000, "1_to_5m"],
+    [300_000, "5_to_30m"],
+    [1_800_000, "5_to_30m"],
+    [1_800_001, "over_30m"],
+  ])(
+    "reports %i visible milliseconds as %s with closing credentials",
+    async (elapsed, bucket) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+      setup();
+      await settle();
+      now = elapsed;
+      globalThis.dispatchEvent(new Event("pagehide"));
+      globalThis.dispatchEvent(new Event("pagehide"));
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const request = fetchMock.mock.calls[1]![0];
+      expect(JSON.parse(await request.text())).toEqual({
+        event: "session_ended",
+        properties: { surface: "web", duration_bucket: bucket },
+      });
+      expect(request.keepalive).toBe(true);
+      expect(request.headers.get("X-Roborev-Web-Session")).toBe("tab-session");
+      expect(request.headers.get("X-Roborev-CSRF")).toBe("csrf-value");
+    },
+  );
+
+  test("starts on visible return and excludes hidden time and disposed mounts", async () => {
+    let now = 0;
+    let hidden = true;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    const stop = setup();
+    now = 600_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    now += 120_000;
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    globalThis.dispatchEvent(new Event("pagehide"));
+    now += 600_000;
+    hidden = false;
+    globalThis.dispatchEvent(new Event("pageshow"));
+    now += 120_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    stop();
+    globalThis.dispatchEvent(new Event("pageshow"));
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [request] of fetchMock.mock.calls.slice(1)) {
+      expect(JSON.parse(await request.text()).properties.duration_bucket).toBe(
+        "1_to_5m",
+      );
+    }
   });
 
   test("ignores focus later on the same UTC day", async () => {

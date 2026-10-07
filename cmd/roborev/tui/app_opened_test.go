@@ -27,6 +27,36 @@ func enableTelemetryEnv(t *testing.T) {
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 }
 
+func TestReportSessionEnded(t *testing.T) {
+	enableTelemetryEnv(t)
+	var body []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ts.Close)
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	m.reportSessionEnded(2 * time.Minute)
+	assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
+	body = nil
+	t.Setenv(telemetry.EnabledEnv, "0")
+	m.reportSessionEnded(time.Minute)
+	assert.Nil(t, body)
+}
+
+func TestReportSessionEndedBoundsDelivery(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &stalledTransport{hit: make(chan struct{}, 1)}
+		m.client.Transport = transport
+		started := time.Now()
+		m.reportSessionEnded(2 * time.Minute)
+		assert.Equal(t, time.Second, time.Since(started))
+		assert.Equal(t, int32(1), transport.requests.Load())
+	})
+}
+
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	assert := assert.New(t)

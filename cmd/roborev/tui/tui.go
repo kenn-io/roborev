@@ -1484,7 +1484,14 @@ func Run(cfg Config) error {
 		close(cleanupDone)
 	}
 
+	started := time.Now()
 	finalModel, err := p.Run()
+	elapsed := time.Since(started)
+	if fm, ok := finalModel.(model); ok {
+		fm.reportSessionEnded(elapsed)
+	} else {
+		m.reportSessionEnded(elapsed)
+	}
 	// Stop SSE subscription goroutine. Use the final model (not the
 	// initial m) because reconnect may have replaced sseStop — closing
 	// the original would double-close.
