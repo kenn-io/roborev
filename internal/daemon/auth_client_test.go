@@ -83,6 +83,35 @@ func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	assert.Zero(t, received)
 }
 
+func TestAuthClientKeepsKeyOffGuessedTCPAddress(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	enqueue := func(ep DaemonEndpoint) (*http.Response, error) {
+		return ep.HTTPClient(time.Second).Post(
+			server.URL+"/api/enqueue", "application/json", strings.NewReader(`{"repo_path":"/synthetic/repo"}`),
+		)
+	}
+
+	// While no daemon has published the address, another local account
+	// could be listening there.
+	resp, err := enqueue(authEndpoint(t, server.URL).AsGuess())
+	assert.Nil(t, resp)
+	require.ErrorIs(t, err, ErrGuessedEndpointAuth)
+	assert.False(t, IsDaemonAccessError(err), "a guessed address means no daemon was found")
+	assert.Zero(t, requests.Load(), "neither the key nor the request body may reach a guessed address")
+
+	resp, err = enqueue(authEndpoint(t, server.URL))
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, int32(1), requests.Load())
+}
+
 func TestAuthClientConfigFailureIsTerminal(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = secret-never-print"), 0o600))
@@ -104,9 +133,9 @@ listen = "0.0.0.0:7373"
 `
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(configText), 0o600))
 
-	key, err := loadClientAuthKey()
+	clientAuth, err := loadClientAuth()
 	require.NoError(t, err)
-	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", key)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", clientAuth.Key)
 }
 
 func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
@@ -162,7 +191,7 @@ func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
-	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
 	require.NoError(t, err)
 	assert.True(t, ready)
 	assert.False(t, exited)
@@ -175,8 +204,14 @@ func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
-	_, err := GetAnyRunningDaemonContext(context.Background())
-	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	// Ping answers callers without a key, so discovery finds the daemon and
+	// the first request that needs the key reports the denial.
+	info, err := GetAnyRunningDaemonContext(context.Background())
+	require.NoError(t, err)
+	resp, err := info.Endpoint().HTTPClient(time.Second).Get(server.URL + "/api/status")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	CleanupZombieDaemons(ep)
 	_, err = os.Stat(RuntimePathForPID(os.Getpid()))
 	assert.NoError(t, err)

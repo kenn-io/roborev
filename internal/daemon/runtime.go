@@ -3,6 +3,8 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -113,6 +115,16 @@ func (r RuntimeInfo) Endpoints() []DaemonEndpoint {
 		return endpoints
 	}
 	return append(endpoints, alternate)
+}
+
+// PreferredEndpoints returns the published endpoints with the private Unix
+// socket first, so auth_key stays off TCP while the socket works.
+func (r RuntimeInfo) PreferredEndpoints() []DaemonEndpoint {
+	endpoints := r.Endpoints()
+	if len(endpoints) == 2 && endpoints[1].IsUnix() {
+		endpoints[0], endpoints[1] = endpoints[1], endpoints[0]
+	}
+	return endpoints
 }
 
 // PingInfo is the minimal daemon identity payload used for liveness probes.
@@ -355,30 +367,50 @@ func listLegacyRuntimes() []*RuntimeInfo {
 }
 
 func probeRuntimeRecord(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
-	key, err := loadClientAuthKey()
+	clientAuth, err := loadClientAuth()
 	if err != nil {
 		return nil, err
 	}
-	return probeRuntimeRecordWithKey(ctx, ep, key)
+	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
 }
 
-func probeRuntimeRecordWithKey(ctx context.Context, ep DaemonEndpoint, key string) (*PingInfo, error) {
+func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	return probeDaemonHTTP(ctx, ep, time.Second, ep.HTTPClientWithAuthKey(time.Second, key))
+	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
+	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
-// IsDaemonAccessError reports credential, configuration, and local permission
-// errors that must not trigger daemon recovery or stale-runtime cleanup.
+// IsDaemonAccessError reports credential, configuration, TLS, and local
+// permission errors that must not trigger daemon recovery or stale-runtime
+// cleanup.
 func IsDaemonAccessError(err error) bool {
 	return errors.Is(err, ErrDaemonAccessDenied) || errors.Is(err, ErrClientConfig) ||
+		isTLSFailure(err) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EACCES) ||
 		errors.Is(err, syscall.EPERM)
+}
+
+// isTLSFailure reports a handshake that reached a listener but failed
+// certificate checks on either side. Something is listening, so the daemon
+// must not be treated as stopped.
+func isTLSFailure(err error) bool {
+	var verification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	var recordHeader tls.RecordHeaderError
+	// crypto/tls reports an alert from the daemon, such as a rejected client
+	// certificate, as a "remote error" operation.
+	var op *net.OpError
+	return errors.As(err, &verification) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &invalid) || errors.As(err, &hostname) ||
+		errors.As(err, &recordHeader) || errors.As(err, &op) && op.Op == "remote error"
 }
 
 func discoverRuntimeRecords(
@@ -396,7 +428,7 @@ func discoverRuntimeRecords(
 			continue
 		}
 		primary := info.Endpoint()
-		for _, ep := range info.Endpoints() {
+		for _, ep := range info.PreferredEndpoints() {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -424,7 +456,7 @@ func discoverRuntimeRecords(
 // GetAnyRunningDaemonContext returns info about a responsive daemon.
 // Returns os.ErrNotExist if no responsive daemon is found.
 func GetAnyRunningDaemonContext(ctx context.Context) (*RuntimeInfo, error) {
-	if _, err := loadClientAuthKey(); err != nil {
+	if _, err := loadClientAuth(); err != nil {
 		return nil, err
 	}
 	return getAnyRunningDaemonContext(ctx, probeRuntimeEndpoint)
@@ -524,6 +556,12 @@ func IsDaemonAlive(ep DaemonEndpoint) bool {
 
 // hasStaleProcess rejects dead or reused PIDs before sending credentials.
 // An unknown identity is not proof of a mismatch; older records may lack it.
+// Stale reports that the recorded process exited or its PID now belongs to
+// another process, so the record's endpoints must not receive credentials.
+func (r *RuntimeInfo) Stale() bool {
+	return r.hasStaleProcess()
+}
+
 func (r *RuntimeInfo) hasStaleProcess() bool {
 	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
 		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
@@ -623,25 +661,74 @@ func KillDaemon(info *RuntimeInfo) error {
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
 	}
-	if info.hasStaleProcess() || confirmedDead() {
+	// Reject dead and reused PIDs before any endpoint receives credentials.
+	if info.hasStaleProcess() {
 		removeRuntimeFile()
 		return nil
 	}
+	identity := processUnknown
 	if info.PID > 0 {
-		switch identifyProcess(info.PID) {
-		case processNotRoborev:
+		if !isProcessAlive(info.PID) {
 			removeRuntimeFile()
 			return nil
-		case processUnknown:
-			ping, err := ProbeDaemon(ep, 2*time.Second)
-			if err != nil {
-				return err
+		}
+		identity = identifyProcess(info.PID)
+		if identity == processNotRoborev {
+			removeRuntimeFile()
+			return nil
+		}
+	}
+
+	// Prefer the private Unix socket so auth_key stays off TCP. A cleaner can
+	// delete the socket file while the daemon runs, so fall back to the next
+	// published endpoint. When the PID is known, only that process may get
+	// the shutdown request: another daemon can take over a freed TCP port.
+	selected, answeredByOther := false, map[DaemonEndpoint]bool{}
+	var probeErr error
+	for _, candidate := range info.PreferredEndpoints() {
+		ping, err := ProbeDaemon(candidate, 2*time.Second)
+		if errors.Is(err, ErrDaemonAccessDenied) || err == nil && (info.PID <= 0 || ping.PID == info.PID) {
+			ep, selected = candidate, true
+			break
+		}
+		if err == nil {
+			answeredByOther[candidate] = true
+		} else {
+			probeErr = err
+		}
+	}
+	if !selected && info.PID > 0 {
+		if identity == processUnknown {
+			if len(answeredByOther) == 0 {
+				// The process is alive, but nothing proves what it is. Keep
+				// the record so the daemon stays discoverable.
+				return probeErr
 			}
-			if ping.PID != info.PID {
-				removeRuntimeFile()
-				return nil
+			// A different daemon answers the published endpoints, so this
+			// record no longer describes a reachable roborev daemon.
+			removeRuntimeFile()
+			return nil
+		}
+		// The process is roborev but did not answer yet; keep the published
+		// endpoint that no other daemon claimed and let shutdown retry.
+		//
+		// Known edge case, deliberately ignored: if the socket file was
+		// deleted (for example, logout removed XDG_RUNTIME_DIR) and the TCP
+		// ping also failed transiently, this picks the missing socket and
+		// shutdown retries only that endpoint until its budget runs out. That
+		// needs the loopback ping to a live daemon to fail at the same moment,
+		// and the cost is a failed stop that succeeds when run again.
+		ep = DaemonEndpoint{}
+		for _, candidate := range info.PreferredEndpoints() {
+			if !answeredByOther[candidate] {
+				ep = candidate
+				break
 			}
 		}
+	}
+	if info.PID <= 0 && confirmedDead() {
+		removeRuntimeFile()
+		return nil
 	}
 
 	// Request graceful shutdown within one shared preparation budget. Once the

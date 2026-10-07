@@ -592,3 +592,19 @@ hook_review_panel = "guard"
 	assert.Equal(t, doctorFail, got.Status)
 	assert.Contains(t, got.Details, `experiments.try-guard: review.hook_review_panel = "guard" includes a security reviewer`)
 }
+
+func TestDoctorDaemonTLS(t *testing.T) {
+	assert.Empty(t, checkDoctorDaemonTLS(&doctorEnv{global: &config.Config{}}), "no check without [daemon_tls]")
+
+	dir := t.TempDir()
+	env := &doctorEnv{global: &config.Config{DaemonTLS: config.DaemonTLSConfig{
+		CAFile:         filepath.Join(dir, "ca.pem"),
+		ClientCertFile: filepath.Join(dir, "client.pem"),
+		ClientKeyFile:  filepath.Join(dir, "client-key.pem"),
+	}}}
+	checks := checkDoctorDaemonTLS(env)
+	require.Len(t, checks, 1)
+	assert.Equal(t, doctorFail, checks[0].Status)
+	assert.Equal(t, "config.daemon_tls", checks[0].ID)
+	assert.Contains(t, checks[0].Details[0], "load daemon_tls client certificate")
+}

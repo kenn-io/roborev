@@ -16,33 +16,48 @@ func ValidateAuthKey(key string) error {
 	return auth.ValidateKey(key)
 }
 
-// LoadGlobalAuthKey reads only auth_key from the global TOML config. Clients
-// need the credential to contact a running daemon even when another setting
-// has a semantic error; malformed TOML and invalid auth keys still fail.
-func LoadGlobalAuthKey() (string, error) {
+// ClientAuth is the credential and transport security a client uses to
+// contact the daemon.
+type ClientAuth struct {
+	Key string
+	TLS DaemonTLSConfig
+}
+
+// LoadGlobalClientAuth reads only auth_key and [daemon_tls] from the global
+// TOML config. Clients need these to contact a running daemon even when
+// another setting has a semantic error; malformed TOML and invalid values
+// still fail.
+func LoadGlobalClientAuth() (ClientAuth, error) {
 	path := GlobalConfigPath()
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return ClientAuth{}, nil
 	} else if err != nil {
-		return "", err
+		return ClientAuth{}, err
 	}
 
-	var values map[string]any
+	var values struct {
+		AuthKey   any             `toml:"auth_key"`
+		DaemonTLS DaemonTLSConfig `toml:"daemon_tls"`
+	}
 	if _, err := toml.DecodeFile(path, &values); err != nil {
-		return "", safeGlobalConfigError(path, err)
+		return ClientAuth{}, safeGlobalConfigError(path, err)
 	}
-	raw, ok := values["auth_key"]
-	if !ok {
-		return "", nil
+	if err := values.DaemonTLS.Validate(); err != nil {
+		return ClientAuth{}, err
 	}
-	key, ok := raw.(string)
+	result := ClientAuth{TLS: values.DaemonTLS}
+	if values.AuthKey == nil {
+		return result, nil
+	}
+	key, ok := values.AuthKey.(string)
 	if !ok {
-		return "", errors.New("auth_key must be a string")
+		return ClientAuth{}, errors.New("auth_key must be a string")
 	}
 	if err := ValidateAuthKey(key); err != nil {
-		return "", err
+		return ClientAuth{}, err
 	}
-	return key, nil
+	result.Key = key
+	return result, nil
 }
 
 // safeGlobalConfigError prevents a TOML parser's source snippets from exposing

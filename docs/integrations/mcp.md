@@ -137,8 +137,10 @@ daemon only listens on loopback. If global `auth_key` is set, `/mcp` requires
 Without it, clients receive HTTP 401. Use stdio with the installers, or
 configure that header manually in an MCP client that supports it. See
 [Daemon authentication](/docs/configuration/#daemon-authentication) for key
-setup and rotation. When the daemon listens on a Unix domain socket, most MCP
-clients cannot reach it over HTTP; use stdio instead.
+setup and rotation. With `[daemon_tls]` configured, the endpoint uses `https://`
+and the MCP client must present a client certificate. When the daemon listens on
+a Unix domain socket, most MCP clients cannot reach it over HTTP; use stdio
+instead.
 
 ```json
 {

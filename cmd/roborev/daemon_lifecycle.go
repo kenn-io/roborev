@@ -124,12 +124,14 @@ func defaultDaemonEndpoint() daemon.DaemonEndpoint {
 	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 }
 
+// fallbackDaemonEndpoint is used when no runtime record names a running
+// daemon. It is only a guess, so clients keep auth_key off it over plain TCP.
 func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 	exe, err := os.Executable()
 	if err == nil && shouldRefuseAutoStartDaemon(exe) {
-		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
+		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}.AsGuess()
 	}
-	return defaultDaemonEndpoint()
+	return defaultDaemonEndpoint().AsGuess()
 }
 
 // validateServerFlag parses and validates the --server flag value.

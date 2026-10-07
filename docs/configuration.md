@@ -1101,6 +1101,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `auth_key` | string | empty | Shared Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
+| `daemon_tls.*` | table | empty | Mutual TLS files for the daemon's TCP listener; see [Transport security](#transport-security) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
 | `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
@@ -1446,11 +1447,12 @@ Invalid keys or malformed config prevent daemon startup. An explicitly supplied
 `daemon run --config` path must exist.
 
 The CLI, hooks and TUI read the key from their global config automatically,
-including for `--server` and Unix sockets. To allow a different account, give it
-the same `auth_key` in its own global config. When the daemon uses a custom
-`--config` file, configure the matching key in each client's usual global config
-too. `ROBOREV_DATA_DIR` changes the global config directory as usual. The key is
-not published in daemon runtime files.
+including for `--server` addresses and Unix sockets. See
+[Transport security](#transport-security) for how they choose a transport. To
+allow a different account, give it the same `auth_key` in its own global config.
+When the daemon uses a custom `--config` file, configure the matching key in
+each client's usual global config too. `ROBOREV_DATA_DIR` changes the global
+config directory as usual. The key is not published in daemon runtime files.
 
 If posting a fix comment or enqueueing its follow-up review returns HTTP 401,
 the CLI reports access denied and directs you to check `auth_key` in the global
@@ -1496,17 +1498,86 @@ curl -H "Authorization: Bearer $ROBOREV_AUTH_KEY" \
   http://127.0.0.1:7373/api/status
 ```
 
+With `[daemon_tls]` configured, use `https://` and add
+`--cacert ca.pem --cert client.pem --key client-key.pem`.
+
 `ROBOREV_AUTH_KEY` above is a shell variable for curl, not a roborev config
 override. Missing or incorrect credentials return HTTP 401. Query-string keys
-are not accepted. Go consumers can use `client.NewWithAuthKey(baseURL, key)`.
-Roborev clients scope keys to their configured endpoint and do not follow
-redirects.
+are not accepted.
 
-This is a local shared-key mechanism. TCP remains loopback-only, and HTTP does
-not encrypt or authenticate the listening process. A process impersonating a
-localhost TCP endpoint can capture a Bearer key; use protected Unix sockets on
-shared machines where that threat matters. It does not isolate processes that
-already run as the daemon owner's account or can read its config.
+Two routes answer callers that send no key, so a monitor or another account can
+confirm that the daemon is running:
+
+- `GET /api/ping` returns the service name, version, process ID and MCP URL.
+- `GET /api/health` returns only `healthy`, `ready`, `uptime` and `version`.
+    Component details and recent errors can contain paths and agent output, so
+    they need the key.
+
+A caller that sends a wrong key still gets HTTP 401 on these routes. Go
+consumers can use `client.NewWithAuthKey(baseURL, key)`. Roborev clients scope
+keys to their configured endpoint and do not follow redirects.
+
+This is a local shared-key mechanism. It does not isolate processes that already
+run as the daemon owner's account or can read its config.
+
+#### Transport security
+
+Plain TCP does not prove which process is listening. While the daemon is
+stopped, another local account could bind its port and capture a key sent there.
+Roborev clients choose a transport in this order:
+
+- **The private Unix socket.** On Linux and macOS, the TCP daemon also listens
+    on a socket that only its owner can open (see
+    [Unix Domain Socket](#unix-domain-socket)). Clients use it automatically
+    when the daemon publishes it.
+- **Mutual TLS over TCP.** With `[daemon_tls]` configured, the daemon requires
+    TLS and a client certificate signed by your CA on its TCP listener, and
+    clients trust only that CA. Callers without a client certificate can still
+    reach the ping and health routes described above.
+- **Plain TCP to a known address.** Otherwise clients send the key over plain
+    TCP, but only to an address a running daemon published or a `--server`
+    address you give. This covers Windows, a socket file that was removed, and
+    daemons older than v0.65.0.
+
+When no running daemon has published an address, clients do not send the key
+over plain TCP to the default address. Commands that need the daemon start it
+instead. Remote `https://` daemons use signed requests and are not affected. On
+shared machines, configure `[daemon_tls]` if another account could bind the
+daemon's port while it runs on plain TCP.
+
+Create the CA and certificates with your usual tooling. The daemon certificate
+needs a subject alternative name for the address clients dial, such as
+`IP:127.0.0.1`, and the server authentication extended key usage. The client
+certificate needs the client authentication extended key usage. Use absolute
+paths:
+
+```toml
+# ~/.roborev/config.toml
+[daemon_tls]
+ca_file = "/home/user-a/.roborev/pki/ca.pem"
+cert_file = "/home/user-a/.roborev/pki/daemon.pem"
+key_file = "/home/user-a/.roborev/pki/daemon-key.pem"
+client_cert_file = "/home/user-a/.roborev/pki/client.pem"
+client_key_file = "/home/user-a/.roborev/pki/client-key.pem"
+```
+
+The daemon reads `cert_file` and `key_file`. Clients read `ca_file`,
+`client_cert_file` and `client_key_file`, so another account's config needs only
+those three. If a file is missing or does not match, the daemon refuses to
+start, and `roborev doctor` reports which file failed to load.
+
+The daemon reads `[daemon_tls]` only when it starts, but commands read it every
+time. Stop the daemon before you add, remove or change `[daemon_tls]`, then
+start it again:
+
+1. Run `roborev daemon stop`.
+1. Edit `[daemon_tls]`.
+1. Run `roborev daemon start`.
+
+If you change the settings first, commands and the running daemon disagree about
+TLS, and requests over TCP fail. `daemon stop` and `daemon restart` then work
+only through the daemon's Unix socket. Windows has no socket, and on Linux and
+macOS the socket can be missing.
 
 ### Persistent Daemon
 

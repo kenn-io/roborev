@@ -142,6 +142,7 @@ type doctorCheckFunc func(*doctorEnv) []doctorCheck
 func runDoctorChecks(env *doctorEnv) []doctorCheck {
 	checks := []doctorCheckFunc{
 		checkDoctorGlobalConfig,
+		checkDoctorDaemonTLS,
 		checkDoctorRepoConfig,
 		checkDoctorDaemon,
 		checkDoctorAgents,

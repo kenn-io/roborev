@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -35,6 +38,11 @@ func TestAuthProtectsAllRoutes(t *testing.T) {
 	}
 	for _, path := range paths {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			// Listed here, not read from livenessRoutes, so a route added to
+			// that map by mistake still fails this test.
+			if method == http.MethodGet && (path == "/api/ping" || path == "/api/health") {
+				continue // TestAuthLivenessRoutesWithoutCredentials covers these.
+			}
 			t.Run(method+path, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 				defer cancel()
@@ -79,7 +87,7 @@ func TestAuthBearerCredentials(t *testing.T) {
 		{"query", nil, "?auth_key=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/ping"+tc.query, nil)
+			r := httptest.NewRequest(http.MethodGet, "/api/status"+tc.query, nil)
 			for _, h := range tc.headers {
 				r.Header.Add("Authorization", h)
 			}
@@ -100,6 +108,49 @@ func TestAuthDisabledAndPinnedAcrossReload(t *testing.T) {
 	s.configWatcher.cfg = config.DefaultConfig()
 	s.configWatcher.cfgMu.Unlock()
 	w = httptest.NewRecorder()
-	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/ping", nil))
+	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthLivenessRoutesWithoutCredentials(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	s := newAuthTestServer(t, key)
+	get := func(path string, headers ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		for _, h := range headers {
+			r.Header.Add("Authorization", h)
+		}
+		w := httptest.NewRecorder()
+		s.httpServer.Handler.ServeHTTP(w, r)
+		return w
+	}
+	decodeHealth := func(w *httptest.ResponseRecorder) storage.HealthStatus {
+		var health storage.HealthStatus
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &health))
+		return health
+	}
+
+	w := get("/api/ping")
+	require.Equal(t, http.StatusOK, w.Code, "a caller without credentials can confirm the daemon runs")
+	var ping PingInfo
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ping))
+	assert.True(t, ping.OK)
+	assert.Equal(t, os.Getpid(), ping.PID)
+
+	s.errorLog.LogError("worker", "synthetic failure in /synthetic/repo", 0)
+	w = get("/api/health")
+	require.Equal(t, http.StatusOK, w.Code)
+	open := decodeHealth(w)
+	assert.NotEmpty(t, open.Version)
+	assert.NotEmpty(t, open.Uptime)
+	assert.Empty(t, open.Components, "component messages need credentials")
+	assert.Empty(t, open.RecentErrors, "recent errors need credentials")
+
+	full := decodeHealth(get("/api/health", "Bearer "+key))
+	assert.NotEmpty(t, full.Components)
+	require.NotEmpty(t, full.RecentErrors, "the key reveals the recent error")
+	assert.Equal(t, "synthetic failure in /synthetic/repo", full.RecentErrors[0].Message)
+
+	// A wrong key is still rejected, so roborev clients can report it.
+	assert.Equal(t, http.StatusUnauthorized, get("/api/ping", "Bearer fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210").Code)
 }

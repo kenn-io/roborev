@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -57,4 +58,44 @@ func TestAuthKeyMalformedConfigDoesNotExposeSecret(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "secret-never-print")
 	assert.Contains(t, err.Error(), `last key "auth_key"`)
+}
+
+func TestDaemonTLSConfigRejectsPartialSettings(t *testing.T) {
+	// '{pki}name' becomes a TOML string holding an absolute path for the host
+	// OS. The directory name has an apostrophe so quoting is exercised.
+	pkiPath := regexp.MustCompile(`'\{pki\}([^']*)'`)
+	for _, tc := range []struct {
+		name    string
+		section string
+		wantErr string
+	}{
+		{name: "client only", section: `ca_file = '{pki}ca.pem'
+client_cert_file = '{pki}client.pem'
+client_key_file = '{pki}client-key.pem'`},
+		{name: "certificate without CA", section: `client_cert_file = '{pki}client.pem'`, wantErr: "ca_file is required"},
+		{name: "CA without client certificate", section: `ca_file = '{pki}ca.pem'`, wantErr: "client_cert_file and client_key_file are required"},
+		{name: "server certificate without key", section: `ca_file = '{pki}ca.pem'
+cert_file = '{pki}daemon.pem'
+client_cert_file = '{pki}client.pem'
+client_key_file = '{pki}client-key.pem'`, wantErr: "cert_file and key_file must be set together"},
+		{name: "relative path", section: `ca_file = 'ca.pem'`, wantErr: "ca_file must be an absolute path"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			pki := filepath.Join(t.TempDir(), "user's pki")
+			section := pkiPath.ReplaceAllStringFunc(tc.section, func(match string) string {
+				encoded, ok := encodeTOMLOverrideValue(filepath.Join(pki, pkiPath.FindStringSubmatch(match)[1]))
+				require.True(t, ok)
+				return encoded
+			})
+			contents := "[daemon_tls]\n" + section + "\n"
+			require.NoError(t, os.WriteFile(GlobalConfigPath(), []byte(contents), 0o600))
+			_, err := LoadGlobalClientAuth()
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
 }

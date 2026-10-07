@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +26,7 @@ type DaemonEndpoint struct {
 	Network   string // "tcp" or "unix"
 	remoteURL string // Explicit HTTPS URL; never used for local discovery.
 	accessErr error  // A terminal discovery error; never persisted.
+	guessed   bool   // A default address no running daemon published.
 	Address   string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
 }
 
@@ -90,16 +93,34 @@ func (e DaemonEndpoint) BaseURL() string {
 	return e.kitEndpoint().BaseURL()
 }
 
+// ErrGuessedEndpointAuth means a client refused to send auth_key over plain
+// TCP to a default address that no running daemon published. While the
+// daemon is stopped, another local account could listen there.
+var ErrGuessedEndpointAuth = errors.New(
+	"no running daemon published this address; refusing to send auth_key over plain TCP to a default address",
+)
+
+// AsGuess marks a default address used when no runtime record names a
+// running daemon. Clients do not send auth_key to it over plain TCP.
+func (e DaemonEndpoint) AsGuess() DaemonEndpoint {
+	e.guessed = true
+	return e
+}
+
 // HTTPClient returns an http.Client configured for this endpoint's transport.
+// It reads auth_key for every request and [daemon_tls] when it is built.
 func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 	if e.IsRemote() {
 		return e.remoteHTTPClient(timeout)
 	}
-	client := auth.HTTPClient(e.BaseURL(), e.transportClient(timeout), func() (string, error) {
+	// A load error here reappears from the per-request key load below.
+	settings, _ := loadClientAuth()
+	client := e.authClient(timeout, settings.TLS, func() (string, error) {
 		if e.accessErr != nil {
 			return "", e.accessErr
 		}
-		return loadClientAuthKey()
+		current, err := loadClientAuth()
+		return current.Key, err
 	})
 	if obs := clientResponseObserver.Load(); obs != nil {
 		transport := client.Transport
@@ -111,11 +132,51 @@ func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 	return client
 }
 
-func (e DaemonEndpoint) transportClient(timeout time.Duration) *http.Client {
-	return e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
+// authClient sends auth_key over plain TCP only to an address a running
+// daemon published or the user chose. A guessed default address gets the key
+// only over the private Unix socket or mutual TLS.
+func (e DaemonEndpoint) authClient(
+	timeout time.Duration,
+	tlsSettings config.DaemonTLSConfig,
+	key func() (string, error),
+) *http.Client {
+	protected := !e.guessed || e.IsUnix() || tlsSettings.Enabled()
+	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout, tlsSettings), func() (string, error) {
+		value, err := key()
+		if err == nil && value != "" && !protected {
+			return "", ErrGuessedEndpointAuth
+		}
+		return value, err
+	})
+}
+
+func (e DaemonEndpoint) transportClient(timeout time.Duration, tlsSettings config.DaemonTLSConfig) *http.Client {
+	client := e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
 		Timeout:           timeout,
 		DisableKeepAlives: e.IsUnix(),
 	})
+	if e.IsUnix() || !tlsSettings.Enabled() {
+		return client
+	}
+	tlsConfig, err := clientTLSConfig(tlsSettings)
+	transport, ok := client.Transport.(*http.Transport)
+	if err != nil || !ok {
+		if err == nil {
+			err = errors.New("unsupported daemon transport")
+		}
+		client.Transport = errorTransport{err: fmt.Errorf("%w: %w", ErrClientConfig, err)}
+		return client
+	}
+	// The shared daemon kit builds http:// endpoint URLs, so TLS wraps each TCP
+	// connection when it is dialed. The dialer verifies the address's host.
+	transport.DialContext = (&tls.Dialer{Config: tlsConfig}).DialContext
+	return client
+}
+
+type errorTransport struct{ err error }
+
+func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
 }
 
 // clientResponseObserver, when set by the CLI, sees each response a client from HTTPClient receives.
