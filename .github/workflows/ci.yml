@@ -447,12 +447,19 @@ jobs:
           version: ${{ steps.golangci.outputs.version }}
 
       - name: golangci-lint for Windows
-        if: needs.go-changes.outputs.changed == 'true'
+        if: needs.go-changes.outputs.changed == 'true' && hashFiles('.custom-gcl.yml') == ''
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         env:
           GOOS: windows
         with:
           version: ${{ steps.golangci.outputs.version }}
+
+      # With a plugin build, reuse the binary the previous step built; the action would build it for Windows.
+      - name: custom golangci-lint for Windows
+        if: needs.go-changes.outputs.changed == 'true' && hashFiles('.custom-gcl.yml') != ''
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
