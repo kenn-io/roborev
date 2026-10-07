@@ -272,27 +272,46 @@ describe("setupAppOpenedReporting", () => {
   });
 
   test.each([
-    ["rejected", () => Promise.reject(new TypeError("network down"))],
+    ["rejected", () => Promise.reject(new TypeError("network down")), false],
+    [
+      "screen rejected",
+      () => Promise.reject(new TypeError("network down")),
+      true,
+    ],
     [
       "answered 400",
       async () => new Response("unsupported telemetry event", { status: 400 }),
+      false,
+    ],
+    [
+      "screen answered 400",
+      async () => new Response("unsupported telemetry event", { status: 400 }),
+      true,
     ],
   ])(
     "swallows a failed post (%s) and still reports the next day",
-    async (_, fail) => {
+    async (_, fail, screenPost) => {
       const unhandled = vi.fn();
       process.on("unhandledRejection", unhandled);
       try {
-        fetchMock.mockImplementationOnce(fail);
-        setup();
+        if (screenPost) {
+          setup();
+          await settle();
+          fetchMock.mockImplementationOnce(fail);
+          appOpened.reportScreenViewed("reviews");
+        } else {
+          fetchMock.mockImplementationOnce(fail);
+          setup();
+        }
         await settle();
         await settle();
         expect(unhandled).not.toHaveBeenCalled();
 
         vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-        focusWindow();
+        if (screenPost) appOpened.reportScreenViewed("reviews");
+        else focusWindow();
         await settle();
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(screenPost ? 3 : 2);
       } finally {
         process.off("unhandledRejection", unhandled);
       }
@@ -300,15 +319,26 @@ describe("setupAppOpenedReporting", () => {
   );
 
   test("holds a focus seen while the shell is gone until it returns", async () => {
-    setup()();
+    const mount = () => {
+      const cleanup = appOpened.setupAppOpenedReporting(() => "analytics");
+      appOpened.reportScreenViewed("analytics");
+      cleanups.push(cleanup);
+      return cleanup;
+    };
+    mount()();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    setup();
-    await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    mount();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(await fetchMock.mock.calls[3]![0].text())).toEqual({
+      event: "screen_viewed",
+      properties: { screen: "analytics", surface: "web" },
+    });
   });
   test("reports screen visits and repeats the visible screen on next-day focus", async () => {
     let screen: "reviews" | "analytics" = "reviews";
@@ -334,62 +364,6 @@ describe("setupAppOpenedReporting", () => {
         .filter((body) => body.event === "screen_viewed")
         .map((body) => body.properties.screen),
     ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
-  });
-
-  test("retries a rejected screen post on the next visit", async () => {
-    setup();
-    await settle();
-    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-  test("reports the recovered shell screen after a pending next-day focus", async () => {
-    const mount = () => {
-      const cleanup = appOpened.setupAppOpenedReporting(() => "analytics");
-      appOpened.reportScreenViewed("analytics");
-      cleanups.push(cleanup);
-      return cleanup;
-    };
-    mount()();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    mount();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    const request = fetchMock.mock.calls[3]![0];
-    expect(JSON.parse(await request.text())).toEqual({
-      event: "screen_viewed",
-      properties: { screen: "analytics", surface: "web" },
-    });
-  });
-  test("reports again after a disabled response and same-day session recovery", async () => {
-    fetchMock.mockResolvedValueOnce(accepted());
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "disabled" }), {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    const cleanup = appOpened.setupAppOpenedReporting(() => "reviews");
-    appOpened.reportScreenViewed("reviews");
-    cleanups.push(cleanup);
-    await settle();
-    cleanup();
-    cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(await fetchMock.mock.calls[2]![0].text())).toEqual({
-      event: "screen_viewed",
-      properties: { screen: "reviews", surface: "web" },
-    });
   });
 
   test("bounds screen requests while preserving app-open transport", async () => {

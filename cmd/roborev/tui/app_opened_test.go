@@ -110,9 +110,18 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	require.NotNil(cmd)
 	assert.Nil(cmd())
 
+	var names []string
+	for view := viewQueue; view <= viewRerunAgent; view++ {
+		names = append(names, view.String())
+		assert.NotEqual("unknown", view.String())
+		m.currentView = view
+		cmd = m.reportScreenViewed()
+		require.NotNil(cmd)
+		assert.Nil(cmd())
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(requests, 1)
+	require.Len(requests, 1+len(names))
 	got := requests[0]
 	assert.Equal(http.MethodPost, got.method)
 	assert.Equal(daemon.TelemetryEventsPath, got.path)
@@ -128,6 +137,20 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	props, err := rep.SanitizeProperties(telemetry.EventAppOpened, decoded.Properties)
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
+	for i, name := range names {
+		var screenEvent struct {
+			Event      string         `json:"event"`
+			Properties map[string]any `json:"properties"`
+		}
+		require.NoError(json.Unmarshal(requests[i+1].body, &screenEvent))
+		assert.Equal(telemetry.EventScreenViewed, screenEvent.Event)
+		properties, err := rep.SanitizeProperties(screenEvent.Event, screenEvent.Properties)
+		require.NoError(err)
+		assert.Equal(name, properties[telemetry.PropertyScreen])
+		assert.Equal("tui", properties[telemetry.PropertySurface])
+		assert.Equal(http.StatusAccepted, requests[i+1].code)
+	}
+
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -256,6 +279,7 @@ func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
 			m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 
 			assert.Nil(t, m.reportAppOpened())
+			assert.Nil(t, m.reportScreenViewed())
 			assert.Zero(t, requests.Load())
 		})
 	}
@@ -316,9 +340,18 @@ func startHeadlessProgram(t *testing.T, m model) (*tea.Program, chan struct{}) {
 func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 	enableTelemetryEnv(t)
 
+	screens := make(chan string, 16)
 	d := &appOpenedTestDaemon{}
 	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
+		var event struct {
+			Event      string            `json:"event"`
+			Properties map[string]string `json:"properties"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		if event.Event == telemetry.EventScreenViewed {
+			assert.Equal(t, "tui", event.Properties[telemetry.PropertySurface])
+			screens <- event.Properties[telemetry.PropertyScreen]
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	})
@@ -327,6 +360,18 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return d.telemetryPosts.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "help", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
 
 	jobsBefore := d.jobFetches.Load()
 	p.Send(reconnectMsg{endpoint: ep, version: "test"})
@@ -337,6 +382,7 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 	p.Quit()
 	<-runDone
 	assert.Equal(t, int32(1), d.telemetryPosts.Load())
+	assert.Empty(t, screens)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -380,71 +426,4 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	p.Quit()
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
-}
-
-//nolint:paralleltest // telemetry environment
-func TestTUIProgramReportsVisibleScreenTransitions(t *testing.T) {
-	enableTelemetryEnv(t)
-	screens := make(chan string, 16)
-	d := &appOpenedTestDaemon{}
-	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
-		var event struct {
-			Event      string            `json:"event"`
-			Properties map[string]string `json:"properties"`
-		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
-		if event.Event == telemetry.EventScreenViewed {
-			assert.Equal(t, "tui", event.Properties[telemetry.PropertySurface])
-			screens <- event.Properties[telemetry.PropertyScreen]
-		}
-		w.WriteHeader(http.StatusAccepted)
-	})
-	p, done := startHeadlessProgram(t, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled()))
-	// Requests cross a test-server socket.
-	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "queue", <-screens)
-	p.Send(keyPressMsg('?'))
-	// Requests cross a test-server socket.
-	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "help", <-screens)
-	p.Send(keyPressMsg('?'))
-	// Requests cross a test-server socket.
-	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "queue", <-screens)
-	p.Quit()
-	<-done
-}
-
-//nolint:paralleltest // telemetry environment
-func TestReportScreenViewedNamesAndOptOut(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "0")
-	reporter, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(t, err)
-	enableTelemetryEnv(t)
-	var names []string
-	var got []string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var event struct {
-			Properties map[string]string `json:"properties"`
-		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
-		props, err := reporter.SanitizeProperties(telemetry.EventScreenViewed, map[string]any{telemetry.PropertyScreen: event.Properties[telemetry.PropertyScreen]})
-		require.NoError(t, err)
-		assert.Equal(t, event.Properties[telemetry.PropertyScreen], props[telemetry.PropertyScreen])
-		got = append(got, event.Properties[telemetry.PropertyScreen])
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	t.Cleanup(ts.Close)
-	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	for view := viewQueue; view <= viewRerunAgent; view++ {
-		names = append(names, view.String())
-		assert.NotEqual(t, "unknown", view.String())
-		m.currentView = view
-		cmd := m.reportScreenViewed()
-		require.NotNil(t, cmd)
-		assert.Nil(t, cmd())
-	}
-	assert.Equal(t, names, got)
-	t.Setenv(telemetry.EnabledEnv, "0")
-	assert.Nil(t, m.reportScreenViewed())
 }
