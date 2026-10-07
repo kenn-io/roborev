@@ -19,7 +19,10 @@
   import { makeAppRuntime } from "../runtime/runtime";
   import { createReviewStores } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
-  import { setupAppOpenedReporting } from "../utils/app-opened";
+  import {
+    reportScreenViewed,
+    setupAppOpenedReporting,
+  } from "../utils/app-opened";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -55,7 +58,8 @@
   });
   setAppRuntime(runtime);
   provideReviewStores(stores);
-  onMount(() => setupAppOpenedReporting());
+  onMount(() => setupAppOpenedReporting(() => route.page));
+  $effect(() => reportScreenViewed(route.page));
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

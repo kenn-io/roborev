@@ -310,4 +310,62 @@ describe("setupAppOpenedReporting", () => {
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+  test("reports screens independently and repeats the visible screen on next-day focus", async () => {
+    let screen: "reviews" | "analytics" = "reviews";
+    const cleanup = appOpened.setupAppOpenedReporting(() => screen);
+    cleanups.push(cleanup);
+    appOpened.reportScreenViewed("reviews");
+    screen = "analytics";
+    appOpened.reportScreenViewed(screen);
+    appOpened.reportScreenViewed("reviews");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const bodies = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) =>
+        JSON.parse(await request.text()),
+      ),
+    );
+    expect(
+      bodies
+        .filter((body) => body.event === "screen_viewed")
+        .map((body) => body.properties.screen),
+    ).toEqual(["reviews", "analytics", "analytics"]);
+  });
+
+  test("retries a rejected screen post on the next visit", async () => {
+    setup();
+    await settle();
+    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+    appOpened.reportScreenViewed("reviews");
+    await settle();
+    appOpened.reportScreenViewed("reviews");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  test("reports the recovered shell screen after a pending next-day focus", async () => {
+    const mount = () => {
+      const cleanup = appOpened.setupAppOpenedReporting(() => "analytics");
+      cleanups.push(cleanup);
+      return cleanup;
+    };
+    mount()();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    mount();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const request = fetchMock.mock.calls[3]![0];
+    expect(JSON.parse(await request.text())).toEqual({
+      event: "screen_viewed",
+      properties: { screen: "analytics", surface: "web" },
+    });
+  });
 });

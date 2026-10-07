@@ -273,7 +273,15 @@ func (d *appOpenedTestDaemon) serve(t *testing.T, telemetryHandler http.HandlerF
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/telemetry/events":
-			d.telemetryPosts.Add(1)
+			var event struct {
+				Event string `json:"event"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &event)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if event.Event == telemetry.EventAppOpened {
+				d.telemetryPosts.Add(1)
+			}
 			telemetryHandler(w, r)
 		case r.URL.Path == "/api/jobs":
 			d.jobFetches.Add(1)
@@ -372,4 +380,63 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	p.Quit()
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
+}
+
+//nolint:paralleltest // telemetry environment
+func TestTUIProgramReportsVisibleScreenTransitions(t *testing.T) {
+	enableTelemetryEnv(t)
+	screens := make(chan string, 16)
+	d := &appOpenedTestDaemon{}
+	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
+		var event struct {
+			Event      string            `json:"event"`
+			Properties map[string]string `json:"properties"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		if event.Event == telemetry.EventScreenViewed {
+			assert.Equal(t, "tui", event.Properties[telemetry.PropertySurface])
+			screens <- event.Properties[telemetry.PropertyScreen]
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	p, done := startHeadlessProgram(t, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled()))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "help", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
+	p.Quit()
+	<-done
+}
+
+//nolint:paralleltest // telemetry environment
+func TestReportScreenViewedNamesAndOptOut(t *testing.T) {
+	enableTelemetryEnv(t)
+	names := []string{"queue", "review", "prompt", "filter", "comment", "commit_message", "help", "log", "tasks", "worktree_confirm", "patch", "column_options", "release_notes", "rerun_agent"}
+	var got []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event struct {
+			Properties map[string]string `json:"properties"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		got = append(got, event.Properties[telemetry.PropertyScreen])
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ts.Close)
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	for view := viewQueue; view <= viewRerunAgent; view++ {
+		m.currentView = view
+		cmd := m.reportScreenViewed()
+		require.NotNil(t, cmd)
+		assert.Nil(t, cmd())
+	}
+	assert.Equal(t, names, got)
+	t.Setenv(telemetry.EnabledEnv, "0")
+	assert.Nil(t, m.reportScreenViewed())
 }

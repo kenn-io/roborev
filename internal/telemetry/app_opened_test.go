@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // postThroughLimiter builds the handler per request, as the daemon route does, so only the limiter carries state.
@@ -196,4 +198,103 @@ func TestPostAppOpened(t *testing.T) {
 		defer mu.Unlock()
 		assert.Zero(t, hits)
 	})
+}
+
+func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	db := testutil.OpenTestDB(t)
+	reporter, messages := newPostHogStubReporter(t)
+	now := time.Date(2026, 3, 1, 23, 59, 0, 0, time.UTC)
+	limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	reviews := `{"event":"screen_viewed","properties":{"screen":"reviews","surface":"web","path":"/private"}}`
+	require.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
+	limiter = &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	for _, body := range []string{
+		reviews,
+		`{"event":"screen_viewed","properties":{"screen":"reviews","surface":"tui"}}`,
+		`{"event":"screen_viewed","properties":{"screen":"analytics","surface":"web"}}`,
+		`{"event":"app_opened","properties":{"surface":"web"}}`,
+		`{"event":"screen_viewed"}`,
+		`{"event":"screen_viewed","properties":{"screen":123}}`,
+		`{"event":"screen_viewed","properties":{"screen":"unknown"}}`,
+	} {
+		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	}
+	now = now.Add(time.Minute)
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
+	require.NoError(t, reporter.Close())
+	got := messages()
+	require.Len(t, got, 4)
+	assert.Equal(t, "reviews", got[0].Properties[PropertyScreen])
+	assert.Equal(t, "analytics", got[1].Properties[PropertyScreen])
+	assert.Equal(t, EventAppOpened, got[2].Event)
+	assert.Equal(t, "reviews", got[3].Properties[PropertyScreen])
+	assert.NotContains(t, got[0].Properties, "path")
+}
+
+func TestScreenViewedLimiterConcurrentRequestsSendOnce(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	limiter := &AppOpenedLimiter{Database: testutil.OpenTestDB(t)}
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Go(func() {
+			codes[i] = postThroughLimiter(limiter, reporter, `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`).Code
+		})
+	}
+	wg.Wait()
+	require.NoError(t, reporter.Close())
+	for _, code := range codes {
+		assert.Equal(t, http.StatusAccepted, code)
+	}
+	assert.Len(t, messages(), 1)
+}
+
+func TestScreenViewedRejectedClaimCanRetry(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	limiter := &AppOpenedLimiter{Database: testutil.OpenTestDB(t)}
+	body := []byte(`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`)
+	skip, finish := limiter.alreadySentToday(reporter, body)
+	require.False(t, skip)
+	require.NotNil(t, finish)
+	finish(false)
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, string(body)).Code)
+	require.NoError(t, reporter.Close())
+	assert.Len(t, messages(), 1)
+}
+
+func TestScreenViewedMetadataFailureSendsNothing(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	db := testutil.OpenTestDB(t)
+	require.NoError(t, db.Close())
+	limiter := &AppOpenedLimiter{Database: db}
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, `{"event":"screen_viewed","properties":{"screen":"queue"}}`).Code)
+	require.NoError(t, reporter.Close())
+	assert.Empty(t, limiter.sent)
+	assert.Empty(t, messages())
+}
+
+func TestScreenViewedMetadataWriteFailureSendsNothing(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	db := testutil.OpenTestDB(t)
+	_, err := db.Exec(`CREATE TRIGGER reject_screen_claim BEFORE INSERT ON sync_state BEGIN SELECT RAISE(FAIL, 'metadata unavailable'); END`)
+	require.NoError(t, err)
+	limiter := &AppOpenedLimiter{Database: db}
+	body := `{"event":"screen_viewed","properties":{"screen":"queue"}}`
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	assert.Empty(t, limiter.sent)
+	_, err = db.Exec(`DROP TRIGGER reject_screen_claim`)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	require.NoError(t, reporter.Close())
+	assert.Len(t, messages(), 1)
 }

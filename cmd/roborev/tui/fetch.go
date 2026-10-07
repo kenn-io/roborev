@@ -420,6 +420,22 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
 }
 
+func (m model) reportScreenViewed() tea.Cmd {
+	if !telemetry.EnabledFromEnv() {
+		return nil
+	}
+	screens := [...]string{"queue", "review", "prompt", "filter", "comment", "commit_message", "help", "log", "tasks", "worktree_confirm", "patch", "column_options", "release_notes", "rerun_agent"}
+	if m.currentView < 0 || int(m.currentView) >= len(screens) {
+		return nil
+	}
+	screen := screens[m.currentView]
+	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
+	return func() tea.Msg {
+		telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
+		return nil
+	}
+}
+
 func (m model) fetchReleaseNotes() tea.Cmd {
 	return func() tea.Msg {
 		resp, err := newDaemonAPI(m.endpoint, m.client).ListReleasesRaw(m.apiContext())
