@@ -417,20 +417,28 @@ func TestTUIProgramReportsVisibleScreenTransitions(t *testing.T) {
 
 //nolint:paralleltest // telemetry environment
 func TestReportScreenViewedNamesAndOptOut(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "0")
+	reporter, err := telemetry.NewReporter(telemetry.Options{})
+	require.NoError(t, err)
 	enableTelemetryEnv(t)
-	names := []string{"queue", "review", "prompt", "filter", "comment", "commit_message", "help", "log", "tasks", "worktree_confirm", "patch", "column_options", "release_notes", "rerun_agent"}
+	var names []string
 	var got []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var event struct {
 			Properties map[string]string `json:"properties"`
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		props, err := reporter.SanitizeProperties(telemetry.EventScreenViewed, map[string]any{telemetry.PropertyScreen: event.Properties[telemetry.PropertyScreen]})
+		require.NoError(t, err)
+		assert.Equal(t, event.Properties[telemetry.PropertyScreen], props[telemetry.PropertyScreen])
 		got = append(got, event.Properties[telemetry.PropertyScreen])
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(ts.Close)
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 	for view := viewQueue; view <= viewRerunAgent; view++ {
+		names = append(names, view.String())
+		assert.NotEqual(t, "unknown", view.String())
 		m.currentView = view
 		cmd := m.reportScreenViewed()
 		require.NotNil(t, cmd)

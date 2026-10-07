@@ -12,7 +12,6 @@ let hasInterval = false;
 let intervalEnded = false;
 export type Screen = "reviews" | "analytics";
 let currentScreen: (() => Screen) | undefined;
-const screenDays = new Map<Screen, string>();
 
 function pauseSession(): void {
   if (started === undefined) return;
@@ -78,25 +77,23 @@ function reportAppOpened(): void {
 function postEvent(
   event: string,
   properties: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
   return roborevFetch(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
-    signal: controller.signal,
-  }).finally(() => clearTimeout(timeout));
+    signal,
+  });
 }
 
 export function reportScreenViewed(screen: Screen): void {
   if (!shellMounted) return;
-  const day = new Date().toISOString().slice(0, 10);
-  if (screenDays.get(screen) === day) return;
-  screenDays.set(screen, day);
-  void postEvent("screen_viewed", { screen, surface: "web" }).catch(() => {
-    if (screenDays.get(screen) === day) screenDays.delete(screen);
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  void postEvent("screen_viewed", { screen, surface: "web" }, controller.signal)
+    .catch(() => undefined)
+    .finally(() => clearTimeout(timeout));
 }
 
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.

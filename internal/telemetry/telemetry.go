@@ -113,7 +113,7 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventScreenViewed,
 			kittelemetry.AllowTelemetryProperty(PropertyScreen, kittelemetry.AllowTelemetryStringValues(
-				"reviews", "analytics", "queue", "review", "prompt", "filter", "comment", "commit_message", "help", "log", "tasks", "worktree_confirm", "patch", "column_options", "release_notes", "rerun_agent")),
+				"reviews", "analytics", "queue", "review", "prompt", "filter", "comment", "commit-msg", "help", "log", "tasks", "worktree-confirm", "patch", "column-options", "release-notes", "rerun-agent")),
 			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI))),
 		kittelemetry.WithAllowedEvent(EventAppOpened,
 			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),

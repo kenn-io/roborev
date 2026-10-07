@@ -424,11 +424,10 @@ func (m model) reportScreenViewed() tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
-	screens := [...]string{"queue", "review", "prompt", "filter", "comment", "commit_message", "help", "log", "tasks", "worktree_confirm", "patch", "column_options", "release_notes", "rerun_agent"}
-	if m.currentView < 0 || int(m.currentView) >= len(screens) {
+	screen := m.currentView.String()
+	if screen == "unknown" {
 		return nil
 	}
-	screen := screens[m.currentView]
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
 		telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)

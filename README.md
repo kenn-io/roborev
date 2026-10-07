@@ -476,8 +476,8 @@ environment.
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
 TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
-`commit_message`, `help`, `log`, `tasks`, `worktree_confirm`, `patch`,
-`column_options`, `release_notes` and `rerun_agent`. Each screen counts once
+`commit-msg`, `help`, `log`, `tasks`, `worktree-confirm`, `patch`,
+`column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
 Each event also carries `install_age_hours`, the whole hours since the install

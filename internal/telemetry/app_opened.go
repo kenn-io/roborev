@@ -166,7 +166,7 @@ func (l *AppOpenedLimiter) claimScreen(screen, day string) (bool, func(bool)) {
 	return false, func(accepted bool) {
 		defer l.mu.Unlock()
 		if !accepted {
-			_, _ = l.Database.Exec("DELETE FROM sync_state WHERE key = ? AND value = ?", key, day)
+			_ = l.Database.SetSyncState(key, stored)
 			return
 		}
 		if l.sent == nil {

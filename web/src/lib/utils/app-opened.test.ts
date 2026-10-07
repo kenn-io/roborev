@@ -310,7 +310,7 @@ describe("setupAppOpenedReporting", () => {
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-  test("reports screens independently and repeats the visible screen on next-day focus", async () => {
+  test("reports screen visits and repeats the visible screen on next-day focus", async () => {
     let screen: "reviews" | "analytics" = "reviews";
     const cleanup = appOpened.setupAppOpenedReporting(() => screen);
     cleanups.push(cleanup);
@@ -319,11 +319,11 @@ describe("setupAppOpenedReporting", () => {
     appOpened.reportScreenViewed(screen);
     appOpened.reportScreenViewed("reviews");
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
     const bodies = await Promise.all(
       fetchMock.mock.calls.map(async ([request]) =>
         JSON.parse(await request.text()),
@@ -333,7 +333,7 @@ describe("setupAppOpenedReporting", () => {
       bodies
         .filter((body) => body.event === "screen_viewed")
         .map((body) => body.properties.screen),
-    ).toEqual(["reviews", "analytics", "analytics"]);
+    ).toEqual(["reviews", "reviews", "analytics", "reviews", "analytics"]);
   });
 
   test("retries a rejected screen post on the next visit", async () => {
@@ -367,5 +367,42 @@ describe("setupAppOpenedReporting", () => {
       event: "screen_viewed",
       properties: { screen: "analytics", surface: "web" },
     });
+  });
+  test("reports again after a disabled response and same-day session recovery", async () => {
+    fetchMock.mockResolvedValueOnce(accepted());
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "disabled" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const cleanup = appOpened.setupAppOpenedReporting(() => "reviews");
+    cleanups.push(cleanup);
+    await settle();
+    cleanup();
+    cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(await fetchMock.mock.calls[2]![0].text())).toEqual({
+      event: "screen_viewed",
+      properties: { screen: "reviews", surface: "web" },
+    });
+  });
+
+  test("bounds screen requests while preserving app-open transport", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(
+      (request) =>
+        new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
+        ),
+    );
+    cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
+    expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
   });
 });
