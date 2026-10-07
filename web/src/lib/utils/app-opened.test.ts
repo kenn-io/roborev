@@ -272,27 +272,46 @@ describe("setupAppOpenedReporting", () => {
   });
 
   test.each([
-    ["rejected", () => Promise.reject(new TypeError("network down"))],
+    ["rejected", () => Promise.reject(new TypeError("network down")), false],
+    [
+      "screen rejected",
+      () => Promise.reject(new TypeError("network down")),
+      true,
+    ],
     [
       "answered 400",
       async () => new Response("unsupported telemetry event", { status: 400 }),
+      false,
+    ],
+    [
+      "screen answered 400",
+      async () => new Response("unsupported telemetry event", { status: 400 }),
+      true,
     ],
   ])(
     "swallows a failed post (%s) and still reports the next day",
-    async (_, fail) => {
+    async (_, fail, screenPost) => {
       const unhandled = vi.fn();
       process.on("unhandledRejection", unhandled);
       try {
-        fetchMock.mockImplementationOnce(fail);
-        setup();
+        if (screenPost) {
+          setup();
+          await settle();
+          fetchMock.mockImplementationOnce(fail);
+          appOpened.reportScreenViewed("reviews");
+        } else {
+          fetchMock.mockImplementationOnce(fail);
+          setup();
+        }
         await settle();
         await settle();
         expect(unhandled).not.toHaveBeenCalled();
 
         vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-        focusWindow();
+        if (screenPost) appOpened.reportScreenViewed("reviews");
+        else focusWindow();
         await settle();
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(screenPost ? 3 : 2);
       } finally {
         process.off("unhandledRejection", unhandled);
       }
@@ -300,14 +319,68 @@ describe("setupAppOpenedReporting", () => {
   );
 
   test("holds a focus seen while the shell is gone until it returns", async () => {
-    setup()();
+    const mount = () => {
+      const cleanup = appOpened.setupAppOpenedReporting(() => "analytics");
+      appOpened.reportScreenViewed("analytics");
+      cleanups.push(cleanup);
+      return cleanup;
+    };
+    mount()();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    setup();
-    await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    mount();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(await fetchMock.mock.calls[3]![0].text())).toEqual({
+      event: "screen_viewed",
+      properties: { screen: "analytics", surface: "web" },
+    });
+  });
+  test("reports screen visits and repeats the visible screen on next-day focus", async () => {
+    let screen: "reviews" | "analytics" = "reviews";
+    const cleanup = appOpened.setupAppOpenedReporting(() => screen);
+    cleanups.push(cleanup);
+    appOpened.reportScreenViewed("reviews");
+    screen = "analytics";
+    appOpened.reportScreenViewed(screen);
+    appOpened.reportScreenViewed("reviews");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    const bodies = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) =>
+        JSON.parse(await request.text()),
+      ),
+    );
+    expect(
+      bodies
+        .filter((body) => body.event === "screen_viewed")
+        .map((body) => body.properties.screen),
+    ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
+  });
+
+  test("bounds screen requests while preserving app-open transport", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(
+      (request) =>
+        new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
+        ),
+    );
+    cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
+    appOpened.reportScreenViewed("reviews");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
+    expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
   });
 });

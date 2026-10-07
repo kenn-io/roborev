@@ -26,7 +26,9 @@ const (
 	EventDaemonActive  = "daemon_active"
 	EventAppOpened     = "app_opened"
 	EventSessionEnded  = "session_ended"
+	EventScreenViewed  = "screen_viewed"
 
+	PropertyScreen = "screen"
 	// PropertySurface names the interface that sent a usage event.
 	PropertySurface        = "surface"
 	PropertyDurationBucket = "duration_bucket"
@@ -109,6 +111,10 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 	return []kittelemetry.PostHogOption{
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
+		kittelemetry.WithAllowedEvent(EventScreenViewed,
+			kittelemetry.AllowTelemetryProperty(PropertyScreen, kittelemetry.AllowTelemetryStringValues(
+				"reviews", "analytics", "queue", "review", "prompt", "filter", "comment", "commit-msg", "help", "log", "tasks", "worktree-confirm", "patch", "column-options", "release-notes", "rerun-agent")),
+			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI))),
 		kittelemetry.WithAllowedEvent(EventAppOpened,
 			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
 		kittelemetry.WithAllowedEvent(EventSessionEnded,

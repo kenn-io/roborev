@@ -81,7 +81,7 @@ type Server struct {
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
-	appOpened               telemetry.AppOpenedLimiter // daily app_opened limit; outlives the per-request capture handler
+	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
 	mcpEnabled              bool       // [mcp] enabled at construction; /mcp is mounted on the API listener
@@ -195,6 +195,7 @@ func newServerWithLogs(
 		goalGate:           newGoalGate(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
+		appOpened:          telemetry.AppOpenedLimiter{Database: db},
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,
 		workerPool:         NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog, activityLog),

@@ -10,6 +10,8 @@ let visibleTime = 0;
 let started: number | undefined;
 let hasInterval = false;
 let intervalEnded = false;
+export type Screen = "reviews" | "analytics";
+let currentScreen: (() => Screen) | undefined;
 
 function pauseSession(): void {
   if (started === undefined) return;
@@ -69,24 +71,40 @@ function reportAppOpened(): void {
   const day = new Date().toISOString().slice(0, 10);
   if (day === lastReportedDay) return;
   lastReportedDay = day;
-  void roborevFetch(telemetryEventsPath, {
+  void postEvent("app_opened", { surface: "web" }).catch(() => undefined);
+}
+
+function postEvent(
+  event: string,
+  properties: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return roborevFetch(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      event: "app_opened",
-      properties: { surface: "web" },
-    }),
-  }).catch(() => undefined);
+    body: JSON.stringify({ event, properties }),
+    signal,
+  });
+}
+
+export function reportScreenViewed(screen: Screen): void {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  void postEvent("screen_viewed", { screen, surface: "web" }, controller.signal)
+    .catch(() => undefined)
+    .finally(() => clearTimeout(timeout));
 }
 
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
 function onFocus(): void {
-  if (shellMounted) reportAppOpened();
-  else focusPending = true;
+  if (shellMounted) {
+    reportAppOpened();
+    if (currentScreen) reportScreenViewed(currentScreen());
+  } else focusPending = true;
 }
 
 /** Reports app_opened on the page's first shell mount and on the first window focus of each later UTC day; returns a cleanup. */
-export function setupAppOpenedReporting(): () => void {
+export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
   if (!listening) {
     listening = true;
     globalThis.addEventListener("focus", onFocus);
@@ -95,6 +113,7 @@ export function setupAppOpenedReporting(): () => void {
     globalThis.addEventListener("pageshow", resumeSession);
   }
   shellMounted = true;
+  currentScreen = getScreen;
   // A remount after session recovery is not a load, so only a focus seen meanwhile makes it report.
   const report = !loadReported || focusPending;
   loadReported = true;
@@ -105,5 +124,6 @@ export function setupAppOpenedReporting(): () => void {
   return () => {
     shellMounted = false;
     pauseSession();
+    currentScreen = undefined;
   };
 }

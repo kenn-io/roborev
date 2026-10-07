@@ -951,6 +951,7 @@ func (m model) Init() tea.Cmd {
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
 		m.reportAppOpened(),
+		m.reportScreenViewed(),
 	}
 	if autoColorMode() && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
 		// Bubble Tea owns stdin and recognizes late replies alongside user input.
@@ -1301,6 +1302,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if resumeCmd != nil {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
+		}
+		if m.currentView != rm.currentView {
+			cmd = tea.Batch(cmd, rm.reportScreenViewed())
 		}
 		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
 			refreshed, refreshCmd := rm.handleWindowSizeMsg(tea.WindowSizeMsg{Width: rm.width, Height: rm.height})

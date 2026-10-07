@@ -473,6 +473,13 @@ per UTC day, so repeated opens on the same day count once, with the same install
 ID and default fields plus `surface` (`web`, `tui` or `cli`). The browser, the TUI and the CLI only talk to the daemon; the TUI and the
 CLI also send nothing when either opt-out variable is set in their own
 environment.
+The browser and TUI also report `screen_viewed` with a fixed `screen` name and
+`surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
+TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
+`commit-msg`, `help`, `log`, `tasks`, `worktree-confirm`, `patch`,
+`column-options`, `release-notes` and `rerun-agent`. Each screen counts once
+per install per UTC day across interfaces, including daemon restarts. Screen
+names contain no paths, job IDs, filter text or review contents.
 Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider

@@ -110,9 +110,18 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	require.NotNil(cmd)
 	assert.Nil(cmd())
 
+	var names []string
+	for view := viewQueue; view <= viewRerunAgent; view++ {
+		names = append(names, view.String())
+		assert.NotEqual("unknown", view.String())
+		m.currentView = view
+		cmd = m.reportScreenViewed()
+		require.NotNil(cmd)
+		assert.Nil(cmd())
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(requests, 1)
+	require.Len(requests, 1+len(names))
 	got := requests[0]
 	assert.Equal(http.MethodPost, got.method)
 	assert.Equal(daemon.TelemetryEventsPath, got.path)
@@ -128,6 +137,19 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	props, err := rep.SanitizeProperties(telemetry.EventAppOpened, decoded.Properties)
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
+	for i, name := range names {
+		var screenEvent struct {
+			Event      string         `json:"event"`
+			Properties map[string]any `json:"properties"`
+		}
+		require.NoError(json.Unmarshal(requests[i+1].body, &screenEvent))
+		assert.Equal(telemetry.EventScreenViewed, screenEvent.Event)
+		properties, err := rep.SanitizeProperties(screenEvent.Event, screenEvent.Properties)
+		require.NoError(err)
+		assert.Equal(name, properties[telemetry.PropertyScreen])
+		assert.Equal("tui", properties[telemetry.PropertySurface])
+		assert.Equal(http.StatusAccepted, requests[i+1].code)
+	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -256,6 +278,7 @@ func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
 			m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 
 			assert.Nil(t, m.reportAppOpened())
+			assert.Nil(t, m.reportScreenViewed())
 			assert.Zero(t, requests.Load())
 		})
 	}
@@ -273,7 +296,15 @@ func (d *appOpenedTestDaemon) serve(t *testing.T, telemetryHandler http.HandlerF
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/telemetry/events":
-			d.telemetryPosts.Add(1)
+			var event struct {
+				Event string `json:"event"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &event)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if event.Event == telemetry.EventAppOpened {
+				d.telemetryPosts.Add(1)
+			}
 			telemetryHandler(w, r)
 		case r.URL.Path == "/api/jobs":
 			d.jobFetches.Add(1)
@@ -308,9 +339,18 @@ func startHeadlessProgram(t *testing.T, m model) (*tea.Program, chan struct{}) {
 func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 	enableTelemetryEnv(t)
 
+	screens := make(chan string, 16)
 	d := &appOpenedTestDaemon{}
 	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
+		var event struct {
+			Event      string            `json:"event"`
+			Properties map[string]string `json:"properties"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		if event.Event == telemetry.EventScreenViewed {
+			assert.Equal(t, "tui", event.Properties[telemetry.PropertySurface])
+			screens <- event.Properties[telemetry.PropertyScreen]
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	})
@@ -319,6 +359,18 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return d.telemetryPosts.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "help", <-screens)
+	p.Send(keyPressMsg('?'))
+	// Requests cross a test-server socket.
+	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "queue", <-screens)
 
 	jobsBefore := d.jobFetches.Load()
 	p.Send(reconnectMsg{endpoint: ep, version: "test"})
@@ -329,6 +381,7 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 	p.Quit()
 	<-runDone
 	assert.Equal(t, int32(1), d.telemetryPosts.Load())
+	assert.Empty(t, screens)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

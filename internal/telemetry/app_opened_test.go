@@ -2,6 +2,8 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // postThroughLimiter builds the handler per request, as the daemon route does, so only the limiter carries state.
@@ -126,23 +130,26 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	reporter, messages := newPostHogStubReporter(t)
-	limiter := &AppOpenedLimiter{}
-
-	var wg sync.WaitGroup
-	codes := make([]int, 8)
-	for i := range codes {
-		wg.Go(func() {
-			codes[i] = postThroughLimiter(limiter, reporter, `{"event":"app_opened","properties":{"surface":"cli"}}`).Code
+	for _, body := range []string{
+		`{"event":"app_opened","properties":{"surface":"cli"}}`,
+		`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			reporter, messages := newPostHogStubReporter(t)
+			limiter := &AppOpenedLimiter{Database: testutil.OpenTestDB(t)}
+			var wg sync.WaitGroup
+			codes := make([]int, 8)
+			for i := range codes {
+				wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
+			}
+			wg.Wait()
+			require.NoError(t, reporter.Close())
+			for _, code := range codes {
+				assert.Equal(t, http.StatusAccepted, code)
+			}
+			assert.Len(t, messages(), 1)
 		})
 	}
-	wg.Wait()
-	require.NoError(t, reporter.Close())
-
-	for _, code := range codes {
-		assert.Equal(t, http.StatusAccepted, code)
-	}
-	assert.Equal(t, []string{"app_opened:cli"}, surfacesOf(messages()))
 }
 
 func TestPostAppOpened(t *testing.T) {
@@ -196,4 +203,117 @@ func TestPostAppOpened(t *testing.T) {
 		defer mu.Unlock()
 		assert.Zero(t, hits)
 	})
+}
+
+func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	db := testutil.OpenTestDB(t)
+	reporter, messages := newPostHogStubReporter(t)
+	now := time.Date(2026, 3, 1, 23, 59, 0, 0, time.UTC)
+	limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	reviews := `{"event":"screen_viewed","properties":{"screen":"reviews","surface":"web","path":"/private"}}`
+	require.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
+	limiter = &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	for _, body := range []string{
+		reviews,
+		`{"event":"screen_viewed","properties":{"screen":"reviews","surface":"tui"}}`,
+		`{"event":"screen_viewed","properties":{"screen":"analytics","surface":"web"}}`,
+		`{"event":"app_opened","properties":{"surface":"web"}}`,
+		`{"event":"screen_viewed"}`,
+		`{"event":"screen_viewed","properties":{"screen":123}}`,
+		`{"event":"screen_viewed","properties":{"screen":"unknown"}}`,
+	} {
+		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	}
+	now = now.Add(time.Minute)
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
+	require.NoError(t, reporter.Close())
+	got := messages()
+	require.Len(t, got, 4)
+	assert.Equal(t, "reviews", got[0].Properties[PropertyScreen])
+	assert.Equal(t, "analytics", got[1].Properties[PropertyScreen])
+	assert.Equal(t, EventAppOpened, got[2].Event)
+	assert.Equal(t, "reviews", got[3].Properties[PropertyScreen])
+	assert.NotContains(t, got[0].Properties, "path")
+	for i := range 8 {
+		t.Run(fmt.Sprint("padded aliases ", i), func(t *testing.T) {
+			reporter, messages := newPostHogStubReporter(t)
+			db := testutil.OpenTestDB(t)
+			limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+			body := `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
+			skip, finish, canonical := limiter.alreadySentToday(reporter, []byte(body))
+			require.False(t, skip)
+			require.NotNil(t, finish)
+			var normalized struct {
+				Properties map[string]any `json:"properties"`
+			}
+			require.NoError(t, json.Unmarshal(canonical, &normalized))
+			assert.NotContains(t, normalized.Properties, " screen ")
+			assert.NotContains(t, normalized.Properties, " surface ")
+			assert.NotContains(t, normalized.Properties, "path")
+			stored, err := db.GetSyncState("telemetry.screen." + normalized.Properties[PropertyScreen].(string))
+			require.NoError(t, err)
+			assert.Equal(t, now.UTC().Format(time.DateOnly), stored)
+			finish(false)
+			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			claimed := "review"
+			queueDay, err := db.GetSyncState("telemetry.screen.queue")
+			require.NoError(t, err)
+			if queueDay == now.UTC().Format(time.DateOnly) {
+				claimed = "queue"
+			}
+			for _, screen := range []string{"queue", "review"} {
+				ordinary := fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":%q,"surface":"tui"}}`, screen)
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, ordinary).Code)
+			}
+			require.NoError(t, reporter.Close())
+			got := messages()
+			require.Len(t, got, 2)
+			assert.Equal(t, claimed, got[0].Properties[PropertyScreen])
+			assert.ElementsMatch(t, []any{"queue", "review"}, []any{got[0].Properties[PropertyScreen], got[1].Properties[PropertyScreen]})
+		})
+	}
+}
+
+func TestScreenViewedUnacceptedClaims(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	for _, failure := range []string{"read", "write", "enqueue"} {
+		t.Run(failure, func(t *testing.T) {
+			reporter, messages := newPostHogStubReporter(t)
+			db := testutil.OpenTestDB(t)
+			limiter := &AppOpenedLimiter{Database: db}
+			body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
+			switch failure {
+			case "read":
+				require.NoError(t, db.Close())
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			case "write":
+				_, err := db.Exec(`CREATE TRIGGER reject_screen_claim BEFORE INSERT ON sync_state BEGIN SELECT RAISE(FAIL, 'metadata unavailable'); END`)
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+				assert.Empty(t, limiter.sent)
+				_, err = db.Exec(`DROP TRIGGER reject_screen_claim`)
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			case "enqueue":
+				require.NoError(t, db.SetSyncState("telemetry.screen.queue", "2026-01-01"))
+				skip, finish, _ := limiter.alreadySentToday(reporter, []byte(body))
+				require.False(t, skip)
+				require.NotNil(t, finish)
+				finish(false)
+				stored, err := db.GetSyncState("telemetry.screen.queue")
+				require.NoError(t, err)
+				assert.Equal(t, "2026-01-01", stored)
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			}
+			require.NoError(t, reporter.Close())
+			if failure == "read" {
+				assert.Empty(t, messages())
+			} else {
+				assert.Len(t, messages(), 1)
+			}
+		})
+	}
 }
