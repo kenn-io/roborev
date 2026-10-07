@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"uuid"
@@ -134,4 +135,101 @@ func TestSessionIsolationMigration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
 	assert.True(t, isolated, "reopening preserves the attempt's isolation marker")
+}
+
+func TestClaimJobStartsFreshSessionWhileAnotherJobResumesIt(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	source := uuid.New()
+	enqueue := func(gitRef string) *ReviewJob {
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID: repo.ID, GitRef: gitRef, Branch: "feature/session", Agent: "test",
+			SessionID: "shared-thread", ResumeSourceJobUUID: &source,
+		})
+		require.NoError(t, err)
+		return job
+	}
+	first := enqueue("aaa111")
+	second := enqueue("bbb222")
+
+	claimedFirst, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, first.ID, claimedFirst.ID)
+	assert.Equal("shared-thread", claimedFirst.SessionID, "a queued job does not contest the session")
+	assert.Equal(&source, claimedFirst.ResumeSourceJobUUID)
+
+	claimedSecond, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.Equal(t, second.ID, claimedSecond.ID)
+	assert.Empty(claimedSecond.SessionID, "a running job already resumes the session")
+	assert.Nil(claimedSecond.ResumeSourceJobUUID)
+
+	var sessionID sql.NullString
+	var resumed, isolated bool
+	var resumeSource sql.NullString
+	require.NoError(t, db.QueryRow(`
+		SELECT session_id, session_resumed, session_isolated, resume_source_job_uuid
+		FROM review_jobs WHERE id = ?`, second.ID,
+	).Scan(&sessionID, &resumed, &isolated, &resumeSource))
+	assert.False(sessionID.Valid)
+	assert.False(resumed)
+	assert.False(isolated, "the fresh session stays eligible for later reuse")
+	assert.False(resumeSource.Valid)
+
+	require.NoError(t, db.SaveJobSessionID(second.ID, "worker-2", "fresh-thread"))
+	stored, err := db.GetJobByID(second.ID)
+	require.NoError(t, err)
+	assert.Equal("fresh-thread", stored.SessionID)
+
+	require.NoError(t, completeReviewFixture(db, first.ID, "test", "prompt", "No issues found."))
+	third := enqueue("ccc333")
+	claimedThird, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, third.ID, claimedThird.ID)
+	assert.Equal("shared-thread", claimedThird.SessionID, "the session is free once its writer finishes")
+}
+
+func TestClaimJobTreatsCanceledJobAsWriterUntilWorkerReleasesIt(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	enqueue := func(gitRef string) *ReviewJob {
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID: repo.ID, GitRef: gitRef, Branch: "feature/session", Agent: "test",
+			SessionID: "shared-thread",
+		})
+		require.NoError(t, err)
+		return job
+	}
+	writer := enqueue("aaa111")
+	claimedWriter, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, writer.ID, claimedWriter.ID)
+	require.NoError(t, db.CancelJob(writer.ID))
+
+	beforeRelease := enqueue("bbb222")
+	claimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.Equal(t, beforeRelease.ID, claimed.ID)
+	assert.Empty(claimed.SessionID, "the canceled agent may still be writing the session")
+
+	released, err := db.ReleaseCanceledJob(writer.ID, "worker-1")
+	require.NoError(t, err)
+	require.True(t, released)
+	require.NoError(t, db.CancelJob(beforeRelease.ID))
+	_, err = db.ReleaseCanceledJob(beforeRelease.ID, "worker-2")
+	require.NoError(t, err)
+
+	afterRelease := enqueue("ccc333")
+	claimed, err = db.ClaimJob("worker-3")
+	require.NoError(t, err)
+	require.Equal(t, afterRelease.ID, claimed.ID)
+	assert.Equal("shared-thread", claimed.SessionID, "the worker released the canceled job")
 }

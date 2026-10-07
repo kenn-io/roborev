@@ -684,6 +684,9 @@ func (db *DB) claimJobAttempt(
 	job.WorkerID = workerID
 	job.StartedAt = &now
 	job.StartedAtRaw = nowStr
+	if err := releaseContestedSession(ctx, conn, &job, nowStr); err != nil {
+		return nil, err
+	}
 	if claimJobBeforeCommitForTest != nil {
 		claimJobBeforeCommitForTest()
 	}
@@ -692,6 +695,51 @@ func (db *DB) claimJobAttempt(
 	}
 	committed = true
 	return &job, nil
+}
+
+// releaseContestedSession drops the session a just-claimed job was assigned to
+// resume when another running job is already resuming it. Sessions are picked
+// at enqueue time from finished jobs, so reviews queued back to back on one
+// branch share a session, and agents such as Codex reject a second concurrent
+// writer on a thread. The claim transaction serializes this check, so exactly
+// one running job resumes a session and the others start fresh. The job stays
+// eligible as a future reuse source for the fresh session it captures.
+//
+// A canceled job keeps its worker_id until the worker sees its agent exit and
+// calls ReleaseCanceledJob, so it still counts as the session's writer until
+// then.
+func releaseContestedSession(
+	ctx context.Context, conn *sql.Conn, job *ReviewJob, nowStr string,
+) error {
+	if job.SessionID == "" {
+		return nil
+	}
+	result, err := conn.ExecContext(ctx, `
+		UPDATE review_jobs
+		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    updated_at = ?, synced_at = NULL
+		WHERE id = ? AND EXISTS (
+			SELECT 1 FROM review_jobs other
+			WHERE (other.status = 'running'
+			       OR (other.status = 'canceled' AND COALESCE(other.worker_id, '') <> ''))
+			  AND other.id <> review_jobs.id
+			  AND other.session_id = review_jobs.session_id
+		)
+	`, nowStr, job.ID)
+	if err != nil {
+		return fmt.Errorf("release contested session: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("release contested session: %w", err)
+	}
+	if rows > 0 {
+		log.Printf("Job %d: session %s is in use by another running job; starting a fresh session",
+			job.ID, job.SessionID)
+		job.SessionID = ""
+		job.ResumeSourceJobUUID = nil
+	}
+	return nil
 }
 
 // SaveJobPrompt stores the prompt for a running job
