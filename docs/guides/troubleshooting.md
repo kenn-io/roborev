@@ -121,6 +121,11 @@ record larger than that limit is marked `[truncated]` in the file; stderr
 retains the complete record. The detached launcher also captures stdout and
 stderr under the data directory's `logs/` directory for startup diagnostics.
 
+Only one daemon can own these log files in a data directory, even when `--db`
+selects different databases. A second startup exits before changing the running
+daemon's logs. Use a separate `ROBOREV_DATA_DIR` for each daemon when running
+multiple instances.
+
 ### CI repository discovery and polling failures
 
 GitHub reads retry transient HTTP errors, interrupted response bodies, network

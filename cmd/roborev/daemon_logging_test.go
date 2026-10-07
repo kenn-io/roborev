@@ -110,3 +110,63 @@ func TestDaemonLoggingBoundsExistingFiles(t *testing.T) {
 		assert.LessOrEqual(t, info.Size(), int64(256))
 	}
 }
+
+func TestDaemonLoggingRejectsSecondOwnerBeforeTouchingFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dir)
+	closeLogs, err := setupDaemonLogging(dir, io.Discard, 256)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeLogs()) })
+	log.Print("first " + strings.Repeat("x", 160))
+	log.Print("second " + strings.Repeat("x", 160))
+	active, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	require.NoError(t, err)
+	previous, err := os.ReadFile(filepath.Join(dir, "daemon.log.1"))
+	require.NoError(t, err)
+
+	// A smaller attempted bound would truncate the owner's files if ownership
+	// were checked after file setup. Database selection must not bypass it.
+	closeSecond, err := setupDaemonLogging(dir, io.Discard, 128)
+	if closeSecond != nil {
+		require.NoError(t, closeSecond())
+	}
+	require.ErrorContains(t, err, "daemon logs are already owned")
+	for _, name := range []string{"first.db", "second.db"} {
+		cmd := daemonRunCmd()
+		cmd.SetArgs([]string{"--db", filepath.Join(dir, name), "--config", filepath.Join(dir, "missing.toml")})
+		require.ErrorContains(t, cmd.Execute(), "daemon logs are already owned")
+		assert.NoFileExists(t, filepath.Join(dir, name))
+	}
+	current, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	require.NoError(t, err)
+	assert.Equal(t, active, current, "rejected startups must leave the active file intact")
+	rotated, err := os.ReadFile(filepath.Join(dir, "daemon.log.1"))
+	require.NoError(t, err)
+	assert.Equal(t, previous, rotated, "rejected startups must leave the rotation intact")
+	log.Print("third " + strings.Repeat("x", 160))
+	for _, name := range []string{"daemon.log", "daemon.log.1"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		require.NoError(t, err)
+		assert.LessOrEqual(t, info.Size(), int64(256))
+	}
+	require.NoError(t, closeLogs())
+	closeNext, err := setupDaemonLogging(dir, io.Discard, 256)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeNext()) })
+	log.Print("successor")
+	data, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "successor")
+}
+
+func TestDaemonLoggingSetupFailureReleasesOwnership(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	require.NoError(t, os.Mkdir(path, 0o700))
+	_, err := setupDaemonLogging(dir, io.Discard, 256)
+	require.Error(t, err)
+	require.NoError(t, os.Remove(path))
+	closeLogs, err := setupDaemonLogging(dir, io.Discard, 256)
+	require.NoError(t, err)
+	require.NoError(t, closeLogs())
+}

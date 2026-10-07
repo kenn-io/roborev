@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/kit/atomicfile"
 )
 
@@ -23,11 +24,26 @@ type daemonLogFile struct {
 	maxBytes int64
 }
 
-func setupDaemonLogging(dir string, stderr io.Writer, maxBytes int64) (func() error, error) {
+func setupDaemonLogging(dir string, stderr io.Writer, maxBytes int64) (_ func() error, setupErr error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon log directory: %w", err)
 	}
 	path := filepath.Join(dir, "daemon.log")
+	// Database paths can differ while sharing DataDir and these log files.
+	// Hold a separate lock before inspecting or changing either file.
+	owner := flock.New(path + ".lock")
+	locked, err := owner.TryLock()
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("lock daemon logs: %w", err), owner.Close())
+	}
+	if !locked {
+		return nil, errors.Join(fmt.Errorf("daemon logs are already owned by a daemon: %s", dir), owner.Close())
+	}
+	defer func() {
+		if setupErr != nil {
+			setupErr = errors.Join(setupErr, owner.Close())
+		}
+	}()
 	for _, name := range []string{path, path + ".1"} {
 		info, err := os.Stat(name)
 		if errors.Is(err, os.ErrNotExist) {
@@ -57,12 +73,12 @@ func setupDaemonLogging(dir string, stderr io.Writer, maxBytes int64) (func() er
 	return func() error {
 		log.SetOutput(oldWriter)
 		log.SetFlags(oldFlags)
-		if writer.file == nil {
-			return nil
+		var closeErr error
+		if writer.file != nil {
+			closeErr = writer.file.Close()
+			writer.file = nil
 		}
-		err := writer.file.Close()
-		writer.file = nil
-		return err
+		return errors.Join(closeErr, owner.Close())
 	}, nil
 }
 
