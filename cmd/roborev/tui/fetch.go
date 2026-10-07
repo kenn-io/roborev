@@ -421,10 +421,24 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 }
 
 func (m model) reportScreenViewed() tea.Cmd {
+	return m.postScreen(m.currentView.String())
+}
+
+func (m model) screensShown() []string {
+	if m.splitActive() {
+		screens := []string{"queue"}
+		if m.selectedReviewLoaded() {
+			screens = append(screens, "review")
+		}
+		return screens
+	}
+	return []string{m.currentView.String()}
+}
+
+func (m model) postScreen(screen string) tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
-	screen := m.currentView.String()
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
 		telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)

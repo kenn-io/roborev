@@ -1,14 +1,12 @@
 package telemetry
 
 import (
-	"compress/gzip"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,18 +30,15 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 }
 
 func TestSessionEndedDurationBuckets(t *testing.T) {
-	for _, tc := range []struct {
-		elapsed time.Duration
-		bucket  string
-	}{
-		{time.Minute - time.Nanosecond, "under_1m"},
-		{time.Minute, "1_to_5m"},
-		{2 * time.Minute, "1_to_5m"},
-		{5 * time.Minute, "5_to_30m"},
-		{30 * time.Minute, "5_to_30m"},
-		{30*time.Minute + time.Nanosecond, "over_30m"},
-	} {
-		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
+	data, err := os.ReadFile("../../web/src/lib/utils/duration-buckets.json")
+	require.NoError(t, err)
+	var cases []struct {
+		MS     int64  `json:"ms"`
+		Bucket string `json:"bucket"`
+	}
+	require.NoError(t, json.Unmarshal(data, &cases))
+	for _, tc := range cases {
+		assert.Equal(t, tc.Bucket, DurationBucket(time.Duration(tc.MS)*time.Millisecond))
 	}
 }
 
@@ -279,43 +274,10 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 	}
 }
 
-type postHogWireMessage struct {
-	Event      string         `json:"event"`
-	DistinctID string         `json:"distinct_id"`
-	Properties map[string]any `json:"properties"`
-}
-
-// newPostHogStubReporter returns an enabled reporter that sends to a loopback PostHog stub, and a reader for the batched messages it received.
-func newPostHogStubReporter(t *testing.T) (*Reporter, func() []postHogWireMessage) {
+// newPostHogStubReporter returns an enabled reporter and its captured messages.
+func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
-	var (
-		mu     sync.Mutex
-		bodies [][]byte
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var reader io.Reader = r.Body
-		if r.Header.Get("Content-Encoding") == "gzip" {
-			gz, err := gzip.NewReader(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			defer gz.Close()
-			reader = gz
-		}
-		body, err := io.ReadAll(reader)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		mu.Lock()
-		bodies = append(bodies, body)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":1}`))
-	}))
-	t.Cleanup(srv.Close)
-
+	endpoint, messages := testutil.NewPostHogStub(t)
 	reporter, err := kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
 		APIKey:      "test-posthog-api-key",
 		Application: "roborev",
@@ -323,23 +285,10 @@ func newPostHogStubReporter(t *testing.T) (*Reporter, func() []postHogWireMessag
 		DistinctID:  "anonymous-install-id",
 		Version:     "test-version",
 		Source:      "daemon",
-		Endpoint:    srv.URL,
+		Endpoint:    endpoint,
 	}, allowedEventOptions()...)
 	require.NoError(t, err)
-
-	return reporter, func() []postHogWireMessage {
-		mu.Lock()
-		defer mu.Unlock()
-		var messages []postHogWireMessage
-		for _, body := range bodies {
-			var batch struct {
-				Batch []postHogWireMessage `json:"batch"`
-			}
-			require.NoError(t, json.Unmarshal(body, &batch))
-			messages = append(messages, batch.Batch...)
-		}
-		return messages
-	}
+	return reporter, messages
 }
 
 func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {

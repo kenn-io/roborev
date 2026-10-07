@@ -10,6 +10,8 @@ let visibleTime = 0;
 let started: number | undefined;
 let hasInterval = false;
 let intervalEnded = false;
+let hiddenAt: number | undefined;
+let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 export type Screen = "reviews" | "analytics";
 let currentScreen: (() => Screen) | undefined;
 
@@ -19,31 +21,32 @@ function pauseSession(): void {
   started = undefined;
 }
 
+function durationBucket(ms: number): string {
+  return ms < 60_000
+    ? "under_1m"
+    : ms < 300_000
+      ? "1_to_5m"
+      : ms <= 1_800_000
+        ? "5_to_30m"
+        : "over_30m";
+}
+
 function flushSession(): void {
   if (!shellMounted || !intervalEnded || !hasInterval) return;
-  const duration =
-    visibleTime < 60_000
-      ? "under_1m"
-      : visibleTime < 300_000
-        ? "1_to_5m"
-        : visibleTime <= 1_800_000
-          ? "5_to_30m"
-          : "over_30m";
+  const duration = durationBucket(visibleTime);
   visibleTime = 0;
   hasInterval = false;
   intervalEnded = false;
-  void roborevFetch(telemetryEventsPath, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: duration },
-    }),
-    keepalive: true,
-  }).catch(() => undefined);
+  void postEvent(
+    "session_ended",
+    { surface: "web", duration_bucket: duration },
+    { keepalive: true },
+  ).catch(() => undefined);
 }
 
 function endSession(): void {
+  clearTimeout(hiddenTimer);
+  hiddenAt = undefined;
   pauseSession();
   if (!hasInterval) return;
   intervalEnded = true;
@@ -63,34 +66,49 @@ function resumeSession(): void {
 }
 
 function onVisibility(): void {
-  if (document.hidden) endSession();
-  else resumeSession();
+  if (document.hidden) {
+    pauseSession();
+    hiddenAt = Date.now();
+    clearTimeout(hiddenTimer);
+    hiddenTimer = setTimeout(endSession, 1_800_000);
+  } else {
+    clearTimeout(hiddenTimer);
+    if (hiddenAt !== undefined && Date.now() - hiddenAt >= 1_800_000)
+      endSession();
+    hiddenAt = undefined;
+    resumeSession();
+  }
 }
 
-function reportAppOpened(): void {
+function reportAppOpened(): boolean {
   const day = new Date().toISOString().slice(0, 10);
-  if (day === lastReportedDay) return;
+  if (day === lastReportedDay) return false;
   lastReportedDay = day;
   void postEvent("app_opened", { surface: "web" }).catch(() => undefined);
+  return true;
 }
 
 function postEvent(
   event: string,
   properties: Record<string, string>,
-  signal?: AbortSignal,
+  init: { signal?: AbortSignal; keepalive?: boolean } = {},
 ): Promise<unknown> {
   return roborevFetch(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
-    signal,
+    ...init,
   });
 }
 
 export function reportScreenViewed(screen: Screen): void {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-  void postEvent("screen_viewed", { screen, surface: "web" }, controller.signal)
+  void postEvent(
+    "screen_viewed",
+    { screen, surface: "web" },
+    { signal: controller.signal },
+  )
     .catch(() => undefined)
     .finally(() => clearTimeout(timeout));
 }
@@ -98,8 +116,7 @@ export function reportScreenViewed(screen: Screen): void {
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
 function onFocus(): void {
   if (shellMounted) {
-    reportAppOpened();
-    if (currentScreen) reportScreenViewed(currentScreen());
+    if (reportAppOpened() && currentScreen) reportScreenViewed(currentScreen());
   } else focusPending = true;
 }
 

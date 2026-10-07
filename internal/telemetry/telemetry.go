@@ -54,6 +54,7 @@ type Reporter = kittelemetry.PostHogReporter
 type Options struct {
 	Database *storage.DB
 	Version  string
+	Endpoint string
 }
 
 func EnabledFromEnv() bool {
@@ -76,6 +77,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 
 	return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
 		APIKey:      postHogAPIKey,
+		Endpoint:    opts.Endpoint,
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
 		DistinctID:  distinctID,

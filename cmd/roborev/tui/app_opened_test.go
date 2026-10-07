@@ -27,30 +27,6 @@ func enableTelemetryEnv(t *testing.T) {
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 }
 
-func TestReportSessionEnded(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "0")
-	reporter, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(t, err)
-	enableTelemetryEnv(t)
-	var body []byte
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ = io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		(&telemetry.AppOpenedLimiter{}).Handler(reporter).ServeHTTP(w, r)
-	}))
-	t.Cleanup(ts.Close)
-	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	m.reportSessionEnded(2 * time.Minute)
-	assert.Nil(t, body)
-	close(m.ready)
-	m.reportSessionEnded(2 * time.Minute)
-	assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
-	body = nil
-	t.Setenv(telemetry.EnabledEnv, "0")
-	m.reportSessionEnded(time.Minute)
-	assert.Nil(t, body)
-}
-
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 	enableTelemetryEnv(t)

@@ -848,6 +848,11 @@ func (s *Server) Broadcaster() Broadcaster {
 	return s.broadcaster
 }
 
+// Handler returns the server's authenticated HTTP handler.
+func (s *Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}
+
 // SetTelemetry sets the anonymous telemetry client used for daemon lifecycle events.
 func (s *Server) SetTelemetry(client telemetry.Client) {
 	s.telemetry = client

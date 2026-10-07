@@ -1,0 +1,8 @@
+[
+  { "ms": 59999, "bucket": "under_1m" },
+  { "ms": 60000, "bucket": "1_to_5m" },
+  { "ms": 299999, "bucket": "1_to_5m" },
+  { "ms": 300000, "bucket": "5_to_30m" },
+  { "ms": 1800000, "bucket": "5_to_30m" },
+  { "ms": 1800001, "bucket": "over_30m" }
+]

@@ -182,33 +182,40 @@ func postTelemetry(ctx context.Context, client *http.Client, url string, body []
 	_ = resp.Body.Close()
 }
 
-// claimScreen holds the existing lock until kit answers, so rejected enqueues leave no daily claim.
+// claimScreen reserves in memory and persists only accepted captures.
 func (l *AppOpenedLimiter) claimScreen(screen, day string) (bool, func(bool)) {
 	l.mu.Lock()
 	key := "telemetry.screen." + screen
-	if l.Database == nil || l.sent[key] == day {
+	if l.Database == nil || l.sent[key] >= day {
 		l.mu.Unlock()
 		return true, nil
+	}
+	if l.sent == nil {
+		l.sent = make(map[string]string)
+	}
+	l.sent[key] = day
+	l.mu.Unlock()
+	release := func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.sent[key] == day {
+			delete(l.sent, key)
+		}
 	}
 	stored, err := l.Database.GetSyncState(key)
-	if err != nil || stored == day {
-		l.mu.Unlock()
+	if err != nil {
+		release()
 		return true, nil
 	}
-	if err := l.Database.SetSyncState(key, day); err != nil {
-		l.mu.Unlock()
+	if stored >= day {
 		return true, nil
 	}
 	return false, func(accepted bool) {
-		defer l.mu.Unlock()
 		if !accepted {
-			_ = l.Database.SetSyncState(key, stored)
+			release()
 			return
 		}
-		if l.sent == nil {
-			l.sent = make(map[string]string)
-		}
-		l.sent[key] = day
+		_ = l.Database.AdvanceSyncState(key, day)
 	}
 }
 

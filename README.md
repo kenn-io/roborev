@@ -460,9 +460,10 @@ and once every 24 hours while the daemon remains running: `daemon_started`
 and `daemon_active` with repo count, review count, sync enabled, CI
 enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
-ID. Hiding or closing a browser tab, or exiting the TUI, also reports
-`session_ended` with `surface` and `duration_bucket`: `under_1m`, `1_to_5m`,
-`5_to_30m`, or `over_30m`. Browser durations count only each visible interval.
+ID. Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
+reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
+`1_to_5m`, `5_to_30m`, or `over_30m`. Each browser session adds up visible time
+across tab switches and excludes hidden time.
 The web UI also asks the daemon to report an `app_opened` event when it loads
 and on the first window focus of each later UTC day, and `roborev tui` asks each
 time it starts. CLI commands that work through the daemon ask after their first

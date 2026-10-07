@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import durationBuckets from "./duration-buckets.json";
 
 type AppOpenedModule = typeof import("./app-opened");
 
@@ -27,8 +28,8 @@ describe("setupAppOpenedReporting", () => {
     [EventTarget, string, EventListenerOrEventListenerObject]
   > = [];
 
-  function setup(): () => void {
-    const cleanup = appOpened.setupAppOpenedReporting();
+  function setup(getScreen?: () => "reviews" | "analytics"): () => void {
+    const cleanup = appOpened.setupAppOpenedReporting(getScreen);
     cleanups.push(cleanup);
     return cleanup;
   }
@@ -86,16 +87,9 @@ describe("setupAppOpenedReporting", () => {
     expect(request.headers.get("Content-Type")).toBe("application/json");
   });
 
-  test.each([
-    [59_999, "under_1m"],
-    [60_000, "1_to_5m"],
-    [120_000, "1_to_5m"],
-    [300_000, "5_to_30m"],
-    [1_800_000, "5_to_30m"],
-    [1_800_001, "over_30m"],
-  ])(
-    "reports %i visible milliseconds as %s with closing credentials",
-    async (elapsed, bucket) => {
+  test.each(durationBuckets)(
+    "reports $ms visible milliseconds as $bucket with closing credentials",
+    async ({ ms: elapsed, bucket }) => {
       let now = 0;
       vi.spyOn(performance, "now").mockImplementation(() => now);
       vi.spyOn(document, "hidden", "get").mockReturnValue(false);
@@ -114,6 +108,73 @@ describe("setupAppOpenedReporting", () => {
       expect(request.keepalive).toBe(true);
       expect(request.headers.get("X-Roborev-Web-Session")).toBe("tab-session");
       expect(request.headers.get("X-Roborev-CSRF")).toBe("csrf-value");
+    },
+  );
+
+  test("adds up visible time across 20 tab switches into one session", async () => {
+    let now = 0;
+    let hidden = false;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    setup();
+    for (let i = 0; i < 20; i++) {
+      now += 60_000;
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      now += 120_000;
+      hidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await fetchMock.mock.calls[1]![0].text())).toEqual({
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: "5_to_30m" },
+    });
+  });
+
+  test.each(["timeout", "early return", "system sleep"])(
+    "ends only after 30 hidden minutes, %s",
+    async (scenario) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      let now = 0;
+      let hidden = false;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+      setup();
+      now = 120_000;
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      if (scenario === "system sleep") {
+        vi.setSystemTime(Date.now() + 31 * 60_000);
+        expect(performance.now()).toBe(120_000);
+      } else {
+        await vi.advanceTimersByTimeAsync(1_799_999);
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      if (scenario !== "timeout") {
+        hidden = false;
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+      if (scenario !== "system sleep") {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(scenario === "early return" ? 1 : 2);
+      if (scenario === "system sleep") now += 600_000;
+      globalThis.dispatchEvent(new Event("pagehide"));
+      expect(fetchMock).toHaveBeenCalledTimes(scenario === "system sleep" ? 3 : 2);
+      expect(
+        JSON.parse(await fetchMock.mock.calls[1]![0].text()).properties
+          .duration_bucket,
+      ).toBe("1_to_5m");
+      if (scenario === "system sleep") {
+        expect(JSON.parse(await fetchMock.mock.calls[2]![0].text())).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "5_to_30m" },
+        });
+      }
     },
   );
 
@@ -206,7 +267,7 @@ describe("setupAppOpenedReporting", () => {
   );
 
   test("ignores focus later on the same UTC day", async () => {
-    setup();
+    setup(() => "reviews");
     focusWindow();
     vi.setSystemTime(new Date("2026-03-10T20:00:00Z"));
     focusWindow();

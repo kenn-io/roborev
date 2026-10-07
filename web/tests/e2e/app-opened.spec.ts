@@ -26,5 +26,13 @@ for (const initial of ["reviews", "analytics"] as const) {
       expect(await response.json()).toEqual({ status: "disabled" });
       expect(response.request().postDataJSON()).toEqual({ event, properties });
     }
+    const sessionEnded = reported("session_ended");
+    await page.evaluate(() => globalThis.dispatchEvent(new Event("pagehide")));
+    const response = await sessionEnded;
+    expect(response.status()).toBe(202);
+    expect(response.request().postDataJSON()).toEqual({
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: "under_1m" },
+    });
   });
 }
