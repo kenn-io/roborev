@@ -502,6 +502,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		input             string
 		want              string
 		wantErr           error
+		wantErrMessage    string
 		notWantErr        error
 		wantWriterContent string
 		finalMessageOnly  bool
@@ -574,7 +575,33 @@ func TestCodexParseStreamJSON(t *testing.T) {
 				`{"type":"turn.failed","error":{"message":"stream disconnected before completion: Access denied."}}`,
 				jsonTurnCompleted,
 			),
-			wantErr: errCodexStreamFailed,
+			wantErr:        errCodexStreamFailed,
+			wantErrMessage: "codex stream reported failure: stream disconnected before completion: Access denied.",
+		},
+		{
+			name: "ReconnectThenTurnFailedTopLevelMessage",
+			input: buildStream(
+				`{"type":"error","message":"Reconnecting... 1/5"}`,
+				`{"type":"turn.failed","message":"Access denied."}`,
+			),
+			wantErr:        errCodexStreamFailed,
+			wantErrMessage: "codex stream reported failure: Access denied.",
+		},
+		{
+			name: "MessageLessTurnFailedPreservesEarlierError",
+			input: buildStream(
+				`{"type":"error","message":"Connection closed."}`,
+				`{"type":"turn.failed"}`,
+				jsonTurnCompleted,
+			),
+			wantErr:        errCodexStreamFailed,
+			wantErrMessage: "codex stream reported failure: Connection closed.",
+		},
+		{
+			name:           "MessageLessTurnFailedReturnsFallback",
+			input:          buildStream(`{"type":"turn.failed"}`),
+			wantErr:        errCodexStreamFailed,
+			wantErrMessage: "codex stream reported failure: turn failed",
 		},
 		{
 			name: "ErrorAfterCompletedTurnReturnsError",
@@ -707,6 +734,9 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w, tt.finalMessageOnly)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
+				if tt.wantErrMessage != "" {
+					assert.EqualError(t, err, tt.wantErrMessage)
+				}
 				assert.Empty(t, result, "parseStreamJSON() result = %q, want empty string on error", result)
 			} else {
 				require.NoError(t, err)
