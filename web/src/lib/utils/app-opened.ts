@@ -88,7 +88,6 @@ function postEvent(
 }
 
 export function reportScreenViewed(screen: Screen): void {
-  if (!shellMounted) return;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   void postEvent("screen_viewed", { screen, surface: "web" }, controller.signal)

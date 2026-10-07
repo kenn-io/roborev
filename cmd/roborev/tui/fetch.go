@@ -425,9 +425,6 @@ func (m model) reportScreenViewed() tea.Cmd {
 		return nil
 	}
 	screen := m.currentView.String()
-	if screen == "unknown" {
-		return nil
-	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
 		telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
