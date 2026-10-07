@@ -16,8 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/embedconfig"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -86,7 +86,7 @@ func startSharingDaemon(t *testing.T, postgresURL, name, providerURL string) *sh
 
 	// The API key tells the daemons apart at the provider; it is not part of
 	// the vector space, so both daemons share one.
-	client, err := searchindex.NewEmbeddings(embedconfig.Embedder{
+	client, err := searchindex.NewEmbeddings(config.SearchEmbeddingsConfig{
 		BaseURL: providerURL, Model: "shared-vectors-model",
 		Dims: 3, BatchSize: 8, InputTypeMode: "retrieval",
 	}, name, searchdoc.RecipeVersion)

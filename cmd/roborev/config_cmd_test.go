@@ -27,19 +27,58 @@ const (
 
 func captureOutput(t *testing.T, fn func() error) string {
 	t.Helper()
-	r, w, err := os.Pipe()
+	// A regular file lets synchronous writers finish regardless of output size.
+	f, err := os.CreateTemp(t.TempDir(), "stdout-*")
 	require.NoError(t, err)
 	old := os.Stdout
-	os.Stdout = w
+	os.Stdout = f
 
-	defer func() { os.Stdout = old }()
+	defer func() {
+		os.Stdout = old
+		assert.NoError(t, f.Close())
+	}()
 
 	fn()
+	os.Stdout = old
 
-	w.Close()
-	out, err := io.ReadAll(r)
+	_, err = f.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	out, err := io.ReadAll(f)
 	require.NoError(t, err)
 	return string(out)
+}
+
+func TestCaptureOutputLarge(t *testing.T) {
+	// One MiB exceeds the buffer of the pipe previously used by captureOutput.
+	want := strings.Repeat("captured output\n", 1<<16)
+	stdout := os.Stdout
+
+	got := captureOutput(t, func() error {
+		_, err := io.WriteString(os.Stdout, want)
+		require.NoError(t, err)
+		return nil
+	})
+
+	assert.Equal(t, want, got)
+	assert.Same(t, stdout, os.Stdout)
+}
+
+func TestCaptureOutputCleanupOnPanic(t *testing.T) {
+	assert := assert.New(t)
+	stdout := os.Stdout
+	var captured *os.File
+
+	assert.Panics(func() {
+		captureOutput(t, func() error {
+			captured = os.Stdout
+			panic("synthetic callback failure")
+		})
+	})
+
+	assert.Same(stdout, os.Stdout)
+	require.NotNil(t, captured)
+	_, err := captured.WriteString("after capture")
+	assert.ErrorIs(err, os.ErrClosed)
 }
 
 func readTOML(t *testing.T, path string) map[string]any {
@@ -888,6 +927,54 @@ func TestSetBudgetConfigKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, cfg.Budget.AgentCosts)
 	require.Error(t, setConfigKey(path, "budget.enabled", "true", false))
+}
+
+func TestSearchEmbeddingPrefixConfigCommands(t *testing.T) {
+	assert := assert.New(t)
+	env := setupConfigEnv(t, `[search.embeddings]
+base_url = "https://example.test/v1"
+model = "embeddinggemma-2-text-r1"
+dims = 768
+api_key = "synthetic-secret-abcd"
+`, "")
+	for key, value := range map[string]string{
+		"search.embeddings.document_prefix": "title: none | text: ",
+		"search.embeddings.query_prefix":    "task: search result | query: ",
+	} {
+		cmd := configSetCmd()
+		cmd.SetArgs([]string{key, value, "--global"})
+		require.NoError(t, cmd.Execute())
+		assertConfigValue(t, filepath.Join(env.DataDir, "config.toml"), key, value)
+		output := captureOutput(t, func() error {
+			cmd := configGetCmd()
+			cmd.SetArgs([]string{key, "--global"})
+			err := cmd.Execute()
+			require.NoError(t, err)
+			return err
+		})
+		assert.Equal(value+"\n", output)
+		require.ErrorContains(t, setConfigKey(filepath.Join(env.RepoDir, ".roborev.toml"), key, value, false), "global")
+	}
+	output := captureOutput(t, func() error {
+		cmd := configListCmd()
+		cmd.SetArgs([]string{"--global"})
+		err := cmd.Execute()
+		require.NoError(t, err)
+		return err
+	})
+	assert.Contains(output, "search.embeddings.document_prefix=title: none | text: ")
+	assert.Contains(output, "search.embeddings.query_prefix=task: search result | query: ")
+	assert.NotContains(output, "synthetic-secret")
+	output = captureOutput(t, func() error {
+		cmd := configGetCmd()
+		cmd.SetArgs([]string{"search.embeddings.api_key", "--global"})
+		err := cmd.Execute()
+		require.NoError(t, err)
+		return err
+	})
+	// Secret references format as TOML values, so the existing mask includes
+	// the closing quote among its final four characters.
+	assert.Equal("****bcd\"\n", output)
 }
 
 func TestGetBudgetPriceRequiresConfiguredEntry(t *testing.T) {

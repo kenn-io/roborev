@@ -24,7 +24,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/safefileio"
 	"go.kenn.io/kit/secretref"
 
@@ -552,14 +551,14 @@ func TestDaemonSearchClosesSidecarOnConstructionFailures(t *testing.T) {
 		{
 			name: "partial config",
 			configure: func(cfg *config.Config) {
-				cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://embeddings.example"}
+				cfg.Search.Embeddings = &config.SearchEmbeddingsConfig{BaseURL: "https://embeddings.example"}
 			},
 			wantError: "search.embeddings: embed base_url, model, and positive dims",
 		},
 		{
 			name: "invalid embedding client",
 			configure: func(cfg *config.Config) {
-				cfg.Search.Embeddings = &embedconfig.Embedder{
+				cfg.Search.Embeddings = &config.SearchEmbeddingsConfig{
 					BaseURL: "file:///tmp/provider", Model: "model", Dims: 2,
 				}
 			},
@@ -674,7 +673,7 @@ func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
 	cfg := config.DefaultConfig()
-	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: secretref.Ref{Env: "ROBOREV_TEST_EMBEDDING_KEY"}, TrustPrivateNetwork: true}
+	cfg.Search.Embeddings = &config.SearchEmbeddingsConfig{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: secretref.Ref{Env: "ROBOREV_TEST_EMBEDDING_KEY"}, TrustPrivateNetwork: true}
 	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, search.Close()) })
@@ -735,7 +734,7 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			cfg := config.DefaultConfig()
-			cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKey: secretref.Ref{File: path}}
+			cfg.Search.Embeddings = &config.SearchEmbeddingsConfig{BaseURL: "https://api.example.test/v1", Model: "test", Dims: 2, APIKey: secretref.Ref{File: path}}
 			search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, search.Close()) })
