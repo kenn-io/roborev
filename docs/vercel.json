@@ -372,6 +372,16 @@
       "permanent": true
     },
     {
+      "source": "/integrations/goal-review/",
+      "destination": "/docs/integrations/goal-review/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/goal-review.md",
+      "destination": "/docs/integrations/goal-review.md",
+      "permanent": true
+    },
+    {
       "source": "/integrations/claudechic/",
       "destination": "/docs/integrations/claudechic/",
       "permanent": true

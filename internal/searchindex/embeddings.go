@@ -1,6 +1,7 @@
 package searchindex
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/kit/vector"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // Embedder encodes review documents and search queries for one vector space.
@@ -32,8 +35,8 @@ type Embeddings struct {
 // the resolved API key. recipeVersion identifies how review documents are
 // rendered. Client retries stay off; the reconciler owns backoff between
 // turns.
-func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int) (*Embeddings, error) {
-	parts, err := config.Parts()
+func NewEmbeddings(settings config.SearchEmbeddingsConfig, apiKey string, recipeVersion int) (*Embeddings, error) {
+	parts, err := settings.Parts()
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +55,17 @@ func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := legacyFingerprint(config, recipeVersion)
-	if err != nil {
-		return nil, err
-	}
 	space := embedmodel.Descriptor{
 		Model: parts.Model, Roles: parts.Roles, Deployment: parts.Deployment,
-		Legacy: []string{legacy},
+	}
+	// Earlier fingerprints do not describe role prefixes. Only unchanged
+	// inputs may reuse those generations, even when just one role changes.
+	if settings.DocumentPrefix == "" && settings.QueryPrefix == "" {
+		legacy, err := legacyFingerprint(settings.Embedder, recipeVersion)
+		if err != nil {
+			return nil, err
+		}
+		space.Legacy = []string{legacy}
 	}
 	if err := space.Validate(); err != nil {
 		return nil, err
@@ -66,9 +73,11 @@ func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int
 	return &Embeddings{client: client, space: space, batch: parts.Batch}, nil
 }
 
-// EncodeFunc sends texts for role unchanged.
+// EncodeFunc applies the model prefix once to rendered documents or queries.
 func (e *Embeddings) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
-	return e.client.EncodeFunc(role)
+	return func(ctx context.Context, texts []string) ([][]float32, error) {
+		return e.client.EmbedTexts(ctx, role, texts)
+	}
 }
 
 // Space returns the vector-space descriptor.

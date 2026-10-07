@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kit/vector"
 	"go.kenn.io/kit/vector/sqlitevec"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
 )
 
@@ -65,7 +66,7 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
 
-	settings := embedconfig.Embedder{
+	settings := config.SearchEmbeddingsConfig{
 		BaseURL: "https://api.voyageai.com/v1", Model: "voyage-4-large", Dims: 2,
 		InputTypeMode: "retrieval",
 	}
@@ -107,18 +108,18 @@ func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testi
 func TestLegacyFingerprintMatchesEarlierReleases(t *testing.T) {
 	// Fingerprints computed by the pre-kit embedding client for these settings.
 	tests := []struct {
-		settings embedconfig.Embedder
+		settings config.SearchEmbeddingsConfig
 		want     string
 	}{
 		{
-			settings: embedconfig.Embedder{
+			settings: config.SearchEmbeddingsConfig{
 				BaseURL: "https://api.voyageai.com/v1", Model: "voyage-4-large", Dims: 1024,
 				InputTypeMode: "retrieval",
 			},
 			want: "28b082fb2ca22d4d",
 		},
 		{
-			settings: embedconfig.Embedder{
+			settings: config.SearchEmbeddingsConfig{
 				BaseURL: "http://127.0.0.1:11434/v1/", Model: "nomic", Dims: 768,
 				FingerprintSalt: "s1",
 			},
@@ -138,7 +139,7 @@ func TestLegacyFingerprintMatchesEarlierReleases(t *testing.T) {
 func TestNewGenerationsUseKitIdentity(t *testing.T) {
 	ctx := context.Background()
 	index := openGenerationTestIndex(t)
-	embeddings, err := NewEmbeddings(embedconfig.Embedder{
+	embeddings, err := NewEmbeddings(config.SearchEmbeddingsConfig{
 		BaseURL: "https://example.test/v1", Model: "model", Dims: 2,
 	}, "", 2)
 	require.NoError(t, err)
@@ -152,11 +153,11 @@ func TestNewGenerationsUseKitIdentity(t *testing.T) {
 
 func TestGenerationIdentitySeparatesVectorSpaceInputs(t *testing.T) {
 	type input struct {
-		config embedconfig.Embedder
+		config config.SearchEmbeddingsConfig
 		recipe int
 	}
 	base := input{
-		config: embedconfig.Embedder{
+		config: config.SearchEmbeddingsConfig{
 			BaseURL: "http://127.0.0.1:9/v1", Model: "embed-large", Dims: 1024, InputTypeMode: "none",
 		},
 		recipe: 3,

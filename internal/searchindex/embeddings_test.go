@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/embedconfig"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
 )
 
@@ -49,7 +50,7 @@ func TestEmbeddingsProviderErrorsAreClassifiedWithoutClientRetries(t *testing.T)
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			defer server.Close()
-			embeddings, err := NewEmbeddings(embedconfig.Embedder{BaseURL: server.URL, Model: "embed-large", Dims: 2}, "", searchdoc.RecipeVersion)
+			embeddings, err := NewEmbeddings(config.SearchEmbeddingsConfig{BaseURL: server.URL, Model: "embed-large", Dims: 2}, "", searchdoc.RecipeVersion)
 			require.NoError(t, err)
 
 			_, err = embeddings.EncodeFunc(embedconfig.RoleDocument)(context.Background(), []string{"text"})
