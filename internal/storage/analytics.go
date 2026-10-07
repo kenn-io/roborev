@@ -190,19 +190,16 @@ func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := aggregateAnalytics(rows, opts)
-	if err != nil {
-		return nil, err
-	}
-	options, err := queryAnalyticsFilterOptions(tx, opts.Since, opts.Until)
-	if err != nil {
-		return nil, err
-	}
-	snapshot.Options = options
-	return snapshot, nil
+	return aggregateAnalytics(rows, opts)
 }
 
-func queryAnalyticsRows(q querier, opts AnalyticsOptions) ([]analyticsRow, error) {
+// analyticsRowsQuery selects every finished job in the time window. Project
+// and source filters are applied in Go so the same rows also supply the filter
+// choices, which must list every value in the window. Every review_jobs column
+// read here must stay in idx_review_jobs_analytics: they are stored after the
+// large prompt column, and reading them from the table walks its overflow
+// pages.
+func analyticsRowsQuery(opts AnalyticsOptions) (string, []any) {
 	conditions := []string{"j.finished_at IS NOT NULL"}
 	args := []any{}
 	if !opts.Since.IsZero() {
@@ -213,10 +210,7 @@ func queryAnalyticsRows(q querier, opts AnalyticsOptions) ([]analyticsRow, error
 		conditions = append(conditions, "julianday(j.finished_at) < julianday(?)")
 		args = append(args, analyticsTime(opts.Until))
 	}
-	appendAnalyticsInFilter(&conditions, &args, "r.name", opts.Projects)
-	appendAnalyticsInFilter(&conditions, &args, "COALESCE(j.source, '')", opts.Sources)
-
-	query := `
+	return `
 		SELECT r.name, COALESCE(j.source, ''), COALESCE(j.agent, ''), COALESCE(j.model, ''),
 		       COALESCE(NULLIF(j.job_type, ''), 'review'), COALESCE(j.panel_role, ''),
 		       j.status, j.finished_at,
@@ -231,8 +225,11 @@ func queryAnalyticsRows(q querier, opts AnalyticsOptions) ([]analyticsRow, error
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY datetime(j.finished_at), j.id`
+		ORDER BY datetime(j.finished_at), j.id`, args
+}
 
+func queryAnalyticsRows(q querier, opts AnalyticsOptions) ([]analyticsRow, error) {
+	query, args := analyticsRowsQuery(opts)
 	sqlRows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -271,9 +268,6 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		Projects: []AnalyticsProjectRow{},
 		Sources:  []AnalyticsDimensionRow{}, Agents: []AnalyticsDimensionRow{},
 		Models: []AnalyticsDimensionRow{}, SplitSeries: []AnalyticsSplitSeries{},
-		Options: AnalyticsFilterOptions{
-			Projects: []string{}, Sources: []string{}, Agents: []string{}, Models: []string{},
-		},
 	}
 	total := &analyticsAccumulator{}
 	projects := map[string]*analyticsAccumulator{}
@@ -283,8 +277,23 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	buckets := map[time.Time]*analyticsAccumulator{}
 	splitTotals := map[string]*analyticsAccumulator{}
 	splitBuckets := map[string]map[time.Time]*analyticsAccumulator{}
+	optionProjects := map[string]struct{}{}
+	optionSources := map[string]struct{}{}
+	optionAgents := map[string]struct{}{}
+	optionModels := map[string]struct{}{}
 
 	for _, row := range rows {
+		optionProjects[row.project] = struct{}{}
+		optionSources[row.source] = struct{}{}
+		if row.agent != "" {
+			optionAgents[row.agent] = struct{}{}
+		}
+		if row.model != "" {
+			optionModels[row.model] = struct{}{}
+		}
+		if !containsAnalyticsValue(opts.Projects, row.project) || !containsAnalyticsValue(opts.Sources, row.source) {
+			continue
+		}
 		logicalReview := isLogicalReview(row)
 		eligibleAttempt := row.eligible && matchesAnalyticsAttemptFilters(row, opts)
 		if !logicalReview && !eligibleAttempt {
@@ -320,6 +329,10 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 		}
 	}
 
+	snapshot.Options = AnalyticsFilterOptions{
+		Projects: sortedAnalyticsOptions(optionProjects), Sources: sortedAnalyticsOptions(optionSources),
+		Agents: sortedAnalyticsOptions(optionAgents), Models: sortedAnalyticsOptions(optionModels),
+	}
 	snapshot.Summary = total.finish()
 	for key, acc := range projects {
 		snapshot.Projects = append(snapshot.Projects, AnalyticsProjectRow{Project: key, AnalyticsSummary: acc.finish()})
@@ -369,7 +382,11 @@ func analyticsSeriesBounds(
 func analyticsTimeSeries(
 	buckets map[time.Time]*analyticsAccumulator, start, until time.Time, bucket AnalyticsBucket,
 ) []AnalyticsTimeBucket {
-	series := []AnalyticsTimeBucket{}
+	count := 0
+	for at := start; !at.IsZero() && at.Before(until); at = analyticsBucketEnd(at, bucket) {
+		count++
+	}
+	series := make([]AnalyticsTimeBucket, 0, count)
 	for ; !start.IsZero() && start.Before(until); start = analyticsBucketEnd(start, bucket) {
 		acc := buckets[start]
 		if acc == nil {
@@ -474,10 +491,12 @@ func (a *analyticsAccumulator) finish() AnalyticsSummary {
 }
 
 func analyticsPercentiles(values []float64) AnalyticsPercentiles {
+	sorted := slices.Clone(values)
+	slices.Sort(sorted)
 	return AnalyticsPercentiles{
-		P50Secs: percentile(append([]float64(nil), values...), 0.50),
-		P90Secs: percentile(append([]float64(nil), values...), 0.90),
-		P99Secs: percentile(append([]float64(nil), values...), 0.99),
+		P50Secs: percentileSorted(sorted, 0.50),
+		P90Secs: percentileSorted(sorted, 0.90),
+		P99Secs: percentileSorted(sorted, 0.99),
 	}
 }
 
@@ -579,16 +598,12 @@ func analyticsBucketEnd(start time.Time, bucket AnalyticsBucket) time.Time {
 	}
 }
 
-func appendAnalyticsInFilter(conditions *[]string, args *[]any, column string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	placeholders := make([]string, len(values))
-	for i, value := range values {
-		placeholders[i] = "?"
-		*args = append(*args, value)
-	}
-	*conditions = append(*conditions, column+" IN ("+strings.Join(placeholders, ",")+")")
+// sortedAnalyticsOptions returns a non-nil slice so empty choices encode as
+// JSON arrays.
+func sortedAnalyticsOptions(values map[string]struct{}) []string {
+	result := slices.AppendSeq(make([]string, 0, len(values)), maps.Keys(values))
+	slices.Sort(result)
+	return result
 }
 
 func analyticsTime(value time.Time) string {
@@ -607,55 +622,4 @@ func sortedUnique(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-func queryAnalyticsFilterOptions(q querier, since, until time.Time) (AnalyticsFilterOptions, error) {
-	result := AnalyticsFilterOptions{Projects: []string{}, Sources: []string{}, Agents: []string{}, Models: []string{}}
-	conditions := []string{"j.finished_at IS NOT NULL"}
-	args := []any{}
-	if !since.IsZero() {
-		conditions = append(conditions, "julianday(j.finished_at) >= julianday(?)")
-		args = append(args, analyticsTime(since))
-	}
-	if !until.IsZero() {
-		conditions = append(conditions, "julianday(j.finished_at) < julianday(?)")
-		args = append(args, analyticsTime(until))
-	}
-	where := " WHERE " + strings.Join(conditions, " AND ")
-	queries := []struct {
-		column   string
-		target   *[]string
-		nonEmpty bool
-	}{
-		{"r.name", &result.Projects, false},
-		{"COALESCE(j.source, '')", &result.Sources, false},
-		{"COALESCE(j.agent, '')", &result.Agents, true},
-		{"COALESCE(j.model, '')", &result.Models, true},
-	}
-	for _, item := range queries {
-		itemWhere := where
-		if item.nonEmpty {
-			itemWhere += " AND " + item.column + " != ''"
-		}
-		rows, err := q.Query(`SELECT DISTINCT `+item.column+` FROM review_jobs j JOIN repos r ON r.id = j.repo_id`+itemWhere+` ORDER BY 1`, args...)
-		if err != nil {
-			return result, err
-		}
-		for rows.Next() {
-			var value string
-			if err := rows.Scan(&value); err != nil {
-				_ = rows.Close()
-				return result, err
-			}
-			*item.target = append(*item.target, value)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return result, err
-		}
-		if err := rows.Close(); err != nil {
-			return result, err
-		}
-	}
-	return result, nil
 }

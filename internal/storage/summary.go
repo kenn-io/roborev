@@ -643,11 +643,16 @@ func categorizeError(errMsg string) string {
 // percentile computes the p-th percentile using linear interpolation.
 // It sorts the input slice in place. Returns 0 if the slice is empty.
 func percentile(values []float64, p float64) float64 {
+	sort.Float64s(values)
+	return percentileSorted(values, p)
+}
+
+// percentileSorted interpolates the p-th percentile of ascending values.
+func percentileSorted(values []float64, p float64) float64 {
 	n := len(values)
 	if n == 0 {
 		return 0
 	}
-	sort.Float64s(values)
 	if n == 1 {
 		return values[0]
 	}
