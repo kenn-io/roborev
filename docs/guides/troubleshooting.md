@@ -120,6 +120,9 @@ file and its one previous rotation, `daemon.log.1`, each hold at most 10 MiB. A
 record larger than that limit is marked `[truncated]` in the file; stderr
 retains the complete record. The detached launcher also captures stdout and
 stderr under the data directory's `logs/` directory for startup diagnostics.
+Both destinations are attempted even if one fails. After a file rotation or
+reopen failure, later messages retry file access; missed messages are not
+replayed.
 
 Only one daemon can own these log files in a data directory, even when `--db`
 selects different databases. A second startup exits before changing the running

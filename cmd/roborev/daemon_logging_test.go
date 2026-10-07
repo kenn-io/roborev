@@ -170,3 +170,44 @@ func TestDaemonLoggingSetupFailureReleasesOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, closeLogs())
 }
+
+func TestDaemonLoggingRecoversAfterRotationFailure(t *testing.T) {
+	dir := t.TempDir()
+	var stderr bytes.Buffer
+	closeLogs, err := setupDaemonLogging(dir, &stderr, 256)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeLogs()) })
+	require.NoError(t, log.Output(1, "before failure "+strings.Repeat("x", 160)))
+	// A directory at the rotation destination makes the real rename fail.
+	previous := filepath.Join(dir, "daemon.log.1")
+	require.NoError(t, os.Mkdir(previous, 0o700))
+	require.Error(t, log.Output(1, "during failure "+strings.Repeat("x", 160)))
+	assert.Contains(t, stderr.String(), "during failure")
+	require.NoError(t, os.Remove(previous))
+
+	require.NoError(t, log.Output(1, "after recovery "+strings.Repeat("x", 160)))
+	active, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	require.NoError(t, err)
+	rotated, err := os.ReadFile(previous)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Contains(string(active), "after recovery")
+	assert.Contains(string(rotated), "before failure")
+	assert.LessOrEqual(len(active), 256)
+	assert.LessOrEqual(len(rotated), 256)
+}
+
+func TestDaemonLoggingRetainsDiagnosticsWithClosedStderr(t *testing.T) {
+	dir := t.TempDir()
+	stderr, err := os.Create(filepath.Join(dir, "stderr"))
+	require.NoError(t, err)
+	require.NoError(t, stderr.Close())
+	closeLogs, err := setupDaemonLogging(dir, stderr, 256)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeLogs()) })
+
+	require.ErrorIs(t, log.Output(1, "diagnostic with closed stderr"), os.ErrClosed)
+	data, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "diagnostic with closed stderr")
+}
