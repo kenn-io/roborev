@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	kittelemetry "go.kenn.io/kit/telemetry"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -26,10 +28,11 @@ type AppOpenedLimiter struct {
 // appOpenedMaxBodyBytes matches kit's maxPostHogCaptureBodyBytes at the pinned version; a larger body goes to kit for its 413.
 const appOpenedMaxBodyBytes = 64 << 10
 
-// Handler wraps NewCaptureHandler(reporter); build it per request if needed, the state lives on the limiter.
+// Handler accepts app_opened, session_ended, and screen_viewed. It limits app_opened and screen_viewed to one send per UTC day.
+// Build it per request if needed; the state lives on the limiter.
 func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture := NewCaptureHandler(reporter)
+		capture := kittelemetry.NewPostHogCaptureHandler(reporter)
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if r.Method != http.MethodPost || err != nil || mediaType != "application/json" {
 			capture.ServeHTTP(w, r)
@@ -42,6 +45,17 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		var finish func(bool)
 		var canonical []byte
 		if err == nil && len(body) <= appOpenedMaxBodyBytes {
+			var event struct {
+				Event string `json:"event"`
+			}
+			if json.Unmarshal(body, &event) == nil {
+				switch strings.TrimSpace(event.Event) {
+				case EventAppOpened, EventSessionEnded, EventScreenViewed:
+				default:
+					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
+					return
+				}
+			}
 			skip, finish, canonical = l.alreadySentToday(reporter, body)
 		}
 		if skip {

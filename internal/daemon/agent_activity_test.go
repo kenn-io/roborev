@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
@@ -243,4 +246,64 @@ func TestAgentActivityBusyWriteCancellation(t *testing.T) {
 	stored, err := db.GetSyncState(agentActivityKey)
 	require.NoError(t, err)
 	assert.Empty(t, stored)
+}
+
+type restoreFailureConnector struct {
+	driver driver.Driver
+	dsn    string
+}
+
+func (c restoreFailureConnector) Driver() driver.Driver { return c.driver }
+
+func (c restoreFailureConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.driver.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	return &restoreFailureConn{Conn: conn}, nil
+}
+
+type restoreFailureConn struct {
+	driver.Conn
+	restoreFailed bool
+	closed        bool
+}
+
+func (c *restoreFailureConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if query == "PRAGMA busy_timeout = 30000" {
+		c.restoreFailed = true
+		return nil, errors.New("timeout restore failed")
+	}
+	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
+}
+
+func (c *restoreFailureConn) Close() error {
+	c.closed = true
+	return c.Conn.Close()
+}
+
+func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	var path string
+	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	pool := sql.OpenDB(restoreFailureConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)"})
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	pool.SetMaxOpenConns(1)
+	server.db = &storage.DB{DB: pool}
+	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
+	conn, err := pool.Conn(t.Context())
+	require.NoError(t, err)
+	var affected *restoreFailureConn
+	require.NoError(t, conn.Raw(func(raw any) error {
+		affected = raw.(*restoreFailureConn)
+		return nil
+	}))
+	require.NoError(t, conn.Close())
+	server.recordAgentCall(t.Context())
+	assert.True(t, affected.restoreFailed)
+	assert.True(t, affected.closed)
+	var busyTimeout int
+	require.NoError(t, pool.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
+	assert.Equal(t, 30000, busyTimeout)
+	require.NoError(t, server.db.SetSyncState("ordinary-write", "saved"))
 }

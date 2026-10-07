@@ -36,7 +36,7 @@ func TestReportSessionEnded(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		telemetry.NewCaptureHandler(reporter).ServeHTTP(w, r)
+		(&telemetry.AppOpenedLimiter{}).Handler(reporter).ServeHTTP(w, r)
 	}))
 	t.Cleanup(ts.Close)
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
@@ -86,7 +86,7 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 		mu       sync.Mutex
 		requests []recorded
 	)
-	capture := telemetry.NewCaptureHandler(rep)
+	capture := (&telemetry.AppOpenedLimiter{}).Handler(rep)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/telemetry/events", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

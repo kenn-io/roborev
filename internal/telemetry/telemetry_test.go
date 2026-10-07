@@ -265,7 +265,7 @@ func TestCaptureHandlerOptedOutAnswersDisabled(t *testing.T) {
 	t.Setenv(EnabledEnv, "0")
 	reporter, err := NewReporter(Options{})
 	require.NoError(t, err)
-	handler := NewCaptureHandler(reporter)
+	handler := (&AppOpenedLimiter{}).Handler(reporter)
 
 	tests := []struct {
 		name       string
@@ -299,7 +299,7 @@ func TestCaptureHandlerSendsAppOpenedWithOnlyAllowedProperties(t *testing.T) {
 
 	reporter, messages := newPostHogStubReporter(t)
 
-	recorder := postCaptureEvent(NewCaptureHandler(reporter), `{"event":"app_opened","properties":{"pad":"x","repo_count":3}}`)
+	recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened","properties":{"pad":"x","repo_count":3}}`)
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"queued"}`, recorder.Body.String())
 	require.NoError(reporter.Close())
@@ -322,7 +322,6 @@ func TestCaptureHandlerSendsSurfaceFromFixedList(t *testing.T) {
 	t.Setenv(GenericEnabledEnv, "1")
 
 	reporter, messages := newPostHogStubReporter(t)
-	handler := NewCaptureHandler(reporter)
 
 	tests := []struct {
 		body        string
@@ -336,7 +335,7 @@ func TestCaptureHandlerSendsSurfaceFromFixedList(t *testing.T) {
 		{body: `{"event":"app_opened","properties":{"surface":"tui","source":"web"}}`, wantSurface: "tui"},
 	}
 	for _, tt := range tests {
-		recorder := postCaptureEvent(handler, tt.body)
+		recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), tt.body)
 		assert.Equal(http.StatusAccepted, recorder.Code, tt.body)
 		assert.JSONEq(`{"status":"queued"}`, recorder.Body.String(), tt.body)
 	}
@@ -426,7 +425,7 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	reporter := NewReporterOrDisabled(Options{})
 
 	assert.False(t, reporter.Enabled())
-	recorder := postCaptureEvent(NewCaptureHandler(reporter), `{"event":"app_opened"}`)
+	recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 

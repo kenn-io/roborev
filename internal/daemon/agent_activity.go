@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
@@ -65,13 +66,15 @@ func (s *Server) recordAgentCall(ctx context.Context) {
 		return
 	}
 	deadline, _ := ctx.Deadline()
+	defer func() {
+		if _, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
+			storage.DiscardConn(conn)
+		}
+	}()
 	// A contended SQLite writer ignored a one-second context; cap its busy wait at that deadline.
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", max(0, min(int(time.Until(deadline).Milliseconds()), busyTimeout)))); err != nil {
 		return
 	}
-	defer func() {
-		_, _ = conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout))
-	}()
 	_, err = conn.ExecContext(ctx, `INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, agentActivityKey, string(value))
 	if err != nil {
 		return

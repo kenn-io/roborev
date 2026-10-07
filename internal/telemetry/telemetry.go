@@ -1,16 +1,11 @@
 package telemetry
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"mime"
-	"net/http"
 	"strings"
 	"time"
 
@@ -101,30 +96,6 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 		return DisabledReporter()
 	}
 	return reporter
-}
-
-// NewCaptureHandler accepts client product events. The daemon records agent activity itself.
-func NewCaptureHandler(reporter *Reporter) http.Handler {
-	capture := kittelemetry.NewPostHogCaptureHandler(reporter)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if r.Method == http.MethodPost && err == nil && mediaType == "application/json" {
-			body, err := io.ReadAll(io.LimitReader(r.Body, appOpenedMaxBodyBytes+1))
-			r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
-			var event struct {
-				Event string `json:"event"`
-			}
-			if err == nil && len(body) <= appOpenedMaxBodyBytes && json.Unmarshal(body, &event) == nil {
-				switch strings.TrimSpace(event.Event) {
-				case EventAppOpened, EventSessionEnded, EventScreenViewed:
-				default:
-					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
-					return
-				}
-			}
-		}
-		capture.ServeHTTP(w, r)
-	})
 }
 
 func allowedEventOptions() []kittelemetry.PostHogOption {
