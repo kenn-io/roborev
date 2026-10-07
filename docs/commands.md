@@ -197,6 +197,9 @@ completes.
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
+Failed Codex jobs report the final turn error when supplied; raw logs retain
+reconnect notices.
+
 When the daemon measured the review input, review details report the reviewed
 and excluded file counts. The counts describe change-set paths supplied to and
 filtered out of the review input, and a rename counts as two paths. Older
@@ -543,9 +546,6 @@ requests the log and its stored metadata through the daemon API to select that
 renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
 reading an orphaned log file. For a daemon using a custom database, select that
 daemon with `--server`; the CLI does not open SQLite.
-
-Failed Codex jobs report the final turn error when supplied; raw logs retain
-reconnect notices.
 
 The `clean` subcommand asks the selected daemon to remove log files older than
 the specified number of days (default: 7).
