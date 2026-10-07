@@ -565,7 +565,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			name: "ReconnectThenTurnFailedReturnsError",
 			input: buildStream(
 				jsonTurnStarted,
-				`{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: Access denied.)"}`,
+				`{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: The server had an error while processing your request.)"}`,
 				`{"type":"turn.failed","error":{"message":"stream disconnected before completion: Access denied."}}`,
 				jsonTurnCompleted,
 			),
