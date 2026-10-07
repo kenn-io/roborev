@@ -44,6 +44,7 @@ func TestReportSessionEnded(t *testing.T) {
 	assert.Nil(t, body)
 }
 
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 	enableTelemetryEnv(t)
 	synctest.Test(t, func(t *testing.T) {

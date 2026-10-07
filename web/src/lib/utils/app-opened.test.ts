@@ -129,6 +129,25 @@ describe("setupAppOpenedReporting", () => {
     }
   });
 
+  test("keeps visible time across shell recovery and excludes the recovery gap", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const stop = setup();
+    now = 120_000;
+    stop();
+    now += 600_000;
+    setup();
+    now += 10_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const request = fetchMock.mock.calls[1]![0];
+    expect(JSON.parse(await request.text()).properties.duration_bucket).toBe(
+      "1_to_5m",
+    );
+  });
+
   test("ignores focus later on the same UTC day", async () => {
     setup();
     focusWindow();

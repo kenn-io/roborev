@@ -6,6 +6,7 @@ let listening = false;
 let shellMounted = false;
 let loadReported = false;
 let focusPending = false;
+let pendingVisibleTime = 0;
 
 function reportAppOpened(): void {
   const day = new Date().toISOString().slice(0, 10);
@@ -42,7 +43,8 @@ export function setupAppOpenedReporting(): () => void {
   let started = document.hidden ? undefined : performance.now();
   const end = () => {
     if (started === undefined) return;
-    const elapsed = performance.now() - started;
+    const elapsed = pendingVisibleTime + performance.now() - started;
+    pendingVisibleTime = 0;
     started = undefined;
     const duration =
       elapsed < 60_000
@@ -71,6 +73,8 @@ export function setupAppOpenedReporting(): () => void {
   globalThis.addEventListener("pageshow", resume);
   return () => {
     shellMounted = false;
+    if (started !== undefined)
+      pendingVisibleTime += performance.now() - started;
     started = undefined;
     document.removeEventListener("visibilitychange", visibility);
     globalThis.removeEventListener("pagehide", end);

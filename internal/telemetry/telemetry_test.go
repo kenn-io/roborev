@@ -39,9 +39,12 @@ func TestSessionEndedPropertiesAndBuckets(t *testing.T) {
 		elapsed time.Duration
 		bucket  string
 	}{
-		{time.Minute - time.Nanosecond, "under_1m"}, {time.Minute, "1_to_5m"},
-		{2 * time.Minute, "1_to_5m"}, {5 * time.Minute, "5_to_30m"},
-		{30 * time.Minute, "5_to_30m"}, {30*time.Minute + time.Nanosecond, "over_30m"},
+		{time.Minute - time.Nanosecond, "under_1m"},
+		{time.Minute, "1_to_5m"},
+		{2 * time.Minute, "1_to_5m"},
+		{5 * time.Minute, "5_to_30m"},
+		{30 * time.Minute, "5_to_30m"},
+		{30*time.Minute + time.Nanosecond, "over_30m"},
 	} {
 		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
 		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "tui", "duration_bucket": tc.bucket, "seconds": 120})
