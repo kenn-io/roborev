@@ -37,7 +37,7 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
 	conn, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	db := &DB{conn}
+	db := &DB{DB: conn}
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.Exec(schema)
 	require.NoError(t, err)
