@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -619,5 +621,165 @@ func TestAnalyticsBucketString(t *testing.T) {
 		AnalyticsBucketHour, AnalyticsBucketDay, AnalyticsBucketWeek, AnalyticsBucketMonth,
 	} {
 		assert.NotEmpty(t, fmt.Sprint(bucket))
+	}
+}
+
+func TestGetAnalyticsFilterOptionsIgnoreActiveFilters(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	base := time.Date(2026, time.August, 4, 0, 0, 0, 0, time.UTC)
+	alpha := createRepo(t, db, filepath.Join(t.TempDir(), "alpha"))
+	beta := createRepo(t, db, filepath.Join(t.TempDir(), "beta"))
+	gamma := createRepo(t, db, filepath.Join(t.TempDir(), "gamma"))
+
+	seedAnalyticsJob(t, db, alpha, analyticsJobSeed{
+		name: "alpha-ci", jobType: JobTypeReview, status: JobStatusDone,
+		source: JobSourceCI, agent: "agent-a", model: "model-a",
+		enqueuedAt: base, startedAt: base, finishedAt: base.Add(time.Hour), verdict: new(1),
+	})
+	seedAnalyticsJob(t, db, alpha, analyticsJobSeed{
+		name: "alpha-post-commit", jobType: JobTypeReview, status: JobStatusDone,
+		source: JobSourcePostCommit, agent: "agent-b", model: "model-b",
+		enqueuedAt: base, startedAt: base, finishedAt: base.Add(time.Hour), verdict: new(0),
+	})
+	seedAnalyticsJob(t, db, beta, analyticsJobSeed{
+		name: "beta-unattributed", jobType: JobTypeReview, status: JobStatusSkipped,
+		enqueuedAt: base, finishedAt: base.Add(2 * time.Hour),
+	})
+	seedAnalyticsJob(t, db, gamma, analyticsJobSeed{
+		name: "gamma-outside-window", jobType: JobTypeReview, status: JobStatusDone,
+		source: JobSourceAutoDesign, agent: "agent-c", model: "model-c",
+		enqueuedAt: base.Add(-time.Hour), startedAt: base.Add(-time.Hour),
+		finishedAt: base.Add(-time.Minute), verdict: new(1),
+	})
+
+	got, err := db.GetAnalytics(AnalyticsOptions{
+		Since: base, Until: base.Add(3 * time.Hour), Projects: []string{"alpha"},
+		Sources: []string{JobSourceCI}, Agents: []string{"agent-a"}, Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(AnalyticsFilterOptions{
+		Projects: []string{"alpha", "beta"},
+		Sources:  []string{"", JobSourceCI, JobSourcePostCommit},
+		Agents:   []string{"agent-a", "agent-b"},
+		Models:   []string{"model-a", "model-b"},
+	}, got.Options)
+	assert.Equal(1, got.Summary.Reviews.Total)
+	require.Len(t, got.Projects, 1)
+	assert.Equal("alpha", got.Projects[0].Project)
+	require.Len(t, got.Sources, 1)
+	assert.Equal(JobSourceCI, got.Sources[0].Value)
+}
+
+func TestGetAnalyticsWindowsOffsetTimestampsByInstant(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+	job := seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+		name: "offset", jobType: JobTypeReview, status: JobStatusDone,
+		enqueuedAt: time.Date(2026, time.August, 2, 23, 0, 0, 0, time.UTC),
+		startedAt:  time.Date(2026, time.August, 2, 23, 0, 0, 0, time.UTC),
+		finishedAt: time.Date(2026, time.August, 2, 23, 30, 0, 0, time.UTC),
+		verdict:    new(1),
+	})
+	// 01:30 at +02:00 is 23:30 UTC on the previous day; a lexical comparison
+	// would place it after midnight UTC.
+	_, err := db.Exec(`UPDATE review_jobs SET finished_at = ? WHERE id = ?`,
+		"2026-08-03T01:30:00+02:00", job.ID)
+	require.NoError(t, err)
+	midnight := time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC)
+
+	before, err := db.GetAnalytics(AnalyticsOptions{
+		Since: midnight.Add(-time.Hour), Until: midnight, Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, before.Summary.Reviews.Total)
+	require.Len(t, before.TimeSeries, 1)
+	assert.Equal(t, 1, before.TimeSeries[0].Reviews.Total)
+
+	after, err := db.GetAnalytics(AnalyticsOptions{
+		Since: midnight, Until: midnight.Add(2 * time.Hour), Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, after.Summary.Reviews.Total)
+}
+
+func TestAnalyticsRowsQueryReadsOnlyAnalyticsIndexes(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	until := time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC)
+
+	// Analytics columns are stored after the large prompt columns of
+	// review_jobs and reviews, so reading them from either table walks every
+	// prompt's overflow pages. Sorting would add a pass over every row.
+	for name, opts := range map[string]AnalyticsOptions{
+		"bounded":  {Since: until.AddDate(0, 0, -30), Until: until},
+		"all-time": {Until: until},
+	} {
+		query, args := analyticsRowsQuery(opts)
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+		require.NoError(t, err)
+		var details []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			details = append(details, detail)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		plan := strings.Join(details, "\n")
+		assert.Contains(t, plan, "SEARCH j USING COVERING INDEX idx_review_jobs_analytics", name)
+		assert.Contains(t, plan, "USING COVERING INDEX idx_reviews_job_verdict", name)
+		assert.NotContains(t, plan, "TEMP B-TREE", name)
+	}
+}
+
+func TestGetAnalyticsEncodesEmptyFilterOptionsAsArrays(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	until := time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC)
+
+	got, err := db.GetAnalytics(AnalyticsOptions{
+		Since: until.Add(-time.Hour), Until: until, Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+	raw, err := json.Marshal(got.Options)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"projects":[],"sources":[],"agents":[],"models":[]}`, string(raw))
+}
+
+func TestGetAnalyticsAppliesEachOpenEndedBound(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	base := time.Date(2026, time.August, 6, 0, 0, 0, 0, time.UTC)
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
+	for i, name := range []string{"first", "second", "third"} {
+		at := base.Add(time.Duration(i) * time.Hour)
+		seedAnalyticsJob(t, db, repo, analyticsJobSeed{
+			name: name, jobType: JobTypeReview, status: JobStatusDone,
+			enqueuedAt: at, startedAt: at, finishedAt: at, verdict: new(1),
+		})
+	}
+
+	for name, tc := range map[string]struct {
+		opts AnalyticsOptions
+		want int
+	}{
+		"since only": {AnalyticsOptions{Since: base.Add(time.Hour), Bucket: AnalyticsBucketHour}, 2},
+		"until only": {AnalyticsOptions{Until: base.Add(time.Hour), Bucket: AnalyticsBucketHour}, 1},
+		"both":       {AnalyticsOptions{Since: base.Add(time.Hour), Until: base.Add(2 * time.Hour), Bucket: AnalyticsBucketHour}, 1},
+		"neither":    {AnalyticsOptions{Bucket: AnalyticsBucketHour}, 3},
+	} {
+		got, err := db.GetAnalytics(tc.opts)
+		require.NoError(t, err, name)
+		assert.Equal(t, tc.want, got.Summary.Reviews.Total, name)
 	}
 }

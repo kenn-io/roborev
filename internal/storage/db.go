@@ -1452,6 +1452,17 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_started_session: %w", err)
 	}
 
+	// Analytics reads finished jobs and their review verdicts. Both indexes
+	// let it skip the large prompt columns stored before the values it needs;
+	// analyticsJobsIndexSQL explains the job index. analyticsRowsQuery names
+	// idx_reviews_job_verdict with INDEXED BY, so the two must stay in sync.
+	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
+		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
+	}
+	if _, err = db.Exec(analyticsReviewsIndexSQL); err != nil {
+		return fmt.Errorf("create idx_reviews_job_verdict: %w", err)
+	}
+
 	// A session present at enqueue time is a resumed provider session. Provider
 	// usage for such sessions is cumulative, so late reconciliation must retain
 	// this attempt-scoped fact after completion instead of inferring it from
