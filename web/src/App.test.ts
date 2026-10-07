@@ -5,8 +5,9 @@ import App from "./App.svelte";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
+  reportScreenViewed: vi.fn(),
 }));
-// The helper reports once per page load, so the shell's call is what this file checks; its request is tested beside it.
+// Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
 
 const credentials = {
@@ -64,6 +65,8 @@ describe("App", () => {
     document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
     history.replaceState(null, "", "/reviews");
     vi.restoreAllMocks();
+    appOpened.setupAppOpenedReporting.mockClear();
+    appOpened.reportScreenViewed.mockClear();
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -116,7 +119,12 @@ describe("App", () => {
       "aria-current",
       "page",
     );
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([
+      ["reviews"],
+      ["analytics"],
+    ]);
     expect(
       screen.getByRole("heading", { name: "Review analytics" }),
     ).toBeInTheDocument();
@@ -138,6 +146,7 @@ describe("App", () => {
 
     const token = await screen.findByLabelText("Daemon token");
     expect(appOpened.setupAppOpenedReporting).not.toHaveBeenCalled();
+    expect(appOpened.reportScreenViewed).not.toHaveBeenCalled();
     await fireEvent.input(token, { target: { value: "one-time-secret" } });
     await fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
@@ -145,6 +154,7 @@ describe("App", () => {
       await screen.findByRole("region", { name: "Review jobs" }),
     ).toBeInTheDocument();
     expect(appOpened.setupAppOpenedReporting).toHaveBeenCalledTimes(1);
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
   });
 
   test("starts loading review jobs before the first daemon status response", async () => {
@@ -363,11 +373,16 @@ describe("App", () => {
 
     const row = await screen.findByRole("button", { name: /17.*abc123/i });
     await fireEvent.click(row);
+    expect(location.pathname).toBe("/reviews/17");
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to cancel job",
     );
+    await fireEvent.click(screen.getByRole("link", { name: "Roborev" }));
+    expect(location.pathname).toBe("/reviews");
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
   });
 
   test("refreshes an off-page deep-linked review from matching events", async () => {
@@ -492,8 +507,10 @@ describe("App", () => {
       }
       if (url.pathname === "/api/status") {
         statusCalls += 1;
-        return response(401);
+        return statusCalls === 1 ? response(401) : response(200, status);
       }
+      if (url.pathname === "/api/ui/session/login")
+        return response(200, credentials);
       return applicationResponse(input);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -502,5 +519,17 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "Connect to Roborev" }),
     ).toBeInTheDocument();
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
+    await fireEvent.input(screen.getByLabelText("Daemon token"), {
+      target: { value: "replacement-token" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(
+      await screen.findByRole("region", { name: "Review jobs" }),
+    ).toBeInTheDocument();
+    expect(appOpened.reportScreenViewed.mock.calls).toEqual([
+      ["reviews"],
+      ["reviews"],
+    ]);
   });
 });

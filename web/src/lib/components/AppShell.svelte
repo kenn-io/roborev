@@ -36,6 +36,7 @@
   const runtime = makeAppRuntime();
   const router = createRouter();
   const route = $derived(router.getRoute());
+  const page = $derived(route.page);
   const navigationTabs: TopBarTab[] = [
     { id: "reviews", label: "Reviews" },
     { id: "analytics", label: "Analytics" },
@@ -58,8 +59,8 @@
   });
   setAppRuntime(runtime);
   provideReviewStores(stores);
-  onMount(() => setupAppOpenedReporting(() => route.page));
-  $effect(() => reportScreenViewed(route.page));
+  onMount(() => setupAppOpenedReporting(() => page));
+  $effect(() => reportScreenViewed(page));
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

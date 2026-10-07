@@ -122,7 +122,6 @@ export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
   if (report) reportAppOpened();
   flushSession();
   resumeSession();
-  if (getScreen) reportScreenViewed(getScreen());
   return () => {
     shellMounted = false;
     pauseSession();
