@@ -89,7 +89,7 @@ func openAnalyticsBenchmarkDB(b *testing.B) (*DB, time.Time) {
 	sources := []string{JobSourcePostCommit, JobSourceCI, JobSourceAutoDesign, ""}
 	statuses := []JobStatus{JobStatusDone, JobStatusDone, JobStatusDone, JobStatusFailed, JobStatusSkipped}
 	for i := range analyticsBenchmarkJobs {
-		finished := until.Add(-time.Duration(i) * historyDays * 24 * time.Hour / analyticsBenchmarkJobs)
+		finished := until.Add(-time.Duration(i) * (historyDays * 24 * time.Hour / analyticsBenchmarkJobs))
 		started := finished.Add(-90 * time.Second)
 		result, err := tx.Exec(`INSERT INTO review_jobs
 			(repo_id, git_ref, agent, model, status, enqueued_at, started_at, finished_at,
