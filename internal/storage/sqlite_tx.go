@@ -14,7 +14,7 @@ import (
 // every other writer waits on the lock, so the connection is discarded.
 func beginImmediate(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		DiscardConn(conn)
+		discardConn(conn)
 		return err
 	}
 	return nil
@@ -26,13 +26,13 @@ func beginImmediate(ctx context.Context, conn *sql.Conn) error {
 // is discarded for the same reason.
 func rollbackConn(conn *sql.Conn) error {
 	if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
-		DiscardConn(conn)
+		discardConn(conn)
 		return err
 	}
 	return nil
 }
 
-// DiscardConn keeps conn out of the pool once the caller closes it.
-func DiscardConn(conn *sql.Conn) {
+// discardConn keeps conn out of the pool once the caller closes it.
+func discardConn(conn *sql.Conn) {
 	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 }

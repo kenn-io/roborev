@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/jsontext"
 	"errors"
@@ -27,8 +28,12 @@ const (
 // GetSyncState retrieves a value from the sync_state table.
 // Returns empty string if key doesn't exist.
 func (db *DB) GetSyncState(key string) (string, error) {
+	return getSyncState(context.Background(), db, key)
+}
+
+func getSyncState(ctx context.Context, store experimentStore, key string) (string, error) {
 	var value string
-	err := db.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, key).Scan(&value)
+	err := store.QueryRowContext(ctx, `SELECT value FROM sync_state WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -40,7 +45,11 @@ func (db *DB) GetSyncState(key string) (string, error) {
 
 // SetSyncState sets a value in the sync_state table (upsert).
 func (db *DB) SetSyncState(key, value string) error {
-	_, err := db.Exec(`
+	return setSyncState(context.Background(), db, key, value)
+}
+
+func setSyncState(ctx context.Context, store experimentStore, key, value string) error {
+	_, err := store.ExecContext(ctx, `
 		INSERT INTO sync_state (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value
 	`, key, value)

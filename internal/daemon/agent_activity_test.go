@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,9 +14,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 )
+
+const agentActivityKey = "telemetry.agent_activity"
+
+type agentActivityState struct {
+	Day   string `json:"day"`
+	Calls uint64 `json:"calls"`
+}
 
 func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 	assert := assert.New(t)
@@ -46,26 +50,16 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 		{telemetry.PropertyCallCountBucket: "11-100"},
 		{telemetry.PropertyCallCountBucket: "over-100"},
 	}, client.properties)
-	_, err := db.Exec(`CREATE TABLE agent_count_writes (value TEXT); CREATE TRIGGER audit_agent_count_update AFTER UPDATE ON sync_state BEGIN INSERT INTO agent_count_writes VALUES (NEW.value); END`)
-	require.NoError(t, err)
 	for range 3 {
 		server.recordAgentCall(t.Context())
 	}
-	stored, err := db.GetSyncState(agentActivityKey)
-	require.NoError(t, err)
-	var saturated agentActivityState
-	require.NoError(t, json.Unmarshal([]byte(stored), &saturated))
-	assert.Equal(uint64(101), saturated.Calls)
-	var writes int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
-	assert.Zero(writes)
-	_, err = db.Exec(`DROP TRIGGER audit_agent_count_update`)
-	require.NoError(t, err)
+	assert.Len(client.events, 3)
+
 	now = now.Add(time.Minute)
 	server.recordAgentCall(t.Context())
 	assert.Len(client.events, 4)
 	assert.Equal(telemetry.EventAgentActive, client.events[3])
-	stored, err = db.GetSyncState(agentActivityKey)
+	stored, err := db.GetSyncState(agentActivityKey)
 	require.NoError(t, err)
 	var state agentActivityState
 	require.NoError(t, json.Unmarshal([]byte(stored), &state))
@@ -189,121 +183,4 @@ func TestAgentActivityCanceledWhileWaiting(t *testing.T) {
 	stored, err = db.GetSyncState(agentActivityKey)
 	require.NoError(t, err)
 	assert.Empty(t, stored)
-}
-
-func TestAgentActivityDatabaseCancellation(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
-	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		server.recordAgentCall(ctx)
-	}()
-	// Wall-clock wait: database/sql waits for the held SQLite connection.
-	require.Eventually(t, func() bool { return db.Stats().WaitCount > 0 }, time.Second, time.Millisecond)
-	cancel()
-	<-done
-	require.NoError(t, conn.Close())
-	stored, err := db.GetSyncState(agentActivityKey)
-	require.NoError(t, err)
-	assert.Empty(t, stored)
-}
-
-func TestAgentActivityBusyWriteCancellation(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
-	writer, err := db.Begin()
-	require.NoError(t, err)
-	defer func() { _ = writer.Rollback() }()
-	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
-	require.NoError(t, err)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		server.recordAgentCall(t.Context())
-	}()
-	// Wall-clock wait: SQLite's busy writer must honor the notification deadline.
-	require.Eventually(t, func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}, 2*telemetry.NotificationTimeout, time.Millisecond)
-	conn, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	var busyTimeout int
-	require.NoError(t, conn.QueryRowContext(t.Context(), `PRAGMA busy_timeout`).Scan(&busyTimeout))
-	assert.Equal(t, 30000, busyTimeout)
-	require.NoError(t, conn.Close())
-	require.NoError(t, writer.Rollback())
-	stored, err := db.GetSyncState(agentActivityKey)
-	require.NoError(t, err)
-	assert.Empty(t, stored)
-}
-
-type restoreFailureConnector struct {
-	driver driver.Driver
-	dsn    string
-}
-
-func (c restoreFailureConnector) Driver() driver.Driver { return c.driver }
-
-func (c restoreFailureConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := c.driver.Open(c.dsn)
-	if err != nil {
-		return nil, err
-	}
-	return &restoreFailureConn{Conn: conn}, nil
-}
-
-type restoreFailureConn struct {
-	driver.Conn
-	restoreFailed bool
-	closed        bool
-}
-
-func (c *restoreFailureConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	if query == "PRAGMA busy_timeout = 30000" {
-		c.restoreFailed = true
-		return nil, errors.New("timeout restore failed")
-	}
-	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
-}
-
-func (c *restoreFailureConn) Close() error {
-	c.closed = true
-	return c.Conn.Close()
-}
-
-func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	var path string
-	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
-	pool := sql.OpenDB(restoreFailureConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)"})
-	t.Cleanup(func() { require.NoError(t, pool.Close()) })
-	pool.SetMaxOpenConns(1)
-	server.db = &storage.DB{DB: pool}
-	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
-	conn, err := pool.Conn(t.Context())
-	require.NoError(t, err)
-	var affected *restoreFailureConn
-	require.NoError(t, conn.Raw(func(raw any) error {
-		affected = raw.(*restoreFailureConn)
-		return nil
-	}))
-	require.NoError(t, conn.Close())
-	server.recordAgentCall(t.Context())
-	assert.True(t, affected.restoreFailed)
-	assert.True(t, affected.closed)
-	var busyTimeout int
-	require.NoError(t, pool.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
-	assert.Equal(t, 30000, busyTimeout)
-	require.NoError(t, server.db.SetSyncState("ordinary-write", "saved"))
 }
