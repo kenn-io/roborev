@@ -1,5 +1,6 @@
 # Binaries (in root directory only)
 /roborev
+/custom-gcl
 *.exe
 /dist/
 bin/

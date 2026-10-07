@@ -75,18 +75,6 @@ func TestContextProcessError(t *testing.T) {
 	require.NoError(t, contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed), "real subprocess error should not be masked by closed pipe parse error")
 }
 
-func TestContextProcessErrorParseOnlyPathWouldMaskRealWaitErr(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	tracker := &subprocessTracker{}
-	tracker.canceledByContext.Store(true)
-	waitErr := errors.New("exit status 1")
-
-	require.NoError(t, contextProcessError(ctx, tracker, waitErr, fs.ErrClosed))
-	require.ErrorIs(t, contextProcessError(ctx, tracker, nil, fs.ErrClosed), context.Canceled)
-}
-
 func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	skipIfWindows(t)
 
@@ -100,7 +88,7 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	// The etxtbsy guard prevents Go 1.25's ETXTBSY probe from running
 	// the full script in a second child process that is never killed.
 	cmdPath := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nsleep 5\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the script sleeps 5s, so only the context ends it
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath)

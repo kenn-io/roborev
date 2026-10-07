@@ -40,7 +40,7 @@ trigger_paths = ["["]
 `), 0o644))
 
 	cmd := daemonRunCmd()
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{

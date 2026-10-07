@@ -37,7 +37,7 @@ func TestAcquirePostCommitBatchLockWaitsForHolder(t *testing.T) {
 	}()
 	<-started
 
-	timer := time.NewTimer(50 * time.Millisecond)
+	timer := time.NewTimer(50 * time.Millisecond) //nolint:kennlint // shows the second acquire does not happen; the held batch lock keeps it blocked
 	defer timer.Stop()
 	var early result
 	returnedEarly := false

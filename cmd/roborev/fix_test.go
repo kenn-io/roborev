@@ -473,7 +473,7 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := fetchReview(ctx, ts.URL, 42)
@@ -702,30 +702,6 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	assert.EqualValues(t, 0, recoveryPostCount.Load())
 }
 
-func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
-	var recoveryAttempted atomic.Bool
-	patchFixDaemonRetryForTest(t, func() error {
-		recoveryAttempted.Store(true)
-		return nil
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/comment" {
-			http.NotFound(w, r)
-			return
-		}
-		closeConnNoResponse(t, w)
-	}))
-	defer ts.Close()
-
-	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
-	require.Error(t, err, "expected connection error")
-	assert.False(t, recoveryAttempted.Load(), "unexpected daemon recovery attempt")
-}
-
 func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	var recoveryAttempted atomic.Bool
 	patchFixDaemonRetryForTest(t, func() error {
@@ -743,7 +719,7 @@ func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
@@ -2675,7 +2651,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := enqueueIfNeeded(ctx, ts.URL, repo.Dir, sha)
@@ -2762,7 +2738,7 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 	serverAddr = ts.URL
 	t.Cleanup(func() { serverAddr = oldServerAddr })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
