@@ -129,14 +129,16 @@ multiple instances.
 ### CI repository discovery and polling failures
 
 GitHub reads retry transient HTTP errors, interrupted response bodies, network
-interruptions, and request timeouts up to four total attempts. Retries use
-exponential backoff with jitter, starting at one second with an eight-second
-maximum interval. Server `Retry-After` delays take precedence. A two-minute
-elapsed budget limits scheduling the next attempt; it does not interrupt an
-attempt already running. Each attempt keeps the HTTP client's timeout, and
-caller cancellation stops attempts and waits. A server-required delay beyond the
-remaining budget surfaces the failure without retrying early. Writes such as
-comments and commit statuses are not retried.
+interruptions, and request timeouts up to four total attempts. HTTP/2 stream
+resets with CANCEL, REFUSED_STREAM, or INTERNAL_ERROR count as network
+interruptions; protocol errors remain permanent. Retries use exponential backoff
+with jitter, starting at one second with an eight-second maximum interval.
+Server `Retry-After` delays take precedence. A two-minute elapsed budget limits
+scheduling the next attempt; it does not interrupt an attempt already running.
+Each attempt keeps the HTTP client's timeout, and caller cancellation stops
+attempts and waits. A server-required delay beyond the remaining budget surfaces
+the failure without retrying early. Writes such as comments and commit statuses
+are not retried.
 
 Retry messages appear in `daemon.log`, including transient failures that
 recover. If all attempts fail, CI health and `errors.log` retain the failed

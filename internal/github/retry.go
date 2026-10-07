@@ -14,6 +14,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 	googlegithub "github.com/google/go-github/v91/github"
+	"golang.org/x/net/http2"
 )
 
 // readFailure retains typed SDK errors for callers while keeping provider text,
@@ -77,6 +78,9 @@ func readGitHub[T any](ctx context.Context, operation string, read func() (T, *g
 }
 
 func retryableRead(err error, resp *googlegithub.Response) bool {
+	if isHTTP2StreamInterruption(err) {
+		return true
+	}
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
 		return true
@@ -111,7 +115,7 @@ func readFailureDetail(err error, resp *googlegithub.Response) string {
 		return "timeout"
 	case errors.As(err, &networkError) && networkError.Timeout():
 		return "timeout"
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
+	case isHTTP2StreamInterruption(err), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
 		return "network interruption"
 	}
 	if _, ok := errors.AsType[*net.OpError](err); ok {
@@ -152,4 +156,14 @@ func readRetryAfter(err error, resp *googlegithub.Response) (time.Duration, bool
 		return *rate.RetryAfter, true
 	}
 	return 0, false
+}
+
+func isHTTP2StreamInterruption(err error) bool {
+	if stream, ok := errors.AsType[http2.StreamError](err); ok {
+		switch stream.Code {
+		case http2.ErrCodeCancel, http2.ErrCodeRefusedStream, http2.ErrCodeInternal:
+			return true
+		}
+	}
+	return false
 }
