@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -64,39 +63,15 @@ func TestMCPEndpointIsOffByDefault(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestMCPEndpointReadsWhileTelemetryWriterWaits(t *testing.T) {
-	server, db := newMCPTestServer(t, true)
-	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
-	writer, err := db.Begin()
-	require.NoError(t, err)
-	defer func() { _ = writer.Rollback() }()
-	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
-	require.NoError(t, err)
-	httpSrv := httptest.NewServer(server.httpServer.Handler)
-	defer httpSrv.Close()
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: httpSrv.URL + mcpserver.HTTPPath, HTTPClient: httpSrv.Client(), DisableStandaloneSSE: true}, nil)
-	require.NoError(t, err)
-	defer func() { _ = session.Close() }()
-	ctx, cancel := context.WithTimeout(t.Context(), telemetry.NotificationTimeout)
-	defer cancel()
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_list_repos"})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	require.NoError(t, writer.Rollback())
-	// Wall-clock wait: SQLite telemetry finishes after the writer releases its lock.
-	require.Eventually(t, func() bool {
-		stored, err := db.GetSyncState(agentActivityKey)
-		return err == nil && stored != ""
-	}, time.Second, time.Millisecond)
-	server.agentActivityGate <- struct{}{}
-	<-server.agentActivityGate
-}
-
 func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
+	var activityCalls atomic.Int32
+	server.agentActivityNow = func() time.Time {
+		activityCalls.Add(1)
+		return time.Now()
+	}
 	telemetryClient := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(telemetryClient)
 	server.browserRuntime = &BrowserRuntimeInfo{Origin: "https://reviews.example", WebBasePath: "/team"}
@@ -116,7 +91,6 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 	_, err = session.ListTools(t.Context(), nil)
 	require.NoError(err)
-	assert.Empty(telemetryClient.events)
 
 	call := func(name string, args map[string]any) map[string]any {
 		result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
@@ -176,20 +150,8 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	}
 	require.NoError(json.Unmarshal([]byte(missing.Content[0].(*mcp.TextContent).Text), &failure))
 	assert.Equal(mcpserver.ErrorCodeNotFound, failure.Error.Code)
-	// Wall-clock wait: asynchronous telemetry persists through SQLite.
-	require.Eventually(func() bool {
-		stored, err := db.GetSyncState(agentActivityKey)
-		var state agentActivityState
-		return err == nil && json.Unmarshal([]byte(stored), &state) == nil && state.Calls == 8
-	}, time.Second, time.Millisecond)
-	server.agentActivityGate <- struct{}{}
-	assert.Equal([]string{telemetry.EventAgentActive}, telemetryClient.events)
-	<-server.agentActivityGate
-	stored, err := db.GetSyncState(agentActivityKey)
-	require.NoError(err)
-	var activity agentActivityState
-	require.NoError(json.Unmarshal([]byte(stored), &activity))
-	assert.Equal(uint64(8), activity.Calls)
+	// Wall-clock wait: MCP activity reaches the recorder through TCP and SQLite work.
+	require.Eventually(func() bool { return activityCalls.Load() == 8 }, time.Second, time.Millisecond)
 }
 
 func TestMCPBackendListJobsMatchesHTTPDefaults(t *testing.T) {

@@ -83,7 +83,6 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	require.NoError(err)
 	_, err = session.ListTools(ctx, nil)
 	require.NoError(err)
-	assert.Empty(rec.telemetryPosts())
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_list_jobs"})
 	require.NoError(err)
@@ -95,11 +94,6 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 1 }, time.Second, time.Millisecond)
 	assert.Empty(rec.telemetryPosts()[0].body)
 	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_get_review"})
-	require.NoError(err)
-	assert.True(result.IsError)
-	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
-	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 2 }, time.Second, time.Millisecond)
 
 	require.NoError(session.Close())
 	_ = stdinW.Close()

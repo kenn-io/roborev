@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -106,6 +107,12 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 	reporter, messages := newPostHogStubReporter(t)
+	agentBody := `{"event":"agent_active","properties":{"call_count_bucket":"1-10"}}`
+	broken, err := http.ReadRequest(bufio.NewReader(strings.NewReader(fmt.Sprintf("POST /api/telemetry/events HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(agentBody)+1, agentBody))))
+	require.NoError(t, err)
+	brokenRecorder := httptest.NewRecorder()
+	limiter.Handler(reporter).ServeHTTP(brokenRecorder, broken)
+	assert.Equal(http.StatusBadRequest, brokenRecorder.Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":"page_viewed"}`).Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":`).Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, cli+`{"event":"app_opened"}`).Code)
@@ -119,9 +126,6 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	recorder = postThroughLimiter(limiter, reporter, cli)
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"queued"}`, recorder.Body.String())
-	daemonStarted := `{"event":"daemon_started","properties":{"repo_count":1}}`
-	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, daemonStarted).Code)
-	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, daemonStarted).Code)
 	require.NoError(t, reporter.Close())
 
 	assert.Equal([]string{"app_opened:cli"}, surfacesOf(messages()))

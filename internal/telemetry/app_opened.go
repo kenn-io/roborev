@@ -39,12 +39,16 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, appOpenedMaxBodyBytes+1))
+		if err != nil {
+			http.Error(w, "invalid telemetry request", http.StatusBadRequest)
+			return
+		}
 		// Hand kit the bytes already read plus the rest, so its size and decode answers stay its own.
 		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
 		var skip bool
 		var finish func(bool)
 		var canonical []byte
-		if err == nil && len(body) <= appOpenedMaxBodyBytes {
+		if len(body) <= appOpenedMaxBodyBytes {
 			var event struct {
 				Event string `json:"event"`
 			}

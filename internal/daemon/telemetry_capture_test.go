@@ -221,6 +221,12 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found",
 		},
+		{
+			name:       "agent activity path is not listed",
+			request:    withCredentials(browserRequest(http.MethodPost, TelemetryAgentCallPath, nil)),
+			wantStatus: http.StatusNotFound,
+			wantBody:   "404 page not found",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

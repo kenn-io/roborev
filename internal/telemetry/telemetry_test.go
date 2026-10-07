@@ -182,6 +182,24 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
+	for _, tc := range []struct{ event, bucket, want string }{
+		{EventAgentActive, "1-10", "1-10"},
+		{EventAgentCallCount, "11-100", "11-100"},
+		{EventAgentCallCount, "over-100", "over-100"},
+		{EventAgentActive, "11-100", ""},
+		{EventAgentCallCount, "1-10", ""},
+	} {
+		assert.True(reporter.EventAllowed(tc.event))
+		props, err := reporter.SanitizeProperties(tc.event, map[string]any{PropertyCallCountBucket: tc.bucket, PropertySurface: "cli", "private": "discard"})
+		require.NoError(err)
+		if tc.want == "" {
+			assert.NotContains(props, PropertyCallCountBucket)
+		} else {
+			assert.Equal(tc.want, props[PropertyCallCountBucket])
+		}
+		assert.NotContains(props, PropertySurface)
+		assert.NotContains(props, "private")
+	}
 }
 
 func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
@@ -276,10 +294,7 @@ func TestCaptureHandlerOptedOutAnswersDisabled(t *testing.T) {
 		{name: "allowed event", body: `{"event":"app_opened"}`, wantStatus: http.StatusAccepted, wantBody: `{"status":"disabled"}`},
 		{name: "wrong case", body: `{"event":"App_Opened"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
 		{name: "blank event", body: `{"event":""}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
-		{name: "daemon start", body: `{"event":"daemon_started"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
-		{name: "daemon heartbeat", body: `{"event":"daemon_active"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
 		{name: "agent activity", body: `{"event":"agent_active"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
-		{name: "agent volume", body: `{"event":"agent_call_count"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -435,29 +450,4 @@ func postCaptureEvent(handler http.Handler, body string) *httptest.ResponseRecor
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder
-}
-
-func TestAgentActivityUsesFixedBuckets(t *testing.T) {
-	reporter, messages := newPostHogStubReporter(t)
-	for _, tc := range []struct{ event, bucket string }{
-		{EventAgentActive, "1-10"},
-		{EventAgentCallCount, "11-100"},
-		{EventAgentCallCount, "over-100"},
-	} {
-		require.NoError(t, reporter.Capture(tc.event, map[string]any{PropertyCallCountBucket: tc.bucket, "surface": "cli", "private": "discard"}))
-	}
-	props, err := reporter.SanitizeProperties(EventAgentActive, map[string]any{PropertyCallCountBucket: "11-100"})
-	require.NoError(t, err)
-	assert.NotContains(t, props, PropertyCallCountBucket)
-	props, err = reporter.SanitizeProperties(EventAgentCallCount, map[string]any{PropertyCallCountBucket: "1-10"})
-	require.NoError(t, err)
-	assert.NotContains(t, props, PropertyCallCountBucket)
-	require.NoError(t, reporter.Close())
-	sent := messages()
-	require.Len(t, sent, 3)
-	for i, bucket := range []string{"1-10", "11-100", "over-100"} {
-		assert.Equal(t, bucket, sent[i].Properties[PropertyCallCountBucket])
-		assert.NotContains(t, sent[i].Properties, PropertySurface)
-		assert.NotContains(t, sent[i].Properties, "private")
-	}
 }

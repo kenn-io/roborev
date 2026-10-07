@@ -49,6 +49,12 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 	var writes int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
 	assert.Zero(writes)
+	calls, err = db.RecordAgentCall(ctx, "2026-01-03")
+	require.NoError(t, err)
+	assert.Equal(uint64(1), calls)
+	stored, err = db.GetSyncState(agentActivityKey)
+	require.NoError(t, err)
+	assert.JSONEq(`{"day":"2026-01-03","calls":1}`, stored)
 }
 
 func TestAgentActivityDatabaseCancellation(t *testing.T) {

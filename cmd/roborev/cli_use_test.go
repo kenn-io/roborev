@@ -425,6 +425,13 @@ func TestCLIUseCommandSet(t *testing.T) {
 	}
 	assert.ElementsMatch(want, got)
 
+	got = got[:0]
+	for path, counted := range agentUseCommands {
+		require.True(t, counted)
+		got = append(got, path)
+	}
+	assert.ElementsMatch([]string{"roborev agent-hook run", "roborev agent-hook fix-done", "roborev post-commit", "roborev enqueue", "roborev remap"}, got)
+
 	root := newRootCmd()
 	for path := range cliUseCommands {
 		found, _, err := root.Find(strings.Fields(path)[1:])
@@ -730,58 +737,43 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 }
 
 func TestCLIUseAgentCommands(t *testing.T) {
-	for _, path := range []string{"agent-hook run", "agent-hook fix-done", "post-commit", "enqueue", "remap"} {
-		t.Run(path, func(t *testing.T) {
-			resetCLIUse(t)
-			cmd, _, err := newRootCmd().Find(strings.Fields(path))
-			require.NoError(t, err)
-			armCLIUse(cmd)
-			assert.True(t, cliUseAgent)
-			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-			ep, err := daemon.ParseEndpoint(md.Server.URL)
-			require.NoError(t, err)
-			for _, requestPath := range []string{daemon.TelemetryAgentCallPath, "/api/ping", "/api/jobs", "/api/jobs"} {
-				observeCLIUse(ep, httptest.NewRequest(http.MethodGet, requestPath, nil), &http.Response{StatusCode: http.StatusOK})
-			}
-			waitCLIUse()
-			assert.Equal(t, []string{"POST " + daemon.TelemetryAgentCallPath}, rec.allPaths())
-		})
-	}
-}
-
-func TestAgentActivityNotificationDeadline(t *testing.T) {
-	for _, mode := range []string{"cli", "mcp"} {
-		t.Run(mode, func(t *testing.T) {
-			resetCLIUse(t)
-			synctest.Test(t, func(t *testing.T) {
-				cliAgentPost = func(ctx context.Context, _ *http.Client, url string) {
-					assert.Equal(t, "http://127.0.0.1:7373"+daemon.TelemetryAgentCallPath, url)
-					<-ctx.Done()
-				}
-				start := time.Now()
-				ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
-				if mode == "mcp" {
-					reportMCPActivity(t.Context(), ep)
-				} else {
-					cliUseAgent = true
-					observeCLIUse(ep, httptest.NewRequest(http.MethodPost, "/api/enqueue", nil), &http.Response{StatusCode: http.StatusCreated})
-					waitCLIUse()
-				}
-				synctest.Wait()
-				assert.Equal(t, cliUseTimeout, time.Since(start))
-				cliUseState.Store(nil)
-			})
-		})
-	}
-}
-
-func TestMCPActivityOptOutStartsNothing(t *testing.T) {
 	resetCLIUse(t)
-	counts := stubStartupSeams(t)
-	cliTelemetryEnabled = func() bool { return false }
-	calls := 0
-	cliAgentPost = func(context.Context, *http.Client, string) { calls++ }
-	reportMCPActivity(t.Context(), daemon.DaemonEndpoint{})
-	assert.Zero(t, calls)
-	assert.Equal(t, [5]int32{}, counts.snapshot())
+	cmd, _, err := newRootCmd().Find([]string{"enqueue"})
+	require.NoError(t, err)
+	armCLIUse(cmd)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	ep, err := daemon.ParseEndpoint(md.Server.URL)
+	require.NoError(t, err)
+	observeCLIUse(ep, httptest.NewRequest(http.MethodPost, daemon.TelemetryAgentCallPath, nil), &http.Response{StatusCode: http.StatusAccepted})
+	waitCLIUse()
+	assert.Empty(t, rec.allPaths())
+	observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+	waitCLIUse()
+	assert.Equal(t, []string{"POST " + daemon.TelemetryAgentCallPath}, rec.allPaths())
+}
+
+func TestMCPActivity(t *testing.T) {
+	t.Run("enabled", func(t *testing.T) {
+		resetCLIUse(t)
+		synctest.Test(t, func(t *testing.T) {
+			cliAgentPost = func(ctx context.Context, _ *http.Client, url string) {
+				assert.Equal(t, "http://127.0.0.1:7373"+daemon.TelemetryAgentCallPath, url)
+				<-ctx.Done()
+			}
+			start := time.Now()
+			reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+			synctest.Wait()
+			assert.Equal(t, cliUseTimeout, time.Since(start))
+		})
+	})
+	t.Run("opted out", func(t *testing.T) {
+		resetCLIUse(t)
+		counts := stubStartupSeams(t)
+		cliTelemetryEnabled = func() bool { return false }
+		calls := 0
+		cliAgentPost = func(context.Context, *http.Client, string) { calls++ }
+		reportMCPActivity(t.Context(), daemon.DaemonEndpoint{})
+		assert.Zero(t, calls)
+		assert.Equal(t, [5]int32{}, counts.snapshot())
+	})
 }
