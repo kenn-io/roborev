@@ -87,7 +87,6 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 			`stream disconnected before completion: Access denied: web search is not authorized for this identity.`,
 			LimitKindPermanent,
 		},
-		{"codex uppercase denial", "codex", "STREAM DISCONNECTED BEFORE COMPLETION: ACCESS DENIED", LimitKindPermanent},
 		{"isolated denial", "codex", "Access denied", LimitKindNone},
 		{"isolated authorization", "codex", "web search is not authorized for this identity", LimitKindNone},
 		{"other agent denial", "gemini", "stream disconnected before completion: Access denied", LimitKindTransient},

@@ -933,32 +933,38 @@ func TestCodexReviewClassifiesNoJSONSignalsAtEndOfDiagnostics(t *testing.T) {
 }
 
 func TestCodexDiagnosticCapturePreservesOutputAndClassifiesTail(t *testing.T) {
-	capture := newCodexDiagnosticCapture()
-
+	var longOutput []string
 	for range 100 {
-		_, err := capture.Write([]byte(strings.Repeat("x", 100)))
-		require.NoError(t, err)
+		longOutput = append(longOutput, strings.Repeat("x", 100))
 	}
-	_, err := capture.Write([]byte("503 Service Unavailable"))
-	require.NoError(t, err)
-
-	assert.Equal(t, strings.Repeat("x", 10000)+"503 Service Unavailable", capture.String())
-	assert.Equal(t, LimitKindTransient, capture.Classification().Kind)
-}
-
-func TestCodexDiagnosticCapturePreservesDenialAcrossWrites(t *testing.T) {
-	capture := newCodexDiagnosticCapture()
-	for _, chunk := range []string{
-		"503 Service Unavailable\nstream disconnected before completion: Access ",
-		"denied: web search is not authorized for this identity.\n",
+	longOutput = append(longOutput, "503 Service Unavailable")
+	for _, tt := range []struct {
+		name     string
+		chunks   []string
+		wantKind LimitKind
+		later    string
+	}{
+		{"long output", longOutput, LimitKindTransient, ""},
+		{"split denial", []string{
+			"503 Service Unavailable\nstream disconnected before completion: Access ",
+			"denied: web search is not authorized for this identity.\n",
+		}, LimitKindPermanent, "503 Service Unavailable"},
 	} {
-		_, err := capture.Write([]byte(chunk))
-		require.NoError(t, err)
+		t.Run(tt.name, func(t *testing.T) {
+			capture := newCodexDiagnosticCapture()
+			for _, chunk := range tt.chunks {
+				_, err := capture.Write([]byte(chunk))
+				require.NoError(t, err)
+			}
+			assert.Equal(t, strings.Join(tt.chunks, ""), capture.String())
+			assert.Equal(t, tt.wantKind, capture.Classification().Kind)
+			if tt.later != "" {
+				_, err := capture.Write([]byte(tt.later))
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantKind, capture.Classification().Kind)
+			}
+		})
 	}
-	assert.Equal(t, LimitKindPermanent, capture.Classification().Kind)
-	_, err := capture.Write([]byte("503 Service Unavailable"))
-	require.NoError(t, err)
-	assert.Equal(t, LimitKindPermanent, capture.Classification().Kind)
 }
 
 func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
