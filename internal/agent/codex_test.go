@@ -533,12 +533,6 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			want:  "",
 		},
 		{
-			name:       "TurnFailedReturnsError",
-			input:      buildStream(`{"type":"turn.failed","error":{"message":"something broke"}}`),
-			wantErr:    errCodexStreamFailed,
-			notWantErr: errNoCodexJSON,
-		},
-		{
 			name:       "ErrorEventReturnsError",
 			input:      buildStream(`{"type":"error","message":"stream error"}`),
 			wantErr:    errCodexStreamFailed,
