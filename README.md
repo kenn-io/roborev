@@ -468,7 +468,7 @@ and on the first window focus of each later UTC day, and `roborev tui` asks each
 time it starts. CLI commands that work through the daemon ask after their first
 successful daemon request, without starting a daemon; hook, MCP and daemon
 management commands, and commands the bundled agent skills run with
-`--from-skill`, do not. The daemon sends at most one `app_opened` per surface
+`--from-skill`, do not. Agent calls count separately as described below. The daemon sends at most one `app_opened` per surface
 per UTC day, so repeated opens on the same day count once, with the same install
 ID and default fields plus `surface` (`web`, `tui` or `cli`). The browser, the TUI and the CLI only talk to the daemon; the TUI and the
 CLI also send nothing when either opt-out variable is set in their own
@@ -480,6 +480,16 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 `column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
+Agent activity counts each MCP `tools/call`, including tool errors, and each
+invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
+`remap`, or an eligible daemon command marked `--from-skill` after its first
+successful product request. MCP discovery and hooks that do no daemon work
+add nothing. The daemon emits `agent_active` once per install per UTC day with
+`call_count_bucket=1-10`, then `agent_call_count` only on calls 11 and 101 with
+`11-100` and `over-100`. The highest bucket observed that day represents its
+volume. Counts persist across restarts in the existing local database.
+Delivery is best effort, honors both opt-outs, and uses the CLI reporting
+timeout for notifications. Telemetry alone never starts a daemon.
 Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider

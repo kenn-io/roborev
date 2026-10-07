@@ -433,3 +433,28 @@ func postCaptureEvent(handler http.Handler, body string) *httptest.ResponseRecor
 	handler.ServeHTTP(recorder, request)
 	return recorder
 }
+
+func TestAgentActivityUsesFixedBuckets(t *testing.T) {
+	reporter, messages := newPostHogStubReporter(t)
+	for _, tc := range []struct{ event, bucket string }{
+		{EventAgentActive, "1-10"},
+		{EventAgentCallCount, "11-100"},
+		{EventAgentCallCount, "over-100"},
+	} {
+		require.NoError(t, reporter.Capture(tc.event, map[string]any{PropertyCallCountBucket: tc.bucket, "surface": "cli", "private": "discard"}))
+	}
+	props, err := reporter.SanitizeProperties(EventAgentActive, map[string]any{PropertyCallCountBucket: "11-100"})
+	require.NoError(t, err)
+	assert.NotContains(t, props, PropertyCallCountBucket)
+	props, err = reporter.SanitizeProperties(EventAgentCallCount, map[string]any{PropertyCallCountBucket: "1-10"})
+	require.NoError(t, err)
+	assert.NotContains(t, props, PropertyCallCountBucket)
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 3)
+	for i, bucket := range []string{"1-10", "11-100", "over-100"} {
+		assert.Equal(t, bucket, sent[i].Properties[PropertyCallCountBucket])
+		assert.NotContains(t, sent[i].Properties, PropertySurface)
+		assert.NotContains(t, sent[i].Properties, "private")
+	}
+}

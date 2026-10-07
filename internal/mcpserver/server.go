@@ -18,7 +18,7 @@ type Server struct {
 
 // New builds a server exposing the roborev tools. backend must not
 // be nil.
-func New(backend Backend, version string) *Server {
+func New(backend Backend, version string, activity ...func(context.Context)) *Server {
 	if backend == nil {
 		panic("mcpserver: backend is required")
 	}
@@ -33,6 +33,16 @@ func New(backend Backend, version string) *Server {
 	s.registerTools()
 	s.registerWriteTools()
 	s.registerGuidance()
+	s.mcp.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				for _, report := range activity {
+					report(ctx)
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 	return s
 }
 

@@ -1717,14 +1717,30 @@ each time it starts. Commands that work through the daemon, such as
 `roborev review`, `roborev list` and `roborev show`, ask once their first daemon
 request succeeds, and they never start a daemon to do so. Git hook, agent hook,
 MCP and daemon management commands never report it. Commands run by the bundled
-agent skills pass `--from-skill` and are not counted; an agent that runs roborev
-outside a bundled skill, or drops the flag, still counts. The daemon sends it
-with the same install ID, version, OS and architecture plus `surface`, which is
-`web`, `tui` or `cli` and nothing else. It sends at most one `app_opened` per
-surface per UTC day, so repeated loads, tabs, launches and commands on the same
-day count once. It forgets which surfaces it sent on restart. The browser, the
-TUI and the CLI never contact PostHog. The same environment variables turn it
-off; the daemon reads them, and so do the `roborev tui` and CLI processes.
+agent skills pass `--from-skill` and count as agent activity. Unmarked eligible
+commands still count as app opens. The daemon sends `app_opened` with the same
+install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
+or `cli` and nothing else. It sends at most one `app_opened` per surface per UTC
+day, so repeated loads, tabs, launches and commands on the same day count once.
+It forgets which surfaces it sent on restart. The browser, the TUI and the CLI
+never contact PostHog. The same environment variables turn it off; the daemon
+reads them, and so do the `roborev tui` and CLI processes.
+
+Agent activity counts each MCP `tools/call`, including tool errors, and each
+invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
+`remap`, or an eligible daemon command marked `--from-skill` after its first
+successful product request. MCP initialization, discovery and keepalives add
+nothing. Git post-rewrite hooks run `remap`; post-commit and pre-push hooks run
+`post-commit`. Hooks that do no daemon work add nothing.
+
+The daemon emits `agent_active` once per install per UTC day with
+`call_count_bucket=1-10`. It emits `agent_call_count` only on calls 11 and 101,
+with `11-100` and `over-100`. Use the highest bucket observed per install and
+UTC day for volume. The local daily count survives daemon restarts in the
+existing database, without a schema migration. These events add no `app_opened`
+events. Delivery is best effort; failed delivery isn't retried. Both opt-out
+variables apply. CLI and stdio MCP notifications use the existing CLI reporting
+timeout and never start a daemon just for telemetry.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

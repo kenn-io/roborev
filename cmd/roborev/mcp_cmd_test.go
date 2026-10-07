@@ -51,9 +51,9 @@ func TestMCPServeRejectsPositionalArgs(t *testing.T) {
 func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	newMockDaemonBuilder(t).
-		WithJobs([]storage.ReviewJob{{ID: 42, GitRef: "abc", Agent: "codex", JobType: "review", Status: storage.JobStatusDone, Prompt: "secret"}}).
-		Build()
+	resetCLIUse(t)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc", Agent: "codex", JobType: "review", Status: storage.JobStatusDone, Prompt: "secret"}
 
 	stdinR, stdinW, err := os.Pipe()
 	require.NoError(err)
@@ -81,6 +81,9 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: stdoutR, Writer: stdinW}, nil)
 	require.NoError(err)
+	_, err = session.ListTools(ctx, nil)
+	require.NoError(err)
+	assert.Empty(rec.telemetryPosts())
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_list_jobs"})
 	require.NoError(err)
@@ -88,6 +91,13 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(text, `"id":42`)
 	assert.NotContains(text, "secret")
+	require.Len(rec.telemetryPosts(), 1)
+	assert.Empty(rec.telemetryPosts()[0].body)
+	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_get_review"})
+	require.NoError(err)
+	assert.True(result.IsError)
+	assert.Len(rec.telemetryPosts(), 2)
 
 	require.NoError(session.Close())
 	_ = stdinW.Close()

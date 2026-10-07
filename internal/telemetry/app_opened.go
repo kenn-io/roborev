@@ -42,6 +42,16 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		var finish func(bool)
 		var canonical []byte
 		if err == nil && len(body) <= appOpenedMaxBodyBytes {
+			var event struct {
+				Event string `json:"event"`
+			}
+			if json.Unmarshal(body, &event) == nil {
+				name := strings.TrimSpace(event.Event)
+				if name == EventAgentActive || name == EventAgentCallCount {
+					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
+					return
+				}
+			}
 			skip, finish, canonical = l.alreadySentToday(reporter, body)
 		}
 		if skip {
@@ -143,6 +153,15 @@ func postEvent(ctx context.Context, client *http.Client, url, event string, prop
 	if err != nil {
 		return
 	}
+	postTelemetry(ctx, client, url, body)
+}
+
+// PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
+func PostAgentCall(ctx context.Context, client *http.Client, url string) {
+	postTelemetry(ctx, client, url, nil)
+}
+
+func postTelemetry(ctx context.Context, client *http.Client, url string, body []byte) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return

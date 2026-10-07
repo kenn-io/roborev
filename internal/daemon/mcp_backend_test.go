@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -66,6 +67,8 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
+	telemetryClient := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(telemetryClient)
 	server.browserRuntime = &BrowserRuntimeInfo{Origin: "https://reviews.example", WebBasePath: "/team"}
 	repoPath := filepath.ToSlash(t.TempDir())
 	job := seedCompletedReview(t, db, repoPath)
@@ -81,6 +84,9 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	}, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = session.Close() })
+	_, err = session.ListTools(t.Context(), nil)
+	require.NoError(err)
+	assert.Empty(telemetryClient.events)
 
 	call := func(name string, args map[string]any) map[string]any {
 		result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
@@ -140,6 +146,12 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	}
 	require.NoError(json.Unmarshal([]byte(missing.Content[0].(*mcp.TextContent).Text), &failure))
 	assert.Equal(mcpserver.ErrorCodeNotFound, failure.Error.Code)
+	assert.Equal([]string{telemetry.EventAgentActive}, telemetryClient.events)
+	stored, err := db.GetSyncState(agentActivityKey)
+	require.NoError(err)
+	var activity agentActivityState
+	require.NoError(json.Unmarshal([]byte(stored), &activity))
+	assert.Equal(uint64(8), activity.Calls)
 }
 
 func TestMCPBackendListJobsMatchesHTTPDefaults(t *testing.T) {
