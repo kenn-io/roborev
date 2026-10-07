@@ -31,6 +31,7 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 	return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
 }
 
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestSplitReviewReportsScreenWithListFocus(t *testing.T) {
 	enableTelemetryEnv(t)
 	m := splitModel()
@@ -45,6 +46,7 @@ func TestSplitReviewReportsScreenWithListFocus(t *testing.T) {
 	assert.Equal(t, []string{"review"}, transport.screens)
 }
 
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 	enableTelemetryEnv(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -70,6 +72,7 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 	})
 }
 
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestSplitRunningJobShowsOnlyQueue(t *testing.T) {
 	m := splitModel()
 	m.currentReview = splitTestReview()

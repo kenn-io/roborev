@@ -161,10 +161,14 @@ describe("setupAppOpenedReporting", () => {
       if (scenario !== "system sleep") {
         await vi.advanceTimersByTimeAsync(1);
       }
-      expect(fetchMock).toHaveBeenCalledTimes(scenario === "early return" ? 1 : 2);
+      expect(fetchMock).toHaveBeenCalledTimes(
+        scenario === "early return" ? 1 : 2,
+      );
       if (scenario === "system sleep") now += 600_000;
       globalThis.dispatchEvent(new Event("pagehide"));
-      expect(fetchMock).toHaveBeenCalledTimes(scenario === "system sleep" ? 3 : 2);
+      expect(fetchMock).toHaveBeenCalledTimes(
+        scenario === "system sleep" ? 3 : 2,
+      );
       expect(
         JSON.parse(await fetchMock.mock.calls[1]![0].text()).properties
           .duration_bucket,
