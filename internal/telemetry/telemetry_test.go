@@ -182,6 +182,24 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
+	for _, tc := range []struct{ event, bucket, want string }{
+		{EventAgentActive, "1-10", "1-10"},
+		{EventAgentCallCount, "11-100", "11-100"},
+		{EventAgentCallCount, "over-100", "over-100"},
+		{EventAgentActive, "11-100", ""},
+		{EventAgentCallCount, "1-10", ""},
+	} {
+		assert.True(reporter.EventAllowed(tc.event))
+		props, err := reporter.SanitizeProperties(tc.event, map[string]any{PropertyCallCountBucket: tc.bucket, PropertySurface: "cli", "private": "discard"})
+		require.NoError(err)
+		if tc.want == "" {
+			assert.NotContains(props, PropertyCallCountBucket)
+		} else {
+			assert.Equal(tc.want, props[PropertyCallCountBucket])
+		}
+		assert.NotContains(props, PropertySurface)
+		assert.NotContains(props, "private")
+	}
 }
 
 func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
@@ -261,97 +279,6 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 	}
 }
 
-func TestCaptureHandlerOptedOutAnswersDisabled(t *testing.T) {
-	t.Setenv(EnabledEnv, "0")
-	reporter, err := NewReporter(Options{})
-	require.NoError(t, err)
-	handler := NewCaptureHandler(reporter)
-
-	tests := []struct {
-		name       string
-		body       string
-		wantStatus int
-		wantBody   string
-	}{
-		{name: "allowed event", body: `{"event":"app_opened"}`, wantStatus: http.StatusAccepted, wantBody: `{"status":"disabled"}`},
-		{name: "wrong case", body: `{"event":"App_Opened"}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
-		{name: "blank event", body: `{"event":""}`, wantStatus: http.StatusBadRequest, wantBody: ErrUnsupportedEvent.Error()},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			recorder := postCaptureEvent(handler, tt.body)
-			assert.Equal(t, tt.wantStatus, recorder.Code)
-			assert.Contains(t, recorder.Body.String(), tt.wantBody)
-		})
-	}
-}
-
-func TestCaptureHandlerSendsAppOpenedWithOnlyAllowedProperties(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-
-	reporter, messages := newPostHogStubReporter(t)
-
-	recorder := postCaptureEvent(NewCaptureHandler(reporter), `{"event":"app_opened","properties":{"pad":"x","repo_count":3}}`)
-	assert.Equal(http.StatusAccepted, recorder.Code)
-	assert.JSONEq(`{"status":"queued"}`, recorder.Body.String())
-	require.NoError(reporter.Close())
-
-	sent := messages()
-	require.Len(sent, 1)
-	message := sent[0]
-	assert.Equal("app_opened", message.Event)
-	assert.Equal("anonymous-install-id", message.DistinctID)
-	assert.Equal("roborev", message.Properties["application"])
-	assert.NotContains(message.Properties, "pad")
-	assert.NotContains(message.Properties, "repo_count")
-}
-
-func TestCaptureHandlerSendsSurfaceFromFixedList(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-
-	reporter, messages := newPostHogStubReporter(t)
-	handler := NewCaptureHandler(reporter)
-
-	tests := []struct {
-		body        string
-		wantSurface string
-	}{
-		{body: `{"event":"app_opened","properties":{"surface":"tui"}}`, wantSurface: "tui"},
-		{body: `{"event":"app_opened","properties":{"surface":"web"}}`, wantSurface: "web"},
-		{body: `{"event":"app_opened","properties":{"surface":"cli"}}`, wantSurface: "cli"},
-		{body: `{"event":"app_opened","properties":{"surface":["tui"]}}`},
-		{body: `{"event":"app_opened"}`},
-		{body: `{"event":"app_opened","properties":{"surface":"tui","source":"web"}}`, wantSurface: "tui"},
-	}
-	for _, tt := range tests {
-		recorder := postCaptureEvent(handler, tt.body)
-		assert.Equal(http.StatusAccepted, recorder.Code, tt.body)
-		assert.JSONEq(`{"status":"queued"}`, recorder.Body.String(), tt.body)
-	}
-	require.NoError(reporter.Close())
-
-	sent := messages()
-	require.Len(sent, len(tests))
-	for i, message := range sent {
-		assert.Equal(EventAppOpened, message.Event)
-		assert.Equal("roborev", message.Properties["application"])
-		assert.Equal("daemon", message.Properties["source"])
-		if tests[i].wantSurface == "" {
-			assert.NotContains(message.Properties, PropertySurface, tests[i].body)
-			continue
-		}
-		assert.Equal(tests[i].wantSurface, message.Properties[PropertySurface], tests[i].body)
-	}
-}
-
 type postHogWireMessage struct {
 	Event      string         `json:"event"`
 	DistinctID string         `json:"distinct_id"`
@@ -422,7 +349,7 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	reporter := NewReporterOrDisabled(Options{})
 
 	assert.False(t, reporter.Enabled())
-	recorder := postCaptureEvent(NewCaptureHandler(reporter), `{"event":"app_opened"}`)
+	recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -90,7 +91,7 @@ Example client configuration:
 			}
 			ep := getDaemonEndpoint()
 			backend := mcpserver.NewHTTPBackend(ep.BaseURL(), ep.HTTPClient(mcpRequestTimeout))
-			server := mcpserver.New(backend, version.Version)
+			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) })
 			return server.RunStdio(cmd.Context())
 		},
 	}

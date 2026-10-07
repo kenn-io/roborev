@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -66,6 +67,13 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
+	var activityCalls atomic.Int32
+	server.agentActivityNow = func() time.Time {
+		activityCalls.Add(1)
+		return time.Now()
+	}
+	telemetryClient := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(telemetryClient)
 	server.browserRuntime = &BrowserRuntimeInfo{Origin: "https://reviews.example", WebBasePath: "/team"}
 	repoPath := filepath.ToSlash(t.TempDir())
 	job := seedCompletedReview(t, db, repoPath)
@@ -140,6 +148,8 @@ func TestMCPEndpointServesInProcessBackend(t *testing.T) {
 	}
 	require.NoError(json.Unmarshal([]byte(missing.Content[0].(*mcp.TextContent).Text), &failure))
 	assert.Equal(mcpserver.ErrorCodeNotFound, failure.Error.Code)
+	// Wall-clock wait: MCP activity reaches the recorder through TCP and SQLite work.
+	require.Eventually(func() bool { return activityCalls.Load() >= 1 }, time.Second, time.Millisecond)
 }
 
 func TestMCPBackendListJobsMatchesHTTPDefaults(t *testing.T) {
@@ -360,7 +370,7 @@ func TestMCPSearchCredentialErrorsThroughBothBackends(t *testing.T) {
 				t.Cleanup(api.Close)
 				endpoint := api.URL + mcpserver.HTTPPath
 				if backend == "stdio-backend" {
-					bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test")
+					bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
 					httpBridge := httptest.NewServer(bridge.HTTPHandler())
 					t.Cleanup(httpBridge.Close)
 					endpoint = httpBridge.URL + mcpserver.HTTPPath
@@ -445,7 +455,7 @@ func TestMCPWriteToolsPersistThroughBothBackends(t *testing.T) {
 			t.Cleanup(api.Close)
 			endpoint := api.URL + mcpserver.HTTPPath
 			if transport == "stdio-backend" {
-				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test")
+				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
 				httpBridge := httptest.NewServer(bridge.HTTPHandler())
 				t.Cleanup(httpBridge.Close)
 				endpoint = httpBridge.URL + mcpserver.HTTPPath

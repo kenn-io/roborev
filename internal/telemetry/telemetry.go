@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -16,17 +15,22 @@ import (
 )
 
 const (
+	// NotificationTimeout shares the CLI's existing one-second bound with MCP database work.
+	NotificationTimeout  = time.Second
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
 	GenericEnabledEnv    = kittelemetry.GenericTelemetryEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
 	installedAtKey       = "telemetry.installed_at"
 	postHogAPIKey        = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
 
-	EventDaemonStarted = "daemon_started"
-	EventDaemonActive  = "daemon_active"
-	EventAppOpened     = "app_opened"
-	EventSessionEnded  = "session_ended"
-	EventScreenViewed  = "screen_viewed"
+	EventDaemonStarted      = "daemon_started"
+	EventDaemonActive       = "daemon_active"
+	EventAppOpened          = "app_opened"
+	EventSessionEnded       = "session_ended"
+	EventScreenViewed       = "screen_viewed"
+	EventAgentActive        = "agent_active"
+	EventAgentCallCount     = "agent_call_count"
+	PropertyCallCountBucket = "call_count_bucket"
 
 	PropertyScreen = "screen"
 	// PropertySurface names the interface that sent a usage event.
@@ -94,11 +98,6 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
-// NewCaptureHandler lets the web UI report allowlisted events through reporter; a nil reporter admits none.
-func NewCaptureHandler(reporter *Reporter) http.Handler {
-	return kittelemetry.NewPostHogCaptureHandler(reporter)
-}
-
 func allowedEventOptions() []kittelemetry.PostHogOption {
 	daemonProperties := []kittelemetry.AllowedTelemetryProperty{
 		kittelemetry.AllowTelemetryProperty("repo_count", kittelemetry.AllowTelemetryNumber),
@@ -109,6 +108,10 @@ func allowedEventOptions() []kittelemetry.PostHogOption {
 	}
 
 	return []kittelemetry.PostHogOption{
+		kittelemetry.WithAllowedEvent(EventAgentActive,
+			kittelemetry.AllowTelemetryProperty(PropertyCallCountBucket, kittelemetry.AllowTelemetryStringValues("1-10"))),
+		kittelemetry.WithAllowedEvent(EventAgentCallCount,
+			kittelemetry.AllowTelemetryProperty(PropertyCallCountBucket, kittelemetry.AllowTelemetryStringValues("11-100", "over-100"))),
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventScreenViewed,

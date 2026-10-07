@@ -32,12 +32,14 @@ func clearCLIUseState() {
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
 	cliUseState.Store(nil)
+	cliUseAgent = false
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
 func resetCLIUse(t *testing.T) {
 	t.Helper()
 	origEnabled, origTimeout, origPost := cliTelemetryEnabled, cliUseTimeout, cliUsePost
+	origAgentPost := cliAgentPost
 	origServer, origParsed, origVerbose, origFromSkill := serverAddr, parsedServerEndpoint, verbose, fromSkill
 	clearCLIUseState()
 	cliTelemetryEnabled = func() bool { return true }
@@ -45,6 +47,7 @@ func resetCLIUse(t *testing.T) {
 		waitCLIUse()
 		clearCLIUseState()
 		cliTelemetryEnabled, cliUseTimeout, cliUsePost = origEnabled, origTimeout, origPost
+		cliAgentPost = origAgentPost
 		serverAddr, parsedServerEndpoint, verbose, fromSkill = origServer, origParsed, origVerbose, origFromSkill
 	})
 }
@@ -80,7 +83,7 @@ func (r *cliUseRecorder) businessPaths() []string {
 	defer r.mu.Unlock()
 	var out []string
 	for _, p := range r.paths {
-		if !strings.HasSuffix(p, " "+daemon.TelemetryEventsPath) {
+		if !strings.HasSuffix(p, " "+daemon.TelemetryEventsPath) && !strings.HasSuffix(p, " "+daemon.TelemetryAgentCallPath) {
 			out = append(out, p)
 		}
 	}
@@ -124,7 +127,7 @@ func newCLIUseDaemon(t *testing.T, hooks MockRefineHooks, onTelemetry http.Handl
 	hooks.OnReviewClose = rec.noting(hooks.OnReviewClose)
 	hooks.OnUnhandled = func(w http.ResponseWriter, req *http.Request, state *mockRefineState) bool {
 		rec.note(req)
-		if req.URL.Path == daemon.TelemetryEventsPath {
+		if req.URL.Path == daemon.TelemetryEventsPath || req.URL.Path == daemon.TelemetryAgentCallPath {
 			body, _ := io.ReadAll(req.Body)
 			rec.mu.Lock()
 			rec.telemetry = append(rec.telemetry, recordedTelemetry{
@@ -422,6 +425,13 @@ func TestCLIUseCommandSet(t *testing.T) {
 	}
 	assert.ElementsMatch(want, got)
 
+	got = got[:0]
+	for path, counted := range agentUseCommands {
+		require.True(t, counted)
+		got = append(got, path)
+	}
+	assert.ElementsMatch([]string{"roborev agent-hook run", "roborev agent-hook fix-done", "roborev post-commit", "roborev enqueue", "roborev remap"}, got)
+
 	root := newRootCmd()
 	for path := range cliUseCommands {
 		found, _, err := root.Find(strings.Fields(path)[1:])
@@ -452,7 +462,7 @@ func TestCLIUseCommandSet(t *testing.T) {
 	}
 	walk(root)
 
-	t.Run("post-commit sends nothing", func(t *testing.T) {
+	t.Run("post-commit reports agent activity", func(t *testing.T) {
 		resetCLIUse(t)
 		md, rec := newCLIUseDaemon(t, MockRefineHooks{
 			OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
@@ -466,7 +476,9 @@ func TestCLIUseCommandSet(t *testing.T) {
 		run := runCLI(t, "post-commit", "--repo", repo.Dir, "--server", md.Server.URL)
 		require.NoError(t, run.err)
 		require.Contains(t, rec.businessPaths(), "POST /api/enqueue")
-		require.Empty(t, rec.telemetryPosts())
+		require.Len(t, rec.telemetryPosts(), 1)
+		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
+		assert.Empty(rec.telemetryPosts()[0].body)
 	})
 }
 
@@ -579,6 +591,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 			{http.MethodPost, "/api/update/renew", 200, false},
 			{http.MethodPost, "/api/update/release", 200, false},
 			{http.MethodPost, daemon.TelemetryEventsPath, 202, false},
+			{http.MethodPost, daemon.TelemetryAgentCallPath, 202, false},
 			{http.MethodGet, "/api/status", 200, true},
 			{http.MethodGet, "/api/jobs", 200, true},
 			{http.MethodPost, "/api/enqueue", 201, true},
@@ -634,7 +647,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 	})
 }
 
-func TestCLIUseSkipsSkillMarkedCommands(t *testing.T) {
+func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 	resetCLIUse(t)
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 	md.State.mu.Lock()
@@ -668,7 +681,9 @@ func TestCLIUseSkipsSkillMarkedCommands(t *testing.T) {
 			rec.reset()
 			marked := runCLIFresh(t, true, append(tc.marked, "--server", md.Server.URL)...)
 			markedBusiness := rec.businessPaths()
-			assert.Empty(rec.telemetryPosts())
+			require.Len(t, rec.telemetryPosts(), 1)
+			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
+			assert.Empty(rec.telemetryPosts()[0].body)
 
 			rec.reset()
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
@@ -719,5 +734,30 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 			assert.Equal(t, time.Duration(0), time.Since(start))
 			cliUseState.Store(nil)
 		})
+	})
+}
+
+func TestMCPActivity(t *testing.T) {
+	t.Run("enabled", func(t *testing.T) {
+		resetCLIUse(t)
+		synctest.Test(t, func(t *testing.T) {
+			cliAgentPost = func(ctx context.Context, _ *http.Client, _ string) {
+				<-ctx.Done()
+			}
+			start := time.Now()
+			reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+			synctest.Wait()
+			assert.Equal(t, cliUseTimeout, time.Since(start))
+		})
+	})
+	t.Run("opted out", func(t *testing.T) {
+		resetCLIUse(t)
+		counts := stubStartupSeams(t)
+		cliTelemetryEnabled = func() bool { return false }
+		calls := 0
+		cliAgentPost = func(context.Context, *http.Client, string) { calls++ }
+		reportMCPActivity(t.Context(), daemon.DaemonEndpoint{})
+		assert.Zero(t, calls)
+		assert.Equal(t, [5]int32{}, counts.snapshot())
 	})
 }

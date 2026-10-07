@@ -51,9 +51,9 @@ func TestMCPServeRejectsPositionalArgs(t *testing.T) {
 func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	newMockDaemonBuilder(t).
-		WithJobs([]storage.ReviewJob{{ID: 42, GitRef: "abc", Agent: "codex", JobType: "review", Status: storage.JobStatusDone, Prompt: "secret"}}).
-		Build()
+	resetCLIUse(t)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc", Agent: "codex", JobType: "review", Status: storage.JobStatusDone, Prompt: "secret"}
 
 	stdinR, stdinW, err := os.Pipe()
 	require.NoError(err)
@@ -88,6 +88,10 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(text, `"id":42`)
 	assert.NotContains(text, "secret")
+	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
+	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 1 }, time.Second, time.Millisecond)
+	assert.Empty(rec.telemetryPosts()[0].body)
+	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 
 	require.NoError(session.Close())
 	_ = stdinW.Close()

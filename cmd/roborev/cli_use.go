@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -62,30 +61,43 @@ var cliUseCommands = map[string]bool{
 
 // cliUseLifecyclePaths are daemon requests a command can make around its own work; a restart's shutdown must not use up the report.
 var cliUseLifecyclePaths = map[string]bool{
-	"/api/ping":                true,
-	"/api/shutdown":            true,
-	"/api/update/prepare":      true,
-	"/api/update/renew":        true,
-	"/api/update/release":      true,
-	daemon.TelemetryEventsPath: true,
+	"/api/ping":                   true,
+	"/api/shutdown":               true,
+	"/api/update/prepare":         true,
+	"/api/update/renew":           true,
+	"/api/update/release":         true,
+	daemon.TelemetryEventsPath:    true,
+	daemon.TelemetryAgentCallPath: true,
+}
+
+var agentUseCommands = map[string]bool{
+	"roborev agent-hook run":      true,
+	"roborev agent-hook fix-done": true,
+	"roborev post-commit":         true,
+	"roborev enqueue":             true,
+	"roborev remap":               true,
 }
 
 var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
-	cliUseTimeout = time.Second
+	cliUseTimeout = telemetry.NotificationTimeout
 	cliUsePost    = telemetry.PostAppOpened
+	cliAgentPost  = telemetry.PostAgentCall
 	cliUseOnce    sync.Once
 	cliUseState   atomic.Pointer[cliUsePostState] // nil until a post starts
+	cliUseAgent   bool
 )
 
 type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
 
-// armCLIUse installs the daemon response observer for a listed command run by a person with telemetry on.
+// armCLIUse selects human or agent activity for commands that work through the daemon.
 func armCLIUse(cmd *cobra.Command) {
-	if fromSkill || !cliUseCommands[cmd.CommandPath()] || !cliTelemetryEnabled() {
+	path := cmd.CommandPath()
+	if (!cliUseCommands[path] && !agentUseCommands[path]) || !cliTelemetryEnabled() {
 		return
 	}
+	cliUseAgent = agentUseCommands[path] || fromSkill
 	daemon.SetClientResponseObserver(observeCLIUse)
 }
 
@@ -94,7 +106,7 @@ func cliUseEligible(req *http.Request, resp *http.Response) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300 && !cliUseLifecyclePaths[req.URL.Path]
 }
 
-// observeCLIUse starts the one app_opened post after the first eligible response from ep.
+// observeCLIUse starts one activity post after the first eligible response from ep.
 func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Response) {
 	if !cliUseEligible(req, resp) {
 		return
@@ -104,9 +116,22 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 		cliUseState.Store(&cliUsePostState{ctx: ctx})
 		go func() {
 			defer cancel()
-			cliUsePost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI)
+			if cliUseAgent {
+				cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
+			} else {
+				cliUsePost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI)
+			}
 		}()
 	})
+}
+
+func reportMCPActivity(ctx context.Context, ep daemon.DaemonEndpoint) {
+	if !cliTelemetryEnabled() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, cliUseTimeout)
+	defer cancel()
+	cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
 }
 
 // waitCLIUse waits for a started post to finish or reach its deadline.

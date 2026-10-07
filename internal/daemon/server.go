@@ -82,6 +82,8 @@ type Server struct {
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
 	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
+	agentActivityGate       chan struct{}
+	agentActivityNow        func() time.Time
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
 	mcpEnabled              bool       // [mcp] enabled at construction; /mcp is mounted on the API listener
@@ -206,6 +208,7 @@ func newServerWithLogs(
 		releaseNotesNow:    time.Now,
 		searchNow:          time.Now,
 		telemetryStop:      make(chan struct{}),
+		agentActivityGate:  make(chan struct{}, 1),
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
@@ -220,7 +223,7 @@ func newServerWithLogs(
 	s.registerTelemetryCaptureRoute(mux)
 	if cfg.MCP.Enabled {
 		s.mcpEnabled = true
-		mcpServer := mcpserver.New(s.mcpBackend(), version.Version)
+		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, s.recordAgentCall)
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
 
