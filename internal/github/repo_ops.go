@@ -45,9 +45,11 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string) ([]Ope
 
 	var result []OpenPullRequest
 	for {
-		prs, resp, err := c.api.PullRequests.List(ctx, owner, repo, opts)
+		prs, resp, err := readGitHub(ctx, "list pull requests", func() ([]*googlegithub.PullRequest, *googlegithub.Response, error) {
+			return c.api.PullRequests.List(ctx, owner, repo, opts)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list pull requests: %w", err)
+			return nil, err
 		}
 		for _, pr := range prs {
 			result = append(result, OpenPullRequest{
@@ -81,9 +83,11 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		return PullRequestInfo{}, err
 	}
 
-	pr, _, err := c.api.PullRequests.Get(ctx, owner, repo, prNumber)
+	pr, _, err := readGitHub(ctx, "get pull request", func() (*googlegithub.PullRequest, *googlegithub.Response, error) {
+		return c.api.PullRequests.Get(ctx, owner, repo, prNumber)
+	})
 	if err != nil {
-		return PullRequestInfo{}, fmt.Errorf("get pull request: %w", err)
+		return PullRequestInfo{}, err
 	}
 	return PullRequestInfo{
 		Number:      pr.GetNumber(),
@@ -103,9 +107,11 @@ func (c *Client) IsIssue(ctx context.Context, ghRepo string, number int) (bool, 
 	if err != nil {
 		return false, err
 	}
-	issue, _, err := c.api.Issues.Get(ctx, owner, repo, number)
+	issue, _, err := readGitHub(ctx, "get issue", func() (*googlegithub.Issue, *googlegithub.Response, error) {
+		return c.api.Issues.Get(ctx, owner, repo, number)
+	})
 	if err != nil {
-		return false, fmt.Errorf("get issue: %w", err)
+		return false, err
 	}
 	return !issue.IsPullRequest(), nil
 }
@@ -147,9 +153,11 @@ func (c *Client) GetRepositoryFullName(ctx context.Context, ghRepo string) (stri
 	if err != nil {
 		return "", err
 	}
-	got, _, err := c.api.Repositories.Get(ctx, owner, repo)
+	got, _, err := readGitHub(ctx, "get repository", func() (*googlegithub.Repository, *googlegithub.Response, error) {
+		return c.api.Repositories.Get(ctx, owner, repo)
+	})
 	if err != nil {
-		return "", fmt.Errorf("get repository: %w", err)
+		return "", err
 	}
 	fullName := strings.TrimSpace(got.GetFullName())
 	if fullName == "" {
@@ -184,9 +192,11 @@ func (c *Client) EnsureSkippedCommitStatus(ctx context.Context, ghRepo, sha, des
 	}
 	opts := &googlegithub.ListOptions{}
 	for {
-		combined, resp, err := c.api.Repositories.GetCombinedStatus(ctx, owner, repo, sha, opts)
+		combined, resp, err := readGitHub(ctx, "get commit statuses", func() (*googlegithub.CombinedStatus, *googlegithub.Response, error) {
+			return c.api.Repositories.GetCombinedStatus(ctx, owner, repo, sha, opts)
+		})
 		if err != nil {
-			return fmt.Errorf("get commit statuses: %w", err)
+			return err
 		}
 		for _, status := range combined.Statuses {
 			if status.GetContext() != "roborev" {
@@ -213,16 +223,18 @@ func (c *Client) EnsureSkippedCheckRun(ctx context.Context, ghRepo, sha, summary
 	}
 
 	const checkName = "roborev"
-	runs, _, err := c.api.Checks.ListCheckRunsForRef(
-		ctx, owner, repo, sha,
-		&googlegithub.ListCheckRunsOptions{
-			CheckName: ptr(checkName),
-			Status:    ptr("completed"),
-			Filter:    ptr("latest"),
-		},
-	)
+	runs, _, err := readGitHub(ctx, "list check runs", func() (*googlegithub.ListCheckRunsResults, *googlegithub.Response, error) {
+		return c.api.Checks.ListCheckRunsForRef(
+			ctx, owner, repo, sha,
+			&googlegithub.ListCheckRunsOptions{
+				CheckName: ptr(checkName),
+				Status:    ptr("completed"),
+				Filter:    ptr("latest"),
+			},
+		)
+	})
 	if err != nil {
-		return fmt.Errorf("list roborev check runs: %w", err)
+		return err
 	}
 	for _, run := range runs.CheckRuns {
 		if run.GetConclusion() == "skipped" &&
@@ -372,7 +384,9 @@ func (c *Client) listOrgRepos(ctx context.Context, owner string, limit int) ([]s
 		PerPage: min(limit, 100),
 	}
 	return c.collectRepos(ctx, limit, func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
-		return c.api.Repositories.ListByOrg(ctx, owner, opts)
+		return readGitHub(ctx, "list organization repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+			return c.api.Repositories.ListByOrg(ctx, owner, opts)
+		})
 	}, func(nextPage int) {
 		opts.Page = nextPage
 	})
@@ -387,7 +401,9 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 		PerPage: min(limit, 100),
 	}
 	pageRepos, err := c.collectRepos(ctx, limit, func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
-		return c.api.Repositories.ListByUser(ctx, owner, userOpts)
+		return readGitHub(ctx, "list user repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+			return c.api.Repositories.ListByUser(ctx, owner, userOpts)
+		})
 	}, func(nextPage int) {
 		userOpts.Page = nextPage
 	})
@@ -408,7 +424,9 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 		PerPage:     min(limit, 100),
 	}
 	for {
-		authPage, resp, err := c.api.Repositories.ListByAuthenticatedUser(ctx, authOpts)
+		authPage, resp, err := readGitHub(ctx, "list accessible repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+			return c.api.Repositories.ListByAuthenticatedUser(ctx, authOpts)
+		})
 		if err != nil {
 			break
 		}
@@ -445,7 +463,7 @@ func (c *Client) collectRepos(ctx context.Context, limit int, fetch func() ([]*g
 	for {
 		pageRepos, resp, err := fetch()
 		if err != nil {
-			return nil, fmt.Errorf("list repositories: %w", err)
+			return nil, err
 		}
 		for _, repo := range pageRepos {
 			if repo.GetArchived() || (repo.HasPullRequests != nil && !repo.GetHasPullRequests()) {

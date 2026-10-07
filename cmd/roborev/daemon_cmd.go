@@ -247,7 +247,7 @@ func daemonRunCmd() *cobra.Command {
 		Use:   "run",
 		Short: "Run the daemon in foreground",
 		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			// Defense-in-depth: clear git repo-context env vars that hooks may set.
 			// The spawn sites (startDaemon, upgrade) filter these out, but
 			// clear them here too in case the daemon is started manually.
@@ -258,7 +258,11 @@ func daemonRunCmd() *cobra.Command {
 				}
 			}
 
-			log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+			closeLogs, err := setupDaemonLogging(config.DataDir(), os.Stderr, maxDaemonLogBytes)
+			if err != nil {
+				return err
+			}
+			defer func() { runErr = errors.Join(runErr, closeLogs()) }()
 			log.Printf("Starting roborev daemon (version %s)...", version.Version)
 
 			// Silently clean up old roborevd binary if it exists (consolidated into roborev)

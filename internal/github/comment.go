@@ -33,9 +33,11 @@ func (c *Client) FindExistingComment(ctx context.Context, ghRepo string, prNumbe
 
 	var lastID int64
 	for {
-		comments, resp, err := c.api.Issues.ListComments(ctx, owner, repo, prNumber, opts)
+		comments, resp, err := readGitHub(ctx, "list issue comments", func() ([]*googlegithub.IssueComment, *googlegithub.Response, error) {
+			return c.api.Issues.ListComments(ctx, owner, repo, prNumber, opts)
+		})
 		if err != nil {
-			return 0, fmt.Errorf("list issue comments: %w", err)
+			return 0, err
 		}
 		for _, comment := range comments {
 			if strings.Contains(comment.GetBody(), CommentMarker) {

@@ -108,11 +108,45 @@ roborev daemon start
 
 `roborev init` starts the daemon automatically, but it won't survive a reboot
 unless you've set up a launchd/systemd service. If the daemon was running but
-reviews still aren't appearing, check the daemon log for errors:
+reviews still aren't appearing, read the saved daemon diagnostics:
 
 ```bash
-roborev daemon run 2>&1 | head -50
+tail -50 "${ROBOREV_DATA_DIR:-$HOME/.roborev}/daemon.log"
 ```
+
+Both foreground and detached daemons write standard timestamped diagnostics to
+`daemon.log` in the data directory and continue writing to stderr. The active
+file and its one previous rotation, `daemon.log.1`, each hold at most 10 MiB. A
+record larger than that limit is marked `[truncated]` in the file; stderr
+retains the complete record. The detached launcher also captures stdout and
+stderr under the data directory's `logs/` directory for startup diagnostics.
+
+### CI repository discovery and polling failures
+
+GitHub reads retry transient HTTP errors, interrupted response bodies, network
+interruptions, and request timeouts up to four total attempts. Retries use
+exponential backoff with jitter, starting at one second with an eight-second
+maximum interval. Server `Retry-After` delays take precedence. A two-minute
+elapsed budget limits scheduling the next attempt; it does not interrupt an
+attempt already running. Each attempt keeps the HTTP client's timeout, and
+caller cancellation stops attempts and waits. A server-required delay beyond the
+remaining budget surfaces the failure without retrying early. Writes such as
+comments and commit statuses are not retried.
+
+Retry messages appear in `daemon.log`, including transient failures that
+recover. If all attempts fail, CI health and `errors.log` retain the failed
+operation and a safe category, such as `list pull requests: timeout` or
+`list organization repositories: HTTP 503`. Provider response text and
+credentials are excluded from these summaries. Other failure details remain in
+the daemon log. The next successful poll clears the current failure and
+preserves error history; discovery continues to use previously known
+repositories when available.
+
+Check the operation and category before changing configuration. For HTTP 401 or
+403, check the CI credential and its repository permissions. For rate limits,
+allow the server's reset interval to pass. For timeouts, interrupted reads, or
+HTTP 5xx responses, check GitHub availability and the daemon's network access. A
+persistent failure stays unhealthy until that operation succeeds.
 
 ### Post-commit hook log
 
