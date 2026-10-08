@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -142,6 +143,8 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	screenDay            string   // UTC day that screensSent covers
+	screensSent          []string // screens reported on screenDay
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -895,7 +898,9 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		glamourStyle:        streamfmt.InitialGlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
-		width:               80, // sensible defaults until we get WindowSizeMsg
+		screenDay:           time.Now().UTC().Format(time.DateOnly),
+		screensSent:         []string{viewQueue.String()}, // Init reports the queue
+		width:               80,                           // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
@@ -1303,8 +1308,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
 		}
-		if m.currentView != rm.currentView {
-			cmd = tea.Batch(cmd, rm.reportScreenViewed())
+		today := time.Now().UTC().Format(time.DateOnly)
+		_, key := msg.(tea.KeyMsg)
+		_, mouse := msg.(tea.MouseMsg)
+		if rm.screenDay != today {
+			rm.screenDay, rm.screensSent = today, nil
+		}
+		for _, screen := range rm.screensShown() {
+			if slices.Contains(rm.screensSent, screen) {
+				continue
+			}
+			if key || mouse || !slices.Contains(m.screensShown(), screen) {
+				rm.screensSent = append(rm.screensSent, screen)
+				cmd = tea.Batch(cmd, rm.postScreen(screen))
+			}
 		}
 		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
 			refreshed, refreshCmd := rm.handleWindowSizeMsg(tea.WindowSizeMsg{Width: rm.width, Height: rm.height})

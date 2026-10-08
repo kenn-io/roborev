@@ -25,7 +25,7 @@ func postThroughLimiter(limiter *AppOpenedLimiter, reporter *Reporter, body stri
 	return postCaptureEvent(limiter.Handler(reporter), body)
 }
 
-func surfacesOf(messages []postHogWireMessage) []string {
+func surfacesOf(messages []testutil.PostHogMessage) []string {
 	surfaces := make([]string, 0, len(messages))
 	for _, message := range messages {
 		surface, _ := message.Properties[PropertySurface].(string)
@@ -275,7 +275,7 @@ func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
 			assert.NotContains(t, normalized.Properties, "path")
 			stored, err := db.GetSyncState("telemetry.screen." + normalized.Properties[PropertyScreen].(string))
 			require.NoError(t, err)
-			assert.Equal(t, now.UTC().Format(time.DateOnly), stored)
+			assert.Empty(t, stored)
 			finish(false)
 			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
 			claimed := "review"
@@ -297,6 +297,37 @@ func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
 	}
 }
 
+func TestScreenViewedClaimsFinishingOutOfOrder(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	db := testutil.OpenTestDB(t)
+	reporter, _ := newPostHogStubReporter(t)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	now := time.Date(2026, 3, 1, 23, 59, 0, 0, time.UTC)
+	limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	body := []byte(`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`)
+	skip, earlier, _ := limiter.alreadySentToday(reporter, body)
+	require.False(t, skip)
+	require.NotNil(t, earlier)
+	now = now.Add(time.Minute)
+	skip, later, _ := limiter.alreadySentToday(reporter, body)
+	require.False(t, skip)
+	require.NotNil(t, later)
+	later(true)
+	earlier(true)
+	stored, err := db.GetSyncState("telemetry.screen.queue")
+	require.NoError(t, err)
+	assert.Equal(t, now.Format(time.DateOnly), stored)
+	skip, _, _ = limiter.alreadySentToday(reporter, body)
+	assert.True(t, skip)
+	limiter = &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+	skip, _, _ = limiter.alreadySentToday(reporter, body)
+	assert.True(t, skip)
+	now = now.Add(-time.Minute)
+	skip, _, _ = limiter.alreadySentToday(reporter, body)
+	assert.True(t, skip)
+}
+
 func TestScreenViewedUnacceptedClaims(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
@@ -314,7 +345,7 @@ func TestScreenViewedUnacceptedClaims(t *testing.T) {
 				_, err := db.Exec(`CREATE TRIGGER reject_screen_claim BEFORE INSERT ON sync_state BEGIN SELECT RAISE(FAIL, 'metadata unavailable'); END`)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-				assert.Empty(t, limiter.sent)
+				assert.Equal(t, time.Now().UTC().Format(time.DateOnly), limiter.sent["telemetry.screen.queue"])
 				_, err = db.Exec(`DROP TRIGGER reject_screen_claim`)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
