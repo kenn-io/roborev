@@ -69,6 +69,21 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictFail,
 	},
 	{
+		name:   "TimestampPrefix/stamped severity finding overrides stamped pass phrase",
+		output: "[2026-10-08 07:53am] - High: token written to the log\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamped ISO severity finding overrides stamped pass phrase",
+		output: "[2026-10-08T14:53:00Z] **Medium** — cache key omits the user id\n[2026-10-08T14:54:00Z] No findings.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamped rubric does not count as a finding",
+		output: "[2026-10-08 07:53am] Severity levels:\n- High: data loss\n- Low: style\n\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
 		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
 		output: "[note] No issues found.",
 		want:   VerdictFail,

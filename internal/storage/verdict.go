@@ -304,11 +304,11 @@ func isExplicitVerdictValue(line, value string) bool {
 }
 
 // timestampPrefix matches a bracketed date or date-time at the start of a
-// lowercased line, e.g. "[2026-10-08 07:53am] ", "[2026-10-08t14:53:00z] ".
+// line, e.g. "[2026-10-08 07:53am] ", "[2026-10-08T14:53:00Z] ".
 // Repository instructions sometimes tell agents to stamp every reply; the
-// stamp is not part of the verdict.
+// stamp is not part of the verdict, a severity label, or a section heading.
 var timestampPrefix = regexp.MustCompile(
-	`^\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\]\s*`)
+	`(?i)^\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\]\s*`)
 
 // stripTimestampPrefix removes a leading bracketed timestamp from a line.
 func stripTimestampPrefix(s string) string {
@@ -409,6 +409,7 @@ func ProseSeverityLabels(lines []string) []ProseLabel {
 	labels := make([]ProseLabel, len(lines))
 	legend, entries := false, false
 	for i, line := range lines {
+		line = stripTimestampPrefix(line)
 		trimmed := strings.TrimSpace(line)
 		severity := proseSeverityLabel(line)
 		switch {
@@ -486,7 +487,7 @@ func proseSeverityLabel(line string) string {
 // value is "summary", "findings", "separator", or empty for ordinary prose.
 // Verdict parsing and comment preparation use the same boundaries.
 func ProseSection(line string) string {
-	line = strings.ToLower(strings.TrimSpace(line))
+	line = stripTimestampPrefix(strings.ToLower(strings.TrimSpace(line)))
 	if line == "---" {
 		return "separator"
 	}
