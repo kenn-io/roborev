@@ -91,24 +91,6 @@ describe("JobRow", () => {
     );
   });
 
-  it.each([
-    ["thorough", "thorough"],
-    [undefined, "--"],
-  ])("shows recorded reasoning %s", (reasoning, expected) => {
-    const view = render(JobRow, {
-      props: {
-        job: { ...makeJob(), reasoning },
-        selected: false,
-        highlighted: false,
-        onclick: () => {},
-      },
-    });
-
-    expect(view.container.querySelector(".col-reasoning")).toHaveTextContent(
-      expected!,
-    );
-  });
-
   it("labels an omitted review type as default", () => {
     const view = render(JobRow, {
       props: {

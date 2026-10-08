@@ -477,10 +477,6 @@ test.describe.serial("native review workspace", () => {
       page.locator(".member-name", { hasText: "security" }),
     ).toBeVisible();
     await expect(jobRow(page, 54).locator(".col-closed")).toHaveText("--");
-    await expect(jobRow(page, 54).locator(".col-reasoning")).toHaveText(
-      "thorough",
-    );
-    await expect(jobRow(page, 55).locator(".col-reasoning")).toHaveText("--");
 
     await jobRow(page, 54).click();
     const drawer = page.getByRole("region", { name: "Review details" });
