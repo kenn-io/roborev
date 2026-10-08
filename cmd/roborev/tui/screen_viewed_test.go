@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -81,4 +82,26 @@ func TestSplitRunningJobShowsOnlyQueue(t *testing.T) {
 	m.jobs[0].Status = storage.JobStatusRunning
 	require.NotEqual(t, m.selectedJobID, m.currentReview.JobID)
 	assert.Equal(t, []string{"queue"}, m.screensShown())
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := splitModel()
+		transport := &screenRecordingTransport{}
+		m.client.Transport = transport
+		update := func(msg tea.Msg) {
+			result, cmd := m.Update(msg)
+			m = result.(model)
+			collectMsgs(cmd)
+		}
+		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		update(keyPressMsg('j'))
+		require.Equal(t, []string{"queue"}, m.screensShown())
+		update(keyPressMsg('k'))
+		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		require.Equal(t, []string{"queue", "review"}, m.screensShown())
+		assert.Equal(t, []string{"review"}, transport.screens)
+	})
 }

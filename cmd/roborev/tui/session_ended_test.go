@@ -21,20 +21,20 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 	tests := []struct {
 		surface string
 		bucket  string
-		send    func(t *testing.T, url string, messages func() []testutil.PostHogMessage)
+		send    func(t *testing.T, url string)
 	}{
-		{telemetry.SurfaceTUI, telemetry.Duration1To5m, func(t *testing.T, url string, messages func() []testutil.PostHogMessage) {
+		// PostHog batches until Close, so only the single message counted after Close shows that the
+		// calls before readiness and after opt-out sent nothing.
+		{telemetry.SurfaceTUI, telemetry.Duration1To5m, func(t *testing.T, url string) {
 			m := newModel(testEndpointFromURL(url), withExternalIODisabled())
 			m.reportSessionEnded(2 * time.Minute)
-			assert.Empty(t, messages(), "no PostHog message before readiness")
 			close(m.ready)
 			t.Setenv(telemetry.EnabledEnv, "0")
 			m.reportSessionEnded(time.Minute)
-			assert.Empty(t, messages(), "no PostHog message after opt-out")
 			enableTelemetryEnv(t)
 			m.reportSessionEnded(2 * time.Minute)
 		}},
-		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, func(t *testing.T, url string, _ func() []testutil.PostHogMessage) {
+		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, func(t *testing.T, url string) {
 			body := `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"under_1m"}}`
 			response, err := http.Post(url+daemon.TelemetryEventsPath, "application/json", strings.NewReader(body))
 			require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			server.SetTelemetry(reporter)
 			srv := httptest.NewServer(server.Handler())
 			t.Cleanup(srv.Close)
-			tt.send(t, srv.URL, messages)
+			tt.send(t, srv.URL)
 			require.NoError(t, reporter.Close())
 			sent := messages()
 			require.Len(t, sent, 1)

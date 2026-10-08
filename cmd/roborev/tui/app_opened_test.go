@@ -343,10 +343,8 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 	// Requests cross a test-server socket.
 	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, "help", <-screens)
+	// The queue was already reported today, so returning to it posts nothing; the final Empty checks that.
 	p.Send(keyPressMsg('?'))
-	// Requests cross a test-server socket.
-	require.Eventually(t, func() bool { return len(screens) == 1 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "queue", <-screens)
 
 	jobsBefore := d.jobFetches.Load()
 	p.Send(reconnectMsg{endpoint: ep, version: "test"})

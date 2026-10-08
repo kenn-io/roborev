@@ -463,7 +463,8 @@ enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 ID. Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 `1_to_5m`, `5_to_30m`, or `over_30m`. Each browser session adds up visible time
-across tab switches and excludes hidden time.
+across tab switches and excludes hidden time. A browser session is lost when the
+browser quits, crashes, or discards the tab before the page closes normally.
 The web UI also asks the daemon to report an `app_opened` event when it loads
 and on the first window focus of each later UTC day, and `roborev tui` asks each
 time it starts. CLI commands that work through the daemon ask after their first
