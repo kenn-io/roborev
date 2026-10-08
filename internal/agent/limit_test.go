@@ -78,6 +78,20 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 		want             LimitKind
 	}{
 		{
+			"codex denied reconnect", "codex",
+			`codex stream reported failure: Reconnecting... 1/5 (stream disconnected before completion: Access denied: web search is not authorized for this identity.)`,
+			LimitKindPermanent,
+		},
+		{
+			"codex denied terminal", "codex",
+			`stream disconnected before completion: Access denied: web search is not authorized for this identity.`,
+			LimitKindPermanent,
+		},
+		{"isolated denial", "codex", "Access denied", LimitKindNone},
+		{"isolated authorization", "codex", "web search is not authorized for this identity", LimitKindNone},
+		{"other agent denial", "gemini", "stream disconnected before completion: Access denied", LimitKindTransient},
+		{"codex server error disconnect", "codex", "stream disconnected before completion: The server had an error while processing your request", LimitKindTransient},
+		{
 			"codex 429 retry limit", "codex",
 			`codex stream reported failure: exceeded retry limit, last status: 429 Too Many Requests, request id: abc`,
 			LimitKindTransient,

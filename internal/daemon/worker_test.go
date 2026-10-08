@@ -3365,42 +3365,43 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
 }
 
-func TestUnavailableAgentErrorFailsWithoutRetry(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJobWithAgent(t, "unavailable-no-backup", testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
+func TestNonRetryableAgentErrorsSkipRetries(t *testing.T) {
+	const message = "stream disconnected before completion: Access denied: web search is not authorized for this identity."
+	for _, tt := range []struct {
+		name, backup string
+		executionErr error
+		wantStatus   storage.JobStatus
+		wantError    string
+	}{
+		{"unavailable without backup", "", agent.MarkUnavailable(errors.New("native package missing: platform helper absent")), storage.JobStatusFailed, review.UnavailableErrorPrefix + "agent: native package missing: platform helper absent"},
+		{"unavailable with backup", "test", agent.MarkUnavailable(errors.New("native package missing")), storage.JobStatusQueued, ""},
+		{"permission refusal", "", errors.New(message), storage.JobStatusFailed, "agent: " + message},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.DefaultBackupAgent = tt.backup
+			tc.reconfigurePool(cfg)
+			job := tc.createAndClaimJobWithAgent(t, "non-retryable", testWorkerID, "codex")
+			job.RepoPath = tc.TmpDir
 
-	tc.Pool.failOrRetryAgentExecutionContext(
-		context.Background(), testWorkerID, job, "codex",
-		agent.MarkUnavailable(errors.New("native package missing: platform helper absent")),
-	)
+			tc.Pool.failOrRetryAgentExecutionContext(
+				context.Background(), testWorkerID, job, "codex", tt.executionErr,
+			)
 
-	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
-	assert.True(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
-	assert.Contains(t, updated.Error, "native package missing: platform helper absent")
-	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
-	require.NoError(t, err)
-	assert.Zero(t, retryCount)
-}
-
-func TestUnavailableAgentErrorFailsOverWithoutRetry(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	cfg := config.DefaultConfig()
-	cfg.DefaultBackupAgent = "test"
-	tc.reconfigurePool(cfg)
-	job := tc.createAndClaimJobWithAgent(t, "unavailable-with-backup", testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
-
-	tc.Pool.failOrRetryAgentExecutionContext(
-		context.Background(), testWorkerID, job, "codex",
-		agent.MarkUnavailable(errors.New("native package missing")),
-	)
-
-	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.Equal(t, "test", updated.Agent)
-	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
-	require.NoError(t, err)
-	assert.Zero(t, retryCount)
+			updated := tc.assertJobStatus(t, job.ID, tt.wantStatus)
+			assert := assert.New(t)
+			if tt.backup != "" {
+				assert.Equal(tt.backup, updated.Agent)
+			} else {
+				assert.Equal(tt.wantError, updated.Error)
+			}
+			retries, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(retries)
+			assert.False(tc.Pool.isAgentCoolingDown("codex"))
+		})
+	}
 }
 
 func TestClaudeWeeklyLimitFailsOverToBackupWithoutRetry(t *testing.T) {

@@ -168,6 +168,12 @@ func TestFormatBatchAgentError(t *testing.T) {
 			err:       fmt.Errorf("model not supported"),
 			want:      "agent review: model not supported",
 		},
+		{
+			name:      "permission refusal is a permanent failure",
+			agentName: "codex",
+			err:       errors.New("stream disconnected before completion: Access denied: web search is not authorized for this identity."),
+			want:      "agent review: stream disconnected before completion: Access denied: web search is not authorized for this identity.",
+		},
 	}
 
 	for _, tt := range tests {

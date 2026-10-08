@@ -582,8 +582,10 @@ func preferLimitClassification(current, candidate LimitClassification) LimitClas
 	priority := func(kind LimitKind) int {
 		switch kind {
 		case LimitKindQuota:
-			return 3
+			return 4
 		case LimitKindSession:
+			return 3
+		case LimitKindPermanent:
 			return 2
 		case LimitKindTransient:
 			return 1

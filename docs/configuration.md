@@ -733,6 +733,9 @@ roborev can use a configured backup agent. This is useful when your primary
 agent has usage caps. For example, Codex plans often hit rate limits during
 heavy review sessions, so falling back to Claude Code keeps reviews flowing.
 
+An explicit Codex permission refusal uses the backup immediately, without
+retrying the denied request.
+
 ```toml
 # ~/.roborev/config.toml
 default_agent = "codex"
