@@ -37,6 +37,42 @@ func TestReviewVerdictUsesStoredValue(t *testing.T) {
 }
 
 var verdictTests = []verdictTestCase{
+	// --- TimestampPrefix: a bracketed date-time stamp before the verdict ---
+	{
+		name:   "TimestampPrefix/12-hour stamp before no issues found",
+		output: "[2026-10-08 07:53am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp line then summary then pass line",
+		output: "[2026-10-08 7:53am] Reviewed the change.\n\nNo issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/ISO stamp before bold pass",
+		output: "[2026-10-08T14:53:00Z] **No issues found.**",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp with zone before pass",
+		output: "[2026-10-08 14:53 PDT] No findings.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp before a finding still fails",
+		output: "[2026-10-08 07:53am] The cache key omits the user id, so sessions leak.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamp before severity finding fails",
+		output: "[2026-10-08 07:53am]\n\n- High: token written to the log",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
+		output: "[note] No issues found.",
+		want:   VerdictFail,
+	},
 	// --- SimplePass: basic "no issues found" phrasing ---
 	{
 		name:   "SimplePass/no issues found at start",

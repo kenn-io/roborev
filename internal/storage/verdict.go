@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -252,6 +253,7 @@ func normalizeVerdictLine(line string) string {
 	// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
 	normalized = strings.ReplaceAll(normalized, "\u2018", "'") // left single quote
 	normalized = strings.ReplaceAll(normalized, "\u2019", "'") // right single quote
+	normalized = stripTimestampPrefix(normalized)
 	normalized = stripMarkdown(normalized)
 	normalized = stripListMarker(normalized)
 	return stripFieldLabel(normalized)
@@ -299,6 +301,18 @@ func isNoFindingVerdictLine(line string) bool {
 
 func isExplicitVerdictValue(line, value string) bool {
 	return line == value
+}
+
+// timestampPrefix matches a bracketed date or date-time at the start of a
+// lowercased line, e.g. "[2026-10-08 07:53am] ", "[2026-10-08t14:53:00z] ".
+// Repository instructions sometimes tell agents to stamp every reply; the
+// stamp is not part of the verdict.
+var timestampPrefix = regexp.MustCompile(
+	`^\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\]\s*`)
+
+// stripTimestampPrefix removes a leading bracketed timestamp from a line.
+func stripTimestampPrefix(s string) string {
+	return timestampPrefix.ReplaceAllString(s, "")
 }
 
 // stripMarkdown removes common markdown formatting from a line
