@@ -84,6 +84,20 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "TimestampPrefix/indented stamped finding overrides stamped pass phrase",
+		output: "  [2026-10-08 07:53am] - High: token written to the log\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name: "TimestampPrefix/stamped rubric keeps indented descriptions",
+		output: "[2026-10-08 07:53am] Severity levels:\n" +
+			"[2026-10-08 07:53am] - High: data loss\n" +
+			"[2026-10-08 07:53am]   Use for security or corruption bugs.\n" +
+			"[2026-10-08 07:53am] - Medium: wrong result\n" +
+			"\n[2026-10-08 07:54am] No issues found.",
+		want: VerdictPass,
+	},
+	{
 		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
 		output: "[note] No issues found.",
 		want:   VerdictFail,

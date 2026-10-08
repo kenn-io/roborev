@@ -303,16 +303,19 @@ func isExplicitVerdictValue(line, value string) bool {
 	return line == value
 }
 
-// timestampPrefix matches a bracketed date or date-time at the start of a
-// line, e.g. "[2026-10-08 07:53am] ", "[2026-10-08T14:53:00Z] ".
+// timestampPrefix matches a bracketed date or date-time after optional
+// indentation, e.g. "[2026-10-08 07:53am] ", "[2026-10-08T14:53:00Z] ".
 // Repository instructions sometimes tell agents to stamp every reply; the
 // stamp is not part of the verdict, a severity label, or a section heading.
+// Only one delimiter after the stamp is consumed, so indentation that belongs
+// to the content (a rubric description, say) survives.
 var timestampPrefix = regexp.MustCompile(
-	`(?i)^\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\]\s*`)
+	`(?i)^([ \t]*)\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\][ \t]?`)
 
-// stripTimestampPrefix removes a leading bracketed timestamp from a line.
+// stripTimestampPrefix removes a bracketed timestamp from the start of a line,
+// keeping the indentation before it and the content's own indentation after it.
 func stripTimestampPrefix(s string) string {
-	return timestampPrefix.ReplaceAllString(s, "")
+	return timestampPrefix.ReplaceAllString(s, "${1}")
 }
 
 // stripMarkdown removes common markdown formatting from a line
