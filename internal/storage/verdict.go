@@ -253,7 +253,7 @@ func normalizeVerdictLine(line string) string {
 	// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
 	normalized = strings.ReplaceAll(normalized, "\u2018", "'") // left single quote
 	normalized = strings.ReplaceAll(normalized, "\u2019", "'") // right single quote
-	normalized = stripTimestampPrefix(normalized)
+	normalized = strings.TrimSpace(stripTimestampPrefix(normalized))
 	normalized = stripMarkdown(normalized)
 	normalized = stripListMarker(normalized)
 	return stripFieldLabel(normalized)
@@ -490,7 +490,7 @@ func proseSeverityLabel(line string) string {
 // value is "summary", "findings", "separator", or empty for ordinary prose.
 // Verdict parsing and comment preparation use the same boundaries.
 func ProseSection(line string) string {
-	line = stripTimestampPrefix(strings.ToLower(strings.TrimSpace(line)))
+	line = strings.TrimSpace(stripTimestampPrefix(strings.ToLower(strings.TrimSpace(line))))
 	if line == "---" {
 		return "separator"
 	}

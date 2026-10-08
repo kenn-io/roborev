@@ -278,6 +278,8 @@ func proseBoundaries(output string) []proseBoundary {
 	for _, b := range boundaries {
 		line := lineAt(b.start)
 		b.section = storage.ProseSection(semanticLines[line])
+		// A stamped "---" is a paragraph to Goldmark, not a thematic break.
+		b.separator = b.separator || b.section == "separator"
 		b.severity, b.legend = labels[line].Severity, labels[line].Legend
 		if b.level > 0 || b.section != "" || b.severity != "" || b.legend || b.separator {
 			markers = append(markers, b)

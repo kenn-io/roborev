@@ -98,6 +98,11 @@ var verdictTests = []verdictTestCase{
 		want: VerdictPass,
 	},
 	{
+		name:   "TimestampPrefix/stamp and extra spaces before pass heading",
+		output: "[2026-10-08 07:53am]   ## No issues found.",
+		want:   VerdictPass,
+	},
+	{
 		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
 		output: "[note] No issues found.",
 		want:   VerdictFail,
@@ -936,4 +941,10 @@ func TestParseVerdictAtSeverity(t *testing.T) {
 			assert.Equal(t, tt.want, ParseVerdictAtSeverity(tt.output, tt.minSeverity))
 		})
 	}
+}
+
+func TestProseSectionIgnoresTimestampPrefix(t *testing.T) {
+	assert.Equal(t, "summary", ProseSection("[2026-10-08 07:53am]   ## Summary"))
+	assert.Equal(t, "findings", ProseSection("  [2026-10-08T14:53:00Z]    **Findings:**"))
+	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am]   ---"))
 }
