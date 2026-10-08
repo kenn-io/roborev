@@ -197,6 +197,9 @@ completes.
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
+Failed Codex jobs report the final turn error when supplied; raw logs retain
+reconnect notices.
+
 When the daemon measured the review input, review details report the reviewed
 and excluded file counts. The counts describe change-set paths supplied to and
 filtered out of the review input, and a rename counts as two paths. Older

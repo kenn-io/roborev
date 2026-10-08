@@ -738,7 +738,8 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter, finalMessageOn
 			if isCodexEventType(ev.Type) {
 				validEventsParsed = true
 
-				if streamFailure == nil {
+				if streamFailure == nil ||
+					(ev.Type == "turn.failed" && (ev.Error.Message != "" || ev.Message != "")) {
 					streamFailure = codexFailureEventError(ev)
 				}
 				switch ev.Type {
