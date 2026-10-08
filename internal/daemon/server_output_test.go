@@ -104,6 +104,11 @@ func TestHandleJobOutput(t *testing.T) {
 			[]byte("first persisted line\nsecond persisted line\n"),
 			0o600,
 		))
+		// datetime('now') is whole seconds, and a filesystem mtime can still
+		// fall in the previous second. The attempt check then treats a log
+		// just written for this job as stale.
+		fresh := time.Now().Add(2 * time.Second)
+		require.NoError(t, os.Chtimes(JobLogPath(job.ID), fresh, fresh))
 
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
@@ -168,6 +173,8 @@ func TestHandleJobOutput(t *testing.T) {
 			[]byte(`{"type":"assistant","message":{"content":"normalized review output"}}`+"\n"),
 			0o600,
 		))
+		fresh := time.Now().Add(2 * time.Second)
+		require.NoError(t, os.Chtimes(JobLogPath(job.ID), fresh, fresh))
 
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
