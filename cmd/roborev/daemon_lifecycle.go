@@ -88,8 +88,8 @@ var (
 	}
 )
 
-// ErrDaemonNotRunning indicates no daemon runtime file was found
-var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
+// ErrDaemonNotRunning indicates no responsive daemon runtime was found.
+var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no responsive daemon found)")
 
 type detachedDaemonOptions struct {
 	Executable      string
@@ -152,45 +152,86 @@ func validateServerFlag() error {
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
 // An explicit --server flag takes precedence over auto-discovered daemons.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
+	ep, err := resolveDaemonEndpoint()
+	return ep.WithAccessError(err)
+}
+
+func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
-			return *parsedServerEndpoint
+			return *parsedServerEndpoint, nil
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fallbackDaemonEndpoint()
+			return fallbackDaemonEndpoint(), err
 		}
-		return ep
+		return ep, nil
 	}
 	// No explicit flag: discover running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
-		return info.Endpoint()
-	} else if daemon.IsDaemonAccessError(err) {
-		return fallbackDaemonEndpoint().WithAccessError(err)
+		return info.Endpoint(), nil
+	} else {
+		// Client config errors can also wrap os.ErrNotExist, for example when
+		// a configured TLS certificate is missing.
+		if daemon.IsDaemonAccessError(err) || !errors.Is(err, os.ErrNotExist) {
+			return fallbackDaemonEndpoint(), err
+		}
 	}
-	// Nothing running: use default
-	return fallbackDaemonEndpoint()
+	// The default port belongs to the host, not to this account. Do not send
+	// requests there unless a runtime record or --server selected it.
+	return fallbackDaemonEndpoint(), ErrDaemonNotRunning
 }
+
+type daemonEndpointSelectionError struct {
+	cause     error
+	retryable bool
+}
+
+func (e *daemonEndpointSelectionError) Error() string { return e.cause.Error() }
+
+func (e *daemonEndpointSelectionError) Unwrap() error { return e.cause }
 
 // getDaemonHTTPClientForURL pairs address-based helpers with the URL they use.
 // The selected Unix transport and terminal discovery errors stay attached when
 // the URL identifies the selected endpoint. Other loopback TCP URLs get their
 // own scoped client, including URLs chosen after daemon recovery.
 func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Client {
-	ep := getDaemonEndpoint()
+	errorClient := func(err error) *http.Client {
+		return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
+			return "", err
+		})
+	}
+	ep, selectionErr := resolveDaemonEndpoint()
 	if baseURL == ep.BaseURL() {
-		return ep.HTTPClient(timeout)
+		if selectionErr != nil {
+			selectionErr = &daemonEndpointSelectionError{
+				cause:     selectionErr,
+				retryable: errors.Is(selectionErr, ErrDaemonNotRunning),
+			}
+		}
+		return ep.WithAccessError(selectionErr).HTTPClient(timeout)
+	}
+	// A stored URL does not authorize recovery from a failed discovery read.
+	if selectionErr != nil && !errors.Is(selectionErr, ErrDaemonNotRunning) {
+		return errorClient(&daemonEndpointSelectionError{cause: selectionErr})
 	}
 	origin, err := url.Parse(baseURL)
 	if err == nil && origin.Scheme == "http" && origin.Host != "" && origin.User == nil {
 		if target, err := daemon.ParseEndpoint(origin.Host); err == nil {
+			// Discovery can change between selecting a URL and building its
+			// client. Neither the real default port nor the development
+			// refusal placeholder becomes authority when that happens.
+			if serverAddr == "" && (target.Port() == defaultDaemonEndpoint().Port() || target.Port() == fallbackDaemonEndpoint().Port()) {
+				return errorClient(&daemonEndpointSelectionError{
+					cause:     ErrDaemonNotRunning,
+					retryable: errors.Is(selectionErr, ErrDaemonNotRunning),
+				})
+			}
 			return target.HTTPClient(timeout)
 		}
 	}
-	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
-		return "", fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied)
-	})
+	return errorClient(fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied))
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -262,8 +303,10 @@ func ensureDaemon() error {
 
 	// First check runtime files for any running daemon
 	info, discoveryErr := getAnyRunningDaemon()
-	if daemon.IsDaemonAccessError(discoveryErr) {
-		return discoveryErr
+	if discoveryErr != nil {
+		if daemon.IsDaemonAccessError(discoveryErr) || !errors.Is(discoveryErr, os.ErrNotExist) {
+			return discoveryErr
+		}
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
@@ -295,34 +338,11 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	// Try the configured default address for manual daemon runs that do not
-	// have a runtime file yet.
-	ep := getDaemonEndpoint()
-	probe, probeErr := probeDaemonForEnsure(ep, 2*time.Second)
-	if probeErr == nil {
-		if !skipVersionCheck {
-			if probe.Version == "" {
-				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
-				}
-				return restartDaemonForEnsure()
-			}
-			if probe.Version != version.Version {
-				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
-				}
-				return restartDaemonForEnsure()
-			}
-		}
-		return nil
-	}
-	if daemon.IsDaemonAccessError(probeErr) {
-		return fmt.Errorf("probe daemon: %w", probeErr)
-	}
-
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
-	cleanupZombieDaemons(ep)
+	// Cleanup uses only this data directory's runtime records. Never adopt
+	// an unpublished daemon by probing the shared default loopback port.
+	cleanupZombieDaemons(fallbackDaemonEndpoint())
 
 	// Start daemon in background
 	return startDaemonForEnsure()
