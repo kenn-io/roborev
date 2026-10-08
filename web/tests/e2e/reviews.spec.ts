@@ -458,11 +458,9 @@ test.describe.serial("native review workspace", () => {
     },
   );
 
-  test("expands panel members and shows their recorded reasoning and command", async ({
+  test("expands panel members and shows reasoning without commands in a token session", async ({
     page,
-    context,
   }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await openReviews(page);
     const parent = jobRow(page, 56);
     await expect(parent).toBeVisible();
@@ -480,21 +478,37 @@ test.describe.serial("native review workspace", () => {
 
     await jobRow(page, 54).click();
     const drawer = page.getByRole("region", { name: "Review details" });
-    const command =
-      "codex exec --model fixture-large -c model_reasoning_effort=high";
     await expect(drawer.getByText("Reasoning: thorough")).toBeVisible();
-    await expect(drawer.locator(".command-line code")).toHaveText(command);
-    await drawer.getByRole("button", { name: "Copy command" }).click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(command);
-    await drawer.getByRole("button", { name: "Log", exact: true }).click();
-    await expect(drawer.locator(".command-line code")).toBeVisible();
+    await expect(drawer.locator(".command-line")).toHaveCount(0);
 
     await jobRow(page, 55).click();
     await expect(drawer.locator(".command-line")).toHaveCount(0);
     await expect(drawer.getByText("Reasoning: thorough")).toHaveCount(0);
   });
+
+  test(
+    "shows and copies recorded commands in a local session",
+    { tag: "@local-session" },
+    async ({ page, context }) => {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await openReview(page, 54);
+      const drawer = page.getByRole("region", { name: "Review details" });
+      const command =
+        "codex exec --model fixture-large -c model_reasoning_effort=high";
+      await expect(drawer.getByText("Reasoning: thorough")).toBeVisible();
+      await expect(drawer.locator(".command-line code")).toHaveText(command);
+      await drawer.getByRole("button", { name: "Copy command" }).click();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(command);
+      await drawer.getByRole("button", { name: "Log", exact: true }).click();
+      await expect(drawer.locator(".command-line code")).toBeVisible();
+
+      await openReview(page, 55);
+      await expect(drawer.locator(".command-line")).toHaveCount(0);
+      await expect(drawer.getByText("Reasoning: thorough")).toHaveCount(0);
+    },
+  );
 
   test("preserves transplanted keyboard navigation and help", async ({
     page,

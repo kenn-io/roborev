@@ -192,8 +192,9 @@ func browserStreamContext(
 // resolved panel configuration, worker ownership, and checkout paths. Those
 // fields are useful to the loopback CLI API but must never cross the browser
 // listener boundary merely because a field was added to storage.ReviewJob.
-// CommandLine is included for inspecting agent invocations. Error is populated
-// only for failed jobs so the Review tab can explain missing output.
+// CommandLine is included only for owner-local sessions because arbitrary agent
+// arguments can contain credentials. Error is populated only for failed jobs
+// so the Review tab can explain missing output.
 type browserReviewJob struct {
 	ID               int64                 `json:"id"`
 	RepoID           int64                 `json:"repo_id"`
@@ -271,7 +272,11 @@ type browserReviewResponse struct {
 	Job         *browserReviewJob `json:"job,omitempty"`
 }
 
-func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
+func projectBrowserReviewJob(job storage.ReviewJob, principal BrowserPrincipal) browserReviewJob {
+	commandLine := ""
+	if principal.Local {
+		commandLine = job.CommandLine
+	}
 	errorMessage := ""
 	if job.Status == storage.JobStatusFailed {
 		errorMessage = job.Error
@@ -284,7 +289,7 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
-		CommandLine: job.CommandLine,
+		CommandLine: commandLine,
 		JobType:     job.JobType, Status: job.Status, Error: errorMessage,
 		EnqueuedAt: job.EnqueuedAt, StartedAt: job.StartedAt,
 		FinishedAt: job.FinishedAt, Prompt: displayPrompt,
@@ -324,6 +329,7 @@ func projectBrowserTokenUsage(raw string) string {
 }
 
 func serveBrowserJobs(w http.ResponseWriter, request *http.Request, core http.Handler) {
+	principal, _ := BrowserPrincipalFromContext(request.Context())
 	serveProjectedBrowserJSON(w, request, core, func(data []byte) (any, error) {
 		var source struct {
 			Jobs          []storage.ReviewJob `json:"jobs"`
@@ -337,7 +343,7 @@ func serveBrowserJobs(w http.ResponseWriter, request *http.Request, core http.Ha
 		}
 		jobs := make([]browserReviewJob, len(source.Jobs))
 		for i := range source.Jobs {
-			jobs[i] = projectBrowserReviewJob(source.Jobs[i])
+			jobs[i] = projectBrowserReviewJob(source.Jobs[i], principal)
 		}
 		return browserJobsResponse{
 			Jobs: jobs, HasMore: source.HasMore, NextCursor: source.NextCursor,
@@ -347,6 +353,7 @@ func serveBrowserJobs(w http.ResponseWriter, request *http.Request, core http.Ha
 }
 
 func serveBrowserReview(w http.ResponseWriter, request *http.Request, core http.Handler) {
+	principal, _ := BrowserPrincipalFromContext(request.Context())
 	serveProjectedBrowserJSON(w, request, core, func(data []byte) (any, error) {
 		var source *storage.Review
 		if err := json.Unmarshal(data, &source); err != nil {
@@ -361,7 +368,7 @@ func serveBrowserReview(w http.ResponseWriter, request *http.Request, core http.
 			Closed: source.Closed, VerdictBool: source.VerdictBool,
 		}
 		if source.Job != nil {
-			job := projectBrowserReviewJob(*source.Job)
+			job := projectBrowserReviewJob(*source.Job, principal)
 			projected.Job = &job
 		}
 		return projected, nil

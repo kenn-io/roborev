@@ -75,9 +75,10 @@ Panel reviews appear as a synthesis row that can be expanded to show its
 individual reviewers.
 
 The detail drawer shows the job's recorded reasoning level beside the agent and
-model. When the daemon has recorded the agent's command line, the drawer shows
-the complete command with a copy button above the Review, Log, and Prompt tabs.
-Long commands scroll horizontally.
+model. In an owner-local browser session, the drawer also shows the recorded
+agent command with a copy button above the Review, Log, and Prompt tabs. Long
+commands scroll horizontally. Remote token and proxy sessions omit command lines
+because agent arguments can contain credentials.
 
 The Type column identifies standard reviews as `default` and shows the
 configured name for specialized or custom reviews. The detail drawer repeats
