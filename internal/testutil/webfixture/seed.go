@@ -32,6 +32,8 @@ type fixtureJob struct {
 	jobType     string
 	agent       string
 	model       string
+	reasoning   string
+	commandLine string
 	branch      string
 	source      string
 	panelRole   string
@@ -182,17 +184,18 @@ func insertJob(tx *sql.Tx, job fixtureJob) error {
 			status, enqueued_at, started_at, finished_at, error,
 			job_type, source, token_usage, agent_invoked, uuid,
 			panel_run_uuid, panel_role, panel_name, panel_member_name,
-			panel_member_index, panel_member_config_json, claim_blocked
+			panel_member_index, panel_member_config_json, claim_blocked,
+			reasoning, command_line
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, 0
+			?, ?, ?, ?, ?, ?, 0, ?, ?
 		)`,
 		job.id, job.repoID, job.id, jobRef(job), job.branch, job.agent,
 		job.model, job.status, enqueued.Format(sqliteTime), started, finished,
 		failure, job.jobType, source, tokenUsage, job.invoked,
 		fmt.Sprintf("00000000-0000-4000-8000-%012d", job.id),
 		panelRun, panelRole, panelName(job), panelMember, panelIndex,
-		panelConfig(job),
+		panelConfig(job), job.reasoning, job.commandLine,
 	)
 	if err != nil {
 		return fmt.Errorf("insert job %d: %w", job.id, err)
@@ -342,7 +345,7 @@ func fixtureJobs() []fixtureJob {
 		fixtureJob{id: 51, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "claude", model: "fixture-medium", branch: "feature/parser", verdict: &failedVerdict},
 		fixtureJob{id: 52, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "gemini", model: "fixture-fast", branch: "fix/streaming", verdict: &failedVerdict, output: richFindingOutput()},
 		fixtureJob{id: 53, repoID: 2, status: storage.JobStatusDone, jobType: storage.JobTypeCompact, agent: "codex", model: "fixture-large", branch: "main", verdict: &passVerdict, output: "No issues found after consolidated review."},
-		fixtureJob{id: 54, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "correctness", panelIndex: &memberZero, panelRun: &panelRun, verdict: &failedVerdict},
+		fixtureJob{id: 54, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "codex", model: "fixture-large", reasoning: "thorough", commandLine: "codex exec --model fixture-large -c model_reasoning_effort=high", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "correctness", panelIndex: &memberZero, panelRun: &panelRun, verdict: &failedVerdict},
 		fixtureJob{id: 55, repoID: 1, status: storage.JobStatusFailed, jobType: storage.JobTypeReview, agent: "claude", model: "fixture-medium", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "security", panelIndex: &memberOne, panelRun: &panelRun},
 		fixtureJob{id: 56, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeSynthesis, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleSynthesis, panelRun: &panelRun, verdict: &failedVerdict, output: "## Panel synthesis\n\nThe panel found one error-handling issue."},
 	)

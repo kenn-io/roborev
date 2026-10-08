@@ -65,6 +65,7 @@ export type SortColumn =
   | "status"
   | "verdict"
   | "agent"
+  | "reasoning"
   | "review_type"
   | "elapsed"
   | "cost"
@@ -296,6 +297,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
         return job.verdict ?? "";
       case "agent":
         return job.agent;
+      case "reasoning":
+        return job.reasoning ?? "";
       case "review_type":
         return reviewTypeColumnLabel(job);
       case "elapsed":

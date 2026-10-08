@@ -300,6 +300,29 @@ describe("createJobsStore cost sorting", () => {
   });
 });
 
+describe("createJobsStore reasoning sorting", () => {
+  it("sorts recorded reasoning and keeps unspecified values distinct", async () => {
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [
+          { ...makeJob(1), reasoning: "thorough" },
+          makeJob(2),
+          { ...makeJob(3), reasoning: "standard" },
+        ],
+        has_more: false,
+        stats: { done: 3, closed: 0, open: 3 },
+      }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+
+    store.setSortColumn("reasoning");
+    expect(store.getJobs().map((job) => job.id)).toEqual([2, 3, 1]);
+    store.setSortColumn("reasoning");
+    expect(store.getJobs().map((job) => job.id)).toEqual([1, 3, 2]);
+  });
+});
+
 describe("createJobsStore review type sorting", () => {
   it("sorts synthesis jobs as panels", async () => {
     const jobs: ReviewJob[] = [

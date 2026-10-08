@@ -357,15 +357,15 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	assert.Empty(t, bootstrapRecorder.Header().Values("Set-Cookie"))
 }
 
-func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
+func TestBrowserHandlerProjectsCommandWithoutInternalJobMetadata(t *testing.T) {
 	const secret = "SENTINEL_BROWSER_SECRET"
 	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/jobs":
-			_, _ = w.Write([]byte(`{"jobs":[{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"repo_name":"example","command_line":"agent --token ` + secret + `","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}","worker_id":"` + secret + `","worktree_path":"/tmp/` + secret + `"}],"has_more":false,"next_cursor":null}`))
+			_, _ = w.Write([]byte(`{"jobs":[{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"repo_name":"example","command_line":"agent --model fixture-model","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}","worker_id":"` + secret + `","worktree_path":"/tmp/` + secret + `"}],"has_more":false,"next_cursor":null}`))
 		case "/api/review":
-			_, _ = w.Write([]byte(`{"id":3,"job_id":7,"agent":"test","prompt":"review","output":"P","created_at":"2026-01-02T03:05:05Z","closed":false,"job":{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"command_line":"agent --token ` + secret + `","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}"}}`))
+			_, _ = w.Write([]byte(`{"id":3,"job_id":7,"agent":"test","prompt":"review","output":"P","created_at":"2026-01-02T03:05:05Z","closed":false,"job":{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"command_line":"agent --model fixture-model","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}"}}`))
 		default:
 			http.NotFound(w, request)
 		}
@@ -379,7 +379,18 @@ func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, recorder.Code, path)
 		assert.NotContains(t, recorder.Body.String(), secret, path)
-		assert.NotContains(t, recorder.Body.String(), "command_line", path)
+		var body struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+			Job  *storage.ReviewJob  `json:"job"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		if path == "/api/jobs" {
+			require.Len(t, body.Jobs, 1)
+			assert.Equal(t, "agent --model fixture-model", body.Jobs[0].CommandLine)
+		} else {
+			require.NotNil(t, body.Job)
+			assert.Equal(t, "agent --model fixture-model", body.Job.CommandLine)
+		}
 		assert.NotContains(t, recorder.Body.String(), "session_id", path)
 		assert.NotContains(t, recorder.Body.String(), "panel_member_config_json", path)
 	}

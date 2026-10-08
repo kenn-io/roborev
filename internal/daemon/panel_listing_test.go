@@ -94,6 +94,41 @@ func TestListJobsPanelRunReturnsMembers(t *testing.T) {
 	assert.True(sawSynth, "panel_run must include the synthesis row")
 }
 
+func TestListJobsPanelRunScopesStats(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	runUUID, _, _ := enqueueTrioPanel(t, server)
+	enqueueTrioPanel(t, server)
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		jobs  int
+		stats storage.JobStats
+	}{
+		{"queue", "", 2, storage.JobStats{Queued: 2}},
+		{"panel", "?panel_run=" + runUUID.String(), 4, storage.JobStats{Queued: 1}},                       //nolint:forbidigo // HTTP query text boundary.
+		{"unknown panel", "?panel_run=" + uuid.New().String(), 0, storage.JobStats{}},                     //nolint:forbidigo // HTTP query text boundary.
+		{"filtered panel", "?closed=false&panel_run=" + runUUID.String(), 4, storage.JobStats{Queued: 1}}, //nolint:forbidigo // HTTP query text boundary.
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/jobs"+tc.query, nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var body struct {
+				Jobs          []storage.ReviewJob `json:"jobs"`
+				Stats         *storage.JobStats   `json:"stats"`
+				FilteredStats *storage.JobStats   `json:"filtered_stats"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+			assert.Len(t, body.Jobs, tc.jobs)
+			assert.Equal(t, &tc.stats, body.Stats)
+			if tc.name == "filtered panel" {
+				assert.Equal(t, &tc.stats, body.FilteredStats)
+			}
+		})
+	}
+}
+
 // TestListJobsIncludePanelMembers verifies include_panel_members=true returns
 // member rows alongside the synthesis parent, so a caller can see a member
 // that failed inside a panel that still finished.

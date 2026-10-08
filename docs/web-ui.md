@@ -74,6 +74,12 @@ ref, and commit subject, and the Agent column shows the model beside the agent.
 Panel reviews appear as a synthesis row that can be expanded to show its
 individual reviewers.
 
+The Reasoning column shows each job's recorded reasoning level, or `--` when
+none was recorded. It also appears beside the agent and model in the detail
+drawer. When the daemon has recorded the agent's command line, the drawer shows
+the complete command with a copy button above the Review, Log, and Prompt tabs.
+Long commands scroll horizontally.
+
 The Type column identifies standard reviews as `default` and shows the
 configured name for specialized or custom reviews. The detail drawer repeats
 that value in its header. Panel synthesis rows show `panel`, while expanded

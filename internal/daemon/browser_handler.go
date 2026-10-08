@@ -188,12 +188,12 @@ func browserStreamContext(
 }
 
 // browserReviewJob is an explicit presentation allowlist. Storage jobs carry
-// execution metadata such as agent command lines, reusable session IDs,
+// execution metadata such as reusable session IDs,
 // resolved panel configuration, worker ownership, and checkout paths. Those
 // fields are useful to the loopback CLI API but must never cross the browser
 // listener boundary merely because a field was added to storage.ReviewJob.
-// Error is an explicit exception for authenticated browser sessions and is
-// populated only for failed jobs so the Review tab can explain missing output.
+// CommandLine is included for inspecting agent invocations. Error is populated
+// only for failed jobs so the Review tab can explain missing output.
 type browserReviewJob struct {
 	ID               int64                 `json:"id"`
 	RepoID           int64                 `json:"repo_id"`
@@ -204,6 +204,7 @@ type browserReviewJob struct {
 	Model            string                `json:"model,omitempty"`
 	Provider         string                `json:"provider,omitempty"`
 	Reasoning        string                `json:"reasoning,omitempty"`
+	CommandLine      string                `json:"command_line,omitempty"`
 	JobType          string                `json:"job_type"`
 	Status           storage.JobStatus     `json:"status"`
 	Error            string                `json:"error,omitempty"`
@@ -283,7 +284,8 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
-		JobType: job.JobType, Status: job.Status, Error: errorMessage,
+		CommandLine: job.CommandLine,
+		JobType:     job.JobType, Status: job.Status, Error: errorMessage,
 		EnqueuedAt: job.EnqueuedAt, StartedAt: job.StartedAt,
 		FinishedAt: job.FinishedAt, Prompt: displayPrompt,
 		RetryCount: job.RetryCount, Agentic: job.Agentic,

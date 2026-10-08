@@ -140,6 +140,7 @@
   >
     {job.agent}{#if job.model}<span class="model">{job.model}</span>{/if}
   </td>
+  <td class="col-reasoning">{job.reasoning || "--"}</td>
   <td class="col-review-type" title={typeLabel}>
     {#if jobType}<span class="job-type">{jobType}</span>{/if}{reviewType}
   </td>
@@ -327,6 +328,7 @@
   }
 
   .col-review-type,
+  .col-reasoning,
   .col-closed {
     color: var(--text-secondary);
   }
