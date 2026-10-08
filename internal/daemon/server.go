@@ -1704,6 +1704,10 @@ func (s *Server) humaListJobs(
 	// FilteredStats below carries the exact closed-filtered counts for browser
 	// views that need counts matching the visible rows.
 	statsOpts := remoteJobOptions(ctx)
+	// Panel expansion must not scan the entire queue for aggregate counts.
+	if input.PanelRun != uuid.Nil() {
+		statsOpts = append(statsOpts, storage.WithPanelRun(input.PanelRun))
+	}
 	if input.GitRef != "" {
 		statsOpts = append(statsOpts, storage.WithGitRef(input.GitRef))
 	}

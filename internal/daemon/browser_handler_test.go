@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +31,7 @@ func TestProjectBrowserReviewJobDisplaysFixPlanPrompt(t *testing.T) {
 		Prompt:  prompt.EncodeFixPlan("planning instructions", "implementation instructions"),
 	}
 
-	projected := projectBrowserReviewJob(job)
+	projected := projectBrowserReviewJob(job, BrowserPrincipal{})
 
 	assert.Equal(t,
 		"## Planning Prompt\n\nplanning instructions\n\n## Implementation Prompt\n\nimplementation instructions",
@@ -357,15 +358,112 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	assert.Empty(t, bootstrapRecorder.Header().Values("Set-Cookie"))
 }
 
+func TestBrowserHandlerCommandLineRequiresLocalSession(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(tempDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "HEAD", Agent: "codex", Reasoning: "thorough",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("fixture-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+
+	const credential = "SYNTHETIC_PROVIDER_CREDENTIAL"
+	codex := agent.NewCodexAgent("codex")
+	codex.ConfigOverrides = (config.CodexConfig{Config: map[string]any{
+		"model_providers": map[string]any{
+			"fixture": map[string]any{
+				"http_headers": map[string]any{"Authorization": "Bearer " + credential},
+			},
+		},
+	}}).ConfigOverrideArgs()
+	command := codex.CommandLine()
+	require.Contains(t, command, credential)
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "fixture-worker", command))
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "codex", "Review this change", "No findings."))
+
+	for _, mode := range []string{"local", "token", "proxy"} {
+		t.Run(mode, func(t *testing.T) {
+			origin := "http://127.0.0.1:7374"
+			newRequest := browserRequest
+			if mode == "proxy" {
+				origin = "https://reviews.example.com"
+				newRequest = proxyBrowserRequest
+			}
+			policy, err := NewBrowserPolicy(BrowserEndpoint{
+				Address: "127.0.0.1:7374", Origin: origin, Enabled: true, authentication: mode,
+			}, "")
+			require.NoError(t, err)
+			sessionConfig := BrowserSessionConfig{
+				Origin: origin, AllowLocal: mode == "local", AllowProxy: mode == "proxy", Entropy: rand.Reader,
+			}
+			if mode == "token" {
+				sessionConfig.AuthToken = testBrowserAuthToken
+			}
+			sessions, err := NewBrowserSessionManager(sessionConfig)
+			require.NoError(t, err)
+			handler, err := server.newBrowserHandler(server.httpServer.Handler, http.NotFoundHandler(), policy, sessions, "")
+			require.NoError(t, err)
+			login := newRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+			if mode == "token" {
+				login = newRequest(http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
+			}
+			login.Header.Set("Sec-Fetch-Site", "same-origin")
+			login.Header.Set("Sec-Fetch-Mode", "cors")
+			login.Header.Set("Sec-Fetch-Dest", "empty")
+			loginResponse := httptest.NewRecorder()
+			handler.ServeHTTP(loginResponse, login)
+			require.Equal(t, http.StatusOK, loginResponse.Code, loginResponse.Body.String())
+			var session WebSessionCredentials
+			require.NoError(t, json.Unmarshal(loginResponse.Body.Bytes(), &session))
+			cookies := loginResponse.Result().Cookies()
+			require.Len(t, cookies, 1)
+
+			for _, path := range []string{"/api/jobs", fmt.Sprintf("/api/review?job_id=%d", job.ID)} {
+				t.Run(path, func(t *testing.T) {
+					assert := assert.New(t)
+					request := newRequest(http.MethodGet, path, nil)
+					request.AddCookie(cookies[0])
+					request.Header.Set(WebSessionHeader, session.Session)
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, request)
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+					var body struct {
+						Jobs []storage.ReviewJob `json:"jobs"`
+						Job  *storage.ReviewJob  `json:"job"`
+					}
+					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+					if path == "/api/jobs" {
+						require.Len(t, body.Jobs, 1)
+						body.Job = &body.Jobs[0]
+					}
+					require.NotNil(t, body.Job)
+					assert.Equal(job.ID, body.Job.ID)
+					assert.Equal("thorough", body.Job.Reasoning)
+					if mode == "local" {
+						assert.Equal(command, body.Job.CommandLine)
+					} else {
+						assert.NotContains(response.Body.String(), "command_line")
+						assert.NotContains(response.Body.String(), credential)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
 	const secret = "SENTINEL_BROWSER_SECRET"
 	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/jobs":
-			_, _ = w.Write([]byte(`{"jobs":[{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"repo_name":"example","command_line":"agent --token ` + secret + `","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}","worker_id":"` + secret + `","worktree_path":"/tmp/` + secret + `"}],"has_more":false,"next_cursor":null}`))
+			_, _ = w.Write([]byte(`{"jobs":[{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"repo_name":"example","command_line":"agent --model fixture-model","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}","worker_id":"` + secret + `","worktree_path":"/tmp/` + secret + `"}],"has_more":false,"next_cursor":null}`))
 		case "/api/review":
-			_, _ = w.Write([]byte(`{"id":3,"job_id":7,"agent":"test","prompt":"review","output":"P","created_at":"2026-01-02T03:05:05Z","closed":false,"job":{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"command_line":"agent --token ` + secret + `","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}"}}`))
+			_, _ = w.Write([]byte(`{"id":3,"job_id":7,"agent":"test","prompt":"review","output":"P","created_at":"2026-01-02T03:05:05Z","closed":false,"job":{"id":7,"repo_id":2,"git_ref":"HEAD","agent":"test","job_type":"review","status":"done","enqueued_at":"2026-01-02T03:04:05Z","retry_count":0,"agentic":false,"prompt_prebuilt":false,"command_line":"agent --model fixture-model","session_id":"` + secret + `","panel_member_config_json":"{\"token\":\"` + secret + `\"}"}}`))
 		default:
 			http.NotFound(w, request)
 		}
@@ -379,7 +477,18 @@ func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, recorder.Code, path)
 		assert.NotContains(t, recorder.Body.String(), secret, path)
-		assert.NotContains(t, recorder.Body.String(), "command_line", path)
+		var body struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+			Job  *storage.ReviewJob  `json:"job"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		if path == "/api/jobs" {
+			require.Len(t, body.Jobs, 1)
+			assert.Empty(t, body.Jobs[0].CommandLine)
+		} else {
+			require.NotNil(t, body.Job)
+			assert.Empty(t, body.Job.CommandLine)
+		}
 		assert.NotContains(t, recorder.Body.String(), "session_id", path)
 		assert.NotContains(t, recorder.Body.String(), "panel_member_config_json", path)
 	}
