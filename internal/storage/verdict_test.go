@@ -944,6 +944,7 @@ func TestParseVerdictAtSeverity(t *testing.T) {
 }
 
 func TestProseSectionIgnoresTimestampPrefix(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "summary", ProseSection("[2026-10-08 07:53am]   ## Summary"))
 	assert.Equal(t, "findings", ProseSection("  [2026-10-08T14:53:00Z]    **Findings:**"))
 	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am]   ---"))
