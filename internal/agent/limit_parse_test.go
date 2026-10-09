@@ -66,6 +66,23 @@ func TestParseResetTime(t *testing.T) {
 			msg:  "LIMIT RESETS AT 6:00 pm",
 			want: time.Date(2026, 5, 5, 18, 0, 0, 0, loc),
 		},
+		{
+			name: "codex dated reset",
+			msg: "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to " +
+				"purchase more credits or try again at Oct 14th, 2026 3:31 AM.)",
+			want: time.Date(2026, 10, 14, 3, 31, 0, 0, loc),
+		},
+		{
+			name: "codex dated reset afternoon",
+			msg:  "try again at Dec 1st, 2026 11:05 PM.",
+			want: time.Date(2026, 12, 1, 23, 5, 0, 0, loc),
+		},
+		{
+			name:    "codex dated reset in the past",
+			msg:     "try again at Mar 2nd, 2026 1:22 PM.",
+			wantErr: true,
+			want:    time.Time{},
+		},
 		{"unparseable token", "resets at moonrise", true, time.Time{}},
 		{
 			// Trailing content after the time defeats time.Parse and
