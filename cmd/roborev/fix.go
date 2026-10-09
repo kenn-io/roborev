@@ -1020,6 +1020,9 @@ func isConnectionError(err error) bool {
 	if err == nil || daemon.IsDaemonAccessError(err) || errors.Is(err, auth.ErrUnexpectedOrigin) {
 		return false
 	}
+	if _, ok := errors.AsType[*daemonEndpointSelectionError](err); ok {
+		return isRecoverableSelectionError(err)
+	}
 	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}

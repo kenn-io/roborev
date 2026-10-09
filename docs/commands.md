@@ -1362,7 +1362,7 @@ daemon.
 
 | Flag | Description |
 |------|-------------|
-| `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets |
+| `--server <addr>` | Daemon address. Without it, the CLI uses the daemon named by this data directory's runtime records. Accepts `unix://` for Unix domain sockets |
 | `-v, --verbose` | Verbose output |
 
 ## Update

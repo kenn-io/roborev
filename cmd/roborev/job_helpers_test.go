@@ -61,6 +61,7 @@ func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	patchServerAddr(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
@@ -99,6 +100,7 @@ func TestAuthJobPollingStopsOnTerminalDenial(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 			}))
 			defer server.Close()
+			patchServerAddr(t, server.URL)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			review, err := waitForJobCompletion(ctx, server.URL, 23, io.Discard)
@@ -188,7 +190,7 @@ func TestWaitForJobCompletionPropagatesDiscoveryError(t *testing.T) {
 	assert.Equal(t, 1, discoveries)
 }
 
-func TestWaitForJobCompletionPropagatesStaleDefaultURL(t *testing.T) {
+func TestWaitForJobCompletionStopsWhenDaemonMoves(t *testing.T) {
 	isolateDaemonSelection(t)
 	var discoveries int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
@@ -200,7 +202,8 @@ func TestWaitForJobCompletionPropagatesStaleDefaultURL(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		_, err := waitForJobCompletion(ctx, defaultDaemonEndpoint().BaseURL(), 123, nil)
-		require.ErrorIs(t, err, ErrDaemonNotRunning)
+		require.ErrorIs(t, err, errDaemonEndpointChanged)
+		require.ErrorContains(t, err, "from http://127.0.0.1:7373 to http://127.0.0.1:7474")
 	})
 	assert.Equal(t, 1, discoveries)
 }

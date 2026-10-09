@@ -141,7 +141,7 @@ func TestDaemonURLHelperDoesNotPromoteMissingRuntimeAddress(t *testing.T) {
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
-	require.ErrorIs(t, err, ErrDaemonNotRunning)
+	require.ErrorIs(t, err, errDaemonEndpointChanged)
 }
 
 func TestDaemonURLHelperPreservesDiscoveryErrorForPreviousAddress(t *testing.T) {
@@ -156,30 +156,49 @@ func TestDaemonURLHelperPreservesDiscoveryErrorForPreviousAddress(t *testing.T) 
 	require.ErrorIs(t, err, wantErr)
 }
 
-func TestDaemonURLHelperRejectsRealDefaultPortInDevelopmentBinary(t *testing.T) {
-	for _, baseURL := range []string{defaultDaemonEndpoint().BaseURL(), "http://localhost:7373", "http://[::1]:7373"} {
-		t.Run(baseURL, func(t *testing.T) {
-			isolateDaemonSelection(t)
-			t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-			require.Equal(t, "127.0.0.1:1", fallbackDaemonEndpoint().Address)
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+func TestDaemonURLHelperDoesNotDialUnselectedURL(t *testing.T) {
+	discoveries := []struct {
+		name     string
+		discover func() (*daemon.RuntimeInfo, error)
+		wantErr  error
+	}{
+		{
+			name:     "no runtime",
+			discover: func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+			wantErr:  ErrDaemonNotRunning,
+		},
+		{
+			name: "daemon moved",
+			discover: func() (*daemon.RuntimeInfo, error) {
 				return &daemon.RuntimeInfo{Network: "tcp", Address: "127.0.0.1:2"}, nil
-			}
-			oldTransport := http.DefaultTransport
-			transport := &http.Transport{}
-			dials := 0
-			transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
-				dials++
-				return nil, errors.New("test intercepted network access")
-			}
-			http.DefaultTransport = transport
-			t.Cleanup(func() { http.DefaultTransport = oldTransport; transport.CloseIdleConnections() })
-			resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Get(baseURL + "/api/jobs")
-			if resp != nil {
-				_ = resp.Body.Close()
-			}
-			require.ErrorIs(t, err, ErrDaemonNotRunning)
-			assert.Zero(t, dials)
-		})
+			},
+			wantErr: errDaemonEndpointChanged,
+		},
+	}
+	// Each URL may now belong to another local account: the shared default
+	// port, its loopback aliases, or a port a stopped daemon published.
+	urls := []string{"http://127.0.0.1:7373", "http://localhost:7373", "http://[::1]:7373", "http://127.0.0.1:7374"}
+	for _, discovery := range discoveries {
+		for _, baseURL := range urls {
+			t.Run(discovery.name+"/"+baseURL, func(t *testing.T) {
+				isolateDaemonSelection(t)
+				getAnyRunningDaemon = discovery.discover
+				oldTransport := http.DefaultTransport
+				transport := &http.Transport{}
+				dials := 0
+				transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+					dials++
+					return nil, errors.New("test intercepted network access")
+				}
+				http.DefaultTransport = transport
+				t.Cleanup(func() { http.DefaultTransport = oldTransport; transport.CloseIdleConnections() })
+				resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Get(baseURL + "/api/jobs")
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				require.ErrorIs(t, err, discovery.wantErr)
+				assert.Zero(t, dials)
+			})
+		}
 	}
 }

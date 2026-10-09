@@ -32,8 +32,8 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		job, err := api.getJob(ctx, jobID)
 		if err != nil {
-			if selectionErr, ok := errors.AsType[*daemonEndpointSelectionError](err); ok {
-				if selectionErr.retryable && errors.Is(err, ErrDaemonNotRunning) {
+			if _, ok := errors.AsType[*daemonEndpointSelectionError](err); ok {
+				if errors.Is(err, ErrDaemonNotRunning) {
 					api = newDaemonReviewAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second))
 					continue
 				}

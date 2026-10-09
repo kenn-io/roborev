@@ -397,6 +397,7 @@ func TestShowPromptResult(t *testing.T) {
 		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, out := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		require.NoError(t, err)
@@ -411,6 +412,7 @@ func TestShowPromptResult(t *testing.T) {
 		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		require.NoError(t, err)
@@ -421,6 +423,7 @@ func TestShowPromptResult(t *testing.T) {
 		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, out := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
 
 		require.NoError(t, err)
@@ -435,6 +438,7 @@ func TestShowPromptResult(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 999, false, "")
 
 		require.Error(t, err)
@@ -444,6 +448,7 @@ func TestShowPromptResult(t *testing.T) {
 	t.Run("handles server error", func(t *testing.T) {
 		server := newRunTestServer(t, mockServerConfig{status: http.StatusInternalServerError})
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		require.Error(t, err)
@@ -568,6 +573,7 @@ func TestWaitForPromptJob(t *testing.T) {
 			cmd, out := newTestCmd(t)
 
 			// Use small poll interval for tests
+			patchServerAddr(t, server.URL)
 			err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, tt.quiet, 1*time.Millisecond)
 
 			if tt.expectError != "" {
@@ -596,6 +602,7 @@ func TestWaitForPromptJob(t *testing.T) {
 		})
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, true, 1*time.Millisecond)
 
 		require.NoError(t, err)
@@ -611,6 +618,7 @@ func TestWaitForPromptJob(t *testing.T) {
 		})
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, true, 1*time.Millisecond)
 
 		require.NoError(t, err)
@@ -630,6 +638,7 @@ func TestWaitForPromptJob(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, true, 1*time.Millisecond)
 
 		require.Error(t, err, "Expected error for max unknown retries")
@@ -669,6 +678,7 @@ func TestWaitForPromptJob(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			cmd, _ := newTestCmd(t)
+			patchServerAddr(t, server.URL)
 			err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, true, tt.interval)
 
 			require.NoError(t, err, "Expected no error, got: %v")
@@ -698,6 +708,7 @@ func TestWaitForPromptJob(t *testing.T) {
 		server, pollCount := newPollingTestServer(t, statuses)
 
 		cmd, _ := newTestCmd(t)
+		patchServerAddr(t, server.URL)
 		err := waitForPromptJob(cmd, mustParseEndpoint(t, server.URL), 123, true, 1*time.Millisecond)
 
 		require.NoError(t, err)

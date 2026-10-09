@@ -156,6 +156,9 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 	return ep.WithAccessError(err)
 }
 
+// resolveDaemonEndpoint selects the endpoint for this command. A non-nil
+// error is a *daemonEndpointSelectionError; clients built from the returned
+// endpoint fail with it before dialing.
 func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
@@ -164,74 +167,63 @@ func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fallbackDaemonEndpoint(), err
+			return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: err}
 		}
 		return ep, nil
 	}
 	// No explicit flag: discover running daemon
-	if info, err := getAnyRunningDaemon(); err == nil {
+	info, err := getAnyRunningDaemon()
+	if err == nil {
 		return info.Endpoint(), nil
-	} else {
-		// Client config errors can also wrap os.ErrNotExist, for example when
-		// a configured TLS certificate is missing.
-		if daemon.IsDaemonAccessError(err) || !errors.Is(err, os.ErrNotExist) {
-			return fallbackDaemonEndpoint(), err
-		}
+	}
+	// Client config errors can also wrap os.ErrNotExist, for example when
+	// a configured TLS certificate is missing.
+	if daemon.IsDaemonAccessError(err) || !errors.Is(err, os.ErrNotExist) {
+		return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: err}
 	}
 	// The default port belongs to the host, not to this account. Do not send
 	// requests there unless a runtime record or --server selected it.
-	return fallbackDaemonEndpoint(), ErrDaemonNotRunning
+	return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: ErrDaemonNotRunning}
 }
 
+// errDaemonEndpointChanged means discovery selected a different endpoint than
+// the URL a command saved earlier, usually because the daemon restarted.
+var errDaemonEndpointChanged = errors.New("daemon endpoint changed")
+
+// daemonEndpointSelectionError means no endpoint was selected for a request.
+// Its cause is ErrDaemonNotRunning, errDaemonEndpointChanged, or a discovery
+// failure such as an unreadable runtime directory or client config.
 type daemonEndpointSelectionError struct {
-	cause     error
-	retryable bool
+	cause error
 }
 
 func (e *daemonEndpointSelectionError) Error() string { return e.cause.Error() }
 
 func (e *daemonEndpointSelectionError) Unwrap() error { return e.cause }
 
+// isRecoverableSelectionError reports whether starting or rediscovering the
+// daemon can select a usable endpoint. Discovery failures need user action.
+func isRecoverableSelectionError(err error) bool {
+	return errors.Is(err, ErrDaemonNotRunning) || errors.Is(err, errDaemonEndpointChanged)
+}
+
 // getDaemonHTTPClientForURL pairs address-based helpers with the URL they use.
-// The selected Unix transport and terminal discovery errors stay attached when
-// the URL identifies the selected endpoint. Other loopback TCP URLs get their
-// own scoped client, including URLs chosen after daemon recovery.
+// Only the endpoint selected now receives requests. A URL saved before the
+// daemon stopped or moved may name a port that another local account owns, so
+// its client fails with a selection error before dialing.
 func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Client {
-	errorClient := func(err error) *http.Client {
-		return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
-			return "", err
-		})
-	}
 	ep, selectionErr := resolveDaemonEndpoint()
 	if baseURL == ep.BaseURL() {
-		if selectionErr != nil {
-			selectionErr = &daemonEndpointSelectionError{
-				cause:     selectionErr,
-				retryable: errors.Is(selectionErr, ErrDaemonNotRunning),
-			}
-		}
 		return ep.WithAccessError(selectionErr).HTTPClient(timeout)
 	}
-	// A stored URL does not authorize recovery from a failed discovery read.
-	if selectionErr != nil && !errors.Is(selectionErr, ErrDaemonNotRunning) {
-		return errorClient(&daemonEndpointSelectionError{cause: selectionErr})
-	}
-	origin, err := url.Parse(baseURL)
-	if err == nil && origin.Scheme == "http" && origin.Host != "" && origin.User == nil {
-		if target, err := daemon.ParseEndpoint(origin.Host); err == nil {
-			// Discovery can change between selecting a URL and building its
-			// client. Neither the real default port nor the development
-			// refusal placeholder becomes authority when that happens.
-			if serverAddr == "" && (target.Port() == defaultDaemonEndpoint().Port() || target.Port() == fallbackDaemonEndpoint().Port()) {
-				return errorClient(&daemonEndpointSelectionError{
-					cause:     ErrDaemonNotRunning,
-					retryable: errors.Is(selectionErr, ErrDaemonNotRunning),
-				})
-			}
-			return target.HTTPClient(timeout)
+	if selectionErr == nil {
+		selectionErr = &daemonEndpointSelectionError{
+			cause: fmt.Errorf("%w from %s to %s", errDaemonEndpointChanged, baseURL, ep.BaseURL()),
 		}
 	}
-	return errorClient(fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied))
+	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
+		return "", selectionErr
+	})
 }
 
 // registerRepoError is a server-side error from the register endpoint

@@ -86,6 +86,7 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			})
 			ts := httptest.NewServer(handler)
 			defer ts.Close()
+			patchServerAddr(t, ts.URL)
 
 			err := enqueueIfNeeded(context.Background(), ts.URL, tmpDir, sha)
 			require.NoError(t, err, "enqueueIfNeeded: %v")
