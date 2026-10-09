@@ -2234,23 +2234,7 @@ type JobStats struct {
 // CountJobStats returns aggregate status and resolution counts using the same
 // filter logic as ListJobs.
 func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOption) (JobStats, error) {
-	query := `
-		SELECT
-			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		LEFT JOIN reviews rv ON rv.job_id = j.id
-	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
-	query += queryFilters
-
+	query, args := jobStatsQuery(statusFilter, repoFilter, opts...)
 	var stats JobStats
 	err := db.QueryRow(query, args...).Scan(
 		&stats.Queued,
@@ -2263,6 +2247,27 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 		&stats.Open,
 	)
 	return stats, err
+}
+
+func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
+	// The unique job_id index still reads closed past each review's prompt.
+	// Use the covering metadata index, as the analytics query does.
+	query := `
+		SELECT
+			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
+		FROM review_jobs j
+		JOIN repos r ON r.id = j.repo_id
+		LEFT JOIN reviews rv INDEXED BY idx_reviews_job_verdict ON rv.job_id = j.id
+	`
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
+	return query + queryFilters, args
 }
 
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
