@@ -1090,6 +1090,16 @@ See: [Repository Management](/docs/guides/repository-management/)
 
 ## Daemon & Hooks
 
+Automatic daemon discovery uses live runtime records from the selected data
+directory (`~/.roborev` by default, or `ROBOREV_DATA_DIR`). A response on the
+default loopback port does not identify your daemon: another local account may
+own that port. When no runtime is found, commands that start the daemon launch
+your own instance; other requests report that the daemon is not running.
+
+Use `--server <address>` to select an endpoint explicitly, including a manually
+managed daemon without a runtime record. The CLI probes that endpoint and does
+not start or restart a local daemon on its behalf.
+
 ```bash
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
@@ -1352,7 +1362,7 @@ daemon.
 
 | Flag | Description |
 |------|-------------|
-| `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets |
+| `--server <addr>` | Daemon address. Without it, the CLI uses the daemon named by this data directory's runtime records. Accepts `unix://` for Unix domain sockets |
 | `-v, --verbose` | Verbose output |
 
 ## Update

@@ -97,6 +97,7 @@ func TestAuthExplicitURLHelpers(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	patchServerAddr(t, server.URL)
 	ctx := context.Background()
 	review, err := fetchReview(ctx, server.URL, 23)
 	require.NoError(t, err)
@@ -170,6 +171,7 @@ func TestAuthCloseAndCancelMapUnauthorized(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":"daemon authentication required"}`))
 			}))
 			defer server.Close()
+			patchServerAddr(t, server.URL)
 
 			err := tc.call(server.URL)
 			require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
@@ -228,6 +230,7 @@ func TestAuthEnqueueStopsOnAccessErrors(t *testing.T) {
 				}
 			}))
 			defer server.Close()
+			patchServerAddr(t, server.URL)
 			err := enqueueIfNeeded(t.Context(), server.URL, t.TempDir(), "abc123")
 			wantErr := daemon.ErrDaemonAccessDenied
 			if tc.badConfig {

@@ -88,8 +88,8 @@ var (
 	}
 )
 
-// ErrDaemonNotRunning indicates no daemon runtime file was found
-var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
+// ErrDaemonNotRunning indicates no responsive daemon runtime was found.
+var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no responsive daemon found)")
 
 type detachedDaemonOptions struct {
 	Executable      string
@@ -152,44 +152,97 @@ func validateServerFlag() error {
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
 // An explicit --server flag takes precedence over auto-discovered daemons.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
+	ep, err := resolveDaemonEndpoint()
+	return ep.WithAccessError(err)
+}
+
+// resolveDaemonEndpoint selects the endpoint for this command. A non-nil
+// error is a *daemonEndpointSelectionError; clients built from the returned
+// endpoint fail with it before dialing.
+func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
+	endpoints, err := selectDaemonEndpoints()
+	return endpoints[0], err
+}
+
+// selectDaemonEndpoints returns the selected endpoint first. After automatic
+// discovery, every other endpoint the same live daemon publishes follows it.
+// The result always has at least one endpoint, so callers can build a client
+// that reports the selection error.
+func selectDaemonEndpoints() ([]daemon.DaemonEndpoint, error) {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
-			return *parsedServerEndpoint
+			return []daemon.DaemonEndpoint{*parsedServerEndpoint}, nil
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fallbackDaemonEndpoint()
+			return failedDaemonSelection(err)
 		}
-		return ep
+		return []daemon.DaemonEndpoint{ep}, nil
 	}
 	// No explicit flag: discover running daemon
-	if info, err := getAnyRunningDaemon(); err == nil {
-		return info.Endpoint()
-	} else if daemon.IsDaemonAccessError(err) {
-		return fallbackDaemonEndpoint().WithAccessError(err)
+	info, err := getAnyRunningDaemon()
+	if err == nil {
+		return info.Endpoints(), nil
 	}
-	// Nothing running: use default
-	return fallbackDaemonEndpoint()
+	// Client config errors can also wrap os.ErrNotExist, for example when
+	// a configured TLS certificate is missing.
+	if daemon.IsDaemonAccessError(err) || !errors.Is(err, os.ErrNotExist) {
+		return failedDaemonSelection(err)
+	}
+	// The default port belongs to the host, not to this account. Do not send
+	// requests there unless a runtime record or --server selected it.
+	return failedDaemonSelection(ErrDaemonNotRunning)
+}
+
+// failedDaemonSelection pairs a selection failure with the fallback endpoint,
+// whose clients report the failure instead of dialing.
+func failedDaemonSelection(cause error) ([]daemon.DaemonEndpoint, error) {
+	fallback := []daemon.DaemonEndpoint{fallbackDaemonEndpoint()}
+	return fallback, &daemonEndpointSelectionError{cause: cause}
+}
+
+// errDaemonEndpointChanged means discovery selected a different endpoint than
+// the URL a command saved earlier, usually because the daemon restarted.
+var errDaemonEndpointChanged = errors.New("daemon endpoint changed")
+
+// daemonEndpointSelectionError means no endpoint was selected for a request.
+// Its cause is ErrDaemonNotRunning, errDaemonEndpointChanged, or a discovery
+// failure such as an unreadable runtime directory or client config.
+type daemonEndpointSelectionError struct {
+	cause error
+}
+
+func (e *daemonEndpointSelectionError) Error() string { return e.cause.Error() }
+
+func (e *daemonEndpointSelectionError) Unwrap() error { return e.cause }
+
+// isRecoverableSelectionError reports whether starting or rediscovering the
+// daemon can select a usable endpoint. Discovery failures need user action.
+func isRecoverableSelectionError(err error) bool {
+	return errors.Is(err, ErrDaemonNotRunning) || errors.Is(err, errDaemonEndpointChanged)
 }
 
 // getDaemonHTTPClientForURL pairs address-based helpers with the URL they use.
-// The selected Unix transport and terminal discovery errors stay attached when
-// the URL identifies the selected endpoint. Other loopback TCP URLs get their
-// own scoped client, including URLs chosen after daemon recovery.
+// Only endpoints the selected daemon publishes receive requests. Discovery may
+// answer on the Unix socket after a command saved the same daemon's TCP URL,
+// so either published endpoint is accepted. A URL saved before the daemon
+// stopped or moved may name a port that another local account owns, so its
+// client fails with a selection error before dialing.
 func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Client {
-	ep := getDaemonEndpoint()
-	if baseURL == ep.BaseURL() {
-		return ep.HTTPClient(timeout)
-	}
-	origin, err := url.Parse(baseURL)
-	if err == nil && origin.Scheme == "http" && origin.Host != "" && origin.User == nil {
-		if target, err := daemon.ParseEndpoint(origin.Host); err == nil {
-			return target.HTTPClient(timeout)
+	endpoints, selectionErr := selectDaemonEndpoints()
+	for _, ep := range endpoints {
+		if baseURL == ep.BaseURL() {
+			return ep.WithAccessError(selectionErr).HTTPClient(timeout)
 		}
 	}
+	if selectionErr == nil {
+		changed := fmt.Errorf("%w from %s to %s",
+			errDaemonEndpointChanged, baseURL, endpoints[0].BaseURL())
+		selectionErr = &daemonEndpointSelectionError{cause: changed}
+	}
 	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
-		return "", fmt.Errorf("%w: invalid daemon API URL", daemon.ErrDaemonAccessDenied)
+		return "", selectionErr
 	})
 }
 
@@ -262,8 +315,10 @@ func ensureDaemon() error {
 
 	// First check runtime files for any running daemon
 	info, discoveryErr := getAnyRunningDaemon()
-	if daemon.IsDaemonAccessError(discoveryErr) {
-		return discoveryErr
+	if discoveryErr != nil {
+		if daemon.IsDaemonAccessError(discoveryErr) || !errors.Is(discoveryErr, os.ErrNotExist) {
+			return discoveryErr
+		}
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
@@ -295,34 +350,11 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	// Try the configured default address for manual daemon runs that do not
-	// have a runtime file yet.
-	ep := getDaemonEndpoint()
-	probe, probeErr := probeDaemonForEnsure(ep, 2*time.Second)
-	if probeErr == nil {
-		if !skipVersionCheck {
-			if probe.Version == "" {
-				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
-				}
-				return restartDaemonForEnsure()
-			}
-			if probe.Version != version.Version {
-				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
-				}
-				return restartDaemonForEnsure()
-			}
-		}
-		return nil
-	}
-	if daemon.IsDaemonAccessError(probeErr) {
-		return fmt.Errorf("probe daemon: %w", probeErr)
-	}
-
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
-	cleanupZombieDaemons(ep)
+	// Cleanup uses only this data directory's runtime records. Never adopt
+	// an unpublished daemon by probing the shared default loopback port.
+	cleanupZombieDaemons(fallbackDaemonEndpoint())
 
 	// Start daemon in background
 	return startDaemonForEnsure()
