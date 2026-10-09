@@ -1469,6 +1469,13 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_reviews_job_verdict: %w", err)
 	}
 
+	// Queue counts read metadata after large prompt/diff columns. Cover the
+	// default browser filters so counting history never walks those payloads.
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_queue_stats
+		ON review_jobs(status, repo_id, job_type, source, panel_role)`); err != nil {
+		return fmt.Errorf("create idx_review_jobs_queue_stats: %w", err)
+	}
+
 	// A session present at enqueue time is a resumed provider session. Provider
 	// usage for such sessions is cumulative, so late reconciliation must retain
 	// this attempt-scoped fact after completion instead of inferring it from
