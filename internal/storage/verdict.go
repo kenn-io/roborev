@@ -226,7 +226,7 @@ func ParseVerdictAtSeverity(output, minSeverity string) Verdict {
 	// substring check would let prose findings without severity
 	// labels (e.g. "the auth module leaks tokens") flip to pass
 	// just because the agent echoed the marker in narration.
-	if config.IsMarkerOnlyOutput(output) {
+	if config.IsMarkerOnlyOutput(stripTimestampPrefixes(output)) {
 		return VerdictPass
 	}
 
@@ -316,6 +316,15 @@ var timestampPrefix = regexp.MustCompile(
 // keeping the indentation before it and the content's own indentation after it.
 func stripTimestampPrefix(s string) string {
 	return timestampPrefix.ReplaceAllString(s, "${1}")
+}
+
+// stripTimestampPrefixes removes a bracketed timestamp from every line.
+func stripTimestampPrefixes(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		lines[i] = stripTimestampPrefix(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // stampedHeading matches an ATX heading marker once a timestamp is removed.

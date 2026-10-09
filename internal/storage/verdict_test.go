@@ -958,3 +958,10 @@ func TestStampedHeadingLevel(t *testing.T) {
 	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am] #hashtag is prose"))
 	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am]     ### indented code"))
 }
+
+func TestParseVerdictTimestampedMarkerOnly(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, VerdictPass, ParseVerdict("[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET"))
+	assert.Equal(t, VerdictPass, ParseVerdict("```\n[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET\n```"))
+	assert.Equal(t, VerdictFail, ParseVerdict("[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET\n[2026-10-08 07:53am] The auth module leaks tokens."))
+}
