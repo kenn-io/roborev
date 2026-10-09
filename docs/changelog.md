@@ -14,6 +14,12 @@ All notable changes to roborev, grouped by minor release.
     editing code. Background fix requests and the TUI fix panel can also plan
     before implementation.
 
+**Bug fixes**
+
+- Open the [browser review queue](/docs/web-ui/#reviews-workspace) faster on
+    histories with large stored prompts. Queue totals remain exact; counting
+    jobs no longer traverses historical prompt payloads.
+
 ## 0.71.0
 
 <small>2026-10-03</small>
