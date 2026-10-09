@@ -3458,6 +3458,55 @@ func TestUnavailableAgentErrorSkipsCoolingBackup(t *testing.T) {
 	assert.True(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
 }
 
+func TestFailOrRetryInner_TypographicApostropheLimitSkipsRetries(t *testing.T) {
+	tests := []struct {
+		name       string
+		agentName  string
+		errorText  string
+		wantPrefix string
+	}{
+		{
+			name:      "codex usage limit",
+			agentName: "codex",
+			// Captured from a production daemon log; Codex renders "You’ve" with U+2019.
+			errorText: "agent: codex failed: exit status 1 (parse error: codex stream reported " +
+				"failure: You\u2019ve hit your usage limit. Visit " +
+				"https://chatgpt.com/settings/usage to purchase more credits or try again at " +
+				"Oct 14th, 2026 3:31 AM.)",
+			wantPrefix: review.QuotaErrorPrefix,
+		},
+		{
+			name:       "claude session limit",
+			agentName:  "claude-code",
+			errorText:  "stream errors: You\u2019ve hit your session limit \u00b7 resets 5:50am (UTC)",
+			wantPrefix: review.OutageErrorPrefix,
+		},
+		{
+			name:       "claude weekly limit",
+			agentName:  "claude-code",
+			errorText:  "stream errors: You\u2019ve hit your weekly limit \u00b7 resets 4pm (UTC)",
+			wantPrefix: review.QuotaErrorPrefix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, tt.agentName)
+
+			tc.Pool.failOrRetryInner(testWorkerID, job, tt.agentName, tt.errorText, true)
+
+			updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+			assert.True(t, strings.HasPrefix(updated.Error, tt.wantPrefix), updated.Error)
+			retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(t, retryCount)
+			assert.True(t, tc.Pool.isAgentCoolingDown(tt.agentName))
+		})
+	}
+}
+
 func TestUnavailableAgentErrorPreservesLimitClassification(t *testing.T) {
 	tests := []struct {
 		name       string
