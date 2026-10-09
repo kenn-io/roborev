@@ -949,3 +949,12 @@ func TestProseSectionIgnoresTimestampPrefix(t *testing.T) {
 	assert.Equal(t, "findings", ProseSection("  [2026-10-08T14:53:00Z]    **Findings:**"))
 	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am]   ---"))
 }
+
+func TestStampedHeadingLevel(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 3, StampedHeadingLevel("[2026-10-08 07:53am] ### Additional concerns"))
+	assert.Equal(t, 2, StampedHeadingLevel("[2026-10-08T14:53:00Z]   ##"))
+	assert.Equal(t, 0, StampedHeadingLevel("### Unstamped headings are parsed by Markdown"))
+	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am] #hashtag is prose"))
+	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am]     ### indented code"))
+}

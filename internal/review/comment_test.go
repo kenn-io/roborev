@@ -65,6 +65,16 @@ func TestProseCommentTimestampedSeparatorEndsFinding(t *testing.T) {
 	assert.NotContains(t, comment, "Minor naming issue.")
 }
 
+func TestProseCommentTimestampedHeadingEndsFinding(t *testing.T) {
+	result := ReviewResult{
+		Output:      "[2026-10-08 07:53am] ### Low\nMinor naming issue.\n\n[2026-10-08 07:53am] ### Additional concerns\nAn unlabelled concern.",
+		MinSeverity: "high",
+	}
+	comment := FormatComment(PrepareComment(CommentConfig{MinSeverity: result.MinSeverity}, result))
+	assert.Contains(t, comment, "An unlabelled concern.")
+	assert.NotContains(t, comment, "Minor naming issue.")
+}
+
 func TestProseCommentKeepsUnlabelledPrefix(t *testing.T) {
 	result := ReviewResult{
 		Output:      "An unlabelled concern.\n\n### Low\nMinor naming issue.",

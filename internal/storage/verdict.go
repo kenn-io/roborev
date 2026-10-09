@@ -318,6 +318,23 @@ func stripTimestampPrefix(s string) string {
 	return timestampPrefix.ReplaceAllString(s, "${1}")
 }
 
+// stampedHeading matches an ATX heading marker once a timestamp is removed.
+var stampedHeading = regexp.MustCompile(`^ {0,3}(#{1,6})(?:[ \t]|$)`)
+
+// StampedHeadingLevel returns the ATX heading level of a line that begins
+// with a timestamp, or zero. Markdown parsers read "[stamp] ### Title" as a
+// paragraph, so callers recover the section boundary from the stripped text.
+func StampedHeadingLevel(line string) int {
+	stripped := stripTimestampPrefix(line)
+	if stripped == line {
+		return 0
+	}
+	if m := stampedHeading.FindStringSubmatch(stripped); m != nil {
+		return len(m[1])
+	}
+	return 0
+}
+
 // stripMarkdown removes common markdown formatting from a line
 func stripMarkdown(s string) string {
 	// Strip leading markdown headers (##, ###, etc.)
