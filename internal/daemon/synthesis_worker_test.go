@@ -687,12 +687,11 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 }`)
 	markMemberRunning(t, tc, members[0].ID)
 	require.NoError(t, tc.DB.CompleteJobResult(
-		members[0].ID, memberAgent, "", storage.ReviewCompletion{
+		members[0].ID, memberAgent, storage.ReviewCompletion{
 			Output:           memberOutput,
 			Verdict:          storage.VerdictFail,
 			StructuredOutput: structured,
-		},
-	))
+		}))
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
@@ -748,12 +747,11 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 	for _, m := range members {
 		markMemberRunning(t, tc, m.ID)
 		require.NoError(t, tc.DB.CompleteJobResult(
-			m.ID, memberAgent, "", storage.ReviewCompletion{
+			m.ID, memberAgent, storage.ReviewCompletion{
 				Output:           "## Summary\n\nOne nit.\n\n## Findings\n\n### 1. Low\n\n**Problem:** shared nit\n\n**Fix:** tidy\n",
 				Verdict:          storage.VerdictFail,
 				StructuredOutput: structured,
-			},
-		))
+			}))
 	}
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
@@ -1335,7 +1333,7 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	member := members[0]
 	_, err := tc.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
 	require.NoError(t, err)
-	_, archiveErr := tc.DB.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', 'prompt', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
+	_, archiveErr := tc.DB.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
 	require.NoError(t, archiveErr)
 	records, err := tc.DB.UnresolvedLegacyReviews()
 	require.NoError(t, err)

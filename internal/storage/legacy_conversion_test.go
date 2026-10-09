@@ -48,8 +48,8 @@ func seedLegacyMarkdownReview(t *testing.T, db *DB, repoID int64, name, markdown
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	fixture := legacyFixture{jobID: job.ID, markdown: markdown, verdict: verdict, closed: closed, createdAt: "2026-01-05 00:00:00"}
-	_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
- VALUES (?, 'test', 'prompt', ?, ?, ?, ?, ?, ?, '2026-01-06T00:00:00Z')`,
+	_, err = db.Exec(`INSERT INTO reviews (job_id, agent, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
+ VALUES (?, 'test', ?, ?, ?, ?, ?, ?, '2026-01-06T00:00:00Z')`,
 		job.ID, markdown, fixture.createdAt, "2026-01-05T00:00:00Z", closed, verdict, testUUID("legacy-"+name))
 	require.NoError(t, err)
 	return fixture
@@ -236,7 +236,7 @@ func TestConvertLegacyReviewsLeavesAJobWithAnActiveReviewAlone(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/legacy-active", "active-head")
 	archived := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "rerun", legacyNoIssuesMarkdown, 1, false)
 	archiveAsOlderRelease(t, env.db)
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', '', ?, ?)`,
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
 		archived.jobID, `{"schema_version":2,"summary":"Reviewed again.","verdict":"pass","findings":[]}`, testUUID("rerun-review"))
 	require.NoError(t, err)
 
@@ -266,7 +266,7 @@ func seedLegacyPanel(t *testing.T, env jobEnv, name string) int64 {
 		require.NoError(t, err)
 		_, err = env.db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, member.ID)
 		require.NoError(t, err)
-		_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', '', ?, ?)`,
+		_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
 			member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(fmt.Sprintf("%s-member-%d", name, i)))
 		require.NoError(t, err)
 	}
@@ -277,7 +277,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-synthesis-convert", "synthesis-convert-head")
 	insert := func(jobID int64, name, markdown string, verdict int) {
-		_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', ?, ?, ?)`,
+		_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, ?, ?)`,
 			jobID, markdown, verdict, testUUID("synthesis-"+name))
 		require.NoError(t, err)
 	}
@@ -325,7 +325,7 @@ func TestConvertedReviewIsNotOverwrittenByAMarkdownOnlyPeer(t *testing.T) {
 	// A machine on an older release still holds the Markdown and syncs it
 	// with a newer timestamp.
 	require.NoError(t, env.db.UpsertPulledReview(PulledReview{
-		UUID: testUUID("legacy-peer"), JobUUID: *job.UUID, Agent: "test", Prompt: "prompt",
+		UUID: testUUID("legacy-peer"), JobUUID: *job.UUID, Agent: "test",
 		Output: strings.ReplaceAll(legacyFindingsMarkdown, "High", "Low"), UpdatedByMachineID: testUUID("old-peer"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
 	}))

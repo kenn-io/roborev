@@ -581,7 +581,7 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
 	require.NoError(t, db.CompleteJobResult(
 		job.ID,
 		"test",
-		"prompt",
+
 		ReviewCompletion{
 			Output: "## Summary\n\nHigh: no actionable findings.\n\n" +
 				"No findings at or above the configured severity threshold.\n",
@@ -593,8 +593,7 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`),
-		},
-	))
+		}))
 	canonical, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 

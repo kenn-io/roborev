@@ -49,7 +49,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					document := jsontext.Value(`{"schema_version":2,"summary":"Review notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null},{"severity":"medium","problem":"Missing cleanup.","fix":"Close it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`)
 					// The successful review is deliberately not the first member.
 					markMemberRunning(t, tc, members[1].ID)
-					require.NoError(t, tc.DB.CompleteJobResult(members[1].ID, "test", "", storage.ReviewCompletion{
+					require.NoError(t, tc.DB.CompleteJobResult(members[1].ID, "test", storage.ReviewCompletion{
 						Output: output, Verdict: storage.VerdictFail, StructuredOutput: document, MinSeverity: policy.member,
 					}))
 					failMember(t, tc, members[0].ID)
@@ -128,7 +128,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			require.NoError(t, err)
 			for i, m := range members {
 				markMemberRunning(t, tc, m.ID)
-				require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", "", storage.ReviewCompletion{Output: "### Low\nMinor naming issue.", StructuredOutput: document, Verdict: storage.ParseVerdictAtSeverity("### Low\nMinor naming issue.", policy.members[i]), MinSeverity: policy.members[i]}))
+				require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", storage.ReviewCompletion{Output: "### Low\nMinor naming issue.", StructuredOutput: document, Verdict: storage.ParseVerdictAtSeverity("### Low\nMinor naming issue.", policy.members[i]), MinSeverity: policy.members[i]}))
 			}
 			synth := releaseAndClaimSynthesis(t, tc, runUUID)
 			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
@@ -202,7 +202,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 						completion.Verdict = storage.VerdictFail
 					}
 					markMemberRunning(t, tc, m.ID)
-					require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", "", completion))
+					require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", completion))
 				}
 				synth := releaseAndClaimSynthesis(t, tc, runUUID)
 				if outcome == "synthesis" {

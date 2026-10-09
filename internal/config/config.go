@@ -255,6 +255,8 @@ type Config struct {
 	JobTimeoutMinutes          int                             `toml:"job_timeout_minutes"`
 	IsolateReviews             bool                            `toml:"isolate_reviews" comment:"Run committed reviews in daemon-owned detached checkouts."`
 	HookTimeoutSeconds         int                             `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
+	PromptRetentionDays        int                             `toml:"prompt_retention_days" comment:"Delete stored prompts of finished review and range jobs after this many days; reviews are kept. 0 or negative keeps prompts forever."`
+	JobLogRetentionDays        int                             `toml:"job_log_retention_days" comment:"Delete job log files after this many days. 0 or negative keeps logs forever."`
 	AgentQuotaCooldown         string                          `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
 	ReviewReasoning            string                          `toml:"review_reasoning" comment:"Default reasoning for reviews. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 	RefineReasoning            string                          `toml:"refine_reasoning" comment:"Default reasoning for refine. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`

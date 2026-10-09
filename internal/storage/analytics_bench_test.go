@@ -93,18 +93,20 @@ func openAnalyticsBenchmarkDB(b *testing.B) (*DB, time.Time) {
 		started := finished.Add(-90 * time.Second)
 		result, err := tx.Exec(`INSERT INTO review_jobs
 			(repo_id, git_ref, agent, model, status, enqueued_at, started_at, finished_at,
-			 prompt, job_type, source, token_usage, agent_invoked)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+			 job_type, source, token_usage, agent_invoked)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
 			repoIDs[i%len(repoIDs)], fmt.Sprintf("sha-%d", i),
 			fmt.Sprintf("agent-%d", i%3), fmt.Sprintf("model-%d", i%5), statuses[i%len(statuses)],
 			started.Add(-time.Minute).Format(time.RFC3339), started.Format(time.RFC3339),
-			finished.Format(time.RFC3339), prompt, JobTypeReview, sources[i%len(sources)],
+			finished.Format(time.RFC3339), JobTypeReview, sources[i%len(sources)],
 			fmt.Sprintf(`{"cost_usd":%d.25,"has_cost":true,"total_output_tokens":1200}`, i%4))
 		require.NoError(b, err)
 		jobID, err := result.LastInsertId()
 		require.NoError(b, err)
-		_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, closed, verdict_bool)
-			VALUES (?, 'agent', ?, '', ?, ?)`, jobID, prompt, i%7 == 0, i%2)
+		_, err = tx.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress(?))`, jobID, prompt)
+		require.NoError(b, err)
+		_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, output, closed, verdict_bool)
+			VALUES (?, 'agent', '', ?, ?)`, jobID, i%7 == 0, i%2)
 		require.NoError(b, err)
 	}
 	require.NoError(b, tx.Commit())
@@ -167,7 +169,7 @@ func BenchmarkCompleteJobWithAnalyticsHistory(b *testing.B) {
 		job, err := db.ClaimJob("bench-worker")
 		require.NoError(b, err)
 		b.StartTimer()
-		require.NoError(b, db.CompleteJob(job.ID, "test", prompt, "No issues found."))
+		require.NoError(b, db.CompleteJob(job.ID, "test", "No issues found."))
 	}
 }
 

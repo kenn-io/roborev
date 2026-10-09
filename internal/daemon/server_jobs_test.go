@@ -3349,7 +3349,7 @@ func TestHandleListJobsByIDWithArchivedReview(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	_, jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "archived"), 1, "archive")
 	job := jobs[0]
-	_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', 'prompt', ?, datetime('now'), 0, ?, 'AI conversion required')`, job.ID, "Legacy review", uuid.New())
+	_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, job.ID, "Legacy review", uuid.New())
 	require.NoError(t, archiveErr)
 	_, err := db.GetReviewByJobID(job.ID)
 	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)

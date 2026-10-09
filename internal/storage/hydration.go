@@ -215,7 +215,9 @@ type reviewScanFields struct {
 }
 
 const reviewSelectColumns = `
-	rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at,
+	rv.id, rv.job_id, rv.agent,
+	COALESCE((SELECT zstd_decompress(prompt) FROM job_content WHERE job_id = rv.job_id), ''),
+	rv.output, rv.created_at,
 	rv.closed, rv.uuid, rv.verdict_bool, rv.structured_output,
 	rv.reviewed_file_count, rv.excluded_file_count,
  (SELECT job_type FROM review_jobs WHERE id = rv.job_id),

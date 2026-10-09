@@ -1773,12 +1773,9 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotZero(t, jobID)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(jobID), []byte("classifier progress\n"), 0o600))
 	require.NoError(t, markJobLogForAppend(jobID))
@@ -1843,12 +1840,9 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 		ReviewType: "design",
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(
 		JobLogPath(jobID),

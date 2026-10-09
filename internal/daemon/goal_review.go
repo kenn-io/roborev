@@ -198,7 +198,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}
 	var completeErr error
 	if wp.runAttemptTransition(workerID, job, func() {
-		completeErr = wp.db.CompleteJobResult(job.ID, a.Name(), job.Prompt, storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)})
+		completeErr = wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)})
 	}) {
 		return
 	}

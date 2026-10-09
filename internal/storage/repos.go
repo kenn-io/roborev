@@ -659,6 +659,10 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 			return err
 		}
 
+		if _, err := conn.ExecContext(ctx, `DELETE FROM job_content WHERE job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)`, repoID); err != nil {
+			return err
+		}
+
 		// 3. Delete jobs for this repo
 		_, err = conn.ExecContext(ctx, `DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
 		if err != nil {

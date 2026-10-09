@@ -40,7 +40,7 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 	repo, commit, job := createJobChain(t, db, "/tmp/coverage-roundtrip", "coverage-sha")
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 	zero, excluded := 0, 27
-	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", ReviewCompletion{
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", ReviewCompletion{
 		StructuredOutput: reviewFixtureJSON("PASS"),
 		Output:           "PASS",
 		FileCoverage:     &ReviewFileCoverage{Reviewed: &zero, Excluded: &excluded},
@@ -61,7 +61,7 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 
 	unknown := enqueueJob(t, db, repo.ID, commit.ID, "unknown-sha")
 	setJobStatus(t, db, unknown.ID, JobStatusRunning)
-	require.NoError(t, db.CompleteJobResult(unknown.ID, "test", "prompt", ReviewCompletion{
+	require.NoError(t, db.CompleteJobResult(unknown.ID, "test", ReviewCompletion{
 		StructuredOutput: reviewFixtureJSON("PASS"), Output: "PASS",
 	}))
 	unknownReview, err := db.GetReviewByJobID(unknown.ID)
@@ -73,7 +73,7 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 
 	canceled := enqueueJob(t, db, repo.ID, commit.ID, "canceled-sha")
 	setJobStatus(t, db, canceled.ID, JobStatusCanceled)
-	require.NoError(t, db.CompleteJobResult(canceled.ID, "test", "prompt", ReviewCompletion{
+	require.NoError(t, db.CompleteJobResult(canceled.ID, "test", ReviewCompletion{
 		StructuredOutput: reviewFixtureJSON("PASS"),
 		Output:           "PASS",
 		FileCoverage:     &ReviewFileCoverage{Reviewed: &zero},
@@ -101,7 +101,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	_, _, job := createJobChain(t, db, "/tmp/coverage-sync", "sync-sha")
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 	reviewed := 4
-	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", ReviewCompletion{
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", ReviewCompletion{
 		StructuredOutput: reviewFixtureJSON("PASS"),
 		Output:           "PASS",
 		FileCoverage:     &ReviewFileCoverage{Reviewed: &reviewed},
@@ -134,7 +134,6 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              "remote",
-		Prompt:             "remote prompt",
 		Output:             "PASS",
 		CreatedAt:          future,
 		UpdatedAt:          future,
@@ -153,7 +152,6 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              "remote",
-		Prompt:             "remote prompt",
 		Output:             "PASS",
 		CreatedAt:          future,
 		UpdatedAt:          future,
@@ -191,7 +189,6 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 		UUID:               reviewUUID,
 		JobUUID:            jobUUID,
 		Agent:              "test",
-		Prompt:             "prompt",
 		Output:             "PASS",
 		ReviewedFileCount:  &zero,
 		ExcludedFileCount:  &excluded,
@@ -210,7 +207,6 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 		UUID:               reviewUUID,
 		JobUUID:            jobUUID,
 		Agent:              "test",
-		Prompt:             "prompt",
 		Output:             "PASS",
 		UpdatedByMachineID: updatedBy,
 		CreatedAt:          time.Now().Add(time.Minute),

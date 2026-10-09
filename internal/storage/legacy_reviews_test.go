@@ -14,8 +14,8 @@ func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-review", "legacy-head")
 	claimJob(t, env.db, "worker")
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid)
- VALUES (?, 'test', 'prompt', 'A finding without a severity or fix.', '11111111-1111-4111-8111-111111111111')`, env.job.ID)
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, uuid)
+ VALUES (?, 'test', 'A finding without a severity or fix.', '11111111-1111-4111-8111-111111111111')`, env.job.ID)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	records, err := env.db.UnresolvedLegacyReviews()
@@ -50,9 +50,9 @@ func TestReviewWritesRequireJSON(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/json-review", "json-head")
 	claimJob(t, env.db, "worker")
-	require.ErrorContains(t, env.db.CompleteJob(env.job.ID, "test", "prompt", "No issues found."), "JSON document is required")
+	require.ErrorContains(t, env.db.CompleteJob(env.job.ID, "test", "No issues found."), "JSON document is required")
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`)
-	require.NoError(t, env.db.CompleteJobResult(env.job.ID, "test", "prompt", ReviewCompletion{Output: "rendered Markdown must not be stored", StructuredOutput: raw}))
+	require.NoError(t, env.db.CompleteJobResult(env.job.ID, "test", ReviewCompletion{Output: "rendered Markdown must not be stored", StructuredOutput: raw}))
 	var output string
 	var document []byte
 	require.NoError(t, env.db.QueryRow(`SELECT output, structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&output, &document))
@@ -68,8 +68,8 @@ func TestLegacyReviewWithJSONUsesDocument(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/dual-review", "dual-head")
 	raw := `{"schema_version":2,"summary":"Canonical summary.","verdict":"pass","findings":[]}`
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid)
- VALUES (?, 'test', 'prompt', 'Obsolete Markdown', ?, '22222222-2222-4222-8222-222222222222')`, env.job.ID, raw)
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid)
+ VALUES (?, 'test', 'Obsolete Markdown', ?, '22222222-2222-4222-8222-222222222222')`, env.job.ID, raw)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	got, err := env.db.GetReviewByJobID(env.job.ID)
@@ -96,16 +96,16 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 		_, err = env.db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, status, member.ID)
 		require.NoError(t, err)
 		if status == "done" {
-			_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
+			_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
 			require.NoError(t, err)
 			for _, suffix := range []string{"old-a", "old-b"} {
-				_, err = env.db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, uuid, migration_error, resolved_at) VALUES (?, 'test', 'prompt', 'No issues found.', datetime('now'), 0, ?, '', datetime('now'))`, member.ID, testUUID(member.ReviewType+suffix))
+				_, err = env.db.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error, resolved_at) VALUES (?, 'test', 'No issues found.', datetime('now'), 0, ?, '', datetime('now'))`, member.ID, testUUID(member.ReviewType+suffix))
 				require.NoError(t, err)
 			}
 		}
 	}
 	raw := `{"schema_version":2,"summary":"Synthesis finding.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null,"sources":[1]}]}`
-	_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, uuid) VALUES (?, 'test', 'prompt', 'Original synthesis', ?, ?)`, env.job.ID, raw, testUUID("synthesis-review"))
+	_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', 'Original synthesis', ?, ?)`, env.job.ID, raw, testUUID("synthesis-review"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	records, err := env.db.UnresolvedLegacyReviews()
@@ -134,10 +134,10 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/legacy-sync", "sync-head")
 	incoming := PulledReview{
 		UUID: testUUID("legacy-sync-review"), JobUUID: *env.job.UUID,
-		Agent: "test", Prompt: "prompt", Output: "Unstructured review.",
+		Agent: "test", Output: "Unstructured review.",
 		UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	_, seedErr := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid) VALUES (?, 'test', 'prompt', ?, ?)`, env.job.ID, incoming.Output, incoming.UUID)
+	_, seedErr := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, uuid) VALUES (?, 'test', ?, ?)`, env.job.ID, incoming.Output, incoming.UUID)
 	require.NoError(t, seedErr)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	_, err := env.db.GetReviewByJobID(env.job.ID)
@@ -159,7 +159,7 @@ func TestStaleMarkdownSyncKeepsCanonicalReview(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/canonical-sync", "canonical-head")
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
-	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	incoming.StructuredOutput = nil
 	incoming.Output = "Stale Markdown"

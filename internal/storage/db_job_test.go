@@ -81,12 +81,11 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 
 	structured := []byte(`{"schema_version":1,"summary":"Misleading summary.","findings":[]}`)
 	require.NoError(t, env.db.CompleteJobResult(
-		env.job.ID, "codex", "prompt", ReviewCompletion{
+		env.job.ID, "codex", ReviewCompletion{
 			Output:           "No issues found.",
 			Verdict:          VerdictFail,
 			StructuredOutput: structured,
-		},
-	))
+		}))
 	var verdict sql.NullInt64
 	var storedStructured string
 	require.NoError(t, env.db.QueryRow(
@@ -155,11 +154,11 @@ func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 			require.NotNil(t, claimed)
 
 			err := env.db.CompleteJobResult(
-				env.job.ID, "codex", "prompt", ReviewCompletion{
+				env.job.ID, "codex", ReviewCompletion{
 					Output:           "No issues found.",
 					StructuredOutput: tt.raw,
-				},
-			)
+				})
+
 			require.ErrorContains(t, err, "validate structured review output")
 
 			updatedJob, err := env.db.GetJobByID(env.job.ID)
@@ -568,7 +567,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 		// Manually insert a review to simulate edge case
 		_, err = env.db.Exec(
-			`INSERT INTO reviews (job_id, agent, prompt, output, structured_output) VALUES (?, 'codex', 'prompt', '', ?)`,
+			`INSERT INTO reviews (job_id, agent, output, structured_output) VALUES (?, 'codex', '', ?)`,
 			env.job.ID, string(reviewFixtureJSON("No issues found.")),
 		)
 		require.NoError(t, err, "Failed to insert review")
@@ -1765,76 +1764,6 @@ func TestRemapJobGitRef(t *testing.T) {
 	})
 }
 
-func TestJobTypeBackfill(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/backfill-test")
-
-	// Insert jobs with job_type='review' to simulate pre-migration state
-	// 1. Normal commit review - should stay 'review'
-	commit := createCommit(t, db, repo.ID, "abc123")
-	_, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type) VALUES (?, ?, 'abc123', 'codex', 'done', 'review')`,
-		repo.ID, commit.ID)
-	require.NoError(t, err, "insert review job: %v")
-
-	// 2. Dirty job (git_ref='dirty') - should become 'dirty'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'dirty', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert dirty job: %v")
-
-	// 3. Dirty job (diff_content set) - should become 'dirty'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, diff_content) VALUES (?, 'some-ref', 'codex', 'done', 'review', 'diff here')`, repo.ID)
-	require.NoError(t, err, "insert dirty-with-diff job: %v")
-
-	// 4. Range job (git_ref has ..) - should become 'range'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'abc..def', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert range job: %v")
-
-	// 5. Task job (no commit_id, no diff, non-dirty git_ref) - should become 'task'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'analyze', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert task job: %v")
-
-	// Run backfill SQL (same as migration)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'dirty' WHERE (git_ref = 'dirty' OR diff_content IS NOT NULL) AND job_type = 'review'`)
-	require.NoError(t, err, "backfill dirty: %v")
-
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'range' WHERE git_ref LIKE '%..%' AND commit_id IS NULL AND job_type = 'review'`)
-	require.NoError(t, err, "backfill range: %v")
-
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'task' WHERE commit_id IS NULL AND diff_content IS NULL AND git_ref != 'dirty' AND git_ref NOT LIKE '%..%' AND git_ref != '' AND job_type = 'review'`)
-	require.NoError(t, err, "backfill task: %v")
-
-	// Verify results
-	rows, err := db.Query(`SELECT git_ref, job_type FROM review_jobs ORDER BY id`)
-	require.NoError(t, err, "query jobs: %v")
-
-	defer rows.Close()
-
-	expected := []struct {
-		gitRef  string
-		jobType string
-	}{
-		{"abc123", "review"},
-		{"dirty", "dirty"},
-		{"some-ref", "dirty"},
-		{"abc..def", "range"},
-		{"analyze", "task"},
-	}
-
-	i := 0
-	for rows.Next() {
-		var gitRef, jobType string
-		if err := rows.Scan(&gitRef, &jobType); err != nil {
-			require.NoError(t, err, "scan row: %v")
-		}
-		assert.Less(t, i, len(expected), "more rows than expected")
-		assert.False(t, gitRef != expected[i].gitRef || jobType != expected[i].jobType)
-		i++
-	}
-	assert.Equal(t, len(expected), i)
-}
-
 func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
@@ -2574,7 +2503,7 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 	job := enqueueJob(t, db, repo.ID, commit.ID, "fix123")
 	claimJob(t, db, "w1")
 
-	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "p", "", "patch content"))
+	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "", "patch content"))
 
 	var vb sql.NullInt64
 	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
@@ -2592,8 +2521,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 	claimJob(t, db, "w1")
 
 	require.NoError(t, db.CompleteFixJob(
-		job.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content",
-	))
+		job.ID, "codex", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content"))
 
 	var verdict sql.NullInt64
 	require.NoError(t, db.QueryRow(

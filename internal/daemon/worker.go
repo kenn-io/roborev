@@ -1452,14 +1452,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
 		// canceled between agent finish and now.
 		if job.IsFixJob() {
-			if err := wp.db.CompleteFixJob(job.ID, agentName, reviewPrompt, output, fixPatch); err != nil {
+			if err := wp.db.CompleteFixJob(job.ID, agentName, output, fixPatch); err != nil {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
-				job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+				job.ID, agentName, storage.ReviewCompletion{
 					Output:           output,
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
@@ -1470,7 +1470,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
-		} else if err := wp.db.CompleteJobResult(job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
 			Output:       output,
 			FileCoverage: fileCoverage,
 		}); err != nil {

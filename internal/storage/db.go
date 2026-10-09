@@ -62,9 +62,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   finished_at TEXT,
   worker_id TEXT,
   error TEXT,
-  prompt TEXT,
   retry_count INTEGER NOT NULL DEFAULT 0,
-  diff_content TEXT,
   dirty_files TEXT,
   output_prefix TEXT,
   job_type TEXT NOT NULL DEFAULT 'review',
@@ -80,12 +78,20 @@ CREATE TABLE IF NOT EXISTS reviews (
   id INTEGER PRIMARY KEY,
   job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
   agent TEXT NOT NULL,
-  prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   closed INTEGER NOT NULL DEFAULT 0,
   reviewed_file_count INTEGER,
   excluded_file_count INTEGER
+);
+
+-- job_content holds each job's zstd-compressed prompt, dirty diff, and fix
+-- patch; see job_content.go.
+CREATE TABLE IF NOT EXISTS job_content (
+  job_id INTEGER PRIMARY KEY REFERENCES review_jobs(id),
+  prompt BLOB,
+  diff_content BLOB,
+  patch BLOB
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -256,6 +262,10 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
+	if err := registerContentFunctions(); err != nil {
+		return nil, err
+	}
+
 	// Open with WAL mode and busy timeout.
 	// 30s busy_timeout gives enough headroom for concurrent writers
 	// (worker pool + sync worker) to wait for locks rather than failing.
@@ -327,6 +337,9 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 	query.Add("_pragma", "busy_timeout(30000)")
 	dsn.RawQuery = query.Encode()
 
+	if err := registerContentFunctions(); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, fmt.Errorf("open database read-only: %w", err)
@@ -343,13 +356,21 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 
 // migrate runs any needed migrations for existing databases
 func (db *DB) migrate() error {
+	// Databases created before job_content keep payloads in review_jobs
+	// columns until migrateJobContent moves them. Only those databases may
+	// need the old payload columns added before the steps below run.
+	legacyContent, err := hasColumn(context.Background(), db, "reviews", "prompt")
+	if err != nil {
+		return err
+	}
+
 	// Migration: add prompt column to review_jobs if missing
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'prompt'`).Scan(&count)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'prompt'`).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("check prompt column: %w", err)
 	}
-	if count == 0 {
+	if legacyContent && count == 0 {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN prompt TEXT`)
 		if err != nil {
 			return fmt.Errorf("add prompt column: %w", err)
@@ -392,7 +413,7 @@ func (db *DB) migrate() error {
 	if err != nil {
 		return fmt.Errorf("check diff_content column: %w", err)
 	}
-	if count == 0 {
+	if legacyContent && count == 0 {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN diff_content TEXT`)
 		if err != nil {
 			return fmt.Errorf("add diff_content column: %w", err)
@@ -886,7 +907,7 @@ func (db *DB) migrate() error {
 	if err != nil {
 		return fmt.Errorf("check patch column: %w", err)
 	}
-	if count == 0 {
+	if legacyContent && count == 0 {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN patch TEXT`)
 		if err != nil {
 			return fmt.Errorf("add patch column: %w", err)
@@ -1578,6 +1599,12 @@ func (db *DB) migrate() error {
 
 	if err := db.migrateRepoNames(); err != nil {
 		return fmt.Errorf("migrate repository names: %w", err)
+	}
+
+	// Runs after every step that may still read the old payload columns and
+	// before migrateLegacyReviews, whose archive no longer stores prompts.
+	if err := db.migrateJobContent(); err != nil {
+		return fmt.Errorf("move job content: %w", err)
 	}
 
 	return nil

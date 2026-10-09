@@ -492,13 +492,14 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
-			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
+			COALESCE(zstd_decompress(jc.prompt), ''), zstd_decompress(jc.diff_content), j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
@@ -685,7 +686,6 @@ type SyncableReview struct {
 	JobID              int64
 	JobUUID            uuid.UUID
 	Agent              string
-	Prompt             string
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
@@ -703,7 +703,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
-			r.agent, r.prompt, r.output, r.closed,
+			r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at
 		FROM reviews r
@@ -732,7 +732,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
-			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
+			&r.Agent, &r.Output, &r.Closed,
 			&verdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
 			&r.UpdatedByMachineID, &createdAt, &updatedAt,
 		)
@@ -887,14 +887,19 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err != nil {
 		return false, err
 	}
-	result, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
-			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
+			enqueued_at, started_at, finished_at, dirty_files, error, token_usage,
 			worktree_path, source, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -962,7 +967,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.Branch), nullStr(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
-		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
+		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
@@ -972,6 +977,23 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
+	}
+	// Payloads are written once: a local row keeps its content, including a
+	// prompt removed by retention.
+	diff := ""
+	if j.DiffContent != nil {
+		diff = *j.DiffContent
+	}
+	if j.Prompt != "" || diff != "" {
+		if _, err := tx.Exec(`
+			INSERT INTO job_content (job_id, prompt, diff_content)
+			SELECT id, zstd_compress(?), zstd_compress(?) FROM review_jobs WHERE uuid = ?
+			ON CONFLICT(job_id) DO NOTHING`, j.Prompt, diff, j.UUID); err != nil {
+			return false, fmt.Errorf("store pulled job content: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
 	return rows > 0, nil
 }
@@ -1052,10 +1074,10 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.Exec(`
 		INSERT INTO reviews (
-			uuid, job_id, agent, prompt, output, closed,
+			uuid, job_id, agent, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
 			updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
  output = excluded.output,
@@ -1068,7 +1090,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			synced_at = ?
 			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
  AND (json_extract(excluded.structured_output, '$.legacy') IS NULL OR reviews.structured_output IS NULL OR json_extract(reviews.structured_output, '$.legacy') IS NOT NULL)
-	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
+	`, r.UUID, jobID, r.Agent, r.Output, r.Closed,
 		verdictBool, nullStr(string(r.StructuredOutput)), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	if err != nil {
@@ -1080,7 +1102,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	}
 	if legacyDocument {
 		if _, err := tx.Exec(`INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
- SELECT id, job_id, agent, prompt, json_extract(structured_output, '$.legacy.markdown'), created_at, closed,
+ SELECT id, job_id, agent, json_extract(structured_output, '$.legacy.markdown'), created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at, synced_at,
  'Unstructured historical review' FROM reviews WHERE uuid = ? AND json_extract(structured_output, '$.legacy') IS NOT NULL
  ON CONFLICT(uuid) DO NOTHING`, r.UUID); err != nil {

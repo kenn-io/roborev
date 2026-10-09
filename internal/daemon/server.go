@@ -532,6 +532,8 @@ func (s *Server) startPanelSweep(ctx context.Context) {
 	s.sweepCancel = cancelSweep
 	s.sweepMu.Unlock()
 	go s.runPanelSweep(sweepCtx, panelSweepInterval)
+	// Retention is periodic maintenance too; it stops with the sweep.
+	go s.runRetention(sweepCtx, retentionInterval)
 }
 
 func (s *Server) stopPanelSweep() {
@@ -1833,6 +1835,9 @@ func (s *Server) humaGetReview(
 	review.WebURL = s.reviewBrowserURL(review.JobID)
 	if review.Job != nil {
 		review.Job.WebURL = review.WebURL
+		if review.Job.IsFixJob() {
+			review.Prompt = prompt.DisplayFixPlanPrompt(review.Prompt)
+		}
 	}
 	return &GetReviewOutput{Body: review}, nil
 }

@@ -48,9 +48,9 @@ func incrementalFixture(t *testing.T, config ReconcilerConfig) (*Reconciler, *ob
 		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
 		VALUES (1, 1, 'main', 'test', 'done', 'review'),
 		       (2, 1, 'main', 'test', 'done', 'review');
-		INSERT INTO reviews (id, job_id, agent, prompt, output)
-		VALUES (1, 1, 'test', '', 'first original'),
-		       (2, 2, 'test', '', 'second original');`)
+		INSERT INTO reviews (id, job_id, agent, output)
+		VALUES (1, 1, 'test', 'first original'),
+		       (2, 2, 'test', 'second original');`)
 	require.NoError(t, err)
 	store := &observedSearchStore{DB: db}
 	index := openGenerationTestIndex(t)

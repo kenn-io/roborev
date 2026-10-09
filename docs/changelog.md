@@ -14,6 +14,15 @@ All notable changes to roborev, grouped by minor release.
     editing code. Background fix requests and the TUI fix panel can also plan
     before implementation.
 
+- Store job prompts, dirty-review diffs, and fix patches once, compressed with
+    zstd, in a table separate from job metadata. The first daemon start after
+    upgrading converts the database and runs `VACUUM`, which can take several
+    minutes on a large database. See
+    [Stored prompts and retention](/docs/configuration/#stored-prompts-and-retention).
+
+- Remove old prompts and job logs automatically with `prompt_retention_days` and
+    `job_log_retention_days`. Both are off by default.
+
 **Improvements**
 
 - The daemon now records which numbered schema changes its database has received

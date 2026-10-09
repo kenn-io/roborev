@@ -149,7 +149,6 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 			StructuredOutput: structured,
 			MinSeverity:      job.MinSeverity,
 		},
-		prompt:          prompt,
 		capturedSession: capturedSession,
 		captureUsage:    true,
 	})
@@ -258,7 +257,6 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 type synthesisResult struct {
 	// Keep the review and its effective policy together across completion.
 	review          reviewpkg.ReviewResult
-	prompt          string
 	capturedSession string
 	captureUsage    bool
 }
@@ -277,8 +275,8 @@ func (wp *WorkerPool) completeSynthesisContext(
 func (wp *WorkerPool) completeSynthesisLocked(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
-	agentName, prompt, output := res.review.Agent, res.prompt, res.review.Output
-	completeErr := wp.db.CompleteJobResult(job.ID, agentName, prompt, storage.ReviewCompletion{
+	agentName, output := res.review.Agent, res.review.Output
+	completeErr := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
 		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
 	})
 	if completeErr != nil {

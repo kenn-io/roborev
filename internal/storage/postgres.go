@@ -841,7 +841,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
 	_, err = p.pool.Exec(ctx, pgUpsertReviewSQL,
-		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
+		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 		r.UpdatedByMachineID, r.CreatedAt, noReview)
 	return err
@@ -855,31 +855,31 @@ const pgUpsertReviewSQL = `
  WITH archived AS (
  INSERT INTO legacy_reviews (uuid, record, migration_error)
  SELECT $1, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
- 'prompt', $4::text, 'output', $8::jsonb->'legacy'->>'markdown', 'closed', $6::boolean,
- 'verdict_bool', $7::boolean, 'structured_output', $8::jsonb,
- 'reviewed_file_count', $9::integer, 'excluded_file_count', $10::integer,
- 'updated_by_machine_id', $11::uuid, 'created_at', $12::timestamptz), 'Unstructured historical review'
- WHERE $8::jsonb->'legacy' IS NOT NULL
+ 'prompt', ''::text, 'output', $7::jsonb->'legacy'->>'markdown', 'closed', $5::boolean,
+ 'verdict_bool', $6::boolean, 'structured_output', $7::jsonb,
+ 'reviewed_file_count', $8::integer, 'excluded_file_count', $9::integer,
+ 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz), 'Unstructured historical review'
+ WHERE $7::jsonb->'legacy' IS NOT NULL
  ON CONFLICT DO NOTHING
  ), resolved AS (
  UPDATE legacy_reviews SET resolved_at = clock_timestamp()
- WHERE uuid = $1 AND $8::jsonb IS NOT NULL AND $8::jsonb->'legacy' IS NULL AND resolved_at IS NULL
+ WHERE uuid = $1 AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL AND resolved_at IS NULL
  )
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
 			updated_by_machine_id, created_at, updated_at
-		) SELECT $1, $2, $3, $4, CASE WHEN $8::jsonb IS NOT NULL THEN '' ELSE $5 END, $6,
+		) SELECT $1, $2, $3, '', CASE WHEN $7::jsonb IS NOT NULL THEN '' ELSE $4 END, $5,
  CASE WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2 AND j.job_type IN ('task', 'insights'))
-				THEN NULL ELSE $7::boolean END,
-			$8, $9, $10, $11, $12, clock_timestamp()
- WHERE $8::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
+				THEN NULL ELSE $6::boolean END,
+			$7, $8, $9, $10, $11, clock_timestamp()
+ WHERE $7::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
  AND j.job_type IN ('review','range','dirty','synthesis','compact','goal_review'))
  ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
  output = EXCLUDED.output,
 			verdict_bool = CASE
-				WHEN $13::boolean THEN NULL
+				WHEN $12::boolean THEN NULL
  WHEN EXCLUDED.structured_output->'legacy' IS NOT NULL THEN EXCLUDED.verdict_bool
 				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
 				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
@@ -1199,7 +1199,6 @@ type PulledReview struct {
 	UUID               uuid.UUID
 	JobUUID            uuid.UUID
 	Agent              string
-	Prompt             string
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
@@ -1232,7 +1231,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 
 	rows, err := p.pool.Query(ctx, `
 		SELECT
-			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
+			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
 		FROM reviews r
@@ -1259,7 +1258,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		var reviewedFileCount, excludedFileCount *int
 
 		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
+			&r.UUID, &r.JobUUID, &r.Agent, &r.Output, &r.Closed,
 			&r.VerdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
 			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
 		)
@@ -1460,7 +1459,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	for i, r := range reviews {
 		verdictBool, noReview := syncedReviewVerdict(r)
 		batch.Queue(pgUpsertReviewSQL,
-			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Prompt), sanitizePostgresText(r.Output), r.Closed,
+			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
 			r.UpdatedByMachineID, r.CreatedAt, noReview)
 	}

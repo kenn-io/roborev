@@ -114,7 +114,7 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, task.ID)
 	require.NoError(t, err)
-	require.NoError(t, tc.DB.CompleteJobResult(task.ID, "test", "task prompt", storage.ReviewCompletion{
+	require.NoError(t, tc.DB.CompleteJobResult(task.ID, "test", storage.ReviewCompletion{
 		StructuredOutput: testutil.ReviewFixtureJSON("task output"),
 		Output:           "task output",
 	}))
@@ -128,7 +128,7 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, compact.ID)
 	require.NoError(t, err)
-	require.NoError(t, tc.DB.CompleteJobResult(compact.ID, "test", "compact prompt", storage.ReviewCompletion{
+	require.NoError(t, tc.DB.CompleteJobResult(compact.ID, "test", storage.ReviewCompletion{
 		StructuredOutput: testutil.ReviewFixtureJSON("compact output"),
 		Output:           "compact output",
 	}))
@@ -142,7 +142,7 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, fix.ID)
 	require.NoError(t, err)
-	require.NoError(t, tc.DB.CompleteFixJob(fix.ID, "test", "fix prompt", "fix output", ""))
+	require.NoError(t, tc.DB.CompleteFixJob(fix.ID, "test", "fix output", ""))
 	fixReview, err := tc.DB.GetReviewByJobID(fix.ID)
 	require.NoError(t, err)
 	assert.Nil(t, fixReview.FileCoverage)

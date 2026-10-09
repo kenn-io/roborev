@@ -305,7 +305,7 @@ func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 
 	tc.Pool.completeSynthesisContext("worker-update", job, synthesisResult{
-		review: reviewpkg.ReviewResult{Agent: "test", Output: "No issues found."}, prompt: "prompt",
+		review: reviewpkg.ReviewResult{Agent: "test", Output: "No issues found."},
 	})
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)

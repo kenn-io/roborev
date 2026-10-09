@@ -1131,7 +1131,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 			UUID:               uuid.New(),
 			JobUUID:            jobUUID,
 			Agent:              "test",
-			Prompt:             "test prompt 1",
 			Output:             "test output 1",
 			Closed:             false,
 			VerdictBool:        new(true),
@@ -1145,7 +1144,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 			UUID:               uuid.New(),
 			JobUUID:            jobUUID,
 			Agent:              "test",
-			Prompt:             "test prompt 2",
 			Output:             "test output 2",
 			Closed:             true,
 			UpdatedByMachineID: defaultTestMachineID,
@@ -1190,7 +1188,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 				UUID:               validReviewUUID,
 				JobUUID:            jobUUID, // Valid FK
 				Agent:              "test",
-				Prompt:             "valid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
@@ -1199,7 +1196,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 				UUID:               uuid.New(),
 				JobUUID:            uuid.Nil(), // Invalid FK - will fail
 				Agent:              "test",
-				Prompt:             "invalid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),

@@ -205,8 +205,8 @@ func completeMemberWithOutput(t *testing.T, db *DB, runUUID uuid.UUID, output st
 	t.Helper()
 	id := panelMemberID(t, db, runUUID)
 	setStatus(t, db, id, JobStatusDone)
-	_, err := db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output)
-		VALUES (?, 'test', 'p', ?)`, id, output)
+	_, err := db.Exec(`INSERT INTO reviews (job_id, agent, output)
+		VALUES (?, 'test', ?)`, id, output)
 	require.NoError(t, err)
 }
 

@@ -26,6 +26,7 @@ require (
 	github.com/google/go-github/v91 v91.0.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/klauspost/compress v1.19.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.29
 	github.com/mattn/go-sqlite3 v1.14.44
@@ -101,7 +102,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect

@@ -1309,8 +1309,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 
 		patch := "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new\n"
 		require.NoError(t, db.CompleteFixJob(
-			staleFix.ID, "test", "prompt", "done", patch,
-		))
+			staleFix.ID, "test", "done", patch))
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",

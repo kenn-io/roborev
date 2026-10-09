@@ -106,7 +106,6 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              review.Agent,
-		Prompt:             review.Prompt,
 		Output:             review.Output,
 		Closed:             false,
 		UpdatedByMachineID: testUUID("stale-review-machine"),
@@ -597,7 +596,6 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 		UUID:               testUUID("stored-review-verdict"),
 		JobUUID:            *job.UUID,
 		Agent:              "test",
-		Prompt:             "prompt",
 		Output:             "No issues found.",
 		VerdictBool:        new(false),
 		UpdatedByMachineID: testUUID("stored-review-machine"),
@@ -617,7 +615,7 @@ func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	const prose = "I am unable to read the diff."
 	incoming := PulledReview{
 		UUID: testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
-		Agent: "test", Prompt: "prompt", Output: prose,
+		Agent: "test", Output: prose,
 		VerdictBool: new(false), UpdatedByMachineID: testUUID("remote-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
@@ -640,7 +638,7 @@ func TestUpsertPulledReviewDoesNotReplaceJSONWithMarkdown(t *testing.T) {
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test", Prompt: "prompt",
+		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
 		Output: "Old Markdown", CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
 		UpdatedByMachineID: testUUID("remote-machine"),
 	}))
@@ -834,7 +832,7 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
 		UUID: testUUID("task-pulled-review"), JobUUID: *job.UUID,
-		Agent: "test", Prompt: "prompt", Output: "Task done. No issues found.",
+		Agent: "test", Output: "Task done. No issues found.",
 		VerdictBool: new(true), UpdatedByMachineID: testUUID("task-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}))

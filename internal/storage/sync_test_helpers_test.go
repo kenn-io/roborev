@@ -60,11 +60,11 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	require.NotNil(h.t, claimed, "ClaimJob returned nil job")
 	require.Equal(h.t, job.ID, claimed.ID, "Claimed wrong job")
 	err = h.db.CompleteJobResult(
-		job.ID, "test", "prompt", ReviewCompletion{
+		job.ID, "test", ReviewCompletion{
 			StructuredOutput: reviewFixtureJSON("output"),
 			Output:           "output", Verdict: VerdictFail,
-		},
-	)
+		})
+
 	require.NoError(h.t, err, "Failed to complete job")
 	return job
 }

@@ -34,7 +34,7 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 
 	review := PulledReview{
 		UUID: testUUID("search-wake-review"), JobUUID: job.UUID, Agent: "test",
-		Prompt: "prompt", StructuredOutput: reviewFixtureJSON("searchable finding"),
+		StructuredOutput:   reviewFixtureJSON("searchable finding"),
 		UpdatedByMachineID: testUUID("search-wake-review-machine"), CreatedAt: now, UpdatedAt: now,
 	}
 	require.NoError(t, worker.pullReview(review))
@@ -125,8 +125,8 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	reviewUUID := testUUID("rollback-review")
 	_, err := h.db.Exec(`
 		INSERT INTO legacy_reviews (
-			job_id, agent, prompt, output, created_at, closed, uuid, migration_error
-		) VALUES (?, 'test', 'prompt', 'legacy', ?, 0, ?, 'pending conversion')
+			job_id, agent, output, created_at, closed, uuid, migration_error
+		) VALUES (?, 'test', 'legacy', ?, 0, ?, 'pending conversion')
 	`, jobID, now.Format(time.RFC3339), reviewUUID)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
@@ -139,7 +139,7 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	require.NoError(t, err)
 
 	err = worker.pullReview(PulledReview{
-		UUID: reviewUUID, JobUUID: job.UUID, Agent: "test", Prompt: "prompt",
+		UUID: reviewUUID, JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   reviewFixtureJSON("transaction should roll back"),
 		UpdatedByMachineID: testUUID("rollback-review-machine"), CreatedAt: now, UpdatedAt: now,
 	})

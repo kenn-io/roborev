@@ -32,12 +32,12 @@ func TestGoalReviewDocumentStorage(t *testing.T) {
 			case "complete":
 				_, err := db.ClaimJob("worker")
 				require.NoError(t, err)
-				require.NoError(t, db.CompleteJobResult(job.ID, "test", "frozen prompt", ReviewCompletion{
+				require.NoError(t, db.CompleteJobResult(job.ID, "test", ReviewCompletion{
 					Output: "stale prose", StructuredOutput: jsontext.Value(goalReviewDocument),
 				}))
 			case "pull":
 				require.NoError(t, db.UpsertPulledReview(PulledReview{
-					UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test", Prompt: "frozen prompt",
+					UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test",
 					StructuredOutput: jsontext.Value(goalReviewDocument), VerdictBool: new(false),
 					UpdatedByMachineID: uuid.New(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 				}))

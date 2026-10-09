@@ -27,7 +27,7 @@ func TestIntegrationGoalReviewSyncRoundTrip(t *testing.T) { //nolint:paralleltes
 	require.NoError(t, err)
 	_, err = source.ClaimJob("worker")
 	require.NoError(t, err)
-	require.NoError(t, source.CompleteJobResult(job.ID, "test", job.Prompt, ReviewCompletion{
+	require.NoError(t, source.CompleteJobResult(job.ID, "test", ReviewCompletion{
 		Output:  "- medium: plan.md:4: The plan omits a required outcome. Fix: Add the missing outcome.",
 		Verdict: VerdictFail, StructuredOutput: jsontext.Value(goalReviewDocument),
 	}))
@@ -68,7 +68,7 @@ func TestIntegrationGoalReviewSyncRequiresDocument(t *testing.T) { //nolint:para
 	_, err := pool.Pool().Exec(ctx, `UPDATE review_jobs SET job_type = 'goal_review' WHERE uuid = $1`, jobID)
 	require.NoError(t, err)
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
-		UUID: reviewID, JobUUID: jobID, Agent: "test", Prompt: "frozen prompt", Output: "No issues found.",
+		UUID: reviewID, JobUUID: jobID, Agent: "test", Output: "No issues found.",
 		UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 	}))
 	var count int

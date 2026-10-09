@@ -1116,6 +1116,8 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
+| `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
@@ -1370,6 +1372,58 @@ Override with the `ROBOREV_DATA_DIR` environment variable:
 ```bash
 export ROBOREV_DATA_DIR=/custom/path
 ```
+
+### Stored prompts and retention
+
+Most of a large `reviews.db` is prompt text. A review prompt includes the full
+diff under review, so it is usually far larger than the review itself.
+
+How roborev stores it:
+
+- Each job's prompt, a dirty review's frozen diff, and a fix job's patch live in
+    the `job_content` table, compressed with zstd. Prompts typically shrink to a
+    quarter of their size or less.
+- Job listings read only job metadata, so they never load prompt text.
+- Each prompt is stored once, on its job. The prompt view of a review shows the
+    job's stored prompt. For a plan-first fix job, the generated plan appears in
+    the review output rather than in the prompt.
+- Agent output logs are separate files under `logs/jobs/`.
+
+The first daemon start after upgrading from a release that stored prompts inline
+converts the database in place:
+
+1. It compresses every stored prompt, diff, and patch into `job_content`.
+1. It removes the old copies from `review_jobs`, `reviews`, and
+    `legacy_reviews`.
+1. It runs `VACUUM` once to return the freed space to the filesystem.
+
+Conversion time grows with the size of the database; a database of tens of
+gigabytes can take several minutes. Until it finishes, the daemon does not
+accept requests. If the conversion stops partway, the next start repeats it.
+`VACUUM` needs free disk space about the size of the converted database. If
+`VACUUM` fails, the daemon logs the error and starts normally; the freed space
+stays inside the file and new jobs reuse it.
+
+PostgreSQL sync is unchanged. Job prompts sync as plain text, and the review
+prompt column receives an empty string.
+
+Retention is off by default; roborev keeps everything until you set a limit. The
+daemon applies both settings at startup and then hourly, and reads them again
+after a config reload:
+
+```toml
+prompt_retention_days = 90   # remove prompts of review and range jobs finished over 90 days ago
+job_log_retention_days = 30  # remove job log files older than 30 days
+```
+
+- `prompt_retention_days` removes only the prompt of finished review and range
+    jobs. Reviews, findings, comments, verdicts, dirty-review diffs, fix
+    patches, and the prompts of task, fix, compact, insights, and goal-review
+    jobs are kept. A rerun rebuilds review and range prompts from git whether or
+    not the old prompt was removed, so removal only empties the prompt view of
+    old jobs.
+- `job_log_retention_days` deletes log files by modification time, the same
+    files that `roborev log clean --days N` removes.
 
 ### Unix Domain Socket
 
