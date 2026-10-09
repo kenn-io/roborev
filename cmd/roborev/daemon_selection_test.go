@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,4 +203,29 @@ func TestDaemonURLHelperDoesNotDialUnselectedURL(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDaemonURLHelperAcceptsOtherEndpointOfSelectedDaemon(t *testing.T) {
+	isolateDaemonSelection(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	// The daemon publishes TCP and a Unix socket. A command saved the TCP URL
+	// while the socket probe failed; discovery now answers on the socket.
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{
+			Network:          "unix",
+			Address:          filepath.Join(t.TempDir(), "daemon.sock"),
+			AlternateNetwork: "tcp",
+			AlternateAddress: strings.TrimPrefix(server.URL, "http://"),
+		}, nil
+	}
+	resp, err := getDaemonHTTPClientForURL(server.URL, time.Second).Get(server.URL + "/api/jobs")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, requests)
 }

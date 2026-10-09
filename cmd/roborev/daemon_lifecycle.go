@@ -160,30 +160,46 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 // error is a *daemonEndpointSelectionError; clients built from the returned
 // endpoint fail with it before dialing.
 func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
+	endpoints, err := selectDaemonEndpoints()
+	return endpoints[0], err
+}
+
+// selectDaemonEndpoints returns the selected endpoint first. After automatic
+// discovery, every other endpoint the same live daemon publishes follows it.
+// The result always has at least one endpoint, so callers can build a client
+// that reports the selection error.
+func selectDaemonEndpoints() ([]daemon.DaemonEndpoint, error) {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
-			return *parsedServerEndpoint, nil
+			return []daemon.DaemonEndpoint{*parsedServerEndpoint}, nil
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: err}
+			return failedDaemonSelection(err)
 		}
-		return ep, nil
+		return []daemon.DaemonEndpoint{ep}, nil
 	}
 	// No explicit flag: discover running daemon
 	info, err := getAnyRunningDaemon()
 	if err == nil {
-		return info.Endpoint(), nil
+		return info.Endpoints(), nil
 	}
 	// Client config errors can also wrap os.ErrNotExist, for example when
 	// a configured TLS certificate is missing.
 	if daemon.IsDaemonAccessError(err) || !errors.Is(err, os.ErrNotExist) {
-		return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: err}
+		return failedDaemonSelection(err)
 	}
 	// The default port belongs to the host, not to this account. Do not send
 	// requests there unless a runtime record or --server selected it.
-	return fallbackDaemonEndpoint(), &daemonEndpointSelectionError{cause: ErrDaemonNotRunning}
+	return failedDaemonSelection(ErrDaemonNotRunning)
+}
+
+// failedDaemonSelection pairs a selection failure with the fallback endpoint,
+// whose clients report the failure instead of dialing.
+func failedDaemonSelection(cause error) ([]daemon.DaemonEndpoint, error) {
+	fallback := []daemon.DaemonEndpoint{fallbackDaemonEndpoint()}
+	return fallback, &daemonEndpointSelectionError{cause: cause}
 }
 
 // errDaemonEndpointChanged means discovery selected a different endpoint than
@@ -208,18 +224,22 @@ func isRecoverableSelectionError(err error) bool {
 }
 
 // getDaemonHTTPClientForURL pairs address-based helpers with the URL they use.
-// Only the endpoint selected now receives requests. A URL saved before the
-// daemon stopped or moved may name a port that another local account owns, so
-// its client fails with a selection error before dialing.
+// Only endpoints the selected daemon publishes receive requests. Discovery may
+// answer on the Unix socket after a command saved the same daemon's TCP URL,
+// so either published endpoint is accepted. A URL saved before the daemon
+// stopped or moved may name a port that another local account owns, so its
+// client fails with a selection error before dialing.
 func getDaemonHTTPClientForURL(baseURL string, timeout time.Duration) *http.Client {
-	ep, selectionErr := resolveDaemonEndpoint()
-	if baseURL == ep.BaseURL() {
-		return ep.WithAccessError(selectionErr).HTTPClient(timeout)
+	endpoints, selectionErr := selectDaemonEndpoints()
+	for _, ep := range endpoints {
+		if baseURL == ep.BaseURL() {
+			return ep.WithAccessError(selectionErr).HTTPClient(timeout)
+		}
 	}
 	if selectionErr == nil {
-		selectionErr = &daemonEndpointSelectionError{
-			cause: fmt.Errorf("%w from %s to %s", errDaemonEndpointChanged, baseURL, ep.BaseURL()),
-		}
+		changed := fmt.Errorf("%w from %s to %s",
+			errDaemonEndpointChanged, baseURL, endpoints[0].BaseURL())
+		selectionErr = &daemonEndpointSelectionError{cause: changed}
 	}
 	return auth.HTTPClient(baseURL, &http.Client{Timeout: timeout}, func() (string, error) {
 		return "", selectionErr
