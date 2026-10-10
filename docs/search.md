@@ -131,13 +131,14 @@ generation is not activated until all current documents have been handled.
 During this initial backfill, `auto` uses lexical search and the health and
 coverage fields report progress.
 
-Changing the model, dimensions, endpoint, input type mode, content recipe, or
-`fingerprint_salt` starts a replacement generation. Upgrading Roborev with the
-same settings keeps serving and filling the existing generation, so an upgrade
-does not re-embed stored reviews. Roborev keeps the old generation on disk
-during the build but does not query vectors from an incompatible generation.
-`auto` therefore degrades to lexical search until the replacement activates.
-Explicit semantic and hybrid requests remain unavailable during that window.
+Changing the model, dimensions, endpoint, input type mode, either role prefix,
+content recipe, or `fingerprint_salt` starts a replacement generation. Upgrading
+Roborev with the same settings keeps serving and filling the existing
+generation, so an upgrade does not re-embed stored reviews. Roborev keeps the
+old generation on disk during the build but does not query vectors from an
+incompatible generation. `auto` therefore degrades to lexical search until the
+replacement activates. Explicit semantic and hybrid requests remain unavailable
+during that window.
 
 Search ranks and filters reviews in the sidecar, then loads the returned page
 from the canonical review database. Closing, reopening, commenting on,
@@ -168,8 +169,9 @@ There is no setting.
 - Startup and periodic safety sweeps also publish existing local vectors.
     Matching shared entries are skipped, and missing entries are retried on the
     next sweep.
-- Only daemons with the same `base_url`, `model`, `dims`, `input_type_mode`, and
-    `fingerprint_salt` share vectors. Other daemons embed for themselves.
+- Only daemons with the same `base_url`, `model`, `dims`, `input_type_mode`,
+    `document_prefix`, `query_prefix`, `fingerprint_salt`, and document recipe
+    share vectors. Other daemons embed for themselves.
 - Sharing is best effort. If PostgreSQL is unreachable, a stored vector is
     unusable, or the review text differs between machines, the daemon embeds the
     review itself. Search queries never contact PostgreSQL.
@@ -208,6 +210,73 @@ This release supports Voyage's default 1,024-dimensional output for
 `voyage-4-large`. Roborev validates the configured dimension but does not send
 Voyage's provider-specific `output_dimension` parameter. Non-default Voyage
 dimensions are outside this release.
+
+## Configure EmbeddingGemma 2 text embeddings
+
+An operator can configure a local OpenAI-compatible server for optional text
+search. Roborev sends review text and queries; it does not load model weights or
+encode images, audio, or video. Existing embedding settings and defaults remain
+unchanged.
+
+The
+[EmbeddingGemma 2 model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
+describes native 768-dimensional output. This recipe targets
+[`google/embeddinggemma-2` at revision `914f7f89142e33e77833254d9c9b90c3cef7303b`](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b).
+Use an endpoint whose operator binds a serving alias to that checkpoint,
+tokenizer, pooling, precision, and output width. For example:
+
+```toml
+[search.embeddings]
+base_url = "http://127.0.0.1:8080/v1"
+model = "embeddinggemma-2-text-914f7f8-f32-mean-768-v1"
+dims = 768
+input_type_mode = "none"
+document_prefix = "title: none | text: "
+query_prefix = "task: search result | query: "
+batch_size = 4
+timeout_seconds = 120
+```
+
+The alias is an operator convention, not proof that HTTP has verified the
+checkpoint or serving settings. Change the alias or existing `fingerprint_salt`
+when weights, tokenizer, pooling, precision, quantization, or other settings
+change the vectors. Restart the daemon after changing embedding configuration.
+Either prefix change starts a replacement generation; prefixed inputs cannot
+reuse vectors stored by releases without prefix support.
+
+Keep the trailing spaces in both prefixes. Roborev adds each prefix once to
+plain review chunks or queries. Configure the server to accept already prompted
+text and **not add the prompts again**. `input_type_mode = "none"` omits
+`input_type`; the role is expressed by the literal text prefix.
+
+The server recipe must use mean pooling with prompt tokens included and return
+L2-normalized vectors. Use bfloat16 or float32 activations; float16 can overflow
+and produce invalid or degraded results. Roborev retains its existing client L2
+normalization and rejects wrong widths, zero norms, and nonfinite values. That
+validation does not certify model identity or inference quality.
+
+The server must admit the full formatted text within the shared 8,192-token
+input window, including prefixes, without silently dropping text. Roborev's
+rune-based chunks do not count model tokens. `model_context_tokens` and
+`max_batch_tokens` pack batches using an operator-supplied conservative bound;
+they do not tokenize or enforce per-input admission.
+
+`batch_size = 4` and `timeout_seconds = 120` are CPU starting settings, not a
+tested performance guarantee. Search query embeddings have a separate, unchanged
+**three-second deadline**. Raising the provider timeout does not extend it. A
+slow query makes explicit semantic/hybrid search unavailable and `auto` falls
+back to lexical results. Choose a deployment that can answer within that query
+budget.
+
+Roborev does not send a `dimensions` request parameter or slice returned
+vectors. Changing `dims` only changes the expected response width. Reduced
+512/256/128-dimensional output requires a separately configured serving recipe
+that truncates and L2-normalizes again before returning vectors. Use native 768
+unless the endpoint explicitly supports that transform for both roles.
+
+The native width and recipe are source-verified, and Roborev's HTTP transport is
+covered with synthetic servers. Actual serving, automatic prompt handling,
+tokenizer admission, inference, and retrieval quality have not been tested.
 
 ## Embedding credentials
 

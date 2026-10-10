@@ -1180,16 +1180,23 @@ timeout_seconds = 30
 | `dims` | - | Required positive response dimension |
 | `api_key` | - | The bearer key itself as a string, or `{ env = "NAME" }` or `{ file = "PATH" }` |
 | `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
+| `document_prefix` | empty | Literal prefix added once to each review chunk before embedding; whitespace is preserved |
+| `query_prefix` | empty | Literal prefix added once to each search query before embedding; whitespace is preserved |
 | `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
 | `batch_size` | `32` | Maximum inputs per provider request |
-| `model_context_tokens` | - | Most tokens one input can hold; set together with `max_batch_tokens` to batch by tokens |
+| `model_context_tokens` | - | Operator-supplied conservative per-input token bound for packing batches; set together with `max_batch_tokens`. Does not tokenize or enforce input admission |
 | `max_batch_tokens` | - | Provider's aggregate input-token cap per request; set together with `model_context_tokens` |
-| `timeout_seconds` | `30` | Provider request timeout in seconds |
+| `timeout_seconds` | `30` | Provider request timeout in seconds; search query embeddings retain an independent three-second deadline |
 | `trust_private_network` | `false` | Allow plain HTTP to a private-network endpoint (a private, link-local, or carrier-grade NAT address, or a host name) |
 
-These are the standard embedding keys shared by Kenn tools, so the same block
-works in any of them. `base_url`, `model`, and `dims` must be configured
-together.
+The standard embedding keys are shared by Kenn tools. `document_prefix` and
+`query_prefix` are Roborev extensions. `base_url`, `model`, and `dims` must be
+configured together; nonempty prefixes also require those core settings. Empty
+prefixes preserve existing input and generation identities. Changing either
+prefix starts a replacement generation and prevents reuse of older vectors. See
+the
+[EmbeddingGemma 2 text recipe](/docs/search/#configure-embeddinggemma-2-text-embeddings)
+for an optional local native-768 example and its serving requirements.
 
 When upgrading to 0.70.0, replace `api_key_env = "NAME"` with
 `api_key = { env = "NAME" }`. See
