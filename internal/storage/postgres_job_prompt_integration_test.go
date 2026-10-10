@@ -114,6 +114,8 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	// belongs to the earlier attempt.
 	failedRerun := insertJob("failed", "failed attempt", "first attempt with preamble")
 	assert.Equal(t, "failed attempt", pulledJobPrompt(t, pool, failedRerun))
+	failedWithoutPrompt := insertJob("failed", "", "first attempt with preamble")
+	assert.Empty(t, pulledJobPrompt(t, pool, failedWithoutPrompt))
 
 	// An older client sent an oversized prompt as a file handoff line and
 	// stored that line on the review; the job kept the complete prompt.

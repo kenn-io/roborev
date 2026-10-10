@@ -289,8 +289,8 @@ func legacyJobPromptExpr(archiveExpr string) string {
 	reviewPrompt := `(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id)`
 	// A job pulled from another machine kept the prompt of the attempt it was
 	// first pulled at, because pulls never updated it, while its pulled
-	// review, or the archive of that review, belongs to the latest completed
-	// attempt. Prefer those for jobs whose prompt a rerun rebuilds; the others
+	// review, or the archive of that review when no review remains, belongs to
+	// the latest completed attempt. Prefer those for jobs whose prompt a rerun rebuilds; the others
 	// keep their prompt across reruns, and their review's copy carries an
 	// agent preamble. A copy that only points to a prompt file is skipped in
 	// favor of the job's complete prompt.
@@ -298,8 +298,9 @@ func legacyJobPromptExpr(archiveExpr string) string {
 		AND COALESCE(j.job_type, 'review') NOT IN ` + storedPromptJobTypesSQL + `
 		AND j.source_machine_id IS NOT NULL
 		AND lower(j.source_machine_id) != (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
-		THEN COALESCE(` + withoutPromptFileHandoff(reviewPrompt) + `, ` +
-		withoutPromptFileHandoff(archiveExpr) + `) END`
+		THEN CASE WHEN EXISTS (SELECT 1 FROM reviews rv WHERE rv.job_id = j.id)
+			THEN ` + withoutPromptFileHandoff(reviewPrompt) + `
+			ELSE ` + withoutPromptFileHandoff(archiveExpr) + ` END END`
 	// Only a completed attempt's review or archived review holds the job's
 	// prompt. A rerun deletes the review but not its archived copy, so a rerun
 	// that stopped before saving its prompt must not take the earlier one.

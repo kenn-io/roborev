@@ -1122,13 +1122,13 @@ type PulledJob struct {
 // prompt on the job and push reviews without one. The job's copy wins for a
 // job whose latest attempt did not complete, for jobs that reuse their stored
 // prompt on a rerun, and over a review copy that only points to a prompt file.
-// A job without a prompt of its own, from before review_jobs.prompt existed,
-// takes its newest review's prompt.
+// A completed job without a prompt of its own, from before review_jobs.prompt
+// existed, takes its newest review's prompt.
 var pgPulledJobPromptExpr = `COALESCE(
 	CASE WHEN j.status IN ('done', 'applied', 'rebased') AND COALESCE(j.job_type, 'review') NOT IN ` + storedPromptJobTypesSQL + `
 		THEN ` + withoutPromptFileHandoff(pgNewestReviewPrompt(`TRUE`)) + ` END,
 	NULLIF(j.prompt, ''),
-	` + pgNewestReviewPrompt(`rv.prompt != ''`) + `,
+	CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN ` + pgNewestReviewPrompt(`rv.prompt != ''`) + ` END,
 	'')`
 
 // pgNewestReviewPrompt selects the prompt of job j's newest review matching

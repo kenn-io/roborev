@@ -479,6 +479,10 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	addReview(pulledOversized, handoff)
 	pulledArchivedOversized := insertRerunJob(remote, JobTypeRange)
 	addArchivedReview(pulledArchivedOversized, handoff)
+	// The archive belongs to an earlier attempt when a current review exists.
+	pulledOversizedOverArchive := insertRerunJob(remote, JobTypeRange)
+	addArchivedReview(pulledOversizedOverArchive, "earlier archived prompt")
+	addReview(pulledOversizedOverArchive, handoff)
 	pulledTask := insertRerunJob(remote, JobTypeTask)
 	addReview(pulledTask, "successful rerun prompt")
 	localRange := insertRerunJob(local, JobTypeRange)
@@ -489,12 +493,13 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	for id, want := range map[int64]string{
-		pulledRange:             "successful rerun prompt",
-		pulledArchived:          "archived rerun prompt",
-		pulledOversized:         "failed attempt prompt",
-		pulledArchivedOversized: "failed attempt prompt",
-		pulledTask:              "failed attempt prompt",
-		localRange:              "failed attempt prompt",
+		pulledRange:                "successful rerun prompt",
+		pulledArchived:             "archived rerun prompt",
+		pulledOversized:            "failed attempt prompt",
+		pulledArchivedOversized:    "failed attempt prompt",
+		pulledOversizedOverArchive: "failed attempt prompt",
+		pulledTask:                 "failed attempt prompt",
+		localRange:                 "failed attempt prompt",
 	} {
 		job, err := db.GetJobByID(id)
 		require.NoError(t, err)
