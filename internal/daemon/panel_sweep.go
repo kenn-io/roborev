@@ -41,12 +41,15 @@ func (s *Server) sweepOrphanedJobs() {
 }
 
 func (s *Server) failOrphanedJob(job *storage.StalledJob) {
+	wp := s.workerPool
+	if wp.ownsJob(job.WorkerID, job.ID) {
+		return
+	}
 	current, err := s.db.GetJobByID(job.ID)
 	if err != nil {
 		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
 		return
 	}
-	wp := s.workerPool
 	wp.attemptTransitionsMu.RLock()
 	if wp.ownsJob(job.WorkerID, job.ID) {
 		wp.attemptTransitionsMu.RUnlock()
