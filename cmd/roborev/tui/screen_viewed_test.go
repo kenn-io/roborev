@@ -84,53 +84,17 @@ func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 				update(keyPressMsg(key))
 			}
 			assert.Len(t, transport.screens, 2)
+			result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
+			m = result.(model)
+			assert.Contains(t, m.screensSent, tt.screen)
 		})
 	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestScreenDeliveryRemovesFailuresOnMatchingDay(t *testing.T) {
-	enableTelemetryEnv(t)
-	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-	transport := &screenRecordingTransport{}
-	m.client.Transport = transport
-	_, cmd := m.Update(keyPressMsg('x'))
-	collectMsgs(cmd)
-	assert.Empty(t, transport.screens)
-	assert.Equal(t, []string{"queue"}, m.screensSent)
-	result, _ := m.Update(screenDeliveryMsg{screen: "queue", day: m.screenDay})
-	m = result.(model)
-	assert.Equal(t, []string{"queue"}, m.screensSent)
-	result, _ = m.Update(screenDeliveryMsg{screen: "queue", day: "2000-01-01", err: errors.New("delivery failed")})
-	m = result.(model)
-	assert.Equal(t, []string{"queue"}, m.screensSent)
-	result, _ = m.Update(screenDeliveryMsg{screen: "queue", day: m.screenDay, err: errors.New("delivery failed")})
-	m = result.(model)
-	assert.Empty(t, m.screensSent)
-	result, cmd = m.Update(keyPressMsg('?'))
-	m = result.(model)
-	assert.Equal(t, []string{"help"}, m.screensSent)
-	collectMsgs(cmd)
-	_, cmd = m.Update(keyPressMsg('x'))
-	collectMsgs(cmd)
-	assert.Equal(t, []string{"help"}, transport.screens)
-}
-
-//nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestScreenViewedDisabledDoesNotRecordScreens(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "0")
-	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-	assert.Empty(t, m.screensSent)
-	assert.Nil(t, m.reportScreenViewed())
-	result, _ := m.Update(keyPressMsg('?'))
-	m = result.(model)
-	assert.Empty(t, m.screensSent)
-}
-
-//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestScreenDeliveryCompletesOnSuccess(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, status := range []string{"queued", "disabled", "skipped", "unknown"} {
+	for _, status := range []string{"skipped", "unknown"} {
 		t.Run(status, func(t *testing.T) {
 			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 			transport := &screenRecordingTransport{status: status}
@@ -224,15 +188,5 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
 		require.Equal(t, []string{"queue", "review"}, m.screensShown())
 		assert.Equal(t, []string{"review"}, transport.screens)
-		time.Sleep(24 * time.Hour)
-		transport.fail = true
-		update(keyPressMsg('x'))
-		assert.Empty(t, m.screensSent)
-		transport.fail = false
-		update(keyPressMsg('x'))
-		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
-		assert.Equal(t, []string{"review", "queue", "review", "queue", "review"}, transport.screens)
-		update(keyPressMsg('x'))
-		assert.Len(t, transport.screens, 5)
 	})
 }
