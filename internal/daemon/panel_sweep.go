@@ -42,7 +42,7 @@ func (s *Server) sweepOrphanedJobs() {
 
 func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 	wp := s.workerPool
-	if wp.ownsJob(job.WorkerID, job.ID) {
+	if wp.ownsJob(job.WorkerID, job.ID, job.StartedAt) {
 		return
 	}
 	current, err := s.db.GetJobByID(job.ID)
@@ -51,7 +51,8 @@ func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 		return
 	}
 	wp.attemptTransitionsMu.RLock()
-	if wp.ownsJob(job.WorkerID, job.ID) {
+	// The locked ownership recheck is authoritative.
+	if wp.ownsJob(job.WorkerID, job.ID, job.StartedAt) {
 		wp.attemptTransitionsMu.RUnlock()
 		return
 	}

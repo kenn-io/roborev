@@ -166,10 +166,8 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 func TestPanelSweepPreservesOwnedJob(t *testing.T) {
 	for _, test := range []struct {
 		name           string
-		claiming       bool
 		pendingRequeue bool
 	}{
-		{name: "claiming sentinel", claiming: true},
 		{name: "update-owned live worker"},
 		{name: "update-owned failed requeue", pendingRequeue: true},
 	} {
@@ -184,17 +182,13 @@ func TestPanelSweepPreservesOwnedJob(t *testing.T) {
 			require.NoError(t, err)
 			tc.Pool.runningJobsMu.Lock()
 			switch {
-			case test.claiming:
-				tc.Pool.workerJobs["worker-a"] = workerClaimingJobID
 			case test.pendingRequeue:
 				tc.Pool.failedUpdateRequeues[claimed.ID] = "worker-a"
 			default:
 				tc.Pool.workerJobs["worker-a"] = claimed.ID
 			}
 			tc.Pool.runningJobsMu.Unlock()
-			if !test.claiming {
-				tc.Pool.InterruptJobsForUpdate([]int64{claimed.ID})
-			}
+			tc.Pool.InterruptJobsForUpdate([]int64{claimed.ID})
 			server := &Server{db: tc.DB, workerPool: tc.Pool}
 
 			server.sweepStuckPanels()
@@ -204,6 +198,46 @@ func TestPanelSweepPreservesOwnedJob(t *testing.T) {
 			synth, err := tc.DB.GetSynthesisJob(runUUID)
 			require.NoError(t, err)
 			assert.True(synth.ClaimBlocked)
+		})
+	}
+}
+
+func TestPanelSweepClaimOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		olderOrphan bool
+		wantStatus  storage.JobStatus
+	}{
+		{name: "claim gap", wantStatus: storage.JobStatusRunning},
+		{name: "older orphan of claiming worker", olderOrphan: true, wantStatus: storage.JobStatusFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+			tc.Pool.runningJobsMu.Lock()
+			tc.Pool.workerJobs["worker-a"] = workerClaimingJobID
+			tc.Pool.workerClaimStartedAt["worker-a"] = time.Now()
+			tc.Pool.runningJobsMu.Unlock()
+			claimed, err := tc.DB.ClaimJob("worker-a")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			if test.olderOrphan {
+				claimed.StartedAtRaw = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+				_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = ? WHERE id = ?", claimed.StartedAtRaw, claimed.ID)
+				require.NoError(t, err)
+			}
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+			if !test.olderOrphan {
+				// Bypass the grace period to exercise ownership during claim publication.
+				server.failOrphanedJob(&storage.StalledJob{ID: claimed.ID, WorkerID: claimed.WorkerID, StartedAt: claimed.StartedAtRaw})
+			}
+			server.sweepStuckPanels()
+
+			tc.assertJobStatus(t, claimed.ID, test.wantStatus)
+			synth, err := tc.DB.GetSynthesisJob(runUUID)
+			require.NoError(t, err)
+			assert.Equal(!test.olderOrphan, synth.ClaimBlocked)
 		})
 	}
 }
