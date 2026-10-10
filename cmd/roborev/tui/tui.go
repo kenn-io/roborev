@@ -144,8 +144,7 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	screenDay            string   // UTC day that screensSent covers
-	screensSent          []string // daemon answered without error on screenDay
-	screensPending       []string // screen request in flight
+	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -900,8 +899,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
-		screensPending:      []string{viewQueue.String()}, // Init reports the queue
-		width:               80,                           // sensible defaults until we get WindowSizeMsg
+		width:               80, // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
@@ -940,6 +938,9 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		expandedPanels:      map[uuid.UUID]bool{},
 		panelMembers:        map[uuid.UUID][]storage.ReviewJob{},
 		promptCmdExpanded:   true,
+	}
+	if m.postScreen(viewQueue.String()) != nil {
+		m.screensSent = append(m.screensSent, viewQueue.String())
 	}
 	// Seed the cached classify-visibility decision once so render and
 	// fetch can read m.classifyEffective without hitting disk.
@@ -1280,11 +1281,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		result = m
 	case screenDeliveryMsg:
-		if msg.day == m.screenDay {
-			m.screensPending = slices.DeleteFunc(m.screensPending, func(screen string) bool { return screen == msg.screen })
-			if msg.err == nil && !slices.Contains(m.screensSent, msg.screen) {
-				m.screensSent = append(m.screensSent, msg.screen)
-			}
+		if msg.day == m.screenDay && msg.err != nil {
+			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
 		}
 		result = m
 	case controlSocketReadyMsg:
@@ -1322,15 +1320,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, mouse := msg.(tea.MouseMsg)
 		if rm.screenDay != today {
 			rm.screenDay, rm.screensSent = today, nil
-			rm.screensPending = nil
 		}
 		for _, screen := range rm.screensShown() {
-			if slices.Contains(rm.screensSent, screen) || slices.Contains(rm.screensPending, screen) {
+			if slices.Contains(rm.screensSent, screen) {
 				continue
 			}
 			if key || mouse || !slices.Contains(m.screensShown(), screen) {
 				if report := rm.postScreen(screen); report != nil {
-					rm.screensPending = append(rm.screensPending, screen)
+					rm.screensSent = append(rm.screensSent, screen)
 					cmd = tea.Batch(cmd, report)
 				}
 			}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,6 +57,10 @@ type Options struct {
 	Version         string
 	Endpoint        string
 	DailyClaimsPath string
+}
+
+func DailyClaimsPath(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), "telemetry-daily.json")
 }
 
 func EnabledFromEnv() bool {

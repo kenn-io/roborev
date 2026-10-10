@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -88,7 +89,7 @@ func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestScreenDeliveryWaitsForAcceptanceOnMatchingDay(t *testing.T) {
+func TestScreenDeliveryRemovesFailuresOnMatchingDay(t *testing.T) {
 	enableTelemetryEnv(t)
 	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 	transport := &screenRecordingTransport{}
@@ -96,17 +97,34 @@ func TestScreenDeliveryWaitsForAcceptanceOnMatchingDay(t *testing.T) {
 	_, cmd := m.Update(keyPressMsg('x'))
 	collectMsgs(cmd)
 	assert.Empty(t, transport.screens)
-	assert.Empty(t, m.screensSent)
+	assert.Equal(t, []string{"queue"}, m.screensSent)
 	result, _ := m.Update(screenDeliveryMsg{screen: "queue", day: m.screenDay})
 	m = result.(model)
 	assert.Equal(t, []string{"queue"}, m.screensSent)
-	assert.Empty(t, m.screensPending)
-	m.screensSent = nil
-	m.screensPending = []string{"queue"}
-	result, _ = m.Update(screenDeliveryMsg{screen: "queue", day: "2000-01-01"})
+	result, _ = m.Update(screenDeliveryMsg{screen: "queue", day: "2000-01-01", err: errors.New("delivery failed")})
+	m = result.(model)
+	assert.Equal(t, []string{"queue"}, m.screensSent)
+	result, _ = m.Update(screenDeliveryMsg{screen: "queue", day: m.screenDay, err: errors.New("delivery failed")})
 	m = result.(model)
 	assert.Empty(t, m.screensSent)
-	assert.Equal(t, []string{"queue"}, m.screensPending)
+	result, cmd = m.Update(keyPressMsg('?'))
+	m = result.(model)
+	assert.Equal(t, []string{"help"}, m.screensSent)
+	collectMsgs(cmd)
+	_, cmd = m.Update(keyPressMsg('x'))
+	collectMsgs(cmd)
+	assert.Equal(t, []string{"help"}, transport.screens)
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestScreenViewedDisabledDoesNotRecordScreens(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "0")
+	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+	assert.Empty(t, m.screensSent)
+	assert.Nil(t, m.reportScreenViewed())
+	result, _ := m.Update(keyPressMsg('?'))
+	m = result.(model)
+	assert.Empty(t, m.screensSent)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -124,7 +142,6 @@ func TestScreenDeliveryCompletesOnSuccess(t *testing.T) {
 			} else {
 				assert.Empty(t, m.screensSent)
 			}
-			assert.Empty(t, m.screensPending)
 			_, cmd := m.Update(keyPressMsg('x'))
 			collectMsgs(cmd)
 			wantPosts := 1
@@ -200,7 +217,7 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		require.Equal(t, viewQueue, m.currentView)
 		require.Equal(t, focusList, m.focus)
 		require.True(t, m.selectedReviewLoaded())
-		assert.Equal(t, []string{"review"}, m.screensSent)
+		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
 		update(keyPressMsg('j'))
 		require.Equal(t, []string{"queue"}, m.screensShown())
 		update(keyPressMsg('k'))
@@ -211,7 +228,6 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		transport.fail = true
 		update(keyPressMsg('x'))
 		assert.Empty(t, m.screensSent)
-		assert.Empty(t, m.screensPending)
 		transport.fail = false
 		update(keyPressMsg('x'))
 		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
