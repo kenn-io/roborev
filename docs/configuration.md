@@ -1441,7 +1441,8 @@ job_log_retention_days = 30  # remove job log files older than 30 days
 - With PostgreSQL sync enabled, a job keeps its prompt until sync has pushed it,
     so retention never removes a prompt that PostgreSQL lacks.
 - `job_log_retention_days` deletes log files by modification time, the same
-    files that `roborev log clean --days N` removes.
+    files that `roborev log clean --days N` removes. Logs that a running job
+    still writes to are kept.
 
 ### Unix Domain Socket
 

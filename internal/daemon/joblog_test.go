@@ -100,6 +100,23 @@ func createLogFile(t *testing.T, path, content string, mtime time.Time) {
 }
 
 func TestCleanJobLogs(t *testing.T) {
+	t.Run("keeps_logs_with_open_writers", func(t *testing.T) {
+		setupTestEnv(t)
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		old := time.Now().Add(-8 * 24 * time.Hour)
+		createLogFile(t, JobLogPath(5), "classifier output\n", old)
+
+		// An appending attempt opens the old log without changing its mtime.
+		w := newAppendingJobLogWriter(5)
+		assert.Zero(t, CleanJobLogs(7*24*time.Hour))
+		assert.FileExists(t, JobLogPath(5))
+
+		require.NoError(t, w.Close())
+		require.NoError(t, os.Chtimes(JobLogPath(5), old, old))
+		assert.Equal(t, 1, CleanJobLogs(7*24*time.Hour))
+		assert.NoFileExists(t, JobLogPath(5))
+	})
+
 	t.Run("removes_old_keeps_new", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

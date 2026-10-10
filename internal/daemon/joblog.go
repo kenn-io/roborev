@@ -20,6 +20,15 @@ import (
 
 var jobLogOpenRetryInterval = 5 * time.Second
 
+// jobLogFiles serializes opening job log files with removing them, and counts
+// each job's open log writers so cleanup skips their logs. Without it, cleanup
+// could remove a log a rerun has just reopened; on Unix the job would keep
+// writing to the deleted file and its log would be lost.
+var jobLogFiles = struct {
+	sync.Mutex
+	writers map[int64]int
+}{writers: map[int64]int{}}
+
 const (
 	maxBufferedJobLogBytes     = 256 * 1024
 	maxNormalizedJobOutputSize = 512 * 1024
@@ -136,7 +145,9 @@ func openJobLogFile(jobID int64, flags int) (*os.File, error) {
 		log.Printf("Warning: cannot chmod job log dir: %v", err)
 	}
 	path := JobLogPath(jobID)
+	jobLogFiles.Lock()
 	f, err := os.OpenFile(path, flags, 0o600)
+	jobLogFiles.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("open job log file for job %d: %w", jobID, err)
 	}
@@ -169,8 +180,14 @@ func CleanJobLogs(maxAge time.Duration) int {
 	}
 	cutoff := time.Now().Add(-maxAge)
 	removed := 0
+	jobLogFiles.Lock()
+	defer jobLogFiles.Unlock()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		jobID, err := strconv.ParseInt(strings.TrimSuffix(e.Name(), ".log"), 10, 64)
+		if err == nil && jobLogFiles.writers[jobID] > 0 {
 			continue
 		}
 		info, err := e.Info()
@@ -304,6 +321,7 @@ type jobLogWriter struct {
 	noticed         int
 	truncatePending bool
 	agent           string
+	registered      bool
 }
 
 func newJobLogWriter(jobID int64) *jobLogWriter {
@@ -325,9 +343,26 @@ func newJobLogWriterWithMode(
 		jobID:           jobID,
 		truncatePending: mode == jobLogTruncate,
 		agent:           agent,
+		registered:      true,
 	}
+	jobLogFiles.Lock()
+	jobLogFiles.writers[jobID]++
+	jobLogFiles.Unlock()
 	w.tryOpenLocked()
 	return w
+}
+
+// unregisterLocked lets cleanup remove the log again once the writer is done.
+func (w *jobLogWriter) unregisterLocked() {
+	if !w.registered {
+		return
+	}
+	w.registered = false
+	jobLogFiles.Lock()
+	defer jobLogFiles.Unlock()
+	if jobLogFiles.writers[w.jobID]--; jobLogFiles.writers[w.jobID] <= 0 {
+		delete(jobLogFiles.writers, w.jobID)
+	}
 }
 
 func (w *jobLogWriter) Write(p []byte) (int, error) {
@@ -364,6 +399,7 @@ func (w *jobLogWriter) Write(p []byte) (int, error) {
 func (w *jobLogWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	defer w.unregisterLocked()
 	if w.f == nil {
 		w.tryOpenLocked()
 	}
