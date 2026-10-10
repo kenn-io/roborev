@@ -335,7 +335,7 @@ func daemonRunCmd() *cobra.Command {
 			telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
 				Database:        db,
 				Version:         version.Version,
-				DailyClaimsPath: filepath.Join(filepath.Dir(dbPath), "telemetry-daily.json"),
+				DailyClaimsPath: telemetry.DailyClaimsPath(dbPath),
 			})
 			defer func() {
 				if err := telemetryReporter.Close(); err != nil {

@@ -18,6 +18,11 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
+func TestDailyClaimsPath(t *testing.T) {
+	dir := t.TempDir()
+	assert.Equal(t, filepath.Join(dir, "telemetry-daily.json"), DailyClaimsPath(filepath.Join(dir, "reviews.db")))
+}
+
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
