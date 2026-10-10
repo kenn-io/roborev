@@ -1399,10 +1399,14 @@ converts the database in place:
 
 Conversion time grows with the size of the database; a database of tens of
 gigabytes can take several minutes. Until it finishes, the daemon does not
-accept requests. If the conversion stops partway, the next start repeats it.
-`VACUUM` needs free disk space about the size of the converted database. If
-`VACUUM` fails, the daemon logs the error and starts normally; the freed space
-stays inside the file and new jobs reuse it.
+accept requests.
+
+The conversion needs free disk space of about twice the size of the converted
+database: it writes the compressed copy before it frees the old columns, and
+`VACUUM` writes the database again. If the disk fills up or the conversion stops
+partway, the old copies stay in place and the next start repeats the conversion.
+If only `VACUUM` fails, the daemon logs the error and starts normally; the freed
+space stays inside the file and new jobs reuse it.
 
 PostgreSQL sync is unchanged. Job prompts sync as plain text, and the review
 prompt column receives an empty string.

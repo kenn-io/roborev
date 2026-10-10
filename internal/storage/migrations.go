@@ -34,6 +34,7 @@ type schemaMigration struct {
 // schemaMigrations lists every SQLite schema migration in version order.
 var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
+	{2, "compress job content", migrateJobContent},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.

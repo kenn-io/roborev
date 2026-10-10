@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -183,24 +184,26 @@ func TestEnqueueJobRollsBackWhenContentWriteFails(t *testing.T) {
 	assert.Zero(t, jobs)
 }
 
-// openLegacyContentDB creates a database in the layout used before
-// job_content: payloads in review_jobs, a second prompt copy in reviews, and a
-// third in legacy_reviews.
+// openLegacyContentDB creates a database at schema version 1, the layout
+// before job_content: payloads in review_jobs, a second prompt copy in
+// reviews, and a third in the legacy_reviews archive that earlier releases
+// created.
 func openLegacyContentDB(t *testing.T) (string, *DB) {
 	t.Helper()
+	require.NoError(t, registerContentFunctions())
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	db, err := Open(path)
+	raw, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	for _, stmt := range []string{
-		`ALTER TABLE review_jobs ADD COLUMN prompt TEXT`,
-		`ALTER TABLE review_jobs ADD COLUMN diff_content TEXT`,
-		`ALTER TABLE review_jobs ADD COLUMN patch TEXT`,
-		`ALTER TABLE reviews ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE legacy_reviews ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`,
-	} {
-		_, err := db.Exec(stmt)
-		require.NoError(t, err)
-	}
+	db := &DB{DB: raw}
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:1]))
+	_, err = db.Exec(`CREATE TABLE legacy_reviews (
+		archive_id INTEGER PRIMARY KEY,
+		id INTEGER, job_id INTEGER NOT NULL, agent TEXT NOT NULL, prompt TEXT NOT NULL,
+		output TEXT NOT NULL, created_at TEXT NOT NULL, closed INTEGER NOT NULL,
+		reviewed_file_count INTEGER, excluded_file_count INTEGER, verdict_bool INTEGER,
+		structured_output TEXT, uuid TEXT UNIQUE, updated_by_machine_id TEXT,
+		updated_at TEXT, synced_at TEXT, migration_error TEXT NOT NULL, resolved_at TEXT)`)
+	require.NoError(t, err)
 	return path, db
 }
 
@@ -229,7 +232,9 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	dirty := insertJob("dirty", JobTypeDirty, "dirty prompt", "+frozen diff\n", nil)
 	fix := insertJob("e..f", JobTypeFix, "fix prompt", nil, "patch body")
 	// A partly finished earlier run left a stale row behind.
-	_, err := db.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale'))`, fix)
+	_, err := db.Exec(`CREATE TABLE job_content (job_id INTEGER PRIMARY KEY, prompt BLOB, diff_content BLOB, patch BLOB)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale'))`, fix)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'archived prompt', 'archived output', datetime('now'), 0, 'pending')`, withJobPrompt)

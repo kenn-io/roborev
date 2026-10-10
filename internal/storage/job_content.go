@@ -150,32 +150,41 @@ func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time) (int64, err
 // moves, so an interrupted upgrade keeps the work already committed.
 const jobContentMoveBatchSize = 500
 
-// migrateJobContent moves the payloads of databases created before
-// job_content existed. Those databases store the prompt in review_jobs, again
-// in reviews, and a third time in legacy_reviews. The job's prompt is kept;
-// a job without one takes its review's prompt so no prompt's only copy is
-// lost. After the copy, the old columns are dropped and the database is
-// vacuumed once to return the freed space to the filesystem.
-func (db *DB) migrateJobContent() error {
-	ctx := context.Background()
-	legacy, err := hasColumn(ctx, db, "reviews", "prompt")
+// migrateJobContent is schema migration 2. Before it, a database stores each
+// prompt in review_jobs, again in reviews, and a third time in legacy_reviews,
+// inline with the metadata of those rows. It moves each job's prompt, diff,
+// and patch into job_content, compressed, then drops the old columns and
+// vacuums once to return the freed space to the filesystem. The job's prompt
+// wins; a job without one takes its review's or archived review's prompt, so
+// no prompt's only copy is lost.
+//
+// A rerun is safe: the copy resumes by overwriting rows, and the columns are
+// dropped in one transaction, after which a rerun only repeats the VACUUM.
+func migrateJobContent(ctx context.Context, db *DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS job_content (
+		job_id INTEGER PRIMARY KEY REFERENCES review_jobs(id),
+		prompt BLOB,
+		diff_content BLOB,
+		patch BLOB
+	)`); err != nil {
+		return fmt.Errorf("create job_content: %w", err)
+	}
+	pending, err := hasColumn(ctx, db, "reviews", "prompt")
 	if err != nil {
 		return err
 	}
-	if !legacy {
-		return nil
+	if pending {
+		start := time.Now()
+		moved, err := db.copyLegacyJobContent(ctx)
+		if err != nil {
+			return err
+		}
+		if err := db.dropLegacyContentColumns(ctx); err != nil {
+			return err
+		}
+		log.Printf("Database migration: compressed content of %d jobs in %s; reclaiming disk space",
+			moved, time.Since(start).Round(time.Second))
 	}
-	start := time.Now()
-	log.Printf("Database migration: compressing job prompts, diffs, and patches")
-	moved, err := db.copyLegacyJobContent(ctx)
-	if err != nil {
-		return err
-	}
-	if err := db.dropLegacyContentColumns(ctx); err != nil {
-		return err
-	}
-	log.Printf("Database migration: compressed content of %d jobs in %s; reclaiming disk space",
-		moved, time.Since(start).Round(time.Second))
 	vacuumStart := time.Now()
 	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
 		// Freed pages stay in the file and are reused by later writes.
@@ -190,16 +199,6 @@ func (db *DB) migrateJobContent() error {
 }
 
 func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
-	exprs := map[string]string{"prompt": "NULL", "diff_content": "NULL", "patch": "NULL"}
-	for column := range exprs {
-		present, err := hasColumn(ctx, db, "review_jobs", column)
-		if err != nil {
-			return 0, err
-		}
-		if present {
-			exprs[column] = "j." + column
-		}
-	}
 	// Jobs from before review_jobs.prompt existed keep their prompt only on
 	// the review, or only in the archive when the review was archived.
 	archivedPrompt, err := hasColumn(ctx, db, "legacy_reviews", "prompt")
@@ -208,21 +207,26 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 	}
 	archiveExpr := "NULL"
 	if archivedPrompt {
+		// The archive's own job index covers only unresolved rows. Without a
+		// full one, each lookup scans every archived prompt.
+		if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_legacy_reviews_job_content_move
+			ON legacy_reviews(job_id)`); err != nil {
+			return 0, fmt.Errorf("index archived reviews by job: %w", err)
+		}
 		archiveExpr = `(SELECT l.prompt FROM legacy_reviews l
 			WHERE l.job_id = j.id AND l.prompt != '' ORDER BY l.archive_id DESC LIMIT 1)`
 	}
-	promptExpr := fmt.Sprintf(
-		`COALESCE(NULLIF(%s, ''), (SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), %s)`,
-		exprs["prompt"], archiveExpr)
+	promptExpr := `COALESCE(NULLIF(j.prompt, ''),
+		(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), ` + archiveExpr + `)`
 	copySQL := fmt.Sprintf(`
 		INSERT INTO job_content (job_id, prompt, diff_content, patch)
-		SELECT j.id, zstd_compress(%[1]s), zstd_compress(%[2]s), zstd_compress(%[3]s)
+		SELECT j.id, zstd_compress(%[1]s), zstd_compress(j.diff_content), zstd_compress(j.patch)
 		FROM review_jobs j
 		WHERE j.id > ? AND j.id <= ?
-		  AND COALESCE(NULLIF(%[1]s, ''), NULLIF(%[2]s, ''), NULLIF(%[3]s, '')) IS NOT NULL
+		  AND COALESCE(NULLIF(%[1]s, ''), NULLIF(j.diff_content, ''), NULLIF(j.patch, '')) IS NOT NULL
 		ON CONFLICT(job_id) DO UPDATE SET
 		  prompt = excluded.prompt, diff_content = excluded.diff_content, patch = excluded.patch`,
-		promptExpr, exprs["diff_content"], exprs["patch"])
+		promptExpr)
 
 	var maxID int64
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM review_jobs`).Scan(&maxID); err != nil {
@@ -256,6 +260,9 @@ func (db *DB) dropLegacyContentColumns(ctx context.Context) error {
 		return fmt.Errorf("begin dropping content columns: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_legacy_reviews_job_content_move`); err != nil {
+		return fmt.Errorf("drop temporary archive index: %w", err)
+	}
 	for _, target := range []struct{ table, column string }{
 		{"review_jobs", "prompt"},
 		{"review_jobs", "diff_content"},
