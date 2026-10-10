@@ -571,6 +571,7 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 		VALUES (1, ?, ?, 'codex', 'source response')
 	`, sourceCommitID, sourceJobID)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	db, err = Open(dbPath)
@@ -700,6 +701,7 @@ func TestBudgetMigrationResumesColumnAdditions(t *testing.T) {
 				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN ` + column)
 				require.NoError(t, err)
 			}
+			forgetSchemaVersion(t, db)
 			require.NoError(t, db.Close())
 
 			reopened, err := Open(dbPath)
@@ -1524,6 +1526,7 @@ func TestRepoNameMigration(t *testing.T) {
 		require.NoError(t, err)
 		jobIDs = append(jobIDs, job.ID)
 	}
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 	db, err = Open(dbPath)
 	require.NoError(t, err)

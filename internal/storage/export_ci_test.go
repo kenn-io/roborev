@@ -79,6 +79,7 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	_, err = db.Exec(`UPDATE ci_pr_panels
 		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL`)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	reopened, err := Open(dbPath)
@@ -168,6 +169,7 @@ func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
 	_, err = db.Exec(`UPDATE ci_pr_panels
 		SET synthesis_agent = NULL, synthesis_model = NULL WHERE id = ?`, panel.ID)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	// Reopen to run the backfill, THEN cascade-delete the repo.

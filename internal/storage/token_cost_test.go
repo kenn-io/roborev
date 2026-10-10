@@ -24,6 +24,7 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 		    agent_invoked = 1, token_usage = '', source_machine_id = NULL
 		WHERE id = ?`, jobs[0].ID)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	db, err = Open(dbPath)
@@ -551,6 +552,7 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 		    source_machine_id = CASE WHEN id = ? THEN 'remote-machine' ELSE source_machine_id END
 		WHERE id IN (?, ?)`, first.ID, first.ID, second.ID)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	rawDB, err := openRawDB(dbPath)

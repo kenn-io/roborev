@@ -115,6 +115,7 @@ func TestOpenAddsAgentHookSnoozesToExistingDatabase(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`DROP TABLE agent_hook_snoozes`)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	db, err = Open(dbPath)
