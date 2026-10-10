@@ -884,7 +884,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
 	planningPrompt := ""
-	storedPromptValue := job.Prompt
+	// A prebuilt prompt stored by an earlier attempt already ends with the
+	// member instructions; drop them so this attempt appends them once.
+	memberSuffix := memberInstructionSuffix(job)
+	storedPromptValue := strings.TrimSuffix(job.Prompt, memberSuffix)
 	var planningDecodeErr error
 	if job.IsFixJob() {
 		planningPrompt, storedPromptValue, _, planningDecodeErr = prompt.DecodeFixPlan(job.Prompt)
@@ -1117,11 +1120,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 	// Panel members carry trusted reviewer instructions resolved at enqueue
-	// time. Append them after every prompt path (snapshot/dirty/range) and
-	// before promptToPersist defaults, so they persist and show in the view.
-	reviewPrompt += memberInstructionSuffix(job)
+	// time. Append them after every prompt path (snapshot/dirty/range/
+	// prebuilt) so the agent and the stored prompt both include them.
+	reviewPrompt += memberSuffix
 	if promptToPersist == "" {
 		promptToPersist = reviewPrompt
+	} else {
+		promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
 	}
 
 	// The job's stored prompt is the only copy the prompt views read, so a

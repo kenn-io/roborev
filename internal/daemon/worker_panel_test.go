@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -267,4 +269,52 @@ func TestReleaseOnAllMembersFailed(t *testing.T) {
 	synth, err = tc.DB.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
 	assert.False(synth.ClaimBlocked, "synthesis releases after the last member fails")
+}
+
+func TestPrebuiltPanelMemberStoresInstructionsOnce(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	const agentName = "prebuilt-member-capture"
+	var prompts []string
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(_ context.Context, _, _, reviewPrompt string, _ io.Writer) (string, error) {
+			prompts = append(prompts, reviewPrompt)
+			if len(prompts) == 1 {
+				return "", errors.New("transient provider error")
+			}
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	})
+	cfgJSON, err := json.Marshal(config.ResolvedMember{
+		Name: "auth-reviewer", Agent: agentName, Instructions: "Focus on auth boundaries.",
+	})
+	require.NoError(t, err)
+	runUUID := uuid.New()
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	members, _, err := tc.DB.EnqueuePanelRun([]storage.EnqueueOpts{{
+		RepoID: tc.Repo.ID, GitRef: "base.." + sha, Agent: agentName, JobType: storage.JobTypeRange,
+		Prompt: "prebuilt CI prompt", PromptPrebuilt: true, Source: storage.JobSourceCI,
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember, PanelName: "security-panel",
+		PanelMemberName: "auth-reviewer", PanelMemberConfigJSON: string(cfgJSON),
+	}}, storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: "base.." + sha, Agent: "test",
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "security-panel",
+	})
+	require.NoError(t, err)
+
+	tc.Pool.processJob(testWorkerID, claimNext(t, tc))
+	tc.assertJobStatus(t, members[0].ID, storage.JobStatusQueued)
+	tc.Pool.processJob(testWorkerID, claimNext(t, tc))
+	tc.assertJobStatus(t, members[0].ID, storage.JobStatusDone)
+
+	require.Len(t, prompts, 2)
+	for _, sent := range prompts {
+		assert.Equal(t, 1, strings.Count(sent, "Focus on auth boundaries."))
+	}
+	review, err := tc.DB.GetReviewByJobID(members[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t,
+		"prebuilt CI prompt\n\n## Additional reviewer instructions (panel: security-panel / member: auth-reviewer)\nFocus on auth boundaries.\n",
+		review.Prompt)
 }
