@@ -144,7 +144,8 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	screenDay            string   // UTC day that screensSent covers
-	screensSent          []string // screens reported on screenDay
+	screensSent          []string // daemon answered without error on screenDay
+	screensPending       []string // screen request in flight
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -899,7 +900,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
-		screensSent:         []string{viewQueue.String()}, // Init reports the queue
+		screensPending:      []string{viewQueue.String()}, // Init reports the queue
 		width:               80,                           // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
@@ -1278,6 +1279,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			5*time.Second, m.currentView,
 		)
 		result = m
+	case screenDeliveryMsg:
+		if msg.day == m.screenDay {
+			m.screensPending = slices.DeleteFunc(m.screensPending, func(screen string) bool { return screen == msg.screen })
+			if msg.err == nil && !slices.Contains(m.screensSent, msg.screen) {
+				m.screensSent = append(m.screensSent, msg.screen)
+			}
+		}
+		result = m
 	case controlSocketReadyMsg:
 		m.controlSocket = msg.socketPath
 		result = m
@@ -1313,14 +1322,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, mouse := msg.(tea.MouseMsg)
 		if rm.screenDay != today {
 			rm.screenDay, rm.screensSent = today, nil
+			rm.screensPending = nil
 		}
 		for _, screen := range rm.screensShown() {
-			if slices.Contains(rm.screensSent, screen) {
+			if slices.Contains(rm.screensSent, screen) || slices.Contains(rm.screensPending, screen) {
 				continue
 			}
 			if key || mouse || !slices.Contains(m.screensShown(), screen) {
-				rm.screensSent = append(rm.screensSent, screen)
-				cmd = tea.Batch(cmd, rm.postScreen(screen))
+				if report := rm.postScreen(screen); report != nil {
+					rm.screensPending = append(rm.screensPending, screen)
+					cmd = tea.Batch(cmd, report)
+				}
 			}
 		}
 		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {

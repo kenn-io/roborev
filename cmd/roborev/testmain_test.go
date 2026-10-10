@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
+	kittelemetry "go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/testenv"
 )
@@ -15,6 +15,6 @@ import (
 // git subprocesses and exhausting macOS CI runner resources. It also disables
 // kit PostHog telemetry for daemon instances built in-process.
 func TestMain(m *testing.M) {
-	kittelemetry.DisablePostHogTelemetry()
+	kittelemetry.DisableProcess()
 	os.Exit(testenv.RunIsolatedMain(m))
 }

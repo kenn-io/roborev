@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
+	kittelemetry "go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -18,7 +18,7 @@ const (
 	// NotificationTimeout shares the CLI's existing one-second bound with MCP database work.
 	NotificationTimeout  = time.Second
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
-	GenericEnabledEnv    = kittelemetry.GenericTelemetryEnabledEnv
+	GenericEnabledEnv    = kittelemetry.GenericEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
 	installedAtKey       = "telemetry.installed_at"
 	postHogAPIKey        = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
@@ -45,26 +45,27 @@ const (
 	SurfaceCLI             = "cli"
 )
 
-var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
+var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedEvent
 
-type Client = kittelemetry.PostHogClient
+type Client = kittelemetry.Client
 
-type Reporter = kittelemetry.PostHogReporter
+type Reporter = kittelemetry.Reporter
 
 type Options struct {
-	Database *storage.DB
-	Version  string
-	Endpoint string
+	Database        *storage.DB
+	Version         string
+	Endpoint        string
+	DailyClaimsPath string
 }
 
 func EnabledFromEnv() bool {
-	return kittelemetry.PostHogTelemetryEnabledFromEnv("ROBOREV")
+	return kittelemetry.EnabledFromEnv("ROBOREV")
 }
 
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// An opted-out kit reporter keeps the allowlist, so the capture route can still reject unknown events.
-		return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
+		return kittelemetry.NewReporter(kittelemetry.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
 	}
 	if opts.Database == nil {
 		return nil, errors.New("telemetry database is required")
@@ -75,7 +76,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, err
 	}
 
-	return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
+	return kittelemetry.NewReporter(kittelemetry.Options{
 		APIKey:      postHogAPIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
@@ -84,11 +85,11 @@ func NewReporter(opts Options) (*Reporter, error) {
 		InstalledAt: installedAt,
 		Version:     opts.Version,
 		Source:      "daemon",
-	}, allowedEventOptions()...)
+	}, append(allowedEventOptions(), kittelemetry.WithDailyEvent(EventScreenViewed, PropertyScreen, kittelemetry.NewDailyClaims(opts.DailyClaimsPath)))...)
 }
 
 func DisabledReporter() *Reporter {
-	return kittelemetry.DisabledPostHogReporter()
+	return kittelemetry.DisabledReporter()
 }
 
 func NewReporterOrDisabled(opts Options) *Reporter {
@@ -100,31 +101,31 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
-func allowedEventOptions() []kittelemetry.PostHogOption {
-	daemonProperties := []kittelemetry.AllowedTelemetryProperty{
-		kittelemetry.AllowTelemetryProperty("repo_count", kittelemetry.AllowTelemetryNumber),
-		kittelemetry.AllowTelemetryProperty("review_count", kittelemetry.AllowTelemetryNumber),
-		kittelemetry.AllowTelemetryProperty("sync_enabled", kittelemetry.AllowTelemetryBool),
-		kittelemetry.AllowTelemetryProperty("ci_enabled", kittelemetry.AllowTelemetryBool),
-		kittelemetry.AllowTelemetryProperty("auto_design_enabled", kittelemetry.AllowTelemetryBool),
+func allowedEventOptions() []kittelemetry.Option {
+	daemonProperties := []kittelemetry.AllowedProperty{
+		kittelemetry.AllowProperty("repo_count", kittelemetry.AllowNumber),
+		kittelemetry.AllowProperty("review_count", kittelemetry.AllowNumber),
+		kittelemetry.AllowProperty("sync_enabled", kittelemetry.AllowBool),
+		kittelemetry.AllowProperty("ci_enabled", kittelemetry.AllowBool),
+		kittelemetry.AllowProperty("auto_design_enabled", kittelemetry.AllowBool),
 	}
 
-	return []kittelemetry.PostHogOption{
+	return []kittelemetry.Option{
 		kittelemetry.WithAllowedEvent(EventAgentActive,
-			kittelemetry.AllowTelemetryProperty(PropertyCallCountBucket, kittelemetry.AllowTelemetryStringValues("1-10"))),
+			kittelemetry.AllowProperty(PropertyCallCountBucket, kittelemetry.AllowStringValues("1-10"))),
 		kittelemetry.WithAllowedEvent(EventAgentCallCount,
-			kittelemetry.AllowTelemetryProperty(PropertyCallCountBucket, kittelemetry.AllowTelemetryStringValues("11-100", "over-100"))),
+			kittelemetry.AllowProperty(PropertyCallCountBucket, kittelemetry.AllowStringValues("11-100", "over-100"))),
 		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		kittelemetry.WithAllowedEvent(EventScreenViewed,
-			kittelemetry.AllowTelemetryProperty(PropertyScreen, kittelemetry.AllowTelemetryStringValues(
+			kittelemetry.RequireProperty(PropertyScreen, kittelemetry.AllowStringValues(
 				"reviews", "analytics", "queue", "review", "prompt", "filter", "comment", "commit-msg", "help", "log", "tasks", "worktree-confirm", "patch", "column-options", "release-notes", "rerun-agent")),
-			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI))),
+			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI))),
 		kittelemetry.WithAllowedEvent(EventAppOpened,
-			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
+			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
 		kittelemetry.WithAllowedEvent(EventSessionEnded,
-			kittelemetry.AllowTelemetryProperty(PropertySurface, kittelemetry.AllowTelemetryStringValues(SurfaceWeb, SurfaceTUI)),
-			kittelemetry.AllowTelemetryProperty(PropertyDurationBucket, kittelemetry.AllowTelemetryStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI)),
+			kittelemetry.AllowProperty(PropertyDurationBucket, kittelemetry.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
 	}
 }
 
