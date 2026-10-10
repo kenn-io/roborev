@@ -133,27 +133,54 @@ func TestPruneJobPromptsKeepsRecentAndUnrebuildableJobs(t *testing.T) {
 	}
 }
 
-func TestPulledJobDoesNotRestorePrunedPrompt(t *testing.T) {
+func TestPulledJobContentFollowsJobChanges(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
-	_, _, job := createJobChain(t, db, t.TempDir(), "abc123")
-	require.NoError(t, db.SaveJobPrompt(job.ID, "local prompt"))
-	loaded, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	require.NoError(t, db.SaveJobPrompt(job.ID, ""))
-
+	repo := createRepo(t, db, t.TempDir())
+	updated := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	pulled := PulledJob{
-		UUID: *loaded.UUID, RepoIdentity: "", GitRef: loaded.GitRef, Agent: "codex",
-		Status: "done", Prompt: "remote prompt", JobType: JobTypeReview,
-		EnqueuedAt: time.Now(), UpdatedAt: time.Now(), SourceMachineID: testUUID("remote"),
+		UUID: testUUID("pulled-job"), GitRef: "a..b", Agent: "codex", Status: "failed",
+		Prompt: "first attempt", JobType: JobTypeRange, EnqueuedAt: updated,
+		UpdatedAt: updated, SourceMachineID: testUUID("remote"),
 	}
-	_, err = db.upsertPulledJob(pulled, loaded.RepoID, loaded.CommitID)
+	promptAfterPull := func() string {
+		t.Helper()
+		_, err := db.upsertPulledJob(pulled, repo.ID, nil)
+		require.NoError(t, err)
+		var id int64
+		require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
+		job, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		return job.Prompt
+	}
+
+	assert.Equal(t, "first attempt", promptAfterPull())
+
+	pulled.Status, pulled.Prompt, pulled.UpdatedAt = "done", "rerun attempt", updated.Add(time.Hour)
+	assert.Equal(t, "rerun attempt", promptAfterPull())
+
+	var id int64
+	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
+	require.NoError(t, db.SaveJobPrompt(id, ""))
+	assert.Empty(t, promptAfterPull(), "replaying an unchanged job must not restore a removed prompt")
+}
+
+func TestEnqueueJobRollsBackWhenContentWriteFails(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, t.TempDir())
+	_, err := db.Exec(`CREATE TRIGGER reject_content BEFORE INSERT ON job_content
+		BEGIN SELECT RAISE(ABORT, 'content write rejected'); END`)
 	require.NoError(t, err)
 
-	loaded, err = db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Empty(t, loaded.Prompt)
+	_, err = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "dirty", Agent: "codex", DiffContent: "+change\n"})
+	require.ErrorContains(t, err, "content write rejected")
+
+	var jobs int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
+	assert.Zero(t, jobs)
 }
 
 // openLegacyContentDB creates a database in the layout used before
@@ -198,6 +225,7 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	insertReview(withJobPrompt, "job prompt with preamble")
 	reviewPromptOnly := insertJob("c..d", JobTypeRange, "", nil, nil)
 	insertReview(reviewPromptOnly, "only the review kept this prompt")
+	archivedOnly := insertJob("g..h", JobTypeRange, "", nil, nil)
 	dirty := insertJob("dirty", JobTypeDirty, "dirty prompt", "+frozen diff\n", nil)
 	fix := insertJob("e..f", JobTypeFix, "fix prompt", nil, "patch body")
 	// A partly finished earlier run left a stale row behind.
@@ -205,6 +233,9 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'archived prompt', 'archived output', datetime('now'), 0, 'pending')`, withJobPrompt)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+		VALUES (?, 'codex', 'only the archive kept this prompt', 'archived output', datetime('now'), 0, 'pending')`, archivedOnly)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -218,6 +249,9 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 		review, err := db.GetReviewByJobID(reviewPromptOnly)
 		require.NoError(t, err)
 		assert.Equal(t, "only the review kept this prompt", review.Prompt)
+		job, err = db.GetJobByID(archivedOnly)
+		require.NoError(t, err)
+		assert.Equal(t, "only the archive kept this prompt", job.Prompt)
 		diff, err := db.GetJobDiffContent(dirty)
 		require.NoError(t, err)
 		assert.Equal(t, "+frozen diff\n", diff)

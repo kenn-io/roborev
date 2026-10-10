@@ -1124,9 +1124,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		promptToPersist = reviewPrompt
 	}
 
-	// Save the prompt so it can be viewed while job is running
+	// The job's stored prompt is the only copy the prompt views read, so a
+	// failed save retries the job instead of running the agent without it.
 	if err := wp.db.SaveJobPrompt(job.ID, promptToPersist); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
+		return
 	}
 
 	// Get the configured job agent. Backup failover is handled explicitly by

@@ -200,11 +200,20 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 			exprs[column] = "j." + column
 		}
 	}
-	// A job saved its prompt only once it started running, so jobs from
-	// before that change keep their prompt on the review alone.
+	// Jobs from before review_jobs.prompt existed keep their prompt only on
+	// the review, or only in the archive when the review was archived.
+	archivedPrompt, err := hasColumn(ctx, db, "legacy_reviews", "prompt")
+	if err != nil {
+		return 0, err
+	}
+	archiveExpr := "NULL"
+	if archivedPrompt {
+		archiveExpr = `(SELECT l.prompt FROM legacy_reviews l
+			WHERE l.job_id = j.id AND l.prompt != '' ORDER BY l.archive_id DESC LIMIT 1)`
+	}
 	promptExpr := fmt.Sprintf(
-		`COALESCE(NULLIF(%s, ''), (SELECT rv.prompt FROM reviews rv WHERE rv.job_id = j.id))`,
-		exprs["prompt"])
+		`COALESCE(NULLIF(%s, ''), (SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), %s)`,
+		exprs["prompt"], archiveExpr)
 	copySQL := fmt.Sprintf(`
 		INSERT INTO job_content (job_id, prompt, diff_content, patch)
 		SELECT j.id, zstd_compress(%[1]s), zstd_compress(%[2]s), zstd_compress(%[3]s)

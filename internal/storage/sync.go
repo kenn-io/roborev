@@ -978,17 +978,22 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err != nil {
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
 	}
-	// Payloads are written once: a local row keeps its content, including a
-	// prompt removed by retention.
+	// Content follows the job row: a pulled change, such as a rerun's new
+	// prompt, replaces the local payload. A replay of an unchanged job writes
+	// nothing, so a prompt removed by retention stays removed. If the job does
+	// change, the next retention pass removes its prompt again when it is old.
 	diff := ""
 	if j.DiffContent != nil {
 		diff = *j.DiffContent
 	}
-	if j.Prompt != "" || diff != "" {
+	if rows > 0 && (j.Prompt != "" || diff != "") {
 		if _, err := tx.Exec(`
 			INSERT INTO job_content (job_id, prompt, diff_content)
 			SELECT id, zstd_compress(?), zstd_compress(?) FROM review_jobs WHERE uuid = ?
-			ON CONFLICT(job_id) DO NOTHING`, j.Prompt, diff, j.UUID); err != nil {
+			ON CONFLICT(job_id) DO UPDATE SET
+				prompt = COALESCE(excluded.prompt, job_content.prompt),
+				diff_content = COALESCE(excluded.diff_content, job_content.diff_content)`,
+			j.Prompt, diff, j.UUID); err != nil {
 			return false, fmt.Errorf("store pulled job content: %w", err)
 		}
 	}

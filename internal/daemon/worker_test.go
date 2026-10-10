@@ -4294,3 +4294,24 @@ func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
 		tc.Repo.ID, "beefc0de").Scan(&n))
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
 }
+
+func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	calls := 0
+	agentName := "prompt-save-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		calls++
+		return "No issues found.", nil
+	}})
+	_, err := tc.DB.Exec(`CREATE TRIGGER reject_prompt BEFORE INSERT ON job_content
+		BEGIN SELECT RAISE(ABORT, 'prompt write rejected'); END`)
+	require.NoError(t, err)
+	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert.Zero(t, calls)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, updated.RetryCount)
+}

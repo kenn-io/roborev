@@ -126,9 +126,8 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	uid := uuid.New()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
-	if opts.Experiment == nil {
-		return db.insertJobTx(context.Background(), db, opts, uid, machineID, now)
-	}
+	// The job row and its payload commit together, so a worker never claims a
+	// queued job whose prompt or frozen diff is not stored yet.
 	ctx := context.Background()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -139,11 +138,16 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := insertExperimentAssignmentTx(ctx, tx, ReviewUnitJob, uid, opts.Experiment, machineID, now); err != nil {
-		return nil, err
+	if opts.Experiment != nil {
+		if err := insertExperimentAssignmentTx(ctx, tx, ReviewUnitJob, uid, opts.Experiment, machineID, now); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	if opts.Experiment == nil {
+		return job, nil
 	}
 	job.Experiments, err = db.GetExperimentAssignments(ReviewUnitJob, uid)
 	return job, err
