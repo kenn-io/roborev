@@ -54,16 +54,18 @@ raw helper methods.
 
 ### Worker health
 
-`/api/health` reports stalled jobs through the `workers` component. A job that
-has run for more than 30 minutes is unhealthy if it has no active worker or its
-assigned execution deadline has passed. Longer reviews remain healthy while
-their worker still has time remaining. The deadline includes repository, global,
-and panel-member timeout settings resolved when the attempt starts;
+`/api/health` reports stalled jobs through the `workers` component. The sweep
+fails ownerless running jobs within a few minutes. A job a live worker still
+holds becomes unhealthy after 30 minutes if its assigned execution deadline
+has passed. Longer reviews remain healthy while their worker still has time
+remaining. The deadline includes repository, global, and panel-member timeout
+settings resolved when the attempt starts;
 configuration reloads do not change it during that attempt.
 
 The daemon sweeps every 60 seconds. It fails a job still running about 2 minutes
 after it started if no worker holds it, with the error "worker stopped without
-saving the job's outcome". Rerun the review to retry.
+saving the job's outcome". The recovery event fires no hooks. Local reviews
+need a manual rerun; CI panels follow their existing retry policy.
 
 ### CI health
 

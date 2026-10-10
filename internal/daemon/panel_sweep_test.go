@@ -92,10 +92,20 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	backdateJobStartedAt(t, tc.DB, members[0].ID)
 	subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
 	defer tc.Broadcaster.Unsubscribe(subscriber)
 	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+
+	_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 minute') WHERE id = ?", members[0].ID)
+	require.NoError(t, err)
+	server.sweepStuckPanels()
+	tc.assertJobStatus(t, claimed.ID, storage.JobStatusRunning)
+	assert.Empty(events)
+	synth, err := tc.DB.GetSynthesisJob(runUUID)
+	require.NoError(t, err)
+	assert.True(synth.ClaimBlocked)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", members[0].ID)
+	require.NoError(t, err)
 
 	server.sweepStuckPanels()
 
@@ -107,9 +117,31 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 	assert.Equal(job.ID, event.JobID)
 	assert.Equal(job.Error, event.Error)
 	assert.True(event.SuppressHooks)
-	synth, err := tc.DB.GetSynthesisJob(runUUID)
+	synth, err = tc.DB.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
 	assert.False(synth.ClaimBlocked)
+}
+
+func TestPanelSweepPreservesClaimingWorkerJob(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	runUUID, members, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+	tc.Pool.runningJobsMu.Lock()
+	tc.Pool.workerJobs["worker-a"] = workerClaimingJobID
+	tc.Pool.runningJobsMu.Unlock()
+	claimed, err := tc.DB.ClaimJobContext(t.Context(), "worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", members[0].ID)
+	require.NoError(t, err)
+	server := &Server{db: tc.DB, workerPool: tc.Pool}
+
+	server.sweepStuckPanels()
+
+	job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusRunning)
+	assert.Empty(t, job.Error)
+	synth, err := tc.DB.GetSynthesisJob(runUUID)
+	require.NoError(t, err)
+	assert.True(t, synth.ClaimBlocked)
 }
 
 func TestPanelSweepRecoversOrphanedGoalReview(t *testing.T) {
@@ -130,7 +162,8 @@ func TestPanelSweepRecoversOrphanedGoalReview(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, claimed)
 			require.Equal(t, job.ID, claimed.ID)
-			backdateJobStartedAt(t, tc.DB, job.ID)
+			_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", job.ID)
+			require.NoError(t, err)
 			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
 			defer tc.Broadcaster.Unsubscribe(subscriber)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
@@ -204,7 +237,8 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 			startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 			require.Equal(t, "review.started", startedEvent.Type)
-			backdateJobStartedAt(t, tc.DB, members[0].ID)
+			_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", members[0].ID)
+			require.NoError(t, err)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
 			server.sweepStuckPanels()
@@ -262,7 +296,8 @@ func TestPanelSweepPreservesUpdateOwnedJob(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	backdateJobStartedAt(t, tc.DB, members[0].ID)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", members[0].ID)
+	require.NoError(t, err)
 	tc.Pool.InterruptJobsForUpdate([]int64{claimed.ID})
 	server := &Server{db: tc.DB, workerPool: tc.Pool}
 
@@ -282,7 +317,8 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	backdateJobStartedAt(t, tc.DB, members[0].ID)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", members[0].ID)
+	require.NoError(t, err)
 	stalled, err := tc.DB.ListStalledJobs(orphanJobGrace)
 	require.NoError(t, err)
 	require.Len(t, stalled, 1)

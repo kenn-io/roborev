@@ -85,9 +85,9 @@ func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 
 // backdateJobStartedAt forces a running job to appear to have consumed runtime
 // beyond the CI batch timeout.
-func backdateJobStartedAt(t *testing.T, db *storage.DB, jobID int64) {
+func (h *ciPollerHarness) backdateJobStartedAt(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := db.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
+	_, err := h.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
 	require.NoError(t, err)
 }
 
@@ -222,7 +222,7 @@ func TestExpireTimedOutPanels(t *testing.T) {
 		})
 	require.Len(t, members, 2)
 	h.backdatePanelCreatedAt(t, panel.ID)
-	backdateJobStartedAt(t, h.DB, members[1].ID)
+	h.backdateJobStartedAt(t, members[1].ID)
 	require.True(t, h.synthBlocked(t, synth.PanelRunUUID), "synthesis blocked before sweep")
 
 	h.Poller.expireTimedOutPanels("acme/api", h.Cfg)
@@ -300,7 +300,7 @@ func TestExpireTimedOutPanelsMeaningfulDoneRunning(t *testing.T) {
 		})
 	require.Len(t, members, 2)
 	h.backdatePanelCreatedAt(t, panel.ID)
-	backdateJobStartedAt(t, h.DB, members[1].ID)
+	h.backdateJobStartedAt(t, members[1].ID)
 	require.True(t, h.synthBlocked(t, synth.PanelRunUUID), "synthesis blocked before sweep")
 
 	h.Poller.expireTimedOutPanels("acme/api", h.Cfg)
@@ -380,7 +380,7 @@ func TestExpireTimedOutPanelsAllowedFailureNotMeaningful(t *testing.T) {
 		})
 	require.Len(t, members, 2)
 	h.backdatePanelCreatedAt(t, panel.ID)
-	backdateJobStartedAt(t, h.DB, members[1].ID)
+	h.backdateJobStartedAt(t, members[1].ID)
 	require.True(t, h.synthBlocked(t, synth.PanelRunUUID), "synthesis blocked before sweep")
 
 	h.Poller.expireTimedOutPanels("acme/api", h.Cfg)

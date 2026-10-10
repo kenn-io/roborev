@@ -33,6 +33,7 @@ import (
 )
 
 const (
+	workerClaimingJobID          = -1
 	agentTimeoutErrorPrefix      = "agent timeout after"
 	tokenUsageIndexRetryWindow   = 3 * time.Second
 	tokenUsageIndexRetryInterval = 500 * time.Millisecond
@@ -65,7 +66,7 @@ type WorkerPool struct {
 
 	// Track running jobs for cancellation
 	runningJobs    map[int64]runningJobCancellation
-	workerJobs     map[string]int64 // worker ID -> claimed job ID
+	workerJobs     map[string]int64 // worker ID -> claimed job ID or workerClaimingJobID
 	pendingCancels map[int64]bool   // job ID -> whether the caller broadcasts the event
 	// updateInterruptTargets records attempts that must unwind without normal
 	// cancellation, retry, failover, hook, or panel-completion side effects.
@@ -530,7 +531,8 @@ func (wp *WorkerPool) ownsJob(workerID string, jobID int64) bool {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
 	_, interrupted := wp.updateInterruptTargets[jobID]
-	return wp.workerJobs[workerID] == jobID || interrupted
+	ownedJobID := wp.workerJobs[workerID]
+	return ownedJobID == workerClaimingJobID || ownedJobID == jobID || interrupted
 }
 
 // unregisterRunningJob removes a job from the running jobs map
@@ -812,12 +814,17 @@ func (wp *WorkerPool) worker(id int) {
 			if paused {
 				return nil, nil
 			}
+			wp.runningJobsMu.Lock()
+			wp.workerJobs[workerID] = workerClaimingJobID
+			wp.runningJobsMu.Unlock()
 			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			wp.runningJobsMu.Lock()
 			if job != nil && err == nil {
-				wp.runningJobsMu.Lock()
 				wp.workerJobs[workerID] = job.ID
-				wp.runningJobsMu.Unlock()
+			} else {
+				delete(wp.workerJobs, workerID)
 			}
+			wp.runningJobsMu.Unlock()
 			if err != nil {
 				wp.noteClaimError(workerID, err)
 			}

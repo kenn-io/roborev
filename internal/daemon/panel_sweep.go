@@ -12,7 +12,7 @@ import (
 // panelSweepInterval is how often the safety sweep recovers jobs and panels.
 const panelSweepInterval = 60 * time.Second
 
-// orphanJobGrace covers only the gap between claiming a job and marking ownership.
+// orphanJobGrace delays recovery of recently started, ownerless attempts.
 const orphanJobGrace = 2 * time.Minute
 
 // runPanelSweep recovers orphaned jobs and blocked panels until ctx is canceled.
