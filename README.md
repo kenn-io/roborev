@@ -482,11 +482,12 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 `column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
-roborev keeps daily screen claims in `telemetry-daily.json` beside the daemon
-database. Counts mean the report was queued, not confirmed delivered to PostHog.
+Daily screen claims live in `telemetry-daily.json` beside the daemon database,
+wherever `--db` points, and deleting it lets that day's screens count again.
+Counts mean the report was queued, not confirmed delivered to PostHog.
 The TUI retries a failed screen report on the next key or mouse input while
-that screen is showing. The browser retries on the next window focus or page
-change.
+that screen is showing. The browser reports the visible screen on every window
+focus and page change, and the daemon counts it once per day.
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

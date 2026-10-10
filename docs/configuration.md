@@ -1753,11 +1753,13 @@ screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
 `help`, `log`, `tasks`, `worktree-confirm`, `patch`, `column-options`,
 `release-notes` and `rerun-agent`. Each screen counts once per install per UTC
 day across interfaces, including daemon restarts. Screen names contain no paths,
-job IDs, filter text or review contents. roborev keeps daily screen claims in
-`telemetry-daily.json` beside the daemon database. Counts mean the report was
+job IDs, filter text or review contents. Daily screen claims live in
+`telemetry-daily.json` beside the daemon database, wherever `--db` points, and
+deleting it lets that day's screens count again. Counts mean the report was
 queued, not confirmed delivered to PostHog. The TUI retries a failed screen
-report on the next key or mouse input while that screen is showing. The
-browser retries on the next window focus or page change.
+report on the next key or mouse input while that screen is showing. The browser
+reports the visible screen on every window focus and page change, and the daemon
+counts it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
