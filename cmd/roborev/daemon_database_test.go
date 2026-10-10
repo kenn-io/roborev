@@ -114,7 +114,10 @@ func TestDaemonDatabaseAliasesHaveOneOwner(t *testing.T) {
 			owner, err := lockDaemonDatabase(alias)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, owner.Close()) })
-			require.Equal(t, telemetry.DailyClaimsPath(target), telemetry.DailyClaimsPath(owner.path))
+			// macOS temp dirs sit behind the /tmp -> /private/tmp link.
+			resolvedDir, err := filepath.EvalSymlinks(dir)
+			require.NoError(t, err)
+			require.Equal(t, telemetry.DailyClaimsPath(filepath.Join(resolvedDir, "reviews.db")), telemetry.DailyClaimsPath(owner.path))
 			for _, created := range []bool{false, true} {
 				if created {
 					db, err := storage.Open(alias)
