@@ -37,6 +37,76 @@ func TestReviewVerdictUsesStoredValue(t *testing.T) {
 }
 
 var verdictTests = []verdictTestCase{
+	// --- TimestampPrefix: a bracketed date-time stamp before the verdict ---
+	{
+		name:   "TimestampPrefix/12-hour stamp before no issues found",
+		output: "[2026-10-08 07:53am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp line then summary then pass line",
+		output: "[2026-10-08 7:53am] Reviewed the change.\n\nNo issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/ISO stamp before bold pass",
+		output: "[2026-10-08T14:53:00Z] **No issues found.**",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp with zone before pass",
+		output: "[2026-10-08 14:53 PDT] No findings.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp before a finding still fails",
+		output: "[2026-10-08 07:53am] The cache key omits the user id, so sessions leak.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamp before severity finding fails",
+		output: "[2026-10-08 07:53am]\n\n- High: token written to the log",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamped severity finding overrides stamped pass phrase",
+		output: "[2026-10-08 07:53am] - High: token written to the log\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamped ISO severity finding overrides stamped pass phrase",
+		output: "[2026-10-08T14:53:00Z] **Medium** — cache key omits the user id\n[2026-10-08T14:54:00Z] No findings.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamped rubric does not count as a finding",
+		output: "[2026-10-08 07:53am] Severity levels:\n- High: data loss\n- Low: style\n\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/indented stamped finding overrides stamped pass phrase",
+		output: "  [2026-10-08 07:53am] - High: token written to the log\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name: "TimestampPrefix/stamped rubric keeps indented descriptions",
+		output: "[2026-10-08 07:53am] Severity levels:\n" +
+			"[2026-10-08 07:53am] - High: data loss\n" +
+			"[2026-10-08 07:53am]   Use for security or corruption bugs.\n" +
+			"[2026-10-08 07:53am] - Medium: wrong result\n" +
+			"\n[2026-10-08 07:54am] No issues found.",
+		want: VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/stamp and extra spaces before pass heading",
+		output: "[2026-10-08 07:53am]   ## No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
+		output: "[note] No issues found.",
+		want:   VerdictFail,
+	},
 	// --- SimplePass: basic "no issues found" phrasing ---
 	{
 		name:   "SimplePass/no issues found at start",
@@ -871,4 +941,27 @@ func TestParseVerdictAtSeverity(t *testing.T) {
 			assert.Equal(t, tt.want, ParseVerdictAtSeverity(tt.output, tt.minSeverity))
 		})
 	}
+}
+
+func TestProseSectionIgnoresTimestampPrefix(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "summary", ProseSection("[2026-10-08 07:53am]   ## Summary"))
+	assert.Equal(t, "findings", ProseSection("  [2026-10-08T14:53:00Z]    **Findings:**"))
+	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am]   ---"))
+}
+
+func TestStampedHeadingLevel(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 3, StampedHeadingLevel("[2026-10-08 07:53am] ### Additional concerns"))
+	assert.Equal(t, 2, StampedHeadingLevel("[2026-10-08T14:53:00Z]   ##"))
+	assert.Equal(t, 0, StampedHeadingLevel("### Unstamped headings are parsed by Markdown"))
+	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am] #hashtag is prose"))
+	assert.Equal(t, 0, StampedHeadingLevel("[2026-10-08 07:53am]     ### indented code"))
+}
+
+func TestParseVerdictTimestampedMarkerOnly(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, VerdictPass, ParseVerdict("[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET"))
+	assert.Equal(t, VerdictPass, ParseVerdict("```\n[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET\n```"))
+	assert.Equal(t, VerdictFail, ParseVerdict("[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET\n[2026-10-08 07:53am] The auth module leaks tokens."))
 }

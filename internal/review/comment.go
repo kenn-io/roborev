@@ -277,7 +277,13 @@ func proseBoundaries(output string) []proseBoundary {
 	markers := boundaries[:0]
 	for _, b := range boundaries {
 		line := lineAt(b.start)
+		if b.level == 0 {
+			// A stamped "### Title" is a paragraph to Goldmark, not a heading.
+			b.level = storage.StampedHeadingLevel(semanticLines[line])
+		}
 		b.section = storage.ProseSection(semanticLines[line])
+		// A stamped "---" is a paragraph to Goldmark, not a thematic break.
+		b.separator = b.separator || b.section == "separator"
 		b.severity, b.legend = labels[line].Severity, labels[line].Legend
 		if b.level > 0 || b.section != "" || b.severity != "" || b.legend || b.separator {
 			markers = append(markers, b)

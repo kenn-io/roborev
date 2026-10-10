@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -225,7 +226,7 @@ func ParseVerdictAtSeverity(output, minSeverity string) Verdict {
 	// substring check would let prose findings without severity
 	// labels (e.g. "the auth module leaks tokens") flip to pass
 	// just because the agent echoed the marker in narration.
-	if config.IsMarkerOnlyOutput(output) {
+	if config.IsMarkerOnlyOutput(stripTimestampPrefixes(output)) {
 		return VerdictPass
 	}
 
@@ -252,6 +253,7 @@ func normalizeVerdictLine(line string) string {
 	// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
 	normalized = strings.ReplaceAll(normalized, "\u2018", "'") // left single quote
 	normalized = strings.ReplaceAll(normalized, "\u2019", "'") // right single quote
+	normalized = strings.TrimSpace(stripTimestampPrefix(normalized))
 	normalized = stripMarkdown(normalized)
 	normalized = stripListMarker(normalized)
 	return stripFieldLabel(normalized)
@@ -299,6 +301,47 @@ func isNoFindingVerdictLine(line string) bool {
 
 func isExplicitVerdictValue(line, value string) bool {
 	return line == value
+}
+
+// timestampPrefix matches a bracketed date or date-time after optional
+// indentation, e.g. "[2026-10-08 07:53am] ", "[2026-10-08T14:53:00Z] ".
+// Repository instructions sometimes tell agents to stamp every reply; the
+// stamp is not part of the verdict, a severity label, or a section heading.
+// Only one delimiter after the stamp is consumed, so indentation that belongs
+// to the content (a rubric description, say) survives.
+var timestampPrefix = regexp.MustCompile(
+	`(?i)^([ \t]*)\[\s*\d{4}-\d{2}-\d{2}(?:[ t]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?\s*(?:z|[+-]\d{2}:?\d{2}|[a-z]{2,5})?)?\s*\][ \t]?`)
+
+// stripTimestampPrefix removes a bracketed timestamp from the start of a line,
+// keeping the indentation before it and the content's own indentation after it.
+func stripTimestampPrefix(s string) string {
+	return timestampPrefix.ReplaceAllString(s, "${1}")
+}
+
+// stripTimestampPrefixes removes a bracketed timestamp from every line.
+func stripTimestampPrefixes(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		lines[i] = stripTimestampPrefix(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// stampedHeading matches an ATX heading marker once a timestamp is removed.
+var stampedHeading = regexp.MustCompile(`^ {0,3}(#{1,6})(?:[ \t]|$)`)
+
+// StampedHeadingLevel returns the ATX heading level of a line that begins
+// with a timestamp, or zero. Markdown parsers read "[stamp] ### Title" as a
+// paragraph, so callers recover the section boundary from the stripped text.
+func StampedHeadingLevel(line string) int {
+	stripped := stripTimestampPrefix(line)
+	if stripped == line {
+		return 0
+	}
+	if m := stampedHeading.FindStringSubmatch(stripped); m != nil {
+		return len(m[1])
+	}
+	return 0
 }
 
 // stripMarkdown removes common markdown formatting from a line
@@ -395,6 +438,7 @@ func ProseSeverityLabels(lines []string) []ProseLabel {
 	labels := make([]ProseLabel, len(lines))
 	legend, entries := false, false
 	for i, line := range lines {
+		line = stripTimestampPrefix(line)
 		trimmed := strings.TrimSpace(line)
 		severity := proseSeverityLabel(line)
 		switch {
@@ -472,7 +516,7 @@ func proseSeverityLabel(line string) string {
 // value is "summary", "findings", "separator", or empty for ordinary prose.
 // Verdict parsing and comment preparation use the same boundaries.
 func ProseSection(line string) string {
-	line = strings.ToLower(strings.TrimSpace(line))
+	line = strings.TrimSpace(stripTimestampPrefix(strings.ToLower(strings.TrimSpace(line))))
 	if line == "---" {
 		return "separator"
 	}
