@@ -440,10 +440,16 @@ func (m model) postScreen(screen string) tea.Cmd {
 		return nil
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
+	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
-		telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
-		return nil
+		err := telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
+		return screenDeliveryMsg{screen: screen, day: day, err: err}
 	}
+}
+
+type screenDeliveryMsg struct {
+	screen, day string
+	err         error
 }
 
 func (m model) fetchReleaseNotes() tea.Cmd {

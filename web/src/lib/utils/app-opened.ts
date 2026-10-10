@@ -14,6 +14,7 @@ let hiddenAt: number | undefined;
 let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 export type Screen = "reviews" | "analytics";
 let currentScreen: (() => Screen) | undefined;
+const pendingScreens = new Set<Screen>();
 
 function pauseSession(): void {
   if (started === undefined) return;
@@ -102,6 +103,8 @@ function postEvent(
 }
 
 export function reportScreenViewed(screen: Screen): void {
+  if (pendingScreens.has(screen)) return;
+  pendingScreens.add(screen);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   void postEvent(
@@ -110,13 +113,17 @@ export function reportScreenViewed(screen: Screen): void {
     { signal: controller.signal },
   )
     .catch(() => undefined)
-    .finally(() => clearTimeout(timeout));
+    .finally(() => {
+      pendingScreens.delete(screen);
+      clearTimeout(timeout);
+    });
 }
 
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
 function onFocus(): void {
   if (shellMounted) {
-    if (reportAppOpened() && currentScreen) reportScreenViewed(currentScreen());
+    reportAppOpened();
+    if (currentScreen) reportScreenViewed(currentScreen());
   } else focusPending = true;
 }
 

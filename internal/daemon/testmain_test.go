@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"go.kenn.io/kit/telemetry/posthog"
+	kittelemetry "go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/testenv"
 )
@@ -23,6 +23,6 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"issues":[{"short_id":"abc4","title":"Leaked task","body":"Secret kata body."}]}`)
 		os.Exit(0)
 	}
-	posthog.DisableProcess()
+	kittelemetry.DisableProcess()
 	os.Exit(testenv.RunIsolatedMain(m))
 }
