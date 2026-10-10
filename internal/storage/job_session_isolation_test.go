@@ -111,6 +111,7 @@ func TestSessionIsolationMigration(t *testing.T) {
 	_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-migration")
 	claimJob(t, db, "worker")
 	require.NoError(t, db.SaveJobSessionID(job.ID, "worker", "existing-session"))
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	raw, err := openRawDB(dbPath)

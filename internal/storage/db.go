@@ -266,14 +266,7 @@ func Open(dbPath string) (*DB, error) {
 
 	wrapped := &DB{DB: db}
 
-	// Initialize schema (CREATE IF NOT EXISTS is idempotent)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("initialize schema: %w", err)
-	}
-
-	// Run migrations for existing databases
-	if err := wrapped.migrate(); err != nil {
+	if err := wrapped.runSchemaMigrations(context.Background(), schemaMigrations); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

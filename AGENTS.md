@@ -13,7 +13,7 @@ changes when working in a growing Go project.
 - Command discovery: `rg '^func .*Cmd\(' cmd/roborev`
 - Daemon HTTP API and route wiring: `internal/daemon/server.go`
 - Worker pool and job execution: `internal/daemon/worker.go`
-- SQLite schema and migrations: `internal/storage/db.go`
+- SQLite schema migrations: `internal/storage/migrations.go`
 - Config loading and resolution: `internal/config/config.go`
 - Prompt construction: `internal/prompt/prompt.go`
 - TUI entry point: `cmd/roborev/tui/tui.go`
@@ -150,7 +150,8 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 - Daemon API changes usually require updates in `internal/daemon/server.go`, `internal/daemon/client.go`, CLI callers, TUI callers, and API/integration tests.
 - Worker/job lifecycle changes usually affect `internal/daemon/worker.go`, `internal/storage/jobs.go`, status/event broadcasting, cancellation, and rerun behavior.
 - Storage schema changes must stay minimal and need both SQLite and PostgreSQL consideration.
-- SQLite changes live in `internal/storage/db.go`; PostgreSQL schema/versioning lives in `internal/storage/postgres.go` plus `internal/storage/schemas/postgres_v*.sql`.
+- SQLite schema changes are numbered migrations in `internal/storage/migrations.go`, recorded in the `schema_migrations` table. Append the next version; never edit, renumber, or remove a migration that has reached `main`. Migration 1 is a frozen baseline that runs the pre-versioning `schema` and `migrate()` in `internal/storage/db.go`; do not change either or the helpers `migrate()` calls. A migration is recorded only after it finishes, so make it safe to rerun. The daemon refuses a database at a newer version than it knows.
+- PostgreSQL schema/versioning lives in `internal/storage/postgres.go` plus `internal/storage/schemas/postgres_v*.sql`.
 - Config key changes usually touch `internal/config/config.go`, `internal/config/keyval.go`, `cmd/roborev/config_cmd.go`, and related tests.
 - Agent changes usually touch the adapter file, `internal/agent/agent.go` registry/fallback logic, and tests that use `test_agent.go`.
 - TUI changes rarely live in one file; expect to touch fetch, handlers, render, and tests together.

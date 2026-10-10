@@ -14,6 +14,12 @@ All notable changes to roborev, grouped by minor release.
     editing code. Background fix requests and the TUI fix panel can also plan
     before implementation.
 
+**Improvements**
+
+- The daemon now records which numbered schema changes its database has received
+    and applies each one only once. It refuses to start on a database written by
+    a newer roborev release instead of modifying it.
+
 **Bug fixes**
 
 - Open the [browser review queue](/docs/web-ui/#reviews-workspace) faster on
