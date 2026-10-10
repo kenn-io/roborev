@@ -258,7 +258,10 @@ func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
 
 			assert.Nil(t, m.reportAppOpened())
 			assert.Nil(t, m.reportScreenViewed())
-			assert.Empty(t, m.screensSent)
+			assert.Equal(t, []string{"queue"}, m.screensSent)
+			result, cmd := m.Update(keyPressMsg('?'))
+			assert.Equal(t, []string{"queue", "help"}, result.(model).screensSent)
+			collectMsgs(cmd)
 			assert.Zero(t, requests.Load())
 		})
 	}
