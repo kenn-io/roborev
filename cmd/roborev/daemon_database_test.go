@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/kit/fslink"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 func TestDaemonDatabaseHasOneOwner(t *testing.T) {
@@ -52,10 +53,12 @@ func TestDaemonDatabaseAliasesHaveOneOwner(t *testing.T) {
 		t.Run(fmt.Sprint(relative), func(t *testing.T) {
 			dir := t.TempDir()
 			target := filepath.Join(dir, "reviews.db")
-			alias := filepath.Join(dir, "alias.db")
+			alias := filepath.Join(t.TempDir(), "alias.db")
 			destination := target
 			if relative {
-				destination = filepath.Base(target)
+				var err error
+				destination, err = filepath.Rel(filepath.Dir(alias), target)
+				require.NoError(t, err)
 			}
 			if err := os.Symlink(destination, alias); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
@@ -63,6 +66,7 @@ func TestDaemonDatabaseAliasesHaveOneOwner(t *testing.T) {
 			owner, err := lockDaemonDatabase(alias)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, owner.Close()) })
+			require.Equal(t, telemetry.DailyClaimsPath(target), telemetry.DailyClaimsPath(owner.path))
 			for _, created := range []bool{false, true} {
 				if created {
 					db, err := storage.Open(alias)
