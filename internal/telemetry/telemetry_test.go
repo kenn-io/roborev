@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kittelemetry "go.kenn.io/kit/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -136,7 +136,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
-	reporter, err := kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
+	reporter, err := posthog.NewReporter(posthog.Options{
 		APIKey:      "test-posthog-api-key",
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
@@ -278,7 +278,7 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
 	endpoint, messages := testutil.NewPostHogStub(t)
-	reporter, err := kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
+	reporter, err := posthog.NewReporter(posthog.Options{
 		APIKey:      "test-posthog-api-key",
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",

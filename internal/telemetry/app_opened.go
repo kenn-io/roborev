@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -32,7 +32,7 @@ const appOpenedMaxBodyBytes = 64 << 10
 // Build it per request if needed; the state lives on the limiter.
 func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture := kittelemetry.NewPostHogCaptureHandler(reporter)
+		capture := posthog.NewCaptureHandler(reporter)
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if r.Method != http.MethodPost || err != nil || mediaType != "application/json" {
 			capture.ServeHTTP(w, r)
