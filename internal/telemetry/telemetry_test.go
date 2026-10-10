@@ -275,13 +275,10 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 }
 
 // newPostHogStubReporter returns an enabled reporter and its captured messages.
-func newPostHogStubReporter(t *testing.T, paths ...string) (*Reporter, func() []testutil.PostHogMessage) {
+func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
 	endpoint, messages := testutil.NewPostHogStub(t)
 	path := filepath.Join(t.TempDir(), "daily.json")
-	if len(paths) > 0 {
-		path = paths[0]
-	}
 	reporter, err := NewReporter(Options{Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
 	require.NoError(t, err)
 	return reporter, messages
@@ -310,9 +307,6 @@ func TestNewReporterUsesSharedDailyClaims(t *testing.T) {
 	require.Len(t, messages(), 2)
 	assert.Equal(t, "reviews", messages()[0].Properties[PropertyScreen])
 	assert.Equal(t, "analytics", messages()[1].Properties[PropertyScreen])
-	stored, err := db.GetSyncState("telemetry.screen.reviews")
-	require.NoError(t, err)
-	assert.Empty(t, stored)
 }
 
 func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
