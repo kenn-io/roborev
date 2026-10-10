@@ -1401,25 +1401,19 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 	return nil
 }
 
-// ListRunningJobsBefore returns candidate IDs and owners for orphan recovery.
-func (db *DB) ListRunningJobsBefore(cutoff time.Time) ([]ReviewJob, error) {
-	rows, err := db.Query(`
-		SELECT id, COALESCE(worker_id, '') FROM review_jobs
-		WHERE status = 'running' AND datetime(started_at) < datetime(?)
-	`, cutoff.UTC().Format(time.RFC3339))
+// FailJobAttempt fails only the exact running attempt observed by the orphan sweep.
+func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
+	now := time.Now().Format(time.RFC3339)
+	result, err := db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ? AND started_at = ?`,
+		now, errorMsg, now, jobID, workerID, startedAt)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	defer rows.Close()
-	var jobs []ReviewJob
-	for rows.Next() {
-		var job ReviewJob
-		if err := rows.Scan(&job.ID, &job.WorkerID); err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, job)
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
 	}
-	return jobs, rows.Err()
+	return rows > 0, nil
 }
 
 // FailJob marks a job as failed with an error message.

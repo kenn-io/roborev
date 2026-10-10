@@ -2,14 +2,17 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // panelSweepInterval is how often the safety sweep recovers jobs and panels.
 const panelSweepInterval = 60 * time.Second
 
-// orphanJobGrace allows workers time to register a newly claimed job.
+// orphanJobGrace covers only the gap between claiming a job and marking ownership.
 const orphanJobGrace = 2 * time.Minute
 
 // runPanelSweep recovers orphaned jobs and blocked panels until ctx is canceled.
@@ -27,29 +30,42 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) sweepOrphanedJobs() {
-	jobs, err := s.db.ListRunningJobsBefore(time.Now().Add(-orphanJobGrace))
+	ids, err := s.db.ListStalledJobIDs(orphanJobGrace)
 	if err != nil {
 		log.Printf("panel sweep: list orphan candidates: %v", err)
 		return
 	}
-	const errorMsg = "worker exited before the job finished"
-	for _, candidate := range jobs {
-		if s.workerPool.IsJobRunning(candidate.ID) {
-			continue
-		}
-		updated, err := s.workerPool.failJobAndInvalidateBudget(candidate.ID, candidate.WorkerID, errorMsg)
+	for _, id := range ids {
+		job, err := s.db.GetJobByID(id)
 		if err != nil {
-			log.Printf("panel sweep: fail orphan job %d: %v", candidate.ID, err)
+			log.Printf("panel sweep: load orphan job %d: %v", id, err)
 			continue
 		}
-		if updated {
-			job, err := s.db.GetJobByID(candidate.ID)
-			if err != nil {
-				log.Printf("panel sweep: load failed job %d: %v", candidate.ID, err)
-				continue
-			}
-			s.workerPool.broadcastFailed(job, job.Agent, errorMsg)
+		s.failOrphanedJob(job)
+	}
+}
+
+func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
+	wp := s.workerPool
+	wp.attemptTransitionsMu.RLock()
+	defer wp.attemptTransitionsMu.RUnlock()
+	if wp.OwnsJob(job.ID) || job.WorkerID == "" || job.StartedAt == nil || time.Since(*job.StartedAt) <= orphanJobGrace {
+		return
+	}
+	const errorMsg = "worker exited before the job finished"
+	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
+	if err != nil {
+		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
+		return
+	}
+	if updated {
+		wp.invalidateBudgetSpend()
+		wp.broadcastFailed(job, job.Agent, errorMsg)
+		if wp.errorLog != nil {
+			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 		}
+		wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
+		log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	}
 }
 

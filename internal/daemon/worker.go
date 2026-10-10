@@ -306,7 +306,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 	wp.runningJobsMu.Lock()
 
 	// Final check if job registered while we did the second DB lookup
-	if running, ok := wp.runningJobs[jobID]; ok {
+	if running, ok := wp.runningJobs[jobID]; ok && running.cancel != nil {
 		running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
 		wp.runningJobs[jobID] = running
 		wp.runningJobsMu.Unlock()
@@ -328,7 +328,7 @@ func (wp *WorkerPool) registeredJobCancel(
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
 	running, ok := wp.runningJobs[jobID]
-	if !ok {
+	if !ok || running.cancel == nil {
 		return nil, false
 	}
 	running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
@@ -409,7 +409,7 @@ func (wp *WorkerPool) interruptJobsForUpdateLocked(jobIDs []int64) {
 	wp.runningJobsMu.Lock()
 	for _, jobID := range jobIDs {
 		wp.updateInterruptTargets[jobID] = struct{}{}
-		if running, ok := wp.runningJobs[jobID]; ok {
+		if running, ok := wp.runningJobs[jobID]; ok && running.cancel != nil {
 			cancels = append(cancels, running.cancel)
 		}
 	}
@@ -524,12 +524,21 @@ func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 	return wp.runningJobs[jobID].callerBroadcastsEvent
 }
 
-// IsJobRunning reports whether this pool still holds the job.
-func (wp *WorkerPool) IsJobRunning(jobID int64) bool {
+// markClaimedJob records ownership before processJob can block on repo config.
+func (wp *WorkerPool) markClaimedJob(jobID int64) {
+	wp.runningJobsMu.Lock()
+	wp.runningJobs[jobID] = runningJobCancellation{}
+	wp.runningJobsMu.Unlock()
+}
+
+// OwnsJob includes active attempts and attempts awaiting update recovery.
+func (wp *WorkerPool) OwnsJob(jobID int64) bool {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
-	_, ok := wp.runningJobs[jobID]
-	return ok
+	_, running := wp.runningJobs[jobID]
+	_, interrupted := wp.updateInterruptTargets[jobID]
+	_, requeuePending := wp.failedUpdateRequeues[jobID]
+	return running || interrupted || requeuePending
 }
 
 // unregisterRunningJob removes a job from the running jobs map
@@ -812,6 +821,9 @@ func (wp *WorkerPool) worker(id int) {
 				return nil, nil
 			}
 			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			if job != nil && err == nil {
+				wp.markClaimedJob(job.ID)
+			}
 			if err != nil {
 				wp.noteClaimError(workerID, err)
 			}
@@ -870,6 +882,7 @@ func (wp *WorkerPool) noteClaimError(workerID string, err error) {
 }
 
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
+	defer wp.finishRunningJob(workerID, job.ID)
 	rtTag := reviewTypeTag(job.ReviewType)
 
 	log.Printf("[%s] Processing job %d %s %sreview/%s ref=%s",
@@ -909,7 +922,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
 	wp.registerRunningJob(job.ID, cancel, deadline)
-	defer wp.finishRunningJob(workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
