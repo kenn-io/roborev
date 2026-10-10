@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// panelSweepInterval is how often the safety sweep looks for panel synthesis
-// jobs left blocked after all their members went terminal.
+// panelSweepInterval is how often the safety sweep recovers jobs and panels.
 const panelSweepInterval = 60 * time.Second
 
-// runPanelSweep periodically releases panel synthesis jobs whose members are all
-// terminal but whose claim_blocked gate was never cleared (e.g. a missed worker
-// release after a crash). It returns when ctx is canceled.
+// orphanJobGrace allows workers time to register a newly claimed job.
+const orphanJobGrace = 2 * time.Minute
+
+// runPanelSweep recovers orphaned jobs and blocked panels until ctx is canceled.
 func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -26,9 +26,36 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// sweepStuckPanels releases every panel run whose synthesis is still blocked
-// despite all members being terminal. One sweep iteration; safe to call anytime.
+func (s *Server) sweepOrphanedJobs() {
+	jobs, err := s.db.ListRunningJobsBefore(time.Now().Add(-orphanJobGrace))
+	if err != nil {
+		log.Printf("panel sweep: list orphan candidates: %v", err)
+		return
+	}
+	const errorMsg = "worker exited before the job finished"
+	for _, candidate := range jobs {
+		if s.workerPool.IsJobRunning(candidate.ID) {
+			continue
+		}
+		updated, err := s.workerPool.failJobAndInvalidateBudget(candidate.ID, candidate.WorkerID, errorMsg)
+		if err != nil {
+			log.Printf("panel sweep: fail orphan job %d: %v", candidate.ID, err)
+			continue
+		}
+		if updated {
+			job, err := s.db.GetJobByID(candidate.ID)
+			if err != nil {
+				log.Printf("panel sweep: load failed job %d: %v", candidate.ID, err)
+				continue
+			}
+			s.workerPool.broadcastFailed(job, job.Agent, errorMsg)
+		}
+	}
+}
+
+// sweepStuckPanels fails orphaned jobs, then releases panels with terminal members.
 func (s *Server) sweepStuckPanels() {
+	s.sweepOrphanedJobs()
 	runs, err := s.db.ListStuckPanelRuns()
 	if err != nil {
 		log.Printf("panel sweep: list stuck runs: %v", err)

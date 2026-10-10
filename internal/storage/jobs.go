@@ -1401,6 +1401,27 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 	return nil
 }
 
+// ListRunningJobsBefore returns candidate IDs and owners for orphan recovery.
+func (db *DB) ListRunningJobsBefore(cutoff time.Time) ([]ReviewJob, error) {
+	rows, err := db.Query(`
+		SELECT id, COALESCE(worker_id, '') FROM review_jobs
+		WHERE status = 'running' AND datetime(started_at) < datetime(?)
+	`, cutoff.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []ReviewJob
+	for rows.Next() {
+		var job ReviewJob
+		if err := rows.Scan(&job.ID, &job.WorkerID); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
 // FailJob marks a job as failed with an error message.
 // Only updates if job is still in 'running' state and owned by the given worker
 // (respects cancellation and prevents stale workers from failing reclaimed jobs).

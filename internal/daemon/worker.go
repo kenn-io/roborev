@@ -524,6 +524,14 @@ func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 	return wp.runningJobs[jobID].callerBroadcastsEvent
 }
 
+// IsJobRunning reports whether this pool still holds the job.
+func (wp *WorkerPool) IsJobRunning(jobID int64) bool {
+	wp.runningJobsMu.Lock()
+	defer wp.runningJobsMu.Unlock()
+	_, ok := wp.runningJobs[jobID]
+	return ok
+}
+
 // unregisterRunningJob removes a job from the running jobs map
 func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Lock()
