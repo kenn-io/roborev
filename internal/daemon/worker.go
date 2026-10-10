@@ -530,9 +530,9 @@ func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 func (wp *WorkerPool) ownsJob(workerID string, jobID int64) bool {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
-	_, interrupted := wp.updateInterruptTargets[jobID]
+	_, pendingRequeue := wp.failedUpdateRequeues[jobID]
 	ownedJobID := wp.workerJobs[workerID]
-	return ownedJobID == workerClaimingJobID || ownedJobID == jobID || interrupted
+	return ownedJobID == workerClaimingJobID || ownedJobID == jobID || pendingRequeue
 }
 
 // unregisterRunningJob removes a job from the running jobs map
