@@ -233,18 +233,28 @@ func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	t.Setenv(GenericEnabledEnv, "1")
 	path := filepath.Join(t.TempDir(), "daily.json")
 	require.NoError(t, os.Mkdir(path, 0o700))
-	reporter, messages := newPostHogStubReporter(t, path)
+	db := testutil.OpenTestDB(t)
+	endpoint, messages := testutil.NewPostHogStub(t)
+	opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: path}
+	reporter, err := NewReporter(opts)
+	require.NoError(t, err)
+	installID, err := db.GetSyncState(installIDMetadataKey)
+	require.NoError(t, err)
+	require.NotEmpty(t, installID)
 	body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
 	limiter := &AppOpenedLimiter{}
 	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
 	require.NoError(t, reporter.Close())
 	assert.Empty(t, messages())
 	require.NoError(t, os.Remove(path))
-	reporter, messages = newPostHogStubReporter(t, path)
+	reporter, err = NewReporter(opts)
+	require.NoError(t, err)
 	limiter = &AppOpenedLimiter{}
 	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
 	require.NoError(t, reporter.Close())
-	assert.Len(t, messages(), 1)
+	sent := messages()
+	require.Len(t, sent, 1)
+	assert.Equal(t, installID, sent[0].DistinctID)
 }
 
 func TestScreenViewedAcceptsWithClosedDatabase(t *testing.T) {
