@@ -49,7 +49,7 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	wp := s.workerPool
 	wp.attemptTransitionsMu.RLock()
 	defer wp.attemptTransitionsMu.RUnlock()
-	if wp.OwnsJob(job.ID) || job.WorkerID == "" || job.StartedAt == nil || time.Since(*job.StartedAt) <= orphanJobGrace {
+	if wp.ownsJob(job.WorkerID, job.ID) || job.StartedAt == nil || time.Since(*job.StartedAt) <= orphanJobGrace {
 		return
 	}
 	const errorMsg = "worker exited before the job finished"

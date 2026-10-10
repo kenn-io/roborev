@@ -1403,17 +1403,7 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 
 // FailJobAttempt fails only the exact running attempt observed by the orphan sweep.
 func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	result, err := db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ? AND started_at = ?`,
-		now, errorMsg, now, jobID, workerID, startedAt)
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
+	return db.failJob(jobID, workerID, errorMsg, startedAt)
 }
 
 // FailJob marks a job as failed with an error message.
@@ -1423,16 +1413,22 @@ func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) 
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
 func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
+	return db.failJob(jobID, workerID, errorMsg, "")
+}
+
+func (db *DB) failJob(jobID int64, workerID, errorMsg, startedAt string) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
-	var result sql.Result
-	var err error
+	query := `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`
+	args := []any{now, errorMsg, now, jobID}
 	if workerID != "" {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?`,
-			now, errorMsg, now, jobID, workerID)
-	} else {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-			now, errorMsg, now, jobID)
+		query += ` AND worker_id = ?`
+		args = append(args, workerID)
 	}
+	if startedAt != "" {
+		query += ` AND started_at = ?`
+		args = append(args, startedAt)
+	}
+	result, err := db.Exec(query, args...)
 	if err != nil {
 		return false, err
 	}

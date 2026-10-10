@@ -65,7 +65,8 @@ type WorkerPool struct {
 
 	// Track running jobs for cancellation
 	runningJobs    map[int64]runningJobCancellation
-	pendingCancels map[int64]bool // job ID -> whether the caller broadcasts the event
+	workerJobs     map[string]int64 // worker ID -> claimed job ID
+	pendingCancels map[int64]bool   // job ID -> whether the caller broadcasts the event
 	// updateInterruptTargets records attempts that must unwind without normal
 	// cancellation, retry, failover, hook, or panel-completion side effects.
 	// The daemon's update lease owns the lifetime of this set.
@@ -135,6 +136,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		stopCancel:                   stopCancel,
 		readyCh:                      make(chan struct{}),
 		runningJobs:                  make(map[int64]runningJobCancellation),
+		workerJobs:                   make(map[string]int64),
 		pendingCancels:               make(map[int64]bool),
 		updateInterruptTargets:       make(map[int64]struct{}),
 		failedUpdateRequeues:         make(map[int64]string),
@@ -306,7 +308,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
 	wp.runningJobsMu.Lock()
 
 	// Final check if job registered while we did the second DB lookup
-	if running, ok := wp.runningJobs[jobID]; ok && running.cancel != nil {
+	if running, ok := wp.runningJobs[jobID]; ok {
 		running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
 		wp.runningJobs[jobID] = running
 		wp.runningJobsMu.Unlock()
@@ -328,7 +330,7 @@ func (wp *WorkerPool) registeredJobCancel(
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
 	running, ok := wp.runningJobs[jobID]
-	if !ok || running.cancel == nil {
+	if !ok {
 		return nil, false
 	}
 	running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
@@ -409,7 +411,7 @@ func (wp *WorkerPool) interruptJobsForUpdateLocked(jobIDs []int64) {
 	wp.runningJobsMu.Lock()
 	for _, jobID := range jobIDs {
 		wp.updateInterruptTargets[jobID] = struct{}{}
-		if running, ok := wp.runningJobs[jobID]; ok && running.cancel != nil {
+		if running, ok := wp.runningJobs[jobID]; ok {
 			cancels = append(cancels, running.cancel)
 		}
 	}
@@ -524,21 +526,11 @@ func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 	return wp.runningJobs[jobID].callerBroadcastsEvent
 }
 
-// markClaimedJob records ownership before processJob can block on repo config.
-func (wp *WorkerPool) markClaimedJob(jobID int64) {
-	wp.runningJobsMu.Lock()
-	wp.runningJobs[jobID] = runningJobCancellation{}
-	wp.runningJobsMu.Unlock()
-}
-
-// OwnsJob includes active attempts and attempts awaiting update recovery.
-func (wp *WorkerPool) OwnsJob(jobID int64) bool {
+func (wp *WorkerPool) ownsJob(workerID string, jobID int64) bool {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
-	_, running := wp.runningJobs[jobID]
 	_, interrupted := wp.updateInterruptTargets[jobID]
-	_, requeuePending := wp.failedUpdateRequeues[jobID]
-	return running || interrupted || requeuePending
+	return wp.workerJobs[workerID] == jobID || interrupted
 }
 
 // unregisterRunningJob removes a job from the running jobs map
@@ -822,7 +814,9 @@ func (wp *WorkerPool) worker(id int) {
 			}
 			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
 			if job != nil && err == nil {
-				wp.markClaimedJob(job.ID)
+				wp.runningJobsMu.Lock()
+				wp.workerJobs[workerID] = job.ID
+				wp.runningJobsMu.Unlock()
 			}
 			if err != nil {
 				wp.noteClaimError(workerID, err)
@@ -848,6 +842,9 @@ func (wp *WorkerPool) worker(id int) {
 		// Process the job
 		wp.activeWorkers.Add(1)
 		wp.processJob(workerID, job)
+		wp.runningJobsMu.Lock()
+		delete(wp.workerJobs, workerID)
+		wp.runningJobsMu.Unlock()
 		wp.activeWorkers.Add(-1)
 	}
 }
@@ -882,7 +879,6 @@ func (wp *WorkerPool) noteClaimError(workerID string, err error) {
 }
 
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
-	defer wp.finishRunningJob(workerID, job.ID)
 	rtTag := reviewTypeTag(job.ReviewType)
 
 	log.Printf("[%s] Processing job %d %s %sreview/%s ref=%s",
@@ -922,6 +918,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
 	wp.registerRunningJob(job.ID, cancel, deadline)
+	defer wp.finishRunningJob(workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
