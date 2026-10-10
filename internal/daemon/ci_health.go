@@ -14,6 +14,8 @@ import (
 // one durable snapshot. Cached review errors preserve history, while delivery
 // and new worker failures affect health immediately, without another poll.
 func (p *CIPoller) HealthObservation() storage.ComponentHealth {
+	// Hold the lock through the storage read so retry dispatch ownership stays
+	// consistent with the durable snapshot used to report recovery.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	ci := storage.ComponentHealth{Name: "ci"}
