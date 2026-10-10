@@ -1115,6 +1115,17 @@ type PulledJob struct {
 	UpdatedAt             time.Time
 }
 
+// pgPulledJobPromptExpr selects the prompt a pulled job j stores. A
+// completed job takes its newest review's prompt when that review has one:
+// releases before job_content kept the complete prompt on the review and never
+// updated the job's copy on a rerun. Later releases keep the prompt on the job
+// and push reviews without one. A job whose latest attempt did not complete
+// has no review of its own, so it keeps the job's prompt.
+const pgPulledJobPromptExpr = `COALESCE(
+	CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN (SELECT NULLIF(rv.prompt, '') FROM reviews rv
+		WHERE rv.job_uuid = j.uuid ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1) END,
+	NULLIF(j.prompt, ''), '')`
+
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.
 // Returns jobs not from the given machineID (to avoid echo).
@@ -1130,16 +1141,12 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 		}
 	}
 
-	// The prompt comes from the job's newest review when that review has one.
-	// Releases before job_content kept the complete prompt on the review and
-	// never updated the job's copy on a rerun. Later releases keep it on the
-	// job and leave the review's copy empty.
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
-			COALESCE((SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_uuid = j.uuid ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1), NULLIF(j.prompt, ''), ''),
+			`+pgPulledJobPromptExpr+`,
 			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
@@ -1202,9 +1209,12 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 
 // PulledReview represents a review pulled from PostgreSQL
 type PulledReview struct {
-	UUID               uuid.UUID
-	JobUUID            uuid.UUID
-	Agent              string
+	UUID    uuid.UUID
+	JobUUID uuid.UUID
+	Agent   string
+	// JobPrompt is the prompt the review's job now stores in PostgreSQL. A
+	// review can arrive after its job, so pulling it refreshes that prompt.
+	JobPrompt          string
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
@@ -1239,7 +1249,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
+			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, `+pgPulledJobPromptExpr+`
 		FROM reviews r
 		JOIN review_jobs j ON j.uuid = r.job_uuid
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
@@ -1266,7 +1276,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Output, &r.Closed,
 			&r.VerdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
+			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID, &r.JobPrompt,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)

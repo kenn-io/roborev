@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,6 +222,57 @@ func TestPulledJobContentFollowsJobChanges(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
 	require.NoError(t, db.SaveJobPrompt(id, ""))
 	assert.Empty(t, promptAfterPull(), "replaying an unchanged job must not restore a removed prompt")
+}
+
+func TestPulledReviewRefreshesRemoteJobPrompt(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, t.TempDir())
+	local, err := db.GetMachineID()
+	require.NoError(t, err)
+	updated := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	pullJob := func(label string, machine uuid.UUID) int64 {
+		t.Helper()
+		pulled := PulledJob{
+			UUID: testUUID(label), GitRef: "a..b", Agent: "codex", Status: "done",
+			Prompt: "earlier attempt prompt", JobType: JobTypeRange, EnqueuedAt: updated,
+			UpdatedAt: updated, SourceMachineID: machine,
+		}
+		_, err := db.upsertPulledJob(pulled, repo.ID, nil)
+		require.NoError(t, err)
+		var id int64
+		require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
+		return id
+	}
+	remoteJob := pullJob("remote-job", testUUID("remote-machine"))
+	localJob := pullJob("local-job", local)
+	pullReview := func(label string, jobLabel string) {
+		t.Helper()
+		_, err := db.upsertPulledReview(PulledReview{
+			UUID: testUUID(label), JobUUID: testUUID(jobLabel), Agent: "codex",
+			JobPrompt: "rerun prompt", StructuredOutput: reviewFixtureJSON("No issues found."),
+			CreatedAt: updated, UpdatedAt: updated.Add(time.Minute), UpdatedByMachineID: testUUID("remote-machine"),
+		})
+		require.NoError(t, err)
+	}
+	prompt := func(id int64) string {
+		t.Helper()
+		job, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		return job.Prompt
+	}
+
+	// The review of the rerun arrives after the job was pulled.
+	pullReview("remote-review", "remote-job")
+	assert.Equal(t, "rerun prompt", prompt(remoteJob))
+
+	require.NoError(t, db.SaveJobPrompt(remoteJob, ""))
+	pullReview("remote-review", "remote-job")
+	assert.Empty(t, prompt(remoteJob), "replaying an unchanged review must not restore a removed prompt")
+
+	pullReview("local-review", "local-job")
+	assert.Equal(t, "earlier attempt prompt", prompt(localJob), "this machine's jobs keep their own prompt")
 }
 
 func TestEnqueueJobRollsBackWhenContentWriteFails(t *testing.T) {

@@ -1417,9 +1417,9 @@ The PostgreSQL schema is unchanged:
 - Upgraded machines push an empty review prompt. Older clients read only that
     column for a finished review, so they show an empty prompt for reviews from
     upgraded machines.
-- For a job from an older client, an upgraded machine shows the prompt of the
-    job's newest review, because older clients never update the job's prompt on
-    a rerun.
+- For a completed job from an older client, an upgraded machine shows the prompt
+    of the job's newest review, because older clients never update the job's
+    prompt on a rerun. A review that arrives after its job updates the prompt.
 
 Retention is off by default; roborev keeps everything until you set a limit. The
 daemon applies both settings at startup and then hourly. A changed setting takes

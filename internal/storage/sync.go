@@ -1119,6 +1119,21 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			return false, err
 		}
 	}
+	// A review pushed after its job pull can change the prompt that job
+	// stores. Refresh it for jobs from other machines; this machine's own
+	// jobs already store their current prompt. As with job pulls, a replay of
+	// an unchanged review writes nothing, so a prompt removed by retention
+	// stays removed.
+	if rows > 0 && r.JobPrompt != "" {
+		if _, err := tx.Exec(`
+			INSERT INTO job_content (job_id, prompt)
+			SELECT id, zstd_compress(?) FROM review_jobs
+			WHERE id = ? AND source_machine_id != (SELECT value FROM sync_state WHERE key = ?)
+			ON CONFLICT(job_id) DO UPDATE SET prompt = excluded.prompt`,
+			r.JobPrompt, jobID, SyncStateMachineID); err != nil {
+			return false, fmt.Errorf("store pulled review's job prompt: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
