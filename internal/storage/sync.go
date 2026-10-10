@@ -136,19 +136,6 @@ func (db *DB) GetOrCreateSyncStateValueWith(key string, create func() (string, e
 	return value, nil
 }
 
-// AdvanceSyncState keeps the lexicographically greatest value for key.
-func (db *DB) AdvanceSyncState(key, value string) error {
-	_, err := db.Exec(`
-		INSERT INTO sync_state (key, value) VALUES (?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value
-		WHERE sync_state.value < excluded.value
-	`, key, value)
-	if err != nil {
-		return fmt.Errorf("advance sync state %s: %w", key, err)
-	}
-	return nil
-}
-
 // GetMachineID returns this machine's unique identifier, creating one if it doesn't exist.
 // Uses INSERT OR IGNORE + SELECT to ensure concurrency-safe behavior.
 // Treats empty values as missing and regenerates.

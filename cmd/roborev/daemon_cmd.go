@@ -333,8 +333,9 @@ func daemonRunCmd() *cobra.Command {
 			log.Printf("Search database: %s", search.path)
 
 			telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
-				Database: db,
-				Version:  version.Version,
+				Database:        db,
+				Version:         version.Version,
+				DailyClaimsPath: telemetry.DailyClaimsPath(owner.path),
 			})
 			defer func() {
 				if err := telemetryReporter.Close(); err != nil {

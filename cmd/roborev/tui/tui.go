@@ -144,7 +144,7 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	screenDay            string   // UTC day that screensSent covers
-	screensSent          []string // screens reported on screenDay
+	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -899,8 +899,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
-		screensSent:         []string{viewQueue.String()}, // Init reports the queue
-		width:               80,                           // sensible defaults until we get WindowSizeMsg
+		screensSent:         []string{viewQueue.String()},
+		width:               80, // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
@@ -1277,6 +1277,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"Config save failed: "+msg.err.Error(),
 			5*time.Second, m.currentView,
 		)
+		result = m
+	case screenDeliveryMsg:
+		if msg.day == m.screenDay && msg.err != nil {
+			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+		}
 		result = m
 	case controlSocketReadyMsg:
 		m.controlSocket = msg.socketPath
