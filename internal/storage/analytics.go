@@ -271,7 +271,7 @@ func analyticsJobsIndexSQL() string {
 }
 
 // analyticsReviewsIndexSQL creates the index analyticsRowsQuery reads review
-// verdicts from. verdict_bool and closed are stored after reviews.prompt.
+// verdicts from, so it does not read the review output stored in each row.
 const analyticsReviewsIndexSQL = `CREATE INDEX IF NOT EXISTS idx_reviews_job_verdict
 	ON reviews(job_id, verdict_bool, closed)`
 

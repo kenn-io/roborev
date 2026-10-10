@@ -33,7 +33,7 @@ func (s *Server) applyRetention(ctx context.Context, now time.Time) {
 	cfg := s.configWatcher.Config()
 	if days := cfg.PromptRetentionDays; days > 0 {
 		cutoff := now.AddDate(0, 0, -days)
-		removed, err := s.db.PruneJobPrompts(ctx, cutoff)
+		removed, err := s.db.PruneJobPrompts(ctx, cutoff, cfg.Sync.Enabled)
 		if err != nil {
 			log.Printf("retention: %v", err)
 		} else if removed > 0 {

@@ -250,7 +250,7 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 	for _, excluded := range []string{
 		"excluded-prompt", "excluded-diff", "excluded-patch", "excluded-command",
 		"excluded-token-data", "excluded-worktree-path", "excluded-log",
-		"excluded-review-prompt", "excluded-repository-path", "excluded-remote-identity",
+		"excluded-repository-path", "excluded-remote-identity",
 	} {
 		assert.NotContains(t, string(encoded), excluded)
 	}

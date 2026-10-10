@@ -1130,12 +1130,16 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 		}
 	}
 
+	// The prompt comes from the job's newest review when that review has one.
+	// Releases before job_content kept the complete prompt on the review and
+	// never updated the job's copy on a rerun. Later releases keep it on the
+	// job and leave the review's copy empty.
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
-			COALESCE(NULLIF(j.prompt, ''), (SELECT rv.prompt FROM reviews rv WHERE rv.job_uuid = j.uuid AND rv.prompt != '' LIMIT 1), ''),
+			COALESCE((SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_uuid = j.uuid ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1), NULLIF(j.prompt, ''), ''),
 			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
@@ -1632,7 +1636,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
 				prompt = COALESCE(NULLIF(EXCLUDED.prompt, ''), review_jobs.prompt),
-			dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
+				dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
 				token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, review_jobs.token_usage) END,
 				agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (review_jobs.agent_invoked OR EXCLUDED.agent_invoked) END,
 				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),

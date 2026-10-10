@@ -119,7 +119,7 @@ func TestPruneJobPromptsKeepsRecentAndUnrebuildableJobs(t *testing.T) {
 		require.NoError(t, db.SaveJobPrompt(ids[name], "prompt for "+name))
 	}
 
-	removed, err := db.PruneJobPrompts(t.Context(), now.AddDate(0, 0, -30))
+	removed, err := db.PruneJobPrompts(t.Context(), now.AddDate(0, 0, -30), false)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, removed)
 
@@ -132,6 +132,57 @@ func TestPruneJobPromptsKeepsRecentAndUnrebuildableJobs(t *testing.T) {
 			assert.Equal(t, "prompt for "+name, job.Prompt, name)
 		}
 	}
+}
+
+func TestPruneJobPromptsKeepsUnpushedPromptsWhileSyncing(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, t.TempDir())
+	cutoff := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	jobs := map[string]struct {
+		updatedAt, syncedAt any
+		prunedWhileSyncing  bool
+	}{
+		"pushed":             {"2026-08-01T00:00:00Z", "2026-08-01T00:00:05Z", true},
+		"never pushed":       {"2026-08-01T00:00:00Z", nil, false},
+		"changed after push": {"2026-08-02T00:00:00Z", "2026-08-01T00:00:05Z", false},
+	}
+	insertAll := func() map[string]int64 {
+		_, err := db.Exec(`DELETE FROM job_content`)
+		require.NoError(t, err)
+		ids := map[string]int64{}
+		for name, f := range jobs {
+			result, err := db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, finished_at,
+					updated_at, synced_at)
+				VALUES (?, 'a..b', 'codex', 'done', 'range', '2026-08-01T00:00:00Z', ?, ?)`,
+				repo.ID, f.updatedAt, f.syncedAt)
+			require.NoError(t, err)
+			ids[name], err = result.LastInsertId()
+			require.NoError(t, err)
+			require.NoError(t, db.SaveJobPrompt(ids[name], "prompt for "+name))
+		}
+		return ids
+	}
+
+	ids := insertAll()
+	removed, err := db.PruneJobPrompts(t.Context(), cutoff, true)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, removed)
+	for name, f := range jobs {
+		job, err := db.GetJobByID(ids[name])
+		require.NoError(t, err)
+		if f.prunedWhileSyncing {
+			assert.Empty(t, job.Prompt, name)
+		} else {
+			assert.Equal(t, "prompt for "+name, job.Prompt, name)
+		}
+	}
+
+	insertAll()
+	removed, err = db.PruneJobPrompts(t.Context(), cutoff, false)
+	require.NoError(t, err)
+	assert.EqualValues(t, len(jobs), removed, "without sync every old prompt is removed")
 }
 
 func TestPulledJobContentFollowsJobChanges(t *testing.T) {
@@ -160,6 +211,11 @@ func TestPulledJobContentFollowsJobChanges(t *testing.T) {
 
 	pulled.Status, pulled.Prompt, pulled.UpdatedAt = "done", "rerun attempt", updated.Add(time.Hour)
 	assert.Equal(t, "rerun attempt", promptAfterPull())
+
+	// A fast rerun can finish within the same second as the version pulled
+	// before it, so only the prompt and the fraction of a second differ.
+	pulled.Prompt, pulled.UpdatedAt = "same-second rerun", pulled.UpdatedAt.Add(300*time.Millisecond)
+	assert.Equal(t, "same-second rerun", promptAfterPull())
 
 	var id int64
 	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
@@ -231,10 +287,20 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	archivedOnly := insertJob("g..h", JobTypeRange, "", nil, nil)
 	dirty := insertJob("dirty", JobTypeDirty, "dirty prompt", "+frozen diff\n", nil)
 	fix := insertJob("e..f", JobTypeFix, "fix prompt", nil, "patch body")
-	// A partly finished earlier run left a stale row behind.
-	_, err := db.Exec(`CREATE TABLE job_content (job_id INTEGER PRIMARY KEY, prompt BLOB, diff_content BLOB, patch BLOB)`)
+	clearedSinceEarlierRun := insertJob("i..j", JobTypeRange, "", nil, nil)
+	// A rerun that failed before saving its prompt keeps only the archived
+	// review of its earlier attempt.
+	failedRerun := insertJob("k..l", JobTypeRange, "", nil, nil)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failedRerun)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale'))`, fix)
+	// A partly finished earlier run left stale rows behind.
+	_, err = db.Exec(`CREATE TABLE job_content (job_id INTEGER PRIMARY KEY, prompt BLOB, diff_content BLOB, patch BLOB)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale')), (?, zstd_compress('stale'))`,
+		fix, clearedSinceEarlierRun)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+		VALUES (?, 'codex', 'earlier attempt prompt', 'archived output', datetime('now'), 0, 'pending')`, failedRerun)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'archived prompt', 'archived output', datetime('now'), 0, 'pending')`, withJobPrompt)
@@ -265,6 +331,11 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 		assert.Equal(t, "fix prompt", job.Prompt)
 		require.NotNil(t, job.Patch)
 		assert.Equal(t, "patch body", *job.Patch)
+		for _, id := range []int64{clearedSinceEarlierRun, failedRerun} {
+			job, err = db.GetJobByID(id)
+			require.NoError(t, err)
+			assert.Empty(t, job.Prompt, "job %d", id)
+		}
 
 		var archived string
 		require.NoError(t, db.QueryRow(`SELECT output FROM legacy_reviews WHERE job_id = ?`, withJobPrompt).Scan(&archived))
@@ -274,4 +345,81 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 		assert.False(t, legacy)
 		require.NoError(t, db.Close())
 	}
+}
+
+func TestMigrateJobContentRestoresPanelMemberInstructions(t *testing.T) {
+	t.Parallel()
+	path, db := openLegacyContentDB(t)
+	repo := createRepo(t, db, t.TempDir())
+	insertMember := func(prebuilt bool, config string) int64 {
+		result, err := db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt,
+				prompt_prebuilt, panel_role, panel_name, panel_member_name, panel_member_config_json)
+			VALUES (?, 'a..b', 'codex', 'done', 'range', 'review the diff in {{diff_file}}', ?, 'member', 'ci', 'security', ?)`,
+			repo.ID, prebuilt, config)
+		require.NoError(t, err)
+		id, err := result.LastInsertId()
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+			VALUES (?, 'codex', 'review the diff in /tmp/snapshot.diff plus instructions', '', ?)`,
+			id, string(reviewFixtureJSON("No issues found.")))
+		require.NoError(t, err)
+		return id
+	}
+	prebuilt := insertMember(true, `{"name":"security","instructions":"Focus on SQL injection."}`)
+	withoutInstructions := insertMember(true, `{"name":"security"}`)
+	unparseable := insertMember(true, `not json`)
+	require.NoError(t, db.Close())
+
+	for range 2 {
+		db, err := Open(path)
+		require.NoError(t, err)
+		for id, want := range map[int64]string{
+			prebuilt: "review the diff in {{diff_file}}\n\n" +
+				"## Additional reviewer instructions (panel: ci / member: security)\nFocus on SQL injection.\n",
+			withoutInstructions: "review the diff in {{diff_file}}",
+			unparseable:         "review the diff in {{diff_file}}",
+		} {
+			job, err := db.GetJobByID(id)
+			require.NoError(t, err)
+			assert.Equal(t, want, job.Prompt, "job %d", id)
+		}
+		require.NoError(t, db.Close())
+	}
+}
+
+func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
+	t.Parallel()
+	path, db := openLegacyContentDB(t)
+	repo := createRepo(t, db, t.TempDir())
+	machine := testUUID("local-machine")
+	synced := "2026-09-01T12:00:00Z"
+	insertSyncedJob := func(label, jobPrompt, reviewPrompt string) int64 {
+		result, err := db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
+				source_machine_id, updated_at, synced_at)
+			VALUES (?, ?, 'a..b', 'codex', 'done', 'range', ?, ?, ?, ?)`,
+			testUUID(label), repo.ID, jobPrompt, machine, synced, synced)
+		require.NoError(t, err)
+		id, err := result.LastInsertId()
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+			VALUES (?, 'codex', ?, '', ?)`, id, reviewPrompt, string(reviewFixtureJSON("No issues found.")))
+		require.NoError(t, err)
+		return id
+	}
+	// An older client pushed this job without a prompt and stopped before
+	// pushing the review, which held the only copy.
+	recovered := insertSyncedJob("recovered", "", "only the review kept this prompt")
+	insertSyncedJob("unchanged", "job prompt", "job prompt with preamble")
+	require.NoError(t, db.Close())
+
+	db, err := Open(path)
+	require.NoError(t, err)
+	defer db.Close()
+	jobs, err := db.GetJobsToSync(machine, 100)
+	require.NoError(t, err)
+	prompts := map[int64]string{}
+	for _, job := range jobs {
+		prompts[job.ID] = job.Prompt
+	}
+	assert.Equal(t, map[int64]string{recovered: "only the review kept this prompt"}, prompts)
 }

@@ -129,8 +129,15 @@ func clearJobContent(ctx context.Context, exec execer, jobID int64, column jobCo
 // rerun, so only the prompt view of an old job loses content. Reviews,
 // findings, diffs of dirty reviews, patches, and prompts of jobs whose prompt
 // cannot be rebuilt (tasks, fixes, compaction, insights, goal reviews) are
-// kept. It returns the number of prompts removed.
-func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time) (int64, error) {
+// kept. With keepUnpushed, a job that sync has yet to push keeps its prompt,
+// so retention cannot remove a prompt before PostgreSQL has a copy. It returns
+// the number of prompts removed.
+func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time, keepUnpushed bool) (int64, error) {
+	pushedFilter := ""
+	if keepUnpushed {
+		pushedFilter = `AND synced_at IS NOT NULL
+			  AND ` + sqliteNormalizedTimestampExpr("updated_at") + ` <= ` + sqliteNormalizedTimestampExpr("synced_at")
+	}
 	result, err := db.ExecContext(ctx, `
 		UPDATE job_content SET prompt = NULL
 		WHERE prompt IS NOT NULL AND job_id IN (
@@ -139,6 +146,7 @@ func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time) (int64, err
 			  AND status NOT IN ('queued', 'running')
 			  AND finished_at IS NOT NULL
 			  AND julianday(finished_at) < julianday(?)
+			  `+pushedFilter+`
 		)`, cutoff.UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, fmt.Errorf("prune job prompts: %w", err)
@@ -155,11 +163,12 @@ const jobContentMoveBatchSize = 500
 // inline with the metadata of those rows. It moves each job's prompt, diff,
 // and patch into job_content, compressed, then drops the old columns and
 // vacuums once to return the freed space to the filesystem. The job's prompt
-// wins; a job without one takes its review's or archived review's prompt, so
-// no prompt's only copy is lost.
+// wins; a completed job without one takes its review's or archived review's
+// prompt, so no prompt's only copy is lost.
 //
-// A rerun is safe: the copy resumes by overwriting rows, and the columns are
-// dropped in one transaction, after which a rerun only repeats the VACUUM.
+// A rerun is safe: the copy redoes each batch from the old columns, which
+// stay until it finishes, and the columns are dropped in one transaction,
+// after which a rerun only repeats the VACUUM.
 func migrateJobContent(ctx context.Context, db *DB) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS job_content (
 		job_id INTEGER PRIMARY KEY REFERENCES review_jobs(id),
@@ -189,12 +198,13 @@ func migrateJobContent(ctx context.Context, db *DB) error {
 	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
 		// Freed pages stay in the file and are reused by later writes.
 		log.Printf("Database migration: VACUUM failed, free space stays inside the database file: %v", err)
-		return nil
+	} else {
+		log.Printf("Database migration: VACUUM finished in %s", time.Since(vacuumStart).Round(time.Second))
 	}
+	// Shrink the WAL, which grew by the size of the column drops, either way.
 	if _, err := db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		log.Printf("Database migration: WAL checkpoint after VACUUM failed: %v", err)
+		log.Printf("Database migration: WAL checkpoint failed: %v", err)
 	}
-	log.Printf("Database migration: VACUUM finished in %s", time.Since(vacuumStart).Round(time.Second))
 	return nil
 }
 
@@ -216,17 +226,40 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 		archiveExpr = `(SELECT l.prompt FROM legacy_reviews l
 			WHERE l.job_id = j.id AND l.prompt != '' ORDER BY l.archive_id DESC LIMIT 1)`
 	}
-	promptExpr := `COALESCE(NULLIF(j.prompt, ''),
-		(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), ` + archiveExpr + `)`
+	// A CI panel member's job kept its prebuilt prompt, with the diff
+	// placeholders a retry needs, but without the member's reviewer
+	// instructions. The worker appended those to the prompt it sent and to the
+	// review's copy only. Restore them, in the format memberInstructionSuffix
+	// in internal/daemon/worker.go used when this migration was written.
+	memberInstructions := `json_extract(j.panel_member_config_json, '$.instructions')`
+	memberSuffix := `CASE WHEN j.prompt_prebuilt != 0 AND j.panel_role = 'member'
+		AND json_valid(j.panel_member_config_json)
+		AND json_type(j.panel_member_config_json, '$.instructions') = 'text'
+		AND ` + memberInstructions + ` != ''
+		THEN char(10, 10) || '## Additional reviewer instructions (panel: ' || COALESCE(j.panel_name, '')
+			|| ' / member: ' || COALESCE(j.panel_member_name, '') || ')' || char(10)
+			|| ` + memberInstructions + ` || char(10)
+		ELSE '' END`
+	// Only a completed attempt's review or archived review holds the job's
+	// prompt. A rerun deletes the review but not its archived copy, so a rerun
+	// that stopped before saving its prompt must not take the earlier one.
+	promptExpr := `COALESCE(NULLIF(j.prompt, '') || ` + memberSuffix + `,
+		CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN COALESCE(
+			(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), ` + archiveExpr + `) END)`
 	copySQL := fmt.Sprintf(`
 		INSERT INTO job_content (job_id, prompt, diff_content, patch)
 		SELECT j.id, zstd_compress(%[1]s), zstd_compress(j.diff_content), zstd_compress(j.patch)
 		FROM review_jobs j
 		WHERE j.id > ? AND j.id <= ?
-		  AND COALESCE(NULLIF(%[1]s, ''), NULLIF(j.diff_content, ''), NULLIF(j.patch, '')) IS NOT NULL
-		ON CONFLICT(job_id) DO UPDATE SET
-		  prompt = excluded.prompt, diff_content = excluded.diff_content, patch = excluded.patch`,
+		  AND COALESCE(NULLIF(%[1]s, ''), NULLIF(j.diff_content, ''), NULLIF(j.patch, '')) IS NOT NULL`,
 		promptExpr)
+	// PostgreSQL may lack a prompt that differs from the job's: an older
+	// client pushed the job's prompt and could stop before pushing the
+	// review that held the complete one, and reviews no longer carry a prompt.
+	// Clearing synced_at makes the next sync push the job with that prompt.
+	resyncSQL := `UPDATE review_jobs AS j SET synced_at = NULL
+		WHERE j.id > ? AND j.id <= ? AND j.synced_at IS NOT NULL
+		  AND ` + promptExpr + ` IS NOT NULLIF(j.prompt, '')`
 
 	var maxID int64
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM review_jobs`).Scan(&maxID); err != nil {
@@ -235,14 +268,10 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 	moved := 0
 	lastLog := time.Now()
 	for after := int64(0); after < maxID; after += jobContentMoveBatchSize {
-		result, err := db.ExecContext(ctx, copySQL, after, after+jobContentMoveBatchSize)
+		count, err := db.copyJobContentBatch(ctx, copySQL, resyncSQL, after, after+jobContentMoveBatchSize)
 		if err != nil {
 			return moved, fmt.Errorf("compress content of jobs %d-%d: %w",
 				after+1, after+jobContentMoveBatchSize, err)
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return moved, fmt.Errorf("count compressed jobs: %w", err)
 		}
 		moved += int(count)
 		if time.Since(lastLog) >= 10*time.Second {
@@ -252,6 +281,38 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 		}
 	}
 	return moved, nil
+}
+
+// copyJobContentBatch replaces the content of jobs with IDs in (after, through]
+// and marks the jobs that need a new push in the same transaction, so an
+// interrupted copy never leaves a moved prompt unsynced. The batch first
+// removes rows an interrupted earlier run left, because an older release
+// may have changed or cleared the job's payload since.
+func (db *DB) copyJobContentBatch(ctx context.Context, copySQL, resyncSQL string, after, through int64) (int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM job_content WHERE job_id > ? AND job_id <= ?`,
+		after, through); err != nil {
+		return 0, fmt.Errorf("remove partly copied content: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, copySQL, after, through)
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count compressed jobs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, resyncSQL, after, through); err != nil {
+		return 0, fmt.Errorf("mark jobs for sync: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (db *DB) dropLegacyContentColumns(ctx context.Context) error {

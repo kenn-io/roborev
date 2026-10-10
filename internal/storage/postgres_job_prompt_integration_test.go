@@ -44,6 +44,57 @@ func TestIntegrationJobPromptFollowsLaterAttempts(t *testing.T) { //nolint:paral
 	assert.Equal(t, "third attempt", promptInPostgres())
 }
 
+// pulledJobPrompt pages through PullJobs until it finds the job.
+func pulledJobPrompt(t *testing.T, pool *PgPool, jobUUID uuid.UUID) string {
+	t.Helper()
+	cursor := ""
+	for {
+		jobs, next, err := pool.PullJobs(t.Context(), uuid.New(), cursor, 500)
+		require.NoError(t, err)
+		for _, pulled := range jobs {
+			if pulled.UUID == jobUUID {
+				return pulled.Prompt
+			}
+		}
+		require.NotEmpty(t, jobs, "pulled every job without finding the test job")
+		cursor = next
+	}
+}
+
+func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+	machineID := uuid.New()
+	require.NoError(t, pool.RegisterMachine(ctx, machineID, "test"))
+	repoID, err := pool.GetOrCreateRepo(ctx, "test-repo-newest-review-"+uuid.New().String())
+	require.NoError(t, err)
+	insertJob := func(prompt string, reviewPrompts ...string) uuid.UUID {
+		jobUUID := uuid.New()
+		_, err := pool.pool.Exec(ctx, `
+			INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, prompt, source_machine_id, enqueued_at, created_at, updated_at)
+			VALUES ($1, $2, 'a..b', 'test', 'done', $3, $4, NOW(), NOW(), NOW())`, jobUUID, repoID, prompt, machineID)
+		require.NoError(t, err)
+		created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+		for i, reviewPrompt := range reviewPrompts {
+			_, err = pool.pool.Exec(ctx, `
+				INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id, created_at)
+				VALUES ($1, $2, 'test', $3, 'No issues found.', $4, $5)`,
+				uuid.New(), jobUUID, reviewPrompt, machineID, created.Add(time.Duration(i)*time.Hour))
+			require.NoError(t, err)
+		}
+		return jobUUID
+	}
+
+	// An older client never updates the job's prompt on a rerun; the rerun's
+	// review holds the prompt the agent received.
+	olderRerun := insertJob("first attempt", "first attempt with preamble", "second attempt with preamble")
+	assert.Equal(t, "second attempt with preamble", pulledJobPrompt(t, pool, olderRerun))
+
+	// A newer client keeps the prompt on the job and pushes reviews without one.
+	newerRerun := insertJob("second attempt", "first attempt with preamble", "")
+	assert.Equal(t, "second attempt", pulledJobPrompt(t, pool, newerRerun))
+}
+
 func TestIntegrationPullJobsUsesReviewPromptForOlderHistory(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
 	ctx := t.Context()
@@ -61,17 +112,5 @@ func TestIntegrationPullJobsUsesReviewPromptForOlderHistory(t *testing.T) { //no
 		VALUES ($1, $2, 'test', 'prompt kept only on the review', 'No issues found.', $3)`, uuid.New(), jobUUID, machineID)
 	require.NoError(t, err)
 
-	cursor := ""
-	for {
-		jobs, next, err := pool.PullJobs(ctx, uuid.New(), cursor, 500)
-		require.NoError(t, err)
-		for _, pulled := range jobs {
-			if pulled.UUID == jobUUID {
-				assert.Equal(t, "prompt kept only on the review", pulled.Prompt)
-				return
-			}
-		}
-		require.NotEmpty(t, jobs, "pulled every job without finding the test job")
-		cursor = next
-	}
+	assert.Equal(t, "prompt kept only on the review", pulledJobPrompt(t, pool, jobUUID))
 }

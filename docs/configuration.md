@@ -1408,8 +1408,16 @@ partway, the old copies stay in place and the next start repeats the conversion.
 If only `VACUUM` fails, the daemon logs the error and starts normally; the freed
 space stays inside the file and new jobs reuse it.
 
-PostgreSQL sync is unchanged. Job prompts sync as plain text, and the review
-prompt column receives an empty string.
+The PostgreSQL schema is unchanged:
+
+- Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
+    in PostgreSQL.
+- Upgraded machines push an empty review prompt. Older clients read only that
+    column for a finished review, so they show an empty prompt for reviews from
+    upgraded machines.
+- For a job from an older client, an upgraded machine shows the prompt of the
+    job's newest review, because older clients never update the job's prompt on
+    a rerun.
 
 Retention is off by default; roborev keeps everything until you set a limit. The
 daemon applies both settings at startup and then hourly, and reads them again
@@ -1426,6 +1434,8 @@ job_log_retention_days = 30  # remove job log files older than 30 days
     jobs are kept. A rerun rebuilds review and range prompts from git whether or
     not the old prompt was removed, so removal only empties the prompt view of
     old jobs.
+- With PostgreSQL sync enabled, a job keeps its prompt until sync has pushed it,
+    so retention never removes a prompt that PostgreSQL lacks.
 - `job_log_retention_days` deletes log files by modification time, the same
     files that `roborev log clean --days N` removes.
 

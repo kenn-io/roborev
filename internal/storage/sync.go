@@ -970,7 +970,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, now)
 	if err != nil {
 		return false, err
 	}
