@@ -899,6 +899,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
+		screensSent:         []string{viewQueue.String()},
 		width:               80, // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
@@ -938,9 +939,6 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		expandedPanels:      map[uuid.UUID]bool{},
 		panelMembers:        map[uuid.UUID][]storage.ReviewJob{},
 		promptCmdExpanded:   true,
-	}
-	if m.postScreen(viewQueue.String()) != nil {
-		m.screensSent = append(m.screensSent, viewQueue.String())
 	}
 	// Seed the cached classify-visibility decision once so render and
 	// fetch can read m.classifyEffective without hitting disk.
@@ -1326,10 +1324,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				continue
 			}
 			if key || mouse || !slices.Contains(m.screensShown(), screen) {
-				if report := rm.postScreen(screen); report != nil {
-					rm.screensSent = append(rm.screensSent, screen)
-					cmd = tea.Batch(cmd, report)
-				}
+				rm.screensSent = append(rm.screensSent, screen)
+				cmd = tea.Batch(cmd, rm.postScreen(screen))
 			}
 		}
 		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
