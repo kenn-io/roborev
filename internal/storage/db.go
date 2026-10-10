@@ -2388,8 +2388,15 @@ func (db *DB) ListStalledJobIDs(threshold time.Duration) ([]int64, error) {
 	return ids, nil
 }
 
+// StalledJob identifies a running attempt without loading the full job.
+type StalledJob struct {
+	ID        int64
+	WorkerID  string
+	StartedAt string // Raw database value for the guarded failure write.
+}
+
 // ListStalledJobs returns only attempt identity for jobs running past the threshold.
-func (db *DB) ListStalledJobs(threshold time.Duration) ([]ReviewJob, error) {
+func (db *DB) ListStalledJobs(threshold time.Duration) ([]StalledJob, error) {
 	// Use threshold in seconds for SQLite datetime arithmetic
 	// This avoids timezone issues with RFC3339 string comparison
 	thresholdSecs := int64(threshold.Seconds())
@@ -2405,10 +2412,10 @@ func (db *DB) ListStalledJobs(threshold time.Duration) ([]ReviewJob, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var jobs []ReviewJob
+	var jobs []StalledJob
 	for rows.Next() {
-		var job ReviewJob
-		if err := rows.Scan(&job.ID, &job.WorkerID, &job.StartedAtRaw); err != nil {
+		var job StalledJob
+		if err := rows.Scan(&job.ID, &job.WorkerID, &job.StartedAt); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)

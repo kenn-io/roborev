@@ -40,7 +40,7 @@ func (s *Server) sweepOrphanedJobs() {
 	}
 }
 
-func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
+func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 	current, err := s.db.GetJobByID(job.ID)
 	if err != nil {
 		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
@@ -53,7 +53,7 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 		return
 	}
 	const errorMsg = "worker stopped without saving the job's outcome"
-	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
+	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAt, errorMsg)
 	wp.attemptTransitionsMu.RUnlock()
 	if err != nil {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
@@ -61,6 +61,7 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	}
 	if updated {
 		wp.invalidateBudgetSpend()
+		// Daemon recovery suppresses hooks, unlike broadcastFailed's worker failures.
 		event := eventForJob(jobEventType(current, "failed"), current, current.ID)
 		event.Error = errorMsg
 		event.WorktreePath = existingJobWorktreePath(current)

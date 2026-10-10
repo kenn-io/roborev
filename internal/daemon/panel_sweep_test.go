@@ -154,76 +154,105 @@ func TestPanelSweepRecoversOrphanedGoalReview(t *testing.T) {
 }
 
 func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
-	assert := assert.New(t)
-	tc := newWorkerTestContext(t, 1)
-	const agentName = "panel-sweep-blocking"
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	agent.RegisterForTest(t, &agent.FakeAgent{
-		NameStr: agentName,
-		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
-			started <- struct{}{}
-			select {
-			case <-release:
-				return "", errors.New("synthetic agent failure")
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
+	for _, test := range []struct {
+		name    string
+		trigger string
+		output  string
+		err     error
+	}{
+		{
+			name: "result write",
+			trigger: `CREATE TRIGGER reject_worker_write BEFORE INSERT ON reviews
+				WHEN NEW.job_id = %d BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END`,
+			output: string(testutil.ReviewFixtureJSON("No issues found.")),
 		},
-	})
-	runUUID, members, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: agentName}})
-	_, err := tc.DB.Exec(`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
-	require.NoError(t, err)
-	_, err = tc.DB.Exec(`CREATE TRIGGER reject_failed_status BEFORE UPDATE OF status ON review_jobs
-		WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END`)
-	require.NoError(t, err)
-	subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
-	defer tc.Broadcaster.Unsubscribe(subscriber)
-	tc.Pool.Start()
-	defer tc.Pool.Stop()
-	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
-	startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
-	require.Equal(t, "review.started", startedEvent.Type)
-	backdateJobStartedAt(t, tc.DB, members[0].ID)
-	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+		{
+			name: "failed-status write",
+			trigger: `CREATE TRIGGER reject_worker_write BEFORE UPDATE OF status ON review_jobs
+				WHEN NEW.id = %d AND NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END`,
+			err: errors.New("synthetic agent failure"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			const agentName = "panel-sweep-blocking"
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: agentName,
+				ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+					started <- struct{}{}
+					select {
+					case <-release:
+						return test.output, test.err
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
+				},
+			})
+			runUUID, members, synthJob := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: agentName}})
+			_, err := tc.DB.Exec(`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
+			require.NoError(t, err)
+			_, err = tc.DB.Exec(fmt.Sprintf(test.trigger, members[0].ID))
+			require.NoError(t, err)
+			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
+			defer tc.Broadcaster.Unsubscribe(subscriber)
 
-	server.sweepStuckPanels()
+			tc.Pool.Start()
+			defer tc.Pool.Stop()
+			testutil.ReceiveWithTimeout(t, started, 10*time.Second)
+			startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+			require.Equal(t, "review.started", startedEvent.Type)
+			backdateJobStartedAt(t, tc.DB, members[0].ID)
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-	tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
-	assert.Empty(events)
-	synth, err := tc.DB.GetSynthesisJob(runUUID)
-	require.NoError(t, err)
-	assert.True(synth.ClaimBlocked)
-	close(release)
-	// The worker finishes its SQLite write before releasing ownership.
-	require.Eventually(t, func() bool {
-		tc.Pool.runningJobsMu.Lock()
-		defer tc.Pool.runningJobsMu.Unlock()
-		return len(tc.Pool.workerJobs) == 0
-	}, 10*time.Second, 10*time.Millisecond)
-	tc.Pool.Stop()
-	server.sweepStuckPanels()
-	tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
-	assert.Empty(events)
-	synth, err = tc.DB.GetSynthesisJob(runUUID)
-	require.NoError(t, err)
-	assert.True(synth.ClaimBlocked)
-	_, err = tc.DB.Exec(`DROP TRIGGER reject_failed_status`)
-	require.NoError(t, err)
+			server.sweepStuckPanels()
 
-	server.sweepStuckPanels()
+			tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
+			assert.Empty(events)
+			synth, err := tc.DB.GetSynthesisJob(runUUID)
+			require.NoError(t, err)
+			assert.True(synth.ClaimBlocked)
+			// A later job on the single worker proves the rejected attempt returned.
+			probe := tc.createJob(t, members[0].GitRef)
+			close(release)
+			for {
+				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+				if event.JobID == probe.ID && event.Type == "review.completed" {
+					break
+				}
+			}
+			tc.assertJobStatus(t, probe.ID, storage.JobStatusDone)
+			tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
+			synth, err = tc.DB.GetSynthesisJob(runUUID)
+			require.NoError(t, err)
+			assert.True(synth.ClaimBlocked)
+			_, err = tc.DB.Exec(`DROP TRIGGER reject_worker_write`)
+			require.NoError(t, err)
 
-	job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
-	assert.Equal("worker stopped without saving the job's outcome", job.Error)
-	require.Len(t, events, 1)
-	event := <-events
-	assert.Equal("review.failed", event.Type)
-	assert.Equal(job.ID, event.JobID)
-	assert.Equal(job.Error, event.Error)
-	assert.True(event.SuppressHooks)
-	synth, err = tc.DB.GetSynthesisJob(runUUID)
-	require.NoError(t, err)
-	assert.False(synth.ClaimBlocked)
+			server.sweepStuckPanels()
+
+			job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
+			assert.Equal("worker stopped without saving the job's outcome", job.Error)
+			assert.Equal(maxRetries, job.RetryCount)
+			event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+			assert.Equal("review.failed", event.Type)
+			assert.Equal(job.ID, event.JobID)
+			assert.Equal(job.Error, event.Error)
+			assert.True(event.SuppressHooks)
+			for {
+				event = testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+				if event.JobID == synthJob.ID && (event.Type == "review.completed" || event.Type == "review.failed") {
+					break
+				}
+			}
+			synth, err = tc.DB.GetSynthesisJob(runUUID)
+			require.NoError(t, err)
+			assert.Contains([]storage.JobStatus{storage.JobStatusDone, storage.JobStatusFailed}, synth.Status)
+			assert.False(synth.ClaimBlocked)
+		})
+	}
 }
 
 func TestPanelSweepPreservesUpdateOwnedJob(t *testing.T) {
@@ -254,8 +283,10 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	backdateJobStartedAt(t, tc.DB, members[0].ID)
-	stale, err := tc.DB.GetJobByID(claimed.ID)
+	stalled, err := tc.DB.ListStalledJobs(orphanJobGrace)
 	require.NoError(t, err)
+	require.Len(t, stalled, 1)
+	stale := &stalled[0]
 	changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -264,7 +295,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	require.NotNil(t, reclaimed)
 	require.Equal(t, stale.ID, reclaimed.ID)
 	require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
-	require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
+	require.NotEqual(t, stale.StartedAt, reclaimed.StartedAtRaw)
 	server := &Server{db: tc.DB, workerPool: tc.Pool}
 
 	server.failOrphanedJob(stale)
