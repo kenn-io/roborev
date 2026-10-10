@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/testenv"
 )
@@ -14,6 +14,6 @@ import (
 // which opens activity/error logs at config.DataDir(). It also disables kit
 // PostHog telemetry for daemon instances built in-process.
 func TestMain(m *testing.M) {
-	kittelemetry.DisablePostHogTelemetry()
+	posthog.DisableProcess()
 	os.Exit(testenv.RunIsolatedMain(m))
 }
