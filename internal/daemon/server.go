@@ -3825,15 +3825,14 @@ func (s *Server) humaGetHealth(
 	if s.ciPoller != nil {
 		ciReady, _ := s.ciPoller.ReadinessCheck()
 		ready = ready && ciReady
-		ciHealthy, ciMessage := s.ciPoller.HealthCheck()
-		if !ciHealthy {
+		ci := s.ciPoller.HealthObservation()
+		if !ci.Healthy {
 			allHealthy = false
 		}
-		components = append(components, storage.ComponentHealth{
-			Name:    "ci",
-			Healthy: ciHealthy,
-			Message: ciMessage,
-		})
+		if !ready {
+			ci.Recovery = nil
+		}
+		components = append(components, ci)
 	}
 
 	var recentErrors []storage.ErrorEntry

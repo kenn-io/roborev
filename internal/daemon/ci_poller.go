@@ -151,14 +151,21 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
-	pollErrors         map[ciPollTarget]string // guarded by mu
-	initialPollPending bool                    // guarded by mu; startup has not established health yet
+	pollErrors         map[ciPollTarget]ciPollFailure // guarded by mu
+	monitoredRepos     []string                       // last successful discovery; guarded by mu
+	dispatchingRetries map[ciPollTarget]int           // live retry enqueue owners; guarded by mu
+	initialPollPending bool                           // guarded by mu; startup has not established health yet
 }
 
 type ciPollTarget struct {
 	repo     string // empty means repository discovery
 	prNumber int    // nonzero means a failed retry operation, retained during backoff
 	headSHA  string // retry health belongs to this exact attempt
+}
+
+type ciPollFailure struct {
+	message       string
+	reviewFailure bool // retained review outcome, not a polling/enqueue/lookup error
 }
 
 type ciRepoConfigSource = config.RepoConfigSource
@@ -180,7 +187,8 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		discordQuotaDedupe: make(map[string]time.Time),
 		discordNowFn:       time.Now,
 		nowFn:              time.Now,
-		pollErrors:         make(map[ciPollTarget]string),
+		pollErrors:         make(map[ciPollTarget]ciPollFailure),
+		dispatchingRetries: make(map[ciPollTarget]int),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -363,16 +371,13 @@ func (p *CIPoller) Stop() {
 
 // HealthCheck returns whether the CI poller is healthy
 func (p *CIPoller) HealthCheck() (bool, string) {
-	return p.healthCheck(false)
+	health := p.HealthObservation()
+	return health.Healthy, health.Message
 }
 
 // ReadinessCheck reports whether CI can poll for work. Outstanding PR review
 // failures affect HealthCheck until delivery, but do not prevent startup.
 func (p *CIPoller) ReadinessCheck() (bool, string) {
-	return p.healthCheck(true)
-}
-
-func (p *CIPoller) healthCheck(readiness bool) (bool, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -383,11 +388,11 @@ func (p *CIPoller) healthCheck(readiness bool) (bool, string) {
 		return false, "waiting for initial poll"
 	}
 	messages := make([]string, 0, len(p.pollErrors))
-	for target, message := range p.pollErrors {
-		if readiness && target.prNumber != 0 {
+	for target, failure := range p.pollErrors {
+		if target.prNumber != 0 {
 			continue
 		}
-		messages = append(messages, message)
+		messages = append(messages, failure.message)
 	}
 	if len(messages) > 0 {
 		slices.Sort(messages)
@@ -399,12 +404,19 @@ func (p *CIPoller) healthCheck(readiness bool) (bool, string) {
 // recordPollResult retains failures until the same repository or retry recovers. Keep
 // raw subprocess and provider diagnostics out of the health API.
 func (p *CIPoller) recordPollResult(repo string, prNumber int, headSHA string, err error) {
+	p.recordCIResult(repo, prNumber, headSHA, err, false)
+}
+
+func (p *CIPoller) recordCIResult(repo string, prNumber int, headSHA string, err error, reviewFailure bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	target := ciPollTarget{repo: repo, prNumber: prNumber, headSHA: headSHA}
 	if err == nil {
 		delete(p.pollErrors, target)
 		return
+	}
+	if _, exists := p.pollErrors[target]; reviewFailure && exists {
+		return // Reconciliation must not overwrite a newer operational error.
 	}
 	message := "repository discovery failed"
 	if repo != "" {
@@ -416,7 +428,7 @@ func (p *CIPoller) recordPollResult(repo string, prNumber int, headSHA string, e
 	if detail := ghpkg.ReadErrorSummary(err); detail != "" {
 		message += ": " + detail
 	}
-	p.pollErrors[target] = message
+	p.pollErrors[target] = ciPollFailure{message: message, reviewFailure: reviewFailure}
 	if p.errorLog != nil {
 		p.errorLog.LogError("ci", message+"; see daemon log for details", 0)
 	}
@@ -468,6 +480,7 @@ func (p *CIPoller) poll(ctx context.Context) {
 	} else {
 		// Only a complete discovery can confirm a failed repository was removed.
 		p.mu.Lock()
+		p.monitoredRepos = slices.Clone(repos)
 		for target := range p.pollErrors {
 			if !slices.Contains(repos, target.repo) {
 				delete(p.pollErrors, target)
@@ -614,7 +627,7 @@ func (p *CIPoller) reconcileRetryHealth(
 	for target, reported := range targets {
 		if failed[target] {
 			if !reported {
-				p.recordPollResult(ghRepo, target.prNumber, target.headSHA, errors.New("review attempt failed"))
+				p.recordCIResult(ghRepo, target.prNumber, target.headSHA, errors.New("review attempt failed"), true)
 			}
 			continue
 		}
@@ -3063,6 +3076,20 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false
 	}
+	// Own the dispatch before its durable state changes to pending. Health can
+	// observe slow clone/fetch/prompt preparation before a panel exists.
+	target := ciPollTarget{repo: ghRepo, prNumber: attempt.PRNumber, headSHA: attempt.HeadSHA}
+	p.mu.Lock()
+	p.dispatchingRetries[target]++
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		p.dispatchingRetries[target]--
+		if p.dispatchingRetries[target] == 0 {
+			delete(p.dispatchingRetries, target)
+		}
+		p.mu.Unlock()
+	}()
 	claimed, attemptNumber, firstAttemptAt, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
 	if err != nil {
 		log.Printf("CI poller: error claiming due review attempt for %s#%d@%s: %v",
@@ -3087,6 +3114,14 @@ func (p *CIPoller) retryDueReviewAttempt(
 	if !enqueued {
 		return false
 	}
+	// A real enqueue recovers earlier enqueue/lookup errors, but the retained
+	// review failure must remain unhealthy until output is delivered.
+	p.mu.Lock()
+	if failure, exists := p.pollErrors[target]; exists {
+		failure.reviewFailure = true
+		p.pollErrors[target] = failure
+	}
+	p.mu.Unlock()
 	nextAttemptAt := "<nil>"
 	if attempt.NextAttemptAt != nil {
 		nextAttemptAt = attempt.NextAttemptAt.Format(time.RFC3339)

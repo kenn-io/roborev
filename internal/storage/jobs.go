@@ -2881,10 +2881,14 @@ func (db *DB) GetSynthesisJob(panelRunUUID uuid.UUID) (*ReviewJob, error) {
 // synthesis row and non-voting members are excluded, so synthesis, the PR
 // comment, and the commit status never see a non-voting review.
 func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult, error) {
+	return getPanelMemberReviews(db, panelRunUUID)
+}
+
+func getPanelMemberReviews(q querier, panelRunUUID uuid.UUID) ([]BatchReviewResult, error) {
 	if panelRunUUID == uuid.Nil() {
 		return nil, nil
 	}
-	rows, err := db.Query(`
+	rows, err := q.Query(`
 		SELECT j.id, j.agent, j.review_type, COALESCE(j.panel_member_name, ''), '', rv.verdict_bool, rv.structured_output, COALESCE(j.min_severity, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, ''),
 		       COALESCE(j.panel_member_config_json, ''),
 		       COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''), COALESCE(j.token_usage, '')
