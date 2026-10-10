@@ -1383,7 +1383,9 @@ How roborev stores it:
 - Each job's prompt, a dirty review's frozen diff, and a fix job's patch live in
     the `job_content` table, compressed with zstd. Prompts typically shrink to a
     quarter of their size or less.
-- Job listings read only job metadata, so they never load prompt text.
+- Listing and counting jobs reads only job metadata. The TUI and web job lists
+    do not load prompts of finished jobs; other API callers get them only when
+    they request them.
 - Each prompt is stored once, on its job. The prompt view of a review shows the
     job's stored prompt. For a plan-first fix job, the generated plan appears in
     the review output rather than in the prompt.
@@ -1420,8 +1422,8 @@ The PostgreSQL schema is unchanged:
     a rerun.
 
 Retention is off by default; roborev keeps everything until you set a limit. The
-daemon applies both settings at startup and then hourly, and reads them again
-after a config reload:
+daemon applies both settings at startup and then hourly. A changed setting takes
+effect at the next hourly pass:
 
 ```toml
 prompt_retention_days = 90   # remove prompts of review and range jobs finished over 90 days ago
@@ -1430,10 +1432,12 @@ job_log_retention_days = 30  # remove job log files older than 30 days
 
 - `prompt_retention_days` removes only the prompt of finished review and range
     jobs. Reviews, findings, comments, verdicts, dirty-review diffs, fix
-    patches, and the prompts of task, fix, compact, insights, and goal-review
-    jobs are kept. A rerun rebuilds review and range prompts from git whether or
-    not the old prompt was removed, so removal only empties the prompt view of
-    old jobs.
+    patches, and the prompts of every other job type, such as dirty, task, fix,
+    compact, synthesis, insights, and goal-review jobs, are kept. A rerun
+    rebuilds review and range prompts from git whether or not the old prompt was
+    removed, so removal only empties the prompt view of old jobs.
+- Removed prompts free space inside `reviews.db` that new jobs reuse. The file
+    itself does not shrink.
 - With PostgreSQL sync enabled, a job keeps its prompt until sync has pushed it,
     so retention never removes a prompt that PostgreSQL lacks.
 - `job_log_retention_days` deletes log files by modification time, the same

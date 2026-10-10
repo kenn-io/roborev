@@ -3323,6 +3323,12 @@ func (s *Server) humaBatchJobs(
 		)
 	}
 
+	for _, result := range results {
+		if result.Job.IsFixJob() && result.Review != nil {
+			result.Review.Prompt = prompt.DisplayFixPlanPrompt(result.Review.Prompt)
+		}
+	}
+
 	resp := &BatchJobsOutput{}
 	resp.Body.Results = results
 	return resp, nil

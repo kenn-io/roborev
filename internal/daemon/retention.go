@@ -41,7 +41,9 @@ func (s *Server) applyRetention(ctx context.Context, now time.Time) {
 		}
 	}
 	if days := cfg.JobLogRetentionDays; days > 0 {
-		if removed := CleanJobLogs(time.Duration(days) * 24 * time.Hour); removed > 0 {
+		// Sub saturates where days*24h would overflow and wrap negative.
+		maxAge := now.Sub(now.AddDate(0, 0, -days))
+		if removed := CleanJobLogs(maxAge); removed > 0 {
 			log.Printf("retention: removed %d job logs older than %d days", removed, days)
 		}
 	}

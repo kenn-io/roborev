@@ -20,6 +20,7 @@ func TestApplyRetention(t *testing.T) {
 	}{
 		{name: "disabled keeps everything", days: 0},
 		{name: "30 days removes older content", days: 30, oldRemoved: true},
+		{name: "days beyond the duration range keep everything", days: 200000},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
