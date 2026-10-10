@@ -483,7 +483,9 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
 Daily screen claims live in `telemetry-daily.json` beside the daemon database,
-wherever `--db` points, and deleting it lets that day's screens count again.
+wherever `--db` points, with a `telemetry-daily.json.lock` sidecar. A damaged
+claims file makes screen reports fail until it's removed. Stop the daemon
+before deleting it; deletion lets that day's screens count again.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The TUI retries a failed screen report on the next key or mouse input while
 that screen is showing. The browser reports the visible screen on every window

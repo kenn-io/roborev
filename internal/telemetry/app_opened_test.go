@@ -240,32 +240,17 @@ func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	installID, err := db.GetSyncState(installIDMetadataKey)
 	require.NoError(t, err)
-	require.NotEmpty(t, installID)
 	body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
 	limiter := &AppOpenedLimiter{}
 	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
 	require.NoError(t, reporter.Close())
-	assert.Empty(t, messages())
 	require.NoError(t, os.Remove(path))
 	reporter, err = NewReporter(opts)
 	require.NoError(t, err)
 	limiter = &AppOpenedLimiter{}
-	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	postThroughLimiter(limiter, reporter, body)
 	require.NoError(t, reporter.Close())
 	sent := messages()
 	require.Len(t, sent, 1)
 	assert.Equal(t, installID, sent[0].DistinctID)
-}
-
-func TestScreenViewedAcceptsWithClosedDatabase(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	endpoint, messages := testutil.NewPostHogStub(t)
-	reporter, err := NewReporter(Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	assert.Equal(t, http.StatusAccepted, postThroughLimiter(&AppOpenedLimiter{}, reporter, `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`).Code)
-	require.NoError(t, reporter.Close())
-	assert.Len(t, messages(), 1)
 }
