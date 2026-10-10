@@ -163,8 +163,9 @@ const jobContentMoveBatchSize = 500
 // inline with the metadata of those rows. It moves each job's prompt, diff,
 // and patch into job_content, compressed, then drops the old columns and
 // vacuums once to return the freed space to the filesystem. The job's prompt
-// wins; a completed job without one takes its review's or archived review's
-// prompt, so no prompt's only copy is lost.
+// wins, except over the review of a job pulled from another machine; a
+// completed job without one takes its review's or archived review's prompt,
+// so no prompt's only copy is lost.
 //
 // A rerun is safe: the copy redoes each batch from the old columns, which
 // stay until it finishes, and the columns are dropped in one transaction,
@@ -240,10 +241,21 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 			|| ' / member: ' || COALESCE(j.panel_member_name, '') || ')' || char(10)
 			|| ` + memberInstructions + ` || char(10)
 		ELSE '' END`
+	// A job pulled from another machine kept the prompt of the attempt it was
+	// first pulled at, because pulls never updated it, while its pulled
+	// review belongs to the latest completed attempt. Prefer that review for
+	// jobs whose prompt a rerun rebuilds; the others keep their prompt across
+	// reruns, and their review's copy carries an agent preamble.
+	remoteReviewPrompt := `CASE WHEN j.status = 'done'
+		AND j.job_type NOT IN ('task', 'compact', 'fix', 'insights', 'goal_review')
+		AND j.source_machine_id IS NOT NULL
+		AND lower(j.source_machine_id) != (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
+		THEN (SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id) END`
 	// Only a completed attempt's review or archived review holds the job's
 	// prompt. A rerun deletes the review but not its archived copy, so a rerun
 	// that stopped before saving its prompt must not take the earlier one.
-	promptExpr := `COALESCE(NULLIF(j.prompt, '') || ` + memberSuffix + `,
+	promptExpr := `COALESCE(` + remoteReviewPrompt + `,
+		NULLIF(j.prompt, '') || ` + memberSuffix + `,
 		CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN COALESCE(
 			(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), ` + archiveExpr + `) END)`
 	copySQL := fmt.Sprintf(`

@@ -387,11 +387,52 @@ func TestMigrateJobContentRestoresPanelMemberInstructions(t *testing.T) {
 	}
 }
 
+func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
+	t.Parallel()
+	path, db := openLegacyContentDB(t)
+	repo := createRepo(t, db, t.TempDir())
+	local, remote := testUUID("local-machine"), testUUID("remote-machine")
+	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, local)
+	require.NoError(t, err)
+	// Each job was pulled, or run here, after a failed attempt that stored
+	// its prompt; the review belongs to the successful rerun.
+	insertRerunJob := func(machine any, jobType string) int64 {
+		result, err := db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, source_machine_id)
+			VALUES (?, 'a..b', 'codex', 'done', ?, 'failed attempt prompt', ?)`, repo.ID, jobType, machine)
+		require.NoError(t, err)
+		id, err := result.LastInsertId()
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+			VALUES (?, 'codex', 'successful rerun prompt', '', ?)`, id, string(reviewFixtureJSON("No issues found.")))
+		require.NoError(t, err)
+		return id
+	}
+	pulledRange := insertRerunJob(remote, JobTypeRange)
+	pulledTask := insertRerunJob(remote, JobTypeTask)
+	localRange := insertRerunJob(local, JobTypeRange)
+	require.NoError(t, db.Close())
+
+	db, err = Open(path)
+	require.NoError(t, err)
+	defer db.Close()
+	for id, want := range map[int64]string{
+		pulledRange: "successful rerun prompt",
+		pulledTask:  "failed attempt prompt",
+		localRange:  "failed attempt prompt",
+	} {
+		job, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		assert.Equal(t, want, job.Prompt, "job %d", id)
+	}
+}
+
 func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	t.Parallel()
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
 	machine := testUUID("local-machine")
+	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machine)
+	require.NoError(t, err)
 	synced := "2026-09-01T12:00:00Z"
 	insertSyncedJob := func(label, jobPrompt, reviewPrompt string) int64 {
 		result, err := db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
@@ -412,7 +453,7 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	insertSyncedJob("unchanged", "job prompt", "job prompt with preamble")
 	require.NoError(t, db.Close())
 
-	db, err := Open(path)
+	db, err = Open(path)
 	require.NoError(t, err)
 	defer db.Close()
 	jobs, err := db.GetJobsToSync(machine, 100)
