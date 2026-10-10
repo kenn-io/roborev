@@ -30,18 +30,13 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) sweepOrphanedJobs() {
-	ids, err := s.db.ListStalledJobIDs(orphanJobGrace)
+	jobs, err := s.db.ListStalledJobs(orphanJobGrace)
 	if err != nil {
 		log.Printf("panel sweep: list orphan candidates: %v", err)
 		return
 	}
-	for _, id := range ids {
-		job, err := s.db.GetJobByID(id)
-		if err != nil {
-			log.Printf("panel sweep: load orphan job %d: %v", id, err)
-			continue
-		}
-		s.failOrphanedJob(job)
+	for _, job := range jobs {
+		s.failOrphanedJob(&job)
 	}
 }
 
@@ -49,22 +44,22 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	wp := s.workerPool
 	wp.attemptTransitionsMu.RLock()
 	defer wp.attemptTransitionsMu.RUnlock()
-	if wp.ownsJob(job.WorkerID, job.ID) || job.StartedAt == nil || time.Since(*job.StartedAt) <= orphanJobGrace {
+	if wp.ownsJob(job.WorkerID, job.ID) {
 		return
 	}
-	const errorMsg = "worker exited before the job finished"
+	current, err := s.db.GetJobByID(job.ID)
+	if err != nil {
+		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
+		return
+	}
+	const errorMsg = "worker stopped without saving the job's outcome"
 	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
 	if err != nil {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
 		return
 	}
 	if updated {
-		wp.invalidateBudgetSpend()
-		wp.broadcastFailed(job, job.Agent, errorMsg)
-		if wp.errorLog != nil {
-			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
-		}
-		wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
+		wp.recordJobFailure(current, job.WorkerID, current.Agent, errorMsg, fmt.Sprintf("job %d failed: %s", job.ID, errorMsg))
 		log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	}
 }

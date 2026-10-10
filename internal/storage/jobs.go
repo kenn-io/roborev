@@ -1401,11 +1401,6 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 	return nil
 }
 
-// FailJobAttempt fails only the exact running attempt observed by the orphan sweep.
-func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
-	return db.failJob(jobID, workerID, errorMsg, startedAt)
-}
-
 // FailJob marks a job as failed with an error message.
 // Only updates if job is still in 'running' state and owned by the given worker
 // (respects cancellation and prevents stale workers from failing reclaimed jobs).
@@ -1413,10 +1408,11 @@ func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) 
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
 func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
-	return db.failJob(jobID, workerID, errorMsg, "")
+	return db.FailJobAttempt(jobID, workerID, "", errorMsg)
 }
 
-func (db *DB) failJob(jobID int64, workerID, errorMsg, startedAt string) (bool, error) {
+// FailJobAttempt also checks the exact attempt when startedAt is supplied.
+func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
 	query := `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`
 	args := []any{now, errorMsg, now, jobID}

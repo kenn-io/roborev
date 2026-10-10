@@ -2315,19 +2315,22 @@ func (wp *WorkerPool) failJobWithPrefixLocked(
 	agentName, errorMsg, prefix, label string,
 ) {
 	storedMsg := prefixedFailure(prefix, errorMsg)
-	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, storedMsg); err != nil {
+	if updated, err := wp.db.FailJob(job.ID, workerID, storedMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Job %d skipped (agent %s %s)",
 			workerID, job.ID, agentName, label)
-		wp.broadcastFailed(job, agentName, storedMsg)
-		if wp.errorLog != nil {
-			wp.errorLog.LogError("worker",
-				fmt.Sprintf("job %d skipped (%s): %s", job.ID, label, errorMsg),
-				job.ID)
-		}
-		wp.logJobFailed(job.ID, workerID, agentName, storedMsg)
+		wp.recordJobFailure(job, workerID, agentName, storedMsg, fmt.Sprintf("job %d skipped (%s): %s", job.ID, label, errorMsg))
 	}
+}
+
+func (wp *WorkerPool) recordJobFailure(job *storage.ReviewJob, workerID, agentName, errorMsg, logMsg string) {
+	wp.invalidateBudgetSpend()
+	wp.broadcastFailed(job, agentName, errorMsg)
+	if wp.errorLog != nil {
+		wp.errorLog.LogError("worker", logMsg, job.ID)
+	}
+	wp.logJobFailed(job.ID, workerID, agentName, errorMsg)
 }
 
 func prefixedFailure(prefix, msg string) string {
