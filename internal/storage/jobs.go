@@ -1408,16 +1408,23 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
 func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
+	return db.FailJobAttempt(jobID, workerID, "", errorMsg)
+}
+
+// FailJobAttempt also checks the exact attempt when startedAt is supplied.
+func (db *DB) FailJobAttempt(jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
-	var result sql.Result
-	var err error
+	query := `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`
+	args := []any{now, errorMsg, now, jobID}
 	if workerID != "" {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?`,
-			now, errorMsg, now, jobID, workerID)
-	} else {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-			now, errorMsg, now, jobID)
+		query += ` AND worker_id = ?`
+		args = append(args, workerID)
 	}
+	if startedAt != "" {
+		query += ` AND started_at = ?`
+		args = append(args, startedAt)
+	}
+	result, err := db.Exec(query, args...)
 	if err != nil {
 		return false, err
 	}

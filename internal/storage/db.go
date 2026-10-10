@@ -2377,12 +2377,32 @@ func (db *DB) ResetStaleJobs() error {
 
 // ListStalledJobIDs returns IDs of jobs running longer than the threshold.
 func (db *DB) ListStalledJobIDs(threshold time.Duration) ([]int64, error) {
+	jobs, err := db.ListStalledJobs(threshold)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for _, job := range jobs {
+		ids = append(ids, job.ID)
+	}
+	return ids, nil
+}
+
+// StalledJob identifies a running attempt without loading the full job.
+type StalledJob struct {
+	ID        int64
+	WorkerID  string
+	StartedAt string // Raw database value for the guarded failure write.
+}
+
+// ListStalledJobs returns only attempt identity for jobs running past the threshold.
+func (db *DB) ListStalledJobs(threshold time.Duration) ([]StalledJob, error) {
 	// Use threshold in seconds for SQLite datetime arithmetic
 	// This avoids timezone issues with RFC3339 string comparison
 	thresholdSecs := int64(threshold.Seconds())
 
 	rows, err := db.Query(`
-		SELECT id FROM review_jobs
+		SELECT id, COALESCE(worker_id, ''), started_at FROM review_jobs
 		WHERE status = 'running'
 		AND started_at IS NOT NULL
 		AND datetime(started_at) < datetime('now', ? || ' seconds')
@@ -2392,15 +2412,15 @@ func (db *DB) ListStalledJobIDs(threshold time.Duration) ([]int64, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	var jobs []StalledJob
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var job StalledJob
+		if err := rows.Scan(&job.ID, &job.WorkerID, &job.StartedAt); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		jobs = append(jobs, job)
 	}
-	return ids, rows.Err()
+	return jobs, rows.Err()
 }
 
 // migrateReviewJobsConstraintsForAutoDesign rebuilds review_jobs to:

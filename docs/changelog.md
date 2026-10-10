@@ -22,6 +22,9 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Jobs could stay stuck "running" and hold up panel summaries after the daemon
+    failed to save their result or failed status. The daemon now marks these
+    jobs failed within a few minutes.
 - Open the [browser review queue](/docs/web-ui/#reviews-workspace) faster on
     histories with large stored prompts. Queue totals remain exact; counting
     jobs no longer traverses historical prompt payloads.
