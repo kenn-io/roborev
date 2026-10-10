@@ -2093,7 +2093,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		if *o.closed {
 			conditions = append(conditions, "rv.closed = 1")
 		} else {
-			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
+			conditions = append(conditions, "j.status NOT IN ('failed', 'canceled') AND (rv.closed IS NULL OR rv.closed = 0)")
 		}
 	}
 	if o.jobType != "" {

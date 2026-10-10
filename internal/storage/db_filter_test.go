@@ -485,6 +485,40 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 	})
 }
 
+func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-closed-filter")
+	openCommit := createCommit(t, db, repo.ID, "open")
+	openJob := enqueueJob(t, db, repo.ID, openCommit.ID, "open")
+	claimedOpen, err := db.ClaimJob("worker-open")
+	require.NoError(t, err)
+	require.NotNil(t, claimedOpen)
+	require.Equal(t, openJob.ID, claimedOpen.ID)
+	require.NoError(t, completeReviewFixture(db, claimedOpen.ID, "codex", "", "open review"))
+
+	failedCommit := createCommit(t, db, repo.ID, "failed")
+	failedJob := enqueueJob(t, db, repo.ID, failedCommit.ID, "failed")
+	claimedFailed, err := db.ClaimJob("worker-failed")
+	require.NoError(t, err)
+	require.NotNil(t, claimedFailed)
+	require.Equal(t, failedJob.ID, claimedFailed.ID)
+	failed, err := db.FailJob(claimedFailed.ID, "", "agent failed")
+	require.NoError(t, err)
+	require.True(t, failed)
+
+	canceledCommit := createCommit(t, db, repo.ID, "canceled")
+	canceledJob := enqueueJob(t, db, repo.ID, canceledCommit.ID, "canceled")
+	require.NoError(t, db.CancelJob(canceledJob.ID))
+
+	jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, openJob.ID, jobs[0].ID)
+}
+
 func TestWithBranchOrEmpty(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
