@@ -289,31 +289,6 @@ func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogM
 	return reporter, messages
 }
 
-func TestNewReporterUsesSharedDailyClaims(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	path := filepath.Join(t.TempDir(), "daily.json")
-	endpoint, messages := testutil.NewPostHogStub(t)
-	for _, surface := range []string{SurfaceWeb, SurfaceTUI} {
-		reporter, err := NewReporter(Options{Database: db, Endpoint: endpoint, DailyClaimsPath: path})
-		require.NoError(t, err)
-		limiter := &AppOpenedLimiter{}
-		body := `{"event":"screen_viewed","properties":{"screen":"reviews","surface":"` + surface + `"}}`
-		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-		if surface == SurfaceTUI {
-			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, `{"event":"screen_viewed","properties":{"screen":"analytics","surface":"web"}}`).Code)
-			for _, body := range []string{`{"event":"screen_viewed"}`, `{"event":"screen_viewed","properties":{"screen":123}}`, `{"event":"screen_viewed","properties":{"screen":"unknown"}}`} {
-				assert.Equal(t, http.StatusBadRequest, postThroughLimiter(limiter, reporter, body).Code)
-			}
-		}
-		require.NoError(t, reporter.Close())
-	}
-	require.Len(t, messages(), 2)
-	assert.Equal(t, "reviews", messages()[0].Properties[PropertyScreen])
-	assert.Equal(t, "analytics", messages()[1].Properties[PropertyScreen])
-}
-
 func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")

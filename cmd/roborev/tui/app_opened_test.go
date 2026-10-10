@@ -258,6 +258,7 @@ func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
 
 			assert.Nil(t, m.reportAppOpened())
 			assert.Nil(t, m.reportScreenViewed())
+			assert.Empty(t, m.screensSent)
 			assert.Zero(t, requests.Load())
 		})
 	}

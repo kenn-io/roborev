@@ -134,6 +134,13 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	limiter.Handler(reporter).ServeHTTP(brokenRecorder, broken)
 	assert.Equal(http.StatusBadRequest, brokenRecorder.Code)
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":`).Code)
+	for _, body := range []string{
+		`{"event":"screen_viewed"}`,
+		`{"event":"screen_viewed","properties":{"screen":123}}`,
+		`{"event":"screen_viewed","properties":{"screen":"unknown"}}`,
+	} {
+		assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, body).Code)
+	}
 	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, cli+`{"event":"app_opened"}`).Code)
 	oversized := `{"event":"app_opened","properties":{"surface":"cli"}}` + strings.Repeat(" ", appOpenedMaxBodyBytes)
 	assert.Equal(http.StatusRequestEntityTooLarge, postThroughLimiter(limiter, reporter, oversized).Code)

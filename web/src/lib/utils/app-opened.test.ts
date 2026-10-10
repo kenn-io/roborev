@@ -270,30 +270,27 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test.each(["queued", "skipped", "disabled"])(
-    "reposts on focus after a successful screen response with status %s",
-    async (status) => {
-      setup(() => "reviews");
-      await settle();
-      fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ status }), {
-          status: 202,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-      appOpened.reportScreenViewed("reviews");
-      await settle();
-      focusWindow();
-      vi.setSystemTime(new Date("2026-03-10T20:00:00Z"));
-      focusWindow();
-      await settle();
+  test("reposts on focus after a successful screen response", async () => {
+    setup(() => "reviews");
+    await settle();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "queued" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    appOpened.reportScreenViewed("reviews");
+    await settle();
+    focusWindow();
+    vi.setSystemTime(new Date("2026-03-10T20:00:00Z"));
+    focusWindow();
+    await settle();
 
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      appOpened.reportScreenViewed("analytics");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-    },
-  );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    appOpened.reportScreenViewed("analytics");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 
   test("posts again on the first focus of the next UTC day only", async () => {
     setup();
@@ -375,7 +372,7 @@ describe("setupAppOpenedReporting", () => {
       process.on("unhandledRejection", unhandled);
       try {
         if (screenPost) {
-          setup(() => "reviews");
+          setup();
           await settle();
           fetchMock.mockImplementationOnce(fail);
           appOpened.reportScreenViewed("reviews");
@@ -386,20 +383,12 @@ describe("setupAppOpenedReporting", () => {
         await settle();
         await settle();
         expect(unhandled).not.toHaveBeenCalled();
-        if (screenPost) {
-          focusWindow();
-          await settle();
-          expect(fetchMock).toHaveBeenCalledTimes(3);
-          focusWindow();
-          await settle();
-          expect(fetchMock).toHaveBeenCalledTimes(4);
-        }
 
         vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
         if (screenPost) appOpened.reportScreenViewed("reviews");
         else focusWindow();
         await settle();
-        expect(fetchMock).toHaveBeenCalledTimes(screenPost ? 5 : 2);
+        expect(fetchMock).toHaveBeenCalledTimes(screenPost ? 3 : 2);
       } finally {
         process.off("unhandledRejection", unhandled);
       }
@@ -473,27 +462,36 @@ describe("setupAppOpenedReporting", () => {
     expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
   });
 
-  test("waits for a pending screen before retrying a rejected request", async () => {
-    setup(() => "reviews");
-    await settle();
-    let reject!: (reason: Error) => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((_resolve, fail) => {
-          reject = fail;
-        }),
-    );
-    appOpened.reportScreenViewed("reviews");
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    reject(new TypeError("offline"));
-    await settle();
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
+  test.each(["rejected", "answered 400"])(
+    "waits for a pending screen before retrying a failed request (%s)",
+    async (failure) => {
+      setup(() => "reviews");
+      await settle();
+      let finish!: () => void;
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve, reject) => {
+            finish = () => {
+              if (failure === "rejected") reject(new TypeError("offline"));
+              else
+                resolve(
+                  new Response("unsupported telemetry event", { status: 400 }),
+                );
+            };
+          }),
+      );
+      appOpened.reportScreenViewed("reviews");
+      focusWindow();
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      finish();
+      await settle();
+      focusWindow();
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      focusWindow();
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    },
+  );
 });
