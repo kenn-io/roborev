@@ -69,3 +69,30 @@ func TestApplyRetention(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyRetentionKeepsUnpushedPromptsAfterSyncIsTurnedOff(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, tmpDir := newTestServer(t)
+	// The daemon started with sync on; a reload then turned it off, but the
+	// running sync worker keeps its startup settings.
+	server.syncEnabledAtStart = true
+	cfg := server.configWatcher.Config()
+	cfg.PromptRetentionDays = 30
+	cfg.Sync.Enabled = false
+
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, synced_at = NULL WHERE id = ?`,
+		now.AddDate(0, 0, -45).Format(time.RFC3339), job.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveJobPrompt(job.ID, "unpushed prompt"))
+
+	server.applyRetention(t.Context(), now)
+
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "unpushed prompt", stored.Prompt)
+}

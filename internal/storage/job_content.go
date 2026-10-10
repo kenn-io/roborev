@@ -227,37 +227,7 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 		archiveExpr = `(SELECT l.prompt FROM legacy_reviews l
 			WHERE l.job_id = j.id AND l.prompt != '' ORDER BY l.archive_id DESC LIMIT 1)`
 	}
-	// A CI panel member's job kept its prebuilt prompt, with the diff
-	// placeholders a retry needs, but without the member's reviewer
-	// instructions. The worker appended those to the prompt it sent and to the
-	// review's copy only. Restore them, in the format memberInstructionSuffix
-	// in internal/daemon/worker.go used when this migration was written.
-	memberInstructions := `json_extract(j.panel_member_config_json, '$.instructions')`
-	memberSuffix := `CASE WHEN j.prompt_prebuilt != 0 AND j.panel_role = 'member'
-		AND json_valid(j.panel_member_config_json)
-		AND json_type(j.panel_member_config_json, '$.instructions') = 'text'
-		AND ` + memberInstructions + ` != ''
-		THEN char(10, 10) || '## Additional reviewer instructions (panel: ' || COALESCE(j.panel_name, '')
-			|| ' / member: ' || COALESCE(j.panel_member_name, '') || ')' || char(10)
-			|| ` + memberInstructions + ` || char(10)
-		ELSE '' END`
-	// A job pulled from another machine kept the prompt of the attempt it was
-	// first pulled at, because pulls never updated it, while its pulled
-	// review belongs to the latest completed attempt. Prefer that review for
-	// jobs whose prompt a rerun rebuilds; the others keep their prompt across
-	// reruns, and their review's copy carries an agent preamble.
-	remoteReviewPrompt := `CASE WHEN j.status = 'done'
-		AND j.job_type NOT IN ('task', 'compact', 'fix', 'insights', 'goal_review')
-		AND j.source_machine_id IS NOT NULL
-		AND lower(j.source_machine_id) != (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
-		THEN (SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id) END`
-	// Only a completed attempt's review or archived review holds the job's
-	// prompt. A rerun deletes the review but not its archived copy, so a rerun
-	// that stopped before saving its prompt must not take the earlier one.
-	promptExpr := `COALESCE(` + remoteReviewPrompt + `,
-		NULLIF(j.prompt, '') || ` + memberSuffix + `,
-		CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN COALESCE(
-			(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id), ` + archiveExpr + `) END)`
+	promptExpr := legacyJobPromptExpr(archiveExpr)
 	copySQL := fmt.Sprintf(`
 		INSERT INTO job_content (job_id, prompt, diff_content, patch)
 		SELECT j.id, zstd_compress(%[1]s), zstd_compress(j.diff_content), zstd_compress(j.patch)
@@ -269,8 +239,11 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 	// client pushed the job's prompt and could stop before pushing the
 	// review that held the complete one, and reviews no longer carry a prompt.
 	// Clearing synced_at makes the next sync push the job with that prompt.
+	// Only this machine's jobs are pushed; a pulled job keeps its marker,
+	// which the sync of its reviews and comments requires.
 	resyncSQL := `UPDATE review_jobs AS j SET synced_at = NULL
 		WHERE j.id > ? AND j.id <= ? AND j.synced_at IS NOT NULL
+		  AND lower(j.source_machine_id) = (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
 		  AND ` + promptExpr + ` IS NOT NULLIF(j.prompt, '')`
 
 	var maxID int64
@@ -293,6 +266,64 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 		}
 	}
 	return moved, nil
+}
+
+// legacyJobPromptExpr selects the prompt a job j keeps when its old copies
+// move into job_content. archiveExpr selects the job's newest archived review
+// prompt, or is NULL.
+func legacyJobPromptExpr(archiveExpr string) string {
+	// A CI panel member's job kept its prebuilt prompt, with the diff
+	// placeholders a retry needs, but without the member's reviewer
+	// instructions. The worker appended those to the prompt it sent and to the
+	// review's copy only. Restore them, in the format memberInstructionSuffix
+	// in internal/daemon/worker.go used when this migration was written.
+	memberInstructions := `json_extract(j.panel_member_config_json, '$.instructions')`
+	memberSuffix := `CASE WHEN j.prompt_prebuilt != 0 AND j.panel_role = 'member'
+		AND json_valid(j.panel_member_config_json)
+		AND json_type(j.panel_member_config_json, '$.instructions') = 'text'
+		AND ` + memberInstructions + ` != ''
+		THEN char(10, 10) || '## Additional reviewer instructions (panel: ' || COALESCE(j.panel_name, '')
+			|| ' / member: ' || COALESCE(j.panel_member_name, '') || ')' || char(10)
+			|| ` + memberInstructions + ` || char(10)
+		ELSE '' END`
+	reviewPrompt := `(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_id = j.id)`
+	// A job pulled from another machine kept the prompt of the attempt it was
+	// first pulled at, because pulls never updated it, while its pulled
+	// review, or the archive of that review, belongs to the latest completed
+	// attempt. Prefer those for jobs whose prompt a rerun rebuilds; the others
+	// keep their prompt across reruns, and their review's copy carries an
+	// agent preamble. A copy that only points to a prompt file is skipped in
+	// favor of the job's complete prompt.
+	remoteReviewPrompt := `CASE WHEN j.status = 'done'
+		AND COALESCE(j.job_type, 'review') NOT IN ` + storedPromptJobTypesSQL + `
+		AND j.source_machine_id IS NOT NULL
+		AND lower(j.source_machine_id) != (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
+		THEN COALESCE(` + withoutPromptFileHandoff(reviewPrompt) + `, ` +
+		withoutPromptFileHandoff(archiveExpr) + `) END`
+	// Only a completed attempt's review or archived review holds the job's
+	// prompt. A rerun deletes the review but not its archived copy, so a rerun
+	// that stopped before saving its prompt must not take the earlier one.
+	return `COALESCE(` + remoteReviewPrompt + `,
+		NULLIF(j.prompt, '') || ` + memberSuffix + `,
+		CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN COALESCE(` + reviewPrompt + `, ` + archiveExpr + `) END)`
+}
+
+// storedPromptJobTypesSQL lists, as an SQL list, the job types whose stored
+// prompt is the input a rerun reuses rather than rebuilds.
+const storedPromptJobTypesSQL = `('task', 'compact', 'fix', 'insights', 'goal_review')`
+
+// promptFileHandoffPattern is a LIKE pattern for the one-line prompt that
+// prompt.Builder.Prepare sends in place of an oversized prompt since v0.68.0.
+// Releases before job_content stored that line as the review's prompt copy,
+// keeping the complete prompt only on the job. The file it names is deleted
+// after the attempt, so the line is never a usable prompt.
+const promptFileHandoffPattern = `Read the complete task prompt from "%" and carry out its instructions. ` +
+	`Read the file in full before starting.%`
+
+// withoutPromptFileHandoff returns SQL that yields expr, or NULL when expr is
+// a prompt file handoff line. It works in SQLite and PostgreSQL.
+func withoutPromptFileHandoff(expr string) string {
+	return `CASE WHEN ` + expr + ` LIKE '` + promptFileHandoffPattern + `' THEN NULL ELSE ` + expr + ` END`
 }
 
 // copyJobContentBatch replaces the content of jobs with IDs in (after, through]

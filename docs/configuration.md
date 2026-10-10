@@ -1417,9 +1417,12 @@ The PostgreSQL schema is unchanged:
 - Upgraded machines push an empty review prompt. Older clients read only that
     column for a finished review, so they show an empty prompt for reviews from
     upgraded machines.
-- For a completed job from an older client, an upgraded machine shows the prompt
-    of the job's newest review, because older clients never update the job's
-    prompt on a rerun. A review that arrives after its job updates the prompt.
+- For a completed job from an older client whose prompt a rerun rebuilds, such
+    as a review or range job, an upgraded machine shows the prompt of the job's
+    newest review, because older clients never update the job's prompt on a
+    rerun. A review that arrives after its job updates the prompt. The job's own
+    prompt wins when the review's copy only names a temporary prompt file, as
+    older clients stored for oversized prompts.
 
 Retention is off by default; roborev keeps everything until you set a limit. The
 daemon applies both settings at startup and then hourly. A changed setting takes
@@ -1438,8 +1441,9 @@ job_log_retention_days = 30  # remove job log files older than 30 days
     removed, so removal only empties the prompt view of old jobs.
 - Removed prompts free space inside `reviews.db` that new jobs reuse. The file
     itself does not shrink.
-- With PostgreSQL sync enabled, a job keeps its prompt until sync has pushed it,
-    so retention never removes a prompt that PostgreSQL lacks.
+- While PostgreSQL sync is enabled, or was enabled when the daemon started, a
+    job keeps its prompt until sync has pushed it, so retention never removes a
+    prompt that PostgreSQL lacks.
 - `job_log_retention_days` deletes log files by modification time, the same
     files that `roborev log clean --days N` removes. Logs that a running job
     still writes to are kept.

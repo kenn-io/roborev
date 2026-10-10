@@ -68,11 +68,11 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	require.NoError(t, pool.RegisterMachine(ctx, machineID, "test"))
 	repoID, err := pool.GetOrCreateRepo(ctx, "test-repo-newest-review-"+uuid.New().String())
 	require.NoError(t, err)
-	insertJob := func(status, prompt string, reviewPrompts ...string) uuid.UUID {
+	insertTypedJob := func(jobType, status, prompt string, reviewPrompts ...string) uuid.UUID {
 		jobUUID := uuid.New()
 		_, err := pool.pool.Exec(ctx, `
-			INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, prompt, source_machine_id, enqueued_at, created_at, updated_at)
-			VALUES ($1, $2, 'a..b', 'test', $3, $4, $5, NOW(), NOW(), NOW())`, jobUUID, repoID, status, prompt, machineID)
+			INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, job_type, status, prompt, source_machine_id, enqueued_at, created_at, updated_at)
+			VALUES ($1, $2, 'a..b', 'test', $3, $4, $5, $6, NOW(), NOW(), NOW())`, jobUUID, repoID, jobType, status, prompt, machineID)
 		require.NoError(t, err)
 		created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 		for i, reviewPrompt := range reviewPrompts {
@@ -84,6 +84,9 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 			require.NoError(t, err)
 		}
 		return jobUUID
+	}
+	insertJob := func(status, prompt string, reviewPrompts ...string) uuid.UUID {
+		return insertTypedJob(JobTypeRange, status, prompt, reviewPrompts...)
 	}
 	// pulledReviewJobPrompts returns the job prompt each pulled review carries.
 	pulledReviewJobPrompts := func(jobUUID uuid.UUID) []string {
@@ -111,6 +114,19 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	// belongs to the earlier attempt.
 	failedRerun := insertJob("failed", "failed attempt", "first attempt with preamble")
 	assert.Equal(t, "failed attempt", pulledJobPrompt(t, pool, failedRerun))
+
+	// An older client sent an oversized prompt as a file handoff line and
+	// stored that line on the review; the job kept the complete prompt.
+	oversized := insertJob("done", "complete oversized prompt",
+		"Read the complete task prompt from \"/tmp/roborev-snapshot/prompt.md\" and carry out its instructions. "+
+			"Read the file in full before starting.\n")
+	assert.Equal(t, "complete oversized prompt", pulledJobPrompt(t, pool, oversized))
+	assert.Equal(t, []string{"complete oversized prompt"}, pulledReviewJobPrompts(oversized))
+
+	// A fix job reuses its stored prompt, here a plan envelope, on a rerun;
+	// its review holds only the implementation prompt the agent received.
+	planFix := insertTypedJob(JobTypeFix, "done", "roborev-fix-plan-v1{}", "implementation prompt")
+	assert.Equal(t, "roborev-fix-plan-v1{}", pulledJobPrompt(t, pool, planFix))
 }
 
 func TestIntegrationPullJobsUsesReviewPromptForOlderHistory(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL

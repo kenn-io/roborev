@@ -446,31 +446,55 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	local, remote := testUUID("local-machine"), testUUID("remote-machine")
 	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, local)
 	require.NoError(t, err)
+	const handoff = "Read the complete task prompt from \"/tmp/roborev-snapshot/prompt.md\" and carry out " +
+		"its instructions. Read the file in full before starting.\n"
 	// Each job was pulled, or run here, after a failed attempt that stored
-	// its prompt; the review belongs to the successful rerun.
+	// its prompt; the review, or its archived copy, belongs to the
+	// successful rerun.
 	insertRerunJob := func(machine any, jobType string) int64 {
 		result, err := db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, source_machine_id)
 			VALUES (?, 'a..b', 'codex', 'done', ?, 'failed attempt prompt', ?)`, repo.ID, jobType, machine)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
 		require.NoError(t, err)
-		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
-			VALUES (?, 'codex', 'successful rerun prompt', '', ?)`, id, string(reviewFixtureJSON("No issues found.")))
-		require.NoError(t, err)
 		return id
 	}
+	addReview := func(jobID int64, prompt string) {
+		_, err := db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+			VALUES (?, 'codex', ?, '', ?)`, jobID, prompt, string(reviewFixtureJSON("No issues found.")))
+		require.NoError(t, err)
+	}
+	addArchivedReview := func(jobID int64, prompt string) {
+		_, err := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+			VALUES (?, 'codex', ?, 'archived output', datetime('now'), 0, 'pending')`, jobID, prompt)
+		require.NoError(t, err)
+	}
 	pulledRange := insertRerunJob(remote, JobTypeRange)
+	addReview(pulledRange, "successful rerun prompt")
+	pulledArchived := insertRerunJob(remote, JobTypeRange)
+	addArchivedReview(pulledArchived, "archived rerun prompt")
+	// An older release sent an oversized prompt as a file handoff line and
+	// stored that line on the review; the job kept the complete prompt.
+	pulledOversized := insertRerunJob(remote, JobTypeRange)
+	addReview(pulledOversized, handoff)
+	pulledArchivedOversized := insertRerunJob(remote, JobTypeRange)
+	addArchivedReview(pulledArchivedOversized, handoff)
 	pulledTask := insertRerunJob(remote, JobTypeTask)
+	addReview(pulledTask, "successful rerun prompt")
 	localRange := insertRerunJob(local, JobTypeRange)
+	addReview(localRange, "successful rerun prompt")
 	require.NoError(t, db.Close())
 
 	db, err = Open(path)
 	require.NoError(t, err)
 	defer db.Close()
 	for id, want := range map[int64]string{
-		pulledRange: "successful rerun prompt",
-		pulledTask:  "failed attempt prompt",
-		localRange:  "failed attempt prompt",
+		pulledRange:             "successful rerun prompt",
+		pulledArchived:          "archived rerun prompt",
+		pulledOversized:         "failed attempt prompt",
+		pulledArchivedOversized: "failed attempt prompt",
+		pulledTask:              "failed attempt prompt",
+		localRange:              "failed attempt prompt",
 	} {
 		job, err := db.GetJobByID(id)
 		require.NoError(t, err)
@@ -486,23 +510,30 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machine)
 	require.NoError(t, err)
 	synced := "2026-09-01T12:00:00Z"
-	insertSyncedJob := func(label, jobPrompt, reviewPrompt string) int64 {
+	insertSyncedJob := func(label string, owner uuid.UUID, jobPrompt, reviewPrompt string) int64 {
 		result, err := db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
 				source_machine_id, updated_at, synced_at)
 			VALUES (?, ?, 'a..b', 'codex', 'done', 'range', ?, ?, ?, ?)`,
-			testUUID(label), repo.ID, jobPrompt, machine, synced, synced)
+			testUUID(label), repo.ID, jobPrompt, owner, synced, synced)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
 		require.NoError(t, err)
-		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
-			VALUES (?, 'codex', ?, '', ?)`, id, reviewPrompt, string(reviewFixtureJSON("No issues found.")))
+		// This machine changed each review after the last sync, for example
+		// by closing it.
+		_, err = db.Exec(`INSERT INTO reviews (uuid, job_id, agent, prompt, output, structured_output,
+				closed, updated_by_machine_id, updated_at)
+			VALUES (?, ?, 'codex', ?, '', ?, 1, ?, ?)`, testUUID(label+"-review"), id, reviewPrompt,
+			string(reviewFixtureJSON("No issues found.")), machine, "2026-09-02T12:00:00Z")
 		require.NoError(t, err)
 		return id
 	}
 	// An older client pushed this job without a prompt and stopped before
 	// pushing the review, which held the only copy.
-	recovered := insertSyncedJob("recovered", "", "only the review kept this prompt")
-	insertSyncedJob("unchanged", "job prompt", "job prompt with preamble")
+	recovered := insertSyncedJob("recovered", machine, "", "only the review kept this prompt")
+	unchanged := insertSyncedJob("unchanged", machine, "job prompt", "job prompt with preamble")
+	// A job pulled from another machine takes its review's prompt, but this
+	// machine never pushes it, so its sync marker must stay.
+	pulled := insertSyncedJob("pulled", testUUID("remote-machine"), "failed attempt prompt", "rerun prompt")
 	require.NoError(t, db.Close())
 
 	db, err = Open(path)
@@ -515,4 +546,14 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 		prompts[job.ID] = job.Prompt
 	}
 	assert.Equal(t, map[int64]string{recovered: "only the review kept this prompt"}, prompts)
+
+	// A review is pushed only after its job, so the reviews of jobs with a
+	// sync marker go out now, and the recovered job's after its push.
+	reviews, err := db.GetReviewsToSync(machine, 100)
+	require.NoError(t, err)
+	var reviewJobs []int64
+	for _, review := range reviews {
+		reviewJobs = append(reviewJobs, review.JobID)
+	}
+	assert.ElementsMatch(t, []int64{unchanged, pulled}, reviewJobs)
 }

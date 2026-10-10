@@ -72,6 +72,7 @@ type Server struct {
 	allowWebCompilationStub bool
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
+	syncEnabledAtStart      bool // [sync] needs a restart; reloads leave the worker as started
 	ciPoller                *CIPoller
 	hookRunner              *HookRunner
 	errorLog                *ErrorLog
@@ -194,6 +195,7 @@ func newServerWithLogs(
 
 	s := &Server{
 		authKey:            cfg.AuthKey,
+		syncEnabledAtStart: cfg.Sync.Enabled,
 		goalGate:           newGoalGate(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,

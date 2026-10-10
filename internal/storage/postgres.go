@@ -1115,16 +1115,28 @@ type PulledJob struct {
 	UpdatedAt             time.Time
 }
 
-// pgPulledJobPromptExpr selects the prompt a pulled job j stores. A
-// completed job takes its newest review's prompt when that review has one:
-// releases before job_content kept the complete prompt on the review and never
-// updated the job's copy on a rerun. Later releases keep the prompt on the job
-// and push reviews without one. A job whose latest attempt did not complete
-// has no review of its own, so it keeps the job's prompt.
-const pgPulledJobPromptExpr = `COALESCE(
-	CASE WHEN j.status IN ('done', 'applied', 'rebased') THEN (SELECT NULLIF(rv.prompt, '') FROM reviews rv
-		WHERE rv.job_uuid = j.uuid ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1) END,
-	NULLIF(j.prompt, ''), '')`
+// pgPulledJobPromptExpr selects the prompt a pulled job j stores. A completed
+// job whose prompt a rerun rebuilds takes its newest review's prompt when that
+// review has one: releases before job_content kept the complete prompt on the
+// review and never updated the job's copy on a rerun. Later releases keep the
+// prompt on the job and push reviews without one. The job's copy wins for a
+// job whose latest attempt did not complete, for jobs that reuse their stored
+// prompt on a rerun, and over a review copy that only points to a prompt file.
+// A job without a prompt of its own, from before review_jobs.prompt existed,
+// takes its newest review's prompt.
+var pgPulledJobPromptExpr = `COALESCE(
+	CASE WHEN j.status IN ('done', 'applied', 'rebased') AND COALESCE(j.job_type, 'review') NOT IN ` + storedPromptJobTypesSQL + `
+		THEN ` + withoutPromptFileHandoff(pgNewestReviewPrompt(`TRUE`)) + ` END,
+	NULLIF(j.prompt, ''),
+	` + pgNewestReviewPrompt(`rv.prompt != ''`) + `,
+	'')`
+
+// pgNewestReviewPrompt selects the prompt of job j's newest review matching
+// filter, or NULL.
+func pgNewestReviewPrompt(filter string) string {
+	return `(SELECT NULLIF(rv.prompt, '') FROM reviews rv WHERE rv.job_uuid = j.uuid AND ` + filter + `
+		ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)`
+}
 
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.

@@ -33,7 +33,10 @@ func (s *Server) applyRetention(ctx context.Context, now time.Time) {
 	cfg := s.configWatcher.Config()
 	if days := cfg.PromptRetentionDays; days > 0 {
 		cutoff := now.AddDate(0, 0, -days)
-		removed, err := s.db.PruneJobPrompts(ctx, cutoff, cfg.Sync.Enabled)
+		// A config reload can turn sync off while the sync worker started with
+		// it keeps pushing, so either setting keeps unpushed prompts.
+		keepUnpushed := s.syncEnabledAtStart || cfg.Sync.Enabled
+		removed, err := s.db.PruneJobPrompts(ctx, cutoff, keepUnpushed)
 		if err != nil {
 			log.Printf("retention: %v", err)
 		} else if removed > 0 {
