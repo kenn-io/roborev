@@ -2,9 +2,11 @@ package storage
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -32,6 +34,26 @@ func TestJobContentIsStoredCompressed(t *testing.T) {
 	assert.Equal(t, prompt, loaded.Prompt)
 	require.NotNil(t, loaded.DiffContent)
 	assert.Equal(t, "+dirty line\n", *loaded.DiffContent)
+}
+
+// A test in a testing/synctest bubble may be the first to store or read job
+// content. The codecs must then still work outside the bubble; a codec built
+// on first use inside one crashes the test binary on the next use outside.
+// Run alone, this test is the first use.
+func TestContentCodecsWorkAcrossSynctestBubbles(t *testing.T) {
+	var compressed driver.Value
+	synctest.Test(t, func(t *testing.T) {
+		var err error
+		compressed, err = sqlZstdCompress(nil, []driver.Value{"inside a bubble"})
+		require.NoError(t, err)
+		_, err = sqlZstdDecompress(nil, []driver.Value{compressed})
+		require.NoError(t, err)
+	})
+	_, err := sqlZstdCompress(nil, []driver.Value{"outside"})
+	require.NoError(t, err)
+	text, err := sqlZstdDecompress(nil, []driver.Value{compressed})
+	require.NoError(t, err)
+	assert.Equal(t, "inside a bubble", text)
 }
 
 func TestJobContentKeepsNULBytes(t *testing.T) {

@@ -22,13 +22,24 @@ import (
 // queries read and write plain strings: zstd_compress(?) on write and
 // zstd_decompress(jc.prompt) on read. Both map NULL and '' to NULL.
 
-var contentCodec = sync.OnceValues(func() (*zstd.Encoder, error) {
-	return zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-})
+// The codecs are built when the package loads. Each hands out its workers
+// through a Go channel, and a channel first used inside a testing/synctest
+// bubble cannot be used outside it, which crashes the test binary. Building
+// them here keeps those channels outside every bubble.
+var (
+	contentEncoder, contentEncoderErr = newContentEncoder()
+	contentDecoder, contentDecoderErr = zstd.NewReader(nil)
+)
 
-var contentDecoder = sync.OnceValues(func() (*zstd.Decoder, error) {
-	return zstd.NewReader(nil)
-})
+func newContentEncoder() (*zstd.Encoder, error) {
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return nil, err
+	}
+	// The encoder creates its worker channel on its first call.
+	enc.EncodeAll(nil, nil)
+	return enc, nil
+}
 
 // registerContentFunctions makes the zstd SQL functions available to every
 // connection the sqlite driver opens afterwards. VolatileArgs makes the driver
@@ -63,11 +74,10 @@ func sqlZstdCompress(_ *sqlite.FunctionContext, args []driver.Value) (driver.Val
 	if len(text) == 0 {
 		return nil, nil
 	}
-	enc, err := contentCodec()
-	if err != nil {
-		return nil, fmt.Errorf("zstd_compress: %w", err)
+	if contentEncoderErr != nil {
+		return nil, fmt.Errorf("zstd_compress: %w", contentEncoderErr)
 	}
-	return enc.EncodeAll(text, nil), nil
+	return contentEncoder.EncodeAll(text, nil), nil
 }
 
 func sqlZstdDecompress(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
@@ -83,11 +93,10 @@ func sqlZstdDecompress(_ *sqlite.FunctionContext, args []driver.Value) (driver.V
 	if len(compressed) == 0 {
 		return nil, nil
 	}
-	dec, err := contentDecoder()
-	if err != nil {
-		return nil, fmt.Errorf("zstd_decompress: %w", err)
+	if contentDecoderErr != nil {
+		return nil, fmt.Errorf("zstd_decompress: %w", contentDecoderErr)
 	}
-	text, err := dec.DecodeAll(compressed, nil)
+	text, err := contentDecoder.DecodeAll(compressed, nil)
 	if err != nil {
 		return nil, fmt.Errorf("zstd_decompress: %w", err)
 	}
