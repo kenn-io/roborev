@@ -179,3 +179,53 @@ func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
 	)
 	require.ErrorContains(t, err, "failing verdict without any finding")
 }
+
+// TestRunAgentReviewRecoversJSONAfterNarration covers agents with no native
+// structured-output mode (e.g. Kiro): under thorough reasoning they sometimes
+// narrate their investigation before landing the JSON answer in a trailing
+// ```json fenced block, which must still decode instead of failing the job.
+func TestRunAgentReviewRecoversJSONAfterNarration(t *testing.T) {
+	narrated := "I need to check a few things before finalizing. " +
+		"Let me verify the caller handles the {nested} config correctly.\n\n" +
+		"```json\n" +
+		`{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}` +
+		"\n```\n"
+	a := &agent.FakeAgent{NameStr: "plain", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		return narrated, nil
+	}}
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, got.Structured)
+	assert.Equal(t, storage.VerdictPass, got.Verdict)
+	assert.JSONEq(t,
+		`{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`,
+		string(got.StructuredOutput))
+}
+
+func TestExtractTrailingJSONObject(t *testing.T) {
+	valid := `{"schema_version":2,"summary":"ok.","verdict":"pass","findings":[]}`
+
+	t.Run("fenced block after narration", func(t *testing.T) {
+		raw := "Investigating the diff first.\n\n```json\n" + valid + "\n```\n"
+		assert.JSONEq(t, valid, extractTrailingJSONObject(raw))
+	})
+
+	t.Run("bare JSON with no narration", func(t *testing.T) {
+		assert.JSONEq(t, valid, extractTrailingJSONObject(valid))
+	})
+
+	t.Run("brace in narration before the real object", func(t *testing.T) {
+		raw := `the {config} map looks fine. ` + valid
+		assert.JSONEq(t, valid, extractTrailingJSONObject(raw))
+	})
+
+	t.Run("no JSON object present", func(t *testing.T) {
+		assert.Empty(t, extractTrailingJSONObject("No issues found."))
+	})
+
+	t.Run("unterminated brace", func(t *testing.T) {
+		assert.Empty(t, extractTrailingJSONObject("prose with a stray { brace"))
+	})
+}
