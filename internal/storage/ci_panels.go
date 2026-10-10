@@ -223,7 +223,11 @@ func (db *DB) GetCIPanelByPRSHA(githubRepo string, prNumber int, headSHA string)
 // same-HEAD mapping means the head was already reviewed and must not be
 // throttled back to pending.
 func (db *DB) GetActiveCIPanelByPRSHA(githubRepo string, prNumber int, headSHA string) (*CIPanel, error) {
-	row := db.QueryRow(`SELECT `+ciPanelColumns+`
+	return getActiveCIPanelByPRSHA(db, githubRepo, prNumber, headSHA)
+}
+
+func getActiveCIPanelByPRSHA(q querier, githubRepo string, prNumber int, headSHA string) (*CIPanel, error) {
+	row := q.QueryRow(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
 		githubRepo, prNumber, headSHA)

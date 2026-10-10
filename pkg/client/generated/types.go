@@ -703,12 +703,36 @@ type CloseReviewRequest struct {
 }
 
 type ComponentHealth struct {
-	Healthy bool    `json:"healthy"`
-	Message *string `json:"message,omitempty"`
-	Name    string  `json:"name" validate:"required"`
+	Healthy  bool               `json:"healthy"`
+	Message  *string            `json:"message,omitempty"`
+	Name     string             `json:"name" validate:"required"`
+	Recovery *ComponentRecovery `json:"recovery,omitempty"`
 }
 
 func (c ComponentHealth) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if c.Recovery != nil {
+		if v, ok := any(c.Recovery).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Recovery", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ComponentRecovery struct {
+	Deadline   time.Time `json:"deadline" validate:"required"`
+	ObservedAt time.Time `json:"observed_at" validate:"required"`
+}
+
+func (c ComponentRecovery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 

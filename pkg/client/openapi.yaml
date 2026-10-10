@@ -889,9 +889,24 @@ components:
           type: string
         name:
           type: string
+        recovery:
+          $ref: "#/components/schemas/ComponentRecovery"
       required:
         - name
         - healthy
+      type: object
+    ComponentRecovery:
+      additionalProperties: false
+      properties:
+        deadline:
+          format: date-time
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+      required:
+        - observed_at
+        - deadline
       type: object
     ConvertLegacyReviewsInputBody:
       additionalProperties: false

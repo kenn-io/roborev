@@ -506,9 +506,16 @@ type SearchHealth struct {
 
 // ComponentHealth represents the health of a single component
 type ComponentHealth struct {
-	Name    string `json:"name"`
-	Healthy bool   `json:"healthy"`
-	Message string `json:"message,omitempty"`
+	Name     string             `json:"name"`
+	Healthy  bool               `json:"healthy"`
+	Message  string             `json:"message,omitempty"`
+	Recovery *ComponentRecovery `json:"recovery,omitempty"`
+}
+
+// ComponentRecovery describes current retry work, not a successful health check.
+type ComponentRecovery struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Deadline   time.Time `json:"deadline"`
 }
 
 // ErrorEntry represents a single error log entry (mirrors daemon.ErrorEntry for API)

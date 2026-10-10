@@ -46,6 +46,7 @@ export * from "./cleanJobLogsOutputBody";
 export * from "./closeReviewOutputBody";
 export * from "./closeReviewRequest";
 export * from "./componentHealth";
+export * from "./componentRecovery";
 export * from "./convertLegacyReviewsInputBody";
 export * from "./costAggregate";
 export * from "./costEnvelope";
