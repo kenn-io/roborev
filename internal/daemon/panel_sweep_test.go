@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
 	"uuid"
@@ -83,13 +85,6 @@ func TestPanelSweepReleasesStuck(t *testing.T) {
 	assert.False(synth.ClaimBlocked, "sweep should release the stuck synthesis job")
 }
 
-func agePanelSweepJob(t *testing.T, tc *workerTestContext, jobID int64) {
-	t.Helper()
-	startedAt := time.Now().Add(-orphanJobGrace - time.Minute).In(time.FixedZone("offset", -5*60*60))
-	_, err := tc.DB.Exec(`UPDATE review_jobs SET started_at = ? WHERE id = ?`, startedAt.Format(time.RFC3339Nano), jobID)
-	require.NoError(t, err)
-}
-
 func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
@@ -97,7 +92,7 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	agePanelSweepJob(t, tc, members[0].ID)
+	backdateJobStartedAt(t, tc.DB, members[0].ID)
 	subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
 	defer tc.Broadcaster.Unsubscribe(subscriber)
 	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
@@ -115,6 +110,47 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 	synth, err := tc.DB.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
 	assert.False(synth.ClaimBlocked)
+}
+
+func TestPanelSweepRecoversOrphanedGoalReview(t *testing.T) {
+	for _, worktreeExists := range []bool{true, false} {
+		t.Run(fmt.Sprintf("worktreeExists=%t", worktreeExists), func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			worktreePath := tc.TmpDir
+			if !worktreeExists {
+				worktreePath = filepath.Join(tc.TmpDir, "missing-worktree")
+			}
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, Agent: "test", GitRef: "snapshot-digest",
+				JobType: storage.JobTypeGoalReview, ReviewType: "goal", WorktreePath: worktreePath,
+			})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob("worker-a")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			require.Equal(t, job.ID, claimed.ID)
+			backdateJobStartedAt(t, tc.DB, job.ID)
+			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
+			defer tc.Broadcaster.Unsubscribe(subscriber)
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+
+			server.sweepStuckPanels()
+
+			job = tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+			require.Len(t, events, 1)
+			event := <-events
+			assert.Equal("goal_review.failed", event.Type)
+			assert.Equal(job.ID, event.JobID)
+			assert.Equal(job.Error, event.Error)
+			assert.True(event.SuppressHooks)
+			if worktreeExists {
+				assert.Equal(worktreePath, event.WorktreePath)
+			} else {
+				assert.Empty(event.WorktreePath)
+			}
+		})
+	}
 }
 
 func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
@@ -148,7 +184,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 	startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 	require.Equal(t, "review.started", startedEvent.Type)
-	agePanelSweepJob(t, tc, members[0].ID)
+	backdateJobStartedAt(t, tc.DB, members[0].ID)
 	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
 	server.sweepStuckPanels()
@@ -197,7 +233,7 @@ func TestPanelSweepPreservesUpdateOwnedJob(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	agePanelSweepJob(t, tc, members[0].ID)
+	backdateJobStartedAt(t, tc.DB, members[0].ID)
 	tc.Pool.InterruptJobsForUpdate([]int64{claimed.ID})
 	server := &Server{db: tc.DB, workerPool: tc.Pool}
 
@@ -217,7 +253,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	agePanelSweepJob(t, tc, members[0].ID)
+	backdateJobStartedAt(t, tc.DB, members[0].ID)
 	stale, err := tc.DB.GetJobByID(claimed.ID)
 	require.NoError(t, err)
 	changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")

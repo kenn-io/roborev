@@ -1971,14 +1971,17 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	return resolution.ModelForSelectedAgent(backup, "")
 }
 
-// broadcastFailed sends a review.failed event for a job
-func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
-	wtPath := ""
+func existingJobWorktreePath(job *storage.ReviewJob) string {
 	if job.WorktreePath != "" {
 		if _, err := os.Stat(job.WorktreePath); err == nil {
-			wtPath = job.WorktreePath
+			return job.WorktreePath
 		}
 	}
+	return ""
+}
+
+// broadcastFailed sends a review.failed event for a job
+func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
 	wp.broadcaster.Broadcast(Event{
 		Type:         jobEventType(job, "failed"),
 		TS:           time.Now(),
@@ -1990,7 +1993,7 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Branch:       job.HookBranch(),
 		Agent:        agentName,
 		Error:        errorMsg,
-		WorktreePath: wtPath,
+		WorktreePath: existingJobWorktreePath(job),
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's

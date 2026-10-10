@@ -41,6 +41,11 @@ func (s *Server) sweepOrphanedJobs() {
 }
 
 func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
+	current, err := s.db.GetJobByID(job.ID)
+	if err != nil {
+		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
+		return
+	}
 	wp := s.workerPool
 	wp.attemptTransitionsMu.RLock()
 	if wp.ownsJob(job.WorkerID, job.ID) {
@@ -56,13 +61,9 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	}
 	if updated {
 		wp.invalidateBudgetSpend()
-		current, err := s.db.GetJobByID(job.ID)
-		if err != nil {
-			log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
-			return
-		}
-		event := eventForJob("review.failed", current, current.ID)
+		event := eventForJob(jobEventType(current, "failed"), current, current.ID)
 		event.Error = errorMsg
+		event.WorktreePath = existingJobWorktreePath(current)
 		event.SuppressHooks = true
 		s.broadcaster.Broadcast(event)
 		if wp.errorLog != nil {

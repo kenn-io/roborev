@@ -60,6 +60,8 @@ assigned execution deadline has passed. Longer reviews remain healthy while
 their worker still has time remaining. The deadline includes repository, global,
 and panel-member timeout settings resolved when the attempt starts;
 configuration reloads do not change it during that attempt.
+The daemon fails jobs with no active worker within a few minutes, so that health
+rule rarely triggers.
 
 ### CI health
 

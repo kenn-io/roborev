@@ -235,7 +235,7 @@ func TestCIHealthStalledWorkersPreventRecoveryEvidence(t *testing.T) {
 	h.Poller.poll(t.Context())
 	for _, member := range h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid) {
 		h.markJobRunning(t, member.ID)
-		h.backdateJobStartedAt(t, member.ID)
+		backdateJobStartedAt(t, h.DB, member.ID)
 	}
 	health, ci := readCIHealth(t, server)
 	assert.False(t, health.Healthy)
@@ -247,7 +247,7 @@ func TestCIHealthHealthyCIHasNoRecoveryForWorkerFailure(t *testing.T) {
 	h, server := newCIHealthHarness(t)
 	_, _, members := h.seedBlockedPanelRun(t, "acme/api", 1, "head-a", "base..head-a", []jobSpec{{Agent: "test"}})
 	h.markJobRunning(t, members[0].ID)
-	h.backdateJobStartedAt(t, members[0].ID)
+	backdateJobStartedAt(t, h.DB, members[0].ID)
 	health, ci := readCIHealth(t, server)
 	assert.False(t, health.Healthy)
 	assert.False(t, health.Ready)
