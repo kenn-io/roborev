@@ -107,6 +107,7 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 		JobUUID:            *job.UUID,
 		Agent:              review.Agent,
 		Output:             review.Output,
+		StructuredOutput:   reviewFixtureJSON("No issues found."),
 		Closed:             false,
 		UpdatedByMachineID: testUUID("stale-review-machine"),
 		CreatedAt:          review.CreatedAt,

@@ -913,31 +913,6 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 	assert.Equal(t, "pass", page.Reviews[0].Verdict)
 }
 
-func TestUpsertPulledReviewWithEmptyOutputIsNotExportable(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	commit := createCommit(t, db, repo.ID, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
-	require.NoError(t, err)
-	require.NoError(t, db.UpsertPulledReview(PulledReview{
-		UUID:               testUUID("pulled-review"),
-		JobUUID:            *job.UUID,
-		Agent:              "codex",
-		Output:             "",
-		UpdatedByMachineID: testUUID("remote"),
-		CreatedAt:          time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:          time.Date(2026, 6, 29, 0, 0, 1, 0, time.UTC),
-	}))
-
-	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
-	require.NoError(t, err)
-	assert.Empty(t, page.Reviews)
-}
-
 func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, completedAt string, closed bool) *Review {
 	t.Helper()
 	commit := createCommit(t, db, repoID, sha)

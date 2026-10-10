@@ -1182,6 +1182,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
+		// Both reviews are structured, so the first one is written before the
+		// second fails; the batch must not keep that write.
 		validReviewUUID := uuid.New()
 		reviews := []SyncableReview{
 			{
@@ -1189,6 +1191,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 				JobUUID:            jobUUID, // Valid FK
 				Agent:              "test",
 				Output:             "output",
+				StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
@@ -1197,6 +1200,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 				JobUUID:            uuid.Nil(), // Invalid FK - will fail
 				Agent:              "test",
 				Output:             "output",
+				StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
