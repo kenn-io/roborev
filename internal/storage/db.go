@@ -270,6 +270,10 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := wrapped.widenAutoDesignDedupRefIndex(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("widen auto-design dedup index: %w", err)
+	}
 	if _, err := wrapped.GetDatabaseID(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
@@ -2545,15 +2549,53 @@ func (db *DB) migrateReviewJobsConstraintsForAutoDesign() error {
 		return fmt.Errorf("create auto-design dedup index: %w", err)
 	}
 
-	// The narrow form (commit_id IS NULL only) prevents two commitless
-	// rows but lets a commitless row coexist with a commit-backed row
-	// for the same git_ref. Widen to cover ALL auto_design rows so
-	// the cross-case race is enforced at the storage layer instead of
-	// only via the read-side HasAutoDesignSlotForCommit pre-check.
-	//
-	// If existing duplicates would block the wider index, log and skip;
-	// the narrow index keeps current correctness guarantees and the
-	// LEFT JOIN in HasAutoDesignSlotForCommit catches the common case.
+	if err := ensureAutoDesignDedupRefIndex(tx); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// widenAutoDesignDedupRefIndex runs on every start. The baseline migration
+// keeps the narrow dedup_ref index while duplicates exist and never runs
+// again, so this step installs the wider index once they are gone.
+func (db *DB) widenAutoDesignDedupRefIndex() error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := ensureAutoDesignDedupRefIndex(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ensureAutoDesignDedupRefIndex installs the dedup_ref index in its wider
+// form when it is missing or narrow.
+//
+// The narrow form (commit_id IS NULL only) prevents two commitless
+// rows but lets a commitless row coexist with a commit-backed row
+// for the same git_ref. The wider form covers ALL auto_design rows so
+// the cross-case race is enforced at the storage layer instead of
+// only via the read-side HasAutoDesignSlotForCommit pre-check.
+//
+// If existing duplicates would block the wider index, log and keep the
+// narrow one; it keeps current correctness guarantees and the
+// LEFT JOIN in HasAutoDesignSlotForCommit catches the common case.
+func ensureAutoDesignDedupRefIndex(tx *sql.Tx) error {
+	var indexSQL string
+	err := tx.QueryRow(`
+		SELECT sql FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_review_jobs_auto_design_dedup_ref'
+	`).Scan(&indexSQL)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read auto-design dedup ref index: %w", err)
+	}
+	if err == nil && !strings.Contains(indexSQL, "commit_id IS NULL") {
+		return nil
+	}
+
 	var dupes int
 	if err := tx.QueryRow(`
 		SELECT COUNT(*) FROM (
@@ -2586,7 +2628,7 @@ func (db *DB) migrateReviewJobsConstraintsForAutoDesign() error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // migrateRepoNames replaces the old directory-based defaults once. Keep custom

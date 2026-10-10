@@ -119,3 +119,47 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
 }
+
+func TestOpenWidensAutoDesignDedupIndexAfterDuplicatesAreRemoved(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(path)
+	require.NoError(t, err)
+	repoID := createRepo(t, db, "/synthetic/repo").ID
+	commitID := createCommit(t, db, repoID, "beef").ID
+	insertAutoDesign := func(db *DB, commitID any) error {
+		_, err := db.Exec(`
+			INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
+			VALUES (?, ?, 'beef', 'queued', 'design', 'auto_design')
+		`, repoID, commitID)
+		return err
+	}
+	// Reproduce a database that reached the baseline with a commitless and a
+	// commit-backed auto-design job for one git_ref, so only the narrow index fit.
+	_, err = db.Exec(`DROP INDEX idx_review_jobs_auto_design_dedup_ref`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE UNIQUE INDEX idx_review_jobs_auto_design_dedup_ref
+		ON review_jobs(repo_id, git_ref, review_type)
+		WHERE source = 'auto_design' AND commit_id IS NULL
+	`)
+	require.NoError(t, err)
+	require.NoError(t, insertAutoDesign(db, nil))
+	require.NoError(t, insertAutoDesign(db, commitID))
+	require.NoError(t, db.Close())
+
+	db, err = Open(path)
+	require.NoError(t, err, "duplicates must not block startup")
+	var jobs int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
+	assert.Equal(t, 2, jobs)
+	_, err = db.Exec(`DELETE FROM review_jobs WHERE commit_id IS NOT NULL`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	db, err = Open(path)
+	require.NoError(t, err)
+	defer db.Close()
+	require.Error(t, insertAutoDesign(db, commitID),
+		"a commit-backed job must collide with the commitless job for its git_ref")
+}

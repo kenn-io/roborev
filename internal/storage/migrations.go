@@ -19,8 +19,10 @@ import (
 //   - A migration may manage its own transactions, for example to work in
 //     batches or to run VACUUM, which SQLite does not allow in a transaction.
 //
-// The data steps Open runs after the migrations on every start (legacy review
-// conversion, job ID preservation, verdict backfill) are not numbered.
+// The steps Open runs after the migrations on every start are not numbered:
+// the auto-design dedup index widening, which waits until duplicate rows are
+// gone, and the data steps (legacy review conversion, job ID preservation,
+// verdict backfill).
 
 // schemaMigration is one numbered step of the SQLite schema.
 type schemaMigration struct {
