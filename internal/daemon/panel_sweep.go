@@ -43,23 +43,32 @@ func (s *Server) sweepOrphanedJobs() {
 func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	wp := s.workerPool
 	wp.attemptTransitionsMu.RLock()
-	defer wp.attemptTransitionsMu.RUnlock()
 	if wp.ownsJob(job.WorkerID, job.ID) {
-		return
-	}
-	current, err := s.db.GetJobByID(job.ID)
-	if err != nil {
-		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
+		wp.attemptTransitionsMu.RUnlock()
 		return
 	}
 	const errorMsg = "worker stopped without saving the job's outcome"
 	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
+	wp.attemptTransitionsMu.RUnlock()
 	if err != nil {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
 		return
 	}
 	if updated {
-		wp.recordJobFailure(current, job.WorkerID, current.Agent, errorMsg, fmt.Sprintf("job %d failed: %s", job.ID, errorMsg))
+		wp.invalidateBudgetSpend()
+		current, err := s.db.GetJobByID(job.ID)
+		if err != nil {
+			log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
+			return
+		}
+		event := eventForJob("review.failed", current, current.ID)
+		event.Error = errorMsg
+		event.SuppressHooks = true
+		s.broadcaster.Broadcast(event)
+		if wp.errorLog != nil {
+			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
+		}
+		wp.logJobFailed(job.ID, job.WorkerID, current.Agent, errorMsg)
 		log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	}
 }
