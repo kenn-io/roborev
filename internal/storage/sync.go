@@ -471,7 +471,7 @@ type SyncableJob struct {
 }
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
-// These are jobs created locally that haven't been synced or were updated since last sync.
+// These are attempts owned locally that have not been synced or were updated since last sync.
 func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
 	rows, err := db.Query(`
 		SELECT
@@ -898,6 +898,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			enqueued_at = excluded.enqueued_at,
+			source_machine_id = excluded.source_machine_id,
 			finished_at = excluded.finished_at,
 			error = excluded.error,
 			model = excluded.model,
@@ -932,6 +933,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			AND NOT (
 				review_jobs.status IS excluded.status
 				AND review_jobs.enqueued_at IS excluded.enqueued_at
+				AND review_jobs.source_machine_id IS excluded.source_machine_id
 				AND review_jobs.finished_at IS excluded.finished_at
 				AND review_jobs.error IS excluded.error
 				AND review_jobs.model IS excluded.model
@@ -1016,8 +1018,14 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	defer func() { _ = tx.Rollback() }()
 	// First, find the job_id by uuid
 	var jobID int64
-	var jobType, threshold, enqueuedAt string
-	err = tx.QueryRow(`SELECT id, job_type, COALESCE(min_severity, ''), enqueued_at FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt)
+	var jobType, threshold, enqueuedAt, status, reviewCreatedAt string
+	var locallyOwned, hasReview, sameReview bool
+	err = tx.QueryRow(`SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
+		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
+		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, '')
+		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`,
+		r.UUID, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt, &status,
+		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return false, nil
@@ -1027,6 +1035,23 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	}
 	if isOlderPulledAttempt(enqueuedAt, r.JobEnqueuedAt) {
 		return false, nil
+	}
+	// The executor owns the current result. A peer may edit that same review,
+	// but cannot replace it with a previous attempt or resurrect a review for
+	// an unfinished/failed local attempt after its job has been uploaded.
+	if locallyOwned && !sameReview && (hasReview || status != "done") {
+		return false, nil
+	}
+	if hasReview && !sameReview {
+		if parseSQLiteTime(reviewCreatedAt).After(r.CreatedAt) {
+			return false, nil
+		}
+		// PullReviews selects the newest PostgreSQL row, including equal-time
+		// ties. Replace the old attempt completely so nullable verdict and
+		// coverage fields do not leak into the incoming review.
+		if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID); err != nil {
+			return false, fmt.Errorf("replace pulled review attempt: %w", err)
+		}
 	}
 
 	legacyDocument := false
@@ -1140,9 +1165,8 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	return rows > 0, nil
 }
 
-// A job imported from another machine keeps its source_machine_id when rerun
-// locally. Its enqueue time identifies that newer attempt even after a restart
-// clears worker_id. PostgreSQL timestamps round-trip at microsecond precision;
+// Enqueue time identifies a newer attempt even after a restart clears its
+// worker_id. PostgreSQL timestamps round-trip at microsecond precision;
 // compare at that precision so a pull can still update the same attempt.
 func isOlderPulledAttempt(localEnqueuedAt string, incoming time.Time) bool {
 	return parseSQLiteTime(localEnqueuedAt).Truncate(time.Microsecond).

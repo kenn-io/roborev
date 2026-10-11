@@ -72,6 +72,7 @@ func TestRestoreLegacyHistoryAndImport(t *testing.T) {
 func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "sync-head")
+	setStatus(t, env.db, env.job.ID, JobStatusDone)
 	incoming := PulledReview{
 		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID),
 		UUID:          testUUID("legacy-sync-document"), JobUUID: *env.job.UUID, Agent: "test", CreatedAt: time.Now(), UpdatedAt: time.Now(),

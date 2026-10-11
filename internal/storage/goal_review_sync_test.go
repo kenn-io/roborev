@@ -36,6 +36,7 @@ func TestGoalReviewDocumentStorage(t *testing.T) {
 					Output: "stale prose", StructuredOutput: jsontext.Value(goalReviewDocument),
 				}))
 			case "pull":
+				setStatus(t, db, job.ID, JobStatusDone)
 				require.NoError(t, db.UpsertPulledReview(PulledReview{
 					JobEnqueuedAt: storedJobEnqueuedAt(t, db, job.ID),
 					UUID:          uuid.New(), JobUUID: *job.UUID, Agent: "test",

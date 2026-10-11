@@ -1560,6 +1560,10 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) ReenqueueJobWithRequest(
 	jobID int64, opts ReenqueueOpts, requestID uuid.UUID,
 ) (resultJobID int64, replayed bool, err error) {
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return 0, false, err
+	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1608,6 +1612,8 @@ func (db *DB) ReenqueueJobWithRequest(
 	// Stored-prompt jobs (task, compact, fix, insights, goal_review) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
+	// The local machine owns this new attempt, including an imported job, so
+	// its prompt and dependent reviews/comments can be uploaded.
 	// synced_at is cleared because this attempt's cost metadata is cleared: if
 	// the rerun completes unpriced in the same RFC3339 second as the prior
 	// sync, the second-precise updated_at vs synced_at comparison would compare
@@ -1618,7 +1624,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
+		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, source_machine_id = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
 		    agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_agent ELSE agent END,
 		    model = ?, provider = ?,
 		    reasoning = CASE WHEN ? THEN ? ELSE reasoning END,
@@ -1635,7 +1641,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, enqueuedAt,
+	`, enqueuedAt, machineID,
 		opts.RestorePlan || opts.Agent != "", opts.Agent,
 		nullString(opts.Model), nullString(opts.Provider),
 		opts.RestorePlan, opts.Reasoning,

@@ -19,6 +19,8 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				db := openTestDB(t)
 				defer db.Close()
 				repo := createRepo(t, db, t.TempDir())
+				machineID, err := db.GetMachineID()
+				require.NoError(t, err)
 				remote := PulledJob{
 					UUID: testUUID("imported-rerun"), SourceMachineID: testUUID("remote-machine"),
 					GitRef: "a..b", Agent: "test", JobType: JobTypeRange, Status: "done",
@@ -61,15 +63,45 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				assert.Equal("local rerun prompt", after.Prompt)
 				assert.Equal(before.EnqueuedAt, after.EnqueuedAt)
 
+				// The local rerun must upload its current prompt before its
+				// review and comments can follow the parent's sync marker.
+				comment, err := db.AddCommentToJob(id, "reviewer", "Local follow-up.")
+				require.NoError(t, err)
+				jobs, err := db.GetJobsToSync(machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, jobs, 1)
+				assert.Equal("local rerun prompt", jobs[0].Prompt)
+				require.NoError(t, db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+				comments, err := db.GetCommentsToSync(machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, comments, 1)
+				assert.Equal(comment.ID, comments[0].ID)
+				pendingReviews, err := db.GetReviewsToSync(machineID, 10)
+				require.NoError(t, err)
+				if status == JobStatusDone {
+					require.Len(t, pendingReviews, 1)
+					assert.Equal(id, pendingReviews[0].JobID)
+				} else {
+					assert.Empty(pendingReviews)
+				}
+
 				// Even a later edit to the remote review still belongs to the
 				// older job attempt. It must not replace or resurrect a review.
-				changed, err = db.upsertPulledReview(PulledReview{
+				oldReview := PulledReview{
 					UUID: testUUID("old-remote-review"), JobUUID: remote.UUID, Agent: "test",
 					JobPrompt: remote.Prompt, JobEnqueuedAt: remote.EnqueuedAt,
 					StructuredOutput: reviewFixtureJSON("Remote result."),
 					CreatedAt:        remote.EnqueuedAt, UpdatedAt: time.Now().Add(time.Hour),
 					UpdatedByMachineID: remote.SourceMachineID,
-				})
+				}
+				changed, err = db.upsertPulledReview(oldReview)
+				require.NoError(t, err)
+				assert.False(changed)
+				// The job can reach PostgreSQL before its new review. Even if
+				// that parent supplies the current enqueue time, the older review
+				// cannot replace or resurrect this executor's result.
+				oldReview.JobEnqueuedAt = before.EnqueuedAt
+				changed, err = db.upsertPulledReview(oldReview)
 				require.NoError(t, err)
 				assert.False(changed)
 				after, err = db.GetJobByID(id)

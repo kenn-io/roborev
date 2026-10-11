@@ -795,6 +795,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			enqueued_at = EXCLUDED.enqueued_at,
+			source_machine_id = EXCLUDED.source_machine_id,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
 			model = EXCLUDED.model,
@@ -824,6 +825,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			non_voting = EXCLUDED.non_voting,
 			updated_at = clock_timestamp()
+		WHERE review_jobs.enqueued_at <= EXCLUDED.enqueued_at
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
@@ -1243,6 +1245,7 @@ type PulledReview struct {
 
 // PullReviews fetches reviews from PostgreSQL updated after the given cursor.
 // Only fetches reviews for jobs in knownJobUUIDs to avoid cursor advancement past unknown jobs.
+// PostgreSQL retains previous attempts; SQLite stores only the newest review.
 func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, knownJobUUIDs []uuid.UUID, cursor string, limit int) ([]PulledReview, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
@@ -1269,6 +1272,10 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		JOIN review_jobs j ON j.uuid = r.job_uuid
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
+		AND NOT EXISTS (
+			SELECT 1 FROM reviews newer WHERE newer.job_uuid = r.job_uuid
+			AND (newer.created_at, newer.id) > (r.created_at, r.id)
+		)
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
 		AND (r.updated_at > $3 OR (r.updated_at = $3 AND r.id > $4))
 		ORDER BY r.updated_at, r.id
@@ -1649,6 +1656,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				enqueued_at = EXCLUDED.enqueued_at,
+				source_machine_id = EXCLUDED.source_machine_id,
 				finished_at = EXCLUDED.finished_at,
 				error = EXCLUDED.error,
 				model = EXCLUDED.model,
@@ -1678,6 +1686,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 			non_voting = EXCLUDED.non_voting,
 				updated_at = clock_timestamp()
+			WHERE review_jobs.enqueued_at <= EXCLUDED.enqueued_at
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),

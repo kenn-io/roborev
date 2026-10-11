@@ -1417,8 +1417,9 @@ The PostgreSQL schema is unchanged:
 
 - Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
     in PostgreSQL.
-- Rerunning a pulled job locally keeps its newer prompt and review when sync
-    replays records from an older remote attempt.
+- Rerunning a pulled job transfers the current attempt to this machine. It
+    uploads the new prompt, review, and comments; older attempts cannot replace
+    them. Other machines receive the newest review for that job.
 - The upgrade queues every nonempty prompt eligible for sync from this machine
     for another upload. Older clients could mark a rerun as synced while
     PostgreSQL still held its first prompt. Retention keeps these prompts until

@@ -130,7 +130,7 @@ type ReviewJob struct {
 	TokenUsage            string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            *uuid.UUID `json:"uuid,omitempty" format:"uuid"`              // Globally unique identifier for sync
-	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that created this job
+	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that owns the current attempt
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`                      // Last modification time
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`                       // Last sync time
 

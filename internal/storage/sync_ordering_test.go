@@ -592,6 +592,7 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	job := h.createPendingJob("stored-review-verdict")
+	setStatus(t, h.db, job.ID, JobStatusDone)
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
 		JobEnqueuedAt:      storedJobEnqueuedAt(t, h.db, job.ID),
@@ -615,6 +616,7 @@ func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	job := h.createPendingJob("legacy-pulled-review")
+	setStatus(t, h.db, job.ID, JobStatusDone)
 	const prose = "I am unable to read the diff."
 	incoming := PulledReview{
 		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
@@ -834,6 +836,7 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, job.UUID)
+	setStatus(t, h.db, job.ID, JobStatusDone)
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
 		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),

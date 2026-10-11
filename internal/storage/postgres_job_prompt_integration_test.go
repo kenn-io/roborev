@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 	"uuid"
@@ -25,12 +26,17 @@ func TestIntegrationJobPromptFollowsLaterAttempts(t *testing.T) { //nolint:paral
 	promptInPostgres := func() string {
 		var prompt string
 		var enqueuedAt time.Time
-		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT COALESCE(prompt, ''), enqueued_at FROM review_jobs WHERE uuid = $1`, job.UUID).Scan(&prompt, &enqueuedAt))
+		var owner uuid.UUID
+		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT COALESCE(prompt, ''), enqueued_at, source_machine_id FROM review_jobs WHERE uuid = $1`, job.UUID).Scan(&prompt, &enqueuedAt, &owner))
+		assert.Equal(t, job.SourceMachineID, owner)
 		assert.Equal(t, job.EnqueuedAt.UTC().Truncate(time.Microsecond), enqueuedAt.UTC())
 		return prompt
 	}
 
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
+	older := job
+	job.SourceMachineID = uuid.New()
+	require.NoError(t, pool.RegisterMachine(ctx, job.SourceMachineID, "rerun"))
 	job.Status, job.Prompt = "done", "second attempt"
 	job.EnqueuedAt = job.EnqueuedAt.Add(time.Millisecond)
 	_, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{Job: job, PgRepoID: repoID}})
@@ -38,14 +44,103 @@ func TestIntegrationJobPromptFollowsLaterAttempts(t *testing.T) { //nolint:paral
 	assert.Equal(t, "second attempt", promptInPostgres())
 
 	job.Prompt = "third attempt"
+	job.SourceMachineID = machineID
 	job.EnqueuedAt = job.EnqueuedAt.Add(time.Millisecond)
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
+	assert.Equal(t, "third attempt", promptInPostgres())
+
+	// A delayed push from the previous owner cannot reclaim the job.
+	require.NoError(t, pool.UpsertJob(ctx, older, repoID, nil))
+	assert.Equal(t, "third attempt", promptInPostgres())
+	_, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{Job: older, PgRepoID: repoID}})
+	require.NoError(t, err)
 	assert.Equal(t, "third attempt", promptInPostgres())
 
 	// A machine whose retention removed the prompt does not erase it here.
 	job.Prompt = ""
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
 	assert.Equal(t, "third attempt", promptInPostgres())
+}
+
+func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	assert := assert.New(t)
+	env := newIntegrationEnv(t)
+	a := env.setupNode("source", "rerun-repository", "1h")
+	b := env.setupNode("rerun", "rerun-repository", "1h")
+	job, originalReview := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "original prompt", "Original review.")
+	_, err := a.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 1 WHERE id = ?`, originalReview.ID)
+	require.NoError(t, err)
+	_, err = a.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = b.Worker.SyncNow()
+	require.NoError(t, err)
+	machineA, err := a.DB.GetMachineID()
+	require.NoError(t, err)
+	machineB, err := b.DB.GetMachineID()
+	require.NoError(t, err)
+	remote, _, err := env.Pool.PullJobs(t.Context(), machineB, "", 10)
+	require.NoError(t, err)
+	require.Len(t, remote, 1)
+	var localID int64
+	require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&localID))
+	require.NoError(t, b.DB.ReenqueueJob(localID, ReenqueueOpts{}))
+	claimed, err := b.DB.ClaimJob("rerun-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, localID, claimed.ID)
+	require.NoError(t, b.DB.SaveJobPrompt(localID, "complete rerun prompt"))
+	require.NoError(t, b.DB.CompleteJobResult(localID, "second-agent", ReviewCompletion{
+		StructuredOutput: reviewFixtureJSON("Rerun review."),
+	}))
+	comment, err := b.DB.AddCommentToJob(localID, "reviewer", "Rerun follow-up.")
+	require.NoError(t, err)
+	// Force the equal-second history case: PostgreSQL's later row ID must
+	// select the rerun even when both review creation timestamps are equal.
+	_, err = b.DB.Exec(`UPDATE reviews SET created_at = ? WHERE job_id = ?`, originalReview.CreatedAt.Format(time.RFC3339), localID)
+	require.NoError(t, err)
+	changed, err := b.DB.upsertPulledJob(remote[0], b.Repo.ID, nil)
+	require.NoError(t, err)
+	assert.False(changed)
+	pending, err := b.DB.GetJobsToSync(machineB, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal("complete rerun prompt", pending[0].Prompt)
+
+	stats, err := b.Worker.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(1, stats.PushedJobs)
+	assert.Equal(1, stats.PushedReviews)
+	assert.Equal(1, stats.PushedResponses)
+	for range 2 {
+		_, err = a.Worker.SyncNow()
+		require.NoError(t, err)
+		_, err = b.Worker.SyncNow()
+		require.NoError(t, err)
+	}
+	for _, db := range []*DB{a.DB, b.DB} {
+		var id int64
+		require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+		current, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		assert.Equal("complete rerun prompt", current.Prompt)
+		require.NotNil(t, current.SourceMachineID)
+		assert.Equal(machineB, *current.SourceMachineID)
+		review, err := db.GetReviewByJobID(id)
+		require.NoError(t, err)
+		assert.Equal("Rerun review.", review.StructuredOutput["summary"])
+		assert.Equal("second-agent", review.Agent)
+		var reviewed, excluded sql.NullInt64
+		require.NoError(t, db.QueryRow(`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, review.ID).Scan(&reviewed, &excluded))
+		assert.False(reviewed.Valid)
+		assert.False(excluded.Valid)
+		comments, err := db.GetCommentsForJob(id)
+		require.NoError(t, err)
+		require.Len(t, comments, 1)
+		assert.Equal(comment.Response, comments[0].Response)
+		jobs, err := db.GetJobsToSync(machineA, 10)
+		require.NoError(t, err)
+		assert.Empty(jobs, "the previous owner must not republish the older attempt")
+	}
 }
 
 // pulledJobPrompt pages through PullJobs until it finds the job.
@@ -110,7 +205,7 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	// review holds the prompt the agent received.
 	olderRerun := insertJob("done", "first attempt", "first attempt with preamble", "second attempt with preamble")
 	assert.Equal(t, "second attempt with preamble", pulledJobPrompt(t, pool, olderRerun))
-	assert.Equal(t, []string{"second attempt with preamble", "second attempt with preamble"},
+	assert.Equal(t, []string{"second attempt with preamble"},
 		pulledReviewJobPrompts(olderRerun))
 
 	// A newer client keeps the prompt on the job and pushes reviews without one.
