@@ -634,7 +634,8 @@ func (db *DB) claimJobAttempt(
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
-	result, err := conn.ExecContext(ctx, `
+	var claimedID int64
+	err = conn.QueryRowContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
 		    session_isolated = 0
@@ -650,18 +651,13 @@ func (db *DB) claimJobAttempt(
 			SELECT 1 FROM daemon_state
 			WHERE key IN (?, ?) AND value IN ('true', '1')
 		)
-	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey, shutdownDrainingStateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if we claimed anything
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if rowsAffected == 0 {
+		RETURNING id
+	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey, shutdownDrainingStateKey).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // No jobs available
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Now fetch the job we just claimed
@@ -672,10 +668,8 @@ func (db *DB) claimJobAttempt(
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
-		WHERE j.worker_id = ? AND j.status = 'running'
-		ORDER BY j.started_at DESC
-		LIMIT 1
-	`, workerID).Scan(jobScanDestinations(&job, &fields)...)
+		WHERE j.id = ?
+	`, claimedID).Scan(jobScanDestinations(&job, &fields)...)
 	if err != nil {
 		return nil, err
 	}

@@ -207,6 +207,35 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 	assert.Regexp(t, `\.\d{9}Z$`, startedAt)
 }
 
+func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/claim-newer-orphan", 2)
+	orphan, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, orphan)
+	require.Equal(t, jobs[0].ID, orphan.ID)
+	// A clock rollback leaves the orphan with a later start than the next claim.
+	_, err = db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		preciseTimestampAt(time.Now().Add(time.Hour)), orphan.ID,
+	)
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	assert.Equal(jobs[1].ID, claimed.ID)
+	var startedAt string
+	require.NoError(t, db.QueryRow(
+		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
+	).Scan(&startedAt))
+	assert.Equal(startedAt, claimed.StartedAtRaw)
+}
+
 func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/claim-hydration-rollback", "claim-hydration-rollback")
