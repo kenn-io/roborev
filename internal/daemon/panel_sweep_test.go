@@ -306,26 +306,30 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 }
 
 func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	jobs := make([]*storage.ReviewJob, 2)
-	for i := range jobs {
-		tc.createJob(t, "deadbeef")
-		job, err := tc.DB.ClaimJob("worker-a")
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		jobs[i] = job
-	}
 	synctest.Test(t, func(t *testing.T) {
-		entered := make(chan struct{})
+		tc := newWorkerTestContext(t, 1)
+		jobs := make([]*storage.ReviewJob, 2)
+		for i := range jobs {
+			enqueued := tc.createJob(t, "deadbeef")
+			// Separate workers keep claims unambiguous when timestamps tie.
+			job, err := tc.DB.ClaimJob(fmt.Sprintf("worker-%d", i))
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			require.Equal(t, enqueued.ID, job.ID)
+			jobs[i] = job
+		}
+		entered := make(chan Event)
 		release := make(chan struct{})
-		b := &observingBroadcaster{Broadcaster: tc.Broadcaster, observe: func(Event) {
-			entered <- struct{}{}
+		b := &observingBroadcaster{Broadcaster: tc.Broadcaster, observe: func(event Event) {
+			entered <- event
 			<-release
 		}}
 		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: b}
 		server.startPanelSweep(context.Background())
 		time.Sleep(panelSweepInterval)
-		<-entered
+		event := <-entered
+		assert.Equal(t, jobs[0].ID, event.JobID)
+		assert.Equal(t, "review.failed", event.Type)
 		stopped := make(chan struct{})
 		go func() {
 			server.stopPanelSweep()
