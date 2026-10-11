@@ -87,6 +87,7 @@ func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 	require.Len(t, records, 1)
 	raw := jsontext.Value(`{"schema_version":1,"summary":"Converted.","findings":[]}`)
 	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, raw))
+	require.NoError(t, env.db.MarkReviewSynced(review.ID))
 	incoming.UpdatedAt = incoming.UpdatedAt.Add(time.Hour)
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	converted, err := env.db.GetReviewByJobID(env.job.ID)

@@ -223,13 +223,15 @@ func TestIntegrationRestoreLegacyAndImport(t *testing.T) { //nolint:paralleltest
 	converted := jsontext.Value(`{"schema_version":1,"summary":"Converted.","findings":[]}`)
 	require.NoError(t, pool.ResolveLegacyReview(ctx, reviewID, converted))
 	require.ErrorIs(t, pool.ResolveLegacyReview(ctx, reviewID, converted), ErrReviewNotLegacy)
-	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobID), Agent: "test", StructuredOutput: raw, CreatedAt: time.Now(), UpdatedByMachineID: defaultTestMachineID}))
+	// A peer can reopen its cached legacy envelope without downgrading the
+	// converted content, just as it can close it after conversion.
+	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobID), Agent: "test", StructuredOutput: raw, Closed: false, CreatedAt: time.Now(), UpdatedByMachineID: defaultTestMachineID}))
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT structured_output, closed FROM reviews WHERE uuid = $1`, reviewID).Scan(&raw, &closed))
 	doc, err = structuredreview.Decode(raw)
 	require.NoError(t, err)
 	assert.Nil(t, doc.Legacy)
 	assert.Equal(t, "Converted.", doc.Summary)
-	assert.True(t, closed)
+	assert.False(t, closed)
 }
 
 func TestIntegrationLegacyMigrationBatches(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL

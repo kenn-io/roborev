@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -446,4 +447,100 @@ func TestIntegrationReviewEditBeyondPushCapSurvivesRepairPull(t *testing.T) { //
 	require.NoError(t, err)
 	require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT COUNT(*) FROM reviews WHERE closed`).Scan(&closed))
 	assert.Equal(t, 501, closed)
+}
+
+func TestIntegrationLegacyClosureMergesWithPeerConversion(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	for _, ownerCloses := range []bool{false, true} {
+		t.Run(map[bool]string{false: "peer closes", true: "owner closes"}[ownerCloses], func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			a := env.setupNode("producer", "conversion-repository", "1h")
+			b := env.setupNode("peer", "conversion-repository", "1h")
+			job, review := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "prompt", "Original review.")
+			_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
+			require.NoError(t, err)
+			_, err = a.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = b.Worker.SyncNow()
+			require.NoError(t, err)
+			converter, closer := a, b
+			if ownerCloses {
+				converter, closer = b, a
+			}
+			var convertedID, closedJobID int64
+			require.NoError(t, converter.DB.QueryRow(`SELECT id FROM reviews WHERE uuid = ?`, review.UUID).Scan(&convertedID))
+			require.NoError(t, closer.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&closedJobID))
+			require.NoError(t, converter.DB.MigrateReview(convertedID, reviewFixtureJSON(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)))
+			_, err = converter.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 2 WHERE id = ?`, convertedID)
+			require.NoError(t, err)
+			_, err = converter.Worker.SyncNow()
+			require.NoError(t, err)
+			// The closer still has the legacy envelope, and edits it without
+			// first pulling the conversion. Its closure must reach both nodes.
+			require.NoError(t, closer.DB.MarkReviewClosedByJobID(closedJobID, true))
+			_, err = closer.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = converter.Worker.SyncNow()
+			require.NoError(t, err)
+			for _, node := range []testNode{a, b} {
+				var id int64
+				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				current, err := node.DB.GetReviewByJobID(id)
+				require.NoError(t, err)
+				assert.True(t, current.Closed)
+				assert.Equal(t, "Converted review.", current.StructuredOutput["summary"])
+				assert.Equal(t, VerdictPass, current.Verdict())
+				var reviewed, excluded int
+				require.NoError(t, node.DB.QueryRow(`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, current.ID).Scan(&reviewed, &excluded))
+				assert.Equal(t, 3, reviewed)
+				assert.Equal(t, 2, excluded)
+				machine, err := node.DB.GetMachineID()
+				require.NoError(t, err)
+				pending, err := node.DB.GetReviewsToSync(machine, 10)
+				require.NoError(t, err)
+				assert.Empty(t, pending)
+			}
+		})
+	}
+}
+
+func TestIntegrationMirrorResetRestoresRepairedReview(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env, a, b, sourceID, importedID := importedAttemptNodes(t)
+	require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
+	_, err := b.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = a.Worker.SyncNow()
+	require.NoError(t, err)
+	// A parent repush produces a mirror-authored review association repair.
+	_, err = a.DB.Exec(`UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
+	require.NoError(t, err)
+	_, err = a.Worker.SyncNow()
+	require.NoError(t, err)
+	before, err := a.DB.GetReviewByJobID(sourceID)
+	require.NoError(t, err)
+	owner, err := a.DB.GetMachineID()
+	require.NoError(t, err)
+	peer, err := b.DB.GetMachineID()
+	require.NoError(t, err)
+	var editor uuid.UUID
+	require.NoError(t, a.DB.QueryRow(`SELECT updated_by_machine_id FROM reviews WHERE id = ?`, before.ID).Scan(&editor))
+	require.NotEqual(t, owner, editor)
+	require.NotEqual(t, peer, editor)
+	a.Worker.Stop()
+	b.Worker.Stop()
+	// Reconnecting to an empty mirror clears the acknowledgments and
+	// cursors. The owner must restore this review despite its last editor.
+	_, err = env.Pool.pool.Exec(t.Context(), `DROP SCHEMA roborev CASCADE`)
+	require.NoError(t, err)
+	require.NoError(t, env.Pool.EnsureSchema(t.Context()))
+	worker := startSyncWorker(t, a.DB, env.pgURL, "restored-owner", "1h")
+	_, err = worker.SyncNow()
+	require.NoError(t, err)
+	var closed bool
+	var document string
+	require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT closed, structured_output->>'summary' FROM reviews WHERE uuid = $1`, before.UUID).Scan(&closed, &document))
+	assert.True(t, closed)
+	assert.Equal(t, "Original review.", document)
+	pending, err := a.DB.GetReviewsToSync(owner, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
 }

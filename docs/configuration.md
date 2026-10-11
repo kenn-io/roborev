@@ -1429,6 +1429,9 @@ clients refuse this newer schema.
     attempt. Pending edits to that same review survive this repair. Imported
     jobs keep their sync markers. Applied or rebased fixes upload as completed
     attempts; whether their patch was applied stays local to each checkout.
+- Closing a cached legacy review after a peer converts it keeps the converted
+    content and syncs the closure. The closing machine receives the conversion
+    on its next pull.
 - Reviews sync with their producing attempt. A failed or canceled rerun has no
     current review, and an older attempt that finishes later cannot replace a
     newer attempt's output. Reruns also update the agent and start time on other

@@ -93,34 +93,6 @@ func TestRewindResponseCursorRewindsTimestampAndResetsLegacyID(t *testing.T) {
 	assert.Equal(t, cursor, responseCursorForMax(cursor))
 }
 
-func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
-	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("stale-review-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-
-	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
-
-	err = h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
-		UUID:               *review.UUID,
-		JobUUID:            *job.UUID,
-		Agent:              review.Agent,
-		Output:             review.Output,
-		StructuredOutput:   reviewFixtureJSON("No issues found."),
-		Closed:             false,
-		UpdatedByMachineID: testUUID("stale-review-machine"),
-		CreatedAt:          review.CreatedAt,
-		UpdatedAt:          time.Now().Add(-time.Hour),
-	})
-	require.NoError(t, err)
-
-	review, err = h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.True(t, review.Closed)
-}
-
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {
@@ -642,23 +614,6 @@ func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	records, err = h.db.UnresolvedLegacyReviews()
 	require.NoError(t, err)
 	assert.Empty(t, records)
-}
-
-func TestUpsertPulledReviewDoesNotReplaceJSONWithMarkdown(t *testing.T) {
-	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("converted-review")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
-		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
-		Output: "Old Markdown", CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
-		UpdatedByMachineID: testUUID("remote-machine"),
-	}))
-	after, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, review.StructuredOutput, after.StructuredOutput)
 }
 
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only

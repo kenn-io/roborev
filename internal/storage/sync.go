@@ -718,7 +718,8 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
 		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL)
-		 OR (j.source_machine_id = ? AND replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T')))
+		 OR (j.source_machine_id = ? AND (r.synced_at IS NULL
+		 OR replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T'))))
 		ORDER BY r.id
 		LIMIT ?
 	`, machineID, machineID, machineID, limit)

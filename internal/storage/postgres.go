@@ -874,7 +874,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	err = p.pool.QueryRow(ctx, pgUpsertReviewSQL,
 		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
-		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID).Scan(&persisted, &awaitingAssociation)
+		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New()).Scan(&persisted, &awaitingAssociation)
 	if err == nil && awaitingAssociation {
 		return errReviewAttemptPending
 	}
@@ -892,6 +892,12 @@ func reviewSyncMachineID(r SyncableReview) uuid.UUID {
 	}
 	return r.UpdatedByMachineID
 }
+
+// Keep a converted document when a peer closes its cached legacy envelope.
+// The closure still applies; $16 identifies that mixed result as mirror-authored
+// so the closing machine also pulls the conversion.
+const pgKeepConvertedReview = `(EXCLUDED.structured_output->'legacy' IS NOT NULL
+ AND reviews.structured_output IS NOT NULL AND reviews.structured_output->'legacy' IS NULL)`
 
 // pgUpsertReviewSQL merges a pushed review. A NULL verdict normally keeps the
 // central value so an older sender cannot wipe one. Two cases must end
@@ -945,19 +951,18 @@ const pgUpsertReviewSQL = `
 			job_enqueued_at = EXCLUDED.job_enqueued_at,
 			job_source_machine_id = EXCLUDED.job_source_machine_id,
 			closed = CASE WHEN $14::boolean THEN reviews.closed ELSE EXCLUDED.closed END,
- output = CASE WHEN $14::boolean THEN reviews.output ELSE EXCLUDED.output END,
+ output = CASE WHEN $14::boolean OR ` + pgKeepConvertedReview + ` THEN reviews.output ELSE EXCLUDED.output END,
 			verdict_bool = CASE
-				WHEN $14::boolean THEN reviews.verdict_bool
+				WHEN $14::boolean OR ` + pgKeepConvertedReview + ` THEN reviews.verdict_bool
 				WHEN $12::boolean THEN NULL
  WHEN EXCLUDED.structured_output->'legacy' IS NOT NULL THEN EXCLUDED.verdict_bool
 				WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = EXCLUDED.job_uuid AND j.job_type IN ('task', 'insights')) THEN NULL
 				ELSE COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool) END,
-			structured_output = CASE WHEN $14::boolean THEN reviews.structured_output ELSE COALESCE(EXCLUDED.structured_output, reviews.structured_output) END,
-			reviewed_file_count = CASE WHEN $14::boolean THEN reviews.reviewed_file_count ELSE COALESCE(EXCLUDED.reviewed_file_count, reviews.reviewed_file_count) END,
-			excluded_file_count = CASE WHEN $14::boolean THEN reviews.excluded_file_count ELSE COALESCE(EXCLUDED.excluded_file_count, reviews.excluded_file_count) END,
-			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+			structured_output = CASE WHEN $14::boolean OR ` + pgKeepConvertedReview + ` THEN reviews.structured_output ELSE COALESCE(EXCLUDED.structured_output, reviews.structured_output) END,
+			reviewed_file_count = CASE WHEN $14::boolean OR ` + pgKeepConvertedReview + ` THEN reviews.reviewed_file_count ELSE COALESCE(EXCLUDED.reviewed_file_count, reviews.reviewed_file_count) END,
+			excluded_file_count = CASE WHEN $14::boolean OR ` + pgKeepConvertedReview + ` THEN reviews.excluded_file_count ELSE COALESCE(EXCLUDED.excluded_file_count, reviews.excluded_file_count) END,
+			updated_by_machine_id = CASE WHEN ` + pgKeepConvertedReview + ` THEN $16::uuid ELSE EXCLUDED.updated_by_machine_id END,
 			updated_at = clock_timestamp()
- WHERE $14::boolean OR EXCLUDED.structured_output->'legacy' IS NULL OR reviews.structured_output IS NULL OR reviews.structured_output->'legacy' IS NOT NULL
  RETURNING 1
  )
  SELECT EXISTS (SELECT 1 FROM written),
@@ -1584,7 +1589,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		batch.Queue(pgUpsertReviewSQL,
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
-			reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID)
+			reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New())
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
