@@ -345,3 +345,33 @@ func TestPulledReviewKeepsSubsecondEditOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, current.Closed)
 }
+
+func TestPulledOwnReviewWithFutureTimestampIsNotDirty(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("future-review-echo")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	producer := testUUID("remote-producer")
+	_, err = h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
+	require.NoError(t, err)
+	require.NoError(t, h.db.MarkJobSynced(job.ID))
+	// Imported jobs can echo this machine's own edit back with PostgreSQL's
+	// timestamp, which may be later than the local acknowledgment time.
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: producer,
+		StructuredOutput: reviewFixtureJSON("Review result."),
+		CreatedAt:        review.CreatedAt, UpdatedAt: time.Now().Add(time.Hour),
+		UpdatedByMachineID: h.machineID,
+	}))
+	pending, err := h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "a pulled echo is already synced regardless of the server clock")
+	require.NoError(t, h.db.MarkReviewClosedByJobID(job.ID, true))
+	pending, err = h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].Closed)
+	assert.False(t, pending[0].MetadataOnly)
+}

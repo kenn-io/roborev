@@ -180,6 +180,16 @@ const jobContentMoveBatchSize = 500
 // stay until it finishes, and the columns are dropped in one transaction,
 // after which a rerun only repeats the VACUUM.
 func migrateJobContent(ctx context.Context, db *DB) error {
+	// Older releases marked local closure edits only by advancing updated_at.
+	// Convert those pending edits once so normal sync can use explicit dirty
+	// markers without comparing clocks on different machines. This also covers
+	// local edits to imported jobs and retries after the content columns dropped.
+	if _, err := db.ExecContext(ctx, `UPDATE reviews SET synced_at = NULL
+		WHERE synced_at IS NOT NULL
+		AND lower(updated_by_machine_id) = (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
+		AND `+sqliteNormalizedTimestampExpr("updated_at")+` > `+sqliteNormalizedTimestampExpr("synced_at")); err != nil {
+		return fmt.Errorf("mark pending review edits for sync: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS job_content (
 		job_id INTEGER PRIMARY KEY REFERENCES review_jobs(id),
 		prompt BLOB,

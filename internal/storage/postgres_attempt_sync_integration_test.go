@@ -226,6 +226,22 @@ func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nol
 			repaired := job.EnqueuedAt.Add(time.Hour).Truncate(time.Microsecond)
 			_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(repaired), job.ID)
 			require.NoError(t, err)
+			producer, err := a.DB.GetMachineID()
+			require.NoError(t, err)
+			pendingJobs, err := a.DB.GetJobsToSync(producer, 10)
+			require.NoError(t, err)
+			require.Len(t, pendingJobs, 1)
+			var pgRepoID int64
+			var pgCommitID *int64
+			require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT repo_id, commit_id FROM review_jobs WHERE uuid = $1`, job.UUID).Scan(&pgRepoID, &pgCommitID))
+			require.NoError(t, env.Pool.UpsertJob(t.Context(), pendingJobs[0], pgRepoID, pgCommitID))
+			// Pause the producer between its job and review uploads. The editor
+			// must wait for the review association before pulling this parent.
+			_, err = b.Worker.SyncNow()
+			require.ErrorContains(t, err, "review attempt association is pending")
+			pendingEdit, err = b.DB.GetReviewsToSync(editor, 10)
+			require.NoError(t, err)
+			require.Len(t, pendingEdit, 1)
 			_, err = a.Worker.SyncNow()
 			require.NoError(t, err)
 			_, err = env.Pool.pool.Exec(t.Context(), `CREATE FUNCTION reject_pending_edit() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -280,9 +296,54 @@ func TestIntegrationRejectedReviewUploadIsNotAcknowledged(t *testing.T) { //noli
 	require.Len(t, pending, 1)
 	startImportedAttempt(t, b, importedID, "new attempt")
 	require.NoError(t, completeReviewFixture(b.DB, importedID, "test", "new attempt", "New review."))
+	producer, err := b.DB.GetMachineID()
+	require.NoError(t, err)
+	jobs, err := b.DB.GetJobsToSync(producer, 10)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	var pgRepoID int64
+	var pgCommitID *int64
+	require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT repo_id, commit_id FROM review_jobs WHERE uuid = $1`, jobs[0].UUID).Scan(&pgRepoID, &pgCommitID))
+	require.NoError(t, env.Pool.UpsertJob(t.Context(), jobs[0], pgRepoID, pgCommitID))
+	// Until the new review arrives, this is indistinguishable from a repair.
+	// Once it arrives, the old UUID must be ignored instead of blocking sync.
+	require.ErrorIs(t, env.Pool.UpsertReview(t.Context(), pending[0]), errReviewAttemptPending)
 	_, err = b.Worker.SyncNow()
 	require.NoError(t, err)
 	success, err := env.Pool.BatchUpsertReviews(t.Context(), pending)
 	require.NoError(t, err)
 	assert.Equal(t, []bool{false}, success)
+}
+
+func TestIntegrationParentUploadPreservesPeerEditWithClockSkew(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env, a, b, sourceID, importedID := importedAttemptNodes(t)
+	// PostgreSQL can be ahead of both clients. Keep its timestamps advancing
+	// normally while preserving that offset through every review write.
+	_, err := env.Pool.pool.Exec(t.Context(), `CREATE FUNCTION future_review_timestamp() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN NEW.updated_at = clock_timestamp() + interval '1 hour'; RETURN NEW; END $$;
+ CREATE TRIGGER future_review_timestamp BEFORE INSERT OR UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION future_review_timestamp()`)
+	require.NoError(t, err)
+	require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
+	_, err = b.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = a.Worker.SyncNow()
+	require.NoError(t, err)
+	cached, err := a.DB.GetReviewByJobID(sourceID)
+	require.NoError(t, err)
+	require.True(t, cached.Closed)
+	require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, false))
+	_, err = b.Worker.SyncNow()
+	require.NoError(t, err)
+	// A parent upload must repair only the review association, even though
+	// the cached review's server timestamp is later than its local sync mark.
+	_, err = a.DB.Exec(`UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
+	require.NoError(t, err)
+	_, err = a.Worker.SyncNow()
+	require.NoError(t, err)
+	var remoteClosed bool
+	require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT closed FROM reviews WHERE uuid = $1`, cached.UUID).Scan(&remoteClosed))
+	assert.False(t, remoteClosed, "the parent's cached closure must not overwrite the peer's reopen")
+	current, err := a.DB.GetReviewByJobID(sourceID)
+	require.NoError(t, err)
+	assert.False(t, current.Closed)
 }

@@ -870,12 +870,18 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 		return err
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
-	_, err = p.pool.Exec(ctx, pgUpsertReviewSQL,
+	var persisted, awaitingAssociation bool
+	err = p.pool.QueryRow(ctx, pgUpsertReviewSQL,
 		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
-		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID)
+		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID).Scan(&persisted, &awaitingAssociation)
+	if err == nil && awaitingAssociation {
+		return errReviewAttemptPending
+	}
 	return err
 }
+
+var errReviewAttemptPending = errors.New("review attempt association is pending; retry after producer sync")
 
 // A metadata repair is a mirror-side change every machine must pull, including
 // the previous editor. As with legacy conversion, a distinct writer prevents
@@ -894,6 +900,8 @@ func reviewSyncMachineID(r SyncableReview) uuid.UUID {
 // Lock the parent while accepting a review. An offline edit to the same
 // canonical review may predate historical attempt repair; retain the corrected
 // parent identity while applying that edit. A different obsolete UUID is ignored.
+// If the parent arrived before its review association, defer the editor's pull
+// so it cannot retire a pending edit before that association is repaired.
 const pgUpsertReviewSQL = `
  WITH locked_job AS MATERIALIZED (
  SELECT enqueued_at, source_machine_id, status FROM review_jobs WHERE uuid = $2 FOR SHARE
@@ -922,7 +930,7 @@ const pgUpsertReviewSQL = `
  resolved_at = CASE WHEN NOT $14::boolean AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL
  THEN COALESCE(resolved_at, clock_timestamp()) ELSE resolved_at END
  FROM current_attempt a WHERE uuid = $1
- )
+ ), written AS (
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
@@ -950,6 +958,15 @@ const pgUpsertReviewSQL = `
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
  WHERE $14::boolean OR EXCLUDED.structured_output->'legacy' IS NULL OR reviews.structured_output IS NULL OR reviews.structured_output->'legacy' IS NOT NULL
+ RETURNING 1
+ )
+ SELECT EXISTS (SELECT 1 FROM written),
+ NOT EXISTS (SELECT 1 FROM current_attempt) AND EXISTS (
+ SELECT 1 FROM locked_job j
+ WHERE j.status IN ('done', 'applied', 'rebased')
+ AND EXISTS (SELECT 1 FROM reviews r WHERE r.uuid = $1 AND r.job_uuid = $2)
+ AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.job_uuid = $2
+ AND r.job_enqueued_at = j.enqueued_at AND r.job_source_machine_id = j.source_machine_id))
 `
 
 // syncedReviewVerdict returns the verdict to store for a pushed review and
@@ -1570,14 +1587,14 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	success := make([]bool, len(reviews))
 	var firstErr error
 	for i := range reviews {
-		tag, err := br.Exec()
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
+		var awaitingAssociation bool
+		err := br.QueryRow().Scan(&success[i], &awaitingAssociation)
+		if err == nil && awaitingAssociation {
+			err = errReviewAttemptPending
 		}
-		success[i] = tag.RowsAffected() > 0
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	// SendBatch commits as a unit. A later failure rolls back earlier

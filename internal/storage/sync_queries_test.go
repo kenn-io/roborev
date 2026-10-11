@@ -94,7 +94,7 @@ func TestParseSQLiteTime(t *testing.T) {
 }
 
 // syncTimestampTestCallbacks parameterizes the shared timestamp comparison
-// test runner so it can be used for both job and review sync paths.
+// test runner for job sync. Reviews use explicit pending-edit markers.
 type syncTimestampTestCallbacks struct {
 	// entityName is used in assertion messages (e.g. "job", "review").
 	entityName string
@@ -122,7 +122,7 @@ type syncTimestampTestCallbacks struct {
 }
 
 // testSyncTimestampComparison is a generic test runner that validates the
-// timestamp comparison logic shared between job sync and review sync.
+// timestamp comparison logic used by job sync.
 func testSyncTimestampComparison(t *testing.T, cb syncTimestampTestCallbacks) {
 	t.Helper()
 
@@ -226,19 +226,6 @@ func jobSyncIDs(h *syncTestHelper) ([]int64, error) {
 	return ids, nil
 }
 
-// reviewSyncIDs extracts review IDs from GetReviewsToSync results.
-func reviewSyncIDs(h *syncTestHelper) ([]int64, error) {
-	reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]int64, len(reviews))
-	for i, r := range reviews {
-		ids[i] = r.ID
-	}
-	return ids, nil
-}
-
 func TestGetJobsToSync_TimestampComparison(t *testing.T) { //nolint:paralleltest // t.Setenv of TZ in a subtest via testSyncTimestampComparison
 	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
 		entityName: "job",
@@ -272,56 +259,32 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) { //nolint:paralleltest
 	})
 }
 
-func TestGetReviewsToSync_TimestampComparison(t *testing.T) { //nolint:paralleltest // t.Setenv of TZ in a subtest via testSyncTimestampComparison
-	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
-		entityName: "review",
-
-		setup: func(t *testing.T) (*syncTestHelper, int64) {
-			h := newSyncTestHelper(t)
-			job := h.createCompletedJob("review-sync-sha")
-			err := h.db.MarkJobSynced(job.ID)
-			require.NoError(t, err, "MarkJobSynced failed: %v")
-			review, err := h.db.GetReviewByJobID(job.ID)
-			require.NoError(t, err, "GetReviewByJobID failed: %v")
-			return h, review.ID
-		},
-
-		setupForTZ: func(t *testing.T) (*syncTestHelper, int64) {
-			h := newSyncTestHelper(t)
-			job := h.createCompletedJob("tz-review-sha")
-			err := h.db.MarkJobSynced(job.ID)
-			require.NoError(t, err, "MarkJobSynced failed: %v")
-			review, err := h.db.GetReviewByJobID(job.ID)
-			require.NoError(t, err, "GetReviewByJobID failed: %v")
-			return h, review.ID
-		},
-
-		getToSync: reviewSyncIDs,
-
-		markSynced: func(h *syncTestHelper, id int64) error {
-			return h.db.MarkReviewSynced(id)
-		},
-
-		setTimestamps: func(h *syncTestHelper, id int64, syncedAt sql.NullString, updatedAt string) {
-			h.setReviewTimestamps(id, syncedAt, updatedAt)
-			// This checks review edits alone; a more recent parent upload also
-			// queues an attempt-metadata repair.
-			_, err := h.db.Exec(`UPDATE review_jobs SET synced_at = '2020-01-01T00:00:00Z' WHERE id = (SELECT job_id FROM reviews WHERE id = ?)`, id)
-			require.NoError(h.t, err)
-		},
-
-		createExtra: func(h *syncTestHelper, _ string) (*syncTestHelper, int64) {
-			// Reviews share the same helper; just need a new review entity.
-			// We don't need a separate job for the mixed-format subtest,
-			// but we do need a review linked to a completed job.
-			job := h.createCompletedJob("mixed-fmt-review-sha")
-			err := h.db.MarkJobSynced(job.ID)
-			require.NoError(h.t, err, "MarkJobSynced failed: %v")
-			review, err := h.db.GetReviewByJobID(job.ID)
-			require.NoError(h.t, err, "GetReviewByJobID failed: %v")
-			return h, review.ID
-		},
-	})
+func TestGetReviewsToSync_PendingLocalEdits(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("review-sync-marker")
+	require.NoError(t, h.db.MarkJobSynced(job.ID))
+	pending, err := h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.False(t, pending[0].MetadataOnly)
+	require.NoError(t, h.db.MarkReviewsSynced(pending))
+	pending, err = h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	// A future server timestamp is not a local edit. The explicit local
+	// closure below must still queue an upload even if the clock is behind.
+	_, err = h.db.Exec(`UPDATE reviews SET updated_at = ? WHERE job_id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+	require.NoError(t, err)
+	pending, err = h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	require.NoError(t, h.db.MarkReviewClosedByJobID(job.ID, true))
+	pending, err = h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].Closed)
+	assert.False(t, pending[0].MetadataOnly)
 }
 
 func TestSessionID_SyncRoundTrip(t *testing.T) {

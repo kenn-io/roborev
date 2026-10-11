@@ -550,9 +550,9 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 		// This machine changed each review after the last sync, for example
 		// by closing it.
 		_, err = db.Exec(`INSERT INTO reviews (uuid, job_id, agent, prompt, output, structured_output,
-				closed, updated_by_machine_id, updated_at)
-			VALUES (?, ?, 'codex', ?, '', ?, 1, ?, ?)`, testUUID(label+"-review"), id, reviewPrompt,
-			string(reviewFixtureJSON("No issues found.")), machine, "2026-09-02T12:00:00Z")
+				closed, updated_by_machine_id, updated_at, synced_at)
+			VALUES (?, ?, 'codex', ?, '', ?, 1, ?, ?, ?)`, testUUID(label+"-review"), id, reviewPrompt,
+			string(reviewFixtureJSON("No issues found.")), machine, "2026-09-02T12:00:00Z", synced)
 		require.NoError(t, err)
 		return id
 	}
@@ -615,6 +615,7 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 	var reviewJobs []int64
 	for _, review := range reviews {
 		reviewJobs = append(reviewJobs, review.JobID)
+		assert.False(review.MetadataOnly, "the old client's pending edit must upload its content")
 	}
 	assert.Equal([]int64{pulled}, reviewJobs)
 
@@ -633,6 +634,12 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 		marks[i] = NewJobSyncMark(job)
 	}
 	require.NoError(t, db.MarkJobsSynced(marks))
+	reviews, err = db.GetReviewsToSync(machine, 100)
+	require.NoError(t, err)
+	assert.Len(reviews, len(wantPrompts)+1)
+	for _, review := range reviews {
+		assert.False(review.MetadataOnly, "both local and imported jobs retain pending edits")
+	}
 	comments, err = db.GetCommentsToSync(machine, 100)
 	require.NoError(t, err)
 	assert.Len(comments, len(localFixes))

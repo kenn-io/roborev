@@ -86,16 +86,6 @@ func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, upd
 	require.NoError(h.t, err, "Failed to set job timestamps")
 }
 
-func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
-	var err error
-	if syncedAt.Valid {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
-	} else {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
-	}
-	require.NoError(h.t, err, "Failed to set review timestamps")
-}
-
 // Legacy schema DDL constants for migration tests.
 
 const legacySchemaV1DDL = `

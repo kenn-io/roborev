@@ -700,9 +700,9 @@ type SyncableReview struct {
 // GetReviewsToSync returns local edits and completed parent uploads whose
 // review attempt needs to follow them. Previously synced content is sent as a
 // metadata-only repair so a cached copy cannot overwrite a peer edit.
-// Sync acknowledgments are always UTC. Compare their full strings (normalizing
-// old whole-second SQLite/UTC forms), since datetime() discards the precision
-// needed when the parent and review were acknowledged in the same second.
+// Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
+// with a local acknowledgment: the server's clock can be ahead. Parent and
+// review acknowledgments both use the local clock; keep their full precision.
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	rows, err := db.Query(`
 		SELECT
@@ -710,18 +710,18 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 			r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at,
-			r.synced_at IS NOT NULL AND `+sqliteNormalizedTimestampExpr("r.updated_at")+` <= `+sqliteNormalizedTimestampExpr("r.synced_at")+`
+			NOT (r.updated_by_machine_id = ? AND r.synced_at IS NULL)
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
-		AND ((r.updated_by_machine_id = ? AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`))
+		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL)
 		 OR (j.source_machine_id = ? AND replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T')))
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, machineID, limit)
+	`, machineID, machineID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
