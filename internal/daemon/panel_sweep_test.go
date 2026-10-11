@@ -292,31 +292,35 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 }
 
 func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
-	assert := assert.New(t)
-	tc := newWorkerTestContext(t, 1)
-	runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
-	claimed, err := tc.DB.ClaimJob("worker-a")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	stale := claimed
-	changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")
-	require.NoError(t, err)
-	require.True(t, changed)
-	reclaimed, err := tc.DB.ClaimJob(stale.WorkerID)
-	require.NoError(t, err)
-	require.NotNil(t, reclaimed)
-	require.Equal(t, stale.ID, reclaimed.ID)
-	require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
-	require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
-	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		tc := newWorkerTestContext(t, 1)
+		runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+		claimed, err := tc.DB.ClaimJob("worker-a")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		stale := claimed
+		changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")
+		require.NoError(t, err)
+		require.True(t, changed)
+		// Distinct attempts need distinct timestamps even when the host clock has not ticked.
+		time.Sleep(time.Nanosecond)
+		reclaimed, err := tc.DB.ClaimJob(stale.WorkerID)
+		require.NoError(t, err)
+		require.NotNil(t, reclaimed)
+		require.Equal(t, stale.ID, reclaimed.ID)
+		require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
+		require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
+		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-	server.failOrphanedJob(context.Background(), stale)
+		server.failOrphanedJob(context.Background(), stale)
 
-	job := tc.assertJobStatus(t, reclaimed.ID, storage.JobStatusRunning)
-	assert.Empty(job.Error)
-	synth, err := tc.DB.GetSynthesisJob(runUUID)
-	require.NoError(t, err)
-	assert.True(synth.ClaimBlocked)
+		job := tc.assertJobStatus(t, reclaimed.ID, storage.JobStatusRunning)
+		assert.Empty(job.Error)
+		synth, err := tc.DB.GetSynthesisJob(runUUID)
+		require.NoError(t, err)
+		assert.True(synth.ClaimBlocked)
+	})
 }
 
 func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
