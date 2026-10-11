@@ -90,6 +90,9 @@ func TestApplyRetentionKeepsPromptsUntilSyncConnects(t *testing.T) {
 			cfg := server.configWatcher.Config()
 			cfg.PromptRetentionDays = 30
 			cfg.Sync.Enabled = tt.syncEnabled
+			// The daemon installs its sync worker before retention starts; this
+			// one has not connected yet.
+			server.SetSyncWorker(storage.NewSyncWorker(db, cfg.Sync))
 
 			repo, err := db.GetOrCreateRepo(tmpDir)
 			require.NoError(t, err)
