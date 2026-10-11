@@ -2,6 +2,9 @@ package review
 
 import "strings"
 
+// UnsavedOutcomeError identifies a daemon storage failure recovered by the sweep.
+const UnsavedOutcomeError = "daemon did not save the job's outcome"
+
 // IsTransientFailure reports whether a review failed due to a transient
 // provider outage (tagged with OutageErrorPrefix), as opposed to quota,
 // timeout, or a genuine/deterministic failure.
@@ -20,9 +23,8 @@ func CountTransientFailures(reviews []ReviewResult) int {
 	return n
 }
 
-// IsGenuineFailure reports a failed review that is neither quota, timeout, nor
-// transient — i.e. a deterministic failure that retrying will not fix soon.
+// IsGenuineFailure reports a deterministic review failure, excluding daemon recovery.
 func IsGenuineFailure(r ReviewResult) bool {
 	return r.Status == ResultFailed &&
-		!IsQuotaFailure(r) && !IsTransientFailure(r) && !IsTimeoutCancellation(r)
+		r.Error != UnsavedOutcomeError && !IsQuotaFailure(r) && !IsTransientFailure(r) && !IsTimeoutCancellation(r)
 }

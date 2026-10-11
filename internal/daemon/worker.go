@@ -425,11 +425,10 @@ func (wp *WorkerPool) interruptJobsForUpdateLocked(jobIDs []int64) {
 }
 
 // ClearUpdateInterruptTargets releases attempt markers after the daemon's
-// update lease ends. It does not cancel or otherwise mutate jobs.
+// update lease ends. Failed requeues remain protected until a retry succeeds.
 func (wp *WorkerPool) ClearUpdateInterruptTargets() {
 	wp.runningJobsMu.Lock()
 	clear(wp.updateInterruptTargets)
-	clear(wp.failedUpdateRequeues)
 	wp.runningJobsMu.Unlock()
 }
 
@@ -1997,18 +1996,23 @@ func existingJobWorktreePath(job *storage.ReviewJob) string {
 
 // broadcastFailed sends a review.failed event for a job
 func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
+	wp.broadcastFailedWithHookSuppression(job, agentName, errorMsg, false)
+}
+
+func (wp *WorkerPool) broadcastFailedWithHookSuppression(job *storage.ReviewJob, agentName, errorMsg string, suppressHooks bool) {
 	wp.broadcaster.Broadcast(Event{
-		Type:         jobEventType(job, "failed"),
-		TS:           time.Now(),
-		JobID:        job.ID,
-		JobUUID:      job.UUID,
-		Repo:         job.RepoPath,
-		RepoName:     job.RepoName,
-		SHA:          job.GitRef,
-		Branch:       job.HookBranch(),
-		Agent:        agentName,
-		Error:        errorMsg,
-		WorktreePath: existingJobWorktreePath(job),
+		Type:          jobEventType(job, "failed"),
+		TS:            time.Now(),
+		JobID:         job.ID,
+		JobUUID:       job.UUID,
+		Repo:          job.RepoPath,
+		RepoName:      job.RepoName,
+		SHA:           job.GitRef,
+		Branch:        job.HookBranch(),
+		Agent:         agentName,
+		Error:         errorMsg,
+		WorktreePath:  existingJobWorktreePath(job),
+		SuppressHooks: suppressHooks,
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's

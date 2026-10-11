@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -56,7 +57,7 @@ func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 		wp.attemptTransitionsMu.RUnlock()
 		return
 	}
-	const errorMsg = "worker stopped without saving the job's outcome"
+	const errorMsg = review.UnsavedOutcomeError
 	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAt, errorMsg)
 	wp.attemptTransitionsMu.RUnlock()
 	if err != nil {
@@ -65,12 +66,7 @@ func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 	}
 	if updated {
 		wp.invalidateBudgetSpend()
-		// Daemon recovery suppresses hooks, unlike broadcastFailed's worker failures.
-		event := eventForJob(jobEventType(current, "failed"), current, current.ID)
-		event.Error = errorMsg
-		event.WorktreePath = existingJobWorktreePath(current)
-		event.SuppressHooks = true
-		s.broadcaster.Broadcast(event)
+		wp.broadcastFailedWithHookSuppression(current, current.Agent, errorMsg, true)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 		}

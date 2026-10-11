@@ -63,11 +63,11 @@ includes repository, global, and panel-member timeout settings resolved when the
 attempt starts; configuration reloads do not change it during that attempt.
 
 The daemon sweeps every 60 seconds. It fails a job running for over 2 minutes if
-no worker holds it and no update requeue is pending, with the error "worker
-stopped without saving the job's outcome". The recovery event fires no hooks.
-Local reviews stay failed until manually rerun; CI can post usable member
-output, but a panel with only recovered failures is retired and retried as a new
-panel with backoff until three consecutive genuine failures end retries.
+no worker holds it and no update requeue is pending, with the error "daemon did
+not save the job's outcome". The recovery event fires no hooks. Local reviews
+stay failed until manually rerun; CI can post usable member output. A panel with
+only recovered failures ends with "No review output", without a comment or
+retries, and consumes no genuine-failure budget.
 
 ### CI health
 

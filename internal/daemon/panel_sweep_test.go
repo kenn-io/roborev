@@ -146,7 +146,7 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 			server.sweepStuckPanels()
 
 			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
-			assert.Equal("worker stopped without saving the job's outcome", job.Error)
+			assert.Equal("daemon did not save the job's outcome", job.Error)
 			require.Len(t, events, 1)
 			event := <-events
 			assert.Equal(eventType, event.Type)
@@ -200,6 +200,32 @@ func TestPanelSweepPreservesOwnedJob(t *testing.T) {
 			assert.True(synth.ClaimBlocked)
 		})
 	}
+}
+
+func TestPanelSweepPreservesFailedRequeueAfterUpdateTargetsClear(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "update-requeue", "worker-update")
+	_, err := tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", job.ID)
+	require.NoError(t, err)
+	_, err = tc.DB.Exec(`CREATE TRIGGER reject_update_requeue BEFORE UPDATE OF status ON review_jobs
+		WHEN NEW.status = 'queued' BEGIN SELECT RAISE(ABORT, 'synthetic requeue failure'); END`)
+	require.NoError(t, err)
+	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+	require.True(t, tc.Pool.handleUpdateInterruption(context.Background(), "worker-update", job))
+
+	tc.Pool.ClearUpdateInterruptTargets()
+	require.Error(t, tc.Pool.RetryFailedUpdateRequeues())
+	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+	server.sweepStuckPanels()
+	tc.assertJobStatus(t, job.ID, storage.JobStatusRunning)
+
+	_, err = tc.DB.Exec(`DROP TRIGGER reject_update_requeue`)
+	require.NoError(t, err)
+	require.NoError(t, tc.Pool.RetryFailedUpdateRequeues())
+	stored := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Zero(stored.RetryCount)
+	assert.False(tc.Pool.ownsJob("worker-update", job.ID, job.StartedAtRaw))
 }
 
 func TestPanelSweepClaimOwnership(t *testing.T) {
@@ -295,7 +321,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 	server.sweepStuckPanels()
 
 	job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
-	assert.Equal("worker stopped without saving the job's outcome", job.Error)
+	assert.Equal("daemon did not save the job's outcome", job.Error)
 	assert.Equal(maxRetries, before.RetryCount)
 	assert.Equal(before.RetryCount, job.RetryCount)
 	event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)

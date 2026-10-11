@@ -25,7 +25,7 @@ const (
 	// a genuine failure recurs up to the give-up cap.
 	OutcomeGenuineGiveUp
 	// OutcomeAllSkip records an error status without a comment: every member
-	// was a timeout skip (or the member set was empty), with no real result.
+	// was a timeout skip or daemon recovery (or the member set was empty).
 	OutcomeAllSkip
 )
 
@@ -61,7 +61,7 @@ type PanelOutcome struct {
 //     failed/partial result).
 //  3. else any genuine failure -> OutcomeGenuineGiveUp when this attempt would
 //     hit the give-up cap (consecutiveGenuine+1), otherwise OutcomeDeferGenuine.
-//  4. else (all timeout skips, or empty) -> OutcomeAllSkip.
+//  4. else (all timeout skips or daemon recovery, or empty) -> OutcomeAllSkip.
 func classifyPanelOutcome(
 	results []reviewpkg.ReviewResult, synthesis *reviewpkg.ReviewResult, consecutiveGenuine int,
 ) PanelOutcome {
