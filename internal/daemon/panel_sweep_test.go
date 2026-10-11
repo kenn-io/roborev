@@ -151,13 +151,13 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 		name           string
 		liveWorker     bool
 		pendingRequeue bool
-		olderOrphan    bool
+		clockRollback  bool
 		wantStatus     storage.JobStatus
 	}{
 		{name: "live worker", liveWorker: true, wantStatus: storage.JobStatusRunning},
 		{name: "pending requeue", pendingRequeue: true, wantStatus: storage.JobStatusRunning},
 		{name: "claim gap", wantStatus: storage.JobStatusRunning},
-		{name: "older orphan of claiming worker", olderOrphan: true, wantStatus: storage.JobStatusFailed},
+		{name: "claim gap after clock rollback", clockRollback: true, wantStatus: storage.JobStatusRunning},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -165,7 +165,6 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 			runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
 			tc.Pool.runningJobsMu.Lock()
 			tc.Pool.workerJobs["worker-a"] = workerClaimingJobID
-			tc.Pool.workerClaimStartedAt["worker-a"] = time.Now()
 			tc.Pool.runningJobsMu.Unlock()
 			claimed, err := tc.DB.ClaimJob("worker-a")
 			require.NoError(t, err)
@@ -179,10 +178,9 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 				tc.Pool.failedUpdateRequeues[claimed.ID] = "worker-a"
 			}
 			tc.Pool.runningJobsMu.Unlock()
-			if test.olderOrphan {
-				tc.Pool.runningJobsMu.Lock()
-				tc.Pool.workerClaimStartedAt["worker-a"] = time.Now()
-				tc.Pool.runningJobsMu.Unlock()
+			if test.clockRollback {
+				_, err := tc.DB.Exec(`UPDATE review_jobs SET started_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).Format(time.RFC3339Nano), claimed.ID)
+				require.NoError(t, err)
 			}
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 			server.sweepStuckPanels()
@@ -193,7 +191,7 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 			}
 			synth, err := tc.DB.GetSynthesisJob(runUUID)
 			require.NoError(t, err)
-			assert.Equal(!test.olderOrphan, synth.ClaimBlocked)
+			assert.True(synth.ClaimBlocked)
 		})
 	}
 }
@@ -298,10 +296,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	stalled, err := tc.DB.ListStalledJobs(0)
-	require.NoError(t, err)
-	require.Len(t, stalled, 1)
-	stale := &stalled[0]
+	stale := claimed
 	changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -310,7 +305,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	require.NotNil(t, reclaimed)
 	require.Equal(t, stale.ID, reclaimed.ID)
 	require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
-	require.NotEqual(t, stale.StartedAt, reclaimed.StartedAtRaw)
+	require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
 	server := &Server{db: tc.DB, workerPool: tc.Pool}
 
 	server.failOrphanedJob(stale)

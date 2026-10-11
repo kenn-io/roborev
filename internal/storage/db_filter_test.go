@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,34 +88,6 @@ func TestListStalledJobIDs(t *testing.T) {
 	require.NoError(t, err, "ListStalledJobIDs failed: %v")
 
 	assert.Empty(t, ids)
-}
-
-func TestListStalledJobsWithoutAgeFilter(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-	repo, _, job := createJobChain(t, db, "/tmp/test-repo", "running1")
-	claimed, err := db.ClaimJob("worker-1")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	now := time.Now()
-	require.NoError(t, db.UpsertPulledJob(PulledJob{
-		UUID: uuid.New(), SourceMachineID: uuid.New(), Agent: "test",
-		GitRef: "deadbeef", Status: string(JobStatusRunning),
-		EnqueuedAt: now, StartedAt: &now, UpdatedAt: now,
-	}, repo.ID, nil))
-
-	jobs, err := db.ListStalledJobs(0)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, StalledJob{ID: job.ID, WorkerID: claimed.WorkerID, StartedAt: claimed.StartedAtRaw}, jobs[0])
-
-	_, err = db.Exec("UPDATE review_jobs SET started_at = datetime('now', '+1 hour') WHERE id = ?", job.ID)
-	require.NoError(t, err)
-	jobs, err = db.ListStalledJobs(0)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, job.ID, jobs[0].ID)
 }
 
 func TestListReposWithReviewCounts(t *testing.T) {

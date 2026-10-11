@@ -27,34 +27,33 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) sweepOrphanedJobs() {
-	jobs, err := s.db.ListStalledJobs(0)
+	ids, err := s.db.ListRunningJobIDs()
 	if err != nil {
 		log.Printf("panel sweep: list orphan candidates: %v", err)
 		return
 	}
-	for _, job := range jobs {
-		s.failOrphanedJob(&job)
+	for _, id := range ids {
+		job, err := s.db.GetJobByID(id)
+		if err != nil {
+			log.Printf("panel sweep: load orphan job %d: %v", id, err)
+			continue
+		}
+		if job.WorkerID == "" {
+			continue
+		}
+		s.failOrphanedJob(job)
 	}
 }
 
-func (s *Server) failOrphanedJob(job *storage.StalledJob) {
+func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 	wp := s.workerPool
-	if wp.ownsJob(job.WorkerID, job.ID, job.StartedAt) {
-		return
-	}
-	current, err := s.db.GetJobByID(job.ID)
-	if err != nil {
-		log.Printf("panel sweep: load orphan job %d: %v", job.ID, err)
-		return
-	}
 	wp.attemptTransitionsMu.RLock()
-	// The locked ownership recheck is authoritative.
-	if wp.ownsJob(job.WorkerID, job.ID, job.StartedAt) {
+	if wp.ownsJob(job.WorkerID, job.ID) {
 		wp.attemptTransitionsMu.RUnlock()
 		return
 	}
 	const errorMsg = "daemon did not save the job's outcome"
-	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAt, errorMsg)
+	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
 	wp.attemptTransitionsMu.RUnlock()
 	if err != nil {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
@@ -62,11 +61,11 @@ func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 	}
 	if updated {
 		wp.invalidateBudgetSpend()
-		wp.broadcastFailedWithHookSuppression(current, current.Agent, errorMsg, true)
+		wp.broadcastFailedWithHookSuppression(job, job.Agent, errorMsg, true)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 		}
-		wp.logJobFailed(job.ID, job.WorkerID, current.Agent, errorMsg)
+		wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
 		log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	}
 }

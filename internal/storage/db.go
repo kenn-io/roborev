@@ -2377,58 +2377,30 @@ func (db *DB) ResetStaleJobs() error {
 
 // ListStalledJobIDs returns IDs of jobs running longer than the threshold.
 func (db *DB) ListStalledJobIDs(threshold time.Duration) ([]int64, error) {
-	jobs, err := db.ListStalledJobs(threshold)
-	if err != nil {
-		return nil, err
-	}
-	var ids []int64
-	for _, job := range jobs {
-		ids = append(ids, job.ID)
-	}
-	return ids, nil
-}
-
-// StalledJob identifies a running attempt without loading the full job.
-type StalledJob struct {
-	ID        int64
-	WorkerID  string
-	StartedAt string // Raw database value for the guarded failure write.
-}
-
-// ListStalledJobs returns only attempt identity for jobs running past the threshold.
-// A zero threshold returns all locally claimed running attempts, regardless of age.
-func (db *DB) ListStalledJobs(threshold time.Duration) ([]StalledJob, error) {
 	// Use threshold in seconds for SQLite datetime arithmetic
 	// This avoids timezone issues with RFC3339 string comparison
 	thresholdSecs := int64(threshold.Seconds())
 
-	query := `
-		SELECT id, COALESCE(worker_id, ''), started_at FROM review_jobs
+	rows, err := db.Query(`
+		SELECT id FROM review_jobs
 		WHERE status = 'running'
 		AND started_at IS NOT NULL
-	`
-	var args []any
-	if threshold == 0 {
-		// Synced running rows have no worker_id until a local worker claims them.
-		query += ` AND worker_id IS NOT NULL`
-	} else {
-		query += ` AND datetime(started_at) < datetime('now', ? || ' seconds')`
-		args = append(args, -thresholdSecs)
-	}
-	rows, err := db.Query(query+` ORDER BY id`, args...)
+		AND datetime(started_at) < datetime('now', ? || ' seconds')
+		ORDER BY id
+	`, -thresholdSecs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var jobs []StalledJob
+	var ids []int64
 	for rows.Next() {
-		var job StalledJob
-		if err := rows.Scan(&job.ID, &job.WorkerID, &job.StartedAt); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, job)
+		ids = append(ids, id)
 	}
-	return jobs, rows.Err()
+	return ids, rows.Err()
 }
 
 // migrateReviewJobsConstraintsForAutoDesign rebuilds review_jobs to:
