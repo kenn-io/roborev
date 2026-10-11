@@ -899,8 +899,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
-		screensSent:         []string{viewQueue.String()},
-		width:               80, // sensible defaults until we get WindowSizeMsg
+		screensSent:         []string{viewQueue.String()}, // Init reports the queue
+		width:               80,                           // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
