@@ -114,7 +114,7 @@ func TestWorkerPlanPhases(t *testing.T) {
 				require.NoError(t, err)
 				assert.Contains(t, review.Output, "## Plan")
 				assert.Contains(t, review.Output, "## Implementation")
-				assert.Contains(t, review.Prompt, "Check cancellation")
+				assert.Equal(t, stored, review.Prompt)
 				comments, err := tc.DB.GetCommentsForJob(*job.ParentJobID)
 				require.NoError(t, err)
 				require.Len(t, comments, 1)

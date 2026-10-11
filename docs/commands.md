@@ -547,6 +547,9 @@ renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
 reading an orphaned log file. For a daemon using a custom database, select that
 daemon with `--server`; the CLI does not open SQLite.
 
+To remove old logs automatically, set
+[`job_log_retention_days`](/docs/configuration/#stored-prompts-and-retention).
+
 The `clean` subcommand asks the selected daemon to remove log files older than
 the specified number of days (default: 7).
 

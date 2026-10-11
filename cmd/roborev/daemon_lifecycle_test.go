@@ -674,7 +674,7 @@ func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
 	cfg := config.DefaultConfig()
 	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: secretref.Ref{Env: "ROBOREV_TEST_EMBEDDING_KEY"}, TrustPrivateNetwork: true}
 	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)

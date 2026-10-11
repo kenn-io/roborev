@@ -241,11 +241,15 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 		return fmt.Errorf("encode review for job %d: %w", job.id, err)
 	}
 	created := jobTime(job.id).Add(10 * time.Minute).Format(sqliteTime)
+	_, err = tx.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('Review the fixture change'))`, job.id)
+	if err != nil {
+		return fmt.Errorf("insert prompt for job %d: %w", job.id, err)
+	}
 	_, err = tx.Exec(`
 		INSERT INTO reviews
-			(job_id, agent, prompt, structured_output, output, created_at, closed,
+			(job_id, agent, structured_output, output, created_at, closed,
 			 verdict_bool, uuid, updated_at)
-		VALUES (?, ?, 'Review the fixture change', ?, '', ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)`,
 		job.id, job.agent, string(raw), created, closed, verdict,
 		fmt.Sprintf("10000000-0000-4000-8000-%012d", job.id), created,
 	)

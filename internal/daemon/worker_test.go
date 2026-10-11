@@ -1773,12 +1773,9 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotZero(t, jobID)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(jobID), []byte("classifier progress\n"), 0o600))
 	require.NoError(t, markJobLogForAppend(jobID))
@@ -1843,12 +1840,9 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 		ReviewType: "design",
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(
 		JobLogPath(jobID),
@@ -4299,4 +4293,25 @@ func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
 		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
 		tc.Repo.ID, "beefc0de").Scan(&n))
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
+}
+
+func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	calls := 0
+	agentName := "prompt-save-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		calls++
+		return "No issues found.", nil
+	}})
+	_, err := tc.DB.Exec(`CREATE TRIGGER reject_prompt BEFORE INSERT ON job_content
+		BEGIN SELECT RAISE(ABORT, 'prompt write rejected'); END`)
+	require.NoError(t, err)
+	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert.Zero(t, calls)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, updated.RetryCount)
 }

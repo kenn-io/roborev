@@ -46,7 +46,7 @@ func (s *Server) fetchInsightsReviews(
 	// Normalize to forward slashes to match how GetOrCreateRepo stores paths.
 	repoFilter := filepath.ToSlash(repoRoot)
 
-	var listOpts []storage.ListJobsOption
+	listOpts := []storage.ListJobsOption{storage.WithoutPrompt()}
 	if branch != "" {
 		listOpts = append(listOpts, storage.WithBranch(branch))
 	}

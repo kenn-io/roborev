@@ -74,7 +74,7 @@ func TestBudgetSelectionOwnershipAndLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.True(t, claimed.BudgetRoutingLocked)
-	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`))
+	require.NoError(t, db.CompleteJob(job.ID, "test", `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`))
 	require.NoError(t, db.ReenqueueJob(job.ID, ReenqueueOpts{}))
 	claimed, err = db.ClaimJob("worker-d")
 	require.NoError(t, err)

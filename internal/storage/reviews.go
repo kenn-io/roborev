@@ -37,6 +37,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(append(reviewDestinations, jobDestinations...)...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -495,6 +496,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.id IN (%s)
 	`, jobSelectColumns(jobTextNone), inClause)
 

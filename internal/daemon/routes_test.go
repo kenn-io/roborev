@@ -73,8 +73,8 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 		require.NoError(t, err)
 		_, err = tx.Exec(
 			`INSERT INTO reviews
-			 (job_id, uuid, agent, prompt, output, created_at, updated_at, verdict_bool)
-			 VALUES (?, ?, 'test-agent', 'prompt', 'No issues found.', ?, ?, 1)`,
+			 (job_id, uuid, agent, output, created_at, updated_at, verdict_bool)
+			 VALUES (?, ?, 'test-agent', 'No issues found.', ?, ?, 1)`,
 			jobID, testUUID("review-"+sha), createdAt, createdAt,
 		)
 		require.NoError(t, err)

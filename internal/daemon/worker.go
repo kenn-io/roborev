@@ -884,7 +884,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
 	planningPrompt := ""
-	storedPromptValue := job.Prompt
+	// A prebuilt prompt stored by an earlier attempt already ends with the
+	// member instructions; drop them so this attempt appends them once.
+	memberSuffix := memberInstructionSuffix(job)
+	storedPromptValue := strings.TrimSuffix(job.Prompt, memberSuffix)
 	var planningDecodeErr error
 	if job.IsFixJob() {
 		planningPrompt, storedPromptValue, _, planningDecodeErr = prompt.DecodeFixPlan(job.Prompt)
@@ -1117,16 +1120,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 	// Panel members carry trusted reviewer instructions resolved at enqueue
-	// time. Append them after every prompt path (snapshot/dirty/range) and
-	// before promptToPersist defaults, so they persist and show in the view.
-	reviewPrompt += memberInstructionSuffix(job)
+	// time. Append them after every prompt path (snapshot/dirty/range/
+	// prebuilt) so the agent and the stored prompt both include them.
+	reviewPrompt += memberSuffix
 	if promptToPersist == "" {
 		promptToPersist = reviewPrompt
+	} else {
+		promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
 	}
 
-	// Save the prompt so it can be viewed while job is running
+	// The job's stored prompt is the only copy the prompt views read, so a
+	// failed save retries the job instead of running the agent without it.
 	if err := wp.db.SaveJobPrompt(job.ID, promptToPersist); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
+		return
 	}
 
 	// Get the configured job agent. Backup failover is handled explicitly by
@@ -1452,14 +1460,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
 		// canceled between agent finish and now.
 		if job.IsFixJob() {
-			if err := wp.db.CompleteFixJob(job.ID, agentName, reviewPrompt, output, fixPatch); err != nil {
+			if err := wp.db.CompleteFixJob(job.ID, agentName, output, fixPatch); err != nil {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
-				job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+				job.ID, agentName, storage.ReviewCompletion{
 					Output:           output,
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
@@ -1470,7 +1478,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
-		} else if err := wp.db.CompleteJobResult(job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
 			Output:       output,
 			FileCoverage: fileCoverage,
 		}); err != nil {

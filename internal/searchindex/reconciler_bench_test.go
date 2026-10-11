@@ -24,10 +24,12 @@ func BenchmarkReconcilerReviewEvent(b *testing.B) {
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 		VALUES (1, 1, 'abcdef1234567890', 'author', 'subject', CURRENT_TIMESTAMP);
 		WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM ids WHERE id < 8000)
-		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, prompt, job_type)
-		SELECT id, 1, 1, 'abcdef1234567890', 'test', 'done', printf('%32768s', 'prompt'), 'review' FROM ids;
-		INSERT INTO reviews (id, job_id, agent, prompt, output)
-		SELECT id, id, 'test', printf('%32768s', 'prompt'), 'synthetic review output' FROM review_jobs;
+		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type)
+		SELECT id, 1, 1, 'abcdef1234567890', 'test', 'done', 'review' FROM ids;
+		INSERT INTO job_content (job_id, prompt)
+		SELECT id, zstd_compress(printf('%32768s', 'prompt')) FROM review_jobs;
+		INSERT INTO reviews (id, job_id, agent, output)
+		SELECT id, id, 'test', 'synthetic review output' FROM review_jobs;
 		INSERT INTO responses (job_id, responder, response)
 		SELECT id, 'author', 'synthetic comment' FROM review_jobs WHERE id % 2 = 0;
 		COMMIT;`)

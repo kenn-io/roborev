@@ -1,0 +1,71 @@
+package daemon
+
+import (
+	"context"
+	"log"
+	"time"
+)
+
+// retentionInterval is how often the daemon applies the prompt and job log
+// retention settings.
+const retentionInterval = time.Hour
+
+// runRetention applies retention once at startup and then every interval
+// until ctx is canceled. Settings are read on every pass, so a config reload
+// takes effect without a restart.
+func (s *Server) runRetention(ctx context.Context, interval time.Duration) {
+	s.applyRetention(ctx, time.Now())
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.applyRetention(ctx, time.Now())
+		}
+	}
+}
+
+// applyRetention removes stored prompts and job log files older than the
+// configured retention. A setting of zero or less keeps everything.
+func (s *Server) applyRetention(ctx context.Context, now time.Time) {
+	cfg := s.configWatcher.Config()
+	if days := cfg.PromptRetentionDays; days > 0 {
+		s.prunePrompts(ctx, now.AddDate(0, 0, -days), days)
+	}
+	if days := cfg.JobLogRetentionDays; days > 0 {
+		// Sub saturates where days*24h would overflow and wrap negative.
+		maxAge := now.Sub(now.AddDate(0, 0, -days))
+		if removed := CleanJobLogs(maxAge); removed > 0 {
+			log.Printf("retention: removed %d job logs older than %d days", removed, days)
+		}
+	}
+}
+
+// prunePrompts removes the prompts of review and range jobs that finished
+// before cutoff. With sync on, it keeps prompts sync has yet to push, and it
+// waits until the sync worker has connected: on connecting to a different
+// PostgreSQL database, the worker clears every sync marker, and until then
+// the markers describe the previous database.
+func (s *Server) prunePrompts(ctx context.Context, cutoff time.Time, days int) {
+	cfg := s.configWatcher.Config()
+	// A config reload can turn sync off while the sync worker started with it
+	// keeps pushing, so either setting keeps unpushed prompts.
+	keepUnpushed := s.syncEnabledAtStart || cfg.Sync.Enabled
+	if keepUnpushed {
+		if s.syncWorker == nil {
+			return
+		}
+		if connected, status := s.syncWorker.HealthCheck(); !connected {
+			log.Printf("retention: keeping prompts until sync connects (%s)", status)
+			return
+		}
+	}
+	removed, err := s.db.PruneJobPrompts(ctx, cutoff, keepUnpushed)
+	if err != nil {
+		log.Printf("retention: %v", err)
+	} else if removed > 0 {
+		log.Printf("retention: removed prompts of %d jobs finished more than %d days ago", removed, days)
+	}
+}

@@ -34,11 +34,12 @@ const searchFeedSelect = `
 	       j.status,
 	       COALESCE(j.job_type, ''),
 	       j.commit_id,
-	       j.diff_content IS NOT NULL
+	       jc.diff_content IS NOT NULL
 	FROM reviews rv
 	JOIN review_jobs j ON j.id = rv.job_id
 	JOIN repos r ON r.id = j.repo_id
 	LEFT JOIN commits c ON c.id = j.commit_id
+	LEFT JOIN job_content jc ON jc.job_id = j.id
 `
 
 const searchFeedEligibility = `
@@ -49,7 +50,7 @@ const searchFeedEligibility = `
 		OR (COALESCE(j.job_type, '') = '' AND (
 			j.commit_id IS NOT NULL
 			OR j.git_ref = 'dirty'
-			OR j.diff_content IS NOT NULL
+			OR jc.diff_content IS NOT NULL
 			OR instr(j.git_ref, '..') > 0
 		))
 	)

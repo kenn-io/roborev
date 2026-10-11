@@ -256,6 +256,10 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
+	if err := registerContentFunctions(); err != nil {
+		return nil, err
+	}
+
 	// Open with WAL mode and busy timeout.
 	// 30s busy_timeout gives enough headroom for concurrent writers
 	// (worker pool + sync worker) to wait for locks rather than failing.
@@ -327,6 +331,9 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 	query.Add("_pragma", "busy_timeout(30000)")
 	dsn.RawQuery = query.Encode()
 
+	if err := registerContentFunctions(); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, fmt.Errorf("open database read-only: %w", err)

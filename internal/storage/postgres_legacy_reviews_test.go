@@ -40,7 +40,7 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
 		UUID: reviewID, JobUUID: jobID,
-		Agent: "test", Prompt: "prompt", StructuredOutput: raw, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
+		Agent: "test", StructuredOutput: raw, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 	}))
 	var resolved bool
 	var output string
@@ -76,7 +76,7 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:para
 			require.NoError(t, err)
 		}
 	}
-	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", Prompt: "original prompt", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}
+	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}
 	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'original prompt', 'Legacy finding', $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))

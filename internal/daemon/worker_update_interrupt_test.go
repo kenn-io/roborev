@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"io"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestHandleUpdateInterruptionRequeuesAttemptWithoutRetry(t *testing.T) {
@@ -304,11 +306,21 @@ func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {
 	job := tc.createAndClaimJob(t, "update-synthesis", "worker-update")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 
+	// A valid result would complete the job, so only the interruption can
+	// requeue it, and that must not use up a retry.
 	tc.Pool.completeSynthesisContext("worker-update", job, synthesisResult{
-		review: reviewpkg.ReviewResult{Agent: "test", Output: "No issues found."}, prompt: "prompt",
+		review: reviewpkg.ReviewResult{
+			Agent: "test", Output: "No issues found.", Verdict: storage.VerdictPass,
+			StructuredOutput: testutil.ReviewFixtureJSON("No issues found."),
+		},
 	})
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	stored, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Zero(t, stored.RetryCount)
+	_, err = tc.DB.GetReviewByJobID(job.ID)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func waitForUpdateSignal(ch <-chan struct{}, timeout time.Duration) bool {

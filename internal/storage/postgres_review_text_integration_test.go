@@ -31,17 +31,17 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 	batch := []SyncableReview{
 		{
 			UUID: uuid.New(), JobUUID: reviewJobID,
-			Agent: "ag\xffent", Prompt: "café\x00 + \xe9", StructuredOutput: structured,
+			Agent: "ag\xffent", StructuredOutput: structured,
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
 		{
 			UUID: uuid.New(), JobUUID: taskJobID,
-			Agent: "test", Prompt: "valid", Output: "résumé\x00 \xe9",
+			Agent: "test", Output: "résumé\x00 \xe9",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
 		{
 			UUID: uuid.New(), JobUUID: taskJobID,
-			Agent: "test", Prompt: "Ελληνικά", Output: "naïve",
+			Agent: "test", Output: "naïve",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
 	}
@@ -52,20 +52,18 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 		require.NoError(t, err)
 		assert.Equal([]bool{true, true, true}, success)
 		assert.Equal("ag\xffent", batch[0].Agent)
-		assert.Equal("café\x00 + \xe9", batch[0].Prompt)
 		assert.Equal("résumé\x00 \xe9", batch[1].Output)
 
-		for i, want := range []struct{ agent, prompt, output string }{
-			{"ag\uFFFDent", "café\uFFFD + \uFFFD", ""},
-			{"test", "valid", "résumé\uFFFD \uFFFD"},
-			{"test", "Ελληνικά", "naïve"},
+		for i, want := range []struct{ agent, output string }{
+			{"ag\uFFFDent", ""},
+			{"test", "résumé\uFFFD \uFFFD"},
+			{"test", "naïve"},
 		} {
-			var agent, prompt, output string
+			var agent, output string
 			require.NoError(t, pool.Pool().QueryRow(ctx,
-				`SELECT agent, prompt, output FROM reviews WHERE uuid = $1`, batch[i].UUID,
-			).Scan(&agent, &prompt, &output))
+				`SELECT agent, output FROM reviews WHERE uuid = $1`, batch[i].UUID,
+			).Scan(&agent, &output))
 			assert.Equal(want.agent, agent)
-			assert.Equal(want.prompt, prompt)
 			assert.Equal(want.output, output)
 		}
 		var structuredOutput string
@@ -79,20 +77,16 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 		assert := assert.New(t)
 		review := SyncableReview{
 			UUID: uuid.New(), JobUUID: taskJobID,
-			Agent: "é\xff", Prompt: "\x00界", Output: "\xe9 café",
+			Agent: "é\xff", Output: "\xe9 café",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		}
 		require.NoError(t, pool.UpsertReview(ctx, review))
-		var agent, prompt, output string
+		var agent, output string
 		require.NoError(t, pool.Pool().QueryRow(ctx,
-			`SELECT agent, prompt, output FROM reviews WHERE uuid = $1`, review.UUID,
-		).Scan(&agent, &prompt, &output))
+			`SELECT agent, output FROM reviews WHERE uuid = $1`, review.UUID,
+		).Scan(&agent, &output))
 		assert.Equal("é\uFFFD", agent)
-		assert.Equal("\uFFFD界", prompt)
 		assert.Equal("\uFFFD café", output)
-		assert.Equal("é\xff", review.Agent)
-		assert.Equal("\x00界", review.Prompt)
-		assert.Equal("\xe9 café", review.Output)
 
 		structuredReview := SyncableReview{
 			UUID: uuid.New(), JobUUID: taskJobID,
@@ -123,7 +117,8 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	prompt, output := "café\xe9\x00", "résumé\xff"
-	require.NoError(t, db.CompleteJob(job.ID, "test", prompt, output))
+	require.NoError(t, db.SaveJobPrompt(job.ID, prompt))
+	require.NoError(t, db.CompleteJob(job.ID, "test", output))
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	require.NotNil(t, review.UUID)
@@ -134,7 +129,7 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 	assert.Equal(1, stats.PushedReviews)
 	var pgPrompt, pgOutput string
 	require.NoError(t, env.Pool.Pool().QueryRow(env.Ctx,
-		`SELECT prompt, output FROM reviews WHERE uuid = $1`, *review.UUID,
+		`SELECT j.prompt, r.output FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid WHERE r.uuid = $1`, *review.UUID,
 	).Scan(&pgPrompt, &pgOutput))
 	assert.Equal("café\uFFFD\uFFFD", pgPrompt)
 	assert.Equal("résumé\uFFFD", pgOutput)
@@ -144,9 +139,10 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 	pending, err := db.GetReviewsToSync(machineID, 10)
 	require.NoError(t, err)
 	assert.Empty(pending)
-	var sqlitePrompt, sqliteOutput string
-	require.NoError(t, db.QueryRow(`SELECT prompt, output FROM reviews WHERE id = ?`, review.ID).
-		Scan(&sqlitePrompt, &sqliteOutput))
-	assert.Equal([]byte(prompt), []byte(sqlitePrompt))
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal([]byte(prompt), []byte(stored.Prompt))
+	var sqliteOutput string
+	require.NoError(t, db.QueryRow(`SELECT output FROM reviews WHERE id = ?`, review.ID).Scan(&sqliteOutput))
 	assert.Equal([]byte(output), []byte(sqliteOutput))
 }

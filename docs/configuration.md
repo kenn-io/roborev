@@ -1116,6 +1116,8 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
+| `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
@@ -1370,6 +1372,82 @@ Override with the `ROBOREV_DATA_DIR` environment variable:
 ```bash
 export ROBOREV_DATA_DIR=/custom/path
 ```
+
+### Stored prompts and retention
+
+Most of a large `reviews.db` is prompt text. A review prompt includes the full
+diff under review, so it is usually far larger than the review itself.
+
+How roborev stores it:
+
+- Each job's prompt, a dirty review's frozen diff, and a fix job's patch live in
+    the `job_content` table, compressed with zstd. Prompts typically shrink to a
+    quarter of their size or less.
+- Listing and counting jobs reads only job metadata. The TUI and web job lists
+    do not load prompts of finished jobs; other API callers get them only when
+    they request them.
+- Each prompt is stored once, on its job. The prompt view of a review shows the
+    job's stored prompt. For a plan-first fix job, the generated plan appears in
+    the review output rather than in the prompt.
+- Agent output logs are separate files under `logs/jobs/`.
+
+The first daemon start after upgrading from a release that stored prompts inline
+converts the database in place:
+
+1. It compresses every stored prompt, diff, and patch into `job_content`.
+1. It removes the old copies from `review_jobs`, `reviews`, and
+    `legacy_reviews`.
+1. It runs `VACUUM` once to return the freed space to the filesystem.
+
+Conversion time grows with the size of the database; a database of tens of
+gigabytes can take several minutes. Until it finishes, the daemon does not
+accept requests.
+
+The conversion needs free disk space of about twice the size of the converted
+database: it writes the compressed copy before it frees the old columns, and
+`VACUUM` writes the database again. If the disk fills up or the conversion stops
+partway, the old copies stay in place and the next start repeats the conversion.
+If only `VACUUM` fails, the daemon logs the error and starts normally; the freed
+space stays inside the file and new jobs reuse it.
+
+The PostgreSQL schema is unchanged:
+
+- Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
+    in PostgreSQL.
+- Upgraded machines push an empty review prompt. Older clients read only that
+    column for a finished review, so they show an empty prompt for reviews from
+    upgraded machines.
+- For a completed job from an older client whose prompt a rerun rebuilds, such
+    as a review or range job, an upgraded machine shows the prompt of the job's
+    newest review, because older clients never update the job's prompt on a
+    rerun. A review that arrives after its job updates the prompt. The job's own
+    prompt wins when the review's copy only names a temporary prompt file, as
+    older clients stored for oversized prompts.
+
+Retention is off by default; roborev keeps everything until you set a limit. The
+daemon applies both settings at startup and then hourly. A changed setting takes
+effect at the next hourly pass:
+
+```toml
+prompt_retention_days = 90   # remove prompts of review and range jobs finished over 90 days ago
+job_log_retention_days = 30  # remove job log files older than 30 days
+```
+
+- `prompt_retention_days` removes only the prompt of finished review and range
+    jobs. Reviews, findings, comments, verdicts, dirty-review diffs, fix
+    patches, and the prompts of every other job type, such as dirty, task, fix,
+    compact, synthesis, insights, and goal-review jobs, are kept. A rerun
+    rebuilds review and range prompts from git whether or not the old prompt was
+    removed, so removal only empties the prompt view of old jobs.
+- Removed prompts free space inside `reviews.db` that new jobs reuse. The file
+    itself does not shrink.
+- While PostgreSQL sync is enabled, or was enabled when the daemon started, a
+    job keeps its prompt until sync has pushed it, so retention never removes a
+    prompt that PostgreSQL lacks. Retention removes no prompts until sync has
+    connected, because a new sync database resets which jobs count as pushed.
+- `job_log_retention_days` deletes log files by modification time, the same
+    files that `roborev log clean --days N` removes. Logs that a running job
+    still writes to are kept.
 
 ### Unix Domain Socket
 
