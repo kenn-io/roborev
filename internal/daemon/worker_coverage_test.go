@@ -108,33 +108,22 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 
 func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	task, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: tc.Repo.ID, Agent: "test", Prompt: "task prompt", JobType: storage.JobTypeTask,
-	})
-	require.NoError(t, err)
-	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, task.ID)
-	require.NoError(t, err)
-	require.NoError(t, tc.DB.CompleteJobResult(task.ID, "test", storage.ReviewCompletion{
-		StructuredOutput: testutil.ReviewFixtureJSON("task output"),
-		Output:           "task output",
-	}))
-	taskReview, err := tc.DB.GetReviewByJobID(task.ID)
-	require.NoError(t, err)
-	assert.Nil(t, taskReview.FileCoverage)
-
-	compact, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: tc.Repo.ID, Agent: "test", Prompt: "compact prompt", JobType: storage.JobTypeCompact,
-	})
-	require.NoError(t, err)
-	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, compact.ID)
-	require.NoError(t, err)
-	require.NoError(t, tc.DB.CompleteJobResult(compact.ID, "test", storage.ReviewCompletion{
-		StructuredOutput: testutil.ReviewFixtureJSON("compact output"),
-		Output:           "compact output",
-	}))
-	compactReview, err := tc.DB.GetReviewByJobID(compact.ID)
-	require.NoError(t, err)
-	assert.Nil(t, compactReview.FileCoverage)
+	// The jobs name a real commit, so the worker could measure coverage for
+	// them; it must not, because their prompts are not that commit's diff.
+	sha := tc.GitRepo.CommitFile("coverage.go", "package coverage\n", "coverage input")
+	for _, jobType := range []string{storage.JobTypeTask, storage.JobTypeCompact} {
+		job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+			RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", Prompt: jobType + " prompt", JobType: jobType,
+		})
+		require.NoError(t, err)
+		claimed, err := tc.DB.ClaimJob(testWorkerID)
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+		tc.Pool.processJob(testWorkerID, claimed)
+		review, err := tc.DB.GetReviewByJobID(job.ID)
+		require.NoError(t, err, jobType)
+		assert.Nil(t, review.FileCoverage, jobType)
+	}
 
 	fix, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID: tc.Repo.ID, Agent: "test", GitRef: "fix", JobType: storage.JobTypeFix,

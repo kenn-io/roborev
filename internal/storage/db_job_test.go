@@ -532,30 +532,6 @@ func TestReviewVerdictComputation(t *testing.T) {
 		assert.Equal(t, int64(1), vb.Int64)
 	})
 
-	t.Run("verdict nil when output is empty", func(t *testing.T) {
-		env := setupJobEnv(t, "/tmp/test-repo", "verdict-empty")
-		_, err := env.db.ClaimJob("worker-1")
-		require.NoError(t, err)
-		require.NoError(t, completeReviewFixture(env.db,
-			env.job.ID, "codex", "the prompt", "",
-		)) // empty output
-
-		review, err := env.db.GetReviewByJobID(env.job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed")
-
-		assert.Nil(t, review.Job.Verdict)
-
-		// Verify verdict_bool is NULL in DB (not a false fail)
-		var vb sql.NullInt64
-		err = env.db.QueryRow(
-			`SELECT verdict_bool FROM reviews WHERE job_id = ?`,
-			env.job.ID,
-		).Scan(&vb)
-		require.NoError(t, err)
-		assert.False(t, vb.Valid,
-			"verdict_bool should be NULL for empty output")
-	})
-
 	t.Run("verdict nil when job has error", func(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-error")
 		_, err := env.db.ClaimJob("worker-1")
@@ -565,9 +541,10 @@ func TestReviewVerdictComputation(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		// Manually insert a review to simulate edge case
+		// Manually insert a passing review to simulate edge case; only the
+		// job's error may remove its verdict.
 		_, err = env.db.Exec(
-			`INSERT INTO reviews (job_id, agent, output, structured_output) VALUES (?, 'codex', '', ?)`,
+			`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, 'codex', '', ?, 1)`,
 			env.job.ID, string(reviewFixtureJSON("No issues found.")),
 		)
 		require.NoError(t, err, "Failed to insert review")

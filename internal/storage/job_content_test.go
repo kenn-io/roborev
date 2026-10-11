@@ -41,6 +41,7 @@ func TestJobContentIsStoredCompressed(t *testing.T) {
 // on first use inside one crashes the test binary on the next use outside.
 // Run alone, this test is the first use.
 func TestContentCodecsWorkAcrossSynctestBubbles(t *testing.T) {
+	t.Parallel()
 	var compressed driver.Value
 	synctest.Test(t, func(t *testing.T) {
 		var err error
