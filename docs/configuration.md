@@ -1443,7 +1443,8 @@ job_log_retention_days = 30  # remove job log files older than 30 days
     itself does not shrink.
 - While PostgreSQL sync is enabled, or was enabled when the daemon started, a
     job keeps its prompt until sync has pushed it, so retention never removes a
-    prompt that PostgreSQL lacks.
+    prompt that PostgreSQL lacks. Retention removes no prompts until sync has
+    connected, because a new sync database resets which jobs count as pushed.
 - `job_log_retention_days` deletes log files by modification time, the same
     files that `roborev log clean --days N` removes. Logs that a running job
     still writes to are kept.

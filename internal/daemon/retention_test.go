@@ -70,29 +70,43 @@ func TestApplyRetention(t *testing.T) {
 	}
 }
 
-func TestApplyRetentionKeepsUnpushedPromptsAfterSyncIsTurnedOff(t *testing.T) {
+func TestApplyRetentionKeepsPromptsUntilSyncConnects(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	server, db, tmpDir := newTestServer(t)
-	// The daemon started with sync on; a reload then turned it off, but the
-	// running sync worker keeps its startup settings.
-	server.syncEnabledAtStart = true
-	cfg := server.configWatcher.Config()
-	cfg.PromptRetentionDays = 30
-	cfg.Sync.Enabled = false
+	finished := now.AddDate(0, 0, -45).Format(time.RFC3339)
+	tests := []struct {
+		name               string
+		syncEnabledAtStart bool
+		syncEnabled        bool
+	}{
+		{name: "sync on", syncEnabledAtStart: true, syncEnabled: true},
+		// The running sync worker keeps its startup settings after a reload.
+		{name: "sync turned off by a reload", syncEnabledAtStart: true, syncEnabled: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			server, db, tmpDir := newTestServer(t)
+			server.syncEnabledAtStart = tt.syncEnabledAtStart
+			cfg := server.configWatcher.Config()
+			cfg.PromptRetentionDays = 30
+			cfg.Sync.Enabled = tt.syncEnabled
 
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	require.NoError(t, err)
-	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test"})
-	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, synced_at = NULL WHERE id = ?`,
-		now.AddDate(0, 0, -45).Format(time.RFC3339), job.ID)
-	require.NoError(t, err)
-	require.NoError(t, db.SaveJobPrompt(job.ID, "unpushed prompt"))
+			repo, err := db.GetOrCreateRepo(tmpDir)
+			require.NoError(t, err)
+			job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test"})
+			require.NoError(t, err)
+			// Marked as pushed, possibly to a previous sync database, whose
+			// markers the worker clears only once it connects.
+			_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, synced_at = ?
+				WHERE id = ?`, finished, finished, finished, job.ID)
+			require.NoError(t, err)
+			require.NoError(t, db.SaveJobPrompt(job.ID, "old prompt"))
 
-	server.applyRetention(t.Context(), now)
+			server.applyRetention(t.Context(), now)
 
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "unpushed prompt", stored.Prompt)
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "old prompt", stored.Prompt)
+		})
+	}
 }

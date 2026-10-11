@@ -32,16 +32,7 @@ func (s *Server) runRetention(ctx context.Context, interval time.Duration) {
 func (s *Server) applyRetention(ctx context.Context, now time.Time) {
 	cfg := s.configWatcher.Config()
 	if days := cfg.PromptRetentionDays; days > 0 {
-		cutoff := now.AddDate(0, 0, -days)
-		// A config reload can turn sync off while the sync worker started with
-		// it keeps pushing, so either setting keeps unpushed prompts.
-		keepUnpushed := s.syncEnabledAtStart || cfg.Sync.Enabled
-		removed, err := s.db.PruneJobPrompts(ctx, cutoff, keepUnpushed)
-		if err != nil {
-			log.Printf("retention: %v", err)
-		} else if removed > 0 {
-			log.Printf("retention: removed prompts of %d jobs finished more than %d days ago", removed, days)
-		}
+		s.prunePrompts(ctx, now.AddDate(0, 0, -days), days)
 	}
 	if days := cfg.JobLogRetentionDays; days > 0 {
 		// Sub saturates where days*24h would overflow and wrap negative.
@@ -49,5 +40,32 @@ func (s *Server) applyRetention(ctx context.Context, now time.Time) {
 		if removed := CleanJobLogs(maxAge); removed > 0 {
 			log.Printf("retention: removed %d job logs older than %d days", removed, days)
 		}
+	}
+}
+
+// prunePrompts removes the prompts of review and range jobs that finished
+// before cutoff. With sync on, it keeps prompts sync has yet to push, and it
+// waits until the sync worker has connected: on connecting to a different
+// PostgreSQL database, the worker clears every sync marker, and until then
+// the markers describe the previous database.
+func (s *Server) prunePrompts(ctx context.Context, cutoff time.Time, days int) {
+	cfg := s.configWatcher.Config()
+	// A config reload can turn sync off while the sync worker started with it
+	// keeps pushing, so either setting keeps unpushed prompts.
+	keepUnpushed := s.syncEnabledAtStart || cfg.Sync.Enabled
+	if keepUnpushed {
+		if s.syncWorker == nil {
+			return
+		}
+		if connected, status := s.syncWorker.HealthCheck(); !connected {
+			log.Printf("retention: keeping prompts until sync connects (%s)", status)
+			return
+		}
+	}
+	removed, err := s.db.PruneJobPrompts(ctx, cutoff, keepUnpushed)
+	if err != nil {
+		log.Printf("retention: %v", err)
+	} else if removed > 0 {
+		log.Printf("retention: removed prompts of %d jobs finished more than %d days ago", removed, days)
 	}
 }
