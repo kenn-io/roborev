@@ -384,7 +384,6 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -392,7 +391,6 @@ func (s *Server) Start(ctx context.Context) error {
 	if !ready {
 		if err := awaitServeExitOnUnreadyStartup(serveExited, serveErrCh); err != nil {
 			s.configWatcher.Stop()
-			s.stopPanelSweep()
 			s.workerPool.Stop()
 			s.stopSearch()
 			return err
@@ -444,7 +442,6 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.startRemoteServer(cfg.Remote); err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -454,7 +451,6 @@ func (s *Server) Start(ctx context.Context) error {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		if errors.Is(err, http.ErrServerClosed) {
@@ -468,7 +464,6 @@ func (s *Server) Start(ctx context.Context) error {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return nil
@@ -516,9 +511,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.stopGoalWatcher()
 		s.workerPool.Stop()
+		s.stopPanelSweep()
 		s.stopSearch()
 		return err
 	}
@@ -526,17 +521,12 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) startPanelSweep(ctx context.Context) {
-	// Backstop for a missed worker release of a panel synthesis gate. Own the
-	// cancel so Stop halts the sweep even when Start received a context the
-	// caller never cancels (the worker pool and CI poller are likewise stopped
-	// explicitly in stopOnce0).
-	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
 	if s.sweepCancel != nil {
-		s.sweepCancel()
-		<-s.sweepDone
+		return
 	}
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepCancel = cancelSweep
 	done := make(chan struct{})
 	s.sweepDone = done
@@ -548,12 +538,13 @@ func (s *Server) startPanelSweep(ctx context.Context) {
 
 func (s *Server) stopPanelSweep() {
 	s.sweepMu.Lock()
-	defer s.sweepMu.Unlock()
-	if s.sweepCancel != nil {
-		s.sweepCancel()
-		<-s.sweepDone
-		s.sweepCancel = nil
-		s.sweepDone = nil
+	cancel, done := s.sweepCancel, s.sweepDone
+	s.sweepCancel = nil
+	s.sweepDone = nil
+	s.sweepMu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
 	}
 }
 
@@ -723,8 +714,6 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.BeginStop()
 	}
 
-	// Stop the panel sweep goroutine
-	s.stopPanelSweep()
 	s.stopGoalWatcher()
 
 	// Cancel gate evaluations before draining HTTP connections.
@@ -732,6 +721,7 @@ func (s *Server) stopOnce0() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+	s.stopPanelSweep()
 
 	// Stop search reconciliation after workers can no longer emit review events.
 	s.stopSearch()

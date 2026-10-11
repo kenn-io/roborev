@@ -55,12 +55,27 @@ func (s *Server) failOrphanedJob(job *storage.ReviewJob) {
 		return
 	}
 	const errorMsg = "daemon did not save the job's outcome"
-	wp.failJobWithPrefixLocked(job.WorkerID, job, job.Agent, errorMsg, "", "outcome persistence", &job.StartedAtRaw, true)
+	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
+	if err != nil {
+		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
+		return
+	}
+	if updated {
+		wp.invalidateBudgetSpend()
+		event := eventForJob(jobEventType(job, "failed"), job, job.ID)
+		event.Error = errorMsg
+		event.SuppressHooks = true
+		s.broadcaster.Broadcast(event)
+		wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
+	}
 }
 
 // sweepStuckPanels fails orphaned jobs, then releases panels with terminal members.
 func (s *Server) sweepStuckPanels(ctx context.Context) {
 	s.sweepOrphanedJobs(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	runs, err := s.db.ListStuckPanelRuns()
 	if err != nil {
 		log.Printf("panel sweep: list stuck runs: %v", err)

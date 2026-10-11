@@ -114,9 +114,6 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 					JobType: storage.JobTypeGoalReview, ReviewType: "goal", WorktreePath: worktreePath,
 				})
 				require.NoError(t, err)
-				if test.missingWorktree {
-					worktreePath = ""
-				}
 			} else {
 				runUUID, _, _ = enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
 			}
@@ -137,7 +134,7 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 			assert.Equal(job.ID, event.JobID)
 			assert.Equal(job.Error, event.Error)
 			assert.True(event.SuppressHooks)
-			assert.Equal(worktreePath, event.WorktreePath)
+			assert.Empty(event.WorktreePath)
 			if !test.goalReview {
 				synth, err := tc.DB.GetSynthesisJob(runUUID)
 				require.NoError(t, err)
@@ -342,8 +339,7 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		b := &blockingPanelSweepBroadcaster{Broadcaster: tc.Broadcaster, entered: make(chan struct{}), release: make(chan struct{})}
-		tc.Pool.broadcaster = b
-		server := &Server{db: tc.DB, workerPool: tc.Pool}
+		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: b}
 		server.startPanelSweep(context.Background())
 		time.Sleep(panelSweepInterval)
 		<-b.entered
@@ -364,6 +360,43 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 		<-stopped
 		tc.assertJobStatus(t, jobs[0].ID, storage.JobStatusFailed)
 		tc.assertJobStatus(t, jobs[1].ID, storage.JobStatusRunning)
+	})
+}
+
+func TestStopPreventsClaimsWhilePanelSweepIsBlocked(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repo, err := db.GetOrCreateRepo(tmpDir)
+		require.NoError(t, err)
+		orphan, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+		require.NoError(t, err)
+		claimed, err := db.ClaimJob("worker-a")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		require.Equal(t, orphan.ID, claimed.ID)
+		server.workerPool = NewWorkerPool(db, server.configWatcher, 1, server.broadcaster, nil, nil)
+		server.workerPool.Start()
+		defer server.workerPool.Stop()
+		synctest.Wait()
+		b := &blockingPanelSweepBroadcaster{Broadcaster: server.broadcaster, entered: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(b.release) })
+		defer release()
+		server.broadcaster = b
+		server.startPanelSweep(context.Background())
+		time.Sleep(panelSweepInterval)
+		<-b.entered
+		queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+		require.NoError(t, err)
+		stopped := make(chan error, 1)
+		go func() { stopped <- server.Stop() }()
+		synctest.Wait()
+		require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
+		job, err := db.GetJobByID(queued.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusQueued, job.Status)
+		assert.Empty(t, stopped)
+		release()
+		require.NoError(t, <-stopped)
 	})
 }
 
