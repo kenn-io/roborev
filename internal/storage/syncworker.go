@@ -759,7 +759,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
-			log.Printf("Sync: batch upsert reviews error: %v", err)
+			return stats, fmt.Errorf("batch upsert reviews: %w", err)
 		}
 
 		// Only mark successfully synced reviews

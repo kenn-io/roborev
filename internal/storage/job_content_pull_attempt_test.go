@@ -289,3 +289,59 @@ func TestReviewAcknowledgmentKeepsReplacementAndEditsPending(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewClosureAfterAcknowledgmentIsPending(t *testing.T) {
+	t.Parallel()
+	for _, byJob := range []bool{false, true} {
+		t.Run(map[bool]string{false: "review ID", true: "job ID"}[byJob], func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				job := h.createCompletedJob("close-after-upload")
+				require.NoError(t, h.db.MarkJobSynced(job.ID))
+				pushed, err := h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, pushed, 1)
+				require.NoError(t, h.db.MarkReviewsSynced(pushed))
+				if byJob {
+					require.NoError(t, h.db.MarkReviewClosedByJobID(job.ID, true))
+				} else {
+					require.NoError(t, h.db.MarkReviewClosed(pushed[0].ID, true))
+				}
+				pending, err := h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
+				assert.True(t, pending[0].Closed)
+				assert.False(t, pending[0].MetadataOnly)
+			})
+		})
+	}
+}
+
+func TestPulledReviewKeepsSubsecondEditOrder(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("subsecond-edit-order")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	first := time.Now().UTC().Truncate(time.Second).Add(time.Hour)
+	incoming := PulledReview{
+		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: *job.SourceMachineID,
+		StructuredOutput: reviewFixtureJSON("Review result."),
+		CreatedAt:        review.CreatedAt, UpdatedByMachineID: testUUID("peer-editor"),
+	}
+	for _, edit := range []struct {
+		offset  time.Duration
+		closed  bool
+		changed bool
+	}{{time.Microsecond, false, true}, {2 * time.Microsecond, true, true}, {time.Microsecond, false, false}} {
+		incoming.UpdatedAt, incoming.Closed = first.Add(edit.offset), edit.closed
+		changed, err := h.db.upsertPulledReview(incoming)
+		require.NoError(t, err)
+		assert.Equal(t, edit.changed, changed)
+	}
+	current, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.True(t, current.Closed)
+}

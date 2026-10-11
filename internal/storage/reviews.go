@@ -430,10 +430,10 @@ func (db *DB) MarkReviewClosed(reviewID int64, closed bool) error {
 	if closed {
 		val = 1
 	}
-	now := time.Now().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE id = ?`, val, machineID, now, reviewID)
 	if err != nil {
 		return err
 	}
@@ -453,10 +453,10 @@ func (db *DB) MarkReviewClosedByJobID(jobID int64, closed bool) error {
 	if closed {
 		val = 1
 	}
-	now := time.Now().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE job_id = ?`, val, machineID, now, jobID)
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE job_id = ?`, val, machineID, now, jobID)
 	if err != nil {
 		return err
 	}

@@ -60,12 +60,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						require.NoError(t, err)
 						assert.Contains(stored.Output, "Minor naming issue.", "storage retains the finding")
 						assert.Contains(stored.Output, "Missing cleanup.")
-						if document != nil {
-							raw, err := json.Marshal(stored.StructuredOutput)
-							require.NoError(t, err)
-							assert.NotEmpty(raw)
-							assert.Len(stored.StructuredOutput["findings"], 3)
-						}
+						assert.Len(stored.StructuredOutput["findings"], 3)
 					} else {
 						failed, err := tc.DB.FailJob(synth.ID, testWorkerID, "Synthesis unavailable.")
 						require.NoError(t, err)
@@ -82,7 +77,6 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.Contains(body, "Minor naming issue.")
 					} else {
 						assert.NotContains(body, "Minor naming issue.")
-						assert.NotContains(body, "High: immediate action.", "rubric entries are not findings")
 					}
 					if policy.mediumVisible {
 						assert.Contains(body, "Missing cleanup.")

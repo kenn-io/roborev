@@ -190,3 +190,99 @@ func TestIntegrationConcurrentRerunsWithTiedTimes(t *testing.T) { //nolint:paral
 		})
 	}
 }
+
+func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	for _, conversion := range []bool{false, true} {
+		t.Run(map[bool]string{false: "closure", true: "conversion"}[conversion], func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			a := env.setupNode("producer", "repair-repository", "1h")
+			b := env.setupNode("editor", "repair-repository", "1h")
+			job, originalReview := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "complete prompt", "Original review.")
+			if conversion {
+				_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, originalReview.ID)
+				require.NoError(t, err)
+			}
+			_, err := a.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = b.Worker.SyncNow()
+			require.NoError(t, err)
+			var importedID int64
+			require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
+			if conversion {
+				var archiveID int64
+				require.NoError(t, b.DB.QueryRow(`SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, originalReview.UUID).Scan(&archiveID))
+				require.NoError(t, b.DB.ResolveLegacyReview(archiveID, reviewFixtureJSON("Converted review.")))
+			} else {
+				require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
+			}
+			editor, err := b.DB.GetMachineID()
+			require.NoError(t, err)
+			pendingEdit, err := b.DB.GetReviewsToSync(editor, 10)
+			require.NoError(t, err)
+			require.Len(t, pendingEdit, 1)
+			// Older clients could upload a rerun's review while leaving its
+			// parent's original enqueue time in PostgreSQL. The producer's
+			// upgrade republishes the real attempt without changing review UUID.
+			repaired := job.EnqueuedAt.Add(time.Hour).Truncate(time.Microsecond)
+			_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(repaired), job.ID)
+			require.NoError(t, err)
+			_, err = a.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = env.Pool.pool.Exec(t.Context(), `CREATE FUNCTION reject_pending_edit() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN RAISE EXCEPTION 'synthetic edit failure'; END $$;
+ CREATE TRIGGER reject_pending_edit BEFORE INSERT OR UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION reject_pending_edit()`)
+			require.NoError(t, err)
+			_, err = b.Worker.SyncNow()
+			require.ErrorContains(t, err, "synthetic edit failure")
+			pendingEdit, err = b.DB.GetReviewsToSync(editor, 10)
+			require.NoError(t, err)
+			require.Len(t, pendingEdit, 1, "a failed push must not pull away the pending edit")
+			_, err = env.Pool.pool.Exec(t.Context(), `DROP TRIGGER reject_pending_edit ON reviews; DROP FUNCTION reject_pending_edit()`)
+			require.NoError(t, err)
+			_, err = b.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = a.Worker.SyncNow()
+			require.NoError(t, err)
+			for i, node := range []testNode{a, b} {
+				id := []int64{job.ID, importedID}[i]
+				currentJob, err := node.DB.GetJobByID(id)
+				require.NoError(t, err)
+				assert.Equal(t, repaired.UTC(), currentJob.EnqueuedAt.UTC())
+				assert.Equal(t, job.SourceMachineID, currentJob.SourceMachineID)
+				review, err := node.DB.GetReviewByJobID(id)
+				require.NoError(t, err)
+				assert.Equal(t, originalReview.UUID, review.UUID)
+				if conversion {
+					assert.Equal(t, "Converted review.", review.StructuredOutput["summary"])
+					var unresolved int
+					require.NoError(t, node.DB.QueryRow(`SELECT COUNT(*) FROM legacy_reviews WHERE uuid = ? AND resolved_at IS NULL`, review.UUID).Scan(&unresolved))
+					assert.Zero(t, unresolved)
+				} else {
+					assert.True(t, review.Closed)
+				}
+			}
+			machine, err := b.DB.GetMachineID()
+			require.NoError(t, err)
+			pending, err := b.DB.GetReviewsToSync(machine, 10)
+			require.NoError(t, err)
+			assert.Empty(t, pending)
+		})
+	}
+}
+
+func TestIntegrationRejectedReviewUploadIsNotAcknowledged(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env, a, b, sourceID, importedID := importedAttemptNodes(t)
+	machine, err := a.DB.GetMachineID()
+	require.NoError(t, err)
+	require.NoError(t, a.DB.MarkReviewClosedByJobID(sourceID, true))
+	pending, err := a.DB.GetReviewsToSync(machine, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	startImportedAttempt(t, b, importedID, "new attempt")
+	require.NoError(t, completeReviewFixture(b.DB, importedID, "test", "new attempt", "New review."))
+	_, err = b.Worker.SyncNow()
+	require.NoError(t, err)
+	success, err := env.Pool.BatchUpsertReviews(t.Context(), pending)
+	require.NoError(t, err)
+	assert.Equal(t, []bool{false}, success)
+}

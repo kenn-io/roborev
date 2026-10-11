@@ -1154,7 +1154,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 	success, err := pool.BatchUpsertReviews(ctx, reviews)
 	require.NoError(t, err, "BatchUpsertReviews failed: %v")
 
-	assert.Equal(t, 2, countSuccesses(success))
+	assert.Equal(t, []bool{true, false}, success, "unstructured review was not persisted")
 
 	var verdict bool
 	var structuredOutput []byte
@@ -1210,7 +1210,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 
 		require.Error(t, err, "Expected error from batch with invalid FK, got nil")
 		assert.Len(t, success, 2)
-		assert.True(t, success[0], "Expected success[0]=true (valid FK)")
+		assert.False(t, success[0], "the later failure rolls back the valid row too")
 		assert.False(t, success[1], "Expected success[1]=false (invalid FK)")
 
 		var count int

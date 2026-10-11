@@ -930,7 +930,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("[%s] Job %d: register attempt: %v", workerID, job.ID, err)
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("register attempt: %v", err))
 		}
+		// This claim never registered: it must release only its database
+		// ownership, leaving the previous worker's handler and output intact.
+		wp.releaseCanceledClaim(workerID, job.ID)
 		return
 	}
 	defer releaseAttempt()
@@ -943,7 +947,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
 	if ctx.Err() != nil {
-		wp.finishCanceledAttempt(workerID, job, job.Agent, job.WorktreePath)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, "job timed out waiting for previous attempt cleanup")
+		} else {
+			wp.finishCanceledAttempt(workerID, job, job.Agent, job.WorktreePath)
+		}
 		return
 	}
 
@@ -1629,6 +1637,10 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 		wp.pendingCancels[jobID] = true
 	}
 	wp.runningJobsMu.Unlock()
+	wp.releaseCanceledClaim(workerID, jobID)
+}
+
+func (wp *WorkerPool) releaseCanceledClaim(workerID string, jobID int64) {
 	released, err := wp.db.ReleaseCanceledJob(jobID, workerID)
 	if err != nil {
 		log.Printf("[%s] Error releasing canceled job %d: %v", workerID, jobID, err)

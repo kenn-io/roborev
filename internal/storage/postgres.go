@@ -891,25 +891,37 @@ func reviewSyncMachineID(r SyncableReview) uuid.UUID {
 // central value so an older sender cannot wipe one. Two cases must end
 // unrated even if a legacy verdict was stored before: output that is not a
 // review ($12), and free-form task or insights jobs, looked up by job type.
+// Lock the parent while accepting a review. An offline edit to the same
+// canonical review may predate historical attempt repair; retain the corrected
+// parent identity while applying that edit. A different obsolete UUID is ignored.
 const pgUpsertReviewSQL = `
- WITH current_attempt AS (
- SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM review_jobs WHERE uuid = $2)
- OR EXISTS (SELECT 1 FROM review_jobs WHERE uuid = $2 AND enqueued_at = $13 AND source_machine_id = $15
- AND status IN ('done', 'applied', 'rebased'))
+ WITH locked_job AS MATERIALIZED (
+ SELECT enqueued_at, source_machine_id, status FROM review_jobs WHERE uuid = $2 FOR SHARE
+ ), current_attempt AS (
+ SELECT j.enqueued_at, j.source_machine_id FROM locked_job j
+ WHERE j.status IN ('done', 'applied', 'rebased') AND (
+ (j.enqueued_at = $13 AND j.source_machine_id = $15)
+ OR EXISTS (
+ SELECT 1 FROM reviews r WHERE r.uuid = $1 AND r.job_uuid = $2
+ AND r.job_enqueued_at = j.enqueued_at AND r.job_source_machine_id = j.source_machine_id
+ AND NOT EXISTS (SELECT 1 FROM reviews newer WHERE newer.job_uuid = r.job_uuid
+ AND newer.job_enqueued_at = r.job_enqueued_at AND newer.job_source_machine_id = r.job_source_machine_id
+ AND (newer.created_at, newer.id) > (r.created_at, r.id))))
+ UNION ALL SELECT $13::timestamptz, $15::uuid WHERE NOT EXISTS (SELECT 1 FROM locked_job)
  ), archived AS (
  INSERT INTO legacy_reviews (uuid, record, migration_error)
  SELECT $1, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
  'prompt', ''::text, 'output', $7::jsonb->'legacy'->>'markdown', 'closed', $5::boolean,
  'verdict_bool', $6::boolean, 'structured_output', $7::jsonb,
  'reviewed_file_count', $8::integer, 'excluded_file_count', $9::integer,
- 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', $13::timestamptz, 'job_source_machine_id', $15::uuid), 'Unstructured historical review'
- WHERE $7::jsonb->'legacy' IS NOT NULL AND EXISTS (SELECT 1 FROM current_attempt)
+ 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id), 'Unstructured historical review'
+ FROM current_attempt a WHERE $7::jsonb->'legacy' IS NOT NULL
  ON CONFLICT DO NOTHING
  ), resolved AS (
- UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', $13::timestamptz, 'job_source_machine_id', $15::uuid),
+ UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id),
  resolved_at = CASE WHEN NOT $14::boolean AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL
  THEN COALESCE(resolved_at, clock_timestamp()) ELSE resolved_at END
- WHERE uuid = $1 AND EXISTS (SELECT 1 FROM current_attempt)
+ FROM current_attempt a WHERE uuid = $1
  )
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
@@ -918,8 +930,8 @@ const pgUpsertReviewSQL = `
 		) SELECT $1, $2, $3, '', CASE WHEN $7::jsonb IS NOT NULL THEN '' ELSE $4 END, $5,
  CASE WHEN EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2 AND j.job_type IN ('task', 'insights'))
 				THEN NULL ELSE $6::boolean END,
-			$7, $8, $9, $10, $11, clock_timestamp(), $13, $15
- WHERE EXISTS (SELECT 1 FROM current_attempt) AND ($7::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
+			$7, $8, $9, $10, $11, clock_timestamp(), a.enqueued_at, a.source_machine_id
+ FROM current_attempt a WHERE ($7::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
  AND j.job_type IN ('review','range','dirty','synthesis','compact','goal_review')))
  ON CONFLICT (uuid) DO UPDATE SET
 			job_enqueued_at = EXCLUDED.job_enqueued_at,
@@ -1309,6 +1321,8 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		return nil, cursor, nil
 	}
 
+	// Include this machine's edits to imported jobs. Pulling a repaired
+	// parent can retire its old local review before this phase restores it.
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
@@ -1316,7 +1330,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, `+pgPulledJobPromptExpr+`, r.job_enqueued_at, r.job_source_machine_id
 		FROM reviews r
 		JOIN review_jobs j ON j.uuid = r.job_uuid
-		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
+		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1 OR j.source_machine_id != $1)
 		AND r.job_uuid = ANY($2)
 		AND r.job_enqueued_at = j.enqueued_at AND r.job_source_machine_id = j.source_machine_id
 		AND j.status IN ('done', 'applied', 'rebased')
@@ -1556,16 +1570,24 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	success := make([]bool, len(reviews))
 	var firstErr error
 	for i := range reviews {
-		_, err := br.Exec()
+		tag, err := br.Exec()
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		success[i] = true
+		success[i] = tag.RowsAffected() > 0
 	}
 
+	// SendBatch commits as a unit. A later failure rolls back earlier
+	// statements, so none of their snapshots may be acknowledged.
+	if err := br.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if firstErr != nil {
+		clear(success)
+	}
 	return success, firstErr
 }
 

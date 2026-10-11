@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -134,4 +135,79 @@ func TestCanceledWaitingClaimKeepsCallerEventOwnership(t *testing.T) {
 	var invoked bool
 	require.NoError(t, tc.DB.QueryRow(`SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
 	assert.False(t, invoked)
+}
+
+func TestRejectedWaitingClaimReleasesCanceledOwnership(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), "old-worker")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release, err := tc.DB.StartJobAttempt(ctx, job, "old-worker", cancel)
+	require.NoError(t, err)
+	tc.Pool.registerRunningJob(job.ID, cancel, time.Time{})
+	changed, err := tc.DB.FailoverJob(job.ID, "old-worker", "backup", "")
+	require.NoError(t, err)
+	require.True(t, changed)
+	next, err := tc.DB.ClaimJob("new-worker")
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.NoError(t, tc.DB.UpsertPulledJob(storage.PulledJob{
+		UUID: *job.UUID, SourceMachineID: uuid.New(), GitRef: job.GitRef,
+		Agent: "test", JobType: job.JobType, Status: "canceled",
+		EnqueuedAt: job.EnqueuedAt.Add(time.Hour), UpdatedAt: time.Now(),
+	}, job.RepoID, job.CommitID))
+	tc.Pool.finishRunningJob("old-worker", job.ID)
+	release()
+	tc.Pool.processJob("new-worker", next)
+	current, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, current.Status)
+	assert.Empty(t, current.WorkerID)
+	require.NoError(t, tc.DB.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+}
+
+func TestWaitingClaimTimeoutCleansOnlyItsOwnClaim(t *testing.T) {
+	t.Parallel()
+	for _, canceled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "running", true: "canceled"}[canceled], func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				tc := newWorkerTestContext(t, 1)
+				job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), "old-worker")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				release, err := tc.DB.StartJobAttempt(ctx, job, "old-worker", cancel)
+				require.NoError(t, err)
+				defer release()
+				tc.Pool.registerRunningJob(job.ID, cancel, time.Time{})
+				changed, err := tc.DB.FailoverJob(job.ID, "old-worker", "backup", "")
+				require.NoError(t, err)
+				require.True(t, changed)
+				next, err := tc.DB.ClaimJob("new-worker")
+				require.NoError(t, err)
+				require.NotNil(t, next)
+				if canceled {
+					require.NoError(t, tc.DB.CancelJob(job.ID))
+				}
+				// Virtual time expires the new claim while the old one still
+				// owns its output and cancellation registration.
+				tc.Pool.processJob("new-worker", next)
+				current, err := tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				assert.Empty(t, current.WorkerID)
+				if canceled {
+					assert.Equal(t, storage.JobStatusCanceled, current.Status)
+				} else {
+					assert.Equal(t, storage.JobStatusQueued, current.Status)
+					retries, err := tc.DB.GetJobRetryCount(job.ID)
+					require.NoError(t, err)
+					assert.Equal(t, 1, retries)
+				}
+				assert.True(t, tc.Pool.CancelJob(job.ID), "the previous handler must remain registered")
+				require.ErrorIs(t, ctx.Err(), context.Canceled)
+				tc.Pool.finishRunningJob("old-worker", job.ID)
+			})
+		})
+	}
 }

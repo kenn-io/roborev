@@ -1426,9 +1426,9 @@ clients refuse this newer schema.
     for another upload. Older clients could mark a rerun as synced while
     PostgreSQL still held its first prompt. Retention keeps these prompts until
     the new upload finishes. The current review uploads again with its producing
-    attempt. Imported jobs keep their sync markers. Applied or rebased fixes
-    upload as completed attempts; whether their patch was applied stays local to
-    each checkout.
+    attempt. Pending edits to that same review survive this repair. Imported
+    jobs keep their sync markers. Applied or rebased fixes upload as completed
+    attempts; whether their patch was applied stays local to each checkout.
 - Reviews sync with their producing attempt. A failed or canceled rerun has no
     current review, and an older attempt that finishes later cannot replace a
     newer attempt's output. Reruns also update the agent and start time on other

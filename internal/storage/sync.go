@@ -1077,15 +1077,15 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	defer func() { _ = tx.Rollback() }()
 	// First, find the job_id by uuid
 	var jobID int64
-	var jobType, threshold, enqueuedAt, status, reviewCreatedAt string
+	var jobType, threshold, enqueuedAt, status, reviewCreatedAt, reviewUpdatedAt string
 	var locallyOwned, hasReview, sameReview bool
 	var sourceMachineID uuid.UUID
 	err = tx.QueryRow(`SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
-		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000')
+		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000')
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`,
 		r.UUID, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt, &status,
-		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt, &sourceMachineID)
+		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt, &reviewUpdatedAt, &sourceMachineID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return false, nil
@@ -1106,6 +1106,11 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	// but cannot replace it with a previous attempt or resurrect a review for
 	// an unfinished/failed local attempt after its job has been uploaded.
 	if locallyOwned && !sameReview && (hasReview || status != "done") {
+		return false, nil
+	}
+	// SQLite datetime() discards subsecond precision. Compare the stored
+	// timestamp directly so edits uploaded in the same second still arrive.
+	if sameReview && !parseSQLiteTime(reviewUpdatedAt).Before(r.UpdatedAt) {
 		return false, nil
 	}
 	if hasReview && !sameReview {
@@ -1184,11 +1189,10 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
- AND (json_extract(excluded.structured_output, '$.legacy') IS NULL OR reviews.structured_output IS NULL OR json_extract(reviews.structured_output, '$.legacy') IS NOT NULL)
+			WHERE (json_extract(excluded.structured_output, '$.legacy') IS NULL OR reviews.structured_output IS NULL OR json_extract(reviews.structured_output, '$.legacy') IS NOT NULL)
 	`, r.UUID, jobID, r.Agent, r.Output, r.Closed,
 		verdictBool, nullStr(string(r.StructuredOutput)), r.ReviewedFileCount, r.ExcludedFileCount,
-		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
+		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339Nano), now, now)
 	if err != nil {
 		return false, err
 	}
