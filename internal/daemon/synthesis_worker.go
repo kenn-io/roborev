@@ -343,10 +343,12 @@ func (wp *WorkerPool) runSynthesisAgent(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	reviews []reviewpkg.ReviewResult, prompt string,
 ) (reviewpkg.SynthesisDocument, string, string, error) {
-	if err := wp.db.SaveJobPrompt(job.ID, prompt); err != nil {
+	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, prompt); err != nil {
 		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save synthesis prompt: %v", err))
 		return reviewpkg.SynthesisDocument{}, "", "", err
+	} else if !saved {
+		return reviewpkg.SynthesisDocument{}, "", "", errSynthesisCanceled
 	}
 
 	a, agentName, err := wp.configureSynthesisAgentContext(ctx, workerID, job)

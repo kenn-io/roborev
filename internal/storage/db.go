@@ -236,6 +236,7 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 type DB struct {
 	*sql.DB
 	analytics analyticsStmts
+	attempts  jobAttempts
 }
 
 // Close closes the cached prepared statements and then the database.

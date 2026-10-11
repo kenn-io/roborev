@@ -1432,7 +1432,10 @@ clients refuse this newer schema.
 - Reviews sync with their producing attempt. A failed or canceled rerun has no
     current review, and an older attempt that finishes later cannot replace a
     newer attempt's output. Reruns also update the agent and start time on other
-    machines.
+    machines. A rerun sorts after its predecessor even when this machine's clock
+    is behind. If sync imports a newer attempt while a local agent is running,
+    the daemon cancels the old agent and keeps its remaining writes and
+    completion actions from changing the imported result.
 - Historical review prompts remain available after upgrading the mirror. For
     completed review and range jobs, the current historical review supplies the
     prompt when it has one, because older clients could leave the job's prompt

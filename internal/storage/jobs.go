@@ -1560,6 +1560,8 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) ReenqueueJobWithRequest(
 	jobID int64, opts ReenqueueOpts, requestID uuid.UUID,
 ) (resultJobID int64, replayed bool, err error) {
+	db.attempts.mu.Lock()
+	defer db.attempts.mu.Unlock()
 	machineID, err := db.GetMachineID()
 	if err != nil {
 		return 0, false, err
@@ -1596,6 +1598,15 @@ func (db *DB) ReenqueueJobWithRequest(
 		}
 	}
 
+	// A pulled terminal job can still have a displaced local agent unwinding.
+	// Keep its output and cancellation registration exclusive until cleanup.
+	if db.attempts.active[jobID] != nil {
+		return 0, false, sql.ErrNoRows
+	}
+	var previousEnqueuedAt string
+	if err := conn.QueryRowContext(ctx, `SELECT enqueued_at FROM review_jobs WHERE id = ?`, jobID).Scan(&previousEnqueuedAt); err != nil {
+		return 0, false, err
+	}
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
@@ -1603,7 +1614,14 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 
 	now := time.Now()
-	enqueuedAt := preciseTimestampAt(now)
+	// PostgreSQL stores microseconds. Advance beyond the stored attempt at
+	// that precision even if this machine's clock is behind its predecessor.
+	nextAttempt := now.Truncate(time.Microsecond)
+	previousAttempt := parseSQLiteTime(previousEnqueuedAt).Truncate(time.Microsecond)
+	if !nextAttempt.After(previousAttempt) {
+		nextAttempt = previousAttempt.Add(time.Microsecond)
+	}
+	enqueuedAt := preciseTimestampAt(nextAttempt)
 	updatedAt := now.Format(time.RFC3339)
 
 	// Preserve the archive, but do not restore an earlier attempt as this

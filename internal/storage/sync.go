@@ -879,6 +879,8 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 // use this to avoid waking derived-data reconcilers for cursor lookback
 // replays and rejected stale records while preserving the public API above.
 func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool, error) {
+	db.attempts.mu.Lock()
+	defer db.attempts.mu.Unlock()
 	now := preciseTimestampAt(time.Now())
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
@@ -890,7 +892,8 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	}
 	defer func() { _ = tx.Rollback() }()
 	var enqueuedAt string
-	err = tx.QueryRow(`SELECT enqueued_at FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&enqueuedAt)
+	var localID int64
+	err = tx.QueryRow(`SELECT id, enqueued_at FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&localID, &enqueuedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("find pulled job attempt: %w", err)
 	}
@@ -1029,6 +1032,11 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
+	}
+	if rows > 0 {
+		if active := db.attempts.active[localID]; active != nil {
+			active.cancel()
+		}
 	}
 	return rows > 0, nil
 }

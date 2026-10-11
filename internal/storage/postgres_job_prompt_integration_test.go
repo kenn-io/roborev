@@ -68,7 +68,10 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	a := env.setupNode("source", "rerun-repository", "1h")
 	b := env.setupNode("rerun", "rerun-repository", "1h")
 	job, originalReview := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "original prompt", "Original review.")
-	_, err := a.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 1 WHERE id = ?`, originalReview.ID)
+	// The importing machine's clock is behind the original executor's.
+	_, err := a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+	require.NoError(t, err)
+	_, err = a.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 1 WHERE id = ?`, originalReview.ID)
 	require.NoError(t, err)
 	_, err = a.Worker.SyncNow()
 	require.NoError(t, err)

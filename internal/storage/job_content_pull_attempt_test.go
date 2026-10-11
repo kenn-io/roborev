@@ -11,10 +11,19 @@ import (
 
 func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 	t.Parallel()
-	for _, status := range []JobStatus{JobStatusDone, JobStatusCanceled} {
-		t.Run(string(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status JobStatus
+		offset time.Duration
+	}{
+		{"done", JobStatusDone, 0},
+		{"canceled", JobStatusCanceled, 0},
+		{"clock behind imported attempt", JobStatusDone, time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
+				status := tc.status
 				assert := assert.New(t)
 				db := openTestDB(t)
 				defer db.Close()
@@ -24,18 +33,19 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				remote := PulledJob{
 					UUID: testUUID("imported-rerun"), SourceMachineID: testUUID("remote-machine"),
 					GitRef: "a..b", Agent: "test", JobType: JobTypeRange, Status: "done",
-					Prompt: "remote attempt prompt", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
+					Prompt: "remote attempt prompt", EnqueuedAt: time.Now().Add(tc.offset), UpdatedAt: time.Now(),
 				}
 				require.NoError(t, db.UpsertPulledJob(remote, repo.ID, nil))
 				var id int64
 				require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, remote.UUID).Scan(&id))
-				// A rerun can start in the same second as the imported attempt.
-				time.Sleep(1234 * time.Nanosecond)
+				// Reruns must advance at PostgreSQL's microsecond precision,
+				// even in the same clock tick or behind the imported clock.
 				require.NoError(t, db.ReenqueueJob(id, ReenqueueOpts{}))
 				job, err := db.ClaimJob("local-worker")
 				require.NoError(t, err)
 				require.NotNil(t, job)
 				require.Equal(t, id, job.ID)
+				require.Greater(t, job.EnqueuedAt.Truncate(time.Microsecond).UnixMicro(), remote.EnqueuedAt.UnixMicro())
 				require.NoError(t, db.SaveJobPrompt(id, "local rerun prompt"))
 				if status == JobStatusDone {
 					require.NoError(t, db.CompleteJobResult(id, "test", ReviewCompletion{
