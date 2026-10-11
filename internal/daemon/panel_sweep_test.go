@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -257,6 +258,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			const agentName = "panel-sweep-blocking"
 			started := make(chan struct{}, 1)
 			release := make(chan struct{})
+			releaseAgent := sync.OnceFunc(func() { close(release) })
 			agent.RegisterForTest(t, &agent.FakeAgent{
 				NameStr: agentName,
 				ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
@@ -279,6 +281,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 
 			tc.Pool.Start()
 			defer tc.Pool.Stop()
+			defer releaseAgent()
 			testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 			startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 			require.Equal(t, "review.started", startedEvent.Type)
@@ -296,7 +299,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 
 			// A later job on the single worker proves the rejected attempt returned.
 			probe := tc.createJob(t, members[0].GitRef)
-			close(release)
+			releaseAgent()
 			for {
 				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 				assert.NotEqual(members[0].ID, event.JobID, "a rejected write must not announce a terminal member event")
