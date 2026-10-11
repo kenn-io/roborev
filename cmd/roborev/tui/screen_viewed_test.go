@@ -40,6 +40,17 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
 }
 
+func updateScreenTestModel(m *model, msg tea.Msg) {
+	result, cmd := m.Update(msg)
+	*m = result.(model)
+	for _, msg := range collectMsgs(cmd) {
+		if delivery, ok := msg.(screenDeliveryMsg); ok {
+			result, _ = m.Update(delivery)
+			*m = result.(model)
+		}
+	}
+}
+
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
@@ -53,25 +64,17 @@ func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 			transport := &screenRecordingTransport{fail: true}
 			m.client.Transport = transport
-			update := func(msg tea.Msg) {
-				result, cmd := m.Update(msg)
-				m = result.(model)
-				for _, msg := range collectMsgs(cmd) {
-					result, _ = m.Update(msg)
-					m = result.(model)
-				}
-			}
 			key := 'x'
 			if tt.initial {
-				update(m.reportScreenViewed()())
+				updateScreenTestModel(&m, m.reportScreenViewed()())
 			} else {
 				key = '?'
-				update(keyPressMsg(key))
+				updateScreenTestModel(&m, keyPressMsg(key))
 			}
 			transport.fail = false
-			update(keyPressMsg(key))
+			updateScreenTestModel(&m, keyPressMsg(key))
 			if !tt.initial {
-				update(keyPressMsg(key))
+				updateScreenTestModel(&m, keyPressMsg(key))
 			}
 			assert.Equal(t, []string{tt.screen, tt.screen}, transport.screens)
 			if tt.initial {
@@ -98,14 +101,7 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 		collectMsgs(cmd)
 		assert.Empty(t, transport.screens)
 		m = result.(model)
-		result, cmd = m.Update(keyPressMsg('x'))
-		m = result.(model)
-		for _, msg := range collectMsgs(cmd) {
-			if delivery, ok := msg.(screenDeliveryMsg); ok {
-				result, _ = m.Update(delivery)
-				m = result.(model)
-			}
-		}
+		updateScreenTestModel(&m, keyPressMsg('x'))
 		assert.ElementsMatch(t, []string{"queue", "review"}, transport.screens)
 		require.Equal(t, focusDetail, m.focus)
 		_, cmd = m.Update(keyPressMsg('x'))
@@ -132,25 +128,15 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		m := splitModel()
 		transport := &screenRecordingTransport{}
 		m.client.Transport = transport
-		update := func(msg tea.Msg) {
-			result, cmd := m.Update(msg)
-			m = result.(model)
-			for _, msg := range collectMsgs(cmd) {
-				if delivery, ok := msg.(screenDeliveryMsg); ok {
-					result, _ = m.Update(delivery)
-					m = result.(model)
-				}
-			}
-		}
-		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		updateScreenTestModel(&m, reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
 		require.Equal(t, viewQueue, m.currentView)
 		require.Equal(t, focusList, m.focus)
 		require.True(t, m.selectedReviewLoaded())
 		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
-		update(keyPressMsg('j'))
+		updateScreenTestModel(&m, keyPressMsg('j'))
 		require.Equal(t, []string{"queue"}, m.screensShown())
-		update(keyPressMsg('k'))
-		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		updateScreenTestModel(&m, keyPressMsg('k'))
+		updateScreenTestModel(&m, reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
 		require.Equal(t, []string{"queue", "review"}, m.screensShown())
 		assert.Equal(t, []string{"review"}, transport.screens)
 	})

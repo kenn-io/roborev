@@ -59,8 +59,8 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusAccepted, response.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, response.Body.String())
-	assert.FileExists(t, filepath.Join(dir, "telemetry-daily.json"))
-	assert.NoFileExists(t, filepath.Join(filepath.Dir(alias), "telemetry-daily.json"))
+	assert.FileExists(t, telemetry.DailyClaimsPath(filepath.Join(dir, "test.db")))
+	assert.NoFileExists(t, telemetry.DailyClaimsPath(alias))
 }
 
 func TestDaemonDatabaseHasOneOwner(t *testing.T) {

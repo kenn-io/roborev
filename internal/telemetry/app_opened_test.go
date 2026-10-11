@@ -226,23 +226,48 @@ func TestPostAppOpened(t *testing.T) {
 func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	for _, offset := range []int{-1, 0, 1} {
-		t.Run(fmt.Sprint(offset), func(t *testing.T) {
+	for _, tc := range []struct {
+		offset  int
+		aliases bool
+	}{{-1, false}, {0, false}, {1, false}, {0, true}} {
+		t.Run(fmt.Sprint(tc), func(t *testing.T) {
 			db := testutil.OpenTestDB(t)
 			now := time.Now().UTC()
-			day := now.AddDate(0, 0, offset).Format(time.DateOnly)
+			day := now.AddDate(0, 0, tc.offset).Format(time.DateOnly)
 			require.NoError(t, db.SetSyncState("telemetry.screen.queue", day))
 			endpoint, messages := testutil.NewPostHogStub(t)
 			opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+			body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
+			attempts := 1
+			if tc.aliases {
+				body = `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
+				attempts = 64
+			}
 			for range 2 {
 				reporter, err := NewReporter(opts)
 				require.NoError(t, err)
 				limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-				body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+				for range attempts {
+					if tc.aliases {
+						skip, canonical, err := limiter.alreadySentToday(reporter, []byte(body))
+						require.NoError(t, err)
+						var normalized struct {
+							Properties map[string]any `json:"properties"`
+						}
+						require.NoError(t, json.Unmarshal(canonical, &normalized))
+						assert.Equal(t, normalized.Properties[PropertyScreen] == "queue", skip)
+						assert.NotContains(t, normalized.Properties, " screen ")
+						assert.NotContains(t, normalized.Properties, " surface ")
+					}
+					assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+				}
 				require.NoError(t, reporter.Close())
 			}
-			if offset < 0 {
+			if tc.aliases {
+				for _, message := range messages() {
+					assert.Equal(t, "review", message.Properties[PropertyScreen])
+				}
+			} else if tc.offset < 0 {
 				assert.Len(t, messages(), 1)
 			} else {
 				assert.Empty(t, messages())
@@ -253,36 +278,6 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 		})
 	}
 }
-
-func TestScreenViewedNormalizesAliasesBeforeLegacyLookup(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	require.NoError(t, db.SetSyncState("telemetry.screen.queue", time.Now().UTC().Format(time.DateOnly)))
-	endpoint, messages := testutil.NewPostHogStub(t)
-	reporter, err := NewReporter(Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
-	require.NoError(t, err)
-	limiter := &AppOpenedLimiter{Database: db}
-	body := `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
-	for range 64 {
-		skip, canonical, err := limiter.alreadySentToday(reporter, []byte(body))
-		require.NoError(t, err)
-		var normalized struct {
-			Properties map[string]any `json:"properties"`
-		}
-		require.NoError(t, json.Unmarshal(canonical, &normalized))
-		assert.Equal(t, normalized.Properties[PropertyScreen] == "queue", skip)
-		assert.NotContains(t, normalized.Properties, " screen ")
-		assert.NotContains(t, normalized.Properties, " surface ")
-		assert.NotContains(t, normalized.Properties, "path")
-		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-	}
-	require.NoError(t, reporter.Close())
-	for _, message := range messages() {
-		assert.Equal(t, "review", message.Properties[PropertyScreen])
-	}
-}
-
 func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
