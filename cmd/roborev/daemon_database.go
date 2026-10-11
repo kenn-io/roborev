@@ -9,9 +9,14 @@ import (
 	"go.kenn.io/kit/pathresolve"
 )
 
+type daemonDatabaseOwner struct {
+	*flock.Flock
+	path string
+}
+
 // lockDaemonDatabase excludes other daemon processes before SQLite is opened
 // or migrated. The owner holds the lock until its database is closed.
-func lockDaemonDatabase(dbPath string) (*flock.Flock, error) {
+func lockDaemonDatabase(dbPath string) (*daemonDatabaseOwner, error) {
 	path, err := filepath.Abs(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve database path: %w", err)
@@ -66,5 +71,5 @@ func lockDaemonDatabase(dbPath string) (*flock.Flock, error) {
 		_ = lock.Close()
 		return nil, fmt.Errorf("database is already owned by a daemon: %s", resolved)
 	}
-	return lock, nil
+	return &daemonDatabaseOwner{Flock: lock, path: resolved}, nil
 }

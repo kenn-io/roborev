@@ -33,6 +33,7 @@ import (
 )
 
 const (
+	workerClaimingJobID          = -1
 	agentTimeoutErrorPrefix      = "agent timeout after"
 	tokenUsageIndexRetryWindow   = 3 * time.Second
 	tokenUsageIndexRetryInterval = 500 * time.Millisecond
@@ -65,7 +66,8 @@ type WorkerPool struct {
 
 	// Track running jobs for cancellation
 	runningJobs    map[int64]runningJobCancellation
-	pendingCancels map[int64]bool // job ID -> whether the caller broadcasts the event
+	workerJobs     map[string]int64 // worker ID -> claimed job ID or workerClaimingJobID
+	pendingCancels map[int64]bool   // job ID -> whether the caller broadcasts the event
 	// updateInterruptTargets records attempts that must unwind without normal
 	// cancellation, retry, failover, hook, or panel-completion side effects.
 	// The daemon's update lease owns the lifetime of this set.
@@ -135,6 +137,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		stopCancel:                   stopCancel,
 		readyCh:                      make(chan struct{}),
 		runningJobs:                  make(map[int64]runningJobCancellation),
+		workerJobs:                   make(map[string]int64),
 		pendingCancels:               make(map[int64]bool),
 		updateInterruptTargets:       make(map[int64]struct{}),
 		failedUpdateRequeues:         make(map[int64]string),
@@ -524,6 +527,14 @@ func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 	return wp.runningJobs[jobID].callerBroadcastsEvent
 }
 
+func (wp *WorkerPool) ownsJob(workerID string, jobID int64) bool {
+	wp.runningJobsMu.Lock()
+	defer wp.runningJobsMu.Unlock()
+	_, pendingRequeue := wp.failedUpdateRequeues[jobID]
+	ownedJobID := wp.workerJobs[workerID]
+	return ownedJobID == workerClaimingJobID || ownedJobID == jobID || pendingRequeue
+}
+
 // unregisterRunningJob removes a job from the running jobs map
 func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Lock()
@@ -803,7 +814,17 @@ func (wp *WorkerPool) worker(id int) {
 			if paused {
 				return nil, nil
 			}
+			wp.runningJobsMu.Lock()
+			wp.workerJobs[workerID] = workerClaimingJobID
+			wp.runningJobsMu.Unlock()
 			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			wp.runningJobsMu.Lock()
+			if job != nil && err == nil {
+				wp.workerJobs[workerID] = job.ID
+			} else {
+				delete(wp.workerJobs, workerID)
+			}
+			wp.runningJobsMu.Unlock()
 			if err != nil {
 				wp.noteClaimError(workerID, err)
 			}
@@ -828,6 +849,9 @@ func (wp *WorkerPool) worker(id int) {
 		// Process the job
 		wp.activeWorkers.Add(1)
 		wp.processJob(workerID, job)
+		wp.runningJobsMu.Lock()
+		delete(wp.workerJobs, workerID)
+		wp.runningJobsMu.Unlock()
 		wp.activeWorkers.Add(-1)
 	}
 }

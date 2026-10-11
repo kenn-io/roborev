@@ -1403,17 +1403,26 @@ Conversion time grows with the size of the database; a database of tens of
 gigabytes can take several minutes. Until it finishes, the daemon does not
 accept requests.
 
-The conversion needs free disk space of about twice the size of the converted
-database: it writes the compressed copy before it frees the old columns, and
-`VACUUM` writes the database again. If the disk fills up or the conversion stops
-partway, the old copies stay in place and the next start repeats the conversion.
-If only `VACUUM` fails, the daemon logs the error and starts normally; the freed
-space stays inside the file and new jobs reuse it.
+The conversion writes compressed rows and a write-ahead log while the original
+data still exists. SQLite documents that
+[`VACUUM` can need up to twice the database file's size in free disk space](https://www.sqlite.org/lang_vacuum.html#how_vacuum_works).
+Do not estimate peak disk use from the final compressed size alone. If the
+conversion stops before the old columns are removed, their copies stay in place
+and the next start repeats the conversion. Once those columns are removed,
+`job_content` holds the complete payloads. If only `VACUUM` fails, the daemon
+logs the error and starts normally; the freed space stays inside the file and
+new jobs reuse it.
 
 The PostgreSQL schema is unchanged:
 
 - Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
     in PostgreSQL.
+- The upgrade queues every nonempty prompt eligible for sync from this machine
+    for another upload. Older clients could mark a rerun as synced while
+    PostgreSQL still held its first prompt. Retention keeps these prompts until
+    the new upload finishes. Imported jobs and fix jobs already applied or
+    rebased keep their sync markers so their review updates and comments can
+    still sync.
 - Upgraded machines push an empty review prompt. Older clients read only that
     column for a finished review, so they show an empty prompt for reviews from
     upgraded machines.
@@ -1831,7 +1840,16 @@ screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
 `help`, `log`, `tasks`, `worktree-confirm`, `patch`, `column-options`,
 `release-notes` and `rerun-agent`. Each screen counts once per install per UTC
 day across interfaces, including daemon restarts. Screen names contain no paths,
-job IDs, filter text or review contents.
+job IDs, filter text or review contents. Daily screen claims live in
+`telemetry-daily.json` beside the daemon database, wherever `--db` points, with
+a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
+file makes screen reports fail until it's removed. Stop the daemon before
+deleting it. Deletion resets file claims; existing SQLite claims remain
+effective through their recorded UTC dates. Counts mean the report was queued,
+not confirmed delivered to PostHog. The TUI retries a failed screen report on
+the next key or mouse input while that screen is showing. The browser reports
+the visible screen on every window focus and page change, and the daemon counts
+it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

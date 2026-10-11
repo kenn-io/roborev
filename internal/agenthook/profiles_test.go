@@ -22,12 +22,13 @@ func TestSelectProfilesAutoDetectsExecutableOrConfigDirectory(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("LOCALAPPDATA", filepath.Join(root, "local-app-data"))
 	for name, dir := range map[string]string{
-		"CODEX_HOME":        "codex",
-		"CLAUDE_CONFIG_DIR": "claude",
-		"COPILOT_HOME":      "copilot",
-		"GEMINI_CLI_HOME":   "gemini",
-		"HERMES_HOME":       "hermes",
-		"QWEN_HOME":         "qwen",
+		"CODEX_HOME":          "codex",
+		"CLAUDE_CONFIG_DIR":   "claude",
+		"COPILOT_HOME":        "copilot",
+		"GEMINI_CLI_HOME":     "gemini",
+		"HERMES_HOME":         "hermes",
+		"QWEN_HOME":           "qwen",
+		"PI_CODING_AGENT_DIR": "pi",
 	} {
 		t.Setenv(name, filepath.Join(root, "agent-homes", dir))
 	}
@@ -37,6 +38,9 @@ func TestSelectProfilesAutoDetectsExecutableOrConfigDirectory(t *testing.T) {
 		gemini += ".bat"
 	}
 	require.NoError(t, os.WriteFile(gemini, []byte("exit 0\n"), 0o755))
+	pi, err := kitagenthook.ConfigPath(kitagenthook.AgentPi)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(pi), 0o755))
 	t.Setenv("PATH", bin)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "agent-homes", "qwen"), 0o755))
 
@@ -64,6 +68,11 @@ func TestSelectProfilesAllUsesKitOrderThenGrok(t *testing.T) {
 		kitagenthook.AgentQwen,
 		AgentGrok,
 	}, agents)
+}
+
+func TestSelectProfilesRejectsUnsupportedAgent(t *testing.T) {
+	_, err := SelectProfiles("pi")
+	require.ErrorContains(t, err, "unsupported agent hook profile")
 }
 
 func TestSelectProfilesDoesNotTreatGrokAgentAliasAsCursor(t *testing.T) {

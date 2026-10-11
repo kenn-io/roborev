@@ -93,9 +93,10 @@ type Server struct {
 	socketActivated         bool // true if started via systemd socket activation
 	stopOnce                sync.Once
 	stopErr                 error
-	sweepMu                 sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepMu                 sync.Mutex         // protects sweepCancel and sweepDone
 	sweepCancel             context.CancelFunc // cancels the panel sweep goroutine on Stop
-	shutdownCh              chan struct{}      // closed when /api/shutdown is requested
+	sweepDone               chan struct{}
+	shutdownCh              chan struct{} // closed when /api/shutdown is requested
 	shutdownOnce            sync.Once
 	shutdownDrainMu         sync.Mutex
 	shutdownDraining        bool
@@ -512,8 +513,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.stopGoalWatcher()
+		s.workerPool.BeginStop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -522,29 +524,33 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) startPanelSweep(ctx context.Context) {
-	// Backstop for a missed worker release of a panel synthesis gate. Own the
-	// cancel so Stop halts the sweep even when Start received a context the
-	// caller never cancels (the worker pool and CI poller are likewise stopped
-	// explicitly in stopOnce0).
-	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	if s.sweepCancel != nil {
-		s.sweepCancel()
+		return
 	}
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepCancel = cancelSweep
-	s.sweepMu.Unlock()
-	go s.runPanelSweep(sweepCtx, panelSweepInterval)
-	// Retention is periodic maintenance too; it stops with the sweep.
-	go s.runRetention(sweepCtx, retentionInterval)
+	done := make(chan struct{})
+	s.sweepDone = done
+	go func() {
+		defer close(done)
+		var maintenance sync.WaitGroup
+		maintenance.Go(func() { s.runPanelSweep(sweepCtx, panelSweepInterval) })
+		maintenance.Go(func() { s.runRetention(sweepCtx, retentionInterval) })
+		maintenance.Wait()
+	}()
 }
 
 func (s *Server) stopPanelSweep() {
 	s.sweepMu.Lock()
-	sweepCancel := s.sweepCancel
+	cancel, done := s.sweepCancel, s.sweepDone
 	s.sweepCancel = nil
+	s.sweepDone = nil
 	s.sweepMu.Unlock()
-	if sweepCancel != nil {
-		sweepCancel()
+	if cancel != nil {
+		cancel()
+		<-done
 	}
 }
 
@@ -714,12 +720,12 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.BeginStop()
 	}
 
-	// Stop the panel sweep goroutine
-	s.stopPanelSweep()
 	s.stopGoalWatcher()
 
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
+
+	s.stopPanelSweep()
 
 	// Stop worker pool
 	s.workerPool.Stop()

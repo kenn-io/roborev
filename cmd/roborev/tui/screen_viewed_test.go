@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -17,7 +18,10 @@ import (
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
-type screenRecordingTransport struct{ screens []string }
+type screenRecordingTransport struct {
+	screens []string
+	fail    bool
+}
 
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Path == "/api/telemetry/events" {
@@ -29,22 +33,57 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 		}
 		s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
 	}
-	return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	status := http.StatusAccepted
+	if s.fail {
+		status = http.StatusServiceUnavailable
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+}
+
+func updateScreenTestModel(m *model, msg tea.Msg) {
+	result, cmd := m.Update(msg)
+	*m = result.(model)
+	for _, msg := range collectMsgs(cmd) {
+		if delivery, ok := msg.(screenDeliveryMsg); ok {
+			result, _ = m.Update(delivery)
+			*m = result.(model)
+		}
+	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestSplitReviewReportsScreenWithListFocus(t *testing.T) {
+func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	m := splitModel()
-	transport := &screenRecordingTransport{}
-	m.client.Transport = transport
-	result, cmd := m.Update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
-	got := result.(model)
-	require.Equal(t, viewQueue, got.currentView)
-	require.Equal(t, focusList, got.focus)
-	require.True(t, got.selectedReviewLoaded())
-	collectMsgs(cmd)
-	assert.Equal(t, []string{"review"}, transport.screens)
+	for _, tt := range []struct {
+		name, screen string
+		initial      bool
+	}{
+		{"initial queue", "queue", true}, {"help after toggle", "help", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+			transport := &screenRecordingTransport{fail: true}
+			m.client.Transport = transport
+			key := 'x'
+			if tt.initial {
+				updateScreenTestModel(&m, m.reportScreenViewed()())
+			} else {
+				key = '?'
+				updateScreenTestModel(&m, keyPressMsg(key))
+			}
+			transport.fail = false
+			updateScreenTestModel(&m, keyPressMsg(key))
+			if !tt.initial {
+				updateScreenTestModel(&m, keyPressMsg(key))
+			}
+			assert.Equal(t, []string{tt.screen, tt.screen}, transport.screens)
+			if tt.initial {
+				result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
+				m = result.(model)
+				assert.Contains(t, m.screensSent, tt.screen)
+			}
+		})
+	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -62,10 +101,8 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 		collectMsgs(cmd)
 		assert.Empty(t, transport.screens)
 		m = result.(model)
-		result, cmd = m.Update(keyPressMsg('x'))
-		collectMsgs(cmd)
+		updateScreenTestModel(&m, keyPressMsg('x'))
 		assert.ElementsMatch(t, []string{"queue", "review"}, transport.screens)
-		m = result.(model)
 		require.Equal(t, focusDetail, m.focus)
 		_, cmd = m.Update(keyPressMsg('x'))
 		collectMsgs(cmd)
@@ -91,16 +128,15 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		m := splitModel()
 		transport := &screenRecordingTransport{}
 		m.client.Transport = transport
-		update := func(msg tea.Msg) {
-			result, cmd := m.Update(msg)
-			m = result.(model)
-			collectMsgs(cmd)
-		}
-		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
-		update(keyPressMsg('j'))
+		updateScreenTestModel(&m, reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		require.Equal(t, viewQueue, m.currentView)
+		require.Equal(t, focusList, m.focus)
+		require.True(t, m.selectedReviewLoaded())
+		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
+		updateScreenTestModel(&m, keyPressMsg('j'))
 		require.Equal(t, []string{"queue"}, m.screensShown())
-		update(keyPressMsg('k'))
-		update(reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
+		updateScreenTestModel(&m, keyPressMsg('k'))
+		updateScreenTestModel(&m, reviewMsg{review: splitTestReview(), jobID: m.selectedJobID, follow: true})
 		require.Equal(t, []string{"queue", "review"}, m.screensShown())
 		assert.Equal(t, []string{"review"}, transport.screens)
 	})

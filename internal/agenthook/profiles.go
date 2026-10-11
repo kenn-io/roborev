@@ -38,6 +38,9 @@ func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {
 		if err != nil {
 			return nil, err
 		}
+		if _, supported := profileExecutables[agent]; !supported {
+			return nil, fmt.Errorf("unsupported agent hook profile %q", raw)
+		}
 		return []kitagenthook.Agent{agent}, nil
 	}
 
@@ -45,7 +48,9 @@ func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {
 	if raw == "all" {
 		agents := make([]kitagenthook.Agent, 0, len(profiles)+1)
 		for _, profile := range profiles {
-			agents = append(agents, profile.Agent)
+			if _, supported := profileExecutables[profile.Agent]; supported {
+				agents = append(agents, profile.Agent)
+			}
 		}
 		agents = append(agents, AgentGrok)
 		return agents, nil
@@ -53,7 +58,7 @@ func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {
 
 	agents := make([]kitagenthook.Agent, 0, len(profiles))
 	for _, profile := range profiles {
-		if profileInstalled(profile.Agent) {
+		if _, supported := profileExecutables[profile.Agent]; supported && profileInstalled(profile.Agent) {
 			agents = append(agents, profile.Agent)
 		}
 	}

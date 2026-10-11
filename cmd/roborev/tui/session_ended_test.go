@@ -3,6 +3,7 @@ package tui
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			db := testutil.OpenTestDB(t)
 			endpoint, messages := testutil.NewPostHogStub(t)
-			reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint})
+			reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			server := daemon.NewServer(db, &config.Config{}, "")

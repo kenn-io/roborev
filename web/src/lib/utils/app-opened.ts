@@ -80,12 +80,11 @@ function onVisibility(): void {
   }
 }
 
-function reportAppOpened(): boolean {
+function reportAppOpened(): void {
   const day = new Date().toISOString().slice(0, 10);
-  if (day === lastReportedDay) return false;
+  if (day === lastReportedDay) return;
   lastReportedDay = day;
   void postEvent("app_opened", { surface: "web" }).catch(() => undefined);
-  return true;
 }
 
 function postEvent(
@@ -116,7 +115,8 @@ export function reportScreenViewed(screen: Screen): void {
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
 function onFocus(): void {
   if (shellMounted) {
-    if (reportAppOpened() && currentScreen) reportScreenViewed(currentScreen());
+    reportAppOpened();
+    if (currentScreen) reportScreenViewed(currentScreen());
   } else focusPending = true;
 }
 

@@ -645,7 +645,8 @@ func (db *DB) claimJobAttempt(
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
-	result, err := conn.ExecContext(ctx, `
+	var claimedID int64
+	err = conn.QueryRowContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
 		    session_isolated = 0
@@ -661,18 +662,13 @@ func (db *DB) claimJobAttempt(
 			SELECT 1 FROM daemon_state
 			WHERE key IN (?, ?) AND value IN ('true', '1')
 		)
-	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey, shutdownDrainingStateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if we claimed anything
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if rowsAffected == 0 {
+		RETURNING id
+	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey, shutdownDrainingStateKey).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // No jobs available
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Now fetch the job we just claimed
@@ -684,10 +680,8 @@ func (db *DB) claimJobAttempt(
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
-		WHERE j.worker_id = ? AND j.status = 'running'
-		ORDER BY j.started_at DESC
-		LIMIT 1
-	`, workerID).Scan(jobScanDestinations(&job, &fields)...)
+		WHERE j.id = ?
+	`, claimedID).Scan(jobScanDestinations(&job, &fields)...)
 	if err != nil {
 		return nil, err
 	}
@@ -877,6 +871,36 @@ func (db *DB) ListRunningJobIDs() ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// RunningAttempt identifies a running job and the local worker that claimed it.
+type RunningAttempt struct {
+	JobID    int64
+	WorkerID string
+}
+
+// ListRunningAttemptsContext returns running jobs claimed by a local worker.
+// Rows without a worker ID were not claimed on this machine and are omitted.
+func (db *DB) ListRunningAttemptsContext(ctx context.Context) ([]RunningAttempt, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, worker_id FROM review_jobs
+		WHERE status = 'running' AND COALESCE(worker_id, '') <> ''
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attempts []RunningAttempt
+	for rows.Next() {
+		var attempt RunningAttempt
+		if err := rows.Scan(&attempt.JobID, &attempt.WorkerID); err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
 }
 
 // CountRunningJobsByID reports how many update-targeted rows still own a
@@ -1421,16 +1445,21 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
 func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	var result sql.Result
-	var err error
 	if workerID != "" {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?`,
-			now, errorMsg, now, jobID, workerID)
-	} else {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-			now, errorMsg, now, jobID)
+		return db.failJob(context.Background(), jobID, errorMsg, " AND worker_id = ?", workerID)
 	}
+	return db.failJob(context.Background(), jobID, errorMsg, "")
+}
+
+// FailJobAttempt fails only the running attempt with the given worker and start time.
+func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
+	return db.failJob(ctx, jobID, errorMsg, " AND worker_id = ? AND started_at = ?", workerID, startedAt)
+}
+
+func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
+	now := time.Now().Format(time.RFC3339)
+	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
+	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
 	if err != nil {
 		return false, err
 	}
@@ -2293,9 +2322,13 @@ func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (str
 }
 
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
+	return db.GetJobByIDContext(context.Background(), id)
+}
+
+func (db *DB) GetJobByIDContext(ctx context.Context, id int64) (*ReviewJob, error) {
 	var j ReviewJob
 	var fields reviewJobScanFields
-	err := db.QueryRow(`
+	err := db.QueryRowContext(ctx, `
 		SELECT `+jobSelectColumns(jobTextAll)+`
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -2307,7 +2340,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		return nil, err
 	}
 	applyReviewJobScan(&j, fields)
-	if err := db.attachExperimentAssignments(&j); err != nil {
+	if err := db.attachExperimentAssignmentsContext(ctx, &j); err != nil {
 		return nil, err
 	}
 
@@ -2776,11 +2809,15 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 // member failed or was canceled, so the synthesis job always runs and lands
 // a durable review — the parent never hangs.
 func (db *DB) MaybeReleasePanelSynthesis(panelRunUUID uuid.UUID) error {
+	return db.MaybeReleasePanelSynthesisContext(context.Background(), panelRunUUID)
+}
+
+func (db *DB) MaybeReleasePanelSynthesisContext(ctx context.Context, panelRunUUID uuid.UUID) error {
 	if panelRunUUID == uuid.Nil() {
 		return nil
 	}
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(ctx, `
 		UPDATE review_jobs
 		   SET claim_blocked = 0, updated_at = ?
 		 WHERE panel_run_uuid = ?
@@ -2805,7 +2842,11 @@ func (db *DB) MaybeReleasePanelSynthesis(panelRunUUID uuid.UUID) error {
 // These are the runs the safety sweep must release. Reuses the same
 // member-terminal predicate as MaybeReleasePanelSynthesis.
 func (db *DB) ListStuckPanelRuns() ([]uuid.UUID, error) {
-	rows, err := db.Query(`
+	return db.ListStuckPanelRunsContext(context.Background())
+}
+
+func (db *DB) ListStuckPanelRunsContext(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT panel_run_uuid FROM review_jobs s
 		WHERE s.panel_role = 'synthesis'
 		  AND s.claim_blocked = 1

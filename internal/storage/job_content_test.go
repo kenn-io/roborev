@@ -530,8 +530,9 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	}
 }
 
-func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
+func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 	t.Parallel()
+	assert := assert.New(t)
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
 	machine := testUUID("local-machine")
@@ -540,9 +541,9 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	synced := "2026-09-01T12:00:00Z"
 	insertSyncedJob := func(label string, owner uuid.UUID, jobPrompt, reviewPrompt string) int64 {
 		result, err := db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
-				source_machine_id, updated_at, synced_at)
-			VALUES (?, ?, 'a..b', 'codex', 'done', 'range', ?, ?, ?, ?)`,
-			testUUID(label), repo.ID, jobPrompt, owner, synced, synced)
+				source_machine_id, updated_at, synced_at, finished_at)
+			VALUES (?, ?, 'a..b', 'codex', 'done', 'range', ?, ?, ?, ?, ?)`,
+			testUUID(label), repo.ID, jobPrompt, owner, synced, synced, synced)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
 		require.NoError(t, err)
@@ -559,6 +560,20 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	// pushing the review, which held the only copy.
 	recovered := insertSyncedJob("recovered", machine, "", "only the review kept this prompt")
 	unchanged := insertSyncedJob("unchanged", machine, "job prompt", "job prompt with preamble")
+	// Older clients leave the first attempt's prompt in PostgreSQL. For an
+	// oversized rerun, only SQLite has the complete current prompt, and the
+	// review contains a file handoff whose snapshot no longer exists.
+	oversized := insertSyncedJob("oversized", machine, "complete rerun prompt",
+		"Read the complete task prompt from \"/tmp/snapshot/prompt.md\" and carry out its instructions. "+
+			"Read the file in full before starting.\n")
+	empty := insertSyncedJob("empty", machine, "", "")
+	var localFixes []int64
+	for _, status := range []string{"applied", "rebased"} {
+		id := insertSyncedJob(status, machine, "fix prompt", "fix result prompt")
+		_, err := db.Exec(`UPDATE review_jobs SET job_type = 'fix', status = ? WHERE id = ?`, status, id)
+		require.NoError(t, err)
+		localFixes = append(localFixes, id)
+	}
 	// A job pulled from another machine takes its review's prompt, but this
 	// machine never pushes it, so its sync marker must stay.
 	pulled := insertSyncedJob("pulled", testUUID("remote-machine"), "failed attempt prompt", "rerun prompt")
@@ -573,15 +588,48 @@ func TestMigrateJobContentMarksRecoveredPromptsForSync(t *testing.T) {
 	for _, job := range jobs {
 		prompts[job.ID] = job.Prompt
 	}
-	assert.Equal(t, map[int64]string{recovered: "only the review kept this prompt"}, prompts)
+	wantPrompts := map[int64]string{
+		recovered: "only the review kept this prompt",
+		unchanged: "job prompt",
+		oversized: "complete rerun prompt",
+	}
+	assert.Equal(wantPrompts, prompts)
+
+	cutoff := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	_, err = db.PruneJobPrompts(t.Context(), cutoff, true)
+	require.NoError(t, err)
+	for id, want := range wantPrompts {
+		job, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		assert.Equal(want, job.Prompt, "keep the complete prompt until it is pushed")
+	}
 
 	// A review is pushed only after its job, so the reviews of jobs with a
-	// sync marker go out now, and the recovered job's after its push.
+	// sync marker go out now; locally owned prompts are pushed first.
 	reviews, err := db.GetReviewsToSync(machine, 100)
 	require.NoError(t, err)
 	var reviewJobs []int64
 	for _, review := range reviews {
 		reviewJobs = append(reviewJobs, review.JobID)
 	}
-	assert.ElementsMatch(t, []int64{unchanged, pulled}, reviewJobs)
+	assert.ElementsMatch(append([]int64{empty, pulled}, localFixes...), reviewJobs)
+
+	// Applied and rebased fix states are local. Their jobs are not pushed
+	// again, but notes and review closures must keep syncing.
+	for _, id := range localFixes {
+		_, err := db.AddCommentToJob(id, "reviewer", "follow-up note")
+		require.NoError(t, err)
+	}
+	comments, err := db.GetCommentsToSync(machine, 100)
+	require.NoError(t, err)
+	assert.Len(comments, len(localFixes))
+
+	marks := make([]JobSyncMark, len(jobs))
+	for i, job := range jobs {
+		marks[i] = NewJobSyncMark(job)
+	}
+	require.NoError(t, db.MarkJobsSynced(marks))
+	removed, err := db.PruneJobPrompts(t.Context(), cutoff, true)
+	require.NoError(t, err)
+	assert.EqualValues(len(wantPrompts), removed, "retention resumes after the complete prompts are pushed")
 }

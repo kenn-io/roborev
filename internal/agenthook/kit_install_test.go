@@ -3,6 +3,7 @@ package agenthook
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,6 +80,21 @@ func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRunInstallAllInstallsSupportedProfiles(t *testing.T) {
+	for _, mcp := range []bool{false, true} {
+		t.Run(fmt.Sprint(mcp), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("LOCALAPPDATA", filepath.Join(home, "local"))
+			for _, name := range []string{"CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME", "GEMINI_CLI_HOME", "HERMES_HOME", "QWEN_HOME", "GROK_HOME", "PI_CODING_AGENT_DIR"} {
+				t.Setenv(name, "")
+			}
+			require.NoError(t, RunInstall(InstallOptions{Agent: "all", Executable: "/opt/bin/roborev", MCP: mcp}, &bytes.Buffer{}))
 		})
 	}
 }

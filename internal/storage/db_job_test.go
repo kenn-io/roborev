@@ -206,6 +206,35 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 	assert.Regexp(t, `\.\d{9}Z$`, startedAt)
 }
 
+func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/claim-newer-orphan", 2)
+	orphan, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, orphan)
+	require.Equal(t, jobs[0].ID, orphan.ID)
+	// A clock rollback leaves the orphan with a later start than the next claim.
+	_, err = db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		preciseTimestampAt(time.Now().Add(time.Hour)), orphan.ID,
+	)
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	assert.Equal(jobs[1].ID, claimed.ID)
+	var startedAt string
+	require.NoError(t, db.QueryRow(
+		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
+	).Scan(&startedAt))
+	assert.Equal(startedAt, claimed.StartedAtRaw)
+}
+
 func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/claim-hydration-rollback", "claim-hydration-rollback")
@@ -349,6 +378,85 @@ func TestFailJobOwnerScoped(t *testing.T) {
 
 	assert.Equal(t, JobStatusFailed, j.Status)
 	assert.Equal(t, "legit fail", j.Error)
+}
+
+func TestFailJobAttemptGuard(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	env := setupJobEnv(t, "/tmp/test-repo", "fail-attempt")
+	job, err := env.db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	for _, attempt := range []struct {
+		name      string
+		workerID  string
+		startedAt string
+	}{
+		{name: "wrong worker", workerID: "worker-b", startedAt: job.StartedAtRaw},
+		{name: "wrong attempt", workerID: job.WorkerID, startedAt: "2000-01-01T00:00:00Z"},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
+			updated, err := env.db.FailJobAttempt(context.Background(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
+			require.NoError(t, err)
+			require.False(t, updated)
+		})
+	}
+	updated, err := env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
+	require.NoError(t, err)
+	assert.True(updated)
+	failed, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(JobStatusFailed, failed.Status)
+	assert.Equal("failed attempt", failed.Error)
+	assert.NotNil(failed.FinishedAt)
+	updated, err = env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
+	require.NoError(t, err)
+	assert.False(updated)
+}
+
+func TestListRunningAttemptsOnlyReturnsLocalClaims(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/running-attempts", 3)
+	claimed, err := db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, jobs[0].ID, claimed.ID)
+	_, err = db.Exec(
+		`UPDATE review_jobs SET status = 'running', worker_id = NULL WHERE id = ?`, jobs[1].ID,
+	)
+	require.NoError(t, err)
+
+	attempts, err := db.ListRunningAttemptsContext(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, []RunningAttempt{{JobID: claimed.ID, WorkerID: "worker-a"}}, attempts)
+}
+
+func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, "/tmp/test-repo", "canceled-recovery")
+	job, err := env.db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = env.db.ListRunningAttemptsContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.GetJobByIDContext(ctx, job.ID)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.FailJobAttempt(ctx, job.ID, job.WorkerID, job.StartedAtRaw, "canceled failure")
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.ListStuckPanelRunsContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	err = env.db.MaybeReleasePanelSynthesisContext(ctx, *job.UUID)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.getExperimentAssignmentsContext(ctx, ReviewUnitJob, *job.UUID)
+	require.ErrorIs(t, err, context.Canceled)
+	current, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusRunning, current.Status)
 }
 
 func TestRetryJobOwnerScoped(t *testing.T) {

@@ -270,16 +270,6 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("ignores focus later on the same UTC day", async () => {
-    setup(() => "reviews");
-    focusWindow();
-    vi.setSystemTime(new Date("2026-03-10T20:00:00Z"));
-    focusWindow();
-    await settle();
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   test("posts again on the first focus of the next UTC day only", async () => {
     setup();
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
@@ -405,20 +395,20 @@ describe("setupAppOpenedReporting", () => {
       properties: { screen: "analytics", surface: "web" },
     });
   });
-  test("reports screen visits and repeats the visible screen on next-day focus", async () => {
+  test("reports page changes and focus while the browser clock stays on the same day", async () => {
     let screen: "reviews" | "analytics" = "reviews";
     const cleanup = appOpened.setupAppOpenedReporting(() => screen);
     cleanups.push(cleanup);
     appOpened.reportScreenViewed("reviews");
     screen = "analytics";
     appOpened.reportScreenViewed(screen);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     appOpened.reportScreenViewed("reviews");
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     const bodies = await Promise.all(
       fetchMock.mock.calls.map(async ([request]) =>
         JSON.parse(await request.text()),
