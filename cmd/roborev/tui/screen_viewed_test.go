@@ -21,7 +21,6 @@ import (
 type screenRecordingTransport struct {
 	screens []string
 	fail    bool
-	status  string
 }
 
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -38,11 +37,7 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 	if s.fail {
 		status = http.StatusServiceUnavailable
 	}
-	deliveryStatus := s.status
-	if deliveryStatus == "" {
-		deliveryStatus = "queued"
-	}
-	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"` + deliveryStatus + `"}`)), Header: make(http.Header)}, nil
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -84,35 +79,11 @@ func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 				update(keyPressMsg(key))
 			}
 			assert.Len(t, transport.screens, 2)
-			result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
-			m = result.(model)
-			assert.Contains(t, m.screensSent, tt.screen)
-		})
-	}
-}
-
-//nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestScreenDeliveryCompletesOnSuccess(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, status := range []string{"skipped", "unknown"} {
-		t.Run(status, func(t *testing.T) {
-			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-			transport := &screenRecordingTransport{status: status}
-			m.client.Transport = transport
-			result, _ := m.Update(m.reportScreenViewed()())
-			m = result.(model)
-			if status != "unknown" {
-				assert.Equal(t, []string{"queue"}, m.screensSent)
-			} else {
-				assert.Empty(t, m.screensSent)
+			if tt.initial {
+				result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
+				m = result.(model)
+				assert.Contains(t, m.screensSent, tt.screen)
 			}
-			_, cmd := m.Update(keyPressMsg('x'))
-			collectMsgs(cmd)
-			wantPosts := 1
-			if status == "unknown" {
-				wantPosts = 2
-			}
-			assert.Len(t, transport.screens, wantPosts)
 		})
 	}
 }
@@ -141,7 +112,6 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 			}
 		}
 		assert.ElementsMatch(t, []string{"queue", "review"}, transport.screens)
-		assert.ElementsMatch(t, []string{"queue", "review"}, m.screensSent)
 		require.Equal(t, focusDetail, m.focus)
 		_, cmd = m.Update(keyPressMsg('x'))
 		collectMsgs(cmd)

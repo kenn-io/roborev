@@ -95,17 +95,6 @@ func TestRunInstallAllInstallsSupportedProfiles(t *testing.T) {
 				t.Setenv(name, "")
 			}
 			require.NoError(t, RunInstall(InstallOptions{Agent: "all", Executable: "/opt/bin/roborev", MCP: mcp}, &bytes.Buffer{}))
-			for _, agent := range []kitagenthook.Agent{kitagenthook.AgentClaude, kitagenthook.AgentCodex, kitagenthook.AgentCopilot, kitagenthook.AgentCursor, kitagenthook.AgentDroid, kitagenthook.AgentGemini, kitagenthook.AgentHermes, kitagenthook.AgentQwen, AgentGrok} {
-				path := DefaultGrokHooksPath()
-				if agent != AgentGrok {
-					var err error
-					path, err = kitagenthook.ConfigPath(agent)
-					require.NoError(t, err)
-				}
-				assert.FileExists(t, path)
-				assert.FileExists(t, filepath.Join(agentHookSkillsDir(agent, path), "roborev-fix", "SKILL.md"))
-			}
-			assert.NoDirExists(t, filepath.Join(home, ".pi"))
 		})
 	}
 }

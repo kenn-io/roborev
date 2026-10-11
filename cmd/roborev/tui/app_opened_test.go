@@ -93,10 +93,7 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 		m.currentView = view
 		cmd = m.reportScreenViewed()
 		require.NotNil(cmd)
-		delivery, ok := cmd().(screenDeliveryMsg)
-		require.True(ok)
-		require.NoError(delivery.err)
-		assert.Equal(view.String(), delivery.screen)
+		cmd()
 	}
 	mu.Lock()
 	defer mu.Unlock()

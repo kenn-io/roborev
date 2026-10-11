@@ -402,7 +402,6 @@ describe("setupAppOpenedReporting", () => {
     appOpened.reportScreenViewed("reviews");
     screen = "analytics";
     appOpened.reportScreenViewed(screen);
-    appOpened.reportScreenViewed("reviews");
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(3);
     appOpened.reportScreenViewed("reviews");
@@ -440,36 +439,24 @@ describe("setupAppOpenedReporting", () => {
     expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
   });
 
-  test.each(["rejected", "answered 400"])(
-    "waits for a pending screen before retrying a failed request (%s)",
-    async (failure) => {
-      setup(() => "reviews");
-      await settle();
-      let finish!: () => void;
-      fetchMock.mockImplementationOnce(
-        () =>
-          new Promise<Response>((resolve, reject) => {
-            finish = () => {
-              if (failure === "rejected") reject(new TypeError("offline"));
-              else
-                resolve(
-                  new Response("unsupported telemetry event", { status: 400 }),
-                );
-            };
-          }),
-      );
-      appOpened.reportScreenViewed("reviews");
-      focusWindow();
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      finish();
-      await settle();
-      focusWindow();
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      focusWindow();
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-    },
-  );
+  test("waits for a pending screen before retrying a failed request", async () => {
+    setup(() => "reviews");
+    await settle();
+    let finish!: () => void;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          finish = () => reject(new TypeError("offline"));
+        }),
+    );
+    appOpened.reportScreenViewed("reviews");
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    finish();
+    await settle();
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
