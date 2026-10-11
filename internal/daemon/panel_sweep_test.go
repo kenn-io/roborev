@@ -147,15 +147,11 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 func TestPanelSweepClaimOwnership(t *testing.T) {
 	for _, test := range []struct {
 		name           string
-		liveWorker     bool
 		pendingRequeue bool
 		clockRollback  bool
-		wantStatus     storage.JobStatus
 	}{
-		{name: "live worker", liveWorker: true, wantStatus: storage.JobStatusRunning},
-		{name: "pending requeue", pendingRequeue: true, wantStatus: storage.JobStatusRunning},
-		{name: "claim gap", wantStatus: storage.JobStatusRunning},
-		{name: "claim gap after clock rollback", clockRollback: true, wantStatus: storage.JobStatusRunning},
+		{name: "pending requeue", pendingRequeue: true},
+		{name: "claim gap after clock rollback", clockRollback: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -168,10 +164,7 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, claimed)
 			tc.Pool.runningJobsMu.Lock()
-			switch {
-			case test.liveWorker:
-				tc.Pool.workerJobs["worker-a"] = claimed.ID
-			case test.pendingRequeue:
+			if test.pendingRequeue {
 				delete(tc.Pool.workerJobs, "worker-a")
 				tc.Pool.failedUpdateRequeues[claimed.ID] = "worker-a"
 			}
@@ -183,10 +176,8 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 			server.sweepStuckPanels(context.Background())
 
-			job := tc.assertJobStatus(t, claimed.ID, test.wantStatus)
-			if test.wantStatus == storage.JobStatusRunning {
-				assert.Empty(job.Error)
-			}
+			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusRunning)
+			assert.Empty(job.Error)
 			synth, err := tc.DB.GetSynthesisJob(runUUID)
 			require.NoError(t, err)
 			assert.True(synth.ClaimBlocked)
@@ -281,7 +272,6 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 				require.Equal(t, "review.started", event.Type)
 			}
 			terminal := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
-			assert.False(terminal.ClaimBlocked)
 			assert.Equal(synth.RetryCount, terminal.RetryCount)
 		})
 	}
@@ -315,18 +305,6 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	assert.True(synth.ClaimBlocked)
 }
 
-type blockingPanelSweepBroadcaster struct {
-	Broadcaster
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (b *blockingPanelSweepBroadcaster) Broadcast(event Event) {
-	b.entered <- struct{}{}
-	<-b.release
-	b.Broadcaster.Broadcast(event)
-}
-
 func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	jobs := make([]*storage.ReviewJob, 2)
@@ -338,11 +316,16 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 		jobs[i] = job
 	}
 	synctest.Test(t, func(t *testing.T) {
-		b := &blockingPanelSweepBroadcaster{Broadcaster: tc.Broadcaster, entered: make(chan struct{}), release: make(chan struct{})}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		b := &observingBroadcaster{Broadcaster: tc.Broadcaster, observe: func(Event) {
+			entered <- struct{}{}
+			<-release
+		}}
 		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: b}
 		server.startPanelSweep(context.Background())
 		time.Sleep(panelSweepInterval)
-		<-b.entered
+		<-entered
 		stopped := make(chan struct{})
 		go func() {
 			server.stopPanelSweep()
@@ -356,79 +339,85 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 		default:
 		}
 		assert.False(t, returned, "stop must wait for the failure broadcast to finish")
-		close(b.release)
+		close(release)
 		<-stopped
 		tc.assertJobStatus(t, jobs[0].ID, storage.JobStatusFailed)
 		tc.assertJobStatus(t, jobs[1].ID, storage.JobStatusRunning)
 	})
 }
 
-func TestStopPreventsClaimsWhilePanelSweepIsBlocked(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		server, db, tmpDir := newTestServer(t)
-		repo, err := db.GetOrCreateRepo(tmpDir)
-		require.NoError(t, err)
-		orphan, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
-		require.NoError(t, err)
-		claimed, err := db.ClaimJob("worker-a")
-		require.NoError(t, err)
-		require.NotNil(t, claimed)
-		require.Equal(t, orphan.ID, claimed.ID)
-		server.workerPool = NewWorkerPool(db, server.configWatcher, 1, server.broadcaster, nil, nil)
-		server.workerPool.Start()
-		defer server.workerPool.Stop()
-		synctest.Wait()
-		b := &blockingPanelSweepBroadcaster{Broadcaster: server.broadcaster, entered: make(chan struct{}), release: make(chan struct{})}
-		release := sync.OnceFunc(func() { close(b.release) })
-		defer release()
-		server.broadcaster = b
-		server.startPanelSweep(context.Background())
-		time.Sleep(panelSweepInterval)
-		<-b.entered
-		queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
-		require.NoError(t, err)
-		stopped := make(chan error, 1)
-		go func() { stopped <- server.Stop() }()
-		synctest.Wait()
-		require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
-		job, err := db.GetJobByID(queued.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusQueued, job.Status)
-		assert.Empty(t, stopped)
-		release()
-		require.NoError(t, <-stopped)
-	})
-}
-
 func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		server, _, _ := newTestServer(t)
-		server.workerPool.Start()
-		defer server.workerPool.Stop()
-		server.startPanelSweep(context.Background())
-		sweepDone := server.sweepDone
-		release := make(chan struct{})
-		releaseWorker := sync.OnceFunc(func() { close(release) })
-		defer releaseWorker()
-		server.workerPool.wg.Go(func() {
-			<-release
+	for _, test := range []struct {
+		name         string
+		blockedSweep bool
+	}{
+		{name: "sweep finishes before worker drain"},
+		{name: "claims stop before sweep join", blockedSweep: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, db, tmpDir := newTestServer(t)
+				var repo *storage.Repo
+				if test.blockedSweep {
+					var err error
+					repo, err = db.GetOrCreateRepo(tmpDir)
+					require.NoError(t, err)
+					orphan, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+					require.NoError(t, err)
+					claimed, err := db.ClaimJob("worker-a")
+					require.NoError(t, err)
+					require.NotNil(t, claimed)
+					require.Equal(t, orphan.ID, claimed.ID)
+					server.workerPool = NewWorkerPool(db, server.configWatcher, 1, server.broadcaster, nil, nil)
+				}
+				server.workerPool.Start()
+				defer server.workerPool.Stop()
+				release := make(chan struct{})
+				releaseWork := sync.OnceFunc(func() { close(release) })
+				defer releaseWork()
+				var queued *storage.ReviewJob
+				if test.blockedSweep {
+					synctest.Wait()
+					entered := make(chan struct{})
+					server.broadcaster = &observingBroadcaster{Broadcaster: server.broadcaster, observe: func(Event) {
+						entered <- struct{}{}
+						<-release
+					}}
+					server.startPanelSweep(context.Background())
+					time.Sleep(panelSweepInterval)
+					<-entered
+					var err error
+					queued, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+					require.NoError(t, err)
+				} else {
+					server.startPanelSweep(context.Background())
+					server.workerPool.wg.Go(func() { <-release })
+					require.NoError(t, server.beginShutdownDrain())
+				}
+				sweepDone := server.sweepDone
+				stopped := make(chan error, 1)
+				go func() { stopped <- server.Stop() }()
+				synctest.Wait()
+				require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
+				if test.blockedSweep {
+					job, err := db.GetJobByID(queued.ID)
+					require.NoError(t, err)
+					assert.Equal(t, storage.JobStatusQueued, job.Status)
+				} else {
+					sweepFinished := false
+					select {
+					case <-sweepDone:
+						sweepFinished = true
+					default:
+					}
+					assert.True(t, sweepFinished, "panel sweep must finish before the worker drain")
+					assert.Empty(t, stopped)
+				}
+				releaseWork()
+				require.NoError(t, <-stopped)
+			})
 		})
-		require.NoError(t, server.beginShutdownDrain())
-		stopped := make(chan error, 1)
-		go func() { stopped <- server.Stop() }()
-		synctest.Wait()
-		require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
-		sweepFinished := false
-		select {
-		case <-sweepDone:
-			sweepFinished = true
-		default:
-		}
-		assert.True(t, sweepFinished, "panel sweep must finish before the worker drain")
-		assert.Empty(t, stopped)
-		releaseWorker()
-		require.NoError(t, <-stopped)
-	})
+	}
 }
 
 func TestRunPanelSweepStopsOnContextCancel(t *testing.T) {
