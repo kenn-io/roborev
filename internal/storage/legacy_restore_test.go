@@ -74,8 +74,8 @@ func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 	env := setupJobEnv(t, t.TempDir(), "sync-head")
 	setStatus(t, env.db, env.job.ID, JobStatusDone)
 	incoming := PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID),
-		UUID:          testUUID("legacy-sync-document"), JobUUID: *env.job.UUID, Agent: "test", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID), JobSourceMachineID: storedJobSourceMachineID(t, env.db, env.job.ID),
+		UUID: testUUID("legacy-sync-document"), JobUUID: *env.job.UUID, Agent: "test", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"The write loses data.","recorded_verdict":null}}`),
 	}
 	require.NoError(t, env.db.UpsertPulledReview(incoming))

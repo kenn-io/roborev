@@ -1433,8 +1433,10 @@ clients refuse this newer schema.
     current review, and an older attempt that finishes later cannot replace a
     newer attempt's output. Reruns also update the agent and start time on other
     machines. A rerun sorts after its predecessor even when this machine's clock
-    is behind. If sync imports a newer attempt while a local agent is running,
-    the daemon cancels the old agent and keeps its remaining writes and
+    is behind. If two machines rerun the same job with identical enqueue times,
+    the producing machine ID breaks the tie so both machines keep the same
+    attempt and review. If sync imports a newer attempt while a local agent is
+    running, the daemon cancels the old agent and keeps its remaining writes and
     completion actions from changing the imported result.
 - Historical review prompts remain available after upgrading the mirror. For
     completed review and range jobs, the current historical review supplies the

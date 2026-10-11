@@ -24,7 +24,7 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 		job    uuid.UUID
 		status string
 	}{{completed, "done"}, {failed, "failed"}, {archived, "done"}} {
-		createTestJob(t, pool.Pool(), TestJobOpts{UUID: row.job, RepoID: repoID, CommitID: commitID, Status: row.status, EnqueuedAt: attempt})
+		createTestJob(t, pool.Pool(), TestJobOpts{UUID: row.job, RepoID: repoID, CommitID: commitID, Status: row.status, EnqueuedAt: attempt, SourceMachineID: defaultTestMachineID})
 	}
 	for i, row := range []struct{ review, job uuid.UUID }{{oldReview, completed}, {currentReview, completed}, {failedReview, failed}} {
 		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, structured_output, updated_by_machine_id, created_at)
@@ -55,8 +55,10 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 	require.NoError(t, pool.EnsureSchema(ctx))
 	for _, id := range []uuid.UUID{currentReview, archivedReview} {
 		var producing time.Time
-		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_enqueued_at FROM reviews WHERE uuid = $1`, id).Scan(&producing))
+		var owner uuid.UUID
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&producing, &owner))
 		assert.Equal(attempt, producing.UTC())
+		assert.Equal(defaultTestMachineID, owner)
 	}
 	for _, id := range []uuid.UUID{oldReview, failedReview} {
 		var producing *time.Time
@@ -71,13 +73,16 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 	assert.NotEmpty(archiveAttempt)
 	// Restoring this archive after a newer attempt must retain its original
 	// identity. Normal opens must never repeat the historical backfill.
-	_, err = pool.Pool().Exec(ctx, `UPDATE review_jobs SET enqueued_at = $1, status = 'done'`, attempt.Add(time.Hour))
+	_, err = pool.Pool().Exec(ctx, `UPDATE review_jobs SET enqueued_at = $1, source_machine_id = $2, status = 'done'`, attempt.Add(time.Hour), uuid.New())
 	require.NoError(t, err)
 	_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, archivedReview)
 	require.NoError(t, err)
 	_, err = pool.Pool().Exec(ctx, `UPDATE legacy_reviews SET resolved_at = NULL WHERE uuid = $1`, archivedReview)
 	require.NoError(t, err)
 	require.NoError(t, pool.EnsureSchema(ctx))
+	var restoredOwner uuid.UUID
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_source_machine_id FROM reviews WHERE uuid = $1`, archivedReview).Scan(&restoredOwner))
+	assert.Equal(defaultTestMachineID, restoredOwner)
 	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{completed, failed, archived}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(pulled)

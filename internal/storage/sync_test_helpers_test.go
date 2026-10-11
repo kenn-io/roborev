@@ -216,3 +216,10 @@ func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
 func openRawDB(dbPath string) (*sql.DB, error) {
 	return sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 }
+
+func storedJobSourceMachineID(t *testing.T, db *DB, jobID int64) uuid.UUID {
+	t.Helper()
+	var owner uuid.UUID
+	require.NoError(t, db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID).Scan(&owner))
+	return owner
+}

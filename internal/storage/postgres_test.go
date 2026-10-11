@@ -1129,7 +1129,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 	reviews := []SyncableReview{
 		{
 			UUID:    uuid.New(),
-			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
+			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
 			Output:             "test output 1",
 			Closed:             false,
@@ -1142,7 +1142,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 		},
 		{
 			UUID:    uuid.New(),
-			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
+			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
 			Output:             "test output 2",
 			Closed:             true,
@@ -1188,7 +1188,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 		reviews := []SyncableReview{
 			{
 				UUID:    validReviewUUID,
-				JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), // Valid FK
+				JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID), // Valid FK
 				Agent:              "test",
 				Output:             "output",
 				StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),

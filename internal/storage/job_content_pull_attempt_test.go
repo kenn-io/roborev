@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -99,7 +100,7 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				// older job attempt. It must not replace or resurrect a review.
 				oldReview := PulledReview{
 					UUID: testUUID("old-remote-review"), JobUUID: remote.UUID, Agent: "test",
-					JobPrompt: remote.Prompt, JobEnqueuedAt: remote.EnqueuedAt,
+					JobPrompt: remote.Prompt, JobEnqueuedAt: remote.EnqueuedAt, JobSourceMachineID: remote.SourceMachineID,
 					StructuredOutput: reviewFixtureJSON("Remote result."),
 					CreatedAt:        remote.EnqueuedAt, UpdatedAt: time.Now().Add(time.Hour),
 					UpdatedByMachineID: remote.SourceMachineID,
@@ -128,7 +129,7 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 					// PostgreSQL drops its sub-microsecond timestamp digits.
 					changed, err = db.upsertPulledReview(PulledReview{
 						UUID: *review.UUID, JobUUID: remote.UUID, Agent: "test", Closed: true,
-						JobPrompt: "local rerun prompt", JobEnqueuedAt: before.EnqueuedAt.Truncate(time.Microsecond),
+						JobPrompt: "local rerun prompt", JobEnqueuedAt: before.EnqueuedAt.Truncate(time.Microsecond), JobSourceMachineID: *before.SourceMachineID,
 						StructuredOutput: reviewFixtureJSON("Local rerun result."),
 						CreatedAt:        review.CreatedAt, UpdatedAt: time.Now().Add(time.Hour),
 						UpdatedByMachineID: remote.SourceMachineID,
@@ -173,7 +174,7 @@ func TestPulledContentAcceptsNewerRemoteAttempt(t *testing.T) {
 
 	review := PulledReview{
 		UUID: testUUID("remote-rerun-review"), JobUUID: remote.UUID, Agent: "test",
-		JobPrompt: "complete second prompt", JobEnqueuedAt: remote.EnqueuedAt,
+		JobPrompt: "complete second prompt", JobEnqueuedAt: remote.EnqueuedAt, JobSourceMachineID: remote.SourceMachineID,
 		StructuredOutput: reviewFixtureJSON("No issues found."),
 		CreatedAt:        remote.EnqueuedAt, UpdatedAt: remote.UpdatedAt.Add(time.Second),
 		UpdatedByMachineID: remote.SourceMachineID,
@@ -211,9 +212,80 @@ func TestReviewAttemptRepairWithinSameSecond(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, reviews, 1)
 		assert.True(t, reviews[0].MetadataOnly)
-		require.NoError(t, env.db.MarkReviewsSynced([]int64{reviews[0].ID}))
+		require.NoError(t, env.db.MarkReviewsSynced(reviews[:1]))
 		reviews, err = env.db.GetReviewsToSync(machine, 10)
 		require.NoError(t, err)
 		assert.Empty(t, reviews)
 	})
+}
+
+func TestNewerAttemptReplacesLaterAppliedState(t *testing.T) {
+	t.Parallel()
+	for _, status := range []JobStatus{JobStatusApplied, JobStatusRebased} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			env := setupJobEnv(t, t.TempDir(), "applied-before-pull")
+			oldTime := env.job.EnqueuedAt
+			_, err := env.db.Exec(`UPDATE review_jobs SET job_type = 'fix', status = ?, updated_at = ? WHERE id = ?`, status, preciseTimestampAt(oldTime.Add(2*time.Hour)), env.job.ID)
+			require.NoError(t, err)
+			incoming := PulledJob{
+				UUID: *env.job.UUID, SourceMachineID: testUUID("new-executor"), GitRef: env.job.GitRef,
+				Agent: "test", JobType: JobTypeFix, Status: "done", Prompt: "new fix prompt",
+				EnqueuedAt: oldTime.Add(time.Hour), UpdatedAt: oldTime.Add(time.Hour),
+			}
+			require.NoError(t, env.db.UpsertPulledJob(incoming, env.repo.ID, nil))
+			require.NoError(t, env.db.UpsertPulledReview(PulledReview{
+				UUID: testUUID("new-fix-review"), JobUUID: incoming.UUID, Agent: "test", Output: "New fix result.",
+				JobEnqueuedAt: incoming.EnqueuedAt, JobSourceMachineID: incoming.SourceMachineID,
+				CreatedAt: incoming.UpdatedAt, UpdatedAt: incoming.UpdatedAt, UpdatedByMachineID: incoming.SourceMachineID,
+			}))
+			current, err := env.db.GetJobByID(env.job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, JobStatusDone, current.Status)
+			assert.Equal(t, "new fix prompt", current.Prompt)
+			review, err := env.db.GetReviewByJobID(env.job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "New fix result.", review.Output)
+		})
+	}
+}
+
+func TestReviewAcknowledgmentKeepsReplacementAndEditsPending(t *testing.T) {
+	t.Parallel()
+	for _, rerun := range []bool{true, false} {
+		t.Run(map[bool]string{true: "rerun reuses numeric ID", false: "closure in same clock tick"}[rerun], func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				job := h.createCompletedJob("review-acknowledgment")
+				require.NoError(t, h.db.MarkJobSynced(job.ID))
+				pushed, err := h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, pushed, 1)
+				if rerun {
+					require.NoError(t, h.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
+					claimJob(t, h.db, "rerun-worker")
+					require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "rerun prompt", "New result."))
+					require.NoError(t, h.db.MarkJobSynced(job.ID))
+					current, err := h.db.GetReviewByJobID(job.ID)
+					require.NoError(t, err)
+					require.Equal(t, pushed[0].ID, current.ID)
+					require.NotEqual(t, pushed[0].UUID, *current.UUID)
+				} else {
+					require.NoError(t, h.db.MarkReviewClosed(pushed[0].ID, true))
+				}
+				require.NoError(t, h.db.MarkReviewsSynced(pushed))
+				var mark sql.NullString
+				require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM reviews WHERE job_id = ?`, job.ID).Scan(&mark))
+				assert.False(t, mark.Valid, "the old upload must not acknowledge the new state")
+				pending, err := h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
+				require.NoError(t, h.db.MarkReviewsSynced(pending))
+				pending, err = h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				assert.Empty(t, pending)
+			})
+		})
+	}
 }

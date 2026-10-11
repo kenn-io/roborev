@@ -125,3 +125,68 @@ func TestIntegrationReviewWaitsForProducingAttempt(t *testing.T) { //nolint:para
 	require.NoError(t, err)
 	assert.Equal(t, "Current review.", review.StructuredOutput["summary"])
 }
+
+func TestIntegrationConcurrentRerunsWithTiedTimes(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	for _, winnerFirst := range []bool{true, false} {
+		t.Run(map[bool]string{true: "winner uploads first", false: "winner uploads last"}[winnerFirst], func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			a := env.setupNode("source", "tied-attempt-repository", "1h")
+			b := env.setupNode("rerun-one", "tied-attempt-repository", "1h")
+			c := env.setupNode("rerun-two", "tied-attempt-repository", "1h")
+			job, _ := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "original prompt", "Original result.")
+			_, err := a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+			require.NoError(t, err)
+			for _, node := range []testNode{a, b, c} {
+				_, err := node.Worker.SyncNow()
+				require.NoError(t, err)
+			}
+			ownerB, err := b.DB.GetMachineID()
+			require.NoError(t, err)
+			ownerC, err := c.DB.GetMachineID()
+			require.NoError(t, err)
+			winner, loser := b, c
+			if ownerB.Compare(ownerC) < 0 {
+				winner, loser = c, b
+			}
+			var attempts []time.Time
+			for i, node := range []testNode{winner, loser} {
+				var id int64
+				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				label := []string{"Winning result.", "Losing result."}[i]
+				startImportedAttempt(t, node, id, label)
+				require.NoError(t, node.DB.CompleteJobResult(id, "test", ReviewCompletion{StructuredOutput: reviewFixtureJSON(label)}))
+				current, err := node.DB.GetJobByID(id)
+				require.NoError(t, err)
+				attempts = append(attempts, current.EnqueuedAt)
+			}
+			require.Equal(t, attempts[0], attempts[1], "both lagging clocks allocate the same next microsecond")
+			order := []testNode{loser, winner}
+			if winnerFirst {
+				order = []testNode{winner, loser}
+			}
+			for _, node := range order {
+				_, err := node.Worker.SyncNow()
+				require.NoError(t, err)
+			}
+			for range 2 {
+				for _, node := range []testNode{a, b, c} {
+					_, err := node.Worker.SyncNow()
+					require.NoError(t, err)
+				}
+			}
+			winnerID, err := winner.DB.GetMachineID()
+			require.NoError(t, err)
+			for _, node := range []testNode{a, b, c} {
+				var id int64
+				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				current, err := node.DB.GetJobByID(id)
+				require.NoError(t, err)
+				assert.Equal(t, winnerID, *current.SourceMachineID)
+				assert.Equal(t, "Winning result.", current.Prompt)
+				review, err := node.DB.GetReviewByJobID(id)
+				require.NoError(t, err)
+				assert.Equal(t, "Winning result.", review.StructuredOutput["summary"])
+			}
+		})
+	}
+}

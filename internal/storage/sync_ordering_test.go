@@ -103,7 +103,7 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
 
 	err = h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt:      storedJobEnqueuedAt(t, h.db, job.ID),
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              review.Agent,
@@ -224,14 +224,7 @@ func TestBatchMarkSynced(t *testing.T) {
 
 		assert.Len(t, reviews, 3)
 
-		// Mark all 3 as synced
-		reviewIDs := make([]int64, len(reviews))
-		for i, r := range reviews {
-			reviewIDs[i] = r.ID
-		}
-		if err := h.db.MarkReviewsSynced(reviewIDs); err != nil {
-			require.NoError(t, err, "MarkReviewsSynced failed: %v")
-		}
+		require.NoError(t, h.db.MarkReviewsSynced(reviews))
 
 		// Verify no reviews left to sync (for synced jobs)
 		reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
@@ -268,7 +261,7 @@ func TestBatchMarkSynced(t *testing.T) {
 		if err := h.db.MarkJobsSynced([]JobSyncMark{}); err != nil {
 			require.NoError(t, err)
 		}
-		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
+		if err := h.db.MarkReviewsSynced(nil); err != nil {
 			require.NoError(t, err)
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
@@ -425,6 +418,20 @@ func TestMarkJobsSyncedSkipsRowWithChangedAttemptMarkers(t *testing.T) {
 			name: "agent_invoked changed",
 			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
 				_, err := h.db.Exec(`UPDATE review_jobs SET agent_invoked = 0 WHERE id = ?`, jobID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "enqueue time changed",
+			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
+				_, err := h.db.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), jobID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "producing machine changed",
+			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
+				_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, testUUID("other-executor"), jobID)
 				require.NoError(t, err)
 			},
 		},
@@ -595,7 +602,7 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	setStatus(t, h.db, job.ID, JobStatusDone)
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt:      storedJobEnqueuedAt(t, h.db, job.ID),
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("No issues found."),
 		UUID:               testUUID("stored-review-verdict"),
 		JobUUID:            *job.UUID,
@@ -619,8 +626,8 @@ func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	setStatus(t, h.db, job.ID, JobStatusDone)
 	const prose = "I am unable to read the diff."
 	incoming := PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
-		UUID:          testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
+		UUID: testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
 		Agent: "test", Output: prose,
 		VerdictBool: new(false), UpdatedByMachineID: testUUID("remote-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -644,8 +651,8 @@ func TestUpsertPulledReviewDoesNotReplaceJSONWithMarkdown(t *testing.T) {
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
-		UUID:          *review.UUID, JobUUID: *job.UUID, Agent: "test",
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
+		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
 		Output: "Old Markdown", CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
 		UpdatedByMachineID: testUUID("remote-machine"),
 	}))
@@ -839,8 +846,8 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 	setStatus(t, h.db, job.ID, JobStatusDone)
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
-		UUID:          testUUID("task-pulled-review"), JobUUID: *job.UUID,
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
+		UUID: testUUID("task-pulled-review"), JobUUID: *job.UUID,
 		Agent: "test", Output: "Task done. No issues found.",
 		VerdictBool: new(true), UpdatedByMachineID: testUUID("task-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),

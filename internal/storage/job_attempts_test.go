@@ -70,3 +70,55 @@ func TestJobAttemptPromptRequiresClaimIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "current prompt", current.Prompt)
 }
+
+func TestPulledCanceledAttemptReleasesUnregisteredClaim(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, t.TempDir(), "unregistered-claim")
+	job := claimJob(t, env.db, "old-worker")
+	require.NoError(t, env.db.UpsertPulledJob(PulledJob{
+		UUID: *job.UUID, SourceMachineID: testUUID("new-owner"), GitRef: job.GitRef,
+		Agent: "test", JobType: job.JobType, Status: "canceled",
+		EnqueuedAt: job.EnqueuedAt.Add(time.Hour), UpdatedAt: time.Now(),
+	}, job.RepoID, job.CommitID))
+	current, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, current.WorkerID)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err = env.db.StartJobAttempt(ctx, job, "old-worker", cancel)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	require.NoError(t, env.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
+}
+
+func TestJobAttemptObservesCancelWhileWaitingForCleanup(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, t.TempDir(), "waiting-claim")
+	job := claimJob(t, env.db, "old-worker")
+	oldCtx, oldCancel := context.WithCancel(t.Context())
+	defer oldCancel()
+	releaseOld, err := env.db.StartJobAttempt(oldCtx, job, "old-worker", oldCancel)
+	require.NoError(t, err)
+	changed, err := env.db.FailoverJob(job.ID, "old-worker", "test", "")
+	require.NoError(t, err)
+	require.True(t, changed)
+	next := claimJob(t, env.db, "new-worker")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	type registration struct {
+		release func()
+		err     error
+	}
+	registered := make(chan registration, 1)
+	go func() {
+		release, err := env.db.StartJobAttempt(ctx, next, "new-worker", cancel)
+		registered <- registration{release, err}
+	}()
+	require.NoError(t, env.db.CancelJob(job.ID))
+	// The pool still has the previous worker's handler during cleanup.
+	oldCancel()
+	releaseOld()
+	result := <-registered
+	require.NoError(t, result.err)
+	result.release()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+}

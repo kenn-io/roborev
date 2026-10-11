@@ -36,13 +36,16 @@ func (db *DB) StartJobAttempt(ctx context.Context, job *ReviewJob, workerID stri
 				return nil, ctx.Err()
 			}
 		}
-		current, err := db.isCurrentJobAttempt(job, workerID)
-		if err != nil || !current {
+		status, err := db.jobAttemptStatus(job, workerID)
+		if err != nil || status == "" {
 			db.attempts.mu.Unlock()
 			if err != nil {
 				return nil, err
 			}
 			return nil, sql.ErrNoRows
+		}
+		if status == JobStatusCanceled {
+			cancel()
 		}
 		attempt := &activeJobAttempt{cancel: cancel, done: make(chan struct{})}
 		if db.attempts.active == nil {
@@ -59,13 +62,24 @@ func (db *DB) StartJobAttempt(ctx context.Context, job *ReviewJob, workerID stri
 	}
 }
 
-func (db *DB) isCurrentJobAttempt(job *ReviewJob, workerID string) (bool, error) {
+func (db *DB) jobAttemptStatus(job *ReviewJob, workerID string) (JobStatus, error) {
 	var enqueuedAt string
-	err := db.QueryRow(`SELECT enqueued_at FROM review_jobs WHERE id = ? AND status IN ('running', 'canceled') AND worker_id = ?`, job.ID, workerID).Scan(&enqueuedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+	var status JobStatus
+	owner := ""
+	if job.SourceMachineID != nil {
+		owner = job.SourceMachineID.String()
 	}
-	return err == nil && parseSQLiteTime(enqueuedAt).Equal(job.EnqueuedAt), err
+	err := db.QueryRow(`SELECT enqueued_at, status FROM review_jobs WHERE id = ? AND status IN ('running', 'canceled') AND worker_id = ? AND COALESCE(source_machine_id, '') = ? COLLATE NOCASE AND COALESCE(started_at, '') = ?`, job.ID, workerID, owner, job.StartedAtRaw).Scan(&enqueuedAt, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !parseSQLiteTime(enqueuedAt).Equal(job.EnqueuedAt) {
+		return "", nil
+	}
+	return status, nil
 }
 
 // RunJobAttempt runs a worker transition only while its claim is current.
@@ -74,8 +88,8 @@ func (db *DB) isCurrentJobAttempt(job *ReviewJob, workerID string) (bool, error)
 func (db *DB) RunJobAttempt(job *ReviewJob, workerID string, transition func()) (bool, error) {
 	db.attempts.mu.RLock()
 	defer db.attempts.mu.RUnlock()
-	current, err := db.isCurrentJobAttempt(job, workerID)
-	if err != nil || !current {
+	status, err := db.jobAttemptStatus(job, workerID)
+	if err != nil || status == "" {
 		return false, err
 	}
 	transition()

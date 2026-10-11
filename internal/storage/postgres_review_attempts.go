@@ -22,7 +22,7 @@ func (p *PgPool) migrateReviewAttempts(ctx context.Context) error {
 		if version >= 24 {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `UPDATE reviews r SET job_enqueued_at = j.enqueued_at
+		if _, err := tx.Exec(ctx, `UPDATE reviews r SET job_enqueued_at = j.enqueued_at, job_source_machine_id = j.source_machine_id
 			FROM review_jobs j WHERE r.job_uuid = j.uuid AND r.job_enqueued_at IS NULL
 			AND j.status IN ('done', 'applied', 'rebased')
 			AND NOT EXISTS (SELECT 1 FROM reviews newer WHERE newer.job_uuid = r.job_uuid
@@ -30,7 +30,7 @@ func (p *PgPool) migrateReviewAttempts(ctx context.Context) error {
 			return fmt.Errorf("v24 migration (backfill review attempt): %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE legacy_reviews l
-			SET record = l.record || jsonb_build_object('job_enqueued_at', r.job_enqueued_at)
+			SET record = l.record || jsonb_build_object('job_enqueued_at', r.job_enqueued_at, 'job_source_machine_id', r.job_source_machine_id)
 			FROM reviews r WHERE l.uuid = r.uuid AND r.job_enqueued_at IS NOT NULL`); err != nil {
 			return fmt.Errorf("v24 migration (archive review attempt): %w", err)
 		}

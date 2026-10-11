@@ -444,6 +444,7 @@ type SyncableJob struct {
 	Agentic               bool
 	AgentInvoked          bool
 	EnqueuedAt            time.Time
+	EnqueuedAtRaw         string
 	StartedAt             *time.Time
 	FinishedAt            *time.Time
 	Prompt                string
@@ -531,6 +532,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			j.DirtyFiles = decodeDirtyFiles(dirtyFiles.String)
 		}
 		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
+		j.EnqueuedAtRaw = enqueuedAt
 		if startedAt != "" {
 			t := parseSQLiteTime(startedAt)
 			if !t.IsZero() {
@@ -567,18 +569,20 @@ func (db *DB) MarkJobSynced(jobID int64) error {
 // the exact terminal attempt that was pushed. MarkJobsSynced restores synced_at
 // only when the row still matches all of them.
 type JobSyncMark struct {
-	ID            int64
-	UpdatedAt     string // raw updated_at string from the pushed snapshot
-	TokenUsage    string // token_usage from the pushed snapshot ("" when NULL)
-	Status        string // status from the pushed snapshot (always terminal)
-	SessionID     string // session_id from the pushed snapshot ("" when NULL)
-	AgentInvoked  bool   // agent_invoked from the pushed snapshot
-	Agent         string // agent from the pushed snapshot
-	Model         string // model from the pushed snapshot ("" when NULL)
-	Provider      string // provider from the pushed snapshot ("" when NULL)
-	Error         string // error from the pushed snapshot ("" when NULL)
-	StartedAtRaw  string // raw started_at string from the pushed snapshot ("" when NULL)
-	FinishedAtRaw string // raw finished_at string from the pushed snapshot ("" when NULL)
+	EnqueuedAtRaw   string
+	SourceMachineID uuid.UUID
+	ID              int64
+	UpdatedAt       string // raw updated_at string from the pushed snapshot
+	TokenUsage      string // token_usage from the pushed snapshot ("" when NULL)
+	Status          string // status from the pushed snapshot (always terminal)
+	SessionID       string // session_id from the pushed snapshot ("" when NULL)
+	AgentInvoked    bool   // agent_invoked from the pushed snapshot
+	Agent           string // agent from the pushed snapshot
+	Model           string // model from the pushed snapshot ("" when NULL)
+	Provider        string // provider from the pushed snapshot ("" when NULL)
+	Error           string // error from the pushed snapshot ("" when NULL)
+	StartedAtRaw    string // raw started_at string from the pushed snapshot ("" when NULL)
+	FinishedAtRaw   string // raw finished_at string from the pushed snapshot ("" when NULL)
 }
 
 // NewJobSyncMark captures the snapshot fields MarkJobsSynced compares to confirm
@@ -586,18 +590,20 @@ type JobSyncMark struct {
 // the push loop and the WHERE clause in agreement.
 func NewJobSyncMark(j SyncableJob) JobSyncMark {
 	return JobSyncMark{
-		ID:            j.ID,
-		UpdatedAt:     j.UpdatedAtRaw,
-		TokenUsage:    j.TokenUsage,
-		Status:        j.Status,
-		SessionID:     j.SessionID,
-		AgentInvoked:  j.AgentInvoked,
-		Agent:         j.Agent,
-		Model:         j.Model,
-		Provider:      j.Provider,
-		Error:         j.Error,
-		StartedAtRaw:  j.StartedAtRaw,
-		FinishedAtRaw: j.FinishedAtRaw,
+		EnqueuedAtRaw:   j.EnqueuedAtRaw,
+		SourceMachineID: j.SourceMachineID,
+		ID:              j.ID,
+		UpdatedAt:       j.UpdatedAtRaw,
+		TokenUsage:      j.TokenUsage,
+		Status:          j.Status,
+		SessionID:       j.SessionID,
+		AgentInvoked:    j.AgentInvoked,
+		Agent:           j.Agent,
+		Model:           j.Model,
+		Provider:        j.Provider,
+		Error:           j.Error,
+		StartedAtRaw:    j.StartedAtRaw,
+		FinishedAtRaw:   j.FinishedAtRaw,
 	}
 }
 
@@ -645,7 +651,7 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		   AND status = ? AND COALESCE(session_id, '') = ? AND agent_invoked = ?
 		   AND agent = ? AND COALESCE(model, '') = ? AND COALESCE(provider, '') = ?
 		   AND COALESCE(error, '') = ? AND COALESCE(started_at, '') = ?
-		   AND COALESCE(finished_at, '') = ?`)
+		   AND COALESCE(finished_at, '') = ? AND enqueued_at = ? AND source_machine_id = ?`)
 	if err != nil {
 		return fmt.Errorf("prepare mark jobs synced: %w", err)
 	}
@@ -658,7 +664,7 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		}
 		if _, err := stmt.Exec(
 			now, m.ID, m.UpdatedAt, m.TokenUsage, m.Status, m.SessionID, invoked,
-			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw,
+			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw, m.EnqueuedAtRaw, m.SourceMachineID,
 		); err != nil {
 			return fmt.Errorf("mark job %d synced: %w", m.ID, err)
 		}
@@ -672,6 +678,9 @@ type SyncableReview struct {
 	// It repairs attempt identity without overwriting edits made by a peer.
 	MetadataOnly       bool
 	JobEnqueuedAt      time.Time
+	JobSourceMachineID uuid.UUID
+	JobEnqueuedAtRaw   string
+	UpdatedAtRaw       string
 	ID                 int64
 	UUID               uuid.UUID
 	JobID              int64
@@ -697,7 +706,7 @@ type SyncableReview struct {
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	rows, err := db.Query(`
 		SELECT
-			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at,
+			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 			r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at,
@@ -727,7 +736,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		var reviewedFileCount, excludedFileCount sql.NullInt64
 
 		err := rows.Scan(
-			&r.ID, &r.UUID, &r.JobID, &r.JobUUID, &enqueuedAt,
+			&r.ID, &r.UUID, &r.JobID, &r.JobUUID, &enqueuedAt, &r.JobSourceMachineID,
 			&r.Agent, &r.Output, &r.Closed,
 			&verdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
 			&r.UpdatedByMachineID, &createdAt, &updatedAt, &r.MetadataOnly,
@@ -737,6 +746,8 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		}
 
 		r.JobEnqueuedAt = parseSQLiteTime(enqueuedAt)
+		r.JobEnqueuedAtRaw = enqueuedAt
+		r.UpdatedAtRaw = updatedAt
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
 		if verdictBool.Valid {
@@ -765,23 +776,29 @@ func (db *DB) MarkReviewSynced(reviewID int64) error {
 	return err
 }
 
-// MarkReviewsSynced updates the synced_at timestamp for multiple reviews
-func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
-	if len(reviewIDs) == 0 {
+// MarkReviewsSynced acknowledges only the review snapshots actually pushed.
+// Numeric IDs can be reused after a rerun deletes a review. UUID and edit-state
+// checks prevent an old upload from acknowledging its replacement or a new edit.
+func (db *DB) MarkReviewsSynced(reviews []SyncableReview) error {
+	if len(reviews) == 0 {
 		return nil
 	}
-	now := preciseTimestampAt(time.Now())
-	placeholders := make([]string, len(reviewIDs))
-	args := make([]any, len(reviewIDs)+1)
-	args[0] = now
-	for i, id := range reviewIDs {
-		placeholders[i] = "?"
-		args[i+1] = id
+	tx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	query := fmt.Sprintf(`UPDATE reviews SET synced_at = ? WHERE id IN (%s)`,
-		strings.Join(placeholders, ","))
-	_, err := db.Exec(query, args...)
-	return err
+	defer func() { _ = tx.Rollback() }()
+	now := preciseTimestampAt(time.Now())
+	for _, r := range reviews {
+		if _, err := tx.Exec(`UPDATE reviews SET synced_at = ?
+		WHERE id = ? AND uuid = ? AND updated_at = ? AND closed = ? AND updated_by_machine_id = ?
+		AND EXISTS (SELECT 1 FROM review_jobs j WHERE j.id = reviews.job_id
+		AND j.enqueued_at = ? AND j.source_machine_id = ?)`,
+			now, r.ID, r.UUID, r.UpdatedAtRaw, r.Closed, r.UpdatedByMachineID, r.JobEnqueuedAtRaw, r.JobSourceMachineID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // SyncableResponse contains response data needed for sync
@@ -893,11 +910,13 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	defer func() { _ = tx.Rollback() }()
 	var enqueuedAt string
 	var localID int64
-	err = tx.QueryRow(`SELECT id, enqueued_at FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&localID, &enqueuedAt)
+	var sourceMachineID uuid.UUID
+	err = tx.QueryRow(`SELECT id, enqueued_at, COALESCE(source_machine_id, '00000000-0000-0000-0000-000000000000') FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&localID, &enqueuedAt, &sourceMachineID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("find pulled job attempt: %w", err)
 	}
-	if err == nil && isOlderPulledAttempt(enqueuedAt, j.EnqueuedAt) {
+	attemptOrder := compareJobAttempts(parseSQLiteTime(enqueuedAt), sourceMachineID, j.EnqueuedAt, j.SourceMachineID)
+	if err == nil && attemptOrder > 0 {
 		return false, nil
 	}
 	result, err := tx.Exec(`
@@ -910,6 +929,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
+			worker_id = CASE WHEN ? THEN review_jobs.worker_id ELSE NULL END,
 			agent = excluded.agent,
 			started_at = excluded.started_at,
 			reasoning = excluded.reasoning,
@@ -945,7 +965,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			non_voting = excluded.non_voting,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE (review_jobs.status NOT IN ('applied', 'rebased')
+			WHERE (? OR review_jobs.status NOT IN ('applied', 'rebased')
 				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`)
 			AND NOT (
 				review_jobs.status IS excluded.status
@@ -990,7 +1010,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, now)
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, db.attempts.active[localID] != nil, now, attemptOrder < 0)
 	if err != nil {
 		return false, err
 	}
@@ -998,7 +1018,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err != nil {
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
 	}
-	if rows > 0 && enqueuedAt != "" && parseSQLiteTime(enqueuedAt).Truncate(time.Microsecond).Before(j.EnqueuedAt.Truncate(time.Microsecond)) {
+	if rows > 0 && localID != 0 && attemptOrder < 0 {
 		// SQLite exposes only the current attempt. Advancing its job must also
 		// retire the old review, even if the new attempt failed without output.
 		if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
@@ -1059,12 +1079,13 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	var jobID int64
 	var jobType, threshold, enqueuedAt, status, reviewCreatedAt string
 	var locallyOwned, hasReview, sameReview bool
+	var sourceMachineID uuid.UUID
 	err = tx.QueryRow(`SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
-		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, '')
+		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000')
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`,
 		r.UUID, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt, &status,
-		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt)
+		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt, &sourceMachineID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return false, nil
@@ -1072,10 +1093,11 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("find job for review: %w", err)
 	}
-	if isOlderPulledAttempt(enqueuedAt, r.JobEnqueuedAt) {
+	attemptOrder := compareJobAttempts(parseSQLiteTime(enqueuedAt), sourceMachineID, r.JobEnqueuedAt, r.JobSourceMachineID)
+	if attemptOrder > 0 {
 		return false, nil
 	}
-	if parseSQLiteTime(enqueuedAt).Truncate(time.Microsecond).Before(r.JobEnqueuedAt.Truncate(time.Microsecond)) {
+	if attemptOrder < 0 {
 		// Another machine can finish a rerun between the job and review pull
 		// phases. Retain the review cursor until the next job pull catches up.
 		return false, fmt.Errorf("review attempt is newer than local job; retry after pulling jobs")
@@ -1209,12 +1231,14 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	return rows > 0, nil
 }
 
-// Enqueue time identifies a newer attempt even after a restart clears its
-// worker_id. PostgreSQL timestamps round-trip at microsecond precision;
-// compare at that precision so a pull can still update the same attempt.
-func isOlderPulledAttempt(localEnqueuedAt string, incoming time.Time) bool {
-	return parseSQLiteTime(localEnqueuedAt).Truncate(time.Microsecond).
-		After(incoming.Truncate(time.Microsecond))
+// compareJobAttempts uses the same ordering as PostgreSQL's (timestamp, uuid)
+// tuple at microsecond precision. The owner distinguishes concurrent reruns
+// with the same clock value, even after a restart clears worker ownership.
+func compareJobAttempts(local time.Time, localOwner uuid.UUID, incoming time.Time, incomingOwner uuid.UUID) int {
+	if order := local.Truncate(time.Microsecond).Compare(incoming.Truncate(time.Microsecond)); order != 0 {
+		return order
+	}
+	return localOwner.Compare(incomingOwner)
 }
 
 // UpsertPulledResponse inserts a response from PostgreSQL into SQLite.

@@ -763,17 +763,17 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		// Only mark successfully synced reviews
-		var syncedReviewIDs []int64
+		var syncedReviews []SyncableReview
 		var syncedReviewUUIDs []string
 		for i, ok := range success {
 			if ok {
-				syncedReviewIDs = append(syncedReviewIDs, reviews[i].ID)
+				syncedReviews = append(syncedReviews, reviews[i])
 				syncedReviewUUIDs = append(syncedReviewUUIDs, reviews[i].UUID.String()) //nolint:forbidigo // search sidecar keys reviews by TEXT UUID
 				stats.Reviews++
 			}
 		}
-		if len(syncedReviewIDs) > 0 {
-			if err := w.db.MarkReviewsSynced(syncedReviewIDs); err != nil {
+		if len(syncedReviews) > 0 {
+			if err := w.db.MarkReviewsSynced(syncedReviews); err != nil {
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
 			}
 		}

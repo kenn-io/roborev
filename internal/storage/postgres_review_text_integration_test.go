@@ -30,17 +30,17 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 	structured := jsontext.Value(structuredBytes)
 	batch := []SyncableReview{
 		{
-			UUID: uuid.New(), JobUUID: reviewJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), reviewJobID),
+			UUID: uuid.New(), JobUUID: reviewJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), reviewJobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), reviewJobID),
 			Agent: "ag\xffent", StructuredOutput: structured,
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
 		{
-			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID),
+			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), taskJobID),
 			Agent: "test", Output: "résumé\x00 \xe9",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
 		{
-			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID),
+			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), taskJobID),
 			Agent: "test", Output: "naïve",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		},
@@ -76,7 +76,7 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 	t.Run("single", func(t *testing.T) {
 		assert := assert.New(t)
 		review := SyncableReview{
-			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID),
+			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), taskJobID),
 			Agent: "é\xff", Output: "\xe9 café",
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		}
@@ -89,7 +89,7 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 		assert.Equal("\uFFFD café", output)
 
 		structuredReview := SyncableReview{
-			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID),
+			UUID: uuid.New(), JobUUID: taskJobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), taskJobID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), taskJobID),
 			StructuredOutput:   jsontext.Value(`{"schema_version":2,"summary":"Single\u0000","verdict":"pass","findings":[]}`),
 			UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 		}

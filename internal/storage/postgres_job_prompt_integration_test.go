@@ -182,8 +182,8 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 		created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 		for i, reviewPrompt := range reviewPrompts {
 			_, err = pool.pool.Exec(ctx, `
-				INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, structured_output, updated_by_machine_id, created_at)
-				VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5, $6)`,
+				INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, structured_output, updated_by_machine_id, created_at)
+				VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5, $6)`,
 				uuid.New(), jobUUID, reviewPrompt, string(reviewFixtureJSON("No issues found.")), machineID,
 				created.Add(time.Duration(i)*time.Hour))
 			require.NoError(t, err)
@@ -252,8 +252,8 @@ func TestIntegrationPullJobsUsesReviewPromptForOlderHistory(t *testing.T) { //no
 		VALUES ($1, $2, 'a..b', 'test', 'done', $3, NOW(), NOW(), NOW())`, jobUUID, repoID, machineID)
 	require.NoError(t, err)
 	_, err = pool.pool.Exec(ctx, `
-		INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id)
-		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt kept only on the review', 'No issues found.', $3)`, uuid.New(), jobUUID, machineID)
+		INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, updated_by_machine_id)
+		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'prompt kept only on the review', 'No issues found.', $3)`, uuid.New(), jobUUID, machineID)
 	require.NoError(t, err)
 
 	assert.Equal(t, "prompt kept only on the review", pulledJobPrompt(t, pool, jobUUID))
@@ -283,8 +283,8 @@ func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:
 				SourceMachineID: machineID, EnqueuedAt: finished.Add(-time.Hour), FinishedAt: &finished,
 				Prompt: "prompt of the first attempt",
 			}, pgRepoID, nil))
-			_, err = pool.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, structured_output, updated_by_machine_id)
-		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5)`, reviewUUID, jobUUID, handoff,
+			_, err = pool.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, structured_output, updated_by_machine_id)
+		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5)`, reviewUUID, jobUUID, handoff,
 				string(reviewFixtureJSON("No issues found.")), machineID)
 			require.NoError(t, err)
 			assert.Equal("prompt of the first attempt", pulledJobPrompt(t, pool, jobUUID))
@@ -335,7 +335,7 @@ func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:
 			assert.Equal(reviewUUID, pulled[0].UUID)
 			assert.True(pulled[0].Closed, "attempt repair must retain a newer peer closure")
 			require.True(t, reviews[0].MetadataOnly)
-			require.NoError(t, db.MarkReviewsSynced([]int64{reviews[0].ID}))
+			require.NoError(t, db.MarkReviewsSynced(reviews[:1]))
 			ownerPull, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID}, "", 10)
 			require.NoError(t, err)
 			require.Len(t, ownerPull, 1, "the owner must learn the preserved peer closure")

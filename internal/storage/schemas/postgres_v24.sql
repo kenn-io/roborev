@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS roborev.reviews (
   uuid UUID UNIQUE NOT NULL,
   job_uuid UUID NOT NULL REFERENCES roborev.review_jobs(uuid),
   job_enqueued_at TIMESTAMPTZ,
+  job_source_machine_id UUID,
   agent TEXT NOT NULL,
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,

@@ -130,7 +130,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	require.NotNil(t, job.UUID)
 	require.NotNil(t, review.UUID)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt:      storedJobEnqueuedAt(t, db, job.ID),
+		JobEnqueuedAt: storedJobEnqueuedAt(t, db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
@@ -149,7 +149,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	newExcluded := 9
 	future = future.Add(time.Hour)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
-		JobEnqueuedAt:      storedJobEnqueuedAt(t, db, job.ID),
+		JobEnqueuedAt: storedJobEnqueuedAt(t, db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
@@ -189,7 +189,7 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
 		StructuredOutput: reviewFixtureJSON("PASS"),
 		UUID:             reviewUUID,
-		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
+		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 		Agent:              "test",
 		Output:             "PASS",
 		ReviewedFileCount:  &zero,
@@ -207,7 +207,7 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
 		StructuredOutput: reviewFixtureJSON("PASS"),
 		UUID:             reviewUUID,
-		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
+		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 		Agent:              "test",
 		Output:             "PASS",
 		UpdatedByMachineID: updatedBy,

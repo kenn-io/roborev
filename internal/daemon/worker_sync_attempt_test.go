@@ -56,7 +56,7 @@ func TestSyncReplacementStopsBlockedWorker(t *testing.T) {
 	require.NoError(t, tc.DB.UpsertPulledJob(remote, tc.Repo.ID, job.CommitID))
 	require.NoError(t, tc.DB.UpsertPulledReview(storage.PulledReview{
 		UUID: uuid.New(), JobUUID: remote.UUID, Agent: remote.Agent,
-		JobPrompt: remote.Prompt, JobEnqueuedAt: remote.EnqueuedAt,
+		JobPrompt: remote.Prompt, JobEnqueuedAt: remote.EnqueuedAt, JobSourceMachineID: remote.SourceMachineID,
 		StructuredOutput: jsontext.Value(`{"schema_version":2,"summary":"Newer failure.","verdict":"fail","findings":[{"severity":"high","problem":"Missing record.","fix":"Keep the record.","location":null}]}`),
 		CreatedAt:        time.Now(), UpdatedAt: time.Now(), UpdatedByMachineID: remote.SourceMachineID,
 	}))
@@ -79,4 +79,59 @@ func TestSyncReplacementStopsBlockedWorker(t *testing.T) {
 		assert.NotContains(t, []string{"review.completed", "review.closed", "review.canceled"}, event.Type)
 	}
 	require.NoError(t, tc.DB.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+}
+
+func TestCanceledClaimDoesNotStartAgent(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	_, events := tc.Broadcaster.Subscribe("")
+	invoked := false
+	const name = "canceled-before-registration"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: name,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			invoked = true
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	})
+	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, name)
+	require.NoError(t, tc.DB.CancelJob(job.ID))
+	tc.Pool.processJob(testWorkerID, job)
+	assert.False(t, invoked)
+	current, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, current.WorkerID)
+	assert.Equal(t, storage.JobStatusCanceled, current.Status)
+	require.Len(t, events, 1)
+	assert.Equal(t, "review.canceled", (<-events).Type)
+}
+
+func TestCanceledWaitingClaimKeepsCallerEventOwnership(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	_, events := tc.Broadcaster.Subscribe("")
+	job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), "old-worker")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release, err := tc.DB.StartJobAttempt(ctx, job, "old-worker", cancel)
+	require.NoError(t, err)
+	tc.Pool.registerRunningJob(job.ID, cancel, time.Time{})
+	changed, err := tc.DB.FailoverJob(job.ID, "old-worker", "backup", "")
+	require.NoError(t, err)
+	require.True(t, changed)
+	next, err := tc.DB.ClaimJob("new-worker")
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.NoError(t, tc.DB.CancelJob(job.ID))
+	require.True(t, tc.Pool.cancelJob(job.ID, true))
+	tc.Pool.finishRunningJob("old-worker", job.ID)
+	release()
+	tc.Pool.processJob("new-worker", next)
+	assert.Empty(t, events, "the caller already emitted the cancellation event")
+	current, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, current.WorkerID)
+	var invoked bool
+	require.NoError(t, tc.DB.QueryRow(`SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
+	assert.False(t, invoked)
 }

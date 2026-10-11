@@ -942,6 +942,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
+	if ctx.Err() != nil {
+		wp.finishCanceledAttempt(workerID, job, job.Agent, job.WorktreePath)
+		return
+	}
 
 	jobUUID := uuid.Nil()
 	if job.UUID != nil {
@@ -1431,24 +1435,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			if wp.handleUpdateInterruption(ctx, workerID, job) {
 				return
 			}
-			wp.runAttemptTransition(workerID, job, func() {
-				log.Printf("[%s] Job %d was canceled", workerID, job.ID)
-				if !wp.cancellationEventOwnedByCaller(job.ID) {
-					wp.broadcaster.Broadcast(Event{
-						Type:         "review.canceled",
-						TS:           time.Now(),
-						JobID:        job.ID,
-						Repo:         job.RepoPath,
-						RepoName:     job.RepoName,
-						SHA:          job.GitRef,
-						Branch:       job.HookBranch(),
-						Agent:        agentName,
-						WorktreePath: eventWorktreePath,
-					})
-				}
-				// Member canceled is terminal — release the panel synthesis.
-				wp.releaseIfPanelMember(job)
-			})
+			wp.finishCanceledAttempt(workerID, job, agentName, eventWorktreePath)
 			return // Job already marked as canceled in DB, nothing more to do
 		}
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
@@ -1595,11 +1582,53 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	})
 }
 
+// finishCanceledAttempt emits cancellation only for the claim that still owns
+// the row. A newer pulled attempt has its own result and terminal events.
+func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.ReviewJob, agentName, eventWorktreePath string) {
+	wp.runAttemptTransition(workerID, job, func() {
+		log.Printf("[%s] Job %d was canceled", workerID, job.ID)
+		if !wp.cancellationEventOwnedByCaller(job.ID) {
+			wp.broadcaster.Broadcast(Event{
+				Type:         jobEventType(job, "canceled"),
+				TS:           time.Now(),
+				JobID:        job.ID,
+				Repo:         job.RepoPath,
+				RepoName:     job.RepoName,
+				SHA:          job.GitRef,
+				Branch:       job.HookBranch(),
+				Agent:        agentName,
+				WorktreePath: eventWorktreePath,
+			})
+		}
+		// Member canceled is terminal — release the panel synthesis.
+		wp.releaseIfPanelMember(job)
+	})
+}
+
 func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 	// Remove the old cancellation handler before releasing the database row.
 	// Once worker_id becomes NULL, a rerun may be claimed and register a new
 	// handler for the same job ID.
-	wp.unregisterRunningJob(jobID)
+	wp.runningJobsMu.Lock()
+	var canceledSuccessor bool
+	if wp.runningJobs[jobID].callerBroadcastsEvent {
+		// A failover can be claimed before this worker finishes cleanup. A
+		// cancellation during that wait reaches this handler, but its event
+		// ownership belongs to the new claim as well.
+		err := wp.db.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM review_jobs WHERE id = ? AND status = 'canceled'
+			AND worker_id IS NOT NULL AND worker_id != ?
+		)`, jobID, workerID).Scan(&canceledSuccessor)
+		if err != nil {
+			log.Printf("[%s] Error checking canceled successor for job %d: %v", workerID, jobID, err)
+		}
+	}
+	delete(wp.runningJobs, jobID)
+	delete(wp.pendingCancels, jobID)
+	if canceledSuccessor {
+		wp.pendingCancels[jobID] = true
+	}
+	wp.runningJobsMu.Unlock()
 	released, err := wp.db.ReleaseCanceledJob(jobID, workerID)
 	if err != nil {
 		log.Printf("[%s] Error releasing canceled job %d: %v", workerID, jobID, err)
