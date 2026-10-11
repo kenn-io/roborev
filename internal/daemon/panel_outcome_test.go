@@ -67,23 +67,6 @@ func TestClassifyPanelOutcomeExcerpt(t *testing.T) {
 		classifyPanelOutcome([]reviewpkg.ReviewResult{genuineA, genuineB}, nil, 3).LastErrorExcerpt)
 }
 
-func TestClassifyPanelOutcomeRecoveredFailures(t *testing.T) {
-	assert := assert.New(t)
-	recovered := reviewpkg.ReviewResult{Status: reviewpkg.ResultFailed, Error: reviewpkg.UnsavedOutcomeError}
-	genuine := reviewpkg.ReviewResult{Status: reviewpkg.ResultFailed, Error: "unsupported model"}
-	outage := reviewpkg.ReviewResult{Status: reviewpkg.ResultFailed, Error: reviewpkg.OutageErrorPrefix + "provider unavailable"}
-	quota := reviewpkg.ReviewResult{Status: reviewpkg.ResultFailed, Error: reviewpkg.QuotaErrorPrefix + "quota exceeded"}
-	assert.False(reviewpkg.IsGenuineFailure(recovered))
-	assert.False(reviewpkg.IsTransientFailure(recovered))
-	for streak := 0; streak <= reviewpkg.DefaultRetrySchedule.GenuineMax; streak++ {
-		assert.Equal(OutcomeAllSkip, classifyPanelOutcome([]reviewpkg.ReviewResult{recovered, recovered}, nil, streak).Kind)
-	}
-	assert.Equal(OutcomeDeferGenuine, classifyPanelOutcome([]reviewpkg.ReviewResult{recovered, genuine}, nil, 0).Kind)
-	assert.Equal(OutcomeGenuineGiveUp, classifyPanelOutcome([]reviewpkg.ReviewResult{recovered, genuine}, nil, 2).Kind)
-	assert.Equal(PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: outage.Error}, classifyPanelOutcome([]reviewpkg.ReviewResult{recovered, outage}, nil, 2))
-	assert.Equal(PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: quota.Error}, classifyPanelOutcome([]reviewpkg.ReviewResult{recovered, quota}, nil, 2))
-}
-
 // TestClassifyPanelOutcomeEmptyIsAllSkip verifies an empty member set classifies
 // as OutcomeAllSkip (rule 4 fall-through), never a post or defer.
 func TestClassifyPanelOutcomeEmptyIsAllSkip(t *testing.T) {

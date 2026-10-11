@@ -65,9 +65,8 @@ attempt starts; configuration reloads do not change it during that attempt.
 The daemon sweeps every 60 seconds. It fails a job running for over 2 minutes if
 no worker holds it and no update requeue is pending, with the error "daemon did
 not save the job's outcome". The recovery event fires no hooks. Local reviews
-stay failed until manually rerun; CI can post usable member output. A panel with
-only recovered failures ends with "No review output", without a comment or
-retries, and consumes no genuine-failure budget.
+stay failed until manually rerun. A CI panel that failed this way is handled
+like any other failed panel.
 
 ### CI health
 

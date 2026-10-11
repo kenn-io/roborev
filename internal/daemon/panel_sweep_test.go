@@ -202,32 +202,6 @@ func TestPanelSweepPreservesOwnedJob(t *testing.T) {
 	}
 }
 
-func TestPanelSweepPreservesFailedRequeueAfterUpdateTargetsClear(t *testing.T) {
-	assert := assert.New(t)
-	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "update-requeue", "worker-update")
-	_, err := tc.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", job.ID)
-	require.NoError(t, err)
-	_, err = tc.DB.Exec(`CREATE TRIGGER reject_update_requeue BEFORE UPDATE OF status ON review_jobs
-		WHEN NEW.status = 'queued' BEGIN SELECT RAISE(ABORT, 'synthetic requeue failure'); END`)
-	require.NoError(t, err)
-	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	require.True(t, tc.Pool.handleUpdateInterruption(context.Background(), "worker-update", job))
-
-	tc.Pool.ClearUpdateInterruptTargets()
-	require.Error(t, tc.Pool.RetryFailedUpdateRequeues())
-	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
-	server.sweepStuckPanels()
-	tc.assertJobStatus(t, job.ID, storage.JobStatusRunning)
-
-	_, err = tc.DB.Exec(`DROP TRIGGER reject_update_requeue`)
-	require.NoError(t, err)
-	require.NoError(t, tc.Pool.RetryFailedUpdateRequeues())
-	stored := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.Zero(stored.RetryCount)
-	assert.False(tc.Pool.ownsJob("worker-update", job.ID, job.StartedAtRaw))
-}
-
 func TestPanelSweepClaimOwnership(t *testing.T) {
 	for _, test := range []struct {
 		name        string

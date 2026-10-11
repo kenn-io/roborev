@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -57,7 +56,7 @@ func (s *Server) failOrphanedJob(job *storage.StalledJob) {
 		wp.attemptTransitionsMu.RUnlock()
 		return
 	}
-	const errorMsg = review.UnsavedOutcomeError
+	const errorMsg = "daemon did not save the job's outcome"
 	updated, err := s.db.FailJobAttempt(job.ID, job.WorkerID, job.StartedAt, errorMsg)
 	wp.attemptTransitionsMu.RUnlock()
 	if err != nil {

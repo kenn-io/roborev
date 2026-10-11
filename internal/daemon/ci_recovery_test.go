@@ -221,7 +221,6 @@ func TestCIPollerRestartKeepsNonFailureOutcomesTerminal(t *testing.T) {
 		{"no verdict", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted, false},
 		{"unreadable", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "unable to read the diff"}, storage.PanelOutcomeNoReviewPosted, false},
 		{"timeout", jobSpec{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}, storage.PanelOutcomeNoReviewPosted, false},
-		{"daemon recovery", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.UnsavedOutcomeError}, storage.PanelOutcomeNoReviewPosted, false},
 		{"posted", jobSpec{Agent: "test", Status: "done", Output: "No issues found."}, storage.PanelOutcomeReviewPosted, false},
 		{"inaccessible", jobSpec{Agent: "test", Status: "failed", Error: "model unavailable"}, storage.PanelOutcomeAbandoned, false},
 		{"no verdict with advisory failure", jobSpec{Agent: "test", Status: "failed", Error: reviewpkg.NoVerdictErrorPrefix + "empty output"}, storage.PanelOutcomeNoReviewPosted, true},

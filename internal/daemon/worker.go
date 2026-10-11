@@ -425,10 +425,11 @@ func (wp *WorkerPool) interruptJobsForUpdateLocked(jobIDs []int64) {
 }
 
 // ClearUpdateInterruptTargets releases attempt markers after the daemon's
-// update lease ends. Failed requeues remain protected until a retry succeeds.
+// update lease ends. It does not cancel or otherwise mutate jobs.
 func (wp *WorkerPool) ClearUpdateInterruptTargets() {
 	wp.runningJobsMu.Lock()
 	clear(wp.updateInterruptTargets)
+	clear(wp.failedUpdateRequeues)
 	wp.runningJobsMu.Unlock()
 }
 
