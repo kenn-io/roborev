@@ -2396,18 +2396,26 @@ type StalledJob struct {
 }
 
 // ListStalledJobs returns only attempt identity for jobs running past the threshold.
+// A zero threshold returns all locally claimed running attempts, regardless of age.
 func (db *DB) ListStalledJobs(threshold time.Duration) ([]StalledJob, error) {
 	// Use threshold in seconds for SQLite datetime arithmetic
 	// This avoids timezone issues with RFC3339 string comparison
 	thresholdSecs := int64(threshold.Seconds())
 
-	rows, err := db.Query(`
+	query := `
 		SELECT id, COALESCE(worker_id, ''), started_at FROM review_jobs
 		WHERE status = 'running'
 		AND started_at IS NOT NULL
-		AND datetime(started_at) < datetime('now', ? || ' seconds')
-		ORDER BY id
-	`, -thresholdSecs)
+	`
+	var args []any
+	if threshold == 0 {
+		// Synced running rows have no worker_id until a local worker claims them.
+		query += ` AND worker_id IS NOT NULL`
+	} else {
+		query += ` AND datetime(started_at) < datetime('now', ? || ' seconds')`
+		args = append(args, -thresholdSecs)
+	}
+	rows, err := db.Query(query+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}

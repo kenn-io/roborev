@@ -90,6 +90,28 @@ func TestListStalledJobIDs(t *testing.T) {
 	assert.Empty(t, ids)
 }
 
+func TestListStalledJobsWithoutAgeFilter(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "running1")
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	jobs, err := db.ListStalledJobs(0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, StalledJob{ID: job.ID, WorkerID: claimed.WorkerID, StartedAt: claimed.StartedAtRaw}, jobs[0])
+
+	_, err = db.Exec("UPDATE review_jobs SET started_at = datetime('now', '+1 hour') WHERE id = ?", job.ID)
+	require.NoError(t, err)
+	jobs, err = db.ListStalledJobs(0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, job.ID, jobs[0].ID)
+}
+
 func TestListReposWithReviewCounts(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

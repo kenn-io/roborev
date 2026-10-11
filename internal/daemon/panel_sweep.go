@@ -12,9 +12,6 @@ import (
 // panelSweepInterval is how often the safety sweep recovers jobs and panels.
 const panelSweepInterval = 60 * time.Second
 
-// orphanJobGrace delays recovery of recently started, ownerless attempts.
-const orphanJobGrace = 2 * time.Minute
-
 // runPanelSweep recovers orphaned jobs and blocked panels until ctx is canceled.
 func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
@@ -30,7 +27,7 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) sweepOrphanedJobs() {
-	jobs, err := s.db.ListStalledJobs(orphanJobGrace)
+	jobs, err := s.db.ListStalledJobs(0)
 	if err != nil {
 		log.Printf("panel sweep: list orphan candidates: %v", err)
 		return

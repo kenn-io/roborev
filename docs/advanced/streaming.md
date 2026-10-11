@@ -62,7 +62,7 @@ reviews remain healthy while their worker still has time remaining. The deadline
 includes repository, global, and panel-member timeout settings resolved when the
 attempt starts; configuration reloads do not change it during that attempt.
 
-The daemon sweeps every 60 seconds. It fails a job running for over 2 minutes if
+The daemon sweeps every 60 seconds. It fails a locally claimed running job if
 no worker holds it and no update requeue is pending, with the error "daemon did
 not save the job's outcome". The recovery event fires no hooks. Local reviews
 stay failed until manually rerun. A CI panel that failed this way is handled
