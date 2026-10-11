@@ -911,13 +911,28 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	var enqueuedAt string
 	var localID int64
 	var sourceMachineID uuid.UUID
-	err = tx.QueryRow(`SELECT id, enqueued_at, COALESCE(source_machine_id, '00000000-0000-0000-0000-000000000000') FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&localID, &enqueuedAt, &sourceMachineID)
+	var localReviewUUID sql.NullString
+	var pendingReview bool
+	err = tx.QueryRow(`SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
+		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
+		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`, j.UUID).
+		Scan(&localID, &enqueuedAt, &sourceMachineID, &localReviewUUID, &pendingReview)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("find pulled job attempt: %w", err)
 	}
 	attemptOrder := compareJobAttempts(parseSQLiteTime(enqueuedAt), sourceMachineID, j.EnqueuedAt, j.SourceMachineID)
 	if err == nil && attemptOrder > 0 {
 		return false, nil
+	}
+	keepReview := false
+	if localID != 0 && attemptOrder < 0 && (j.Status == "done" || j.Status == "applied" || j.Status == "rebased") {
+		// Upload limits and edits after the final push query can leave pending
+		// work when pulling begins. Only the canonical UUID can distinguish a
+		// historical association repair from a new attempt's different result.
+		if pendingReview && j.CurrentReviewUUID == nil {
+			return false, errReviewAttemptPending
+		}
+		keepReview = localReviewUUID.Valid && j.CurrentReviewUUID != nil && strings.EqualFold(localReviewUUID.String, j.CurrentReviewUUID.String())
 	}
 	result, err := tx.Exec(`
 		INSERT INTO review_jobs (
@@ -1019,13 +1034,15 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
 	}
 	if rows > 0 && localID != 0 && attemptOrder < 0 {
-		// SQLite exposes only the current attempt. Advancing its job must also
-		// retire the old review, even if the new attempt failed without output.
-		if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
-			return false, fmt.Errorf("clear previous attempt review: %w", err)
-		}
-		if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
-			return false, fmt.Errorf("retire previous attempt archive: %w", err)
+		// Retire a different attempt, but retain the same canonical review
+		// and its archive during historical association repair.
+		if !keepReview {
+			if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+				return false, fmt.Errorf("clear previous attempt review: %w", err)
+			}
+			if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
+				return false, fmt.Errorf("retire previous attempt archive: %w", err)
+			}
 		}
 		if _, err := tx.Exec(`UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
 			return false, fmt.Errorf("clear previous attempt content: %w", err)
@@ -1078,14 +1095,15 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	// First, find the job_id by uuid
 	var jobID int64
 	var jobType, threshold, enqueuedAt, status, reviewCreatedAt, reviewUpdatedAt string
-	var locallyOwned, hasReview, sameReview bool
+	var locallyOwned, hasReview, sameReview, pendingReview bool
 	var sourceMachineID uuid.UUID
 	err = tx.QueryRow(`SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
-		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000')
+		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
+		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`,
 		r.UUID, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt, &status,
-		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt, &reviewUpdatedAt, &sourceMachineID)
+		&locallyOwned, &hasReview, &sameReview, &reviewCreatedAt, &reviewUpdatedAt, &sourceMachineID, &pendingReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return false, nil
@@ -1106,6 +1124,11 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	// but cannot replace it with a previous attempt or resurrect a review for
 	// an unfinished/failed local attempt after its job has been uploaded.
 	if locallyOwned && !sameReview && (hasReview || status != "done") {
+		return false, nil
+	}
+	if sameReview && pendingReview {
+		// A user can edit after the push phase or while parents are pulling.
+		// Keep that edit queued instead of replacing it with a server snapshot.
 		return false, nil
 	}
 	// SQLite datetime() discards subsecond precision. Compare the stored

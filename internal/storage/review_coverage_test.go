@@ -126,6 +126,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	assert.NotNil(t, pushed[0].ReviewedFileCount)
 	assert.Equal(t, 4, *pushed[0].ReviewedFileCount)
 	assert.Nil(t, pushed[0].ExcludedFileCount)
+	require.NoError(t, db.MarkReviewsSynced(pushed))
 
 	require.NotNil(t, job.UUID)
 	require.NotNil(t, review.UUID)

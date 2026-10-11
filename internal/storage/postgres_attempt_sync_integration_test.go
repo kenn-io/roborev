@@ -4,6 +4,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -346,4 +347,103 @@ func TestIntegrationParentUploadPreservesPeerEditWithClockSkew(t *testing.T) { /
 	current, err := a.DB.GetReviewByJobID(sourceID)
 	require.NoError(t, err)
 	assert.False(t, current.Closed)
+}
+
+func TestIntegrationReviewEditAfterPushSurvivesRepairPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	for _, conversion := range []bool{false, true} {
+		t.Run(map[bool]string{false: "closure", true: "conversion"}[conversion], func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			a := env.setupNode("producer", "late-edit-repository", "1h")
+			b := env.setupNode("editor", "late-edit-repository", "1h")
+			job, review := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "prompt", "Original review.")
+			if conversion {
+				_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
+				require.NoError(t, err)
+			}
+			_, err := a.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = b.Worker.SyncNow()
+			require.NoError(t, err)
+			var importedID int64
+			require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
+			_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(job.EnqueuedAt.Add(time.Hour)), job.ID)
+			require.NoError(t, err)
+			_, err = a.Worker.SyncNow()
+			require.NoError(t, err)
+			pushed, err := b.Worker.pushChangesWithStats(t.Context(), env.Pool)
+			require.NoError(t, err)
+			require.Zero(t, pushed.Reviews)
+			// The user edits after the final upload query, before the parent pull.
+			if conversion {
+				var archiveID int64
+				require.NoError(t, b.DB.QueryRow(`SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, review.UUID).Scan(&archiveID))
+				require.NoError(t, b.DB.ResolveLegacyReview(archiveID, reviewFixtureJSON("Converted review.")))
+			} else {
+				require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
+			}
+			_, err = b.Worker.pullChangesWithStats(t.Context(), env.Pool)
+			require.NoError(t, err)
+			machine, err := b.DB.GetMachineID()
+			require.NoError(t, err)
+			pending, err := b.DB.GetReviewsToSync(machine, 10)
+			require.NoError(t, err)
+			require.Len(t, pending, 1, "the parent and review pull must retain the pending edit")
+			assert.False(t, pending[0].MetadataOnly)
+			_, err = b.Worker.SyncNow()
+			require.NoError(t, err)
+			_, err = a.Worker.SyncNow()
+			require.NoError(t, err)
+			current, err := a.DB.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			if conversion {
+				assert.Equal(t, "Converted review.", current.StructuredOutput["summary"])
+			} else {
+				assert.True(t, current.Closed)
+			}
+		})
+	}
+}
+
+func TestIntegrationReviewEditBeyondPushCapSurvivesRepairPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env := newIntegrationEnv(t)
+	a := env.setupNode("producer", "push-cap-repository", "1h")
+	b := env.setupNode("editor", "push-cap-repository", "1h")
+	// SyncNow caps uploads at 20 batches of 25. Leave one pending review
+	// beyond that cap when the editor starts pulling repaired parents.
+	for i := range 501 {
+		createCompletedReview(t, a.DB, a.Repo.ID, fmt.Sprintf("review-%d", i), "Author", "Subject", "prompt", "Original review.")
+	}
+	for range 2 {
+		_, err := a.Worker.SyncNow()
+		require.NoError(t, err)
+	}
+	_, err := b.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = datetime(enqueued_at, '+1 hour'), synced_at = NULL`)
+	require.NoError(t, err)
+	for range 2 {
+		_, err := a.Worker.SyncNow()
+		require.NoError(t, err)
+	}
+	jobs, err := b.DB.ListJobs("", "", 1000, 0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 501)
+	for _, job := range jobs {
+		require.NoError(t, b.DB.MarkReviewClosedByJobID(job.ID, true))
+	}
+	stats, err := b.Worker.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 500, stats.PushedReviews)
+	var closed int
+	require.NoError(t, b.DB.QueryRow(`SELECT COUNT(*) FROM reviews WHERE closed = 1`).Scan(&closed))
+	assert.Equal(t, 501, closed)
+	machine, err := b.DB.GetMachineID()
+	require.NoError(t, err)
+	pending, err := b.DB.GetReviewsToSync(machine, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	_, err = b.Worker.SyncNow()
+	require.NoError(t, err)
+	require.NoError(t, env.Pool.pool.QueryRow(t.Context(), `SELECT COUNT(*) FROM reviews WHERE closed`).Scan(&closed))
+	assert.Equal(t, 501, closed)
 }

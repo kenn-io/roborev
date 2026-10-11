@@ -1146,6 +1146,9 @@ func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 
 // PulledJob represents a job pulled from PostgreSQL
 type PulledJob struct {
+	// CurrentReviewUUID identifies the canonical review in the same snapshot
+	// as the parent, so a historical attempt repair can retain local edits.
+	CurrentReviewUUID     *uuid.UUID
 	UUID                  uuid.UUID
 	RepoIdentity          string
 	CommitSHA             string
@@ -1239,7 +1242,10 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
-			j.source_machine_id, j.updated_at, j.id
+			j.source_machine_id, j.updated_at, j.id,
+			(SELECT rv.uuid FROM reviews rv WHERE rv.job_uuid = j.uuid
+			 AND rv.job_enqueued_at = j.enqueued_at AND rv.job_source_machine_id = j.source_machine_id
+			 ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
@@ -1269,7 +1275,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON, &j.NonVoting,
-			&j.SourceMachineID, &j.UpdatedAt, &lastID,
+			&j.SourceMachineID, &j.UpdatedAt, &lastID, &j.CurrentReviewUUID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan job: %w", err)

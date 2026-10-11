@@ -127,6 +127,7 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 					assert.Equal("Local rerun result.", review.StructuredOutput["summary"])
 					// A peer can still close the review of this same attempt.
 					// PostgreSQL drops its sub-microsecond timestamp digits.
+					require.NoError(t, db.MarkReviewsSynced(pendingReviews))
 					changed, err = db.upsertPulledReview(PulledReview{
 						UUID: *review.UUID, JobUUID: remote.UUID, Agent: "test", Closed: true,
 						JobPrompt: "local rerun prompt", JobEnqueuedAt: before.EnqueuedAt.Truncate(time.Microsecond), JobSourceMachineID: *before.SourceMachineID,
@@ -324,6 +325,7 @@ func TestPulledReviewKeepsSubsecondEditOrder(t *testing.T) {
 	job := h.createCompletedJob("subsecond-edit-order")
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
+	require.NoError(t, h.db.MarkReviewSynced(review.ID))
 	first := time.Now().UTC().Truncate(time.Second).Add(time.Hour)
 	incoming := PulledReview{
 		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
@@ -358,13 +360,15 @@ func TestPulledOwnReviewWithFutureTimestampIsNotDirty(t *testing.T) {
 	require.NoError(t, h.db.MarkJobSynced(job.ID))
 	// Imported jobs can echo this machine's own edit back with PostgreSQL's
 	// timestamp, which may be later than the local acknowledgment time.
-	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+	require.NoError(t, h.db.MarkReviewSynced(review.ID))
+	incoming := PulledReview{
 		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
 		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: producer,
 		StructuredOutput: reviewFixtureJSON("Review result."),
 		CreatedAt:        review.CreatedAt, UpdatedAt: time.Now().Add(time.Hour),
 		UpdatedByMachineID: h.machineID,
-	}))
+	}
+	require.NoError(t, h.db.UpsertPulledReview(incoming))
 	pending, err := h.db.GetReviewsToSync(h.machineID, 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending, "a pulled echo is already synced regardless of the server clock")
@@ -374,4 +378,73 @@ func TestPulledOwnReviewWithFutureTimestampIsNotDirty(t *testing.T) {
 	require.Len(t, pending, 1)
 	assert.True(t, pending[0].Closed)
 	assert.False(t, pending[0].MetadataOnly)
+	changed, err := h.db.upsertPulledReview(incoming)
+	require.NoError(t, err)
+	assert.False(t, changed, "a newer server timestamp cannot overwrite a pending local edit")
+	current, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.True(t, current.Closed)
+}
+
+func TestPulledParentReconcilesPendingReviewIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, status, identity string
+		keep, retry            bool
+	}{
+		{"same review repair", "done", "same", true, false},
+		{"association pending", "done", "", true, true},
+		{"different review", "done", "different", false, false},
+		{"failed rerun", "failed", "", false, false},
+		{"canceled rerun", "canceled", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("pending-parent-repair")
+			review, err := h.db.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			producer := testUUID("parent-producer")
+			_, err = h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
+			require.NoError(t, err)
+			require.NoError(t, h.db.MarkJobSynced(job.ID))
+			require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
+			incoming := PulledJob{
+				UUID: *job.UUID, SourceMachineID: producer, GitRef: job.GitRef,
+				Agent: "test", JobType: JobTypeReview, Status: tc.status,
+				EnqueuedAt: job.EnqueuedAt.Add(time.Hour), UpdatedAt: time.Now().Add(time.Hour),
+			}
+			switch tc.identity {
+			case "same":
+				incoming.CurrentReviewUUID = review.UUID
+			case "different":
+				incoming.CurrentReviewUUID = new(testUUID("replacement-review"))
+			}
+			changed, err := h.db.upsertPulledJob(incoming, h.repo.ID, nil)
+			if tc.retry {
+				require.ErrorIs(t, err, errReviewAttemptPending)
+				assert.False(t, changed)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, changed)
+			}
+			pending, err := h.db.GetReviewsToSync(h.machineID, 10)
+			require.NoError(t, err)
+			if tc.keep {
+				require.Len(t, pending, 1)
+				assert.Equal(t, *review.UUID, pending[0].UUID)
+				assert.True(t, pending[0].Closed)
+				assert.False(t, pending[0].MetadataOnly)
+				if tc.retry {
+					assert.Less(t, pending[0].JobEnqueuedAt.UnixMicro(), incoming.EnqueuedAt.UnixMicro())
+				} else {
+					assert.Equal(t, incoming.EnqueuedAt.UnixMicro(), pending[0].JobEnqueuedAt.UnixMicro())
+				}
+			} else {
+				assert.Empty(t, pending, "an obsolete review must never upload under the new attempt")
+				_, err := h.db.GetReviewByJobID(job.ID)
+				assert.ErrorIs(t, err, sql.ErrNoRows)
+			}
+		})
+	}
 }
