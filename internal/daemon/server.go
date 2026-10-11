@@ -92,9 +92,10 @@ type Server struct {
 	socketActivated         bool // true if started via systemd socket activation
 	stopOnce                sync.Once
 	stopErr                 error
-	sweepMu                 sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepMu                 sync.Mutex         // protects sweepCancel and sweepDone
 	sweepCancel             context.CancelFunc // cancels the panel sweep goroutine on Stop
-	shutdownCh              chan struct{}      // closed when /api/shutdown is requested
+	sweepDone               chan struct{}
+	shutdownCh              chan struct{} // closed when /api/shutdown is requested
 	shutdownOnce            sync.Once
 	shutdownDrainMu         sync.Mutex
 	shutdownDraining        bool
@@ -383,6 +384,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -390,6 +392,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if !ready {
 		if err := awaitServeExitOnUnreadyStartup(serveExited, serveErrCh); err != nil {
 			s.configWatcher.Stop()
+			s.stopPanelSweep()
 			s.workerPool.Stop()
 			s.stopSearch()
 			return err
@@ -441,6 +444,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.startRemoteServer(cfg.Remote); err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -450,6 +454,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		if errors.Is(err, http.ErrServerClosed) {
@@ -463,6 +468,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return nil
@@ -526,21 +532,28 @@ func (s *Server) startPanelSweep(ctx context.Context) {
 	// explicitly in stopOnce0).
 	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	if s.sweepCancel != nil {
 		s.sweepCancel()
+		<-s.sweepDone
 	}
 	s.sweepCancel = cancelSweep
-	s.sweepMu.Unlock()
-	go s.runPanelSweep(sweepCtx, panelSweepInterval)
+	done := make(chan struct{})
+	s.sweepDone = done
+	go func() {
+		defer close(done)
+		s.runPanelSweep(sweepCtx, panelSweepInterval)
+	}()
 }
 
 func (s *Server) stopPanelSweep() {
 	s.sweepMu.Lock()
-	sweepCancel := s.sweepCancel
-	s.sweepCancel = nil
-	s.sweepMu.Unlock()
-	if sweepCancel != nil {
-		sweepCancel()
+	defer s.sweepMu.Unlock()
+	if s.sweepCancel != nil {
+		s.sweepCancel()
+		<-s.sweepDone
+		s.sweepCancel = nil
+		s.sweepDone = nil
 	}
 }
 

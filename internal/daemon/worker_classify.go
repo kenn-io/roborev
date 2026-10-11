@@ -332,7 +332,7 @@ func (wp *WorkerPool) failClassifyOnDBErrorLocked(
 	workerID string, job *storage.ReviewJob, op string, dbErr error,
 ) {
 	errMsg := fmt.Sprintf("classify %s: %v", op, dbErr)
-	updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, errMsg)
+	updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, errMsg, nil)
 	if fErr != nil {
 		log.Printf("[%s] FailJob for stuck classify %d: %v", workerID, job.ID, fErr)
 		return

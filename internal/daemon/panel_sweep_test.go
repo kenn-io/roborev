@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -79,7 +80,7 @@ func TestPanelSweepReleasesStuck(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(synth.ClaimBlocked, "synthesis should remain blocked before the sweep")
 
-	server.sweepStuckPanels()
+	server.sweepStuckPanels(context.Background())
 
 	synth, err = db.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
@@ -126,7 +127,7 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 			defer tc.Broadcaster.Unsubscribe(subscriber)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-			server.sweepStuckPanels()
+			server.sweepStuckPanels(context.Background())
 
 			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
 			assert.Equal("daemon did not save the job's outcome", job.Error)
@@ -183,7 +184,7 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 				require.NoError(t, err)
 			}
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
-			server.sweepStuckPanels()
+			server.sweepStuckPanels(context.Background())
 
 			job := tc.assertJobStatus(t, claimed.ID, test.wantStatus)
 			if test.wantStatus == storage.JobStatusRunning {
@@ -242,7 +243,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			require.Equal(t, "review.started", startedEvent.Type)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-			server.sweepStuckPanels()
+			server.sweepStuckPanels(context.Background())
 			live := tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
 			assert.Empty(live.Error)
 			assert.Empty(events, "sweeping a live worker must not announce a failure")
@@ -266,7 +267,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			_, err = tc.DB.Exec(`DROP TRIGGER reject_worker_write`)
 			require.NoError(t, err)
 
-			server.sweepStuckPanels()
+			server.sweepStuckPanels(context.Background())
 
 			job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
 			assert.Equal(before.RetryCount, job.RetryCount)
@@ -315,6 +316,55 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	synth, err := tc.DB.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
 	assert.True(synth.ClaimBlocked)
+}
+
+type blockingPanelSweepBroadcaster struct {
+	Broadcaster
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingPanelSweepBroadcaster) Broadcast(event Event) {
+	b.entered <- struct{}{}
+	<-b.release
+	b.Broadcaster.Broadcast(event)
+}
+
+func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	jobs := make([]*storage.ReviewJob, 2)
+	for i := range jobs {
+		tc.createJob(t, "deadbeef")
+		job, err := tc.DB.ClaimJob("worker-a")
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		jobs[i] = job
+	}
+	synctest.Test(t, func(t *testing.T) {
+		b := &blockingPanelSweepBroadcaster{Broadcaster: tc.Broadcaster, entered: make(chan struct{}), release: make(chan struct{})}
+		tc.Pool.broadcaster = b
+		server := &Server{db: tc.DB, workerPool: tc.Pool}
+		server.startPanelSweep(context.Background())
+		time.Sleep(panelSweepInterval)
+		<-b.entered
+		stopped := make(chan struct{})
+		go func() {
+			server.stopPanelSweep()
+			close(stopped)
+		}()
+		synctest.Wait()
+		returned := false
+		select {
+		case <-stopped:
+			returned = true
+		default:
+		}
+		assert.False(t, returned, "stop must wait for the failure broadcast to finish")
+		close(b.release)
+		<-stopped
+		tc.assertJobStatus(t, jobs[0].ID, storage.JobStatusFailed)
+		tc.assertJobStatus(t, jobs[1].ID, storage.JobStatusRunning)
+	})
 }
 
 func TestRunPanelSweepStopsOnContextCancel(t *testing.T) {
