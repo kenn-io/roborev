@@ -843,11 +843,7 @@ func (db *DB) RequeueUpdateInterruptedJob(
 // the query. Update preparation calls this after persisting the claim gate, so
 // the result is the complete cutover set.
 func (db *DB) ListRunningJobIDs() ([]int64, error) {
-	return db.ListRunningJobIDsContext(context.Background())
-}
-
-func (db *DB) ListRunningJobIDsContext(ctx context.Context) ([]int64, error) {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.Query(`
 		SELECT id FROM review_jobs WHERE status = 'running' ORDER BY id
 	`)
 	if err != nil {
@@ -864,6 +860,36 @@ func (db *DB) ListRunningJobIDsContext(ctx context.Context) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// RunningAttempt identifies a running job and the local worker that claimed it.
+type RunningAttempt struct {
+	JobID    int64
+	WorkerID string
+}
+
+// ListRunningAttemptsContext returns running jobs claimed by a local worker.
+// Rows without a worker ID were not claimed on this machine and are omitted.
+func (db *DB) ListRunningAttemptsContext(ctx context.Context) ([]RunningAttempt, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, worker_id FROM review_jobs
+		WHERE status = 'running' AND COALESCE(worker_id, '') <> ''
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attempts []RunningAttempt
+	for rows.Next() {
+		var attempt RunningAttempt
+		if err := rows.Scan(&attempt.JobID, &attempt.WorkerID); err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
 }
 
 // CountRunningJobsByID reports how many update-targeted rows still own a

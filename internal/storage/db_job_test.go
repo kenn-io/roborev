@@ -415,6 +415,26 @@ func TestFailJobAttemptGuard(t *testing.T) {
 	assert.False(updated)
 }
 
+func TestListRunningAttemptsOnlyReturnsLocalClaims(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/running-attempts", 3)
+	claimed, err := db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, jobs[0].ID, claimed.ID)
+	_, err = db.Exec(
+		`UPDATE review_jobs SET status = 'running', worker_id = NULL WHERE id = ?`, jobs[1].ID,
+	)
+	require.NoError(t, err)
+
+	attempts, err := db.ListRunningAttemptsContext(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, []RunningAttempt{{JobID: claimed.ID, WorkerID: "worker-a"}}, attempts)
+}
+
 func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "canceled-recovery")
@@ -423,7 +443,7 @@ func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
 	require.NotNil(t, job)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = env.db.ListRunningJobIDsContext(ctx)
+	_, err = env.db.ListRunningAttemptsContext(ctx)
 	require.ErrorIs(t, err, context.Canceled)
 	_, err = env.db.GetJobByIDContext(ctx, job.ID)
 	require.ErrorIs(t, err, context.Canceled)

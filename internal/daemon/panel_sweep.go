@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -26,21 +27,21 @@ func (s *Server) runPanelSweep(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Server) sweepOrphanedJobs(ctx context.Context) {
-	ids, err := s.db.ListRunningJobIDsContext(ctx)
+	attempts, err := s.db.ListRunningAttemptsContext(ctx)
 	if err != nil {
 		log.Printf("panel sweep: list orphan candidates: %v", err)
 		return
 	}
-	for _, id := range ids {
+	for _, attempt := range attempts {
 		if ctx.Err() != nil {
 			return
 		}
-		job, err := s.db.GetJobByIDContext(ctx, id)
-		if err != nil {
-			log.Printf("panel sweep: load orphan job %d: %v", id, err)
+		if s.workerPool.ownsJob(attempt.WorkerID, attempt.JobID) {
 			continue
 		}
-		if job.WorkerID == "" {
+		job, err := s.db.GetJobByIDContext(ctx, attempt.JobID)
+		if err != nil {
+			log.Printf("panel sweep: load orphan job %d: %v", attempt.JobID, err)
 			continue
 		}
 		s.failOrphanedJob(ctx, job)
@@ -60,14 +61,16 @@ func (s *Server) failOrphanedJob(ctx context.Context, job *storage.ReviewJob) {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
 		return
 	}
-	if updated {
-		wp.invalidateBudgetSpend()
-		event := eventForJob(jobEventType(job, "failed"), job, job.ID)
-		event.Error = errorMsg
-		event.SuppressHooks = true
-		s.broadcaster.Broadcast(event)
-		wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
+	if !updated {
+		return
 	}
+	log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
+	wp.invalidateBudgetSpend()
+	wp.broadcastFailed(job, job.Agent, errorMsg)
+	if wp.errorLog != nil {
+		wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
+	}
+	wp.logJobFailed(job.ID, job.WorkerID, job.Agent, errorMsg)
 }
 
 // sweepStuckPanels fails orphaned jobs, then releases panels with terminal members.

@@ -100,14 +100,19 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			tc := newWorkerTestContext(t, 1)
+			errorLog := newTestErrorLog()
+			tc.Pool.errorLog = errorLog
 			runUUID := uuid.Nil()
 			eventType := "review.failed"
 			worktreePath := ""
+			wantWorktreePath := ""
 			if test.goalReview {
 				eventType = "goal_review.failed"
 				worktreePath = tc.TmpDir
+				wantWorktreePath = tc.TmpDir
 				if test.missingWorktree {
 					worktreePath = filepath.Join(tc.TmpDir, "missing-worktree")
+					wantWorktreePath = ""
 				}
 				_, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 					RepoID: tc.Repo.ID, Agent: "test", GitRef: "snapshot-digest",
@@ -133,8 +138,12 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 			assert.Equal(eventType, event.Type)
 			assert.Equal(job.ID, event.JobID)
 			assert.Equal(job.Error, event.Error)
-			assert.True(event.SuppressHooks)
-			assert.Empty(event.WorktreePath)
+			assert.False(event.SuppressHooks)
+			assert.Equal(wantWorktreePath, event.WorktreePath)
+			errors := errorLog.Recent()
+			require.Len(t, errors, 1)
+			assert.Equal(job.ID, errors[0].JobID)
+			assert.Contains(errors[0].Message, job.Error)
 			if !test.goalReview {
 				synth, err := tc.DB.GetSynthesisJob(runUUID)
 				require.NoError(t, err)
@@ -226,6 +235,8 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			tc.Pool.Start()
 			defer tc.Pool.Stop()
 			defer releaseAgent()
+			// Wall-clock waits: the started worker pool runs git subprocesses and
+			// SQLite writes, which testing/synctest cannot observe.
 			testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 			startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 			require.Equal(t, "review.started", startedEvent.Type)
@@ -242,6 +253,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			probe := tc.createJob(t, members[0].GitRef)
 			releaseAgent()
 			for {
+				// Wall-clock wait: the worker processes the probe job with git and SQLite.
 				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 				assert.NotEqual(members[0].ID, event.JobID, "a rejected write must not announce a terminal member event")
 				if event.JobID == probe.ID && event.Type == "review.completed" {
@@ -259,9 +271,11 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 
 			job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
 			assert.Equal(before.RetryCount, job.RetryCount)
-			event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+			require.NotEmpty(t, events, "the sweep announces the failure before returning")
+			event := <-events
 			assert.Equal(job.ID, event.JobID)
 			for {
+				// Wall-clock wait: the worker runs the released synthesis job with SQLite.
 				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
 				require.Equal(t, synth.ID, event.JobID)
 				if event.Type == "review.failed" {
@@ -294,7 +308,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	require.Equal(t, stale.ID, reclaimed.ID)
 	require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
 	require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
-	server := &Server{db: tc.DB, workerPool: tc.Pool}
+	server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
 	server.failOrphanedJob(context.Background(), stale)
 
@@ -324,6 +338,7 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 			entered <- event
 			<-release
 		}}
+		tc.Pool.broadcaster = b
 		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: b}
 		server.startPanelSweep(context.Background())
 		time.Sleep(panelSweepInterval)
@@ -361,6 +376,10 @@ func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				server, db, tmpDir := newTestServer(t)
+				release := make(chan struct{})
+				releaseWork := sync.OnceFunc(func() { close(release) })
+				defer releaseWork()
+				entered := make(chan struct{})
 				var repo *storage.Repo
 				if test.blockedSweep {
 					var err error
@@ -372,21 +391,18 @@ func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
 					require.NoError(t, err)
 					require.NotNil(t, claimed)
 					require.Equal(t, orphan.ID, claimed.ID)
-					server.workerPool = NewWorkerPool(db, server.configWatcher, 1, server.broadcaster, nil, nil)
-				}
-				server.workerPool.Start()
-				defer server.workerPool.Stop()
-				release := make(chan struct{})
-				releaseWork := sync.OnceFunc(func() { close(release) })
-				defer releaseWork()
-				var queued *storage.ReviewJob
-				if test.blockedSweep {
-					synctest.Wait()
-					entered := make(chan struct{})
-					server.broadcaster = &observingBroadcaster{Broadcaster: server.broadcaster, observe: func(Event) {
+					// The sweep announces failures through the pool's broadcaster.
+					observer := &observingBroadcaster{Broadcaster: server.broadcaster, observe: func(Event) {
 						entered <- struct{}{}
 						<-release
 					}}
+					server.workerPool = NewWorkerPool(db, server.configWatcher, 1, observer, nil, nil)
+				}
+				server.workerPool.Start()
+				defer server.workerPool.Stop()
+				var queued *storage.ReviewJob
+				if test.blockedSweep {
+					synctest.Wait()
 					server.startPanelSweep(context.Background())
 					time.Sleep(panelSweepInterval)
 					<-entered
