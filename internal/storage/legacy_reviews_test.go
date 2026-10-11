@@ -133,7 +133,8 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-sync", "sync-head")
 	incoming := PulledReview{
-		UUID: testUUID("legacy-sync-review"), JobUUID: *env.job.UUID,
+		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID),
+		UUID:          testUUID("legacy-sync-review"), JobUUID: *env.job.UUID,
 		Agent: "test", Output: "Unstructured review.",
 		UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
@@ -159,7 +160,7 @@ func TestStaleMarkdownSyncKeepsCanonicalReview(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/canonical-sync", "canonical-head")
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Canonical review.","verdict":"pass","findings":[]}`)
-	incoming := PulledReview{UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	incoming := PulledReview{JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID), UUID: testUUID("canonical-sync-review"), JobUUID: *env.job.UUID, Agent: "test", StructuredOutput: raw, UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	incoming.StructuredOutput = nil
 	incoming.Output = "Stale Markdown"

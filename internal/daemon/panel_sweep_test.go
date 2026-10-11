@@ -267,7 +267,14 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			_, err = tc.DB.Exec(`DROP TRIGGER reject_worker_write`)
 			require.NoError(t, err)
 
-			server.sweepStuckPanels(context.Background())
+			// The worker can already be claiming its next job in SQLite after
+			// announcing the probe's completion. A sweep skips that claim gap;
+			// retry until the database operation finishes and recovery can run.
+			require.Eventually(t, func() bool {
+				server.sweepStuckPanels(context.Background())
+				job, err := tc.DB.GetJobByID(members[0].ID)
+				return err == nil && job.Status == storage.JobStatusFailed
+			}, 10*time.Second, 10*time.Millisecond)
 
 			job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
 			assert.Equal(before.RetryCount, job.RetryCount)

@@ -33,7 +33,8 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 	assert.Equal(t, int64(3), notifications.Load(), "repo, commit, and job each notify")
 
 	review := PulledReview{
-		UUID: testUUID("search-wake-review"), JobUUID: job.UUID, Agent: "test",
+		JobEnqueuedAt: now,
+		UUID:          testUUID("search-wake-review"), JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   reviewFixtureJSON("searchable finding"),
 		UpdatedByMachineID: testUUID("search-wake-review-machine"), CreatedAt: now, UpdatedAt: now,
 	}
@@ -65,7 +66,8 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	now := time.Now().UTC()
 	missingJob := testUUID("missing-search-wake-job")
 	require.NoError(t, worker.pullReview(PulledReview{
-		UUID: testUUID("orphan-review"), JobUUID: missingJob, Agent: "test",
+		JobEnqueuedAt: now,
+		UUID:          testUUID("orphan-review"), JobUUID: missingJob, Agent: "test",
 		UpdatedByMachineID: testUUID("orphan-review-machine"), CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, worker.pullResponse(PulledResponse{
@@ -84,7 +86,8 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	require.NoError(t, worker.pullJob(job))
 	before := notifications.Load()
 	err := worker.pullReview(PulledReview{
-		UUID: testUUID("invalid-review"), JobUUID: job.UUID, Agent: "test",
+		JobEnqueuedAt: now,
+		UUID:          testUUID("invalid-review"), JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   []byte(`{"schema_version":`),
 		UpdatedByMachineID: testUUID("invalid-review-machine"), CreatedAt: now, UpdatedAt: now,
 	})
@@ -139,7 +142,8 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	require.NoError(t, err)
 
 	err = worker.pullReview(PulledReview{
-		UUID: reviewUUID, JobUUID: job.UUID, Agent: "test",
+		JobEnqueuedAt: now,
+		UUID:          reviewUUID, JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   reviewFixtureJSON("transaction should roll back"),
 		UpdatedByMachineID: testUUID("rollback-review-machine"), CreatedAt: now, UpdatedAt: now,
 	})

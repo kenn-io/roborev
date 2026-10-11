@@ -24,17 +24,21 @@ func TestIntegrationJobPromptFollowsLaterAttempts(t *testing.T) { //nolint:paral
 	}
 	promptInPostgres := func() string {
 		var prompt string
-		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT COALESCE(prompt, '') FROM review_jobs WHERE uuid = $1`, job.UUID).Scan(&prompt))
+		var enqueuedAt time.Time
+		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT COALESCE(prompt, ''), enqueued_at FROM review_jobs WHERE uuid = $1`, job.UUID).Scan(&prompt, &enqueuedAt))
+		assert.Equal(t, job.EnqueuedAt.UTC().Truncate(time.Microsecond), enqueuedAt.UTC())
 		return prompt
 	}
 
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
 	job.Status, job.Prompt = "done", "second attempt"
+	job.EnqueuedAt = job.EnqueuedAt.Add(time.Millisecond)
 	_, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{Job: job, PgRepoID: repoID}})
 	require.NoError(t, err)
 	assert.Equal(t, "second attempt", promptInPostgres())
 
 	job.Prompt = "third attempt"
+	job.EnqueuedAt = job.EnqueuedAt.Add(time.Millisecond)
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
 	assert.Equal(t, "third attempt", promptInPostgres())
 
@@ -92,8 +96,11 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	pulledReviewJobPrompts := func(jobUUID uuid.UUID) []string {
 		reviews, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobUUID}, "", 10)
 		require.NoError(t, err)
+		var enqueuedAt time.Time
+		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&enqueuedAt))
 		var prompts []string
 		for _, review := range reviews {
+			assert.Equal(t, enqueuedAt, review.JobEnqueuedAt)
 			prompts = append(prompts, review.JobPrompt)
 		}
 		return prompts

@@ -18,6 +18,13 @@ type syncTestHelper struct {
 	repo      *Repo
 }
 
+func storedJobEnqueuedAt(t *testing.T, db *DB, jobID int64) time.Time {
+	t.Helper()
+	job, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	return job.EnqueuedAt
+}
+
 func newSyncTestHelper(t *testing.T) *syncTestHelper {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

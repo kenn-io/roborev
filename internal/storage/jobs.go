@@ -1599,7 +1599,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 
 	now := time.Now()
-	enqueuedAt := formatSQLiteTimestamp(now)
+	enqueuedAt := preciseTimestampAt(now)
 	updatedAt := now.Format(time.RFC3339)
 
 	// Reset job status and replace effective execution settings with the

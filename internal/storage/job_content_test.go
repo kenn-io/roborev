@@ -274,7 +274,7 @@ func TestPulledReviewRefreshesRemoteJobPrompt(t *testing.T) {
 		t.Helper()
 		_, err := db.upsertPulledReview(PulledReview{
 			UUID: testUUID(label), JobUUID: testUUID(jobLabel), Agent: "codex",
-			JobPrompt: "rerun prompt", StructuredOutput: reviewFixtureJSON("No issues found."),
+			JobPrompt: "rerun prompt", JobEnqueuedAt: updated, StructuredOutput: reviewFixtureJSON("No issues found."),
 			CreatedAt: updated, UpdatedAt: updated.Add(time.Minute), UpdatedByMachineID: testUUID("remote-machine"),
 		})
 		require.NoError(t, err)

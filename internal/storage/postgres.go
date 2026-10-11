@@ -794,6 +794,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
+			enqueued_at = EXCLUDED.enqueued_at,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
 			model = EXCLUDED.model,
@@ -1226,7 +1227,9 @@ type PulledReview struct {
 	Agent   string
 	// JobPrompt is the prompt the review's job now stores in PostgreSQL. A
 	// review can arrive after its job, so pulling it refreshes that prompt.
+	// JobEnqueuedAt identifies the attempt the prompt belongs to.
 	JobPrompt          string
+	JobEnqueuedAt      time.Time
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
@@ -1261,7 +1264,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, `+pgPulledJobPromptExpr+`
+			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, `+pgPulledJobPromptExpr+`, j.enqueued_at
 		FROM reviews r
 		JOIN review_jobs j ON j.uuid = r.job_uuid
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
@@ -1288,7 +1291,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Output, &r.Closed,
 			&r.VerdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID, &r.JobPrompt,
+			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID, &r.JobPrompt, &r.JobEnqueuedAt,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)
@@ -1645,6 +1648,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
+				enqueued_at = EXCLUDED.enqueued_at,
 				finished_at = EXCLUDED.finished_at,
 				error = EXCLUDED.error,
 				model = EXCLUDED.model,

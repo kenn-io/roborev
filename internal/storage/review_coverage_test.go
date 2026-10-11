@@ -130,6 +130,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	require.NotNil(t, job.UUID)
 	require.NotNil(t, review.UUID)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
+		JobEnqueuedAt:      storedJobEnqueuedAt(t, db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
@@ -148,6 +149,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	newExcluded := 9
 	future = future.Add(time.Hour)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
+		JobEnqueuedAt:      storedJobEnqueuedAt(t, db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("PASS"),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,

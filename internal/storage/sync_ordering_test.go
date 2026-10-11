@@ -103,6 +103,7 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
 
 	err = h.db.UpsertPulledReview(PulledReview{
+		JobEnqueuedAt:      storedJobEnqueuedAt(t, h.db, job.ID),
 		UUID:               *review.UUID,
 		JobUUID:            *job.UUID,
 		Agent:              review.Agent,
@@ -593,6 +594,7 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	job := h.createPendingJob("stored-review-verdict")
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		JobEnqueuedAt:      storedJobEnqueuedAt(t, h.db, job.ID),
 		StructuredOutput:   reviewFixtureJSON("No issues found."),
 		UUID:               testUUID("stored-review-verdict"),
 		JobUUID:            *job.UUID,
@@ -615,7 +617,8 @@ func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	job := h.createPendingJob("legacy-pulled-review")
 	const prose = "I am unable to read the diff."
 	incoming := PulledReview{
-		UUID: testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
+		UUID:          testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
 		Agent: "test", Output: prose,
 		VerdictBool: new(false), UpdatedByMachineID: testUUID("remote-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -639,7 +642,8 @@ func TestUpsertPulledReviewDoesNotReplaceJSONWithMarkdown(t *testing.T) {
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		UUID: *review.UUID, JobUUID: *job.UUID, Agent: "test",
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
+		UUID:          *review.UUID, JobUUID: *job.UUID, Agent: "test",
 		Output: "Old Markdown", CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
 		UpdatedByMachineID: testUUID("remote-machine"),
 	}))
@@ -832,7 +836,8 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 	require.NotNil(t, job.UUID)
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		UUID: testUUID("task-pulled-review"), JobUUID: *job.UUID,
+		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID),
+		UUID:          testUUID("task-pulled-review"), JobUUID: *job.UUID,
 		Agent: "test", Output: "Task done. No issues found.",
 		VerdictBool: new(true), UpdatedByMachineID: testUUID("task-machine"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),

@@ -879,6 +879,14 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var enqueuedAt string
+	err = tx.QueryRow(`SELECT enqueued_at FROM review_jobs WHERE uuid = ?`, j.UUID).Scan(&enqueuedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("find pulled job attempt: %w", err)
+	}
+	if err == nil && isOlderPulledAttempt(enqueuedAt, j.EnqueuedAt) {
+		return false, nil
+	}
 	result, err := tx.Exec(`
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
@@ -889,6 +897,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
+			enqueued_at = excluded.enqueued_at,
 			finished_at = excluded.finished_at,
 			error = excluded.error,
 			model = excluded.model,
@@ -922,6 +931,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`)
 			AND NOT (
 				review_jobs.status IS excluded.status
+				AND review_jobs.enqueued_at IS excluded.enqueued_at
 				AND review_jobs.finished_at IS excluded.finished_at
 				AND review_jobs.error IS excluded.error
 				AND review_jobs.model IS excluded.model
@@ -952,7 +962,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 				AND review_jobs.updated_at IS excluded.updated_at
 			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.Branch), nullStr(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
-		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
+		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339Nano),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
@@ -999,16 +1009,24 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 // upsertPulledReview reports whether the canonical review row committed a
 // change. A skipped orphan or stale timestamp is a successful no-op.
 func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	// First, find the job_id by uuid
 	var jobID int64
-	var jobType, threshold string
-	err := db.QueryRow(`SELECT id, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType, &threshold)
+	var jobType, threshold, enqueuedAt string
+	err = tx.QueryRow(`SELECT id, job_type, COALESCE(min_severity, ''), enqueued_at FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("find job for review: %w", err)
+	}
+	if isOlderPulledAttempt(enqueuedAt, r.JobEnqueuedAt) {
+		return false, nil
 	}
 
 	legacyDocument := false
@@ -1059,11 +1077,6 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if noVerdict {
 		verdictOnConflict = "NULL"
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	result, err := tx.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, output, closed,
@@ -1125,6 +1138,15 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		return false, err
 	}
 	return rows > 0, nil
+}
+
+// A job imported from another machine keeps its source_machine_id when rerun
+// locally. Its enqueue time identifies that newer attempt even after a restart
+// clears worker_id. PostgreSQL timestamps round-trip at microsecond precision;
+// compare at that precision so a pull can still update the same attempt.
+func isOlderPulledAttempt(localEnqueuedAt string, incoming time.Time) bool {
+	return parseSQLiteTime(localEnqueuedAt).Truncate(time.Microsecond).
+		After(incoming.Truncate(time.Microsecond))
 }
 
 // UpsertPulledResponse inserts a response from PostgreSQL into SQLite.

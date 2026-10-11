@@ -325,7 +325,8 @@ func TestConvertedReviewIsNotOverwrittenByAMarkdownOnlyPeer(t *testing.T) {
 	// A machine on an older release still holds the Markdown and syncs it
 	// with a newer timestamp.
 	require.NoError(t, env.db.UpsertPulledReview(PulledReview{
-		UUID: testUUID("legacy-peer"), JobUUID: *job.UUID, Agent: "test",
+		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, job.ID),
+		UUID:          testUUID("legacy-peer"), JobUUID: *job.UUID, Agent: "test",
 		Output: strings.ReplaceAll(legacyFindingsMarkdown, "High", "Low"), UpdatedByMachineID: testUUID("old-peer"),
 		CreatedAt: time.Now(), UpdatedAt: time.Now().Add(time.Hour),
 	}))

@@ -1441,7 +1441,7 @@ func TestReenqueueJob(t *testing.T) {
 			`SELECT enqueued_at FROM review_jobs WHERE id = ?`, job.ID,
 		).Scan(&storedEnqueuedAt)
 		require.NoError(t, err)
-		_, err = time.Parse("2006-01-02 15:04:05", storedEnqueuedAt)
+		_, err = time.Parse(time.RFC3339Nano, storedEnqueuedAt)
 		assert.NoError(t, err)
 	})
 
