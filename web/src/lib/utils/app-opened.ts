@@ -14,7 +14,6 @@ let hiddenAt: number | undefined;
 let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 export type Screen = "reviews" | "analytics";
 let currentScreen: (() => Screen) | undefined;
-const pendingScreens = new Set<Screen>();
 
 function pauseSession(): void {
   if (started === undefined) return;
@@ -103,8 +102,6 @@ function postEvent(
 }
 
 export function reportScreenViewed(screen: Screen): void {
-  if (pendingScreens.has(screen)) return;
-  pendingScreens.add(screen);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   void postEvent(
@@ -114,7 +111,6 @@ export function reportScreenViewed(screen: Screen): void {
   )
     .catch(() => undefined)
     .finally(() => {
-      pendingScreens.delete(screen);
       clearTimeout(timeout);
     });
 }

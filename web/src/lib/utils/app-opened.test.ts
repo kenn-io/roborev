@@ -438,25 +438,4 @@ describe("setupAppOpenedReporting", () => {
     expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
     expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
   });
-
-  test("waits for a pending screen before retrying a failed request", async () => {
-    setup(() => "reviews");
-    await settle();
-    let finish!: () => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((_resolve, reject) => {
-          finish = () => reject(new TypeError("offline"));
-        }),
-    );
-    appOpened.reportScreenViewed("reviews");
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    finish();
-    await settle();
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
 });

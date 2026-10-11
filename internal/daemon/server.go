@@ -197,7 +197,7 @@ func newServerWithLogs(
 		goalGate:           newGoalGate(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
-		appOpened:          telemetry.AppOpenedLimiter{},
+		appOpened:          telemetry.AppOpenedLimiter{Database: db},
 		configWatcher:      configWatcher,
 		broadcaster:        broadcaster,
 		workerPool:         NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog, activityLog),

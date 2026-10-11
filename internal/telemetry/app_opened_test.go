@@ -228,6 +228,37 @@ func TestPostAppOpened(t *testing.T) {
 	})
 }
 
+func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	for _, offset := range []int{-1, 0, 1} {
+		t.Run(fmt.Sprint(offset), func(t *testing.T) {
+			db := testutil.OpenTestDB(t)
+			now := time.Now().UTC()
+			day := now.AddDate(0, 0, offset).Format(time.DateOnly)
+			require.NoError(t, db.SetSyncState("telemetry.screen.queue", day))
+			endpoint, messages := testutil.NewPostHogStub(t)
+			opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+			for range 2 {
+				reporter, err := NewReporter(opts)
+				require.NoError(t, err)
+				limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+				body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
+				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+				require.NoError(t, reporter.Close())
+			}
+			if offset < 0 {
+				assert.Len(t, messages(), 1)
+			} else {
+				assert.Empty(t, messages())
+			}
+			stored, err := db.GetSyncState("telemetry.screen.queue")
+			require.NoError(t, err)
+			assert.Equal(t, day, stored)
+		})
+	}
+}
+
 func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
@@ -241,14 +272,19 @@ func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	installID, err := db.GetSyncState(installIDMetadataKey)
 	require.NoError(t, err)
 	body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
-	limiter := &AppOpenedLimiter{}
+	limiter := &AppOpenedLimiter{Database: db}
 	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
 	require.NoError(t, reporter.Close())
 	require.NoError(t, os.Remove(path))
 	reporter, err = NewReporter(opts)
 	require.NoError(t, err)
-	limiter = &AppOpenedLimiter{}
-	postThroughLimiter(limiter, reporter, body)
+	limiter = &AppOpenedLimiter{Database: db}
+	_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+	_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
 	require.NoError(t, reporter.Close())
 	sent := messages()
 	require.Len(t, sent, 1)

@@ -1755,7 +1755,8 @@ screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
 day across interfaces, including daemon restarts. Screen names contain no paths,
 job IDs, filter text or review contents. Daily screen claims live in
 `telemetry-daily.json` beside the daemon database, wherever `--db` points, with
-a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
+a `telemetry-daily.json.lock` sidecar. Existing database claims suppress repeat
+counts through their recorded UTC dates. An unreadable or newer-version claims
 file makes screen reports fail until it's removed. Stop the daemon before
 deleting it; deletion lets that day's screens count again. Counts mean the
 report was queued, not confirmed delivered to PostHog. The TUI retries a failed
