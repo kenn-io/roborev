@@ -38,11 +38,9 @@ func TestSelectProfilesAutoDetectsExecutableOrConfigDirectory(t *testing.T) {
 		gemini += ".bat"
 	}
 	require.NoError(t, os.WriteFile(gemini, []byte("exit 0\n"), 0o755))
-	pi := filepath.Join(bin, "pi")
-	if runtime.GOOS == "windows" {
-		pi += ".bat"
-	}
-	require.NoError(t, os.WriteFile(pi, []byte("exit 0\n"), 0o755))
+	pi, err := kitagenthook.ConfigPath(kitagenthook.AgentPi)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(pi), 0o755))
 	t.Setenv("PATH", bin)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "agent-homes", "qwen"), 0o755))
 
