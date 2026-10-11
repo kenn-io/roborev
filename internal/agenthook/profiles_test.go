@@ -61,6 +61,7 @@ func TestSelectProfilesAllUsesKitOrderThenGrok(t *testing.T) {
 		kitagenthook.AgentDroid,
 		kitagenthook.AgentGemini,
 		kitagenthook.AgentHermes,
+		kitagenthook.AgentPi,
 		kitagenthook.AgentQwen,
 		AgentGrok,
 	}, agents)
