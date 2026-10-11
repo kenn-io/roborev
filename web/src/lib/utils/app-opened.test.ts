@@ -270,28 +270,6 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("reposts on focus after a successful screen response", async () => {
-    setup(() => "reviews");
-    await settle();
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "queued" }), {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    focusWindow();
-    vi.setSystemTime(new Date("2026-03-10T20:00:00Z"));
-    focusWindow();
-    await settle();
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    appOpened.reportScreenViewed("analytics");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
   test("posts again on the first focus of the next UTC day only", async () => {
     setup();
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));

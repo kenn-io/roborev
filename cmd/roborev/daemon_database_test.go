@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/internal/version"
 )
 
 func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
@@ -37,15 +36,17 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	db, dir := testutil.OpenTestDBWithDir(t)
-	owner, err := lockDaemonDatabase(filepath.Join(dir, "test.db"))
+	alias := filepath.Join(t.TempDir(), "alias.db")
+	if err := os.Symlink(filepath.Join(dir, "test.db"), alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	owner, err := lockDaemonDatabase(alias)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	endpoint, _ := testutil.NewPostHogStub(t)
-	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{
-		Database:        db,
-		Version:         version.Version,
-		DailyClaimsPath: telemetry.DailyClaimsPath(owner.path),
-		Endpoint:        endpoint,
+	reporter := newDaemonTelemetry(owner, telemetry.Options{
+		Database: db,
+		Endpoint: endpoint,
 	})
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 	require.True(t, reporter.Enabled())
@@ -58,7 +59,8 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusAccepted, response.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, response.Body.String())
-	assert.FileExists(t, telemetry.DailyClaimsPath(owner.path))
+	assert.FileExists(t, filepath.Join(dir, "telemetry-daily.json"))
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(alias), "telemetry-daily.json"))
 }
 
 func TestDaemonDatabaseHasOneOwner(t *testing.T) {
