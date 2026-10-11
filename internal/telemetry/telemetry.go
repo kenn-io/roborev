@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	kittelemetry "go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -19,7 +19,7 @@ const (
 	// NotificationTimeout shares the CLI's existing one-second bound with MCP database work.
 	NotificationTimeout  = time.Second
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
-	GenericEnabledEnv    = kittelemetry.GenericEnabledEnv
+	GenericEnabledEnv    = posthog.GenericEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
 	installedAtKey       = "telemetry.installed_at"
 	postHogAPIKey        = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
@@ -46,11 +46,11 @@ const (
 	SurfaceCLI             = "cli"
 )
 
-var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedEvent
+var ErrUnsupportedEvent = posthog.ErrUnsupportedEvent
 
-type Client = kittelemetry.Client
+type Client = posthog.Client
 
-type Reporter = kittelemetry.Reporter
+type Reporter = posthog.Reporter
 
 type Options struct {
 	Database        *storage.DB
@@ -64,13 +64,13 @@ func DailyClaimsPath(dbPath string) string {
 }
 
 func EnabledFromEnv() bool {
-	return kittelemetry.EnabledFromEnv("ROBOREV")
+	return posthog.EnabledFromEnv("ROBOREV")
 }
 
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// An opted-out kit reporter keeps the allowlist, so the capture route can still reject unknown events.
-		return kittelemetry.NewReporter(kittelemetry.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
+		return posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
 	}
 	if opts.Database == nil {
 		return nil, errors.New("telemetry database is required")
@@ -81,7 +81,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, err
 	}
 
-	return kittelemetry.NewReporter(kittelemetry.Options{
+	return posthog.NewReporter(posthog.Options{
 		APIKey:      postHogAPIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
@@ -90,11 +90,11 @@ func NewReporter(opts Options) (*Reporter, error) {
 		InstalledAt: installedAt,
 		Version:     opts.Version,
 		Source:      "daemon",
-	}, append(allowedEventOptions(), kittelemetry.WithDailyEvent(EventScreenViewed, PropertyScreen, kittelemetry.NewDailyClaims(opts.DailyClaimsPath)))...)
+	}, append(allowedEventOptions(), posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, posthog.NewDailyClaims(opts.DailyClaimsPath)))...)
 }
 
 func DisabledReporter() *Reporter {
-	return kittelemetry.DisabledReporter()
+	return posthog.DisabledReporter()
 }
 
 func NewReporterOrDisabled(opts Options) *Reporter {
@@ -106,31 +106,31 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
-func allowedEventOptions() []kittelemetry.Option {
-	daemonProperties := []kittelemetry.AllowedProperty{
-		kittelemetry.AllowProperty("repo_count", kittelemetry.AllowNumber),
-		kittelemetry.AllowProperty("review_count", kittelemetry.AllowNumber),
-		kittelemetry.AllowProperty("sync_enabled", kittelemetry.AllowBool),
-		kittelemetry.AllowProperty("ci_enabled", kittelemetry.AllowBool),
-		kittelemetry.AllowProperty("auto_design_enabled", kittelemetry.AllowBool),
+func allowedEventOptions() []posthog.Option {
+	daemonProperties := []posthog.AllowedProperty{
+		posthog.AllowProperty("repo_count", posthog.AllowNumber),
+		posthog.AllowProperty("review_count", posthog.AllowNumber),
+		posthog.AllowProperty("sync_enabled", posthog.AllowBool),
+		posthog.AllowProperty("ci_enabled", posthog.AllowBool),
+		posthog.AllowProperty("auto_design_enabled", posthog.AllowBool),
 	}
 
-	return []kittelemetry.Option{
-		kittelemetry.WithAllowedEvent(EventAgentActive,
-			kittelemetry.AllowProperty(PropertyCallCountBucket, kittelemetry.AllowStringValues("1-10"))),
-		kittelemetry.WithAllowedEvent(EventAgentCallCount,
-			kittelemetry.AllowProperty(PropertyCallCountBucket, kittelemetry.AllowStringValues("11-100", "over-100"))),
-		kittelemetry.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
-		kittelemetry.WithAllowedEvent(EventDaemonActive, daemonProperties...),
-		kittelemetry.WithAllowedEvent(EventScreenViewed,
-			kittelemetry.RequireProperty(PropertyScreen, kittelemetry.AllowStringValues(
+	return []posthog.Option{
+		posthog.WithAllowedEvent(EventAgentActive,
+			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
+		posthog.WithAllowedEvent(EventAgentCallCount,
+			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("11-100", "over-100"))),
+		posthog.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
+		posthog.WithAllowedEvent(EventDaemonActive, daemonProperties...),
+		posthog.WithAllowedEvent(EventScreenViewed,
+			posthog.RequireProperty(PropertyScreen, posthog.AllowStringValues(
 				"reviews", "analytics", "queue", "review", "prompt", "filter", "comment", "commit-msg", "help", "log", "tasks", "worktree-confirm", "patch", "column-options", "release-notes", "rerun-agent")),
-			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI))),
-		kittelemetry.WithAllowedEvent(EventAppOpened,
-			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
-		kittelemetry.WithAllowedEvent(EventSessionEnded,
-			kittelemetry.AllowProperty(PropertySurface, kittelemetry.AllowStringValues(SurfaceWeb, SurfaceTUI)),
-			kittelemetry.AllowProperty(PropertyDurationBucket, kittelemetry.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI))),
+		posthog.WithAllowedEvent(EventAppOpened,
+			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))),
+		posthog.WithAllowedEvent(EventSessionEnded,
+			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
+			posthog.AllowProperty(PropertyDurationBucket, posthog.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
 	}
 }
 

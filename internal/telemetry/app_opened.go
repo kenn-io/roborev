@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	kittelemetry "go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -32,7 +32,7 @@ const appOpenedMaxBodyBytes = 64 << 10
 // Build it per request if needed; the state lives on the limiter.
 func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture := kittelemetry.NewCaptureHandler(reporter)
+		capture := posthog.NewCaptureHandler(reporter)
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if r.Method != http.MethodPost || err != nil || mediaType != "application/json" {
 			capture.ServeHTTP(w, r)
@@ -46,6 +46,7 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		// Hand kit the bytes already read plus the rest, so its size and decode answers stay its own.
 		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
 		var skip bool
+		var canonical []byte
 		if len(body) <= appOpenedMaxBodyBytes {
 			var event struct {
 				Event string `json:"event"`
@@ -53,7 +54,7 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 			if json.Unmarshal(body, &event) == nil {
 				switch strings.TrimSpace(event.Event) {
 				case EventAppOpened, EventScreenViewed:
-					skip, err = l.alreadySentToday(reporter, body)
+					skip, canonical, err = l.alreadySentToday(reporter, body)
 					if err != nil {
 						http.Error(w, "read telemetry claim", http.StatusInternalServerError)
 						return
@@ -72,6 +73,10 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 			_, _ = io.WriteString(w, "{\"status\":\"queued\"}\n")
 			return
 		}
+		if canonical != nil {
+			r.Body = readCloser{Reader: bytes.NewReader(canonical), Closer: r.Body}
+			r.ContentLength = int64(len(canonical))
+		}
 		capture.ServeHTTP(w, r)
 	})
 }
@@ -81,26 +86,26 @@ type readCloser struct {
 	io.Closer
 }
 
-func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bool, error) {
+func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bool, []byte, error) {
 	var req struct {
 		Event      string         `json:"event"`
 		Properties map[string]any `json:"properties"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&req); err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 	// Kit rejects data after the JSON object; leave that answer to kit.
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return false, nil
+		return false, nil, nil
 	}
 	req.Event = strings.TrimSpace(req.Event)
 	if !reporter.Enabled() {
-		return false, nil
+		return false, nil, nil
 	}
 	props, err := reporter.SanitizeProperties(req.Event, req.Properties)
 	if err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 	surface, _ := props[PropertySurface].(string)
 	clock := l.now
@@ -109,37 +114,42 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bo
 	}
 	day := clock().UTC().Format(time.DateOnly)
 	if req.Event == EventScreenViewed {
+		req.Properties = props
+		canonical, err := json.Marshal(req)
+		if err != nil {
+			return false, nil, err
+		}
 		if l.Database == nil {
-			return false, nil
+			return false, canonical, nil
 		}
 		screen, _ := props[PropertyScreen].(string)
 		claimed, err := l.Database.GetSyncState("telemetry.screen." + screen)
-		return claimed >= day, err
+		return claimed >= day, canonical, err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.sent[surface] == day {
-		return true, nil
+		return true, nil, nil
 	}
 	if l.sent == nil {
 		l.sent = make(map[string]string)
 	}
 	l.sent[surface] = day
-	return false, nil
+	return false, nil, nil
 }
 
 // PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.
 func PostAppOpened(ctx context.Context, client *http.Client, url, surface string) {
-	_, _ = kittelemetry.PostEvent(ctx, client, url, EventAppOpened, map[string]any{PropertySurface: surface})
+	_, _ = posthog.PostEvent(ctx, client, url, EventAppOpened, map[string]any{PropertySurface: surface})
 }
 
 // PostSessionEnded reports one completed interface lifetime.
 func PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
-	_, _ = kittelemetry.PostEvent(ctx, client, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
+	_, _ = posthog.PostEvent(ctx, client, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
 }
 
 func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, surface string) error {
-	_, err := kittelemetry.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
+	_, err := posthog.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
 	return err
 }
 

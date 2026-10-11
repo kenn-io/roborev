@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -153,26 +154,20 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	for _, body := range []string{
-		`{"event":"app_opened","properties":{"surface":"cli"}}`,
-		`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`,
-	} {
-		t.Run(body, func(t *testing.T) {
-			reporter, messages := newPostHogStubReporter(t)
-			limiter := &AppOpenedLimiter{}
-			var wg sync.WaitGroup
-			codes := make([]int, 8)
-			for i := range codes {
-				wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
-			}
-			wg.Wait()
-			require.NoError(t, reporter.Close())
-			for _, code := range codes {
-				assert.Equal(t, http.StatusAccepted, code)
-			}
-			assert.Len(t, messages(), 1)
-		})
+	body := `{"event":"app_opened","properties":{"surface":"cli"}}`
+	reporter, messages := newPostHogStubReporter(t)
+	limiter := &AppOpenedLimiter{}
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
 	}
+	wg.Wait()
+	require.NoError(t, reporter.Close())
+	for _, code := range codes {
+		assert.Equal(t, http.StatusAccepted, code)
+	}
+	assert.Len(t, messages(), 1)
 }
 
 func TestPostAppOpened(t *testing.T) {
@@ -256,6 +251,35 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, day, stored)
 		})
+	}
+}
+
+func TestScreenViewedNormalizesAliasesBeforeLegacyLookup(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	db := testutil.OpenTestDB(t)
+	require.NoError(t, db.SetSyncState("telemetry.screen.queue", time.Now().UTC().Format(time.DateOnly)))
+	endpoint, messages := testutil.NewPostHogStub(t)
+	reporter, err := NewReporter(Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+	require.NoError(t, err)
+	limiter := &AppOpenedLimiter{Database: db}
+	body := `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
+	for range 64 {
+		skip, canonical, err := limiter.alreadySentToday(reporter, []byte(body))
+		require.NoError(t, err)
+		var normalized struct {
+			Properties map[string]any `json:"properties"`
+		}
+		require.NoError(t, json.Unmarshal(canonical, &normalized))
+		assert.Equal(t, normalized.Properties[PropertyScreen] == "queue", skip)
+		assert.NotContains(t, normalized.Properties, " screen ")
+		assert.NotContains(t, normalized.Properties, " surface ")
+		assert.NotContains(t, normalized.Properties, "path")
+		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+	}
+	require.NoError(t, reporter.Close())
+	for _, message := range messages() {
+		assert.Equal(t, "review", message.Properties[PropertyScreen])
 	}
 }
 

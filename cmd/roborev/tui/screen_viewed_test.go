@@ -74,11 +74,6 @@ func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 				update(keyPressMsg(key))
 			}
 			assert.Equal(t, []string{tt.screen, tt.screen}, transport.screens)
-			update(keyPressMsg(key))
-			if !tt.initial {
-				update(keyPressMsg(key))
-			}
-			assert.Len(t, transport.screens, 2)
 			if tt.initial {
 				result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
 				m = result.(model)

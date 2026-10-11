@@ -1758,7 +1758,8 @@ job IDs, filter text or review contents. Daily screen claims live in
 a `telemetry-daily.json.lock` sidecar. Existing database claims suppress repeat
 counts through their recorded UTC dates. An unreadable or newer-version claims
 file makes screen reports fail until it's removed. Stop the daemon before
-deleting it; deletion lets that day's screens count again. Counts mean the
+deleting it. Deletion resets file claims; existing SQLite claims remain effective
+through their recorded UTC dates. Counts mean the
 report was queued, not confirmed delivered to PostHog. The TUI retries a failed
 screen report on the next key or mouse input while that screen is showing. The
 browser reports the visible screen on every window focus and page change, and
