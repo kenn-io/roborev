@@ -278,6 +278,7 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 		})
 	}
 }
+
 func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
