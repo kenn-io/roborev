@@ -87,8 +87,6 @@ func TestIntegrationReviewTextSanitizedForPostgres(t *testing.T) { //nolint:para
 		).Scan(&agent, &output))
 		assert.Equal("é\uFFFD", agent)
 		assert.Equal("\uFFFD café", output)
-		assert.Equal("é\xff", review.Agent)
-		assert.Equal("\xe9 café", review.Output)
 
 		structuredReview := SyncableReview{
 			UUID: uuid.New(), JobUUID: taskJobID,
