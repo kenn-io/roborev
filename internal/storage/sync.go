@@ -487,7 +487,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
-		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
+		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
 		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
@@ -558,7 +558,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 
 // MarkJobSynced updates the synced_at timestamp for a job
 func (db *DB) MarkJobSynced(jobID int64) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	_, err := db.Exec(`UPDATE review_jobs SET synced_at = ? WHERE id = ?`, now, jobID)
 	return err
 }
@@ -632,7 +632,7 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 	if len(marks) == 0 {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin mark jobs synced: %w", err)
@@ -668,6 +668,10 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 
 // SyncableReview contains review data needed for sync
 type SyncableReview struct {
+	// MetadataOnly republishes an already-synced review after its parent upload.
+	// It repairs attempt identity without overwriting edits made by a peer.
+	MetadataOnly       bool
+	JobEnqueuedAt      time.Time
 	ID                 int64
 	UUID               uuid.UUID
 	JobID              int64
@@ -684,26 +688,31 @@ type SyncableReview struct {
 	UpdatedAt          time.Time
 }
 
-// GetReviewsToSync returns reviews modified locally that need to be pushed.
-// Only returns reviews whose parent job has already been synced.
+// GetReviewsToSync returns local edits and completed parent uploads whose
+// review attempt needs to follow them. Previously synced content is sent as a
+// metadata-only repair so a cached copy cannot overwrite a peer edit.
+// Sync acknowledgments are always UTC. Compare their full strings (normalizing
+// old whole-second SQLite/UTC forms), since datetime() discards the precision
+// needed when the parent and review were acknowledged in the same second.
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	rows, err := db.Query(`
 		SELECT
-			r.id, r.uuid, r.job_id, j.uuid,
+			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at,
 			r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
-			r.updated_by_machine_id, r.created_at, r.updated_at
+			r.updated_by_machine_id, r.created_at, r.updated_at,
+			r.synced_at IS NOT NULL AND `+sqliteNormalizedTimestampExpr("r.updated_at")+` <= `+sqliteNormalizedTimestampExpr("r.synced_at")+`
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
-		WHERE r.updated_by_machine_id = ?
-		AND r.uuid IS NOT NULL
+		WHERE r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
-		AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`)
+		AND ((r.updated_by_machine_id = ? AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`))
+		 OR (j.source_machine_id = ? AND replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T')))
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, limit)
+	`, machineID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
@@ -712,21 +721,22 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 	var reviews []SyncableReview
 	for rows.Next() {
 		var r SyncableReview
-		var createdAt, updatedAt string
+		var createdAt, updatedAt, enqueuedAt string
 		var verdictBool sql.NullBool
 		var structuredOutput sql.NullString
 		var reviewedFileCount, excludedFileCount sql.NullInt64
 
 		err := rows.Scan(
-			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
+			&r.ID, &r.UUID, &r.JobID, &r.JobUUID, &enqueuedAt,
 			&r.Agent, &r.Output, &r.Closed,
 			&verdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
-			&r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&r.UpdatedByMachineID, &createdAt, &updatedAt, &r.MetadataOnly,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
 		}
 
+		r.JobEnqueuedAt = parseSQLiteTime(enqueuedAt)
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
 		if verdictBool.Valid {
@@ -750,7 +760,7 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 
 // MarkReviewSynced updates the synced_at timestamp for a review
 func (db *DB) MarkReviewSynced(reviewID int64) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	_, err := db.Exec(`UPDATE reviews SET synced_at = ? WHERE id = ?`, now, reviewID)
 	return err
 }
@@ -760,7 +770,7 @@ func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
 	if len(reviewIDs) == 0 {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	placeholders := make([]string, len(reviewIDs))
 	args := make([]any, len(reviewIDs)+1)
 	args[0] = now
@@ -869,7 +879,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 // use this to avoid waking derived-data reconcilers for cursor lookback
 // replays and rejected stale records while preserving the public API above.
 func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
 		return false, err
@@ -897,6 +907,10 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
+			agent = excluded.agent,
+			started_at = excluded.started_at,
+			reasoning = excluded.reasoning,
+			review_type = excluded.review_type,
 			enqueued_at = excluded.enqueued_at,
 			source_machine_id = excluded.source_machine_id,
 			finished_at = excluded.finished_at,
@@ -932,6 +946,10 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`)
 			AND NOT (
 				review_jobs.status IS excluded.status
+				AND review_jobs.agent IS excluded.agent
+				AND review_jobs.started_at IS excluded.started_at
+				AND review_jobs.reasoning IS excluded.reasoning
+				AND review_jobs.review_type IS excluded.review_type
 				AND review_jobs.enqueued_at IS excluded.enqueued_at
 				AND review_jobs.source_machine_id IS excluded.source_machine_id
 				AND review_jobs.finished_at IS excluded.finished_at
@@ -976,6 +994,19 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
+	}
+	if rows > 0 && enqueuedAt != "" && parseSQLiteTime(enqueuedAt).Truncate(time.Microsecond).Before(j.EnqueuedAt.Truncate(time.Microsecond)) {
+		// SQLite exposes only the current attempt. Advancing its job must also
+		// retire the old review, even if the new attempt failed without output.
+		if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+			return false, fmt.Errorf("clear previous attempt review: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
+			return false, fmt.Errorf("retire previous attempt archive: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+			return false, fmt.Errorf("clear previous attempt content: %w", err)
+		}
 	}
 	// Content follows the job row: a pulled change, such as a rerun's new
 	// prompt, replaces the local payload. A replay of an unchanged job writes
@@ -1036,6 +1067,11 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if isOlderPulledAttempt(enqueuedAt, r.JobEnqueuedAt) {
 		return false, nil
 	}
+	if parseSQLiteTime(enqueuedAt).Truncate(time.Microsecond).Before(r.JobEnqueuedAt.Truncate(time.Microsecond)) {
+		// Another machine can finish a rerun between the job and review pull
+		// phases. Retain the review cursor until the next job pull catches up.
+		return false, fmt.Errorf("review attempt is newer than local job; retry after pulling jobs")
+	}
 	// The executor owns the current result. A peer may edit that same review,
 	// but cannot replace it with a previous attempt or resurrect a review for
 	// an unfinished/failed local attempt after its job has been uploaded.
@@ -1076,7 +1112,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	// A remote machine on an older release may have stored a verdict for
 	// output that never reviewed the code (an unreadable diff). Do not
 	// re-import that verdict; the row stays unrated here as it would locally.
@@ -1386,5 +1422,5 @@ func nullTimeStr(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }

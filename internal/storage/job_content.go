@@ -247,15 +247,16 @@ func (db *DB) copyLegacyJobContent(ctx context.Context) (int, error) {
 	// Older clients did not update PostgreSQL's job prompt on a rerun. Even
 	// an unchanged local prompt may be its only complete current copy when
 	// the review contains a temporary-file handoff. Re-push every nonempty
-	// local prompt eligible for sync before retention can remove it.
-	// Only this machine's jobs are pushed; a pulled job keeps its marker,
-	// which the sync of its reviews and comments requires. Applied and
-	// rebased fix states are local-only and also keep their markers.
+	// local prompt eligible for sync before retention can remove it. Current
+	// reviews and their parents also need another upload: older mirrors kept
+	// the original enqueue time even after a rerun. PostgreSQL v24 records the
+	// producing attempt. Applied/rebased fixes sync as completed attempts;
+	// their local application state stays local. Imported markers stay intact.
 	resyncSQL := `UPDATE review_jobs AS j SET synced_at = NULL
 		WHERE j.id > ? AND j.id <= ? AND j.synced_at IS NOT NULL
-		  AND j.status IN ('done', 'failed', 'canceled', 'skipped')
+		  AND j.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		  AND lower(j.source_machine_id) = (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
-		  AND NULLIF(` + promptExpr + `, '') IS NOT NULL`
+		  AND (NULLIF(` + promptExpr + `, '') IS NOT NULL OR EXISTS (SELECT 1 FROM reviews r WHERE r.job_id = j.id))`
 
 	var maxID int64
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM review_jobs`).Scan(&maxID); err != nil {

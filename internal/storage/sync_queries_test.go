@@ -304,6 +304,10 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) { //nolint:parallelt
 
 		setTimestamps: func(h *syncTestHelper, id int64, syncedAt sql.NullString, updatedAt string) {
 			h.setReviewTimestamps(id, syncedAt, updatedAt)
+			// This checks review edits alone; a more recent parent upload also
+			// queues an attempt-metadata repair.
+			_, err := h.db.Exec(`UPDATE review_jobs SET synced_at = '2020-01-01T00:00:00Z' WHERE id = (SELECT job_id FROM reviews WHERE id = ?)`, id)
+			require.NoError(h.t, err)
 		},
 
 		createExtra: func(h *syncTestHelper, _ string) (*syncTestHelper, int64) {

@@ -68,15 +68,15 @@ func TestIntegrationGoalReviewSyncRequiresDocument(t *testing.T) { //nolint:para
 	_, err := pool.Pool().Exec(ctx, `UPDATE review_jobs SET job_type = 'goal_review' WHERE uuid = $1`, jobID)
 	require.NoError(t, err)
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
-		UUID: reviewID, JobUUID: jobID, Agent: "test", Output: "No issues found.",
+		UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID), Agent: "test", Output: "No issues found.",
 		UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 	}))
 	var count int
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, reviewID).Scan(&count))
 	assert.Zero(t, count, "prose-only goal reviews must not be pushed")
 
-	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id)
- VALUES ($1, $2, 'test', 'frozen prompt', 'No issues found.', $3)`, uuid.New(), jobID, defaultTestMachineID)
+	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'frozen prompt', 'No issues found.', $3)`, uuid.New(), jobID, defaultTestMachineID)
 	require.NoError(t, err)
 	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobID}, "", 10)
 	require.NoError(t, err)

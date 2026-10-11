@@ -1413,7 +1413,9 @@ and the next start repeats the conversion. Once those columns are removed,
 logs the error and starts normally; the freed space stays inside the file and
 new jobs reuse it.
 
-The PostgreSQL schema is unchanged:
+PostgreSQL sync upgrades its schema to version 24 to record which job attempt
+produced each review. Upgrade all machines that share the mirror together; older
+clients refuse this newer schema.
 
 - Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
     in PostgreSQL.
@@ -1423,18 +1425,20 @@ The PostgreSQL schema is unchanged:
 - The upgrade queues every nonempty prompt eligible for sync from this machine
     for another upload. Older clients could mark a rerun as synced while
     PostgreSQL still held its first prompt. Retention keeps these prompts until
-    the new upload finishes. Imported jobs and fix jobs already applied or
-    rebased keep their sync markers so their review updates and comments can
-    still sync.
-- Upgraded machines push an empty review prompt. Older clients read only that
-    column for a finished review, so they show an empty prompt for reviews from
-    upgraded machines.
-- For a completed job from an older client whose prompt a rerun rebuilds, such
-    as a review or range job, an upgraded machine shows the prompt of the job's
-    newest review, because older clients never update the job's prompt on a
-    rerun. A review that arrives after its job updates the prompt. The job's own
-    prompt wins when the review's copy only names a temporary prompt file, as
-    older clients stored for oversized prompts.
+    the new upload finishes. The current review uploads again with its producing
+    attempt. Imported jobs keep their sync markers. Applied or rebased fixes
+    upload as completed attempts; whether their patch was applied stays local to
+    each checkout.
+- Reviews sync with their producing attempt. A failed or canceled rerun has no
+    current review, and an older attempt that finishes later cannot replace a
+    newer attempt's output. Reruns also update the agent and start time on other
+    machines.
+- Historical review prompts remain available after upgrading the mirror. For
+    completed review and range jobs, the current historical review supplies the
+    prompt when it has one, because older clients could leave the job's prompt
+    stale after a rerun. The job's own prompt wins when the review's copy only
+    names a temporary prompt file. New reviews store their prompt only on the
+    job.
 
 Retention is off by default; roborev keeps everything until you set a limit. The
 daemon applies both settings at startup and then hourly. A changed setting takes

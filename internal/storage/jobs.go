@@ -1606,6 +1606,12 @@ func (db *DB) ReenqueueJobWithRequest(
 	enqueuedAt := preciseTimestampAt(now)
 	updatedAt := now.Format(time.RFC3339)
 
+	// Preserve the archive, but do not restore an earlier attempt as this
+	// rerun's canonical review if the new execution fails without output.
+	if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = ? AND resolved_at IS NULL`, updatedAt, jobID); err != nil {
+		return 0, false, err
+	}
+
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
 	// only for review jobs so they rebuild from current git/config state.

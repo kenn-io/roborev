@@ -83,7 +83,7 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	require.Len(t, remote, 1)
 	var localID int64
 	require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&localID))
-	require.NoError(t, b.DB.ReenqueueJob(localID, ReenqueueOpts{}))
+	require.NoError(t, b.DB.ReenqueueJob(localID, ReenqueueOpts{Agent: "second-agent"}))
 	claimed, err := b.DB.ClaimJob("rerun-worker")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
@@ -123,6 +123,9 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 		current, err := db.GetJobByID(id)
 		require.NoError(t, err)
 		assert.Equal("complete rerun prompt", current.Prompt)
+		assert.Equal("second-agent", current.Agent)
+		require.NotNil(t, current.StartedAt)
+		assert.Equal(claimed.StartedAt.UTC().Truncate(time.Microsecond), current.StartedAt.UTC().Truncate(time.Microsecond))
 		require.NotNil(t, current.SourceMachineID)
 		assert.Equal(machineB, *current.SourceMachineID)
 		review, err := db.GetReviewByJobID(id)
@@ -176,8 +179,8 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 		created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 		for i, reviewPrompt := range reviewPrompts {
 			_, err = pool.pool.Exec(ctx, `
-				INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, structured_output, updated_by_machine_id, created_at)
-				VALUES ($1, $2, 'test', $3, '', $4, $5, $6)`,
+				INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, structured_output, updated_by_machine_id, created_at)
+				VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5, $6)`,
 				uuid.New(), jobUUID, reviewPrompt, string(reviewFixtureJSON("No issues found.")), machineID,
 				created.Add(time.Duration(i)*time.Hour))
 			require.NoError(t, err)
@@ -246,70 +249,124 @@ func TestIntegrationPullJobsUsesReviewPromptForOlderHistory(t *testing.T) { //no
 		VALUES ($1, $2, 'a..b', 'test', 'done', $3, NOW(), NOW(), NOW())`, jobUUID, repoID, machineID)
 	require.NoError(t, err)
 	_, err = pool.pool.Exec(ctx, `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id)
-		VALUES ($1, $2, 'test', 'prompt kept only on the review', 'No issues found.', $3)`, uuid.New(), jobUUID, machineID)
+		INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id)
+		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt kept only on the review', 'No issues found.', $3)`, uuid.New(), jobUUID, machineID)
 	require.NoError(t, err)
 
 	assert.Equal(t, "prompt kept only on the review", pulledJobPrompt(t, pool, jobUUID))
 }
 
 func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	assert := assert.New(t)
-	pool := openTestPgPool(t)
-	ctx := t.Context()
-	path, db := openLegacyContentDB(t)
-	repo := createRepo(t, db, t.TempDir())
-	machineID, jobUUID := uuid.New(), uuid.New()
-	finished := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	const completePrompt = "complete prompt of the successful rerun"
-	const handoff = "Read the complete task prompt from \"/tmp/snapshot/prompt.md\" and carry out its instructions. " +
-		"Read the file in full before starting.\n"
-	require.NoError(t, pool.RegisterMachine(ctx, machineID, "test"))
-	pgRepoID, err := pool.GetOrCreateRepo(ctx, "test-repo-migrated-prompt-"+uuid.New().String())
-	require.NoError(t, err)
-	// This is the state left by an older client's successful oversized rerun:
-	// the job's first prompt remains in PostgreSQL and its review only names
-	// the temporary file. SQLite has the complete prompt, marked as pushed.
-	require.NoError(t, pool.UpsertJob(ctx, SyncableJob{
-		UUID: jobUUID, GitRef: "a..b", Agent: "test", Status: "done", JobType: JobTypeRange,
-		SourceMachineID: machineID, EnqueuedAt: finished, FinishedAt: &finished,
-		Prompt: "prompt of the first attempt",
-	}, pgRepoID, nil))
-	_, err = pool.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, structured_output, updated_by_machine_id)
-		VALUES ($1, $2, 'test', $3, '', $4, $5)`, uuid.New(), jobUUID, handoff,
-		string(reviewFixtureJSON("No issues found.")), machineID)
-	require.NoError(t, err)
-	assert.Equal("prompt of the first attempt", pulledJobPrompt(t, pool, jobUUID))
+	for _, status := range []string{"done", "applied", "rebased"} {
+		t.Run(status, func(t *testing.T) {
+			assert := assert.New(t)
+			pool := openTestPgPool(t)
+			ctx := t.Context()
+			path, db := openLegacyContentDB(t)
+			repo := createRepo(t, db, t.TempDir())
+			machineID, jobUUID, reviewUUID := uuid.New(), uuid.New(), uuid.New()
+			finished := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+			const completePrompt = "complete prompt of the successful rerun"
+			const handoff = "Read the complete task prompt from \"/tmp/snapshot/prompt.md\" and carry out its instructions. " +
+				"Read the file in full before starting.\n"
+			require.NoError(t, pool.RegisterMachine(ctx, machineID, "test"))
+			pgRepoID, err := pool.GetOrCreateRepo(ctx, "test-repo-migrated-prompt-"+uuid.New().String())
+			require.NoError(t, err)
+			// This is the state left by an older client's successful oversized rerun:
+			// the job's first prompt remains in PostgreSQL and its review only names
+			// the temporary file. SQLite has the complete prompt, marked as pushed.
+			require.NoError(t, pool.UpsertJob(ctx, SyncableJob{
+				UUID: jobUUID, GitRef: "a..b", Agent: "test", Status: "done", JobType: JobTypeRange,
+				SourceMachineID: machineID, EnqueuedAt: finished.Add(-time.Hour), FinishedAt: &finished,
+				Prompt: "prompt of the first attempt",
+			}, pgRepoID, nil))
+			_, err = pool.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, structured_output, updated_by_machine_id)
+		VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', $3, '', $4, $5)`, reviewUUID, jobUUID, handoff,
+				string(reviewFixtureJSON("No issues found.")), machineID)
+			require.NoError(t, err)
+			assert.Equal("prompt of the first attempt", pulledJobPrompt(t, pool, jobUUID))
 
-	_, err = db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machineID)
-	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
+			_, err = db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machineID)
+			require.NoError(t, err)
+			_, err = db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
 		source_machine_id, updated_at, synced_at, finished_at)
 		VALUES (?, ?, 'a..b', 'test', 'done', 'range', ?, ?, ?, ?, ?)`,
-		jobUUID, repo.ID, completePrompt, machineID, finished.Format(time.RFC3339),
-		finished.Format(time.RFC3339), finished.Format(time.RFC3339))
-	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
-		SELECT id, 'test', ?, '', ? FROM review_jobs WHERE uuid = ?`, handoff,
-		string(reviewFixtureJSON("No issues found.")), jobUUID)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
+				jobUUID, repo.ID, completePrompt, machineID, finished.Format(time.RFC3339),
+				finished.Format(time.RFC3339), finished.Format(time.RFC3339))
+			require.NoError(t, err)
+			_, err = db.Exec(`INSERT INTO reviews (uuid, synced_at, updated_at, updated_by_machine_id, job_id, agent, prompt, output, structured_output)
+		SELECT ?, ?, ?, ?, id, 'test', ?, '', ? FROM review_jobs WHERE uuid = ?`, reviewUUID, finished.Format(time.RFC3339), finished.Format(time.RFC3339), machineID, handoff,
+				string(reviewFixtureJSON("No issues found.")), jobUUID)
+			require.NoError(t, err)
+			jobType := JobTypeRange
+			if status != "done" {
+				jobType = JobTypeFix
+			}
+			_, err = db.Exec(`UPDATE review_jobs SET status = ?, job_type = ? WHERE uuid = ?`, status, jobType, jobUUID)
+			require.NoError(t, err)
+			_, err = pool.pool.Exec(ctx, `UPDATE reviews SET closed = TRUE, updated_by_machine_id = $1, updated_at = clock_timestamp() WHERE uuid = $2`, uuid.New(), reviewUUID)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
 
-	db, err = Open(path)
-	require.NoError(t, err)
-	defer db.Close()
-	removed, err := db.PruneJobPrompts(ctx, finished.AddDate(0, 0, 2), true)
-	require.NoError(t, err)
-	assert.Zero(removed, "the complete prompt must survive retention until its re-upload")
-	jobs, err := db.GetJobsToSync(machineID, 10)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(completePrompt, jobs[0].Prompt)
-	_, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{Job: jobs[0], PgRepoID: pgRepoID}})
-	require.NoError(t, err)
-	require.NoError(t, db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
-	removed, err = db.PruneJobPrompts(ctx, finished.AddDate(0, 0, 2), true)
-	require.NoError(t, err)
-	assert.EqualValues(1, removed)
-	assert.Equal(completePrompt, pulledJobPrompt(t, pool, jobUUID))
+			db, err = Open(path)
+			require.NoError(t, err)
+			defer db.Close()
+			removed, err := db.PruneJobPrompts(ctx, finished.AddDate(0, 0, 2), true)
+			require.NoError(t, err)
+			assert.Zero(removed, "the complete prompt must survive retention until its re-upload")
+			jobs, err := db.GetJobsToSync(machineID, 10)
+			require.NoError(t, err)
+			require.Len(t, jobs, 1)
+			assert.Equal(completePrompt, jobs[0].Prompt)
+			_, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{{Job: jobs[0], PgRepoID: pgRepoID}})
+			require.NoError(t, err)
+			require.NoError(t, db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+			reviews, err := db.GetReviewsToSync(machineID, 10)
+			require.NoError(t, err)
+			require.Len(t, reviews, 1, "a previously synced rerun must republish its producing attempt")
+			_, err = pool.BatchUpsertReviews(ctx, reviews)
+			require.NoError(t, err)
+			pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobUUID}, "", 10)
+			require.NoError(t, err)
+			require.Len(t, pulled, 1)
+			assert.Equal(reviewUUID, pulled[0].UUID)
+			assert.True(pulled[0].Closed, "attempt repair must retain a newer peer closure")
+			require.True(t, reviews[0].MetadataOnly)
+			require.NoError(t, db.MarkReviewsSynced([]int64{reviews[0].ID}))
+			ownerPull, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID}, "", 10)
+			require.NoError(t, err)
+			require.Len(t, ownerPull, 1, "the owner must learn the preserved peer closure")
+			require.NoError(t, db.UpsertPulledReview(ownerPull[0]))
+			currentReview, err := db.GetReviewByJobID(jobs[0].ID)
+			require.NoError(t, err)
+			assert.True(currentReview.Closed)
+			pendingReviews, err := db.GetReviewsToSync(machineID, 10)
+			require.NoError(t, err)
+			assert.Empty(pendingReviews, "acknowledging the repair must stop re-uploading it")
+			removed, err = db.PruneJobPrompts(ctx, finished.AddDate(0, 0, 2), true)
+			require.NoError(t, err)
+			if status == "done" {
+				assert.EqualValues(1, removed)
+			} else {
+				assert.Zero(removed)
+			}
+			local, err := db.GetJobByID(jobs[0].ID)
+			require.NoError(t, err)
+			assert.Equal(JobStatus(status), local.Status)
+			var remoteStatus string
+			require.NoError(t, pool.pool.QueryRow(ctx, `SELECT status FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&remoteStatus))
+			assert.Equal("done", remoteStatus)
+			pending, err := db.GetJobsToSync(machineID, 10)
+			require.NoError(t, err)
+			assert.Empty(pending)
+			_, err = db.AddCommentToJob(local.ID, "reviewer", "Follow-up after upgrade.")
+			require.NoError(t, err)
+			comments, err := db.GetCommentsToSync(machineID, 10)
+			require.NoError(t, err)
+			require.Len(t, comments, 1)
+			_, err = pool.BatchInsertResponses(ctx, comments)
+			require.NoError(t, err)
+			assert.Equal(completePrompt, pulledJobPrompt(t, pool, jobUUID))
+		})
+	}
 }

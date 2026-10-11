@@ -592,6 +592,10 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 		recovered: "only the review kept this prompt",
 		unchanged: "job prompt",
 		oversized: "complete rerun prompt",
+		empty:     "",
+	}
+	for _, id := range localFixes {
+		wantPrompts[id] = "fix prompt"
 	}
 	assert.Equal(wantPrompts, prompts)
 
@@ -612,24 +616,27 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 	for _, review := range reviews {
 		reviewJobs = append(reviewJobs, review.JobID)
 	}
-	assert.ElementsMatch(append([]int64{empty, pulled}, localFixes...), reviewJobs)
+	assert.Equal([]int64{pulled}, reviewJobs)
 
-	// Applied and rebased fix states are local. Their jobs are not pushed
-	// again, but notes and review closures must keep syncing.
+	// Applied/rebased fixes republish their completed attempt first.
+	// Their notes and review closures become eligible after that upload.
 	for _, id := range localFixes {
 		_, err := db.AddCommentToJob(id, "reviewer", "follow-up note")
 		require.NoError(t, err)
 	}
 	comments, err := db.GetCommentsToSync(machine, 100)
 	require.NoError(t, err)
-	assert.Len(comments, len(localFixes))
+	assert.Empty(comments)
 
 	marks := make([]JobSyncMark, len(jobs))
 	for i, job := range jobs {
 		marks[i] = NewJobSyncMark(job)
 	}
 	require.NoError(t, db.MarkJobsSynced(marks))
+	comments, err = db.GetCommentsToSync(machine, 100)
+	require.NoError(t, err)
+	assert.Len(comments, len(localFixes))
 	removed, err := db.PruneJobPrompts(t.Context(), cutoff, true)
 	require.NoError(t, err)
-	assert.EqualValues(len(wantPrompts), removed, "retention resumes after the complete prompts are pushed")
+	assert.EqualValues(3, removed, "retention resumes after the complete prompts are pushed")
 }

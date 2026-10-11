@@ -182,3 +182,28 @@ func TestPulledContentAcceptsNewerRemoteAttempt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal("complete second prompt", job.Prompt)
 }
+
+func TestReviewAttemptRepairWithinSameSecond(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		env := setupJobEnv(t, t.TempDir(), "same-second-upgrade")
+		claimJob(t, env.db, "worker")
+		require.NoError(t, completeReviewFixture(env.db, env.job.ID, "test", "prompt", "Current review."))
+		machine, err := env.db.GetMachineID()
+		require.NoError(t, err)
+		// Old releases acknowledged reviews at whole-second precision. The
+		// migration's parent upload can finish in that very same second.
+		legacyMark := time.Now().UTC().Format(time.RFC3339)
+		_, err = env.db.Exec(`UPDATE reviews SET updated_at = ?, synced_at = ? WHERE job_id = ?`, legacyMark, legacyMark, env.job.ID)
+		require.NoError(t, err)
+		require.NoError(t, env.db.MarkJobSynced(env.job.ID))
+		reviews, err := env.db.GetReviewsToSync(machine, 10)
+		require.NoError(t, err)
+		require.Len(t, reviews, 1)
+		assert.True(t, reviews[0].MetadataOnly)
+		require.NoError(t, env.db.MarkReviewsSynced([]int64{reviews[0].ID}))
+		reviews, err = env.db.GetReviewsToSync(machine, 10)
+		require.NoError(t, err)
+		assert.Empty(t, reviews)
+	})
+}

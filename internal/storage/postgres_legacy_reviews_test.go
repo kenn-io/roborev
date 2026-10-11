@@ -22,8 +22,8 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 	jobID := uuid.New()
 	createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
 	reviewID := uuid.New()
-	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id)
- VALUES ($1, $2, 'test', 'prompt', 'Legacy finding with missing details', $3)`, reviewID, jobID, defaultTestMachineID)
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'Legacy finding with missing details', $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
 	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobID}, "", 10)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
-		UUID: reviewID, JobUUID: jobID,
+		UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID),
 		Agent: "test", StructuredOutput: raw, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
 	}))
 	var resolved bool
@@ -67,7 +67,7 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:para
 		require.NoError(t, err)
 		if status == "done" {
 			memberReviewID := uuid.New()
-			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'prompt', 'The member wrote prose that roborev cannot read back.', $3)`, memberReviewID, memberID, defaultTestMachineID)
+			_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'The member wrote prose that roborev cannot read back.', $3)`, memberReviewID, memberID, defaultTestMachineID)
 			require.NoError(t, err)
 			require.NoError(t, pool.migrateLegacyReviews(ctx))
 			clean := jsontext.Value(`{"schema_version":2,"summary":"Current review.","verdict":"pass","findings":[]}`)
@@ -76,8 +76,8 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:para
 			require.NoError(t, err)
 		}
 	}
-	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}
-	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, 'test', 'original prompt', 'Legacy finding', $3)`, reviewID, jobID, defaultTestMachineID)
+	incoming := SyncableReview{UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID), Agent: "test", Output: "Legacy finding", UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now()}
+	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, updated_by_machine_id) VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'original prompt', 'Legacy finding', $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	records, err := pool.UnresolvedLegacyReviews(ctx)
@@ -123,8 +123,8 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:par
 	insert := func(markdown string, verdict, closed bool) uuid.UUID {
 		jobID, reviewID := uuid.New(), uuid.New()
 		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
-		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, verdict_bool, closed, updated_by_machine_id)
- VALUES ($1, $2, 'test', 'original prompt', $3, $4, $5, $6)`, reviewID, jobID, markdown, verdict, closed, defaultTestMachineID)
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, verdict_bool, closed, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'original prompt', $3, $4, $5, $6)`, reviewID, jobID, markdown, verdict, closed, defaultTestMachineID)
 		require.NoError(t, err)
 		return reviewID
 	}
@@ -204,8 +204,8 @@ func TestIntegrationRestoreLegacyAndImport(t *testing.T) { //nolint:paralleltest
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
 	jobID, reviewID := uuid.New(), uuid.New()
 	createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
-	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool, updated_by_machine_id)
- VALUES ($1, $2, 'test', 'prompt', 'The write loses data. Keep the old file until rename.', true, NULL, $3)`, reviewID, jobID, defaultTestMachineID)
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, closed, verdict_bool, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'The write loses data. Keep the old file until rename.', true, NULL, $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	require.NoError(t, pool.restoreLegacyReviews(ctx))
@@ -223,7 +223,7 @@ func TestIntegrationRestoreLegacyAndImport(t *testing.T) { //nolint:paralleltest
 	converted := jsontext.Value(`{"schema_version":1,"summary":"Converted.","findings":[]}`)
 	require.NoError(t, pool.ResolveLegacyReview(ctx, reviewID, converted))
 	require.ErrorIs(t, pool.ResolveLegacyReview(ctx, reviewID, converted), ErrReviewNotLegacy)
-	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: reviewID, JobUUID: jobID, Agent: "test", StructuredOutput: raw, CreatedAt: time.Now(), UpdatedByMachineID: defaultTestMachineID}))
+	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: reviewID, JobUUID: jobID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobID), Agent: "test", StructuredOutput: raw, CreatedAt: time.Now(), UpdatedByMachineID: defaultTestMachineID}))
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT structured_output, closed FROM reviews WHERE uuid = $1`, reviewID).Scan(&raw, &closed))
 	doc, err = structuredreview.Decode(raw)
 	require.NoError(t, err)
@@ -240,8 +240,8 @@ func TestIntegrationLegacyMigrationBatches(t *testing.T) { //nolint:paralleltest
 	for range 205 {
 		jobID := uuid.New()
 		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
-		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, updated_by_machine_id)
- VALUES ($1, $2, 'test', 'prompt', 'Preserve this historical text.', true, $3)`, uuid.New(), jobID, defaultTestMachineID)
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, agent, prompt, output, closed, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'Preserve this historical text.', true, $3)`, uuid.New(), jobID, defaultTestMachineID)
 		require.NoError(t, err)
 	}
 	require.NoError(t, pool.migrateLegacyReviews(ctx))

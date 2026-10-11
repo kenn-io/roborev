@@ -187,9 +187,9 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 	excluded := 3
 	updatedBy := uuid.New()
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
-		StructuredOutput:   reviewFixtureJSON("PASS"),
-		UUID:               reviewUUID,
-		JobUUID:            jobUUID,
+		StructuredOutput: reviewFixtureJSON("PASS"),
+		UUID:             reviewUUID,
+		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
 		Agent:              "test",
 		Output:             "PASS",
 		ReviewedFileCount:  &zero,
@@ -205,9 +205,9 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 	assert.Equal(t, 3, *reviews[0].ExcludedFileCount)
 
 	require.NoError(t, pool.UpsertReview(ctx, SyncableReview{
-		StructuredOutput:   reviewFixtureJSON("PASS"),
-		UUID:               reviewUUID,
-		JobUUID:            jobUUID,
+		StructuredOutput: reviewFixtureJSON("PASS"),
+		UUID:             reviewUUID,
+		JobUUID:          jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID),
 		Agent:              "test",
 		Output:             "PASS",
 		UpdatedByMachineID: updatedBy,
