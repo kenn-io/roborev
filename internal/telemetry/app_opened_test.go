@@ -223,13 +223,14 @@ func TestPostAppOpened(t *testing.T) {
 	})
 }
 
-func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
+func TestScreenViewedDailyClaims(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 	for _, tc := range []struct {
 		offset  int
 		aliases bool
-	}{{-1, false}, {0, false}, {1, false}, {0, true}} {
+		recover bool
+	}{{-1, false, false}, {0, false, false}, {1, false, false}, {0, true, false}, {-1, false, true}} {
 		t.Run(fmt.Sprint(tc), func(t *testing.T) {
 			db := testutil.OpenTestDB(t)
 			now := time.Now().UTC()
@@ -237,16 +238,35 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 			require.NoError(t, db.SetSyncState("telemetry.screen.queue", day))
 			endpoint, messages := testutil.NewPostHogStub(t)
 			opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+			if tc.recover {
+				require.NoError(t, os.Mkdir(opts.DailyClaimsPath, 0o700))
+			}
 			body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
 			attempts := 1
 			if tc.aliases {
 				body = `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
 				attempts = 64
 			}
-			for range 2 {
+			var installID string
+			for pass := range 2 {
 				reporter, err := NewReporter(opts)
 				require.NoError(t, err)
 				limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+				if tc.recover {
+					if pass == 0 {
+						installID, err = db.GetSyncState(installIDMetadataKey)
+						require.NoError(t, err)
+						assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+						require.NoError(t, reporter.Close())
+						require.NoError(t, os.Remove(opts.DailyClaimsPath))
+						continue
+					}
+					_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+					require.NoError(t, err)
+					assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+					_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
+					require.NoError(t, err)
+				}
 				for range attempts {
 					if tc.aliases {
 						skip, canonical, err := limiter.alreadySentToday(reporter, []byte(body))
@@ -268,7 +288,10 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 					assert.Equal(t, "review", message.Properties[PropertyScreen])
 				}
 			} else if tc.offset < 0 {
-				assert.Len(t, messages(), 1)
+				require.Len(t, messages(), 1)
+				if tc.recover {
+					assert.Equal(t, installID, messages()[0].DistinctID)
+				}
 			} else {
 				assert.Empty(t, messages())
 			}
@@ -277,36 +300,4 @@ func TestScreenViewedPreservesLegacyClaims(t *testing.T) {
 			assert.Equal(t, day, stored)
 		})
 	}
-}
-
-func TestScreenViewedFailedReservationRetriesAfterRestart(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	path := filepath.Join(t.TempDir(), "daily.json")
-	require.NoError(t, os.Mkdir(path, 0o700))
-	db := testutil.OpenTestDB(t)
-	endpoint, messages := testutil.NewPostHogStub(t)
-	opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: path}
-	reporter, err := NewReporter(opts)
-	require.NoError(t, err)
-	installID, err := db.GetSyncState(installIDMetadataKey)
-	require.NoError(t, err)
-	body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
-	limiter := &AppOpenedLimiter{Database: db}
-	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
-	require.NoError(t, reporter.Close())
-	require.NoError(t, os.Remove(path))
-	reporter, err = NewReporter(opts)
-	require.NoError(t, err)
-	limiter = &AppOpenedLimiter{Database: db}
-	_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
-	_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-	require.NoError(t, reporter.Close())
-	sent := messages()
-	require.Len(t, sent, 1)
-	assert.Equal(t, installID, sent[0].DistinctID)
 }

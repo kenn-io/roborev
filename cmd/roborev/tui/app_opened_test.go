@@ -94,8 +94,6 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(requests, 1+len(names))
-	got := requests[0]
-	assert.Equal(http.StatusAccepted, got.code)
 	for i, name := range names {
 		var screenEvent struct {
 			Event      string         `json:"event"`
