@@ -108,10 +108,10 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				changed, err = db.upsertPulledReview(oldReview)
 				require.NoError(t, err)
 				assert.False(changed)
-				// The job can reach PostgreSQL before its new review. Even if
-				// that parent supplies the current enqueue time, the older review
-				// cannot replace or resurrect this executor's result.
+				// Even if an old review claims the current attempt's identity,
+				// it cannot replace or resurrect this executor's result.
 				oldReview.JobEnqueuedAt = before.EnqueuedAt
+				oldReview.JobSourceMachineID = *before.SourceMachineID
 				changed, err = db.upsertPulledReview(oldReview)
 				require.NoError(t, err)
 				assert.False(changed)
