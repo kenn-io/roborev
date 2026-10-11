@@ -306,7 +306,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 	require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
 	server := &Server{db: tc.DB, workerPool: tc.Pool}
 
-	server.failOrphanedJob(stale)
+	server.failOrphanedJob(context.Background(), stale)
 
 	job := tc.assertJobStatus(t, reclaimed.ID, storage.JobStatusRunning)
 	assert.Empty(job.Error)
@@ -396,6 +396,37 @@ func TestStopPreventsClaimsWhilePanelSweepIsBlocked(t *testing.T) {
 		assert.Equal(t, storage.JobStatusQueued, job.Status)
 		assert.Empty(t, stopped)
 		release()
+		require.NoError(t, <-stopped)
+	})
+}
+
+func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, _, _ := newTestServer(t)
+		server.workerPool.Start()
+		defer server.workerPool.Stop()
+		server.startPanelSweep(context.Background())
+		sweepDone := server.sweepDone
+		release := make(chan struct{})
+		releaseWorker := sync.OnceFunc(func() { close(release) })
+		defer releaseWorker()
+		server.workerPool.wg.Go(func() {
+			<-release
+		})
+		require.NoError(t, server.beginShutdownDrain())
+		stopped := make(chan error, 1)
+		go func() { stopped <- server.Stop() }()
+		synctest.Wait()
+		require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
+		sweepFinished := false
+		select {
+		case <-sweepDone:
+			sweepFinished = true
+		default:
+		}
+		assert.True(t, sweepFinished, "panel sweep must finish before the worker drain")
+		assert.Empty(t, stopped)
+		releaseWorker()
 		require.NoError(t, <-stopped)
 	})
 }

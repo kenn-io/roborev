@@ -512,8 +512,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopGoalWatcher()
-		s.workerPool.Stop()
+		s.workerPool.BeginStop()
 		s.stopPanelSweep()
+		s.workerPool.Stop()
 		s.stopSearch()
 		return err
 	}
@@ -719,9 +720,10 @@ func (s *Server) stopOnce0() error {
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
 
+	s.stopPanelSweep()
+
 	// Stop worker pool
 	s.workerPool.Stop()
-	s.stopPanelSweep()
 
 	// Stop search reconciliation after workers can no longer emit review events.
 	s.stopSearch()
