@@ -34,6 +34,26 @@ type tokenCostRetryState struct {
 	ticksRemaining int
 }
 
+// tokenCostMiss records periodic-scan lookups that did not price a job. Each
+// lookup can start an agentsview process, so a session that never resolves
+// is rechecked with exponential backoff instead of on every scan.
+type tokenCostMiss struct {
+	count     int
+	checkedAt time.Time
+}
+
+// tokenCostMissDelay doubles the wait from the scan interval with each miss.
+// It never exceeds the candidate age window, after which the job leaves the
+// scan anyway.
+func (wp *WorkerPool) tokenCostMissDelay(count int) time.Duration {
+	limit := wp.tokenCostMaxCandidateAge
+	delay := wp.tokenCostScanInterval
+	for i := 1; i < count && delay < limit; i++ {
+		delay *= 2
+	}
+	return min(delay, limit)
+}
+
 func (wp *WorkerPool) queueTokenCostRetry(jobID int64) {
 	if jobID <= 0 {
 		return
@@ -50,7 +70,8 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 	defer wp.wg.Done()
 
 	wp.recoverTokenUsageLogs(wp.stopCtx)
-	cursor := wp.reconcileTokenCostPage(wp.stopCtx, 0)
+	misses := make(map[int64]tokenCostMiss)
+	cursor := wp.reconcileTokenCostPage(wp.stopCtx, 0, misses)
 	scanTicker := time.NewTicker(wp.tokenCostScanInterval)
 	defer scanTicker.Stop()
 	logScanTicker := time.NewTicker(wp.tokenUsageLogScanInterval)
@@ -68,7 +89,7 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 		case <-retryTicker.C:
 			wp.processTokenCostRetries(wp.stopCtx, pending)
 		case <-scanTicker.C:
-			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor)
+			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor, misses)
 		case <-logScanTicker.C:
 			wp.recoverTokenUsageLogs(wp.stopCtx)
 		}
@@ -214,11 +235,12 @@ func (wp *WorkerPool) processTokenCostRetries(
 }
 
 func (wp *WorkerPool) reconcileTokenCostPage(
-	ctx context.Context, afterJobID int64,
+	ctx context.Context, afterJobID int64, misses map[int64]tokenCostMiss,
 ) int64 {
+	now := time.Now()
 	candidates, err := wp.db.ListTokenCostCandidates(
 		afterJobID, wp.tokenCostPageSize,
-		time.Now().Add(-wp.tokenCostMaxCandidateAge),
+		now.Add(-wp.tokenCostMaxCandidateAge),
 	)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -226,13 +248,30 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 		}
 		return afterJobID
 	}
+	if len(candidates) < wp.tokenCostPageSize {
+		// The scan wraps here. A job last checked before the age window
+		// started has aged out of the candidate set.
+		for jobID, miss := range misses {
+			if now.Sub(miss.checkedAt) > wp.tokenCostMaxCandidateAge {
+				delete(misses, jobID)
+			}
+		}
+	}
 	if len(candidates) == 0 {
 		return 0
 	}
 
 	cursor := afterJobID
 	for _, candidate := range candidates {
-		_, err := wp.reconcileTokenCostCandidate(ctx, candidate)
+		miss, missed := misses[candidate.JobID]
+		if missed && now.Sub(miss.checkedAt) < wp.tokenCostMissDelay(miss.count) {
+			cursor = candidate.JobID
+			continue
+		}
+		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate)
+		if resolved {
+			delete(misses, candidate.JobID)
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return cursor
@@ -242,6 +281,11 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 				return cursor
 			}
 			log.Printf("token cost reconciliation: job %d: %v", candidate.JobID, err)
+		}
+		if !resolved {
+			misses[candidate.JobID] = tokenCostMiss{
+				count: miss.count + 1, checkedAt: now,
+			}
 		}
 		cursor = candidate.JobID
 	}

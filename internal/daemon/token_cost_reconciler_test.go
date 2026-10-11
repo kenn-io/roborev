@@ -330,6 +330,44 @@ func TestTokenCostReconcilerAdvancesPastUnavailableCandidate(t *testing.T) {
 	assert.False(t, usage.HasCost)
 }
 
+func TestTokenCostReconcilerBacksOffRepeatedMisses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		job := seedTokenCostCandidate(t, tc, "late-session", `{}`)
+		tc.Pool.tokenCostScanInterval = time.Minute
+		tc.Pool.tokenCostRetryInterval = time.Hour
+
+		var indexed atomic.Bool
+		var lookups atomic.Int32
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			lookups.Add(1)
+			if !indexed.Load() {
+				return nil, nil
+			}
+			return &tokens.Usage{HasCost: true, CostUSD: 0.12}, nil
+		}
+		tc.Pool.Start()
+		t.Cleanup(tc.Pool.Stop)
+
+		// Misses wait 1, 2, 4, 8, and 16 minutes, so lookups run at
+		// minutes 0, 1, 3, 7, 15, and 31 rather than every scan.
+		time.Sleep(time.Hour - time.Second)
+		synctest.Wait()
+		assert.Equal(t, int32(6), lookups.Load())
+
+		// The next lookup is due at minute 63 and still prices the job.
+		indexed.Store(true)
+		time.Sleep(4 * time.Minute)
+		synctest.Wait()
+		assert.Equal(t, int32(7), lookups.Load())
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.InDelta(t, 0.12, usage.CostUSD, 1e-9)
+	})
+}
+
 func TestTokenCostReconcilerShutdownCancelsProviderLookup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
