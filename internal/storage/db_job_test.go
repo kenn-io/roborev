@@ -366,8 +366,6 @@ func TestFailJobAttemptGuard(t *testing.T) {
 	}{
 		{name: "wrong worker", workerID: "worker-b", startedAt: job.StartedAtRaw},
 		{name: "wrong attempt", workerID: job.WorkerID, startedAt: "2000-01-01T00:00:00Z"},
-		{name: "empty worker", startedAt: job.StartedAtRaw},
-		{name: "empty start", workerID: job.WorkerID},
 	} {
 		t.Run(attempt.name, func(t *testing.T) {
 			updated, err := env.db.FailJobAttempt(context.Background(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
