@@ -158,9 +158,15 @@ daemon endpoint. See [MCP setup](integrations/mcp.md).
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
 
-ZCode registers hooks in `~/.zcode/cli/config.json` under `hooks.events` and
-sets `hooks.enabled` to `true` because ZCode configuration-file hooks stay
-disabled until that flag is set. ZCode follows the Claude Code hook input and
+ZCode hooks are delivered as an inline plugin instead of configuration-file
+hooks. The install writes a manifest plus `hooks/hooks.json` under
+`~/.roborev/zcode-plugin/` and appends that directory to `plugins.dirs` in
+`~/.zcode/cli/config.json`. On the ZCode versions tested, hooks configured under
+`hooks.events` never run: the desktop client loads configuration hooks only
+through its UI-driven hooks service and does not reload them on restart, while
+plugin-contributed hooks load in the CLI process and enable the hook runner
+automatically. The install therefore also removes any roborev-owned
+`hooks.events` entries it finds. ZCode follows the Claude Code hook input and
 output protocol, so a `Stop` hook blocks the stop with the reminder text as the
 reason.
 

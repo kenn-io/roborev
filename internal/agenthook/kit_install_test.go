@@ -122,6 +122,11 @@ func TestRunInstallInstallsAndUpdatesBundledSkillsForSupportedProfiles(t *testin
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			root := t.TempDir()
+			if tt.agent == "zcode" {
+				// The ZCode install writes plugin files under the roborev
+				// data directory; keep them inside the test sandbox.
+				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			}
 			configPath := filepath.Join(root, tt.configName)
 			opts := InstallOptions{
 				Agent: tt.agent, Executable: "/opt/bin/roborev",

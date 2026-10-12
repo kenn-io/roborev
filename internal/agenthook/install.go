@@ -197,6 +197,13 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 		fmt.Fprintf(stdout, "would install or update bundled %s skills in %s (MCP: %t)\n", agent, agentHookSkillsDir(agent, planned.ConfigPath), opts.MCP)
 		return planned, nil
 	}
+	if agent == AgentZcode {
+		// Write the plugin payload before registering it so ZCode never sees
+		// a plugins.dirs entry without its manifest and hooks on disk.
+		if err := installZcodePluginFiles(opts); err != nil {
+			return kitagenthook.Result{}, err
+		}
+	}
 	if err := installAgentHookSkills(agent, planned.ConfigPath, opts.MCP); err != nil {
 		return kitagenthook.Result{}, err
 	}
@@ -451,7 +458,7 @@ func profileError(agent kitagenthook.Agent, configuredPath string, err error) er
 		case AgentGrok:
 			path = DefaultGrokHooksPath()
 		case AgentZcode:
-			path = DefaultZcodeHooksPath()
+			path = DefaultZcodeConfigPath()
 		default:
 			path, _ = kitagenthook.ConfigPath(agent)
 		}

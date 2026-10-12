@@ -52,6 +52,8 @@ func TestInstalledForAgentDetectsGrokHook(t *testing.T) {
 }
 
 func TestInstalledForAgentDetectsZcodeHookUnderEvents(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 	path := filepath.Join(t.TempDir(), "config.json")
 	content := `{"hooks":{"enabled":true,"events":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent zcode --source=roborev-agent-hook"}]}]}}}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
@@ -63,6 +65,22 @@ func TestInstalledForAgentDetectsZcodeHookUnderEvents(t *testing.T) {
 	grok, err := InstalledForAgent(path, "grok")
 	require.NoError(t, err)
 	assert.False(t, grok)
+}
+
+func TestInstalledForAgentDetectsZcodePluginHook(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	hooksPath := filepath.Join(dataDir, "zcode-plugin", "hooks", "hooks.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hooksPath), 0o755))
+	require.NoError(t, os.WriteFile(hooksPath, []byte(
+		`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent zcode --source=roborev-agent-hook"}]}]}}`,
+	), 0o644))
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{}`), 0o644))
+
+	ok, err := InstalledForAgent(configPath, "zcode")
+	require.NoError(t, err)
+	assert.True(t, ok)
 }
 
 func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {	dir := t.TempDir()

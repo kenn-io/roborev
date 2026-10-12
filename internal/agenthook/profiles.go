@@ -121,7 +121,7 @@ func profileInstalled(agent kitagenthook.Agent) bool {
 	case AgentGrok:
 		path = DefaultGrokHooksPath()
 	case AgentZcode:
-		path = DefaultZcodeHooksPath()
+		path = DefaultZcodeConfigPath()
 	default:
 		path, err = kitagenthook.ConfigPath(agent)
 	}
