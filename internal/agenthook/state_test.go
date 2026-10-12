@@ -3026,8 +3026,8 @@ func TestRecordSessionStartDeliversReminder(t *testing.T) {
 	failed.GitRef = head
 	failed.Branch = "main"
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failed),
-		path:    filepath.Join(t.TempDir(), "state.json"),
+		reviews:     trackedReviewSource(repo.Path(), failed),
+		path:        filepath.Join(t.TempDir(), "state.json"),
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
@@ -3051,8 +3051,8 @@ func TestRecordUserPromptRespectsFailedReviewThreshold(t *testing.T) {
 	failed.GitRef = head
 	failed.Branch = "main"
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failed),
-		path:    filepath.Join(t.TempDir(), "state.json"),
+		reviews:     trackedReviewSource(repo.Path(), failed),
+		path:        filepath.Join(t.TempDir(), "state.json"),
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
@@ -3079,8 +3079,8 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 				return TrackedRepoResolution{Tracked: false}, true
 			},
 		},
-		path:       filepath.Join(t.TempDir(), "state.json"),
-		sessions:   map[string]SessionState{},
+		path:        filepath.Join(t.TempDir(), "state.json"),
+		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
 	resp, err := untracked.Record(Request{
@@ -3096,8 +3096,8 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 	failed.GitRef = head
 	failed.Branch = "main"
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failed),
-		path:    filepath.Join(t.TempDir(), "state.json"),
+		reviews:     trackedReviewSource(repo.Path(), failed),
+		path:        filepath.Join(t.TempDir(), "state.json"),
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
@@ -3121,8 +3121,8 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 				return nil, false
 			},
 		},
-		path:       filepath.Join(t.TempDir(), "state.json"),
-		sessions:   map[string]SessionState{},
+		path:        filepath.Join(t.TempDir(), "state.json"),
+		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
 	broken, err := unavailable.Record(Request{

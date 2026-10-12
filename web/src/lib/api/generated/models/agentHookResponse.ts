@@ -8,6 +8,7 @@ export interface AgentHookResponse {
   commit_count?: number;
   commit_threshold?: number;
   count: number;
+  diagnosis?: string;
   failed_review_count?: number;
   failed_review_threshold?: number;
   fix_session_id?: string;

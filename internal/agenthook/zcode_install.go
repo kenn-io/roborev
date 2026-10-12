@@ -99,10 +99,7 @@ func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
 	if err != nil {
 		return zcodePlugin{}, err
 	}
-	timeout := opts.Timeout
-	if timeout < zcodeMinTimeout {
-		timeout = zcodeMinTimeout
-	}
+	timeout := max(opts.Timeout, zcodeMinTimeout)
 	events := map[string]any{}
 	if err := appendHookEntries(events, "", "ZCode", command, timeout, zcodeHookSpecs(opts.StopForm)); err != nil {
 		return zcodePlugin{}, err

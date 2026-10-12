@@ -83,7 +83,8 @@ func TestInstalledForAgentDetectsZcodePluginHook(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {	dir := t.TempDir()
+func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {
+	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo hi"}]}]}}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))

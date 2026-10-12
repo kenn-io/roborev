@@ -94,7 +94,8 @@ func serversAt(doc map[string]any, key string) map[string]any {
 	return servers
 }
 
-func TestInstallDryRunAndInvalidInputPreserveConfig(t *testing.T) {	path := filepath.Join(t.TempDir(), "mcp.json")
+func TestInstallDryRunAndInvalidInputPreserveConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
 	initial := []byte(`{"mcpServers":{"other":{"command":"other"}}}`)
 	require.NoError(t, os.WriteFile(path, initial, 0o600))
 	opts := Options{Agent: skills.AgentDroid, ConfigPath: path, Transport: "stdio", DryRun: true}

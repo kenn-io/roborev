@@ -95,6 +95,7 @@ type AgentHookResponse struct {
 	CommitCount           *int64  `json:"commit_count,omitempty"`
 	CommitThreshold       *int64  `json:"commit_threshold,omitempty"`
 	Count                 int64   `json:"count"`
+	Diagnosis             *string `json:"diagnosis,omitempty"`
 	FailedReviewCount     *int64  `json:"failed_review_count,omitempty"`
 	FailedReviewThreshold *int64  `json:"failed_review_threshold,omitempty"`
 	FixSessionID          *string `json:"fix_session_id,omitempty"`

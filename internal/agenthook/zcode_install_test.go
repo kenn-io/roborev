@@ -81,7 +81,7 @@ func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
 			for _, rawHandler := range rawEntry.(map[string]any)["hooks"].([]any) {
 				command := rawHandler.(map[string]any)["command"].(string)
 				handler := rawHandler.(map[string]any)
-				assert.Equal(float64(30), handler["timeout"])
+				assert.InDelta(float64(30), handler["timeout"], 0.001)
 				if strings.Contains(command, agentHookMarker) {
 					installed++
 				}
