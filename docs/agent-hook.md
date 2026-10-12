@@ -175,6 +175,18 @@ register the Stop/PreToolUse/PostToolUse form instead, for use once ZCode
 dispatches those events; ZCode hook registrations use a 30-second minimum
 timeout because a real run measured 15 seconds end to end.
 
+Reminders stay muted for a repository until it defines its own review
+guidelines: `review_guidelines` in `.roborev.toml` on the default branch, or a
+`REVIEW.md` there. Global review guidelines do not count for this check (they
+tune the prompt, but repo-specific guidance is what makes the reminder worth
+acting on), and the hook's error stream says `review guidelines missing` while
+muted. Repositories that cannot commit guidelines to the default branch can keep
+an uncommitted `.roborev.toml` in the working tree: guideline loading falls back
+to the filesystem when the default branch has no config. Run
+`roborev agent-hook install` with an up-to-date daemon, and restart it after
+upgrading; a stale daemon silently skips events and reminder types it does not
+know.
+
 Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:
 

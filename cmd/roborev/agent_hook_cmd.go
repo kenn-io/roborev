@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/githook"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func agentHookCmd() *cobra.Command {
@@ -187,7 +188,11 @@ func agentHookInstallCmd() *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), resolution.Notice)
 				}
 			}
-			return agenthook.RunInstall(opts, cmd.OutOrStdout())
+			if err := agenthook.RunInstall(opts, cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			printStaleDaemonNotice(cmd.OutOrStdout())
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to update; empty detects installed agents, all updates every profile")
@@ -348,4 +353,21 @@ func (s *agentHookSecondsOrDuration) Set(v string) error {
 
 func (s *agentHookSecondsOrDuration) Type() string {
 	return "duration"
+}
+
+// printStaleDaemonNotice warns when a running daemon is older than this
+// binary: installed hooks call the daemon, and a stale daemon silently skips
+// events and reminder types it does not know, which surfaced as hooks
+// returning empty output during ZCode integration testing.
+var printStaleDaemonNotice = func(stdout io.Writer) {
+	status, err := fetchDaemonStatus(context.Background(), getDaemonEndpoint())
+	if err != nil || status == nil {
+		return
+	}
+	if status.Version == version.Version {
+		return
+	}
+	fmt.Fprintf(stdout,
+		"notice: running daemon version %s differs from this binary (%s); run 'roborev daemon restart' so installed hooks reach current reminder behavior\n",
+		status.Version, version.Version)
 }
