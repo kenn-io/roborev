@@ -2973,3 +2973,97 @@ func TestRecordStopSuppressesReminderWithoutReviewGuidelines(t *testing.T) {
 	guidelinesMissing.Store(false)
 	assert.True(stop().Triggered)
 }
+
+func TestRecordUserPromptSubmitInjectsSelfContainedReminder(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	failed := failedReviewJob(1)
+	failed.GitRef = head
+	failed.Branch = "main"
+	reviews := trackedReviewSource(repo.Path(), failed)
+	store := &StateStore{
+		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
+	}
+	req := Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "session-a", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
+		},
+		FailedReviewThreshold: 1,
+	}
+
+	first, err := store.Record(req)
+	require.NoError(t, err)
+	assert.True(first.Triggered)
+	assert.Equal("failed_reviews", first.TriggeredBy)
+	assert.Contains(first.Reason, "[roborev]")
+	assert.Contains(first.Reason, "1 unaddressed review finding")
+	assert.Contains(first.Reason, "job 1 (")
+	assert.Contains(first.Reason, "verdict F")
+	assert.Contains(first.Reason, head[:12])
+	assert.Contains(first.Reason, "finish the user's current task first")
+
+	// The failed-review reminder is acknowledged. The next prompt still
+	// triggers, but only through the active fix session (matching the Stop
+	// reminder behavior of keeping the fix visible until it completes).
+	second, err := store.Record(req)
+	require.NoError(t, err)
+	assert.True(second.Triggered)
+	assert.Equal("fix_session", second.TriggeredBy)
+	require.NoError(t, store.CompleteFixSession(*first.FixSessionID))
+
+	// With the fix complete and the reviews acknowledged, prompts stay quiet.
+	third, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(third.Triggered)
+}
+
+func TestRecordSessionStartDeliversReminder(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	failed := failedReviewJob(7)
+	failed.GitRef = head
+	failed.Branch = "main"
+	store := &StateStore{
+		reviews: trackedReviewSource(repo.Path(), failed),
+		path:    filepath.Join(t.TempDir(), "state.json"),
+		sessions:    map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+
+	resp, err := store.Record(Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "session-a", CWD: repo.Path(), HookEventName: "SessionStart",
+		},
+		FailedReviewThreshold: 1,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, resp.Triggered)
+	assert.Contains(t, resp.Reason, "job 7 (")
+}
+
+func TestRecordUserPromptRespectsFailedReviewThreshold(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	failed := failedReviewJob(1)
+	failed.GitRef = head
+	failed.Branch = "main"
+	store := &StateStore{
+		reviews: trackedReviewSource(repo.Path(), failed),
+		path:    filepath.Join(t.TempDir(), "state.json"),
+		sessions:    map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+
+	resp, err := store.Record(Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "session-a", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
+		},
+		FailedReviewThreshold: 2,
+	})
+
+	require.NoError(t, err)
+	assert.False(t, resp.Triggered)
+}

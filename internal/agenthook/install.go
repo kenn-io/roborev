@@ -35,6 +35,11 @@ type InstallOptions struct {
 	ConfigPath        string
 	Timeout           time.Duration
 	DryRun            bool
+	// StopForm registers ZCode's lifecycle-control hook form (Stop,
+	// PreToolUse, PostToolUse) instead of the scheduled-event form. ZCode
+	// does not dispatch those events on the versions tested; the switch
+	// exists for harnesses that do.
+	StopForm bool
 }
 
 func resolveMCPDaemon(enabled bool, transport, url, server string) (string, error) {

@@ -139,6 +139,16 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 		if resp.TriggeredBy == "fix_session" {
 			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
 		}
+		if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
+			// Injected context must stay self-contained: the daemon reason
+			// already carries the triage guidance, so only append the fix
+			// skill warning and guidelines rather than the stop instruction.
+			resp.Reason = prependAgentHookFixSkillWarning(
+				agent, opts.MCP,
+				agenthook.PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, opts.FixGuidelines),
+			)
+			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
+		}
 		resp.Reason = prependAgentHookFixSkillWarning(
 			agent, opts.MCP,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
@@ -184,6 +194,7 @@ func agentHookInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into agent hooks (for version-manager shims)")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "hook config path for a single selected agent")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().BoolVar(&opts.StopForm, "stop-form", opts.StopForm, "register ZCode's Stop/PreToolUse/PostToolUse hooks instead of UserPromptSubmit/SessionStart (ZCode does not dispatch those events yet)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", opts.DryRun, "print what would change without writing files")
 	return cmd
 }
@@ -217,6 +228,7 @@ func agentHookDumpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path to read and merge into; defaults to the agent's standard path")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().BoolVar(&opts.StopForm, "stop-form", opts.StopForm, "dump ZCode's Stop/PreToolUse/PostToolUse hook form instead of UserPromptSubmit/SessionStart")
 	return cmd
 }
 

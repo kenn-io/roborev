@@ -158,17 +158,19 @@ daemon endpoint. See [MCP setup](integrations/mcp.md).
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
 
-ZCode hooks are delivered as an inline plugin instead of configuration-file
-hooks. The install writes a manifest plus `hooks/hooks.json` under
+ZCode hooks are delivered as an inline plugin and registered on the events ZCode
+actually schedules. The install writes a manifest plus `hooks/hooks.json` under
 `~/.roborev/zcode-plugin/` and appends that directory to `plugins.dirs` in
-`~/.zcode/cli/config.json`. On the ZCode versions tested, hooks configured under
-`hooks.events` never run: the desktop client loads configuration hooks only
-through its UI-driven hooks service and does not reload them on restart, while
-plugin-contributed hooks load in the CLI process and enable the hook runner
-automatically. The install therefore also removes any roborev-owned
-`hooks.events` entries it finds. ZCode follows the Claude Code hook input and
-output protocol, so a `Stop` hook blocks the stop with the reminder text as the
-reason.
+`~/.zcode/cli/config.json`. ZCode documents seven hook events but, on the
+versions tested, dispatches only SessionStart and UserPromptSubmit: a full day
+of session logs showed zero Stop, PreToolUse, and PostToolUse dispatches. The
+default form therefore registers those two events and delivers reminders as
+injected `additionalContext` (self-contained text naming the repo, review job
+IDs, commits, and verdicts, plus triage guidance), with the usual acknowledgment
+and threshold throttling. Pass `--stop-form` to register the
+Stop/PreToolUse/PostToolUse form instead, for use once ZCode dispatches those
+events; ZCode hook registrations use a 30-second minimum timeout because a real
+run measured 15 seconds end to end.
 
 Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:

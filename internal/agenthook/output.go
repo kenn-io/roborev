@@ -26,13 +26,11 @@ func BuildOutput(input Input, resp Response) map[string]any {
 	if !resp.Triggered {
 		return map[string]any{}
 	}
+	if injectsAdditionalContext(input.HookEventName) {
+		return additionalContextOutput(input.HookEventName, PostToolUseAdditionalContext(resp.Reason))
+	}
 	if input.HookEventName == "PostToolUse" {
-		return map[string]any{
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":     "PostToolUse",
-				"additionalContext": PostToolUseAdditionalContext(resp.Reason),
-			},
-		}
+		return additionalContextOutput("PostToolUse", PostToolUseAdditionalContext(resp.Reason))
 	}
 	return map[string]any{"decision": "block", "reason": StopReason(resp.Reason)}
 }
@@ -41,17 +39,38 @@ func BuildOutputWithFixGuidelines(input Input, resp Response, guidelines string)
 	if !resp.Triggered {
 		return BuildOutput(input, resp)
 	}
+	if injectsAdditionalContext(input.HookEventName) {
+		return additionalContextOutput(
+			input.HookEventName,
+			PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, guidelines),
+		)
+	}
 	if input.HookEventName == "PostToolUse" {
-		return map[string]any{
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":     "PostToolUse",
-				"additionalContext": PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, guidelines),
-			},
-		}
+		return additionalContextOutput(
+			"PostToolUse",
+			PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, guidelines),
+		)
 	}
 	return map[string]any{
 		"decision": "block",
 		"reason":   StopReasonWithFixGuidelines(resp.Reason, guidelines),
+	}
+}
+
+// injectsAdditionalContext reports whether the event delivers hook output as
+// injected context for the model rather than a lifecycle decision. ZCode
+// schedules only UserPromptSubmit and SessionStart today, and both take
+// additionalContext.
+func injectsAdditionalContext(eventName string) bool {
+	return eventName == "UserPromptSubmit" || eventName == "SessionStart"
+}
+
+func additionalContextOutput(eventName, context string) map[string]any {
+	return map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     eventName,
+			"additionalContext": context,
+		},
 	}
 }
 

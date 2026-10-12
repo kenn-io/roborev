@@ -254,9 +254,108 @@ func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, 
 		return s.recordStop(ctx, req)
 	case "PostToolUse":
 		return s.recordPostToolUse(ctx, req)
+	case "UserPromptSubmit", "SessionStart":
+		return s.recordUserPrompt(ctx, req)
 	default:
 		return Response{SessionID: req.Event.SessionID, Skipped: true}, nil
 	}
+}
+
+// recordUserPrompt handles UserPromptSubmit and SessionStart, the only hook
+// events ZCode schedules on the versions tested. The reminder is delivered as
+// injected context rather than a stop decision: it fires when unacknowledged
+// open failed reviews reach the failed-review threshold, acknowledges them so
+// one session is not re-prompted, and re-arms only when new failures cross
+// the threshold again.
+func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Response, error) {
+	scope, ok := s.resolveHookScope(ctx, req.Event.CWD)
+	if ok {
+		s.mu.Lock()
+		fixSession, owned := s.activeOwnerFixSessionLocked(req, scope, s.currentTime())
+		s.mu.Unlock()
+		if owned {
+			return Response{
+				SessionID:    req.Event.SessionID,
+				Triggered:    true,
+				TriggeredBy:  "fix_session",
+				FixSessionID: new(fixSession.ID),
+				Reason:       "Finish the current Agent Hook fix." + formatReviewJobIDs(fixSession.ReviewIDs),
+			}, nil
+		}
+	}
+	if !ok || !scope.Tracked || scope.remindersMuted(time.Now()) {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			Threshold:             req.Threshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+		}, nil
+	}
+	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(
+		ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
+	)
+	openFailedReviewIDs := reviewIDsFromJobs(openFailedJobs)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
+
+	st := cloneSessionState(s.sessions[req.Event.SessionID])
+	lineageKey := ensureLineageKey(&st, scope)
+	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
+	st.LastCWD = req.Event.CWD
+	now := s.currentTime()
+	st.LastSeenAt = now
+
+	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
+	failedReviewCount := len(actionableReviewIDs)
+	failedReviewTriggered := applyFailedReviewTrigger(
+		req, &st, scope.TrackedRepoRoot, scope.Branch, lineageKey,
+		failedReviewCount, haveFailedReviewCount,
+	)
+	fixSessions := s.fixSessions
+	var fixSession *FixSession
+	if failedReviewTriggered {
+		var deliveryAllowed bool
+		fixSessions, fixSession, deliveryAllowed = s.prepareFixSessionGrantLocked(
+			req, scope.WorktreeKey, now, actionableReviewIDs,
+		)
+		if !deliveryAllowed {
+			failedReviewTriggered = false
+			delete(st.FailedReviewTriggeredCounts, lineageKey)
+		}
+	}
+	if failedReviewTriggered {
+		acknowledgeReviewIDs(&st, lineageKey, actionableReviewIDs)
+		delete(st.FailedReviewTriggeredCounts, lineageKey)
+		st.ReminderPromptCount++
+		st.FailedReviewTriggeredAt = now
+	}
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
+	if err := s.saveSessionAndFixSessionsLocked(req.Event.SessionID, st, fixSessions); err != nil {
+		return Response{}, err
+	}
+
+	resp := Response{
+		SessionID:             req.Event.SessionID,
+		Threshold:             req.Threshold,
+		FailedReviewCount:     st.FailedReviewCount,
+		FailedReviewThreshold: req.FailedReviewThreshold,
+		ReminderPromptCount:   st.ReminderPromptCount,
+		Triggered:             failedReviewTriggered,
+	}
+	if fixSession != nil {
+		resp.FixSessionID = new(fixSession.ID)
+	}
+	if failedReviewTriggered {
+		resp.TriggeredBy = "failed_reviews"
+		resp.Reason = buildUserPromptReason(scope, openFailedJobs, actionableReviewIDs)
+	}
+	return resp, nil
 }
 
 func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, error) {
@@ -1334,6 +1433,63 @@ func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet
 	return buildPromptReason(req, detail+"."+formatReviewJobIDs(reviewIDs))
 }
 
+// userPromptGuidance is the triage contract for injected reminders. Unlike a
+// stop-decision reminder, injected context reaches the model next to a fresh
+// user message, so it must explicitly yield to that task and scope the review
+// work instead of telling the model to start fixing immediately.
+const userPromptGuidance = "Guidance: finish the user's current task first, then address these reviews. " +
+	"Handle only the named jobs. Re-verify each finding independently before changing code. " +
+	"Keep out-of-scope findings open and tell the user. " +
+	"Close invalid, stale, or already-resolved findings and record the evidence."
+
+// buildUserPromptReason renders the self-contained reminder injected as
+// additional context on UserPromptSubmit and SessionStart. Each open failed
+// review is named with its job ID, commit, and verdict so the model can pull
+// details with one command instead of guessing from prose.
+func buildUserPromptReason(scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
+	repo := repoDisplayName(scope.TrackedRepoRoot)
+	var b strings.Builder
+	fmt.Fprintf(&b, "[roborev] %s has %s.",
+		repo, countPhrase(len(reviewIDs), "unaddressed review finding", "unaddressed review findings"))
+	for _, job := range jobs {
+		if _, actionable := reviewIDs[job.ID]; !actionable {
+			continue
+		}
+		verdict := "F"
+		if job.Verdict != nil {
+			verdict = *job.Verdict
+		}
+		fmt.Fprintf(&b, "\n- job %d (%s, verdict %s)", job.ID, shortReviewRef(job.GitRef), verdict)
+	}
+	b.WriteString("\n")
+	b.WriteString(userPromptGuidance)
+	return b.String()
+}
+
+// shortReviewRef shortens commit SHAs and ranges to review-reminder size.
+func shortReviewRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "no ref"
+	}
+	start, end, ranged := strings.Cut(ref, "..")
+	if !ranged {
+		return shortCommitSHA(ref)
+	}
+	if start == "" {
+		return ".." + shortCommitSHA(end)
+	}
+	return shortCommitSHA(start) + ".." + shortCommitSHA(end)
+}
+
+func shortCommitSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 // formatReviewJobIDs names the exact daemon-selected reviews in reminder context.
 func formatReviewJobIDs(reviewIDs reviewIDSet) string {
 	if len(reviewIDs) == 0 {
@@ -1863,6 +2019,26 @@ func findOpenFailedReviewIDs(
 	reviews ReviewSource,
 	repoRoot, branch, head string,
 ) (reviewIDSet, bool) {
+	jobs, ok := findOpenFailedReviewJobs(ctx, reviews, repoRoot, branch, head)
+	if !ok {
+		return nil, false
+	}
+	return reviewIDsFromJobs(jobs), true
+}
+
+func reviewIDsFromJobs(jobs []storage.ReviewJob) reviewIDSet {
+	ids := make(reviewIDSet, len(jobs))
+	for _, job := range jobs {
+		ids[job.ID] = struct{}{}
+	}
+	return ids
+}
+
+func findOpenFailedReviewJobs(
+	ctx context.Context,
+	reviews ReviewSource,
+	repoRoot, branch, head string,
+) ([]storage.ReviewJob, bool) {
 	if repoRoot == "" || reviews == nil {
 		return nil, false
 	}
@@ -1895,10 +2071,10 @@ func findOpenFailedReviewIDs(
 		}
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
-	ids := make(reviewIDSet, len(failed))
+	ids := make([]storage.ReviewJob, 0, len(failed))
 	for _, job := range failed {
 		if failedReviewCountsForHead(branch, head, job, lineageMatches) {
-			ids[job.ID] = struct{}{}
+			ids = append(ids, job)
 		}
 	}
 	return ids, true

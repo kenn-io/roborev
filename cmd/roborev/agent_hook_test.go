@@ -620,3 +620,30 @@ func TestRunAgentHookMCPCompletesWithExactSession(t *testing.T) {
 	assert.Contains(t, response.Reason, server.URL)
 	assert.NotContains(t, response.Reason, "agent-hook fix-done")
 }
+
+func TestZcodeUserPromptSubmitHookInjectsAdditionalContext(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{Triggered: true, TriggeredBy: "failed_reviews", Reason: "[roborev] demo has 1 unaddressed review finding.\n- job 3 (abc123, verdict F)"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout bytes.Buffer
+	err := runLocalAgentHook(
+		agenthook.AgentZcode,
+		agenthook.DefaultOptions(),
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&stdout,
+		io.Discard,
+	)
+	require.NoError(t, err)
+
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	_, blocked := output["decision"]
+	assert.False(t, blocked)
+	specific, ok := output["hookSpecificOutput"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "UserPromptSubmit", specific["hookEventName"])
+	assert.Contains(t, specific["additionalContext"], "[roborev] demo has 1 unaddressed review finding.")
+}

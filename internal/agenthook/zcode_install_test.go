@@ -69,21 +69,26 @@ func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
 	require.NoError(t, json.Unmarshal(hooksBody, &hooksDoc))
 	events, ok := hooksDoc["hooks"].(map[string]any)
 	require.True(t, ok)
-	assert.Len(events, 3)
-	assert.Contains(string(hooksBody), ZcodeShellMatcher)
+	// ZCode schedules only UserPromptSubmit and SessionStart, so those are
+	// the registered events in the default form.
+	assert.Len(events, 2)
+	assert.Contains(events, "UserPromptSubmit")
+	assert.Contains(events, "SessionStart")
 	assert.Contains(string(hooksBody), agentHookMarker)
 	installed := 0
 	for _, rawEntries := range events {
 		for _, rawEntry := range rawEntries.([]any) {
 			for _, rawHandler := range rawEntry.(map[string]any)["hooks"].([]any) {
 				command := rawHandler.(map[string]any)["command"].(string)
+				handler := rawHandler.(map[string]any)
+				assert.Equal(float64(30), handler["timeout"])
 				if strings.Contains(command, agentHookMarker) {
 					installed++
 				}
 			}
 		}
 	}
-	assert.Equal(3, installed)
+	assert.Equal(2, installed)
 
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -130,4 +135,27 @@ func TestRunDumpZcodeDoesNotWriteSource(t *testing.T) {
 	assert.Equal(t, source, unchanged)
 	_, statErr := os.Stat(filepath.Join(config.DataDir(), "zcode-plugin", "hooks", "hooks.json"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestRunInstallZcodeStopFormRegistersLifecycleEvents(t *testing.T) {
+	assert := assert.New(t)
+	path, pluginRoot := zcodeInstallFixture(t)
+	opts := InstallOptions{
+		Agent: "zcode", Executable: "/opt/bin/roborev", StopForm: true,
+		ConfigPath: path, Timeout: 10 * time.Second,
+	}
+
+	require.NoError(t, RunInstall(opts, &bytes.Buffer{}))
+
+	hooksBody, err := os.ReadFile(filepath.Join(pluginRoot, "hooks", "hooks.json"))
+	require.NoError(t, err)
+	var hooksDoc map[string]any
+	require.NoError(t, json.Unmarshal(hooksBody, &hooksDoc))
+	events, ok := hooksDoc["hooks"].(map[string]any)
+	require.True(t, ok)
+	assert.Len(events, 3)
+	assert.Contains(string(hooksBody), ZcodeShellMatcher)
+	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
+		assert.Contains(events, event)
+	}
 }

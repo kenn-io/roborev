@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
 
@@ -16,9 +17,15 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-// ZCode matches tool events against the Bash tool name exactly like Claude
-// Code; its matcher is a case-sensitive regular expression.
+// ZcodeShellMatcher matches ZCode's shell tool events. ZCode matches tool
+// events against the Bash tool name exactly like Claude Code.
 const ZcodeShellMatcher = "Bash"
+
+// zcodeMinTimeout floors the hook timeout for ZCode registrations. A real
+// hook run measured 15 seconds end to end (process start, daemon discovery,
+// git scope resolution, review lookup) before the 10-second default killed
+// it, so shorter timeouts would disable the integration in practice.
+const zcodeMinTimeout = 30 * time.Second
 
 // DefaultZcodeConfigPath returns ZCode's user-scope configuration file, the
 // shared ~/.zcode/cli/config.json that also holds MCP servers and plugin
@@ -92,12 +99,12 @@ func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
 	if err != nil {
 		return zcodePlugin{}, err
 	}
+	timeout := opts.Timeout
+	if timeout < zcodeMinTimeout {
+		timeout = zcodeMinTimeout
+	}
 	events := map[string]any{}
-	if err := appendHookEntries(events, "", "ZCode", command, opts.Timeout, []hookSpec{
-		{event: "PreToolUse", matcher: ZcodeShellMatcher},
-		{event: "PostToolUse", matcher: ZcodeShellMatcher},
-		{event: "Stop"},
-	}); err != nil {
+	if err := appendHookEntries(events, "", "ZCode", command, timeout, zcodeHookSpecs(opts.StopForm)); err != nil {
 		return zcodePlugin{}, err
 	}
 	hooks, err := marshalHooksConfig(map[string]any{"hooks": events})
@@ -115,6 +122,27 @@ func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
 	}
 	manifest = append(manifest, '\n')
 	return zcodePlugin{root: DefaultZcodePluginRoot(), manifest: manifest, hooks: hooks}, nil
+}
+
+// zcodeHookSpecs selects the registered events. ZCode schedules only
+// SessionStart and UserPromptSubmit on the versions tested (a full day of
+// turn-phase logs showed zero Stop, PreToolUse, and PostToolUse dispatches),
+// so the default installs the two scheduled events and delivers reminders as
+// injected additionalContext. StopForm registers the lifecycle-control form
+// for harnesses that schedule it, kept as an explicit switch until ZCode
+// fixes event dispatch.
+func zcodeHookSpecs(stopForm bool) []hookSpec {
+	if stopForm {
+		return []hookSpec{
+			{event: "PreToolUse", matcher: ZcodeShellMatcher},
+			{event: "PostToolUse", matcher: ZcodeShellMatcher},
+			{event: "Stop"},
+		}
+	}
+	return []hookSpec{
+		{event: "UserPromptSubmit"},
+		{event: "SessionStart"},
+	}
 }
 
 // installZcodePluginFiles writes the plugin manifest and hook registrations.
