@@ -59,9 +59,12 @@ made with `make build`.
 
 The Reviews workspace follows the daemon's queue in real time. Use the
 repository and branch picker, status filter, ref search, and closed-review
-toggle to narrow the list. The Closed column shows `yes` for a closed review,
-`no` for an open review, and `--` when no closed state is available. Panel
-member rows show `--` because the synthesis row owns the panel's closed state.
+toggle to narrow the list. Hiding closed reviews also hides failed and canceled
+jobs, because they have no review to resolve; select **Failed** or **Canceled**
+in the status filter to list them anyway. The Closed column shows `yes` for a
+closed review, `no` for an open review, and `--` when no closed state is
+available. Panel member rows show `--` because the synthesis row owns the
+panel's closed state.
 
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. Sorting reorders

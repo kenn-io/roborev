@@ -151,7 +151,8 @@ roborev show --prompt <job_id>   # Show the prompt sent to the agent
 roborev list                     # List jobs for current repo/branch
 roborev list --all-branches      # List jobs for every branch in the current repo
 roborev list --open              # List open reviews; failed and canceled
-                                 # jobs are excluded
+                                 # jobs are excluded unless --status
+                                 # selects them
 roborev list --closed            # List only closed reviews
 roborev list --analysis-type refactor # List recorded refactor analyses
 roborev list --file pkg/a.go     # List analyses that recorded this file

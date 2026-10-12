@@ -2093,7 +2093,14 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		if *o.closed {
 			conditions = append(conditions, "rv.closed = 1")
 		} else {
-			conditions = append(conditions, "j.status NOT IN ('failed', 'canceled') AND (rv.closed IS NULL OR rv.closed = 0)")
+			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
+			// Failed and canceled jobs never produce a review to resolve, so
+			// they are not open. An explicit status filter wins: asking for
+			// failed jobs with the open filter on must still list them.
+			if statusFilter == "" {
+				conditions = append(conditions, "j.status NOT IN (?, ?)")
+				args = append(args, JobStatusFailed, JobStatusCanceled)
+			}
 		}
 	}
 	if o.jobType != "" {

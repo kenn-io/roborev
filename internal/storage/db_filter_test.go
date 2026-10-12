@@ -513,10 +513,33 @@ func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
 	canceledJob := enqueueJob(t, db, repo.ID, canceledCommit.ID, "canceled")
 	require.NoError(t, db.CancelJob(canceledJob.ID))
 
-	jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, openJob.ID, jobs[0].ID)
+	t.Run("list", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		assert.Equal(t, openJob.ID, jobs[0].ID)
+	})
+
+	t.Run("stats", func(t *testing.T) {
+		stats, err := db.CountJobStats("", "", WithClosed(false))
+		require.NoError(t, err)
+		assert.Equal(t, JobStats{Done: 1, Open: 1}, stats)
+	})
+
+	t.Run("explicit status wins", func(t *testing.T) {
+		for _, tc := range []struct {
+			status JobStatus
+			wantID int64
+		}{
+			{JobStatusFailed, failedJob.ID},
+			{JobStatusCanceled, canceledJob.ID},
+		} {
+			jobs, err := db.ListJobs(string(tc.status), "", 50, 0, WithClosed(false))
+			require.NoError(t, err)
+			require.Len(t, jobs, 1, tc.status)
+			assert.Equal(t, tc.wantID, jobs[0].ID, tc.status)
+		}
+	})
 }
 
 func TestWithBranchOrEmpty(t *testing.T) {
