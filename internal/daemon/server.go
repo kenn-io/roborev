@@ -214,7 +214,7 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
-		daemonAgentHookSource{db: db},
+		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
 
 	mux := http.NewServeMux()

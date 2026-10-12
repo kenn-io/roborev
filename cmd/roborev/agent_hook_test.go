@@ -647,3 +647,26 @@ func TestZcodeUserPromptSubmitHookInjectsAdditionalContext(t *testing.T) {
 	assert.Equal(t, "UserPromptSubmit", specific["hookEventName"])
 	assert.Contains(t, specific["additionalContext"], "[roborev] demo has 1 unaddressed review finding.")
 }
+
+func TestLocalAgentHookSurfacesDiagnosisOnStderr(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{
+			SessionID: "s1", Skipped: true,
+			Diagnosis: `repo "C:/code/demo" branch "main": 0 open failed review job(s), 0 unacknowledged, threshold 1`,
+		}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout, stderr bytes.Buffer
+	err := runLocalAgentHook(
+		agenthook.AgentZcode,
+		agenthook.DefaultOptions(),
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"C:/code/demo"}`),
+		&stdout,
+		&stderr,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, stderr.String(), "0 open failed review job(s)")
+	assert.Equal(t, "{}", stdout.String())
+}

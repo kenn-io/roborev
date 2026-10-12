@@ -167,10 +167,13 @@ of session logs showed zero Stop, PreToolUse, and PostToolUse dispatches. The
 default form therefore registers those two events and delivers reminders as
 injected `additionalContext` (self-contained text naming the repo, review job
 IDs, commits, and verdicts, plus triage guidance), with the usual acknowledgment
-and threshold throttling. Pass `--stop-form` to register the
-Stop/PreToolUse/PostToolUse form instead, for use once ZCode dispatches those
-events; ZCode hook registrations use a 30-second minimum timeout because a real
-run measured 15 seconds end to end.
+and threshold throttling. Non-triggering runs print an evaluation summary on the
+hook's error stream (repo, branch, open failed review count, unacknowledged
+count, threshold), so an empty reminder is distinguishable from a broken query;
+ZCode records that stream in its hook execution log. Pass `--stop-form` to
+register the Stop/PreToolUse/PostToolUse form instead, for use once ZCode
+dispatches those events; ZCode hook registrations use a 30-second minimum
+timeout because a real run measured 15 seconds end to end.
 
 Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:

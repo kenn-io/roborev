@@ -3067,3 +3067,71 @@ func TestRecordUserPromptRespectsFailedReviewThreshold(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, resp.Triggered)
 }
+
+func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	untracked := &StateStore{
+		reviews: fakeReviewSource{
+			resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+				return TrackedRepoResolution{Tracked: false}, true
+			},
+		},
+		path:       filepath.Join(t.TempDir(), "state.json"),
+		sessions:   map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+	resp, err := untracked.Record(Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "s1", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(resp.Diagnosis, "not a tracked roborev repo")
+
+	head := repo.CommitFile("main.go", "package main\nfunc f() {}\n", "second")
+	failed := failedReviewJob(1)
+	failed.GitRef = head
+	failed.Branch = "main"
+	store := &StateStore{
+		reviews: trackedReviewSource(repo.Path(), failed),
+		path:    filepath.Join(t.TempDir(), "state.json"),
+		sessions:    map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+
+	evaluated, err := store.Record(Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "s2", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
+		},
+		FailedReviewThreshold: 2,
+	})
+	require.NoError(t, err)
+	assert.False(evaluated.Triggered)
+	assert.Contains(evaluated.Diagnosis, "1 open failed review job(s), 1 unacknowledged, threshold 2")
+
+	unavailable := &StateStore{
+		reviews: fakeReviewSource{
+			resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+				return TrackedRepoResolution{Tracked: true, RootPath: path}, true
+			},
+			list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+				return nil, false
+			},
+		},
+		path:       filepath.Join(t.TempDir(), "state.json"),
+		sessions:   map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+	broken, err := unavailable.Record(Request{
+		Agent: "zcode", Event: Input{
+			SessionID: "s3", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
+		},
+		FailedReviewThreshold: 1,
+	})
+	require.NoError(t, err)
+	assert.False(broken.Triggered)
+	assert.Contains(broken.Diagnosis, "open review query unavailable")
+}

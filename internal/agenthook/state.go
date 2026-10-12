@@ -283,12 +283,37 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 			}, nil
 		}
 	}
-	if !ok || !scope.Tracked || scope.remindersMuted(time.Now()) {
+	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
 			Threshold:             req.Threshold,
 			FailedReviewThreshold: req.FailedReviewThreshold,
 			Skipped:               true,
+			Diagnosis:             fmt.Sprintf("git scope unresolved for cwd %q", req.Event.CWD),
+		}, nil
+	}
+	if !scope.Tracked {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			Threshold:             req.Threshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+			Diagnosis: fmt.Sprintf(
+				"checkout %q (repo %q, branch %q) is not a tracked roborev repo",
+				req.Event.CWD, scope.TrackedRepoRoot, scope.Branch),
+		}, nil
+	}
+	if scope.remindersMuted(time.Now()) {
+		reason := "review guidelines missing for this repo"
+		if scope.SnoozedUntil.After(time.Now()) {
+			reason = "reminders snoozed until " + scope.SnoozedUntil.Format(time.RFC3339)
+		}
+		return Response{
+			SessionID:             req.Event.SessionID,
+			Threshold:             req.Threshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+			Diagnosis:             reason,
 		}, nil
 	}
 	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(
@@ -347,6 +372,11 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 		FailedReviewThreshold: req.FailedReviewThreshold,
 		ReminderPromptCount:   st.ReminderPromptCount,
 		Triggered:             failedReviewTriggered,
+		// The evaluation summary makes an empty result distinguishable from
+		// a failed query: unavailable means ListOpenReviewJobs errored.
+		Diagnosis: userPromptDiagnosis(
+			haveFailedReviewCount, len(openFailedJobs), failedReviewCount,
+			req.FailedReviewThreshold, scope),
 	}
 	if fixSession != nil {
 		resp.FixSessionID = new(fixSession.ID)
@@ -1441,6 +1471,18 @@ const userPromptGuidance = "Guidance: finish the user's current task first, then
 	"Handle only the named jobs. Re-verify each finding independently before changing code. " +
 	"Keep out-of-scope findings open and tell the user. " +
 	"Close invalid, stale, or already-resolved findings and record the evidence."
+
+// userPromptDiagnosis summarizes the failed-review evaluation for one
+// injected reminder so an empty reminder is explainable from hook stderr.
+func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, scope hookScope) string {
+	detail := fmt.Sprintf(
+		"repo %q branch %q: %d open failed review job(s), %d unacknowledged, threshold %d",
+		scope.TrackedRepoRoot, scope.Branch, openFailed, actionable, threshold)
+	if !available {
+		return "open review query unavailable; " + detail
+	}
+	return detail
+}
 
 // buildUserPromptReason renders the self-contained reminder injected as
 // additional context on UserPromptSubmit and SessionStart. Each open failed

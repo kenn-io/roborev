@@ -135,6 +135,11 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 		fmt.Fprintf(stderr, "roborev %s: %v\n", displayName, err)
 		return json.MarshalWrite(stdout, map[string]any{})
 	}
+	if !resp.Triggered && resp.Diagnosis != "" {
+		// Harnesses record a hook's error-stream preview, so the evaluation
+		// summary is visible when debugging why no reminder was injected.
+		fmt.Fprintf(stderr, "roborev %s: %s\n", displayName, resp.Diagnosis)
+	}
 	if resp.Triggered {
 		if resp.TriggeredBy == "fix_session" {
 			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))

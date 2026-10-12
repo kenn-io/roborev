@@ -147,7 +147,11 @@ type Response struct {
 	TriggeredBy           string     `json:"triggered_by,omitempty"`
 	Reason                string     `json:"reason,omitempty"`
 	Skipped               bool       `json:"skipped,omitempty"`
-	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
+	// Diagnosis explains why an event did not trigger a reminder, or the
+	// counts behind one that did. Hook runners surface it on stderr so an
+	// empty result is distinguishable from a broken query.
+	Diagnosis    string     `json:"diagnosis,omitempty"`
+	FixSessionID *uuid.UUID `json:"fix_session_id,omitempty"`
 }
 
 type reviewIDSet map[int64]struct{}
