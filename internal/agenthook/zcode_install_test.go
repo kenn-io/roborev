@@ -69,11 +69,12 @@ func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
 	require.NoError(t, json.Unmarshal(hooksBody, &hooksDoc))
 	events, ok := hooksDoc["hooks"].(map[string]any)
 	require.True(t, ok)
-	// ZCode schedules only UserPromptSubmit and SessionStart, so those are
-	// the registered events in the default form.
-	assert.Len(events, 2)
+	// ZCode schedules only UserPromptSubmit and SessionStart; Stop stays
+	// registered so it activates on its own once ZCode dispatches it.
+	assert.Len(events, 3)
 	assert.Contains(events, "UserPromptSubmit")
 	assert.Contains(events, "SessionStart")
+	assert.Contains(events, "Stop")
 	assert.Contains(string(hooksBody), agentHookMarker)
 	installed := 0
 	for _, rawEntries := range events {
@@ -88,7 +89,7 @@ func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(2, installed)
+	assert.Equal(3, installed)
 
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)

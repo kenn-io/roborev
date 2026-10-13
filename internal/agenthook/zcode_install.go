@@ -123,11 +123,13 @@ func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
 
 // zcodeHookSpecs selects the registered events. ZCode schedules only
 // SessionStart and UserPromptSubmit on the versions tested (a full day of
-// turn-phase logs showed zero Stop, PreToolUse, and PostToolUse dispatches),
-// so the default installs the two scheduled events and delivers reminders as
-// injected additionalContext. StopForm registers the lifecycle-control form
-// for harnesses that schedule it, kept as an explicit switch until ZCode
-// fixes event dispatch.
+// turn-phase logs plus a post-restart Stop verification with a loaded hook
+// showed zero Stop, PreToolUse, and PostToolUse dispatches), so the default
+// delivers reminders through those two as injected additionalContext. The
+// Stop registration is kept installed anyway: it is inert until ZCode
+// dispatches the event, then works immediately with the shared thresholds
+// and acknowledgment state, so users need not reinstall when that lands.
+// StopForm adds PreToolUse/PostToolUse for harnesses that dispatch them.
 func zcodeHookSpecs(stopForm bool) []hookSpec {
 	if stopForm {
 		return []hookSpec{
@@ -139,6 +141,7 @@ func zcodeHookSpecs(stopForm bool) []hookSpec {
 	return []hookSpec{
 		{event: "UserPromptSubmit"},
 		{event: "SessionStart"},
+		{event: "Stop"},
 	}
 }
 

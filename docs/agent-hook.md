@@ -163,17 +163,21 @@ actually schedules. The install writes a manifest plus `hooks/hooks.json` under
 `~/.roborev/zcode-plugin/` and appends that directory to `plugins.dirs` in
 `~/.zcode/cli/config.json`. ZCode documents seven hook events but, on the
 versions tested, dispatches only SessionStart and UserPromptSubmit: a full day
-of session logs showed zero Stop, PreToolUse, and PostToolUse dispatches. The
-default form therefore registers those two events and delivers reminders as
-injected `additionalContext` (self-contained text naming the repo, review job
-IDs, commits, and verdicts, plus triage guidance), with the usual acknowledgment
-and threshold throttling. Non-triggering runs print an evaluation summary on the
-hook's error stream (repo, branch, open failed review count, unacknowledged
-count, threshold), so an empty reminder is distinguishable from a broken query;
-ZCode records that stream in its hook execution log. Pass `--stop-form` to
-register the Stop/PreToolUse/PostToolUse form instead, for use once ZCode
-dispatches those events; ZCode hook registrations use a 30-second minimum
-timeout because a real run measured 15 seconds end to end.
+of session logs plus a post-restart verification with a loaded Stop hook (the
+hook was confirmed registered and a complete turn produced zero dispatch
+records) showed that Stop, PreToolUse, and PostToolUse never fire. The default
+form delivers reminders through the two scheduled events as injected
+`additionalContext` (self-contained text naming the repo, review job IDs,
+commits, and verdicts, plus triage guidance), with the usual acknowledgment and
+threshold throttling. The Stop registration is kept installed alongside them: it
+stays inert until ZCode dispatches the event, then activates on its own with the
+shared thresholds and acknowledgment state. Non-triggering runs print an
+evaluation summary on the hook's error stream (repo, branch, open failed review
+count, unacknowledged count, threshold), so an empty reminder is distinguishable
+from a broken query; ZCode records that stream in its hook execution log. Pass
+`--stop-form` to also register the PreToolUse/PostToolUse shell hooks; ZCode
+hook registrations use a 30-second minimum timeout because a real run measured
+15 seconds end to end.
 
 Reminders stay muted for a repository until it defines its own review
 guidelines: `review_guidelines` in `.roborev.toml` on the default branch, or a
