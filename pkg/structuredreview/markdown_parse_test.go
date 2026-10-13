@@ -53,6 +53,15 @@ func TestParseMarkdownRoundTripsRenderedDocuments(t *testing.T) {
 				{Severity: "medium", Problem: "The error is dropped.", Fix: "Return the error.", Sources: []int{1}},
 			},
 		}},
+		"summary that ends with a Findings heading": {doc: Document{
+			SchemaVersion: 1, Summary: "The change renames a helper.\n\n## Findings", Findings: []Finding{},
+		}},
+		"summary that is only a Findings heading": {doc: Document{
+			SchemaVersion: 1, Summary: "## Findings", Findings: []Finding{},
+		}},
+		"summary that is only an agent assessment line": {doc: Document{
+			SchemaVersion: 1, Summary: renderedAssessment + "Pass", Findings: []Finding{},
+		}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
