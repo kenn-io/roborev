@@ -176,9 +176,16 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 			if !known {
 				return Document{}, "", refuse(RefusalUnrecognizedContent, "unknown agent assessment %q", label)
 			}
-			doc.Verdict = verdict
-			doc.SchemaVersion = SchemaVersion
-			header = trimBlankLines(header[:len(header)-1])
+			// A summary that is nothing but the assessment line renders that
+			// line twice, and reading it as the verdict would leave no summary
+			// at all. No document with a verdict renders that way, so the line
+			// is summary text; the caller only accepts a candidate that renders
+			// back to the same text.
+			if len(header) > 1 {
+				doc.Verdict = verdict
+				doc.SchemaVersion = SchemaVersion
+				header = trimBlankLines(header[:len(header)-1])
+			}
 		}
 	}
 	doc.Summary = strings.TrimSpace(strings.Join(header, "\n"))
@@ -187,8 +194,12 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 	}
 	if findingsAt < 0 {
 		// Without this check a Findings section that failed to parse would be
-		// kept as summary text of a review that claims no findings.
-		if slices.Contains(header, "## Findings") {
+		// kept as summary text of a review that claims no findings. A summary
+		// may still end with a "## Findings" line of its own, which renders the
+		// heading twice with only blanks before the closing "No issues found."
+		// line. That shape is the summary read verbatim, so it is kept; a
+		// summary that runs on past the heading is still refused.
+		if slices.Contains(header, "## Findings") && header[len(header)-1] != "## Findings" {
 			return Document{}, "", refuse(RefusalUnrecognizedContent,
 				"the Findings section is not what roborev renders for findings")
 		}
