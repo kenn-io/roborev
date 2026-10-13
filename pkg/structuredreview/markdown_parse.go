@@ -197,9 +197,10 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 		// kept as summary text of a review that claims no findings. A summary
 		// may still end with a "## Findings" line of its own, which renders the
 		// heading twice with only blanks before the closing "No issues found."
-		// line. That shape is the summary read verbatim, so it is kept; a
-		// summary that runs on past the heading is still refused.
-		if slices.Contains(header, "## Findings") && header[len(header)-1] != "## Findings" {
+		// line. That shape is the summary read verbatim, so it is kept. Text
+		// between the two headings belongs to a findings section that failed to
+		// parse, so a summary that runs on past the heading is still refused.
+		if i := slices.Index(header, "## Findings"); i >= 0 && i != len(header)-1 {
 			return Document{}, "", refuse(RefusalUnrecognizedContent,
 				"the Findings section is not what roborev renders for findings")
 		}
