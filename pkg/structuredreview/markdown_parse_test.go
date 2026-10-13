@@ -247,3 +247,17 @@ func TestParseMarkdownRefusesFindingsHiddenInARenderedSummary(t *testing.T) {
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, RefusalUnrecognizedContent, refusal.Reason)
 }
+
+// A second Findings heading followed by the rendered no-findings trailer must
+// not turn a findings section that failed to parse into a review that claims
+// no findings: the text between the two headings is finding content, not
+// summary text.
+func TestParseMarkdownRefusesFindingsHiddenBehindASecondHeading(t *testing.T) {
+	markdown := "## Summary\n\nThe change adds a save routine.\n\n## Findings\n\nThe write is not atomic.\n\n## Findings\n\nNo issues found."
+
+	_, err := ParseMarkdown(markdown, ParseMarkdownOptions{})
+
+	var refusal *MarkdownRefusal
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, RefusalUnrecognizedContent, refusal.Reason)
+}
