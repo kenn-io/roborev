@@ -144,10 +144,14 @@ func (a *PiAgent) structuredReviewArgs(
 	promptPath, outputPath string,
 	schema jsontext.Value,
 	agenticMode bool,
+	sessionPath string,
 ) []string {
 	args := slices.Clone(a.LaunchArgs)
+	args = append(args, "--mode", "json")
+	if sessionPath != "" {
+		args = append(args, "--session", sessionPath)
+	}
 	args = append(args,
-		"--no-session",
 		"--extension", a.jsonSchemaExtension(),
 		"--json-schema", string(schema),
 		"--json-output", outputPath,
@@ -305,8 +309,16 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("write structured review prompt: %w", err)
 	}
 	outputPath := filepath.Join(tmpDir, "result.json")
-	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode)
+	sessionPath := resolvePiSessionPath(a.SessionID)
+	if a.SessionID != "" && sessionPath == "" {
+		return nil, fmt.Errorf("pi session not found; cannot resume requested session")
+	}
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
+	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode, sessionPath)
+	if planningReadOnly(ctx) {
+		// Disable discovered extensions; the explicit schema extension remains enabled.
+		args = append(args, "--no-extensions")
+	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -381,6 +393,9 @@ func (a *PiAgent) Review(
 	}
 
 	sessionPath := resolvePiSessionPath(a.SessionID)
+	if a.SessionID != "" && sessionPath == "" {
+		return "", fmt.Errorf("pi session not found; cannot resume requested session")
+	}
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(sessionPath, agenticMode)
 	if planningReadOnly(ctx) {

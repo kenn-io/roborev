@@ -120,7 +120,7 @@ func (a *ClaudeAgent) CommandLine() string {
 
 // PlanningCommandLine returns Claude's representative read-only planning command.
 func (a *ClaudeAgent) PlanningCommandLine() string {
-	return a.Command + " " + strings.Join(a.buildPlanningArgs(true), " ")
+	return a.Command + " " + strings.Join(a.clone(withClonedSessionID("")).buildPlanningArgs(true), " ")
 }
 
 func (a *ClaudeAgent) commandLine(agenticMode bool) string {
@@ -254,7 +254,6 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 }
 
 func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
-	a = a.clone(withClonedSessionID(""))
 	args := a.buildArgs(false, includeEffort)
 	// --allowedTools only preapproves tools. Limit built-ins and MCP tools
 	// separately, and override any configured default permission mode.
@@ -852,7 +851,7 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	if err != nil {
 		return nil, err
 	}
-	agenticMode := a.Agentic || AllowUnsafeAgents()
+	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	if agenticMode {
 		supported, supportErr := claudeSupportsDangerousFlag(ctx, a.Command)
 		if supportErr != nil {
@@ -868,6 +867,9 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	includeEffort := a.claudeEffort() != "" &&
 		claudeSupportsEffortFlag(ctx, a.Command)
 	args := a.buildArgs(agenticMode, includeEffort)
+	if planningReadOnly(ctx) {
+		args = a.buildPlanningArgs(includeEffort)
+	}
 	args = append(args, "--json-schema", string(schema))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)

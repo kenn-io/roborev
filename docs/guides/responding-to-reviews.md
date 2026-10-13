@@ -116,3 +116,47 @@ Please ignore style issues in *.pb.go files.
 ```
 Good catch on the race condition! I'll add a mutex in the next commit.
 ```
+
+## Re-evaluating a Finding
+
+Send an explanation back to the agent that wrote a finding:
+
+```bash
+roborev comment 42 --rebuttal --finding "Missing null check in handler." \
+  -m "The caller rejects null input before invoking the handler."
+```
+
+`--finding` must be an excerpt of the original review. Roborev queues a focused
+assessment and waits for the original agent session, using the review's model,
+provider and normal review permissions. It does not request a full review or
+apply fixes. `roborev respond` accepts the same options.
+
+The assessment confirms, refutes or supersedes the selected finding and explains
+its evidence, including any severity change. Both the explanation and assessment
+are saved as comments; the original review and verdict remain available.
+
+Add `--close` to close the **whole review** after the assessment is recorded.
+This is your explicit close instruction, even when the agent confirms the
+finding. Omit it when other findings still need attention.
+
+Rebuttals require an open, completed local code review, a stored session ID, an
+agent that supports resuming sessions, and the original checkout. CI reviews,
+isolated review sessions and OpenCode rebuttals are unsupported.
+
+Assessments enforce read-only permissions even when `allow_unsafe_agents` is
+enabled. An adapter that cannot enforce this policy is rejected before launch.
+
+Missing sessions, stale worktrees, agent errors and malformed assessments leave
+the review open. Rebuttals wait while another job holds their session, including
+canceled jobs whose workers have not finished. Failed rebuttals are not
+automatically retried or rerun with a fresh session; submit a new rebuttal on
+the original review to try again.
+
+The command prints its assessment job ID before waiting. If interrupted, the job
+remains in the queue: inspect it with `roborev show <assessment-job-id>`. You
+can record its completed assessment manually with `roborev comment` and close
+the original review once satisfied. A daemon restart can invalidate an
+interrupted session; submit a new rebuttal in that case.
+
+To record the assessment as a typed Kata reply, see
+[Rebuttal Replies](/integrations/kata/#rebuttal-replies).

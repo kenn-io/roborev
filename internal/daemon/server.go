@@ -2559,6 +2559,10 @@ func (s *Server) humaRerunJob(
 	}
 	selectedAgent := strings.TrimSpace(input.Body.Agent)
 
+	if job.Source == storage.JobSourceRebuttal {
+		return nil, huma.Error400BadRequest("rebuttal jobs cannot be rerun; submit a new rebuttal on the original review")
+	}
+
 	// Rerunning a panel synthesis parent spawns a brand-new panel run (fresh
 	// members + a re-blocked synthesis) rather than re-queueing the parent in
 	// place, so the new run gets fresh member reviews to synthesize.
@@ -2658,10 +2662,20 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	err := s.db.MarkReviewClosedByJobID(
-		input.Body.JobID, input.Body.Closed,
-	)
+	var err error
+	if input.Body.ExpectedReviewUUID != nil {
+		err = s.db.MarkReviewClosedByJobIDIfReviewUUID(
+			input.Body.JobID, *input.Body.ExpectedReviewUUID, input.Body.Closed,
+		)
+	} else {
+		err = s.db.MarkReviewClosedByJobID(
+			input.Body.JobID, input.Body.Closed,
+		)
+	}
 	if err != nil {
+		if errors.Is(err, storage.ErrReviewChanged) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
 				"review not found for job",
@@ -2708,13 +2722,23 @@ func (s *Server) humaAddComment(
 	}
 
 	if input.Body.JobID != 0 {
-		resp, err = s.db.AddCommentToJobWithSource(
-			input.Body.JobID,
-			input.Body.Commenter,
-			input.Body.Comment,
-			source,
-		)
+		if input.Body.ExpectedReviewUUID != nil {
+			resp, err = s.db.AddCommentToJobWithSourceIfReviewUUID(
+				input.Body.JobID, *input.Body.ExpectedReviewUUID,
+				input.Body.Commenter, input.Body.Comment, source,
+			)
+		} else {
+			resp, err = s.db.AddCommentToJobWithSource(
+				input.Body.JobID,
+				input.Body.Commenter,
+				input.Body.Comment,
+				source,
+			)
+		}
 		if err != nil {
+			if errors.Is(err, storage.ErrReviewChanged) {
+				return nil, huma.Error409Conflict(err.Error())
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, huma.Error404NotFound(
 					"job not found",

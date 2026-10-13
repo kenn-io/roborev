@@ -11,6 +11,10 @@ import (
 	"uuid"
 )
 
+// ErrReviewChanged means a guarded rebuttal mutation targeted an earlier
+// review version than the one currently stored for the job.
+var ErrReviewChanged = errors.New("review changed since rebuttal was queued")
+
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	return db.getReviewByJobID(jobID, false)
@@ -470,6 +474,50 @@ func (db *DB) MarkReviewClosedByJobID(jobID int64, closed bool) error {
 	return nil
 }
 
+func (db *DB) reviewExistsForJobID(jobID int64) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM review_jobs AS j
+			JOIN reviews AS r ON r.job_id = j.id
+			WHERE j.id = ?
+		)
+	`, jobID).Scan(&exists)
+	return exists, err
+}
+
+// MarkReviewClosedByJobIDIfReviewUUID changes the review state only while the
+// job still has the review UUID captured when the operation was requested.
+func (db *DB) MarkReviewClosedByJobIDIfReviewUUID(jobID int64, expectedUUID uuid.UUID, closed bool) error {
+	val := 0
+	if closed {
+		val = 1
+	}
+	now := preciseTimestampAt(time.Now())
+	machineID, _ := db.GetMachineID()
+
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE job_id = ? AND uuid = ?`,
+		val, machineID, now, jobID, expectedUUID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		exists, err := db.reviewExistsForJobID(jobID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return sql.ErrNoRows
+		}
+		return ErrReviewChanged
+	}
+	return nil
+}
+
 // GetJobsWithReviewsByIDs fetches jobs and their reviews in batch for the given job IDs.
 // Returns a map of job ID to JobWithReview. Jobs without reviews are included with a nil Review.
 func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, error) {
@@ -662,6 +710,53 @@ func (db *DB) AddCommentToJobWithSource(jobID int64, responder, response, source
 		jobID, responder, response, source, responseUUID, machineID, nowStr)
 	if err != nil {
 		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return &Response{
+		ID:              id,
+		JobID:           &jobID,
+		Responder:       responder,
+		Response:        response,
+		Source:          source,
+		CreatedAt:       now,
+		UUID:            &responseUUID,
+		SourceMachineID: &machineID,
+	}, nil
+}
+
+// AddCommentToJobWithSourceIfReviewUUID atomically adds a comment only while
+// the review row still has the UUID captured for the rebuttal.
+func (db *DB) AddCommentToJobWithSourceIfReviewUUID(
+	jobID int64, expectedUUID uuid.UUID, responder, response, source string,
+) (*Response, error) {
+	source = normalizeResponseSource(source)
+	responseUUID := uuid.New()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`
+		INSERT INTO responses (job_id, responder, response, source, uuid, source_machine_id, created_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (SELECT 1 FROM reviews WHERE job_id = ? AND uuid = ?)
+	`, jobID, responder, response, source, responseUUID, machineID, nowStr, jobID, expectedUUID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		exists, err := db.reviewExistsForJobID(jobID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, sql.ErrNoRows
+		}
+		return nil, ErrReviewChanged
 	}
 
 	id, _ := result.LastInsertId()

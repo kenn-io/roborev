@@ -1182,6 +1182,25 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	assert.Contains(t, createdRefs, "#/components/schemas/EnqueueSkippedResponse")
 }
 
+func TestMutationOpenAPIDocumentsHandlerErrorResponses(t *testing.T) {
+	api := (&Server{}).registerHumaAPI(http.NewServeMux())
+	for _, path := range []string{"/api/comment", "/api/review/close", "/api/rebuttal"} {
+		t.Run(path, func(t *testing.T) {
+			operation := api.OpenAPI().Paths[path].Post
+			require.NotNil(t, operation)
+			for _, status := range []string{"400", "404", "409", "422", "500"} {
+				response, ok := operation.Responses[status]
+				require.True(t, ok, "operation %s must document HTTP %s", path, status)
+				require.NotNil(t, response)
+				problem, ok := response.Content["application/problem+json"]
+				require.True(t, ok, "operation %s HTTP %s must document problem details", path, status)
+				require.NotNil(t, problem.Schema)
+				assert.Equal(t, "#/components/schemas/ErrorModel", problem.Schema.Ref)
+			}
+		})
+	}
+}
+
 func TestHumaListRepos(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)

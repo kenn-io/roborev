@@ -1903,6 +1903,12 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 			wantIgnore: true,
 		},
 		{
+			name:       "focused rebuttal",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal},
+			wantSkills: true,
+			wantIgnore: true,
+		},
+		{
 			name:       "task job",
 			job:        storage.ReviewJob{JobType: storage.JobTypeTask},
 			wantSkills: true,
@@ -3315,6 +3321,55 @@ func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	got, err := tc.DB.GetJobRetryCount(job.ID)
 	require.NoError(t, err)
 	assert.Equal(0, got, "session-limit error must not consume a retry slot")
+}
+
+func TestFailOrRetryInner_RebuttalLimitErrorsCoolDownWithoutRetryOrFailover(t *testing.T) {
+	originalBackup, err := agent.Get("claude-code")
+	require.NoError(t, err)
+	agent.Register(&agent.FakeAgent{NameStr: "claude-code"})
+	t.Cleanup(func() { agent.Register(originalBackup) })
+
+	for _, limit := range []struct {
+		name string
+		kind agent.LimitKind
+	}{
+		{name: "quota", kind: agent.LimitKindQuota},
+		{name: "session", kind: agent.LimitKindSession},
+	} {
+		t.Run(limit.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.ReviewBackupAgent = "claude-code"
+			tc.reconfigurePool(cfg)
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+			require.NoError(t, err)
+			queued, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test",
+				JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal,
+			})
+			require.NoError(t, err)
+			job, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			assert.Equal(t, queued.ID, job.ID)
+
+			tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+				return agent.LimitClassification{
+					Kind: limit.kind, Agent: agentName, CooldownFor: time.Hour, Message: msg,
+				}
+			}
+
+			tc.Pool.failOrRetryInner(testWorkerID, job, "test", "provider limit", true)
+
+			updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+			assert.Equal(t, "test", updated.Agent)
+			assert.True(t, tc.Pool.isAgentCoolingDown("test"))
+			retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(t, retryCount)
+		})
+	}
 }
 
 func TestFailOrRetryInner_SessionLimitFinalFailureIsRetryableOutage(t *testing.T) {

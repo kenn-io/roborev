@@ -348,6 +348,8 @@ func TestTokenCostReconcilerBacksOffRepeatedMisses(t *testing.T) {
 		}
 		tc.Pool.Start()
 		t.Cleanup(tc.Pool.Stop)
+		synctest.Wait()
+		require.Equal(t, int32(1), lookups.Load())
 
 		// Misses wait 1, 2, 4, 8, and 16 minutes, so lookups run at
 		// minutes 0, 1, 3, 7, 15, and 31 rather than every scan.

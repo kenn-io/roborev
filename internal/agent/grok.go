@@ -761,8 +761,10 @@ func (a *GrokAgent) reviewWithSchema(
 	if a.SessionID != "" {
 		args = append(args, "--resume", a.SessionID)
 	}
-	if a.Agentic || AllowUnsafeAgents() {
+	if effectiveAgentic(ctx, a.Agentic) {
 		args = append(args, "--always-approve")
+	} else if planningReadOnly(ctx) {
+		args = appendGrokPlanningSafetyArgs(args, a.planningSandboxProfile())
 	} else {
 		args = appendGrokReviewSafetyArgs(args, a.sandboxProfile())
 	}

@@ -95,3 +95,31 @@ Together, the two directions form a workflow: a commit references a Kata issue,
 the review prompt includes that issue as task intent, and if the review fails or
 finds problems, the findings land back in the Kata backlog with the commands to
 reproduce and fix them.
+
+## Rebuttal Replies
+
+A focused rebuttal can also answer an existing Kata finding comment:
+
+```bash
+roborev comment 42 --rebuttal --finding "Missing null check in handler." \
+  -m "The caller rejects null input before invoking the handler." \
+  --kata abc4 --reply-to c:xbzxrq
+```
+
+Supply both the issue reference and the finding's comment handle from
+`kata show`. Roborev records the local assessment, then posts a typed reply:
+confirmed maps to `--confirm`, refuted to `--refute`, and superseded to
+`--supersede`. The reply includes the selected finding, assessment job and
+agent, outcome, and evidence. Its idempotency key uses the assessment job UUID.
+
+This requires Kata's comment-relation CLI support described in
+[Kata PR #519](https://github.com/kenn-io/kata/pull/519), which is unreleased.
+Older versions report an error; roborev does not substitute an ordinary comment.
+A failed Kata reply leaves the assessment recorded locally and the review open,
+including when `--close` was requested. Inspect the assessment job, then record
+its evidence in Kata manually before closing the review.
+
+Kata finding issues created by the review hook contain findings in their issue
+body. `--reply-to` targets an existing comment; add a finding comment in Kata
+before using typed replies. Roborev does not poll Kata for inbound rebuttals or
+close Kata issues automatically.

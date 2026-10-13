@@ -49,15 +49,33 @@ func (a ActivityOutputBody) Validate() error {
 
 type AddCommentRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	Comment   string  `json:"comment" validate:"required"`
-	Commenter string  `json:"commenter" validate:"required"`
-	JobID     *int64  `json:"job_id,omitempty"`
-	Sha       *string `json:"sha,omitempty"`
+	Schema             *string    `json:"$schema,omitempty"`
+	Comment            string     `json:"comment" validate:"required"`
+	Commenter          string     `json:"commenter" validate:"required"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
+	JobID              *int64     `json:"job_id,omitempty"`
+	Sha                *string    `json:"sha,omitempty"`
 }
 
 func (a AddCommentRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Comment, "required"); err != nil {
+		errors = errors.Append("Comment", err)
+	}
+	if err := typesValidator.Var(a.Commenter, "required"); err != nil {
+		errors = errors.Append("Commenter", err)
+	}
+	if a.ExpectedReviewUUID != nil {
+		if v, ok := any(a.ExpectedReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExpectedReviewUUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AgentHookFixDoneOutputBody struct {
@@ -697,9 +715,25 @@ type CloseReviewOutputBody struct {
 
 type CloseReviewRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	Closed bool    `json:"closed"`
-	JobID  int64   `json:"job_id"`
+	Schema             *string    `json:"$schema,omitempty"`
+	Closed             bool       `json:"closed"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
+	JobID              int64      `json:"job_id"`
+}
+
+func (c CloseReviewRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if c.ExpectedReviewUUID != nil {
+		if v, ok := any(c.ExpectedReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExpectedReviewUUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ComponentHealth struct {
@@ -1000,6 +1034,7 @@ type EnqueueCreatedResponse struct {
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
 	NonVoting             *bool                  `json:"non_voting,omitempty"`
+	OriginalReviewUUID    *uuid.UUID             `json:"original_review_uuid,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -1066,6 +1101,13 @@ func (e EnqueueCreatedResponse) Validate() error {
 	}
 	if err := typesValidator.Var(e.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
+	}
+	if e.OriginalReviewUUID != nil {
+		if v, ok := any(e.OriginalReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginalReviewUUID", err)
+			}
+		}
 	}
 	if e.PanelRunUUID != nil {
 		if v, ok := any(e.PanelRunUUID).(runtime.Validator); ok {
@@ -2586,6 +2628,7 @@ type PanelEnqueueResponse struct {
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
 	NonVoting             *bool                  `json:"non_voting,omitempty"`
+	OriginalReviewUUID    *uuid.UUID             `json:"original_review_uuid,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -2655,6 +2698,13 @@ func (p PanelEnqueueResponse) Validate() error {
 	}
 	if err := typesValidator.Var(p.MemberJobIds, "required"); err != nil {
 		errors = errors.Append("MemberJobIds", err)
+	}
+	if p.OriginalReviewUUID != nil {
+		if v, ok := any(p.OriginalReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginalReviewUUID", err)
+			}
+		}
 	}
 	if v, ok := any(p.PanelRunUUID).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -2807,6 +2857,19 @@ type QueuePauseOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string `json:"$schema,omitempty"`
 	QueuePaused bool    `json:"queue_paused"`
+}
+
+type RebuttalRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string `json:"$schema,omitempty"`
+	Comment   string  `json:"comment" validate:"required"`
+	Commenter string  `json:"commenter" validate:"required"`
+	Finding   string  `json:"finding" validate:"required"`
+	JobID     int64   `json:"job_id"`
+}
+
+func (r RebuttalRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type RegisterRepoRequest struct {
@@ -3274,6 +3337,7 @@ type ReviewJob struct {
 	MinSeverity           *string                `json:"min_severity,omitempty"`
 	Model                 *string                `json:"model,omitempty"`
 	NonVoting             *bool                  `json:"non_voting,omitempty"`
+	OriginalReviewUUID    *uuid.UUID             `json:"original_review_uuid,omitempty"`
 	OutputPrefix          *string                `json:"output_prefix,omitempty"`
 	PanelMemberConfigJSON *string                `json:"panel_member_config_json,omitempty"`
 	PanelMemberIndex      *int64                 `json:"panel_member_index,omitempty"`
@@ -3340,6 +3404,13 @@ func (r ReviewJob) Validate() error {
 	}
 	if err := typesValidator.Var(r.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
+	}
+	if r.OriginalReviewUUID != nil {
+		if v, ok := any(r.OriginalReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginalReviewUUID", err)
+			}
+		}
 	}
 	if r.PanelRunUUID != nil {
 		if v, ok := any(r.PanelRunUUID).(runtime.Validator); ok {

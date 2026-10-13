@@ -144,6 +144,7 @@ export * from "./pendingReminder";
 export * from "./pingInfo";
 export * from "./postgresLegacyReview";
 export * from "./queuePauseOutputBody";
+export * from "./rebuttalRequest";
 export * from "./registerRepoRequest";
 export * from "./releaseNote";
 export * from "./releaseNotesResponse";

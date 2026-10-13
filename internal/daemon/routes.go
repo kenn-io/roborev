@@ -477,7 +477,15 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Summary = "Close or reopen a review"
 			o.Tags = []string{"reviews"}
 			o.SkipValidateBody = true
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict}
 		})
+
+	huma.Post(api, "/api/rebuttal", s.humaRebuttal, func(o *huma.Operation) {
+		o.OperationID = "rebuttal"
+		o.Summary = "Re-evaluate one finding in the original agent session"
+		o.DefaultStatus = 201
+		o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict}
+	})
 
 	huma.Post(api, "/api/comment", s.humaAddComment,
 		func(o *huma.Operation) {
@@ -486,6 +494,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"comments"}
 			o.DefaultStatus = 201
 			o.SkipValidateBody = true
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict}
 		})
 
 	huma.Post(api, "/api/job/fix", s.humaFixJob,

@@ -569,6 +569,11 @@ roborev close <job_id> --reopen      # Reopen a closed review
 | `--message, -m` | Comment message (inline) |
 | `--commenter` | Name of commenter |
 | `--job` | Force interpretation as job ID |
+| `--rebuttal` | Re-evaluate one finding in its original agent session and wait |
+| `--finding` | Excerpt of the original review to re-evaluate |
+| `--close` | Close the whole review after recording the assessment (requires `--rebuttal`) |
+| `--kata` | Kata issue for a typed assessment reply |
+| `--reply-to` | Kata finding comment handle (requires `--kata` and `--rebuttal`) |
 
 !!! note
 

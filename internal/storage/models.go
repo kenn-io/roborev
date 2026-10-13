@@ -65,13 +65,15 @@ const (
 
 // Job source values identify daemon-created automation rows.
 const (
+	JobSourceRebuttal   = "rebuttal"
 	JobSourceAutoDesign = "auto_design"
 	JobSourceCI         = "ci"
 	JobSourcePostCommit = "post_commit"
 )
 
 type ReviewJob struct {
-	WebURL              string     `json:"web_url,omitempty"` // Response-only browser link; not persisted.
+	WebURL              string     `json:"web_url,omitempty"`                            // Response-only browser link; not persisted.
+	OriginalReviewUUID  *uuid.UUID `json:"original_review_uuid,omitempty" format:"uuid"` // Response-only rebuttal version token.
 	ID                  int64      `json:"id"`
 	RepoID              int64      `json:"repo_id"`
 	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges

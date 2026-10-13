@@ -179,6 +179,10 @@ type ClientInterface interface {
 	UnpauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*UnpauseQueueResponse, error)
 	UnpauseQueueWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*UnpauseQueueResp, error)
 
+	// Rebuttal Re-evaluate one finding in the original agent session
+	Rebuttal(ctx context.Context, options *RebuttalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuttalResponse, error)
+	RebuttalWithResponse(ctx context.Context, options *RebuttalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuttalResp, error)
+
 	// ListReleases List recent Roborev release notes
 	ListReleases(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListReleasesResponse, error)
 	ListReleasesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListReleasesResp, error)
@@ -2724,6 +2728,70 @@ func (c *Client) UnpauseQueue(ctx context.Context, reqEditors ...runtime.Request
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/queue/unpause")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// Rebuttal Re-evaluate one finding in the original agent session
+func (c *Client) Rebuttal(ctx context.Context, options *RebuttalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuttalResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/rebuttal",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RebuttalResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(RebuttalErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RebuttalErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RebuttalResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RebuttalResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/rebuttal")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
