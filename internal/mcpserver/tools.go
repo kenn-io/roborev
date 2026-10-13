@@ -558,6 +558,13 @@ func normalizeSearchInput(in searchInput) (SearchQuery, error) {
 	}, nil
 }
 
+// isRepoNameAmbiguityMessage recognizes the daemon's catalog diagnostic so MCP
+// can preserve checkout paths while still hiding arbitrary backend errors.
+func isRepoNameAmbiguityMessage(message string) bool {
+	return strings.HasPrefix(message, `repository name "`) &&
+		strings.Contains(message, "\" is ambiguous; use a repository path:\n  ")
+}
+
 func privateSearchError(err error) error {
 	backendErr, ok := errors.AsType[*Error](err)
 	if !ok {
@@ -565,7 +572,7 @@ func privateSearchError(err error) error {
 	}
 	switch backendErr.Code {
 	case ErrorCodeInvalidArgument:
-		if backendErr.Message == "repository not found" || backendErr.Message == "search request is invalid" {
+		if backendErr.Message == "repository not found" || backendErr.Message == "search request is invalid" || isRepoNameAmbiguityMessage(backendErr.Message) {
 			return NewError(ErrorCodeInvalidArgument, backendErr.Message)
 		}
 		return NewError(ErrorCodeInvalidArgument, "search request is invalid")

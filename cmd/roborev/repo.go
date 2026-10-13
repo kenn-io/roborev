@@ -273,7 +273,7 @@ Examples:
 					"\nNote: %s no longer exists on disk.\n"+
 						"If the directory was moved, run:\n"+
 						"  roborev repo move %q <new-path>\n",
-					repo.RootPath, newName)
+					repo.RootPath, repo.RootPath)
 			}
 			return nil
 		},
@@ -515,10 +515,10 @@ Examples:
 
 			// Confirm
 			if !yes {
-				fmt.Printf("Source: %s (%d jobs)\n", source.Name, sourceStats.TotalJobs)
-				fmt.Printf("Target: %s\n", target.Name)
-				fmt.Printf("\nThis will move %d jobs to %q and delete %q.\n",
-					sourceStats.TotalJobs, target.Name, source.Name)
+				fmt.Printf("Source: %s (%s) (%d jobs)\n", source.Name, source.RootPath, sourceStats.TotalJobs)
+				fmt.Printf("Target: %s (%s)\n", target.Name, target.RootPath)
+				fmt.Printf("\nThis will move %d jobs to %q (%s) and delete %q (%s).\n",
+					sourceStats.TotalJobs, target.Name, target.RootPath, source.Name, source.RootPath)
 				fmt.Print("\nProceed? [y/N] ")
 				var response string
 				_, _ = fmt.Scanln(&response)

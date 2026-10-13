@@ -497,3 +497,27 @@ func TestMCPWriteToolsPersistThroughBothBackends(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPBackendSearchReportsAmbiguousRepoPaths(t *testing.T) {
+	assert := assert.New(t)
+	server, db := newMCPTestServer(t, true)
+	searcher := &recordingReviewSearcher{}
+	server.search = searcher
+	var paths []string
+	for _, checkout := range []string{"first", "second"} {
+		repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), checkout))
+		require.NoError(t, err)
+		_, err = db.RenameRepo(repo.RootPath, "widgets")
+		require.NoError(t, err)
+		paths = append(paths, repo.RootPath)
+	}
+	_, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: "needle", Repo: "widgets", Limit: 20})
+	backendErr, ok := errors.AsType[*mcpserver.Error](err)
+	require.True(t, ok)
+	assert.Equal(mcpserver.ErrorCodeInvalidArgument, backendErr.Code)
+	assert.Contains(backendErr.Message, "ambiguous")
+	for _, path := range paths {
+		assert.Contains(backendErr.Message, path)
+	}
+	assert.Empty(searcher.params)
+}

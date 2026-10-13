@@ -264,6 +264,12 @@ type GetRepoResponse = RepoStats
 
 type GetRepoErrorResponse = ErrorModel
 
+type GetRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type GetRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type GetRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type MergeReposResponse = MergeReposOutputBody
 
 type MergeReposErrorResponse = ErrorModel
@@ -284,6 +290,12 @@ type RenameRepoResponse = RenameRepoOutputBody
 
 type RenameRepoErrorResponse = ErrorModel
 
+type RenameRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type RenameRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type RenameRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type ResolveRepoResponse = ResolveRepoOutputBody
 
 type ResolveRepoErrorResponse = ErrorModel
@@ -303,6 +315,14 @@ type MigrateReviewErrorResponse = ErrorModel
 type SearchReviewsResponse = SearchResponse
 
 type SearchReviewsErrorResponse = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON503 = ErrorModel
 
 type ShutdownResponse = ShutdownOutputBody
 
@@ -683,10 +703,14 @@ type DeleteRepoResp struct {
 }
 
 type GetRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetRepoResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *GetRepoResponse
+	ApplicationProblemPlusJSON404 *GetRepoErrorResponse
+	ApplicationProblemPlusJSON409 *GetRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *GetRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *GetRepoErrorResponseApplicationProblemPlusJSON500
 }
 
 type MergeReposResp struct {
@@ -714,10 +738,14 @@ type RegisterRepoResp struct {
 }
 
 type RenameRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RenameRepoResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *RenameRepoResponse
+	ApplicationProblemPlusJSON404 *RenameRepoErrorResponse
+	ApplicationProblemPlusJSON409 *RenameRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *RenameRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *RenameRepoErrorResponseApplicationProblemPlusJSON500
 }
 
 type ResolveRepoResp struct {
@@ -749,10 +777,15 @@ type MigrateReviewResp struct {
 }
 
 type SearchReviewsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SearchReviewsResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *SearchReviewsResponse
+	ApplicationProblemPlusJSON400 *SearchReviewsErrorResponse
+	ApplicationProblemPlusJSON409 *SearchReviewsErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *SearchReviewsErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *SearchReviewsErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON503 *SearchReviewsErrorResponseApplicationProblemPlusJSON503
 }
 
 type ShutdownResp struct {

@@ -143,6 +143,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 
 	huma.Get(api, "/api/search", s.humaSearchReviews,
 		func(o *huma.Operation) {
+			o.Errors = []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusServiceUnavailable}
 			o.OperationID = "searchReviews"
 			o.Summary = "Search completed review history"
 			o.Tags = []string{"Reviews"}

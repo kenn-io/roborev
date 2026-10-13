@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -550,4 +551,29 @@ func TestRerunWakesSearchReconcilerToDropTheDeletedReview(t *testing.T) {
 	require.Len(t, reconciler.jobs, 1)
 	assert.Equal(t, job.ID, <-reconciler.jobs)
 	assert.Empty(t, reconciler.wakes)
+}
+
+func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	searcher := &recordingReviewSearcher{}
+	server.search = searcher
+	t.Cleanup(func() { _ = server.Close() })
+	var paths []string
+	for _, checkout := range []string{"first", "second"} {
+		repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), checkout))
+		require.NoError(t, err)
+		_, err = db.RenameRepo(repo.RootPath, "widgets")
+		require.NoError(t, err)
+		paths = append(paths, repo.RootPath)
+	}
+	// An identity with the same spelling must not rescue an ambiguous name.
+	_, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "identity-match"), "widgets")
+	require.NoError(t, err)
+	response := executeSearch(server, url.Values{"q": {"needle"}, "repo": {"widgets"}})
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	for _, path := range paths {
+		assert.Contains(t, response.Body.String(), path)
+	}
+	assert.Empty(t, searcher.params)
 }

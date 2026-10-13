@@ -31,6 +31,30 @@ roborev repo merge source target      # Merge reviews into another repo
 | `repo delete <name>` | Remove repository from tracking |
 | `repo merge <src> <dst>` | Move all reviews to another repo |
 
+## Selecting a Repository
+
+Repository display names are not unique. Separate clones and worktrees of a bare
+repository can share a name while retaining separate review histories.
+`repo show`, `rename`, `move`, `delete`, and `merge` reject names that match
+multiple records and list their stored paths. Use `roborev repo list` to find
+the checkout you want, then pass its path:
+
+```bash
+roborev repo show /path/to/widgets
+roborev repo rename /path/to/widgets "Widgets main"
+roborev repo merge /path/to/old-checkout /path/to/main-checkout
+```
+
+Stored absolute paths work even after a checkout has been removed. The merge
+confirmation shows both paths. `--yes` skips confirmation only; it does not
+allow ambiguous names. Renaming one checkout to an existing display name is
+allowed, but subsequent commands must use paths to distinguish those records.
+
+The web repository filter shows checkout paths beneath repeated names. Search
+matches both names and paths, and selecting an entry filters that checkout's
+reviews and branches. Review search through HTTP or MCP also reports ambiguous
+names with their matching paths.
+
 ## Common Use Cases
 
 ### Rename for Clarity
@@ -131,9 +155,10 @@ display_name = "My Custom Name"
 
 ## Git Worktrees
 
-roborev fully supports git worktrees. Reviews are stored against the main
-repository, so commits made in any worktree are associated with the same review
-history. No configuration is needed.
+roborev fully supports git worktrees. For a non-bare repository, reviews from
+linked worktrees are stored against the main checkout and share its review
+history. Worktrees of a bare repository are tracked separately because there is
+no main checkout. No configuration is needed.
 
 ```bash
 # Create a worktree for a feature branch
@@ -174,9 +199,8 @@ branch it mirrors. If no single best candidate exists (ties, or more than 20
 candidate branches), the review is stored without a branch, as before. Inferred
 branches respect `excluded_branches`.
 
-Without this, you'd get duplicate repository entries, scattered reviews, and
-confusion about which reviews belong to which code. With worktree support,
-everything is consolidated under the main repository.
+For worktrees of a non-bare repository, reviews are consolidated under the main
+checkout. Bare-backed worktrees keep separate records and review histories.
 
 ### Git Hook Maintenance
 

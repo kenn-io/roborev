@@ -362,14 +362,43 @@ func (db *DB) RenameRepo(rootPath, newName string) (int64, error) {
 	return result.RowsAffected()
 }
 
-// RenameRepoByName updates every repository with the given display name.
-func (db *DB) RenameRepoByName(name, newName string) (int64, error) {
-	result, err := db.Exec(`UPDATE repos SET name = ? WHERE name = ?`, newName, name)
+// RenameRepoByNameWithResult resolves and renames a uniquely named repository
+// under one write lock, returning the exact record that was renamed.
+func (db *DB) RenameRepoByNameWithResult(name, newName string) (*Repo, error) {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	affected, _ := result.RowsAffected()
-	return affected, nil
+	defer conn.Close()
+	if err := beginImmediate(ctx, conn); err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if err := rollbackConn(conn); err != nil {
+				log.Printf("repos rename: rollback failed: %v", err)
+			}
+		}
+	}()
+	rows, err := conn.QueryContext(ctx, repoByNameQuery, name)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := readRepoByName(rows, name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE repos SET name = ? WHERE id = ?`, newName, repo.ID); err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, err
+	}
+	committed = true
+	repo.Name = newName
+	return repo, nil
 }
 
 // ErrRepoPathConflict is returned when MoveRepo would create a duplicate root_path.
@@ -444,17 +473,54 @@ func (db *DB) GetRepoByID(id int64) (*Repo, error) {
 	return &repo, nil
 }
 
-// GetRepoByName returns a repo by its display name
+// AmbiguousRepoNameError lists the checkouts sharing a display name.
+type AmbiguousRepoNameError struct {
+	Name  string
+	Paths []string
+}
+
+func (e *AmbiguousRepoNameError) Error() string {
+	return fmt.Sprintf("repository name %q is ambiguous; use a repository path:\n  %s", e.Name, strings.Join(e.Paths, "\n  "))
+}
+
+const repoByNameQuery = `SELECT id, root_path, name, created_at, identity FROM repos WHERE name = ? ORDER BY root_path`
+
+// GetRepoByName returns a uniquely named repo, or AmbiguousRepoNameError when
+// multiple checkouts share that display name.
 func (db *DB) GetRepoByName(name string) (*Repo, error) {
-	var repo Repo
-	var createdAt string
-	err := db.QueryRow(`SELECT id, root_path, name, created_at FROM repos WHERE name = ?`, name).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt)
+	rows, err := db.Query(repoByNameQuery, name)
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt = parseSQLiteTime(createdAt)
-	return &repo, nil
+	return readRepoByName(rows, name)
+}
+
+func readRepoByName(rows *sql.Rows, name string) (*Repo, error) {
+	defer rows.Close()
+	var found *Repo
+	var paths []string
+	for rows.Next() {
+		var repo Repo
+		var createdAt string
+		var identity sql.NullString
+		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt, &identity); err != nil {
+			return nil, err
+		}
+		repo.CreatedAt = parseSQLiteTime(createdAt)
+		repo.Identity = identity.String
+		found = &repo
+		paths = append(paths, repo.RootPath)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(paths) > 1 {
+		return nil, &AmbiguousRepoNameError{Name: name, Paths: paths}
+	}
+	if found == nil {
+		return nil, sql.ErrNoRows
+	}
+	return found, nil
 }
 
 // FindRepo finds a repo by path or name (tries path first, then name)

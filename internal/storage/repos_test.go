@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -288,10 +289,11 @@ func TestRenameRepo(t *testing.T) {
 	})
 
 	t.Run("rename by name", func(t *testing.T) {
-		affected, err := db.RenameRepoByName("new-name", "another-name")
+		renamed, err := db.RenameRepoByNameWithResult("new-name", "another-name")
 		require.NoError(t, err, "RenameRepo failed: %v")
-
-		assert.EqualValues(t, 1, affected)
+		require.NotNil(t, renamed)
+		assert.Equal(t, repo.ID, renamed.ID)
+		assert.Equal(t, "another-name", renamed.Name)
 
 		updated, err := db.GetRepoByID(repo.ID)
 		require.NoError(t, err, "GetRepoByID failed: %v")
@@ -1145,4 +1147,69 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			assert.Equal(t, tt.expectedPrompt, reclaimed.Prompt)
 		})
 	}
+}
+
+func TestRepoNameAmbiguity(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	root := t.TempDir()
+	var repos []*Repo
+	for _, checkout := range []string{"z-checkout", "a-checkout", "m-checkout"} {
+		repo := createRepo(t, db, filepath.Join(root, checkout))
+		_, err := db.RenameRepo(repo.RootPath, "widgets")
+		require.NoError(t, err)
+		repos = append(repos, repo)
+	}
+
+	for _, lookup := range []func(string) (*Repo, error){db.GetRepoByName, db.FindRepo} {
+		found, err := lookup("widgets")
+		require.Error(t, err)
+		assert.Nil(t, found)
+		ambiguity, ok := errors.AsType[*AmbiguousRepoNameError](err)
+		require.True(t, ok)
+		assert.Equal(t, []string{repos[1].RootPath, repos[2].RootPath, repos[0].RootPath}, ambiguity.Paths)
+		assert.Contains(t, err.Error(), "ambiguous")
+		assert.Contains(t, err.Error(), "use a repository path")
+		for _, repo := range repos {
+			assert.Contains(t, err.Error(), repo.RootPath)
+		}
+		assert.Less(t, strings.Index(err.Error(), repos[1].RootPath), strings.Index(err.Error(), repos[2].RootPath))
+		assert.Less(t, strings.Index(err.Error(), repos[2].RootPath), strings.Index(err.Error(), repos[0].RootPath))
+	}
+	found, err := db.FindRepo(repos[0].RootPath)
+	require.NoError(t, err)
+	assert.Equal(t, repos[0].ID, found.ID)
+
+	for _, newName := range []string{"friendly", "widgets"} {
+		renamed, err := db.RenameRepoByNameWithResult("widgets", newName)
+		require.Error(t, err)
+		assert.Nil(t, renamed)
+		ambiguity, ok := errors.AsType[*AmbiguousRepoNameError](err)
+		require.True(t, ok)
+		assert.Equal(t, "widgets", ambiguity.Name)
+		for _, repo := range repos {
+			stored, err := db.GetRepoByID(repo.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "widgets", stored.Name)
+		}
+	}
+}
+
+func TestRenameRepoByNameWithResultReturnsSelectedRepo(t *testing.T) {
+	t.Parallel()
+	db, source := setupDBAndRepo(t, "source")
+	db.SetMaxOpenConns(1)
+	target := createRepo(t, db, filepath.Join(t.TempDir(), "friendly"))
+	renamed, err := db.RenameRepoByNameWithResult(source.Name, target.Name)
+	require.NoError(t, err)
+	require.NotNil(t, renamed)
+	assert.Equal(t, source.ID, renamed.ID)
+	assert.Equal(t, source.RootPath, renamed.RootPath)
+	assert.Equal(t, target.Name, renamed.Name)
+	stored, err := db.GetRepoByID(target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, target.Name, stored.Name)
+	_, err = db.RenameRepoByNameWithResult("missing", "friendly")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

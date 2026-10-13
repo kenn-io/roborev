@@ -176,7 +176,7 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(pathRecorder.Body.Bytes(), &pathDetails))
 	assert.Equal(t, pathRepo.ID, pathDetails.Repo.ID)
 
-	// Display names are not unique; renaming a name still updates every match.
+	// Display names are not unique; name-based rename must refuse every match.
 	var namedIDs []int64
 	for _, path := range []string{filepath.Join(dir, "named"), filepath.Join(dir, "duplicate")} {
 		repo, err := db.GetOrCreateRepo(path)
@@ -186,11 +186,11 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 		namedIDs = append(namedIDs, repo.ID)
 	}
 	renamed := postRepoManagement(t, server, "rename", map[string]any{"identifier": name, "name": "friendly", "by_path": false})
-	require.Equal(t, http.StatusOK, renamed.Code, renamed.Body.String())
+	require.Equal(t, http.StatusConflict, renamed.Code, renamed.Body.String())
 	for _, id := range namedIDs {
 		repo, err := db.GetRepoByID(id)
 		require.NoError(t, err)
-		assert.Equal(t, "friendly", repo.Name)
+		assert.Equal(t, name, repo.Name)
 	}
 	storedPathRepo, err = db.GetRepoByID(pathRepo.ID)
 	require.NoError(t, err)
@@ -228,4 +228,49 @@ func TestRepoManagementPathDoesNotFallBackToName(t *testing.T) {
 	var result RenameRepoOutput
 	require.NoError(t, json.Unmarshal(renamed.Body.Bytes(), &result.Body))
 	assert.Equal(tracked.ID, result.Body.Repo.ID)
+}
+
+func TestRepoManagementAmbiguousName(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	var repos []*storage.Repo
+	for _, checkout := range []string{"first", "second", "third"} {
+		repo, err := db.GetOrCreateRepo(filepath.Join(dir, checkout))
+		require.NoError(t, err)
+		_, err = db.RenameRepo(repo.RootPath, "widgets")
+		require.NoError(t, err)
+		repos = append(repos, repo)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?identifier=widgets", nil)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	for _, repo := range repos {
+		assert.Contains(t, w.Body.String(), repo.RootPath)
+	}
+	for _, name := range []string{"friendly", "widgets"} {
+		w = postRepoManagement(t, server, "rename", map[string]any{"identifier": "widgets", "name": name, "by_path": false})
+		require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+		for _, repo := range repos {
+			assert.Contains(t, w.Body.String(), repo.RootPath)
+			stored, err := db.GetRepoByID(repo.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "widgets", stored.Name)
+		}
+	}
+	// These registered paths never existed on disk; paths still select exactly one.
+	req = httptest.NewRequest(http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(repos[1].RootPath), nil)
+	w = httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var details storage.RepoStats
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &details))
+	assert.Equal(t, repos[1].ID, details.Repo.ID)
+	w = postRepoManagement(t, server, "rename", map[string]any{"identifier": repos[1].RootPath, "by_path": true, "name": "unique"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	// Renaming into a shared name must return the record that was changed.
+	w = postRepoManagement(t, server, "rename", map[string]any{"identifier": "unique", "name": "widgets", "by_path": false})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var output RenameRepoOutput
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &output.Body))
+	assert.Equal(t, repos[1].ID, output.Body.Repo.ID)
 }
