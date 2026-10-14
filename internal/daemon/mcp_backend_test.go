@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -498,26 +499,53 @@ func TestMCPWriteToolsPersistThroughBothBackends(t *testing.T) {
 	}
 }
 
-func TestMCPBackendSearchReportsAmbiguousRepoPaths(t *testing.T) {
-	assert := assert.New(t)
-	server, db := newMCPTestServer(t, true)
-	searcher := &recordingReviewSearcher{}
-	server.search = searcher
-	var paths []string
-	for _, checkout := range []string{"first", "second"} {
-		repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), checkout))
-		require.NoError(t, err)
-		_, err = db.RenameRepo(repo.RootPath, "widgets")
-		require.NoError(t, err)
-		paths = append(paths, repo.RootPath)
+func TestMCPSearchReportsAmbiguousRepoPathsThroughBothBackends(t *testing.T) {
+	for _, transport := range []string{"http", "stdio-backend"} {
+		t.Run(transport, func(t *testing.T) {
+			assert := assert.New(t)
+			server, db := newMCPTestServer(t, true)
+			searcher := &recordingReviewSearcher{}
+			server.search = searcher
+			var paths []string
+			for _, checkout := range []string{"first", "second"} {
+				repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), checkout))
+				require.NoError(t, err)
+				_, err = db.RenameRepo(repo.RootPath, "widgets")
+				require.NoError(t, err)
+				paths = append(paths, repo.RootPath)
+			}
+			slices.Sort(paths)
+			api := httptest.NewServer(server.httpServer.Handler)
+			t.Cleanup(api.Close)
+			endpoint := api.URL + mcpserver.HTTPPath
+			if transport == "stdio-backend" {
+				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
+				httpBridge := httptest.NewServer(bridge.HTTPHandler())
+				t.Cleanup(httpBridge.Close)
+				endpoint = httpBridge.URL + mcpserver.HTTPPath
+			}
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+			session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: endpoint, DisableStandaloneSSE: true}, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+
+			result, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+				Name: "roborev_search_reviews", Arguments: map[string]any{"query": "needle", "repo": "widgets"},
+			})
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			var failure struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &failure))
+			assert.Equal(mcpserver.ErrorCodeInvalidArgument, failure.Error.Code)
+			ambiguity := &storage.AmbiguousRepoNameError{Name: "widgets", Paths: paths}
+			want := mcpserver.NewError(mcpserver.ErrorCodeInvalidArgument, ambiguity.Error())
+			assert.Equal(want.Error(), failure.Error.Message)
+			assert.Empty(searcher.params)
+		})
 	}
-	_, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: "needle", Repo: "widgets", Limit: 20})
-	backendErr, ok := errors.AsType[*mcpserver.Error](err)
-	require.True(t, ok)
-	assert.Equal(mcpserver.ErrorCodeInvalidArgument, backendErr.Code)
-	assert.Contains(backendErr.Message, "ambiguous")
-	for _, path := range paths {
-		assert.Contains(backendErr.Message, path)
-	}
-	assert.Empty(searcher.params)
 }

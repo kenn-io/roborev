@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SearchInput } from "@kenn-io/kit-ui";
   import { Effect } from "effect";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { getAppRuntime } from "../../runtime/context";
   import { executeRoborevRequest } from "../../api/client";
@@ -218,6 +218,9 @@
     open = false;
   }
 
+  // The closed label needs the catalog to tell repeated names apart.
+  onMount(loadRepos);
+
   onDestroy(() => {
     runtime.runCommand(
       Effect.gen(function* () {
@@ -257,7 +260,7 @@
           016.5 9h6V1.5z"
       />
     </svg>
-    {displayLabel}
+    <span class="picker-label" title={displayLabel}>{displayLabel}</span>
     <svg
       class="chevron"
       class:chevron-up={open}
@@ -382,6 +385,17 @@
     font-size: var(--font-size-sm);
     cursor: pointer;
     white-space: nowrap;
+    max-width: 32rem;
+  }
+
+  .picker-button svg {
+    flex-shrink: 0;
+  }
+
+  .picker-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .picker-button:hover {

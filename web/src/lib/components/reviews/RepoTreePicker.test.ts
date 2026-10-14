@@ -246,7 +246,7 @@ describe("RepoTreePicker", () => {
     expect(state.repo).toBe("/workspace/worktrees/pr-1");
   });
 
-  it("shows a restored checkout path with its branch before and after loading", async () => {
+  it("labels a restored duplicate checkout with its path without opening", async () => {
     state.repo = "/workspace/worktrees/pr-1";
     state.branch = "feature";
     repoApi.listRepos.mockResolvedValue({
@@ -256,15 +256,28 @@ describe("RepoTreePicker", () => {
       ],
     });
     render(RepoTreePicker);
-    const trigger = screen.getByRole("button", {
-      name: "feature (/workspace/worktrees/pr-1)",
-    });
-    await fireEvent.click(trigger);
-    await screen.findByText("/workspace/main/widgets");
+    await waitFor(() => expect(repoApi.listRepos).toHaveBeenCalled());
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "feature (/workspace/worktrees/pr-1)",
       }),
     ).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter repos...")).toBeNull();
+  });
+
+  it("labels a restored unique checkout by name without opening", async () => {
+    state.repo = "/workspace/project-a";
+    render(RepoTreePicker);
+    expect(
+      await screen.findByRole("button", { name: "project-a" }),
+    ).toBeInTheDocument();
+
+    state.branch = "feature";
+    cleanup();
+    render(RepoTreePicker);
+    expect(
+      await screen.findByRole("button", { name: "feature" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter repos...")).toBeNull();
   });
 });

@@ -289,7 +289,7 @@ func TestRenameRepo(t *testing.T) {
 	})
 
 	t.Run("rename by name", func(t *testing.T) {
-		renamed, err := db.RenameRepoByNameWithResult("new-name", "another-name")
+		renamed, err := db.RenameRepoByName("new-name", "another-name")
 		require.NoError(t, err, "RenameRepo failed: %v")
 		require.NotNil(t, renamed)
 		assert.Equal(t, repo.ID, renamed.ID)
@@ -1182,7 +1182,7 @@ func TestRepoNameAmbiguity(t *testing.T) {
 	assert.Equal(t, repos[0].ID, found.ID)
 
 	for _, newName := range []string{"friendly", "widgets"} {
-		renamed, err := db.RenameRepoByNameWithResult("widgets", newName)
+		renamed, err := db.RenameRepoByName("widgets", newName)
 		require.Error(t, err)
 		assert.Nil(t, renamed)
 		ambiguity, ok := errors.AsType[*AmbiguousRepoNameError](err)
@@ -1196,12 +1196,12 @@ func TestRepoNameAmbiguity(t *testing.T) {
 	}
 }
 
-func TestRenameRepoByNameWithResultReturnsSelectedRepo(t *testing.T) {
+func TestRenameRepoByNameReturnsSelectedRepo(t *testing.T) {
 	t.Parallel()
 	db, source := setupDBAndRepo(t, "source")
 	db.SetMaxOpenConns(1)
 	target := createRepo(t, db, filepath.Join(t.TempDir(), "friendly"))
-	renamed, err := db.RenameRepoByNameWithResult(source.Name, target.Name)
+	renamed, err := db.RenameRepoByName(source.Name, target.Name)
 	require.NoError(t, err)
 	require.NotNil(t, renamed)
 	assert.Equal(t, source.ID, renamed.ID)
@@ -1210,6 +1210,6 @@ func TestRenameRepoByNameWithResultReturnsSelectedRepo(t *testing.T) {
 	stored, err := db.GetRepoByID(target.ID)
 	require.NoError(t, err)
 	assert.Equal(t, target.Name, stored.Name)
-	_, err = db.RenameRepoByNameWithResult("missing", "friendly")
+	_, err = db.RenameRepoByName("missing", "friendly")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }

@@ -127,7 +127,7 @@ func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*Ren
 			repo, err = s.db.GetRepoByPath(input.Body.Identifier)
 		}
 	} else {
-		repo, err = s.db.RenameRepoByNameWithResult(input.Body.Identifier, input.Body.Name)
+		repo, err = s.db.RenameRepoByName(input.Body.Identifier, input.Body.Name)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

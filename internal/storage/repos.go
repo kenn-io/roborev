@@ -362,9 +362,9 @@ func (db *DB) RenameRepo(rootPath, newName string) (int64, error) {
 	return result.RowsAffected()
 }
 
-// RenameRepoByNameWithResult resolves and renames a uniquely named repository
+// RenameRepoByName resolves and renames a uniquely named repository
 // under one write lock, returning the exact record that was renamed.
-func (db *DB) RenameRepoByNameWithResult(name, newName string) (*Repo, error) {
+func (db *DB) RenameRepoByName(name, newName string) (*Repo, error) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {

@@ -450,7 +450,9 @@ func TestHTTPBackendSearchTransportErrorDoesNotLeakURLOrQuery(t *testing.T) {
 
 func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
 	d, backend := newFakeDaemon(t)
-	message := "repository name \"widgets\" is ambiguous; use a repository path:\n  /workspace/main\n  /workspace/worktree"
+	message := (&storage.AmbiguousRepoNameError{
+		Name: "widgets", Paths: []string{"/workspace/main", "/workspace/worktree"},
+	}).Error()
 	body, err := json.Marshal(map[string]any{"detail": message})
 	require.NoError(t, err)
 	d.routes["/api/search"] = jsonResponse(http.StatusConflict, string(body))
@@ -458,7 +460,6 @@ func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
 	require.True(t, result.IsError)
 	var failure toolErrorOutput
 	decodeText(t, result, &failure)
-	assert.Contains(t, failure.Error.Message, "ambiguous")
-	assert.Contains(t, failure.Error.Message, "/workspace/main")
-	assert.Contains(t, failure.Error.Message, "/workspace/worktree")
+	assert.Equal(t, ErrorCodeInvalidArgument, failure.Error.Code)
+	assert.Equal(t, NewError(ErrorCodeInvalidArgument, message).Error(), failure.Error.Message)
 }
