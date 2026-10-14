@@ -127,6 +127,13 @@ func RunDump(opts InstallOptions, stdout io.Writer) error {
 	if err != nil {
 		return profileError(agent, opts.ConfigPath, err)
 	}
+	if agent == AgentZcode {
+		data, err := zcodeDumpPayload(result, opts)
+		if err != nil {
+			return profileError(agent, opts.ConfigPath, err)
+		}
+		result.Data = data
+	}
 	_, err = stdout.Write(result.Data)
 	return err
 }

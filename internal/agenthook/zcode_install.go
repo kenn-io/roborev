@@ -2,6 +2,7 @@ package agenthook
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -38,11 +39,34 @@ func DefaultZcodeConfigPath() string {
 	return filepath.Join(home, ".zcode", "cli", "config.json")
 }
 
-// DefaultZcodePluginRoot returns the roborev ZCode plugin directory. The
-// plugin is registered by appending this directory to plugins.dirs in
-// ZCode's configuration.
+// DefaultZcodePluginRoot returns the roborev ZCode plugin directory used
+// for ZCode's default configuration. The plugin is registered by appending
+// the directory to plugins.dirs in the target configuration.
 func DefaultZcodePluginRoot() string {
-	return filepath.Join(config.DataDir(), "zcode-plugin")
+	return zcodePluginRoot("")
+}
+
+// zcodeTargetConfigPath resolves the configuration file an install or
+// dump operates on.
+func zcodeTargetConfigPath(opts InstallOptions) string {
+	if path := strings.TrimSpace(opts.ConfigPath); path != "" {
+		return path
+	}
+	return DefaultZcodeConfigPath()
+}
+
+// zcodePluginRoot scopes the plugin directory to the resolved target
+// configuration: installations with different --config files keep
+// independent manifests and hook registrations, so a second install cannot
+// overwrite the hooks a first configuration registered (different command,
+// daemon, MCP mode, or event form).
+func zcodePluginRoot(configPath string) string {
+	name := "zcode-plugin"
+	if configPath != "" && configPath != DefaultZcodeConfigPath() {
+		digest := sha256.Sum256([]byte(filepath.Clean(configPath)))
+		name = fmt.Sprintf("zcode-plugin-%x", digest[:4])
+	}
+	return filepath.Join(config.DataDir(), name)
 }
 
 // planZcodeInstall registers roborev as an inline ZCode plugin. ZCode does
@@ -53,14 +77,11 @@ func DefaultZcodePluginRoot() string {
 // a manifest at .zcode-plugin/plugin.json plus hook registrations in
 // hooks/hooks.json, with the plugin root appended to plugins.dirs.
 func planZcodeInstall(opts InstallOptions) (kitagenthook.Result, error) {
-	path := strings.TrimSpace(opts.ConfigPath)
+	path := zcodeTargetConfigPath(opts)
 	if path == "" {
-		path = DefaultZcodeConfigPath()
+		return kitagenthook.Result{}, errors.New("could not resolve Zcode config path")
 	}
-	if path == "" {
-		return kitagenthook.Result{}, errors.New("could not resolve ZCode config path")
-	}
-	plan, err := planZcodePlugin(opts)
+	plan, err := planZcodePlugin(opts, path)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
@@ -94,7 +115,7 @@ type zcodePlugin struct {
 	hooks    []byte
 }
 
-func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
+func planZcodePlugin(opts InstallOptions, configPath string) (zcodePlugin, error) {
 	command, err := hookRunCommand(AgentZcode, opts)
 	if err != nil {
 		return zcodePlugin{}, err
@@ -118,7 +139,7 @@ func planZcodePlugin(opts InstallOptions) (zcodePlugin, error) {
 		return zcodePlugin{}, err
 	}
 	manifest = append(manifest, '\n')
-	return zcodePlugin{root: DefaultZcodePluginRoot(), manifest: manifest, hooks: hooks}, nil
+	return zcodePlugin{root: zcodePluginRoot(configPath), manifest: manifest, hooks: hooks}, nil
 }
 
 // zcodeHookSpecs selects the registered events. ZCode schedules only
@@ -149,7 +170,7 @@ func zcodeHookSpecs(stopForm bool) []hookSpec {
 // It runs before the configuration is updated so a registered plugin always
 // has its files on disk.
 func installZcodePluginFiles(opts InstallOptions) error {
-	plan, err := planZcodePlugin(opts)
+	plan, err := planZcodePlugin(opts, zcodeTargetConfigPath(opts))
 	if err != nil {
 		return err
 	}
@@ -234,4 +255,24 @@ func removeLegacyZcodeHooks(root map[string]any, path string) error {
 		delete(root, "hooks")
 	}
 	return nil
+}
+
+// zcodeDumpPayload renders the complete dump document for ZCode: the
+// registration configuration plus every plugin file with its destination, so
+// applying the dump describes a working installation instead of registering a
+// plugin whose files are missing.
+func zcodeDumpPayload(result kitagenthook.Result, opts InstallOptions) ([]byte, error) {
+	plan, err := planZcodePlugin(opts, result.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	doc := map[string]any{
+		"config_path": result.ConfigPath,
+		"config":      jsontext.Value(result.Data),
+		"files": map[string]jsontext.Value{
+			filepath.Join(plan.root, ".zcode-plugin", "plugin.json"): jsontext.Value(plan.manifest),
+			filepath.Join(plan.root, "hooks", "hooks.json"):          jsontext.Value(plan.hooks),
+		},
+	}
+	return marshalHooksConfig(doc)
 }

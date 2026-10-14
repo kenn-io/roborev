@@ -11,8 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/roborev/internal/config"
 )
 
 func zcodeInstallFixture(t *testing.T) (configPath, pluginRoot string) {
@@ -38,7 +36,7 @@ func zcodeInstallFixture(t *testing.T) (configPath, pluginRoot string) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, fixture, 0o600))
-	return path, filepath.Join(dataDir, "zcode-plugin")
+	return path, zcodePluginRoot(path)
 }
 
 func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
@@ -115,6 +113,7 @@ func TestRunInstallZcodeRegistersPluginAndCleansLegacyHooks(t *testing.T) {
 }
 
 func TestRunDumpZcodeDoesNotWriteSource(t *testing.T) {
+	assert := assert.New(t)
 	path, _ := zcodeInstallFixture(t)
 	source, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -126,16 +125,29 @@ func TestRunDumpZcodeDoesNotWriteSource(t *testing.T) {
 	}, &stdout)
 
 	require.NoError(t, err)
-	assert.Contains(t, stdout.String(), `"enabledPlugins"`)
-	var planned map[string]any
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &planned))
-	dirs := planned["plugins"].(map[string]any)["dirs"].([]any)
-	assert.Equal(t, []any{filepath.Join(config.DataDir(), "zcode-plugin")}, dirs)
+	var dump map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &dump))
+	// The dump describes the full installation: the registration config
+	// plus each plugin file with its destination, so applying it never
+	// registers a plugin whose files are missing.
+	assert.Equal(path, dump["config_path"])
+	files, ok := dump["files"].(map[string]any)
+	require.True(t, ok)
+	assert.Len(files, 2)
+	for dest, body := range files {
+		encoded, err := json.Marshal(body)
+		require.NoError(t, err)
+		assert.NotEmpty(t, encoded)
+		assert.Contains(dest, "zcode-plugin")
+	}
+	hooksDoc, ok := dump["config"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(hooksDoc, "plugins")
 	unchanged, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, source, unchanged)
-	_, statErr := os.Stat(filepath.Join(config.DataDir(), "zcode-plugin", "hooks", "hooks.json"))
-	assert.ErrorIs(t, statErr, os.ErrNotExist)
+	assert.Equal(source, unchanged)
+	_, statErr := os.Stat(filepath.Join(zcodePluginRoot(path), "hooks", "hooks.json"))
+	assert.ErrorIs(statErr, os.ErrNotExist)
 }
 
 func TestRunInstallZcodeStopFormRegistersLifecycleEvents(t *testing.T) {
@@ -159,4 +171,32 @@ func TestRunInstallZcodeStopFormRegistersLifecycleEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
 		assert.Contains(events, event)
 	}
+}
+
+func TestRunInstallZcodeScopesPluginDirectoryToConfig(t *testing.T) {
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	first, second := filepath.Join(t.TempDir(), "cli", "config.json"), filepath.Join(t.TempDir(), "cli", "config.json")
+	for _, path := range []string{first, second} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	}
+
+	require.NoError(t, RunInstall(InstallOptions{
+		Agent: "zcode", Executable: "/opt/first/roborev",
+		ConfigPath: first, Timeout: 10 * time.Second,
+	}, &bytes.Buffer{}))
+	require.NoError(t, RunInstall(InstallOptions{
+		Agent: "zcode", Executable: "/opt/second/roborev",
+		ConfigPath: second, Timeout: 10 * time.Second,
+	}, &bytes.Buffer{}))
+
+	firstHooks, err := os.ReadFile(filepath.Join(zcodePluginRoot(first), "hooks", "hooks.json"))
+	require.NoError(t, err)
+	assert.Contains(string(firstHooks), "/opt/first/roborev")
+	secondHooks, err := os.ReadFile(filepath.Join(zcodePluginRoot(second), "hooks", "hooks.json"))
+	require.NoError(t, err)
+	assert.Contains(string(secondHooks), "/opt/second/roborev")
+	assert.NotEqual(zcodePluginRoot(first), zcodePluginRoot(second))
 }

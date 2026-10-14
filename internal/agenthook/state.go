@@ -383,7 +383,7 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	}
 	if failedReviewTriggered {
 		resp.TriggeredBy = "failed_reviews"
-		resp.Reason = buildUserPromptReason(scope, openFailedJobs, actionableReviewIDs)
+		resp.Reason = buildUserPromptReason(req, scope, openFailedJobs, actionableReviewIDs)
 	}
 	return resp, nil
 }
@@ -1468,7 +1468,8 @@ func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet
 // user message, so it must explicitly yield to that task and scope the review
 // work instead of telling the model to start fixing immediately.
 const userPromptGuidance = "Guidance: finish the user's current task first, then address these reviews. " +
-	"Handle only the named jobs. Re-verify each finding independently before changing code. " +
+	"Invoke the roborev-fix skill for only the named jobs. " +
+	"Re-verify each finding independently before changing code. " +
 	"Keep out-of-scope findings open and tell the user. " +
 	"Close invalid, stale, or already-resolved findings and record the evidence."
 
@@ -1487,8 +1488,14 @@ func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, 
 // buildUserPromptReason renders the self-contained reminder injected as
 // additional context on UserPromptSubmit and SessionStart. Each open failed
 // review is named with its job ID, commit, and verdict so the model can pull
-// details with one command instead of guessing from prose.
-func buildUserPromptReason(scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
+// details with one command instead of guessing from prose. A configured
+// instruction replaces the default guidance verbatim, mirroring the
+// stop-decision reminder's instruction handling.
+func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
+	guidance := strings.TrimSpace(req.Instruction)
+	if guidance == "" {
+		guidance = userPromptGuidance
+	}
 	repo := repoDisplayName(scope.TrackedRepoRoot)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[roborev] %s has %s.",
@@ -1504,7 +1511,7 @@ func buildUserPromptReason(scope hookScope, jobs []storage.ReviewJob, reviewIDs 
 		fmt.Fprintf(&b, "\n- job %d (%s, verdict %s)", job.ID, shortReviewRef(job.GitRef), verdict)
 	}
 	b.WriteString("\n")
-	b.WriteString(userPromptGuidance)
+	b.WriteString(guidance)
 	return b.String()
 }
 

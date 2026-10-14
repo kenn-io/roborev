@@ -70,13 +70,13 @@ func TestInstalledForAgentDetectsZcodeHookUnderEvents(t *testing.T) {
 func TestInstalledForAgentDetectsZcodePluginHook(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	hooksPath := filepath.Join(dataDir, "zcode-plugin", "hooks", "hooks.json")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{}`), 0o644))
+	hooksPath := filepath.Join(zcodePluginRoot(configPath), "hooks", "hooks.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(hooksPath), 0o755))
 	require.NoError(t, os.WriteFile(hooksPath, []byte(
 		`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent zcode --source=roborev-agent-hook"}]}]}}`,
 	), 0o644))
-	configPath := filepath.Join(t.TempDir(), "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{}`), 0o644))
 
 	ok, err := InstalledForAgent(configPath, "zcode")
 	require.NoError(t, err)

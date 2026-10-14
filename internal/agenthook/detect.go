@@ -50,7 +50,7 @@ func InstalledForAgent(path, agent string) (bool, error) {
 // manifest, and the legacy configuration form wrote them into the shared
 // config file. Either counts so a pending migration is still detected.
 func zcodeInstalled(configPath string) (bool, error) {
-	if body, err := os.ReadFile(filepath.Join(DefaultZcodePluginRoot(), "hooks", "hooks.json")); err == nil {
+	if body, err := os.ReadFile(filepath.Join(zcodePluginRoot(configPath), "hooks", "hooks.json")); err == nil {
 		var root any
 		if err := json.Unmarshal(body, &root); err == nil && containsOwnedHook(root, AgentZcode) {
 			return true, nil

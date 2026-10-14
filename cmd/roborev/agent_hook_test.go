@@ -670,3 +670,39 @@ func TestLocalAgentHookSurfacesDiagnosisOnStderr(t *testing.T) {
 	assert.Contains(t, stderr.String(), "0 open failed review job(s)")
 	assert.Equal(t, "{}", stdout.String())
 }
+
+func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
+	var captured agenthook.Request
+	oldPost := postAgentHook
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
+		captured = req
+		return agenthook.Response{}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+	opts := agenthook.DefaultOptions()
+
+	err := runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, captured.Instruction, "default-filled instruction must not override injected guidance")
+
+	opts.Instruction = "Custom injected instruction."
+	err = runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+
+	err = runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+}

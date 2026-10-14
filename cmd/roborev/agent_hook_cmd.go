@@ -123,6 +123,16 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 	if input.SessionID == "" {
 		return fmt.Errorf("decode %s input: missing session_id", displayName)
 	}
+	instruction := opts.Instruction
+	if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
+		// Injected reminders carry purpose-built guidance in the daemon.
+		// The CLI default-fills Instruction with the stop-decision text,
+		// which would override it, so only explicitly configured
+		// instructions travel for these events.
+		if strings.TrimSpace(instruction) == strings.TrimSpace(agenthook.DefaultInstruction) {
+			instruction = ""
+		}
+	}
 	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
 		MCP:                   opts.MCP,
 		Agent:                 agent,
@@ -130,7 +140,7 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
 		FailedReviewThreshold: opts.FailedReviewThreshold,
-		Instruction:           opts.Instruction,
+		Instruction:           instruction,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "roborev %s: %v\n", displayName, err)
