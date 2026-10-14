@@ -282,10 +282,12 @@ Test conventions:
 
 ## Workflow + Commits
 
-CI uses public Namespace profiles with Restricted access, which disables
-workload access to Namespace features and APIs. GitHub fork approvals,
-workflow token permissions, and secrets are separate controls. Restricted
-access does not determine fork-job eligibility or network and cache settings.
+The main CI test matrix's Windows leg uses GitHub-hosted `windows-2025` runners.
+Jobs with `namespace-profile-*` labels use public Namespace profiles with
+Restricted access, which disables workload access to Namespace features and
+APIs. GitHub fork approvals, workflow token permissions, and secrets are
+separate controls. Restricted access does not determine fork-job eligibility
+or network and cache settings.
 
 - For multi-step tasks (for example: implement + commit + PR), complete the full requested sequence without stopping partway.
 - Commit after completing each piece of work; do not wait to be asked.

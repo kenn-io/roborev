@@ -1,7 +1,6 @@
 name: CI
 
-# The PR dispatcher always calls the main-pinned workflow, which uses public
-# Namespace profiles with Restricted access. See AGENTS.md for access controls.
+# Pin CI to main so PRs cannot change the checks they run; workflow-validation.yml runs candidate CI on same-repository pr/** pushes.
 on:
   pull_request:
     branches: [main]
