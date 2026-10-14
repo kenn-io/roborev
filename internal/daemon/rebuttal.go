@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -140,6 +139,6 @@ User explanation: %q
 	job.RepoPath = parent.RepoPath
 	job.RepoName = parent.RepoName
 	job.OriginalReviewUUID = review.UUID
-	s.broadcaster.Broadcast(Event{Type: "review.enqueued", TS: time.Now(), JobID: job.ID, Repo: parent.RepoPath, RepoName: parent.RepoName, Agent: job.Agent, SHA: job.GitRef, Branch: job.Branch})
+	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
 	return &RebuttalOutput{Body: job}, nil
 }

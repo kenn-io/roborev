@@ -129,17 +129,19 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	_, events := s.broadcaster.Subscribe("")
 	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
 	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
-	commented := map[int64]Event{}
+	broadcast := map[string]Event{}
 	for len(events) > 0 {
 		e := <-events
-		if e.Type == "review.commented" {
-			commented[e.JobID] = e
-		}
+		broadcast[e.Type] = e
 	}
-	require.Contains(t, commented, parent.ID, "the saved explanation must notify subscribers and hooks")
-	assert.False(t, commented[parent.ID].SuppressHooks)
 	var job storage.ReviewJob
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &job))
+	require.Contains(t, broadcast, "review.commented", "the saved explanation must notify subscribers and hooks")
+	assert.Equal(t, parent.ID, broadcast["review.commented"].JobID)
+	assert.False(t, broadcast["review.commented"].SuppressHooks)
+	require.Contains(t, broadcast, "review.enqueued")
+	assert.Equal(t, job.ID, broadcast["review.enqueued"].JobID)
+	assert.True(t, broadcast["review.enqueued"].SuppressHooks, "a queued rebuttal must not run review.* hooks")
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	a := assert.New(t)
