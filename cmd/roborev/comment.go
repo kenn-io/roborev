@@ -176,8 +176,6 @@ Examples:
 	cmd.Flags().BoolVar(&rebuttalOpts.enabled, "rebuttal", false, "re-evaluate one finding in the original agent session and wait")
 	cmd.Flags().StringVar(&rebuttalOpts.finding, "finding", "", "original review excerpt to re-evaluate (requires --rebuttal)")
 	cmd.Flags().BoolVar(&rebuttalOpts.close, "close", false, "close the whole review after recording the rebuttal assessment")
-	cmd.Flags().StringVar(&rebuttalOpts.kataIssue, "kata", "", "Kata issue for a typed assessment reply (requires --reply-to)")
-	cmd.Flags().StringVar(&rebuttalOpts.replyTo, "reply-to", "", "Kata finding comment handle (requires --kata)")
 
 	return cmd
 }

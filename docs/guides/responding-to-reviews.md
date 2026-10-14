@@ -139,9 +139,10 @@ Add `--close` to close the **whole review** after the assessment is recorded.
 This is your explicit close instruction, even when the agent confirms the
 finding. Omit it when other findings still need attention.
 
-Rebuttals require an open, completed local code review, a stored session ID, an
-agent that supports resuming sessions, and the original checkout. CI reviews,
-isolated review sessions and OpenCode rebuttals are unsupported.
+Rebuttals require an open, completed local code review, a stored session ID and
+the original checkout. Only these agents can run a rebuttal: Codex, Claude
+Code, Pi and Grok. Other agents, CI reviews and isolated review sessions are
+unsupported.
 
 Assessments enforce read-only permissions even when `allow_unsafe_agents` is
 enabled. An adapter that cannot enforce this policy is rejected before launch.
@@ -157,6 +158,3 @@ remains in the queue: inspect it with `roborev show <assessment-job-id>`. You
 can record its completed assessment manually with `roborev comment` and close
 the original review once satisfied. A daemon restart can invalidate an
 interrupted session; submit a new rebuttal in that case.
-
-To record the assessment as a typed Kata reply, see
-[Rebuttal Replies](/integrations/kata/#rebuttal-replies).

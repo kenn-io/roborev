@@ -3,9 +3,6 @@ package main
 import (
 	"encoding/json/v2"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"uuid"
 
@@ -17,25 +14,16 @@ import (
 
 func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 	for _, tc := range []struct {
-		name                                    string
-		valid, kataFailure, staleOriginalReview bool
+		name                       string
+		valid, staleOriginalReview bool
 	}{
 		{name: "valid", valid: true},
 		{name: "invalid"},
-		{name: "Kata failure", valid: true, kataFailure: true},
 		{name: "stale original review", valid: true, staleOriginalReview: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			originalReviewUUID := uuid.New()
 			valid := tc.valid
-			if tc.kataFailure {
-				if runtime.GOOS == "windows" {
-					t.Skip("shell fixture")
-				}
-				dir := t.TempDir()
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "kata"), []byte("#!/bin/sh\ncat >/dev/null\nexit 1\n"), 0o755))
-				t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-			}
 			var actions []string
 			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -71,17 +59,10 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 				}
 			}))
 			cmd := commentCmd()
-			args := []string{"42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--close"}
-			if tc.kataFailure {
-				args = append(args, "--kata", "abc4", "--reply-to", "c:abc123")
-			}
-			cmd.SetArgs(args)
+			cmd.SetArgs([]string{"42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--close"})
 			err := cmd.Execute()
 			if tc.staleOriginalReview {
 				require.ErrorContains(t, err, "original review left open")
-				assert.Equal(t, []string{"rebuttal", "assessment"}, actions)
-			} else if tc.kataFailure {
-				require.ErrorContains(t, err, "recorded locally, Kata reply failed")
 				assert.Equal(t, []string{"rebuttal", "assessment"}, actions)
 			} else if valid {
 				require.NoError(t, err)
@@ -108,22 +89,12 @@ func TestCommentRebuttalRejectsIncompleteOptions(t *testing.T) {
 		{
 			name: "finding requires rebuttal",
 			opts: rebuttalOptions{finding: "finding"},
-			want: "--finding, --close, --kata and --reply-to require --rebuttal",
+			want: "--finding and --close require --rebuttal",
 		},
 		{
 			name: "close requires rebuttal",
 			opts: rebuttalOptions{close: true},
-			want: "--finding, --close, --kata and --reply-to require --rebuttal",
-		},
-		{
-			name: "Kata issue requires reply target",
-			opts: rebuttalOptions{enabled: true, finding: "finding", kataIssue: "abc4"},
-			want: "--kata and --reply-to must be supplied together",
-		},
-		{
-			name: "reply target requires Kata issue",
-			opts: rebuttalOptions{enabled: true, finding: "finding", replyTo: "c:abc123"},
-			want: "--kata and --reply-to must be supplied together",
+			want: "--finding and --close require --rebuttal",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,53 +114,5 @@ func TestCommentInvalidJobIDNamesRequestedMode(t *testing.T) {
 		cmd := commentCmd()
 		cmd.SetArgs(tc.args)
 		require.ErrorContains(t, cmd.Execute(), tc.want)
-	}
-}
-
-func TestCommentRebuttalKataReplyWorkingDirectory(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell fixture")
-	}
-	for _, useWorktree := range []bool{false, true} {
-		name := "repository fallback"
-		if useWorktree {
-			name = "original worktree"
-		}
-		t.Run(name, func(t *testing.T) {
-			repoDir := t.TempDir()
-			worktreeDir := ""
-			wantDir := repoDir
-			if useWorktree {
-				worktreeDir = t.TempDir()
-				wantDir = worktreeDir
-			}
-			binDir := t.TempDir()
-			cwdFile := filepath.Join(t.TempDir(), "cwd.txt")
-			t.Setenv("KATA_REPLY_CWD", cwdFile)
-			require.NoError(t, os.WriteFile(filepath.Join(binDir, "kata"), []byte("#!/bin/sh\ncat >/dev/null\npwd -P > \"$KATA_REPLY_CWD\"\n"), 0o755))
-			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-			originalReviewUUID := uuid.New()
-			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/rebuttal":
-					w.WriteHeader(http.StatusCreated)
-					assert.NoError(t, json.MarshalWrite(w, storage.ReviewJob{ID: 8, UUID: new(uuid.New()), OriginalReviewUUID: &originalReviewUUID, RepoPath: repoDir, WorktreePath: worktreeDir, Agent: "test"}))
-				case "/api/jobs":
-					assert.NoError(t, json.MarshalWrite(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 8, Status: storage.JobStatusDone}}}))
-				case "/api/review":
-					assert.NoError(t, json.MarshalWrite(w, storage.Review{Output: `{"outcome":"refuted","explanation":"The caller checks it."}`}))
-				case "/api/comment":
-					w.WriteHeader(http.StatusCreated)
-				}
-			}))
-			cmd := commentCmd()
-			cmd.SetArgs([]string{"42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--kata", "abc4", "--reply-to", "c:abc123"})
-			require.NoError(t, cmd.Execute())
-			cwd, err := os.ReadFile(cwdFile)
-			require.NoError(t, err)
-			physicalDir, err := filepath.EvalSymlinks(wantDir)
-			require.NoError(t, err)
-			assert.Equal(t, physicalDir+"\n", string(cwd))
-		})
 	}
 }
