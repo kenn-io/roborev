@@ -131,18 +131,34 @@ func TestRunDumpZcodeDoesNotWriteSource(t *testing.T) {
 	// plus each plugin file with its destination, so applying it never
 	// registers a plugin whose files are missing.
 	assert.Equal(path, dump["config_path"])
+	root := zcodePluginRoot(path)
 	files, ok := dump["files"].(map[string]any)
 	require.True(t, ok)
-	assert.Len(files, 2)
-	for dest, body := range files {
-		encoded, err := json.Marshal(body)
-		require.NoError(t, err)
-		assert.NotEmpty(t, encoded)
-		assert.Contains(dest, "zcode-plugin")
-	}
-	hooksDoc, ok := dump["config"].(map[string]any)
+	manifest, ok := files[filepath.Join(root, ".zcode-plugin", "plugin.json")].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(hooksDoc, "plugins")
+	assert.Equal("roborev", manifest["name"])
+	assert.Equal("hooks", manifest["hooks"])
+	hooks, ok := files[filepath.Join(root, "hooks", "hooks.json")].(map[string]any)
+	require.True(t, ok)
+	events, ok := hooks["hooks"].(map[string]any)
+	require.True(t, ok)
+	for _, event := range []string{"UserPromptSubmit", "SessionStart", "Stop"} {
+		entries, ok := events[event].([]any)
+		require.True(t, ok)
+		require.Len(t, entries, 1)
+		handlers, ok := entries[0].(map[string]any)["hooks"].([]any)
+		require.True(t, ok)
+		require.Len(t, handlers, 1)
+		command, ok := handlers[0].(map[string]any)["command"].(string)
+		require.True(t, ok)
+		assert.Contains(command, "agent-hook run --agent zcode")
+		assert.Contains(command, agentHookMarker)
+	}
+	configDoc, ok := dump["config"].(map[string]any)
+	require.True(t, ok)
+	dirs, ok := configDoc["plugins"].(map[string]any)["dirs"].([]any)
+	require.True(t, ok)
+	assert.Equal([]any{root}, dirs)
 	unchanged, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(source, unchanged)
@@ -171,6 +187,22 @@ func TestRunInstallZcodeStopFormRegistersLifecycleEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
 		assert.Contains(events, event)
 	}
+}
+
+func TestZcodePluginRootSeparatesSameRelativeConfigPaths(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	require.NoError(t, os.Chdir(first))
+	firstRoot := zcodePluginRoot("cli/config.json")
+	require.NoError(t, os.Chdir(second))
+	secondRoot := zcodePluginRoot("cli/config.json")
+
+	assert.NotEqual(t, firstRoot, secondRoot)
+	assert.Contains(t, firstRoot, "zcode-plugin-")
 }
 
 func TestRunInstallZcodeScopesPluginDirectoryToConfig(t *testing.T) {

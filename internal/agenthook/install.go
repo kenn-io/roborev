@@ -174,6 +174,12 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 			Agent: skills.Agent(agent), ConfigDir: dir, Executable: executable,
 			Transport: opts.MCPTransport, URL: opts.MCPURL, Server: opts.RoborevServerAddr, DryRun: true,
 		}
+		if agent == AgentZcode {
+			// ZCode hooks live in the selected shared configuration, so MCP
+			// settings must merge into that same file; the default path
+			// would otherwise receive them instead.
+			mcpOpts.ConfigPath = planned.ConfigPath
+		}
 		path, err := mcpconfig.ConfigPath(mcpOpts)
 		if err != nil {
 			return kitagenthook.Result{}, err

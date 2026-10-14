@@ -62,6 +62,14 @@ func zcodeTargetConfigPath(opts InstallOptions) string {
 // daemon, MCP mode, or event form).
 func zcodePluginRoot(configPath string) string {
 	name := "zcode-plugin"
+	if configPath != "" {
+		// Resolve to an absolute path first: the same relative --config
+		// value from different working directories names different files
+		// and must not share a hashed plugin directory.
+		if abs, err := filepath.Abs(configPath); err == nil {
+			configPath = abs
+		}
+	}
 	if configPath != "" && configPath != DefaultZcodeConfigPath() {
 		digest := sha256.Sum256([]byte(filepath.Clean(configPath)))
 		name = fmt.Sprintf("zcode-plugin-%x", digest[:4])
