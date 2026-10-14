@@ -282,9 +282,7 @@ Test conventions:
 
 ## Workflow + Commits
 
-Same-repository PRs run branch-controlled CI and Windows migration workflows
-with read-only permissions; fork PRs use the main-pinned workflows.
-Windows tests use GitHub-hosted `windows-2025` runners.
+The main CI test matrix's Windows leg uses GitHub-hosted `windows-2025` runners.
 Jobs with `namespace-profile-*` labels use public Namespace profiles with
 Restricted access, which disables workload access to Namespace features and
 APIs. GitHub fork approvals, workflow token permissions, and secrets are
