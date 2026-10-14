@@ -172,7 +172,7 @@ func (a *PiAgent) structuredReviewArgs(
 	}
 	return append(args,
 		"@"+promptPath,
-		"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+		"Follow the attached instructions and write the result with the structured JSON output tool.",
 	)
 }
 

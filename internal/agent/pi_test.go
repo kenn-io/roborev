@@ -147,7 +147,7 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 				"--json-fallback", "none", "-p", "--tools",
 				piStructuredReviewReadOnlyTools, "--provider", "cpa",
 				"--model", "gpt-test", "--thinking", "low", "@prompt.md",
-				"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+				"Follow the attached instructions and write the result with the structured JSON output tool.",
 			},
 		},
 		{
@@ -160,7 +160,7 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 				"--json-fallback", "none", "-p", "--tools",
 				piStructuredReviewReadOnlyTools, "--provider", "cpa",
 				"--model", "gpt-test", "--thinking", "low", "@prompt.md",
-				"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+				"Follow the attached instructions and write the result with the structured JSON output tool.",
 			},
 		},
 		{
