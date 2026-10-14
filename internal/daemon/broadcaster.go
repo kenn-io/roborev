@@ -39,7 +39,16 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.SHA = job.GitRef
 	event.Branch = job.HookBranch()
 	event.Agent = job.Agent
+	event.SuppressHooks = suppressJobHooks(job)
 	return event
+}
+
+// suppressJobHooks reports whether a job's lifecycle events must stay out of
+// [[hooks]]. A rebuttal is a follow-up question to an existing review, not a
+// review: its JSON assessment is not findings, and its failure is not a
+// failed review, so issue-filing hooks must not act on it.
+func suppressJobHooks(job *storage.ReviewJob) bool {
+	return job != nil && job.Source == storage.JobSourceRebuttal
 }
 
 // Subscriber represents a client subscribed to events

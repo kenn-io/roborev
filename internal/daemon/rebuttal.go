@@ -87,8 +87,8 @@ func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*Rebuttal
 	if parent.Status != storage.JobStatusDone || !parent.IsReviewJob() || parent.IsCIReview() {
 		return nil, huma.Error400BadRequest("rebuttal requires a completed local code review")
 	}
-	var isolated bool
-	if err := s.db.QueryRowContext(ctx, `SELECT session_isolated FROM review_jobs WHERE id = ?`, parent.ID).Scan(&isolated); err != nil {
+	isolated, err := s.db.JobSessionIsolated(ctx, parent.ID)
+	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 	if isolated {
@@ -125,6 +125,9 @@ User explanation: %q
 		}
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("save explanation: %v", err))
 	}
+	s.broadcaster.Broadcast(eventForMutationPrincipal(
+		ctx, eventForJob(jobEventType(parent, "commented"), parent, parent.ID),
+	))
 	job, err := s.db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: parent.RepoID, GitRef: parent.GitRef, Branch: parent.Branch, Agent: parent.Agent,
 		Model: parent.Model, Provider: parent.Provider, Reasoning: parent.Reasoning,

@@ -956,6 +956,14 @@ func (db *DB) MarkClassifyAgentInvoked(
 	return nil
 }
 
+// JobSessionIsolated reports whether the job's session was captured in an
+// isolated checkout, so it must not be resumed from the original checkout.
+func (db *DB) JobSessionIsolated(ctx context.Context, jobID int64) (bool, error) {
+	var isolated bool
+	err := db.QueryRowContext(ctx, `SELECT session_isolated FROM review_jobs WHERE id = ?`, jobID).Scan(&isolated)
+	return isolated, err
+}
+
 // IsolateJobSession clears inherited resume metadata and marks this attempt's
 // session ineligible for reuse, including sessions later found by usage backfill.
 func (db *DB) IsolateJobSession(jobID int64, workerID string) error {

@@ -126,8 +126,18 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{"job_id": parent.ID, "finding": "The guard is missing.", "comment": "The caller checks it.", "commenter": "operator"})
 	require.NoError(t, err)
+	_, events := s.broadcaster.Subscribe("")
 	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
 	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	commented := map[int64]Event{}
+	for len(events) > 0 {
+		e := <-events
+		if e.Type == "review.commented" {
+			commented[e.JobID] = e
+		}
+	}
+	require.Contains(t, commented, parent.ID, "the saved explanation must notify subscribers and hooks")
+	assert.False(t, commented[parent.ID].SuppressHooks)
 	var job storage.ReviewJob
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &job))
 	stored, err := db.GetJobByID(job.ID)
@@ -328,22 +338,22 @@ func TestRebuttalWorkerNeverStartsFreshOrRetries(t *testing.T) {
 			env.Pool.processJob("worker", claimed)
 			got, err := env.DB.GetJobByID(j.ID)
 			require.NoError(t, err)
+			terminal := map[string]Event{}
+			for len(events) > 0 {
+				e := <-events
+				assert.True(t, e.SuppressHooks, "rebuttal %s event must not run hooks", e.Type)
+				terminal[e.Type] = e
+			}
 			if tc.name == "success" {
 				assert.Equal(t, storage.JobStatusDone, got.Status)
 				calls := a.Calls()
 				require.Len(t, calls, 1)
 				assert.Equal(t, "original-session", calls[0].SessionID)
 				assert.Equal(t, "focused request", calls[0].Prompt)
-				var completed *Event
-				for len(events) > 0 {
-					e := <-events
-					if e.Type == "review.completed" {
-						completed = &e
-					}
-				}
-				require.NotNil(t, completed)
-				assert.Empty(t, completed.Verdict, "assessments must not file new Kata findings")
+				require.Contains(t, terminal, "review.completed")
+				assert.Empty(t, terminal["review.completed"].Verdict, "assessments must not report a review verdict")
 			} else {
+				assert.Contains(t, terminal, "review.failed")
 				assert.Equal(t, storage.JobStatusFailed, got.Status)
 				assert.Zero(t, got.RetryCount)
 				if !tc.fail && tc.name != "malformed result" {
