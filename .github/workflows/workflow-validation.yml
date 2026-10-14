@@ -1,10 +1,6 @@
 name: Workflow validation
 
 on:
-  push:
-    branches: ['pr/**']
-    paths:
-      - ".github/workflows/ci.yml"
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -13,13 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  branch-ci:
-    if: github.event_name == 'push' && github.repository == 'kenn-io/roborev'
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: ./.github/workflows/ci.yml
-
   actionlint:
     runs-on: ubuntu-latest
     steps:
