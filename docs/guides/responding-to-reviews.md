@@ -140,8 +140,8 @@ This is your explicit close instruction, even when the agent confirms the
 finding. Omit it when other findings still need attention.
 
 Rebuttals require an open, completed local code review, a stored session ID and
-the original checkout. Only these agents can run a rebuttal: Codex, Claude
-Code, Pi and Grok. Other agents, CI reviews and isolated review sessions are
+the original checkout. Only these agents can run a rebuttal: Codex, Claude Code,
+Pi and Grok. Other agents, CI reviews and isolated review sessions are
 unsupported.
 
 Assessments enforce read-only permissions even when `allow_unsafe_agents` is
