@@ -47,24 +47,29 @@ jobs:
               - 'go.sum'
               - 'go.work'
               - 'go.work.sum'
+              - '.github/workflows/windows-migration.yml'
 
   windows-migration-202608:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
-    runs-on: namespace-profile-windows-4cpu
+    runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: Configure Windows Go paths
+        shell: pwsh
+        run: |
+          foreach ($name in 'GOCACHE', 'GOMODCACHE', 'GOTMPDIR') {
+            $path = Join-Path $env:RUNNER_TEMP $name
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            "$name=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
-          cache: false
-
-      - name: Configure Namespace Go cache
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9  # v1
-        with:
-          cache: go
+          cache: true
 
       - name: Download v0.56 Windows release binary
         id: old
