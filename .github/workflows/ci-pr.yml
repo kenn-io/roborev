@@ -1,7 +1,6 @@
 name: CI
 
-# The PR dispatcher always calls the main-pinned workflow, which uses public
-# Namespace profiles with Restricted access. See AGENTS.md for access controls.
+# Same-repository PRs run candidate CI; fork PRs use the main-pinned workflow.
 on:
   pull_request:
     branches: [main]
@@ -10,4 +9,9 @@ permissions: read-all
 
 jobs:
   run:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/ci.yml
+
+  fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
     uses: kenn-io/roborev/.github/workflows/ci.yml@main
