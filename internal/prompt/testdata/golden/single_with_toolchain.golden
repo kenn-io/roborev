@@ -52,7 +52,9 @@ Current date: GOLDEN_DATE (UTC)
 
 ## Toolchain
 
-This project uses Go 1.27.0 (from the `go` directive in go.mod). Judge version-gated language and standard-library features against this version.
+Judge version-gated language and standard-library features against the owning module's `go` directive:
+
+- `go.mod`: Go 1.27.0
 
 ## Current Commit
 

@@ -3,6 +3,12 @@ title: Reviewing Code
 description: Review branches, uncommitted changes, and commit ranges
 ---
 
+When Go files or `go.mod` files change, the review prompt lists the declared Go
+version for each affected module. Committed reviews read manifests from the
+reviewed commit or range endpoint; dirty reviews read the working tree. Nested
+modules use their own `go.mod`, so each version is labeled with its manifest
+path. Modules without a readable, valid Go directive contribute no version fact.
+
 ## Feature Branches
 
 Use `--branch` to review all commits since your branch diverged from main:

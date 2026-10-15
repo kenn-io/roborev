@@ -1,41 +1,80 @@
 package prompt
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/mod/modfile"
+
+	"go.kenn.io/roborev/internal/git"
 )
 
-// buildToolchainSection returns a short facts section stating the Go version
-// declared by the repository's go.mod, or "" when the change touches no Go
-// files. Reviewers judge version-gated language and stdlib availability from
-// memory unless the declared version is in front of them, which produces
-// false positives about recent features (issue #1202).
-func buildToolchainSection(repoPath string, changedFiles []string) string {
-	if !changeTouchesGo(changedFiles) {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(repoPath, "go.mod"))
-	if err != nil {
-		return ""
-	}
-	file, err := modfile.Parse("go.mod", data, nil)
-	if err != nil || file.Go == nil || file.Go.Version == "" {
-		return ""
-	}
-	return "## Toolchain\n\nThis project uses Go " + file.Go.Version +
-		" (from the `go` directive in go.mod). Judge version-gated language" +
-		" and standard-library features against this version.\n\n"
-}
-
-func changeTouchesGo(files []string) bool {
-	for _, file := range files {
-		base := filepath.Base(filepath.ToSlash(strings.TrimSpace(file)))
-		if base == "go.mod" || strings.HasSuffix(base, ".go") {
-			return true
+// buildToolchainSection states the Go versions of modules containing changed Go
+// files. An empty ref reads dirty manifests from the working tree.
+func buildToolchainSection(repoPath, ref string, changedFiles []string) string {
+	if _, end, ok := git.ParseRange(ref); ok {
+		ref = strings.TrimPrefix(end, ".") // Three-dot ranges also use the right endpoint.
+		if ref == "" {
+			ref = "HEAD"
 		}
 	}
-	return false
+	type moduleVersion struct {
+		found   bool
+		version string
+	}
+	cache := make(map[string]moduleVersion)
+	versions := make(map[string]string)
+	for _, file := range changedFiles {
+		file = filepath.ToSlash(file)
+		if path.Base(file) != "go.mod" && !strings.HasSuffix(file, ".go") {
+			continue
+		}
+		for dir := path.Dir(file); ; dir = path.Dir(dir) {
+			manifest := path.Join(dir, "go.mod")
+			module, cached := cache[manifest]
+			if !cached {
+				var data []byte
+				var err error
+				if ref == "" {
+					data, err = os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(manifest)))
+					module.found = !errors.Is(err, os.ErrNotExist)
+				} else {
+					data, err = git.ReadFile(repoPath, ref, manifest)
+					module.found = err == nil
+				}
+				if err == nil {
+					if parsed, err := modfile.Parse(manifest, data, nil); err == nil && parsed.Go != nil {
+						module.version = parsed.Go.Version
+					}
+				}
+				cache[manifest] = module
+			}
+			if module.found {
+				if module.version != "" {
+					versions[manifest] = module.version
+				}
+				// A module without a usable Go directive still owns its files.
+				break
+			}
+			if dir == "." {
+				break
+			}
+		}
+	}
+	if len(versions) == 0 {
+		return ""
+	}
+	var section strings.Builder
+	section.WriteString("## Toolchain\n\nJudge version-gated language and standard-library features against the owning module's `go` directive:\n\n")
+	for _, manifest := range slices.Sorted(maps.Keys(versions)) {
+		fmt.Fprintf(&section, "- `%s`: Go %s\n", manifest, versions[manifest])
+	}
+	section.WriteString("\n")
+	return section.String()
 }

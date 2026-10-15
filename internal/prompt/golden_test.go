@@ -137,7 +137,7 @@ func TestSinglePromptOmitsToolchainWithoutGoChanges(t *testing.T) {
 	prompt, err := NewBuilder(nil).ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)
 
-	assert.NotContains(t, prompt, "This project uses Go")
+	assert.NotContains(t, prompt, "## Toolchain")
 }
 
 func TestGoldenPrompt_SingleReviewCodex(t *testing.T) {

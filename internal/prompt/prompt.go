@@ -588,7 +588,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 		return "", err
 	}
 	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
-	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, changedFiles)
+	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, "", changedFiles)
 
 	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
 		LoadGuidelinesLocal(b.resolvedConfigRepoPath(), b.globalCfg),
@@ -894,7 +894,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 	if files, err := git.GetFilesChangedCtx(b.context(), b.repoPath, sha); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, files)
+		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files)
 	}
 
 	// Current commit section
@@ -966,7 +966,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	}
 	if files, err := git.GetRangeFilesChangedCtx(b.context(), b.repoPath, rangeRef); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, files)
+		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, rangeRef, files)
 	}
 	if opts.priorRangeReviewsFile != nil {
 		ctx.optional.PriorRangeReviewsFile = *opts.priorRangeReviewsFile
