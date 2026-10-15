@@ -103,6 +103,36 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "TimestampPrefix/stamp after bullet on finding overrides stamped pass phrase",
+		output: "- [2026-10-08 07:53am] High: token written to the log\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamp after number on finding overrides stamped pass phrase",
+		output: "1. [2026-10-08 07:53am] **Medium** — cache key omits the user id\n[2026-10-08 07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "TimestampPrefix/stamp after bullet before pass",
+		output: "- [2026-10-08 07:53am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/time-only stamp before pass",
+		output: "[07:53am] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/offset and zone stamp before pass",
+		output: "[2026-10-08 07:53:00.123 +0000 UTC] No issues found.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "TimestampPrefix/time-only stamp before finding still fails",
+		output: "[07:53am] - High: token written to the log\n[07:54am] No issues found.",
+		want:   VerdictFail,
+	},
+	{
 		name:   "TimestampPrefix/non-timestamp bracket is not stripped",
 		output: "[note] No issues found.",
 		want:   VerdictFail,
@@ -948,6 +978,8 @@ func TestProseSectionIgnoresTimestampPrefix(t *testing.T) {
 	assert.Equal(t, "summary", ProseSection("[2026-10-08 07:53am]   ## Summary"))
 	assert.Equal(t, "findings", ProseSection("  [2026-10-08T14:53:00Z]    **Findings:**"))
 	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am]   ---"))
+	assert.Equal(t, "separator", ProseSection("[2026-10-08 07:53am] ***"))
+	assert.Equal(t, "separator", ProseSection("[07:53] ___"))
 }
 
 func TestStampedHeadingLevel(t *testing.T) {

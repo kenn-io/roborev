@@ -339,3 +339,17 @@ func TestConvertedReviewIsNotOverwrittenByAMarkdownOnlyPeer(t *testing.T) {
 	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews WHERE job_id = ?`, fixture.jobID).Scan(&rows))
 	assert.Equal(t, 1, rows)
 }
+
+func TestConvertLegacyTimestampedMarkerOnlyReview(t *testing.T) {
+	t.Parallel()
+	pass := true
+	raw, refusal := convertLegacyMarkdown(legacyMarkdown{
+		Markdown:      "[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET",
+		StoredVerdict: &pass,
+	})
+	require.Nil(t, refusal)
+	doc, err := structuredreview.Decode(raw)
+	require.NoError(t, err)
+	assert.Empty(t, doc.Findings)
+	assert.Equal(t, legacyThresholdSummary, doc.Summary)
+}

@@ -4844,6 +4844,11 @@ func TestIsMarkerOnlyOutput(t *testing.T) {
 		{"marker substring inside another word", "PRESEVERITY_THRESHOLD_MET", false},
 		{"marker split by newline (gemini quirk)", "SEVERITY_THRESHOLD\n_MET", true},
 		{"marker split by double newline (gemini quirk)", "SEVERITY_THRESHOLD\n\n_MET", true},
+		{"timestamped marker", "[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET", true},
+		{"timestamped marker in fenced block", "```\n[2026-10-08T14:53:00Z] **SEVERITY_THRESHOLD_MET**\n```", true},
+		{"timestamped marker as bullet", "- [07:53] SEVERITY_THRESHOLD_MET", true},
+		{"timestamped marker plus stamped prose", "[2026-10-08 07:53am] SEVERITY_THRESHOLD_MET\n[2026-10-08 07:53am] The auth module leaks tokens.", false},
+		{"non-timestamp bracket before marker", "[note] SEVERITY_THRESHOLD_MET", false},
 	}
 
 	for _, tt := range tests {

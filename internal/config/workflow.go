@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -160,19 +161,48 @@ var severityAbove = map[string]string{
 // from "agent couldn't fix it."
 const SeverityThresholdMarker = "SEVERITY_THRESHOLD_MET"
 
+// timestampPrefix matches a bracketed time or date-time at the start of a
+// line, after optional indentation and an optional list marker, e.g.
+// "[2026-10-08 07:53am] ", "- [2026-10-08T14:53:00Z] ", "[07:53] ".
+// Repository instructions sometimes tell agents to stamp every reply; the
+// stamp is not part of the verdict, a severity label, or a section heading.
+// Only one delimiter after the stamp is consumed, so indentation that belongs
+// to the content (a rubric description, say) survives.
+var timestampPrefix = regexp.MustCompile(`(?i)^([ \t]*(?:(?:[-*+•]|\d{1,9}[.)])[ \t]+)?)` +
+	`\[\s*(?:\d{4}-\d{2}-\d{2}(?:[ t]` + stampTime + `)?|` + stampTime + `)\s*\][ \t]?`)
+
+// stampTime matches a clock time with optional seconds, fraction, am/pm,
+// UTC offset, and zone abbreviation, e.g. "07:53am", "14:53:00.123 +0000 UTC".
+const stampTime = `\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:am|pm)?` +
+	`(?:\s*(?:z|[+-]\d{2}:?\d{2}))?(?:\s*[a-z]{2,5})?`
+
+// StripTimestampPrefix removes a bracketed timestamp from the start of a
+// line, keeping the indentation and list marker before it and the content's
+// own indentation after it.
+func StripTimestampPrefix(line string) string {
+	if !strings.Contains(line, "[") {
+		return line
+	}
+	return timestampPrefix.ReplaceAllString(line, "${1}")
+}
+
 // IsMarkerOnlyOutput reports whether output is essentially the
-// SeverityThresholdMarker by itself, allowing only whitespace and
-// minimal markdown decoration: bold (**...** or __...__), italic
-// (*...* or _..._), a fenced code block, a leading list bullet,
-// and an optional trailing period. Any prose or other substantive
-// content disqualifies the output, since we cannot reliably tell
-// chatty narration from prose findings without severity labels.
+// SeverityThresholdMarker by itself, allowing only whitespace,
+// timestamp prefixes, and minimal markdown decoration: bold (**...**
+// or __...__), italic (*...* or _..._), a fenced code block, a leading
+// list bullet, and an optional trailing period. Any prose or other
+// substantive content disqualifies the output, since we cannot reliably
+// tell chatty narration from prose findings without severity labels.
 //
 // Callers that want to treat the marker as a "below threshold"
 // signal should use this helper rather than substring matching,
 // which is too easy to fool with marker-bearing prose findings.
 func IsMarkerOnlyOutput(output string) bool {
-	s := strings.TrimSpace(output)
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		lines[i] = StripTimestampPrefix(line)
+	}
+	s := strings.TrimSpace(strings.Join(lines, "\n"))
 	if s == "" {
 		return false
 	}
