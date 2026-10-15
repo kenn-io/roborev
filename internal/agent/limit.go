@@ -110,6 +110,11 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "503 service unavailable", Kind: LimitKindTransient},
 }
 
+// typographicApostrophes maps curly quotes to the ASCII apostrophe used in
+// limitRule substrings. Providers render "you've" with either form; Codex
+// usage-limit errors, for example, use U+2019.
+var typographicApostrophes = strings.NewReplacer("\u2018", "'", "\u2019", "'")
+
 // ClassifyLimit inspects an agent error message and returns a
 // LimitClassification describing whether (and how) the agent is
 // rate-limited. The agent argument is the canonical agent name; the
@@ -128,7 +133,7 @@ func classifyLimitWithRules(agent, errMsg string, rules []limitRule) LimitClassi
 	if errMsg == "" {
 		return LimitClassification{Kind: LimitKindNone, Agent: agent, Message: errMsg}
 	}
-	lower := strings.ToLower(errMsg)
+	lower := strings.ToLower(typographicApostrophes.Replace(errMsg))
 	for _, r := range rules {
 		if !limitRuleAppliesToAgent(r, agent) {
 			continue

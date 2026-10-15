@@ -173,11 +173,13 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(jobLog, outputWriter))
 	if ctx.Err() != nil {
 		if current, getErr := wp.db.GetJobByID(job.ID); getErr == nil && current.Status == storage.JobStatusCanceled {
-			event.Type = "goal_review.canceled"
-			event.TS = time.Now()
-			if !wp.cancellationEventOwnedByCaller(job.ID) {
-				wp.broadcaster.Broadcast(event)
-			}
+			wp.runAttemptTransition(workerID, job, func() {
+				event.Type = "goal_review.canceled"
+				event.TS = time.Now()
+				if !wp.cancellationEventOwnedByCaller(job.ID) {
+					wp.broadcaster.Broadcast(event)
+				}
+			})
 			return
 		}
 	}
@@ -196,27 +198,23 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		fail(err)
 		return
 	}
-	var completeErr error
-	if wp.runAttemptTransition(workerID, job, func() {
-		completeErr = wp.db.CompleteJobResult(job.ID, a.Name(), job.Prompt, storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)})
-	}) {
-		return
-	}
-	if completeErr != nil {
-		log.Printf("[%s] store goal review: %v", workerID, completeErr)
-		return
-	}
-	current, err := wp.db.GetJobByID(job.ID)
-	if err != nil || current.Status != storage.JobStatusDone {
-		return
-	}
-	verdict := storage.ParseVerdict(output)
-	wp.autoClosePassingReview(workerID, job, verdict)
-	event.Type = "goal_review.completed"
-	event.TS = time.Now()
-	event.Verdict = string(verdict)
-	event.Findings = output
-	wp.broadcaster.Broadcast(event)
+	wp.runAttemptTransition(workerID, job, func() {
+		if err := wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
+			log.Printf("[%s] store goal review: %v", workerID, err)
+			return
+		}
+		current, err := wp.db.GetJobByID(job.ID)
+		if err != nil || current.Status != storage.JobStatusDone {
+			return
+		}
+		verdict := storage.ParseVerdict(output)
+		wp.autoClosePassingReview(workerID, job, verdict)
+		event.Type = "goal_review.completed"
+		event.TS = time.Now()
+		event.Verdict = string(verdict)
+		event.Findings = output
+		wp.broadcaster.Broadcast(event)
+	})
 }
 
 // Goal reviewers disable session persistence, so their own output is the

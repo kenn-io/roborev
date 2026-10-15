@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   agentic: false,
   promptPrebuilt: false,
   panelRole: undefined as string | undefined,
+  reasoning: undefined as string | undefined,
+  commandLine: undefined as string | undefined,
   rerunning: false,
   capabilities: {
     cancelAnyJob: true,
@@ -72,6 +74,8 @@ vi.mock("../../stores/context", () => ({
           agentic: state.agentic,
           prompt_prebuilt: state.promptPrebuilt,
           panel_role: state.panelRole,
+          reasoning: state.reasoning,
+          command_line: state.commandLine,
         },
       ],
       getSelectedJobId: () => state.selectedJobId,
@@ -118,6 +122,8 @@ describe("ReviewDrawer", () => {
     state.agentic = false;
     state.promptPrebuilt = false;
     state.panelRole = undefined;
+    state.reasoning = undefined;
+    state.commandLine = undefined;
     state.rerunning = false;
     state.capabilities = {
       cancelAnyJob: true,
@@ -172,6 +178,31 @@ describe("ReviewDrawer", () => {
       screen.getByRole("button", { name: "Close review details" }),
     );
     expect(state.deselectJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows reasoning and the recorded command on every tab", async () => {
+    state.reasoning = "thorough";
+    state.commandLine =
+      "codex exec --model fixture-large -c model_reasoning_effort=high";
+    render(ReviewDrawer);
+
+    expect(screen.getByText("Reasoning: thorough")).toBeInTheDocument();
+    expect(screen.getByText(state.commandLine)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy command" }),
+    ).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Log" }));
+    expect(screen.getByText(state.commandLine)).toBeInTheDocument();
+  });
+
+  it("does not invent missing reasoning or a command", () => {
+    render(ReviewDrawer);
+
+    expect(screen.queryByText(/Reasoning:/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy command" }),
+    ).not.toBeInTheDocument();
   });
 
   it("summarizes token usage instead of rendering the raw JSON blob", () => {

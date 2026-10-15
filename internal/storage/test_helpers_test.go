@@ -254,8 +254,8 @@ func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
 	opts.applyDefaults()
 
 	_, err := pool.Exec(t.Context(), `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id, structured_output)
-		VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8, $9)
+		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id, structured_output, job_enqueued_at, job_source_machine_id)
+		VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8, $9, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2))
 	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID, reviewFixtureJSON("No issues found."))
 	require.NoError(t, err, "Failed to create review %s", opts.UUID)
 }
@@ -279,4 +279,18 @@ func parseSQLStatements(sql string) []string {
 		}
 	}
 	return stmts
+}
+
+func testJobEnqueuedAt(t *testing.T, pool *pgxpool.Pool, jobUUID uuid.UUID) time.Time {
+	t.Helper()
+	var enqueuedAt time.Time
+	require.NoError(t, pool.QueryRow(t.Context(), `SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&enqueuedAt))
+	return enqueuedAt
+}
+
+func testJobSourceMachineID(t *testing.T, pool *pgxpool.Pool, jobUUID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var owner uuid.UUID
+	require.NoError(t, pool.QueryRow(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&owner))
+	return owner
 }

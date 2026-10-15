@@ -428,8 +428,8 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 			"- **Problem**: The write is not atomic.\n- **Fix**: Rename a temporary file.\n\n## Summary\n\nThe change adds a save routine.",
 		prose.ID: "The save routine looks risky. Consider a rename.",
 	} {
-		_, err := db.Exec(`INSERT INTO legacy_reviews (id, job_id, agent, prompt, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
- SELECT id, job_id, agent, prompt, ?, created_at, closed, 0, uuid, updated_at, 'No valid review JSON document; AI conversion required'
+		_, err := db.Exec(`INSERT INTO legacy_reviews (id, job_id, agent, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
+ SELECT id, job_id, agent, ?, created_at, closed, 0, uuid, updated_at, 'No valid review JSON document; AI conversion required'
  FROM reviews WHERE job_id = ?`, markdown, jobID)
 		require.NoError(t, err)
 		_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)

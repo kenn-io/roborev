@@ -142,9 +142,11 @@ func TestHealthCIPollerReviewRecovery(t *testing.T) {
 		require.NoError(t, err)
 		// Observe health inside enqueue, before end-of-poll reconciliation can
 		// hide a premature recovery from a concurrent health request.
-		h.Poller.setCommitStatusFn = func(string, string, string, string) error {
-			assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
-				"enqueueing a retry does not prove recovery")
+		h.Poller.setCommitStatusFn = func(_, _, state, _ string) error {
+			if state == "pending" {
+				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+					"enqueueing a retry does not prove recovery")
+			}
 			return nil
 		}
 		h.Poller.poll(context.Background())

@@ -60,11 +60,13 @@ type MergeReposOutput struct {
 
 func (s *Server) registerRepoManagementAPI(api huma.API) {
 	huma.Get(api, "/api/repos/detail", s.humaGetRepo, func(o *huma.Operation) {
+		o.Errors = []int{http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError}
 		o.OperationID = "get-repo"
 		o.Summary = "Get repository details and statistics"
 		o.Tags = []string{"repos"}
 	})
 	huma.Post(api, "/api/repos/rename", s.humaRenameRepo, func(o *huma.Operation) {
+		o.Errors = []int{http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError}
 		o.OperationID = "rename-repo"
 		o.Summary = "Rename a repository's display name"
 		o.Tags = []string{"repos"}
@@ -97,6 +99,9 @@ func (s *Server) humaGetRepo(_ context.Context, input *GetRepoInput) (*GetRepoOu
 		repo, err = s.db.GetRepoByName(input.Identifier)
 	}
 	if err != nil {
+		if _, ok := errors.AsType[*storage.AmbiguousRepoNameError](err); ok {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(fmt.Sprintf("repository not found: %s", input.Identifier))
 		}
@@ -110,27 +115,28 @@ func (s *Server) humaGetRepo(_ context.Context, input *GetRepoInput) (*GetRepoOu
 }
 
 func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*RenameRepoOutput, error) {
-	var affected int64
+	var repo *storage.Repo
 	var err error
 	if input.Body.ByPath {
+		var affected int64
 		affected, err = s.db.RenameRepo(input.Body.Identifier, input.Body.Name)
+		if err == nil && affected == 0 {
+			err = sql.ErrNoRows
+		}
+		if err == nil {
+			repo, err = s.db.GetRepoByPath(input.Body.Identifier)
+		}
 	} else {
-		affected, err = s.db.RenameRepoByName(input.Body.Identifier, input.Body.Name)
+		repo, err = s.db.RenameRepoByName(input.Body.Identifier, input.Body.Name)
 	}
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, huma.Error404NotFound(fmt.Sprintf("no repository found matching %q", input.Body.Identifier))
+		}
+		if _, ok := errors.AsType[*storage.AmbiguousRepoNameError](err); ok {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("rename repo: %v", err))
-	}
-	if affected == 0 {
-		return nil, huma.Error404NotFound(fmt.Sprintf("no repository found matching %q", input.Body.Identifier))
-	}
-	var repo *storage.Repo
-	if input.Body.ByPath {
-		repo, err = s.db.GetRepoByPath(input.Body.Identifier)
-	} else {
-		repo, err = s.db.GetRepoByName(input.Body.Name)
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError(fmt.Sprintf("get renamed repository: %v", err))
 	}
 	output := &RenameRepoOutput{}
 	output.Body.Repo = repo

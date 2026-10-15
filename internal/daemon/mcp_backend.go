@@ -154,7 +154,9 @@ func (b mcpBackend) Search(
 	params, err := b.server.searchParams(input)
 	if err != nil {
 		message := "search request is invalid"
-		if errors.Is(err, errSearchRepoNotFound) {
+		if ambiguity, ok := errors.AsType[*storage.AmbiguousRepoNameError](err); ok {
+			message = ambiguity.Error()
+		} else if errors.Is(err, errSearchRepoNotFound) {
 			message = errSearchRepoNotFound.Error()
 		}
 		return storage.SearchResponse{}, mcpserver.NewError(mcpserver.ErrorCodeInvalidArgument, message)

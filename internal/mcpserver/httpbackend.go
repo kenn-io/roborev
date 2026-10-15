@@ -302,6 +302,11 @@ func searchHTTPStatusError(resp *http.Response, mode string) error {
 	}
 
 	switch resp.StatusCode {
+	case http.StatusConflict:
+		if isRepoNameAmbiguityMessage(reason) {
+			return NewError(ErrorCodeInvalidArgument, reason)
+		}
+		return NewError(ErrorCodeInvalidArgument, "search request is invalid")
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return NewError(ErrorCodeInvalidArgument, "search request is invalid")
 	case http.StatusBadGateway, http.StatusGatewayTimeout:

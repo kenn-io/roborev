@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/svelte";
 import { Effect } from "effect";
+import { SvelteMap } from "svelte/reactivity";
 import {
   afterEach,
   beforeEach,
@@ -24,6 +25,8 @@ type JobsStoreStub = {
   getFilterBranch: () => string | undefined;
   setFilter: Mock<(key: string, value: string | undefined) => void>;
 };
+
+const filters = new SvelteMap<string, string | undefined>();
 
 const state = {
   repo: undefined as string | undefined,
@@ -55,13 +58,15 @@ vi.mock("../../runtime/context", () => ({
 
 describe("RepoTreePicker", () => {
   beforeEach(() => {
+    filters.clear();
     state.repo = undefined;
     state.branch = undefined;
     state.runtime = makeAppRuntime();
     state.jobs = {
-      getFilterRepo: () => state.repo,
-      getFilterBranch: () => state.branch,
+      getFilterRepo: () => filters.get("repo") ?? state.repo,
+      getFilterBranch: () => filters.get("branch") ?? state.branch,
       setFilter: vi.fn((key: string, value: string | undefined) => {
+        filters.set(key, value);
         if (key === "repo") state.repo = value;
         if (key === "branch") state.branch = value;
       }),
@@ -198,5 +203,81 @@ describe("RepoTreePicker", () => {
 
     await screen.findByText("No branches");
     expect(screen.queryByText("project-a-main")).toBeNull();
+  });
+  it("distinguishes duplicate checkouts and searches their paths", async () => {
+    repoApi.listRepos.mockResolvedValue({
+      repos: [
+        { root_path: "/workspace/main/widgets", name: "widgets", count: 9 },
+        { root_path: "/workspace/worktrees/pr-1", name: "widgets", count: 0 },
+        { root_path: "/workspace/other", name: "other", count: 2 },
+      ],
+    });
+    render(RepoTreePicker);
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    const main = await screen.findByRole("button", {
+      name: "widgets /workspace/main/widgets 9",
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "widgets /workspace/worktrees/pr-1 0",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "other 2" })).toBeInTheDocument();
+    expect(screen.queryByText("/workspace/other")).toBeNull();
+    await fireEvent.click(main);
+    expect(state.repo).toBe("/workspace/main/widgets");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: /widgets.*\/workspace\/main\/widgets/,
+      }),
+    );
+    await fireEvent.input(screen.getByPlaceholderText("Filter repos..."), {
+      target: { value: "pr-1" },
+    });
+    const worktree = screen.getByRole("button", {
+      name: "widgets /workspace/worktrees/pr-1 0",
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "widgets /workspace/main/widgets 9",
+      }),
+    ).toBeNull();
+    await fireEvent.click(worktree);
+    expect(state.repo).toBe("/workspace/worktrees/pr-1");
+  });
+
+  it("labels a restored duplicate checkout with its path without opening", async () => {
+    state.repo = "/workspace/worktrees/pr-1";
+    state.branch = "feature";
+    repoApi.listRepos.mockResolvedValue({
+      repos: [
+        { root_path: "/workspace/main/widgets", name: "widgets", count: 9 },
+        { root_path: "/workspace/worktrees/pr-1", name: "widgets", count: 1 },
+      ],
+    });
+    render(RepoTreePicker);
+    await waitFor(() => expect(repoApi.listRepos).toHaveBeenCalled());
+    expect(
+      await screen.findByRole("button", {
+        name: "feature (/workspace/worktrees/pr-1)",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter repos...")).toBeNull();
+  });
+
+  it("labels a restored unique checkout by name without opening", async () => {
+    state.repo = "/workspace/project-a";
+    render(RepoTreePicker);
+    expect(
+      await screen.findByRole("button", { name: "project-a" }),
+    ).toBeInTheDocument();
+
+    state.branch = "feature";
+    cleanup();
+    render(RepoTreePicker);
+    expect(
+      await screen.findByRole("button", { name: "feature" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter repos...")).toBeNull();
   });
 });

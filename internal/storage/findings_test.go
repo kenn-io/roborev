@@ -108,8 +108,7 @@ func TestListJobsFindingCounts(t *testing.T) {
 	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","location":null},{"severity":"medium","problem":"p","fix":"f","location":null}]}`
 	_, err := db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
 	require.NoError(t, err)
-	_, err = db.Exec("UPDATE review_jobs SET diff_content = ? WHERE id = ?", "large legacy diff payload", job.ID)
-	require.NoError(t, err)
+	require.NoError(t, setJobContent(t.Context(), db, job.ID, jobContentDiff, "large legacy diff payload"))
 
 	defaultJobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
@@ -152,8 +151,9 @@ func TestListJobsFindingCounts(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT structured_output FROM reviews WHERE job_id = ?", job.ID).Scan(&structuredOutput))
 	assert.True(t, structuredOutput.Valid)
 
-	_, err = db.Exec("UPDATE review_jobs SET job_type = '', commit_id = NULL, git_ref = '', diff_content = ? WHERE id = ?", "diff --git a/file.go b/file.go", job.ID)
+	_, err = db.Exec("UPDATE review_jobs SET job_type = '', commit_id = NULL, git_ref = '' WHERE id = ?", job.ID)
 	require.NoError(t, err)
+	require.NoError(t, setJobContent(t.Context(), db, job.ID, jobContentDiff, "diff --git a/file.go b/file.go"))
 	_, err = db.Exec("UPDATE reviews SET structured_output = NULL, output = ?, verdict_bool = NULL WHERE job_id = ?", "- Medium — legacy diff-only finding", job.ID)
 	require.NoError(t, err)
 	jobs, err = db.ListJobs("", "", 0, 0, WithFindingCounts())

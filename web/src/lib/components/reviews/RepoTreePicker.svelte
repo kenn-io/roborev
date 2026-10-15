@@ -1,7 +1,8 @@
 <script lang="ts">
   import { SearchInput } from "@kenn-io/kit-ui";
   import { Effect } from "effect";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { getAppRuntime } from "../../runtime/context";
   import { executeRoborevRequest } from "../../api/client";
   import { listBranches, listRepos } from "../../api/generated/repos/repos";
@@ -33,9 +34,28 @@
   const selectedRepo = $derived(stores.roborevJobs?.getFilterRepo());
   const selectedBranch = $derived(stores.roborevJobs?.getFilterBranch());
 
+  const duplicateNames = $derived.by(() => {
+    const seen = new SvelteSet<string>();
+    const duplicates = new SvelteSet<string>();
+    for (const repo of repos) {
+      if (seen.has(repo.name)) duplicates.add(repo.name);
+      seen.add(repo.name);
+    }
+    return duplicates;
+  });
+  const selectedRecord = $derived(
+    repos.find((repo) => repo.root_path === selectedRepo),
+  );
+  const showSelectedPath = $derived(
+    selectedRepo &&
+      (!selectedRecord || duplicateNames.has(selectedRecord.name)),
+  );
+
   const displayLabel = $derived(
     selectedBranch
-      ? selectedBranch
+      ? showSelectedPath
+        ? `${selectedBranch} (${selectedRepo})`
+        : selectedBranch
       : selectedRepo
         ? repoDisplayName(selectedRepo)
         : "All Repos",
@@ -43,13 +63,20 @@
 
   const filteredRepos = $derived(
     search
-      ? repos.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()))
+      ? repos.filter(
+          (r) =>
+            r.name.toLowerCase().includes(search.toLowerCase()) ||
+            r.root_path.toLowerCase().includes(search.toLowerCase()),
+        )
       : repos,
   );
 
   function repoDisplayName(rootPath: string): string {
     const repo = repos.find((r) => r.root_path === rootPath);
-    return repo?.name ?? rootPath.split("/").pop() ?? rootPath;
+    if (!repo) return rootPath;
+    return duplicateNames.has(repo.name)
+      ? `${repo.name} (${rootPath})`
+      : repo.name;
   }
 
   const loadReposEffect = Effect.gen(function* () {
@@ -191,6 +218,9 @@
     open = false;
   }
 
+  // The closed label needs the catalog to tell repeated names apart.
+  onMount(loadRepos);
+
   onDestroy(() => {
     runtime.runCommand(
       Effect.gen(function* () {
@@ -230,7 +260,7 @@
           016.5 9h6V1.5z"
       />
     </svg>
-    {displayLabel}
+    <span class="picker-label" title={displayLabel}>{displayLabel}</span>
     <svg
       class="chevron"
       class:chevron-up={open}
@@ -293,7 +323,14 @@
                   !selectedBranch}
                 onclick={() => selectRepo(repo.root_path)}
               >
-                {repo.name}
+                <span class="repo-label">
+                  <span>{repo.name}</span>
+                  {#if duplicateNames.has(repo.name)}
+                    <span class="repo-path" title={repo.root_path}>
+                      {repo.root_path}
+                    </span>
+                  {/if}
+                </span>
                 <span class="count">{repo.count}</span>
               </button>
             </div>
@@ -348,6 +385,17 @@
     font-size: var(--font-size-sm);
     cursor: pointer;
     white-space: nowrap;
+    max-width: 32rem;
+  }
+
+  .picker-button svg {
+    flex-shrink: 0;
+  }
+
+  .picker-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .picker-button:hover {
@@ -408,6 +456,21 @@
   .dropdown-item.active {
     color: var(--accent-blue);
     font-weight: 500;
+  }
+
+  .repo-label {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .repo-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: normal;
   }
 
   .repo-group {

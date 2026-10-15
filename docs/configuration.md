@@ -1116,6 +1116,8 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
+| `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
@@ -1370,6 +1372,106 @@ Override with the `ROBOREV_DATA_DIR` environment variable:
 ```bash
 export ROBOREV_DATA_DIR=/custom/path
 ```
+
+### Stored prompts and retention
+
+Most of a large `reviews.db` is prompt text. A review prompt includes the full
+diff under review, so it is usually far larger than the review itself.
+
+How roborev stores it:
+
+- Each job's prompt, a dirty review's frozen diff, and a fix job's patch live in
+    the `job_content` table, compressed with zstd. Prompts typically shrink to a
+    quarter of their size or less.
+- Listing and counting jobs reads only job metadata. The TUI and web job lists
+    do not load prompts of finished jobs; other API callers get them only when
+    they request them.
+- Each prompt is stored once, on its job. The prompt view of a review shows the
+    job's stored prompt. For a plan-first fix job, the generated plan appears in
+    the review output rather than in the prompt.
+- Agent output logs are separate files under `logs/jobs/`.
+
+The first daemon start after upgrading from a release that stored prompts inline
+converts the database in place:
+
+1. It compresses every stored prompt, diff, and patch into `job_content`.
+1. It removes the old copies from `review_jobs`, `reviews`, and
+    `legacy_reviews`.
+1. It runs `VACUUM` once to return the freed space to the filesystem.
+
+Conversion time grows with the size of the database; a database of tens of
+gigabytes can take several minutes. Until it finishes, the daemon does not
+accept requests.
+
+The conversion writes compressed rows and a write-ahead log while the original
+data still exists. SQLite documents that
+[`VACUUM` can need up to twice the database file's size in free disk space](https://www.sqlite.org/lang_vacuum.html#how_vacuum_works).
+Do not estimate peak disk use from the final compressed size alone. If the
+conversion stops before the old columns are removed, their copies stay in place
+and the next start repeats the conversion. Once those columns are removed,
+`job_content` holds the complete payloads. If only `VACUUM` fails, the daemon
+logs the error and starts normally; the freed space stays inside the file and
+new jobs reuse it.
+
+PostgreSQL sync upgrades its schema to version 24 to record which job attempt
+produced each review. Upgrade all machines that share the mirror together; older
+clients refuse this newer schema.
+
+- Job prompts sync as plain text. A rerun's new prompt replaces the job's prompt
+    in PostgreSQL.
+- Rerunning a pulled job transfers the current attempt to this machine. It
+    uploads the new prompt, review, and comments; older attempts cannot replace
+    them. Other machines receive the newest review for that job.
+- The upgrade queues every nonempty prompt eligible for sync from this machine
+    for another upload. Older clients could mark a rerun as synced while
+    PostgreSQL still held its first prompt. Retention keeps these prompts until
+    the new upload finishes. The current review uploads again with its producing
+    attempt. Pending edits to that same review survive this repair. Imported
+    jobs keep their sync markers. Applied or rebased fixes upload as completed
+    attempts; whether their patch was applied stays local to each checkout.
+- Closing a cached legacy review after a peer converts it keeps the converted
+    content and syncs the closure. The closing machine receives the conversion
+    on its next pull.
+- Reviews sync with their producing attempt. A failed or canceled rerun has no
+    current review, and an older attempt that finishes later cannot replace a
+    newer attempt's output. Reruns also update the agent and start time on other
+    machines. A rerun sorts after its predecessor even when this machine's clock
+    is behind. If two machines rerun the same job with identical enqueue times,
+    the producing machine ID breaks the tie so both machines keep the same
+    attempt and review. If sync imports a newer attempt while a local agent is
+    running, the daemon cancels the old agent and keeps its remaining writes and
+    completion actions from changing the imported result.
+- Historical review prompts remain available after upgrading the mirror. For
+    completed review and range jobs, the current historical review supplies the
+    prompt when it has one, because older clients could leave the job's prompt
+    stale after a rerun. The job's own prompt wins when the review's copy only
+    names a temporary prompt file. New reviews store their prompt only on the
+    job.
+
+Retention is off by default; roborev keeps everything until you set a limit. The
+daemon applies both settings at startup and then hourly. A changed setting takes
+effect at the next hourly pass:
+
+```toml
+prompt_retention_days = 90   # remove prompts of review and range jobs finished over 90 days ago
+job_log_retention_days = 30  # remove job log files older than 30 days
+```
+
+- `prompt_retention_days` removes only the prompt of finished review and range
+    jobs. Reviews, findings, comments, verdicts, dirty-review diffs, fix
+    patches, and the prompts of every other job type, such as dirty, task, fix,
+    compact, synthesis, insights, and goal-review jobs, are kept. A rerun
+    rebuilds review and range prompts from git whether or not the old prompt was
+    removed, so removal only empties the prompt view of old jobs.
+- Removed prompts free space inside `reviews.db` that new jobs reuse. The file
+    itself does not shrink.
+- While PostgreSQL sync is enabled, or was enabled when the daemon started, a
+    job keeps its prompt until sync has pushed it, so retention never removes a
+    prompt that PostgreSQL lacks. Retention removes no prompts until sync has
+    connected, because a new sync database resets which jobs count as pushed.
+- `job_log_retention_days` deletes log files by modification time, the same
+    files that `roborev log clean --days N` removes. Logs that a running job
+    still writes to are kept.
 
 ### Unix Domain Socket
 
@@ -1753,7 +1855,16 @@ screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
 `help`, `log`, `tasks`, `worktree-confirm`, `patch`, `column-options`,
 `release-notes` and `rerun-agent`. Each screen counts once per install per UTC
 day across interfaces, including daemon restarts. Screen names contain no paths,
-job IDs, filter text or review contents.
+job IDs, filter text or review contents. Daily screen claims live in
+`telemetry-daily.json` beside the daemon database, wherever `--db` points, with
+a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
+file makes screen reports fail until it's removed. Stop the daemon before
+deleting it. Deletion resets file claims; existing SQLite claims remain
+effective through their recorded UTC dates. Counts mean the report was queued,
+not confirmed delivered to PostHog. The TUI retries a failed screen report on
+the next key or mouse input while that screen is showing. The browser reports
+the visible screen on every window focus and page change, and the daemon counts
+it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
@@ -1843,11 +1954,14 @@ fall back to `10s`.
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
 recorded price. The missing price in SQLite is the durable retry state, so
-reconciliation resumes after daemon restarts. For rows without a stored session
-ID, the daemon recovers the ID and token counts from the per-job JSONL log
-before retrying the provider. Provider failures do not change the completed job
-result. Deleted sessions and sessions reused by multiple started jobs can remain
-unpriced; jobs older than the one-week scan window are reachable with
+reconciliation resumes after daemon restarts. Each lookup can start an
+`agentsview` process, so a job that stays unpriced is rechecked with backoff:
+the wait starts at one minute and doubles after each miss. The backoff resets
+when the daemon restarts. For rows without a stored session ID, the daemon
+recovers the ID and token counts from the per-job JSONL log before retrying the
+provider. Provider failures do not change the completed job result. Deleted
+sessions and sessions reused by multiple started jobs can remain unpriced; jobs
+older than the one-week scan window are reachable with
 `roborev backfill-tokens`.
 
 The endpoint should return JSON compatible with

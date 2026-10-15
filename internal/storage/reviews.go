@@ -11,6 +11,10 @@ import (
 	"uuid"
 )
 
+// ErrReviewChanged means a guarded rebuttal mutation targeted an earlier
+// review version than the one currently stored for the job.
+var ErrReviewChanged = errors.New("review changed since rebuttal was queued")
+
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	return db.getReviewByJobID(jobID, false)
@@ -37,6 +41,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(append(reviewDestinations, jobDestinations...)...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -429,10 +434,10 @@ func (db *DB) MarkReviewClosed(reviewID int64, closed bool) error {
 	if closed {
 		val = 1
 	}
-	now := time.Now().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE id = ?`, val, machineID, now, reviewID)
 	if err != nil {
 		return err
 	}
@@ -448,14 +453,30 @@ func (db *DB) MarkReviewClosed(reviewID int64, closed bool) error {
 
 // MarkReviewClosedByJobID marks a review as closed (or reopened) by job ID
 func (db *DB) MarkReviewClosedByJobID(jobID int64, closed bool) error {
+	return db.markReviewClosedByJobID(jobID, nil, closed)
+}
+
+// MarkReviewClosedByJobIDIfReviewUUID changes the review state only while the
+// job still has the review UUID captured when the operation was requested.
+func (db *DB) MarkReviewClosedByJobIDIfReviewUUID(jobID int64, expectedUUID uuid.UUID, closed bool) error {
+	return db.markReviewClosedByJobID(jobID, &expectedUUID, closed)
+}
+
+func (db *DB) markReviewClosedByJobID(jobID int64, expectedUUID *uuid.UUID, closed bool) error {
 	val := 0
 	if closed {
 		val = 1
 	}
-	now := time.Now().Format(time.RFC3339)
+	now := preciseTimestampAt(time.Now())
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE job_id = ?`, val, machineID, now, jobID)
+	query := `UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE job_id = ?`
+	args := []any{val, machineID, now, jobID}
+	if expectedUUID != nil {
+		query += ` AND uuid = ?`
+		args = append(args, *expectedUUID)
+	}
+	result, err := db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
@@ -464,9 +485,26 @@ func (db *DB) MarkReviewClosedByJobID(jobID int64, closed bool) error {
 		return err
 	}
 	if rows == 0 {
-		return sql.ErrNoRows
+		if expectedUUID == nil {
+			return sql.ErrNoRows
+		}
+		return db.reviewChangedOrMissing(jobID)
 	}
 	return nil
+}
+
+// reviewChangedOrMissing explains why a review-version-guarded write matched
+// no row: the job has no review (sql.ErrNoRows) or a newer review version
+// replaced the expected one (ErrReviewChanged).
+func (db *DB) reviewChangedOrMissing(jobID int64) error {
+	var exists bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM reviews WHERE job_id = ?)`, jobID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return sql.ErrNoRows
+	}
+	return ErrReviewChanged
 }
 
 // GetJobsWithReviewsByIDs fetches jobs and their reviews in batch for the given job IDs.
@@ -495,6 +533,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.id IN (%s)
 	`, jobSelectColumns(jobTextNone), inClause)
 
@@ -640,26 +679,53 @@ func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Respons
 
 // AddCommentToJobWithSource adds a job comment with explicit provenance.
 func (db *DB) AddCommentToJobWithSource(jobID int64, responder, response, source string) (*Response, error) {
-	source = normalizeResponseSource(source)
-	// Verify job exists first to return proper 404 instead of FK violation or orphaned row
-	var exists int
-	err := db.QueryRow(`SELECT 1 FROM review_jobs WHERE id = ?`, jobID).Scan(&exists)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, sql.ErrNoRows // Job not found
-		}
-		return nil, err
-	}
+	return db.addCommentToJob(jobID, nil, responder, response, source)
+}
 
+// AddCommentToJobWithSourceIfReviewUUID atomically adds a comment only while
+// the review row still has the UUID captured for the rebuttal.
+func (db *DB) AddCommentToJobWithSourceIfReviewUUID(
+	jobID int64, expectedUUID uuid.UUID, responder, response, source string,
+) (*Response, error) {
+	return db.addCommentToJob(jobID, &expectedUUID, responder, response, source)
+}
+
+// addCommentToJob inserts the comment only when its target exists: the job,
+// or, when expectedUUID is set, that exact review version of the job. Checking
+// in the INSERT returns a proper not-found error instead of an FK violation or
+// orphaned row.
+func (db *DB) addCommentToJob(
+	jobID int64, expectedUUID *uuid.UUID, responder, response, source string,
+) (*Response, error) {
+	source = normalizeResponseSource(source)
 	responseUUID := uuid.New()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response, source, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		jobID, responder, response, source, responseUUID, machineID, nowStr)
+	target := `SELECT 1 FROM review_jobs WHERE id = ?`
+	args := []any{jobID, responder, response, source, responseUUID, machineID, nowStr, jobID}
+	if expectedUUID != nil {
+		target = `SELECT 1 FROM reviews WHERE job_id = ? AND uuid = ?`
+		args = append(args, *expectedUUID)
+	}
+	result, err := db.Exec(`
+		INSERT INTO responses (job_id, responder, response, source, uuid, source_machine_id, created_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (`+target+`)
+	`, args...)
 	if err != nil {
 		return nil, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		if expectedUUID == nil {
+			return nil, sql.ErrNoRows
+		}
+		return nil, db.reviewChangedOrMissing(jobID)
 	}
 
 	id, _ := result.LastInsertId()

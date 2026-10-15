@@ -107,7 +107,8 @@ changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
 `roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
-CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build harnesses
+CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode
+harnesses
 and adds optional hooks after configured turn, commit, or failed-review
 thresholds are met. Reminders name exact review IDs, invoke the bundled
 `roborev-fix` skill, and never run `roborev fix --open`. Hook installation
@@ -129,6 +130,20 @@ roborev refine --plan-only       # Inspect plans for existing failed reviews
 
 `refine` runs in an isolated worktree and loops: fix findings, wait for
 re-review, fix again, until all reviews pass or `--max-iterations` is hit.
+
+## Rebutting a Finding
+
+Use a stored reviewer session to re-evaluate one finding with your explanation:
+
+```bash
+roborev comment 42 --rebuttal --finding "Missing null check in handler." \
+  -m "The caller rejects null input before invoking the handler."
+```
+
+The assessment is saved as a comment. Add `--close` to close the whole review
+once it is recorded. See
+[Responding to Reviews](https://roborev.io/guides/responding-to-reviews/) for
+supported agents and recovery.
 
 ## Code Analysis
 
@@ -482,6 +497,15 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 `column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
+Daily screen claims live in `telemetry-daily.json` beside the daemon database,
+wherever `--db` points, with a `telemetry-daily.json.lock` sidecar. Deleting the
+file resets its claims; existing SQLite claims remain effective through their
+recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+for recovery instructions.
+Counts mean the report was queued, not confirmed delivered to PostHog.
+The TUI retries a failed screen report on the next key or mouse input while
+that screen is showing. The browser reports the visible screen on every window
+focus and page change, and the daemon counts it once per day.
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

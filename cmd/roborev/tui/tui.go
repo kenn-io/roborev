@@ -144,7 +144,7 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	screenDay            string   // UTC day that screensSent covers
-	screensSent          []string // screens reported on screenDay
+	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -1277,6 +1277,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"Config save failed: "+msg.err.Error(),
 			5*time.Second, m.currentView,
 		)
+		result = m
+	case screenDeliveryMsg:
+		if msg.day == m.screenDay && msg.err != nil {
+			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+		}
 		result = m
 	case controlSocketReadyMsg:
 		m.controlSocket = msg.socketPath

@@ -99,7 +99,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 	}
 	cfg := s.configWatcher.Config()
 	fetchConfig := tokens.FetchConfig{Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(), RequireCLI: true}
-	jobs, err := s.db.ListJobs("", "", 0, 0)
+	jobs, err := s.db.ListJobs("", "", 0, 0, storage.WithoutPrompt())
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list jobs", err)
 	}

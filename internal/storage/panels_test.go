@@ -704,12 +704,11 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, m0.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.CompleteJobResult(
-		m0.ID, "test", "prompt", ReviewCompletion{
+		m0.ID, "test", ReviewCompletion{
 			StructuredOutput: reviewFixtureJSON("High: no actionable findings."),
 			Output:           "High: no actionable findings.",
 			Verdict:          VerdictPass,
-		},
-	))
+		}))
 
 	got, err := db.GetPanelMemberReviews(runUUID)
 	require.NoError(t, err)
@@ -1150,7 +1149,7 @@ func TestJobReadPathsReturnNonVoting(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.True(claimed.NonVoting, "ClaimJob")
-	require.NoError(t, db.CompleteJob(claimed.ID, "test", "p",
+	require.NoError(t, db.CompleteJob(claimed.ID, "test",
 		`{"schema_version":2,"summary":"ok","verdict":"pass","findings":[]}`))
 
 	byID, err := db.GetJobByID(observer.ID)

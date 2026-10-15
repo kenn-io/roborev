@@ -135,19 +135,23 @@ type Request struct {
 }
 
 type Response struct {
-	SessionID             string     `json:"session_id"`
-	Count                 int        `json:"count"`
-	Threshold             int        `json:"threshold"`
-	CommitCount           int        `json:"commit_count,omitempty"`
-	CommitThreshold       int        `json:"commit_threshold,omitempty"`
-	FailedReviewCount     int        `json:"failed_review_count,omitempty"`
-	FailedReviewThreshold int        `json:"failed_review_threshold,omitempty"`
-	ReminderPromptCount   int        `json:"remind_count,omitempty"`
-	Triggered             bool       `json:"triggered"`
-	TriggeredBy           string     `json:"triggered_by,omitempty"`
-	Reason                string     `json:"reason,omitempty"`
-	Skipped               bool       `json:"skipped,omitempty"`
-	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
+	SessionID             string `json:"session_id"`
+	Count                 int    `json:"count"`
+	Threshold             int    `json:"threshold"`
+	CommitCount           int    `json:"commit_count,omitempty"`
+	CommitThreshold       int    `json:"commit_threshold,omitempty"`
+	FailedReviewCount     int    `json:"failed_review_count,omitempty"`
+	FailedReviewThreshold int    `json:"failed_review_threshold,omitempty"`
+	ReminderPromptCount   int    `json:"remind_count,omitempty"`
+	Triggered             bool   `json:"triggered"`
+	TriggeredBy           string `json:"triggered_by,omitempty"`
+	Reason                string `json:"reason,omitempty"`
+	Skipped               bool   `json:"skipped,omitempty"`
+	// Diagnosis explains why an event did not trigger a reminder, or the
+	// counts behind one that did. Hook runners surface it on stderr so an
+	// empty result is distinguishable from a broken query.
+	Diagnosis    string     `json:"diagnosis,omitempty"`
+	FixSessionID *uuid.UUID `json:"fix_session_id,omitempty"`
 }
 
 type reviewIDSet map[int64]struct{}

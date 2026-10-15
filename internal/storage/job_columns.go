@@ -13,6 +13,7 @@ import "database/sql"
 //	FROM review_jobs j
 //	JOIN repos r ON r.id = j.repo_id
 //	LEFT JOIN commits c ON c.id = j.commit_id
+//	LEFT JOIN job_content jc ON jc.job_id = j.id
 //
 // and jobWithReviewSelectColumns additionally expects
 //
@@ -28,11 +29,16 @@ type jobTextColumns struct {
 	Patch  string
 }
 
+const (
+	jobPromptExpr = "zstd_decompress(jc.prompt)"
+	jobDiffExpr   = "zstd_decompress(jc.diff_content)"
+)
+
 var (
 	// jobTextAll loads every payload: the worker and single-job lookups need them.
-	jobTextAll = jobTextColumns{Prompt: "j.prompt", Diff: "j.diff_content", Patch: "j.patch"}
+	jobTextAll = jobTextColumns{Prompt: jobPromptExpr, Diff: jobDiffExpr, Patch: "zstd_decompress(jc.patch)"}
 	// jobTextPrompt loads only the prompt: panel member views show it inline.
-	jobTextPrompt = jobTextColumns{Prompt: "j.prompt", Diff: "NULL", Patch: "NULL"}
+	jobTextPrompt = jobTextColumns{Prompt: jobPromptExpr, Diff: "NULL", Patch: "NULL"}
 	// jobTextNone loads no payload: batch metadata reads.
 	jobTextNone = jobTextColumns{Prompt: "NULL", Diff: "NULL", Patch: "NULL"}
 )

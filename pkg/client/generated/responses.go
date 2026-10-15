@@ -44,6 +44,14 @@ type AddCommentResponse = Response
 
 type AddCommentErrorResponse = ErrorModel
 
+type AddCommentErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type AddCommentErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type AddCommentErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type AddCommentErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type ListCommentsResponse = ListCommentsOutputBody
 
 type ListCommentsErrorResponse = ErrorModel
@@ -240,6 +248,18 @@ type UnpauseQueueResponse = QueuePauseOutputBody
 
 type UnpauseQueueErrorResponse = ErrorModel
 
+type RebuttalResponse = ReviewJob
+
+type RebuttalErrorResponse = ErrorModel
+
+type RebuttalErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type RebuttalErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type RebuttalErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type RebuttalErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type ListReleasesResponse = ReleaseNotesResponse
 
 type ListReleasesErrorResponse = ErrorModel
@@ -264,6 +284,12 @@ type GetRepoResponse = RepoStats
 
 type GetRepoErrorResponse = ErrorModel
 
+type GetRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type GetRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type GetRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type MergeReposResponse = MergeReposOutputBody
 
 type MergeReposErrorResponse = ErrorModel
@@ -284,6 +310,12 @@ type RenameRepoResponse = RenameRepoOutputBody
 
 type RenameRepoErrorResponse = ErrorModel
 
+type RenameRepoErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type RenameRepoErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type RenameRepoErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type ResolveRepoResponse = ResolveRepoOutputBody
 
 type ResolveRepoErrorResponse = ErrorModel
@@ -296,6 +328,14 @@ type CloseReviewResponse = CloseReviewOutputBody
 
 type CloseReviewErrorResponse = ErrorModel
 
+type CloseReviewErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type CloseReviewErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type CloseReviewErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type CloseReviewErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type MigrateReviewResponse = MigrateReviewOutputBody
 
 type MigrateReviewErrorResponse = ErrorModel
@@ -303,6 +343,14 @@ type MigrateReviewErrorResponse = ErrorModel
 type SearchReviewsResponse = SearchResponse
 
 type SearchReviewsErrorResponse = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type SearchReviewsErrorResponseApplicationProblemPlusJSON503 = ErrorModel
 
 type ShutdownResponse = ShutdownOutputBody
 
@@ -432,10 +480,15 @@ type ListBranchesResp struct {
 }
 
 type AddCommentResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON201      *AddCommentResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON201                       *AddCommentResponse
+	ApplicationProblemPlusJSON400 *AddCommentErrorResponse
+	ApplicationProblemPlusJSON404 *AddCommentErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *AddCommentErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *AddCommentErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *AddCommentErrorResponseApplicationProblemPlusJSON500
 }
 
 type ListCommentsResp struct {
@@ -651,6 +704,18 @@ type UnpauseQueueResp struct {
 	JSON200      *UnpauseQueueResponse
 }
 
+type RebuttalResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON201                       *RebuttalResponse
+	ApplicationProblemPlusJSON400 *RebuttalErrorResponse
+	ApplicationProblemPlusJSON404 *RebuttalErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *RebuttalErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *RebuttalErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *RebuttalErrorResponseApplicationProblemPlusJSON500
+}
+
 type ListReleasesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -683,10 +748,14 @@ type DeleteRepoResp struct {
 }
 
 type GetRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetRepoResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *GetRepoResponse
+	ApplicationProblemPlusJSON404 *GetRepoErrorResponse
+	ApplicationProblemPlusJSON409 *GetRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *GetRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *GetRepoErrorResponseApplicationProblemPlusJSON500
 }
 
 type MergeReposResp struct {
@@ -714,10 +783,14 @@ type RegisterRepoResp struct {
 }
 
 type RenameRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RenameRepoResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *RenameRepoResponse
+	ApplicationProblemPlusJSON404 *RenameRepoErrorResponse
+	ApplicationProblemPlusJSON409 *RenameRepoErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *RenameRepoErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *RenameRepoErrorResponseApplicationProblemPlusJSON500
 }
 
 type ResolveRepoResp struct {
@@ -735,10 +808,15 @@ type GetReviewResp struct {
 }
 
 type CloseReviewResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CloseReviewResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *CloseReviewResponse
+	ApplicationProblemPlusJSON400 *CloseReviewErrorResponse
+	ApplicationProblemPlusJSON404 *CloseReviewErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *CloseReviewErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *CloseReviewErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *CloseReviewErrorResponseApplicationProblemPlusJSON500
 }
 
 type MigrateReviewResp struct {
@@ -749,10 +827,15 @@ type MigrateReviewResp struct {
 }
 
 type SearchReviewsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SearchReviewsResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *SearchReviewsResponse
+	ApplicationProblemPlusJSON400 *SearchReviewsErrorResponse
+	ApplicationProblemPlusJSON409 *SearchReviewsErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *SearchReviewsErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *SearchReviewsErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON503 *SearchReviewsErrorResponseApplicationProblemPlusJSON503
 }
 
 type ShutdownResp struct {
@@ -1442,6 +1525,22 @@ func (c *RawClient) UnpauseQueueRaw(ctx context.Context, reqEditors ...runtime.R
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/queue/unpause",
 		Method:     "POST",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) RebuttalRaw(ctx context.Context, options *RebuttalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &RebuttalRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/rebuttal",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

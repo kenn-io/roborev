@@ -3,6 +3,7 @@ package agenthook
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,6 +84,21 @@ func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 	}
 }
 
+func TestRunInstallAllInstallsSupportedProfiles(t *testing.T) {
+	for _, mcp := range []bool{false, true} {
+		t.Run(fmt.Sprint(mcp), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("LOCALAPPDATA", filepath.Join(home, "local"))
+			for _, name := range []string{"CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME", "GEMINI_CLI_HOME", "HERMES_HOME", "QWEN_HOME", "GROK_HOME", "PI_CODING_AGENT_DIR"} {
+				t.Setenv(name, "")
+			}
+			require.NoError(t, RunInstall(InstallOptions{Agent: "all", Executable: "/opt/bin/roborev", MCP: mcp}, &bytes.Buffer{}))
+		})
+	}
+}
+
 func TestRunInstallUsesKitForQwen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	var stdout bytes.Buffer
@@ -116,11 +132,17 @@ func TestRunInstallInstallsAndUpdatesBundledSkillsForSupportedProfiles(t *testin
 		{agent: "gemini", configName: "settings.json"},
 		{agent: "hermes", configName: "config.yaml"},
 		{agent: "qwen", configName: "settings.json"},
+		{agent: "zcode", configName: filepath.Join("cli", "config.json")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			root := t.TempDir()
+			if tt.agent == "zcode" {
+				// The ZCode install writes plugin files under the roborev
+				// data directory; keep them inside the test sandbox.
+				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			}
 			configPath := filepath.Join(root, tt.configName)
 			opts := InstallOptions{
 				Agent: tt.agent, Executable: "/opt/bin/roborev",

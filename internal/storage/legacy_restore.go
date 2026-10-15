@@ -64,10 +64,10 @@ func (db *DB) restoreLegacyReviews() error {
 				}
 				// Review IDs may have been reused after archival. Keep them when
 				// available; the archived numeric job ID stays unchanged.
-				_, err = db.Exec(`INSERT INTO reviews (id, job_id, agent, prompt, output, created_at, closed,
+				_, err = db.Exec(`INSERT INTO reviews (id, job_id, agent, output, created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at)
  SELECT CASE WHEN EXISTS(SELECT 1 FROM reviews WHERE id = l.id) THEN NULL ELSE l.id END,
- job_id, agent, prompt, '', created_at, closed, reviewed_file_count, excluded_file_count,
+ job_id, agent, '', created_at, closed, reviewed_file_count, excluded_file_count,
  verdict_bool, ?, uuid, ?, datetime('now') FROM legacy_reviews l WHERE archive_id = ?
  AND NOT EXISTS(SELECT 1 FROM reviews WHERE job_id = l.job_id OR uuid = l.uuid)`, string(raw), machineID, record.ID)
 				if err != nil {

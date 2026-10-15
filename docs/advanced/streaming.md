@@ -54,12 +54,19 @@ raw helper methods.
 
 ### Worker health
 
-`/api/health` reports stalled jobs through the `workers` component. A job that
-has run for more than 30 minutes is unhealthy if it has no active worker or its
-assigned execution deadline has passed. Longer reviews remain healthy while
-their worker still has time remaining. The deadline includes repository, global,
-and panel-member timeout settings resolved when the attempt starts;
-configuration reloads do not change it during that attempt.
+`/api/health` reports stalled jobs through the `workers` component. A running
+job with no active worker becomes unhealthy after 30 minutes, though the
+recovery sweep usually fails it first. A job a live worker still holds becomes
+unhealthy after 30 minutes if its assigned execution deadline has passed. Longer
+reviews remain healthy while their worker still has time remaining. The deadline
+includes repository, global, and panel-member timeout settings resolved when the
+attempt starts; configuration reloads do not change it during that attempt.
+
+The daemon sweeps every 60 seconds. It fails a locally claimed running job if no
+worker holds it and no update requeue is pending, with the error "daemon did not
+save the job's outcome". The failure event, hooks, and CI notifications match
+any other failed job. Local reviews stay failed until manually rerun. A CI panel
+that failed this way is handled like any other failed panel.
 
 ### CI health
 
@@ -86,12 +93,26 @@ unhealthy even when polling can use cached or partial repository lists.
 Successful discovery clears the discovery failure.
 
 A failed review stays unhealthy during backoff and while its retry is queued or
-running. Polling restores these failures after a restart. Recovery requires a
-posted review with usable output; exhausting retries or abandoning delivery does
-not restore health. Ordinary queued reviews with no previous failure are
-healthy. An enqueue error alone can clear once polling confirms an active panel.
-A first attempt that finishes without usable output also makes CI unhealthy,
-including when every reviewer times out.
+running. Health reads current durable failures, including after a restart and
+between polls. Recovery requires a posted review with usable output; exhausting
+retries or abandoning delivery does not restore health. Ordinary queued reviews
+with no previous failure are healthy. An enqueue error alone can clear once
+polling confirms an active panel. A first attempt that finishes without usable
+output also makes CI unhealthy, including when every reviewer times out.
+
+While every retained CI failure is a transient review failure with a scheduled
+retry, active dispatch, live panel, or output awaiting automatic publication,
+the `ci` component can include `recovery: {observed_at, deadline}`. Both
+timestamps use RFC 3339. The deadline is the earliest affected review's existing
+72-hour retry deadline; retries and health requests do not extend it. A due
+retry remains scheduled while it waits for the next poll. Missing, exhausted, or
+terminal work, genuine failures, operational polling errors, and unhealthy
+daemon components receive no recovery evidence. The daemon reads retry and panel
+state in one snapshot on each health request, so delivery restores health
+immediately and evidence expires even if no further retry completes. Monitoring
+may use current recovery evidence to defer a new incident. It must retain the
+failed health result and require actual recovery before resolving an existing
+incident.
 
 Each error belongs to that commit. A successful review of another commit does
 not clear an older retry's error until the obsolete attempt is removed.

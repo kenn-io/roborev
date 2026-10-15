@@ -155,10 +155,14 @@ func insertExperimentAssignmentTx(
 
 // GetExperimentAssignments returns immutable attribution for one review unit.
 func (db *DB) GetExperimentAssignments(kind string, unitUUID uuid.UUID) ([]ExperimentAssignment, error) {
+	return db.getExperimentAssignmentsContext(context.Background(), kind, unitUUID)
+}
+
+func (db *DB) getExperimentAssignmentsContext(ctx context.Context, kind string, unitUUID uuid.UUID) ([]ExperimentAssignment, error) {
 	if unitUUID == uuid.Nil() {
 		return nil, nil
 	}
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT a.experiment_id, a.arm, a.subject_hash, d.definition_hash,
 		       a.effective_config_hash
 		FROM experiment_assignments a
@@ -237,6 +241,10 @@ func (db *DB) GetExperimentAssignmentInputForJobUUID(jobUUID uuid.UUID) (*Experi
 }
 
 func (db *DB) attachExperimentAssignments(job *ReviewJob) error {
+	return db.attachExperimentAssignmentsContext(context.Background(), job)
+}
+
+func (db *DB) attachExperimentAssignmentsContext(ctx context.Context, job *ReviewJob) error {
 	if job == nil {
 		return nil
 	}
@@ -247,7 +255,7 @@ func (db *DB) attachExperimentAssignments(job *ReviewJob) error {
 	if job.PanelRunUUID != nil {
 		kind, unitUUID = ReviewUnitPanel, *job.PanelRunUUID
 	}
-	assignments, err := db.GetExperimentAssignments(kind, unitUUID)
+	assignments, err := db.getExperimentAssignmentsContext(ctx, kind, unitUUID)
 	if err != nil {
 		return err
 	}

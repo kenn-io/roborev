@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHTTPClientCanceledRequestSkipsCredentialLoading(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	keyCalls := 0
+	client := HTTPClient("http://127.0.0.1:1", nil, func() (string, error) {
+		keyCalls++
+		return "", errors.New("credential config unavailable")
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:1/api/jobs", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, keyCalls)
+}
 
 func TestHTTPClientScopesCredentialsAndPreservesRequest(t *testing.T) {
 	assert := assert.New(t)

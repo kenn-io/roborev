@@ -607,8 +607,8 @@ func seedAnalyticsJob(t *testing.T, db *DB, repo *Repo, seed analyticsJobSeed) *
 		require.NoError(t, err)
 	}
 	if seed.verdict != nil {
-		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, created_at, closed, verdict_bool)
-			VALUES (?, ?, '', '', ?, ?, ?)`, job.ID, seed.agent,
+		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, output, created_at, closed, verdict_bool)
+			VALUES (?, ?, '', ?, ?, ?)`, job.ID, seed.agent,
 			seed.finishedAt.UTC().Format("2006-01-02 15:04:05"), seed.closed, *seed.verdict)
 		require.NoError(t, err)
 	}

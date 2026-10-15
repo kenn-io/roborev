@@ -53,6 +53,22 @@ func TestParseMarkdownRoundTripsRenderedDocuments(t *testing.T) {
 				{Severity: "medium", Problem: "The error is dropped.", Fix: "Return the error.", Sources: []int{1}},
 			},
 		}},
+		"summary that ends with a Findings heading": {doc: Document{
+			SchemaVersion: 1, Summary: "The change renames a helper.\n\n## Findings", Findings: []Finding{},
+		}},
+		"summary that is only a Findings heading": {doc: Document{
+			SchemaVersion: 1, Summary: "## Findings", Findings: []Finding{},
+		}},
+		"summary that is only an agent assessment line": {doc: Document{
+			SchemaVersion: 1, Summary: renderedAssessment + "Pass", Findings: []Finding{},
+		}},
+		"summary that is only an unknown agent assessment line": {doc: Document{
+			SchemaVersion: 1, Summary: renderedAssessment + "Maybe", Findings: []Finding{},
+		}},
+		"summary that is only an agent assessment line, with findings": {doc: Document{
+			SchemaVersion: 1, Summary: renderedAssessment + "Fail",
+			Findings: []Finding{{Severity: "high", Problem: "The write is not atomic.", Fix: "Rename a temporary file."}},
+		}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -202,6 +218,10 @@ func TestParseMarkdownRefusesInsteadOfGuessing(t *testing.T) {
 			markdown: "No issues found.\n\n## Risks\n\nThe write is not atomic.",
 			reason:   RefusalUnrecognizedContent,
 		},
+		"unknown agent assessment after a summary": {
+			markdown: "## Summary\n\nThe change adds a save routine.\n\n**Agent assessment:** Maybe\n\nNo issues found.",
+			reason:   RefusalUnrecognizedContent,
+		},
 		"rendered finding without a fix": {
 			markdown: "## Summary\n\nThe change adds a save routine.\n\n## Findings\n\n### 1. High\n\n**Problem:** The write is not atomic.\n",
 			reason:   RefusalMissingFix,
@@ -231,6 +251,20 @@ func TestParseMarkdownRefusesInsteadOfGuessing(t *testing.T) {
 
 func TestParseMarkdownRefusesFindingsHiddenInARenderedSummary(t *testing.T) {
 	markdown := "## Summary\n\nThe change adds a save routine.\n\n## Findings\n\nThe write is not atomic.\n\nNo issues found."
+
+	_, err := ParseMarkdown(markdown, ParseMarkdownOptions{})
+
+	var refusal *MarkdownRefusal
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, RefusalUnrecognizedContent, refusal.Reason)
+}
+
+// A second Findings heading followed by the rendered no-findings trailer must
+// not turn a findings section that failed to parse into a review that claims
+// no findings: the text between the two headings is finding content, not
+// summary text.
+func TestParseMarkdownRefusesFindingsHiddenBehindASecondHeading(t *testing.T) {
+	markdown := "## Summary\n\nThe change adds a save routine.\n\n## Findings\n\nThe write is not atomic.\n\n## Findings\n\nNo issues found."
 
 	_, err := ParseMarkdown(markdown, ParseMarkdownOptions{})
 

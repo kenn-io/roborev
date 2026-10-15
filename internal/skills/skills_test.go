@@ -875,13 +875,13 @@ func TestListSkillsReportsSupportedAgents(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen, AgentZcode},
 		skillsByDir["roborev-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen, AgentZcode},
 		skillsByDir["roborev-lookahead-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok, AgentCopilot, AgentCursor, AgentGemini, AgentHermes, AgentQwen, AgentZcode},
 		skillsByDir["roborev-lookahead-review-branch"].SupportedAgents)
 }
 

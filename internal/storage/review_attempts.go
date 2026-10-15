@@ -450,7 +450,11 @@ func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
 // retries and attempts finalized without delivering a review. Successful posted
 // reviews retain their historical error fields but are no longer failures.
 func (db *DB) GetFailedReviewAttempts(repo string) ([]ReviewAttempt, error) {
-	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
+	return getFailedReviewAttempts(db, repo)
+}
+
+func getFailedReviewAttempts(q querier, repo string) ([]ReviewAttempt, error) {
+	rows, err := q.Query(`SELECT `+reviewAttemptColumns+`
 		FROM ci_pr_review_attempts
 		WHERE github_repo = ? AND (
 		  (state IN ('pending', 'deferred')

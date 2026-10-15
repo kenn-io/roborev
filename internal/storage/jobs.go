@@ -126,9 +126,8 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	uid := uuid.New()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
-	if opts.Experiment == nil {
-		return db.insertJobTx(context.Background(), db, opts, uid, machineID, now)
-	}
+	// The job row and its payload commit together, so a worker never claims a
+	// queued job whose prompt or frozen diff is not stored yet.
 	ctx := context.Background()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -139,11 +138,16 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := insertExperimentAssignmentTx(ctx, tx, ReviewUnitJob, uid, opts.Experiment, machineID, now); err != nil {
-		return nil, err
+	if opts.Experiment != nil {
+		if err := insertExperimentAssignmentTx(ctx, tx, ReviewUnitJob, uid, opts.Experiment, machineID, now); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	if opts.Experiment == nil {
+		return job, nil
 	}
 	job.Experiments, err = db.GetExperimentAssignments(ReviewUnitJob, uid)
 	return job, err
@@ -307,16 +311,16 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 
 	result, err := exec.ExecContext(ctx, `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, session_resumed, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning,
-			status, job_type, review_type, patch_id, diff_content, dirty_files, prompt, agentic, prompt_prebuilt, output_prefix,
+			status, job_type, review_type, patch_id, dirty_files, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, claim_blocked, source,
 			analysis_type, analysis_files, analysis_commit_sha)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID),
 		sessionResumedInt, opts.ResumeSourceJobUUID,
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
-		nullString(opts.DiffContent), nullString(dirtyFilesJSON), nullString(opts.Prompt), agenticInt, promptPrebuiltInt,
+		nullString(dirtyFilesJSON), agenticInt, promptPrebuiltInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
 		uid, machineID, nowStr, opts.WorktreePath, normalizeMinSeverityForWrite(opts.MinSeverity), opts.BackupAgent, opts.BackupModel,
 		opts.PanelRunUUID, nullString(opts.PanelRole), nullString(opts.PanelName),
@@ -327,6 +331,13 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	}
 
 	id, _ := result.LastInsertId()
+	if opts.Prompt != "" || opts.DiffContent != "" {
+		if _, err := exec.ExecContext(ctx,
+			`INSERT INTO job_content (job_id, prompt, diff_content) VALUES (?, zstd_compress(?), zstd_compress(?))`,
+			id, opts.Prompt, opts.DiffContent); err != nil {
+			return nil, fmt.Errorf("store job %d content: %w", id, err)
+		}
+	}
 	job := &ReviewJob{
 		ID:                    id,
 		RepoID:                opts.RepoID,
@@ -634,13 +645,21 @@ func (db *DB) claimJobAttempt(
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
-	result, err := conn.ExecContext(ctx, `
+	var claimedID int64
+	err = conn.QueryRowContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
 		    session_isolated = 0
 		WHERE id = (
-			SELECT id FROM review_jobs
-			WHERE status = 'queued'
+			SELECT candidate.id FROM review_jobs candidate
+			WHERE candidate.status = 'queued'
+			  AND (COALESCE(candidate.session_id, '') = '' OR NOT EXISTS (
+			    SELECT 1 FROM review_jobs busy
+			    WHERE (busy.status = 'running'
+			           OR (busy.status = 'canceled' AND COALESCE(busy.worker_id, '') <> ''))
+			      AND busy.session_id = candidate.session_id
+			      AND (candidate.source = ? OR busy.source = ?)
+			  ))
 			  AND claim_blocked = 0
 			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
 			ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
@@ -650,18 +669,13 @@ func (db *DB) claimJobAttempt(
 			SELECT 1 FROM daemon_state
 			WHERE key IN (?, ?) AND value IN ('true', '1')
 		)
-	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey, shutdownDrainingStateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if we claimed anything
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if rowsAffected == 0 {
+		RETURNING id
+	`, workerID, nowStr, nowStr, JobSourceRebuttal, JobSourceRebuttal, nowNano, queuePausedStateKey, shutdownDrainingStateKey).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // No jobs available
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Now fetch the job we just claimed
@@ -672,10 +686,9 @@ func (db *DB) claimJobAttempt(
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
-		WHERE j.worker_id = ? AND j.status = 'running'
-		ORDER BY j.started_at DESC
-		LIMIT 1
-	`, workerID).Scan(jobScanDestinations(&job, &fields)...)
+		LEFT JOIN job_content jc ON jc.job_id = j.id
+		WHERE j.id = ?
+	`, claimedID).Scan(jobScanDestinations(&job, &fields)...)
 	if err != nil {
 		return nil, err
 	}
@@ -744,8 +757,7 @@ func releaseContestedSession(
 
 // SaveJobPrompt stores the prompt for a running job
 func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
-	_, err := db.Exec(`UPDATE review_jobs SET prompt = ? WHERE id = ?`, prompt, jobID)
-	return err
+	return setJobContent(context.Background(), db, jobID, jobContentPrompt, prompt)
 }
 
 // MarkJobAgentInvoked records that an agent was actually invoked for this
@@ -868,6 +880,36 @@ func (db *DB) ListRunningJobIDs() ([]int64, error) {
 	return ids, rows.Err()
 }
 
+// RunningAttempt identifies a running job and the local worker that claimed it.
+type RunningAttempt struct {
+	JobID    int64
+	WorkerID string
+}
+
+// ListRunningAttemptsContext returns running jobs claimed by a local worker.
+// Rows without a worker ID were not claimed on this machine and are omitted.
+func (db *DB) ListRunningAttemptsContext(ctx context.Context) ([]RunningAttempt, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, worker_id FROM review_jobs
+		WHERE status = 'running' AND COALESCE(worker_id, '') <> ''
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attempts []RunningAttempt
+	for rows.Next() {
+		var attempt RunningAttempt
+		if err := rows.Scan(&attempt.JobID, &attempt.WorkerID); err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
+}
+
 // CountRunningJobsByID reports how many update-targeted rows still own a
 // running attempt. Non-running terminal and retry states are already unwound.
 func (db *DB) CountRunningJobsByID(jobIDs []int64) (int, error) {
@@ -912,6 +954,14 @@ func (db *DB) MarkClassifyAgentInvoked(
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// JobSessionIsolated reports whether the job's session was captured in an
+// isolated checkout, so it must not be resumed from the original checkout.
+func (db *DB) JobSessionIsolated(ctx context.Context, jobID int64) (bool, error) {
+	var isolated bool
+	err := db.QueryRowContext(ctx, `SELECT session_isolated FROM review_jobs WHERE id = ?`, jobID).Scan(&isolated)
+	return isolated, err
 }
 
 // IsolateJobSession clears inherited resume metadata and marks this attempt's
@@ -996,8 +1046,7 @@ func (db *DB) SaveJobSessionID(
 
 // SaveJobPatch stores the generated patch for a completed fix job
 func (db *DB) SaveJobPatch(jobID int64, patch string) error {
-	_, err := db.Exec(`UPDATE review_jobs SET patch = ? WHERE id = ?`, patch, jobID)
-	return err
+	return setJobContent(context.Background(), db, jobID, jobContentPatch, patch)
 }
 
 // SaveJobTokenUsage stores a JSON blob of token consumption data, scoped to
@@ -1165,7 +1214,7 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(w TokenUsageWrite) (bool, error) {
 // CompleteFixJob atomically marks a fix job as done, stores the review,
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
-func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) error {
+func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
@@ -1202,10 +1251,10 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		finalOutput = outputPrefix.String + output
 	}
 
-	// Atomically set status=done AND patch in one UPDATE
+	// Set status=done and store the patch in the same transaction.
 	result, err := conn.ExecContext(ctx,
-		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, patch = ? WHERE id = ? AND status = 'running'`,
-		now, now, patch, jobID)
+		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
+		now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -1217,14 +1266,17 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	if rows == 0 {
 		return nil // Job was canceled
 	}
+	if err := setJobContent(ctx, conn, jobID, jobContentPatch, patch); err != nil {
+		return err
+	}
 
 	// Only store a verdict for non-empty output, matching CompleteJob:
 	// listings treat a non-NULL verdict_bool as proof that a non-empty
 	// review output exists and skip reading the output column.
 	verdictBoolVal := verdictBoolFromOutput(finalOutput)
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
+		`INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
@@ -1240,8 +1292,8 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
 // Review jobs require a JSON document. Prefixes are applied only when rendering.
-func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
-	return db.completeJob(jobID, agent, prompt, ReviewCompletion{Output: output})
+func (db *DB) CompleteJob(jobID int64, agent, output string) error {
+	return db.completeJob(jobID, agent, ReviewCompletion{Output: output})
 }
 
 // ReviewCompletion is the canonical result persisted for one completed review.
@@ -1257,15 +1309,15 @@ type ReviewCompletion struct {
 // review runner without reinterpreting its rendered output.
 func (db *DB) CompleteJobResult(
 	jobID int64,
-	agent, prompt string,
+	agent string,
 	result ReviewCompletion,
 ) error {
-	return db.completeJob(jobID, agent, prompt, result)
+	return db.completeJob(jobID, agent, result)
 }
 
 func (db *DB) completeJob(
 	jobID int64,
-	agent, prompt string,
+	agent string,
 	completion ReviewCompletion,
 ) error {
 	if err := validateStructuredOutputForWrite(completion.StructuredOutput); err != nil {
@@ -1375,8 +1427,8 @@ func (db *DB) completeJob(
 			excludedFileCount = *coverage.Excluded
 		}
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal,
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, finalOutput, verdictBoolVal,
 		nullString(string(completion.StructuredOutput)), reviewedFileCount, excludedFileCount,
 		reviewUUID, machineID, now)
 	if err != nil {
@@ -1408,16 +1460,21 @@ func validateStructuredOutputForWrite(raw jsontext.Value) error {
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
 func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	var result sql.Result
-	var err error
 	if workerID != "" {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?`,
-			now, errorMsg, now, jobID, workerID)
-	} else {
-		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-			now, errorMsg, now, jobID)
+		return db.failJob(context.Background(), jobID, errorMsg, " AND worker_id = ?", workerID)
 	}
+	return db.failJob(context.Background(), jobID, errorMsg, "")
+}
+
+// FailJobAttempt fails only the running attempt with the given worker and start time.
+func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
+	return db.failJob(ctx, jobID, errorMsg, " AND worker_id = ? AND started_at = ?", workerID, startedAt)
+}
+
+func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
+	now := time.Now().Format(time.RFC3339)
+	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
+	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
 	if err != nil {
 		return false, err
 	}
@@ -1518,6 +1575,12 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) ReenqueueJobWithRequest(
 	jobID int64, opts ReenqueueOpts, requestID uuid.UUID,
 ) (resultJobID int64, replayed bool, err error) {
+	db.attempts.mu.Lock()
+	defer db.attempts.mu.Unlock()
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return 0, false, err
+	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1550,6 +1613,15 @@ func (db *DB) ReenqueueJobWithRequest(
 		}
 	}
 
+	// A pulled terminal job can still have a displaced local agent unwinding.
+	// Keep its output and cancellation registration exclusive until cleanup.
+	if db.attempts.active[jobID] != nil {
+		return 0, false, sql.ErrNoRows
+	}
+	var previousEnqueuedAt string
+	if err := conn.QueryRowContext(ctx, `SELECT enqueued_at FROM review_jobs WHERE id = ?`, jobID).Scan(&previousEnqueuedAt); err != nil {
+		return 0, false, err
+	}
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
@@ -1557,8 +1629,21 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 
 	now := time.Now()
-	enqueuedAt := formatSQLiteTimestamp(now)
+	// PostgreSQL stores microseconds. Advance beyond the stored attempt at
+	// that precision even if this machine's clock is behind its predecessor.
+	nextAttempt := now.Truncate(time.Microsecond)
+	previousAttempt := parseSQLiteTime(previousEnqueuedAt).Truncate(time.Microsecond)
+	if !nextAttempt.After(previousAttempt) {
+		nextAttempt = previousAttempt.Add(time.Microsecond)
+	}
+	enqueuedAt := preciseTimestampAt(nextAttempt)
 	updatedAt := now.Format(time.RFC3339)
+
+	// Preserve the archive, but do not restore an earlier attempt as this
+	// rerun's canonical review if the new execution fails without output.
+	if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = ? AND resolved_at IS NULL`, updatedAt, jobID); err != nil {
+		return 0, false, err
+	}
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
@@ -1566,6 +1651,8 @@ func (db *DB) ReenqueueJobWithRequest(
 	// Stored-prompt jobs (task, compact, fix, insights, goal_review) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
+	// The local machine owns this new attempt, including an imported job, so
+	// its prompt and dependent reviews/comments can be uploaded.
 	// synced_at is cleared because this attempt's cost metadata is cleared: if
 	// the rerun completes unpriced in the same RFC3339 second as the prior
 	// sync, the second-precise updated_at vs synced_at comparison would compare
@@ -1576,7 +1663,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
+		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, source_machine_id = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
 		    agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_agent ELSE agent END,
 		    model = ?, provider = ?,
 		    reasoning = CASE WHEN ? THEN ? ELSE reasoning END,
@@ -1586,7 +1673,6 @@ func (db *DB) ReenqueueJobWithRequest(
 		    backup_model = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_model ELSE backup_model END,
 		    budget_original_agent = '', budget_original_backup_agent = '', budget_original_backup_model = '',
 		    prompt_prebuilt = 0,
-		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights', 'goal_review') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
 		    updated_at = ?
 		WHERE id = ?
@@ -1594,7 +1680,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, enqueuedAt,
+	`, enqueuedAt, machineID,
 		opts.RestorePlan || opts.Agent != "", opts.Agent,
 		nullString(opts.Model), nullString(opts.Provider),
 		opts.RestorePlan, opts.Reasoning,
@@ -1612,6 +1698,15 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	if rows == 0 {
 		return 0, false, sql.ErrNoRows
+	}
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE job_content
+		SET patch = NULL,
+		    prompt = CASE WHEN (SELECT job_type FROM review_jobs WHERE id = job_content.job_id)
+		                  IN ('task', 'compact', 'fix', 'insights', 'goal_review')
+		             THEN prompt ELSE NULL END
+		WHERE job_id = ?`, jobID); err != nil {
+		return 0, false, fmt.Errorf("reset job %d content: %w", jobID, err)
 	}
 	if requestID != uuid.Nil() {
 		if err := recordRerunRequest(ctx, conn, requestID, jobID, jobID, nil); err != nil {
@@ -2013,8 +2108,8 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 	}
 	return `CASE WHEN COALESCE(j.job_type, '') = ''
 			AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty'
-				OR j.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0)
-			THEN j.diff_content ELSE NULL END`
+				OR jc.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0)
+			THEN ` + jobDiffExpr + ` ELSE NULL END`
 }
 
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
@@ -2094,6 +2189,13 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 			conditions = append(conditions, "rv.closed = 1")
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
+			// Failed and canceled jobs never produce a review to resolve, so
+			// they are not open. An explicit status filter wins: asking for
+			// failed jobs with the open filter on must still list them.
+			if statusFilter == "" {
+				conditions = append(conditions, "j.status NOT IN (?, ?)")
+				args = append(args, JobStatusFailed, JobStatusCanceled)
+			}
 		}
 	}
 	if o.jobType != "" {
@@ -2155,9 +2257,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	// scan still binds the same positional field, it just never touches the
 	// large TEXT payload. Queued/running rows keep their prompt: the active
 	// set is small and the TUI prompt view reads it straight from list rows.
-	promptExpr := "j.prompt"
+	promptExpr := jobPromptExpr
 	if options.omitPrompt {
-		promptExpr = "CASE WHEN j.status IN ('queued', 'running') THEN j.prompt ELSE '' END"
+		promptExpr = "CASE WHEN j.status IN ('queued', 'running') THEN " + jobPromptExpr + " ELSE '' END"
 	}
 	structuredOutputExpr := "''"
 	diffContentExpr := findingCountsDiffContentExpr(options.includeFindings)
@@ -2174,6 +2276,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
 	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, options)
@@ -2234,23 +2337,7 @@ type JobStats struct {
 // CountJobStats returns aggregate status and resolution counts using the same
 // filter logic as ListJobs.
 func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOption) (JobStats, error) {
-	query := `
-		SELECT
-			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		LEFT JOIN reviews rv ON rv.job_id = j.id
-	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
-	query += queryFilters
-
+	query, args := jobStatsQuery(statusFilter, repoFilter, opts...)
 	var stats JobStats
 	err := db.QueryRow(query, args...).Scan(
 		&stats.Queued,
@@ -2265,21 +2352,47 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 	return stats, err
 }
 
+func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
+	// The unique job_id index still reads closed past each review's prompt.
+	// Use the covering metadata index, as the analytics query does.
+	query := `
+		SELECT
+			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
+		FROM review_jobs j
+		JOIN repos r ON r.id = j.repo_id
+		LEFT JOIN reviews rv INDEXED BY idx_reviews_job_verdict ON rv.job_id = j.id
+	`
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
+	return query + queryFilters, args
+}
+
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
+	return db.GetJobByIDContext(context.Background(), id)
+}
+
+func (db *DB) GetJobByIDContext(ctx context.Context, id int64) (*ReviewJob, error) {
 	var j ReviewJob
 	var fields reviewJobScanFields
-	err := db.QueryRow(`
+	err := db.QueryRowContext(ctx, `
 		SELECT `+jobSelectColumns(jobTextAll)+`
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.id = ?
 	`, id).Scan(jobScanDestinations(&j, &fields)...)
 	if err != nil {
 		return nil, err
 	}
 	applyReviewJobScan(&j, fields)
-	if err := db.attachExperimentAssignments(&j); err != nil {
+	if err := db.attachExperimentAssignmentsContext(ctx, &j); err != nil {
 		return nil, err
 	}
 
@@ -2293,7 +2406,8 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 func (db *DB) GetJobDiffContent(jobID int64) (string, error) {
 	var diff string
 	err := db.QueryRow(
-		"SELECT COALESCE(diff_content, '') FROM review_jobs WHERE id = ?",
+		`SELECT COALESCE(zstd_decompress(jc.diff_content), '')
+		 FROM review_jobs j LEFT JOIN job_content jc ON jc.job_id = j.id WHERE j.id = ?`,
 		jobID,
 	).Scan(&diff)
 	if err != nil {
@@ -2616,7 +2730,13 @@ func (db *DB) EnqueueAutoDesignJob(p EnqueueOpts) (int64, error) {
 // (status='running' AND worker_id=?). A stale worker whose job was canceled,
 // reclaimed, or retried will affect zero rows and receive sql.ErrNoRows.
 func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent, model string) error {
-	res, err := db.ExecContext(context.Background(), `
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET job_type = 'review',
 		    status = 'queued',
@@ -2632,7 +2752,6 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 		    command_line = NULL,
 		    agent_invoked = 0,
 		    synced_at = NULL,
-		    prompt = NULL,
 		    prompt_prebuilt = 0,
 		    error = NULL,
 		    updated_at = ?
@@ -2652,7 +2771,10 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if err := clearJobContent(ctx, tx, classifyJobID, jobContentPrompt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MarkClassifyAsSkippedDesign converts a classify row into a terminal
@@ -2739,11 +2861,15 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 // member failed or was canceled, so the synthesis job always runs and lands
 // a durable review — the parent never hangs.
 func (db *DB) MaybeReleasePanelSynthesis(panelRunUUID uuid.UUID) error {
+	return db.MaybeReleasePanelSynthesisContext(context.Background(), panelRunUUID)
+}
+
+func (db *DB) MaybeReleasePanelSynthesisContext(ctx context.Context, panelRunUUID uuid.UUID) error {
 	if panelRunUUID == uuid.Nil() {
 		return nil
 	}
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(ctx, `
 		UPDATE review_jobs
 		   SET claim_blocked = 0, updated_at = ?
 		 WHERE panel_run_uuid = ?
@@ -2768,7 +2894,11 @@ func (db *DB) MaybeReleasePanelSynthesis(panelRunUUID uuid.UUID) error {
 // These are the runs the safety sweep must release. Reuses the same
 // member-terminal predicate as MaybeReleasePanelSynthesis.
 func (db *DB) ListStuckPanelRuns() ([]uuid.UUID, error) {
-	rows, err := db.Query(`
+	return db.ListStuckPanelRunsContext(context.Background())
+}
+
+func (db *DB) ListStuckPanelRunsContext(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT panel_run_uuid FROM review_jobs s
 		WHERE s.panel_role = 'synthesis'
 		  AND s.claim_blocked = 1
@@ -2809,6 +2939,7 @@ func (db *DB) GetPanelMembers(panelRunUUID uuid.UUID) ([]ReviewJob, error) {
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		WHERE j.panel_run_uuid = ? AND j.panel_role = 'member'
 		ORDER BY j.panel_member_index, j.id
@@ -2854,6 +2985,7 @@ func (db *DB) GetSynthesisJob(panelRunUUID uuid.UUID) (*ReviewJob, error) {
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		WHERE j.panel_run_uuid = ? AND j.panel_role = 'synthesis'
 		LIMIT 1
@@ -2876,10 +3008,14 @@ func (db *DB) GetSynthesisJob(panelRunUUID uuid.UUID) (*ReviewJob, error) {
 // synthesis row and non-voting members are excluded, so synthesis, the PR
 // comment, and the commit status never see a non-voting review.
 func (db *DB) GetPanelMemberReviews(panelRunUUID uuid.UUID) ([]BatchReviewResult, error) {
+	return getPanelMemberReviews(db, panelRunUUID)
+}
+
+func getPanelMemberReviews(q querier, panelRunUUID uuid.UUID) ([]BatchReviewResult, error) {
 	if panelRunUUID == uuid.Nil() {
 		return nil, nil
 	}
-	rows, err := db.Query(`
+	rows, err := q.Query(`
 		SELECT j.id, j.agent, j.review_type, COALESCE(j.panel_member_name, ''), '', rv.verdict_bool, rv.structured_output, COALESCE(j.min_severity, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, ''),
 		       COALESCE(j.panel_member_config_json, ''),
 		       COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''), COALESCE(j.token_usage, '')

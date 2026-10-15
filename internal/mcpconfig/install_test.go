@@ -32,7 +32,11 @@ func TestInstallMergesAndSwitchesTransports(t *testing.T) {
 			case skills.AgentHermes:
 				initial = "theme: dark\nmcp_servers:\n  other:\n    command: other\n"
 				key = "mcp_servers"
+			case skills.AgentZcode:
+				initial = `{"theme":"dark","mcp":{"servers":{"other":{"command":"other"}}}}`
+				key = "mcp.servers"
 			}
+			require.NoError(t, os.MkdirAll(filepath.Dir(plan.Path), 0o700))
 			require.NoError(t, os.WriteFile(plan.Path, []byte(initial), 0o600))
 			opts.DryRun = false
 			for _, transport := range []string{"stdio", "http", "stdio"} {
@@ -56,7 +60,7 @@ func TestInstallMergesAndSwitchesTransports(t *testing.T) {
 				}
 				require.NoError(t, err)
 				assert.Equal("dark", doc["theme"])
-				servers := doc[key].(map[string]any)
+				servers := serversAt(doc, key)
 				assert.Equal("other", servers["other"].(map[string]any)["command"])
 				entry := servers["roborev"].(map[string]any)
 				if transport == "stdio" {
@@ -78,6 +82,16 @@ func TestInstallMergesAndSwitchesTransports(t *testing.T) {
 			}
 		})
 	}
+}
+
+// serversAt resolves the server map at key, following dotted nesting such as
+// ZCode's mcp.servers.
+func serversAt(doc map[string]any, key string) map[string]any {
+	servers, err := serversObject(doc, key)
+	if err != nil {
+		return nil
+	}
+	return servers
 }
 
 func TestInstallDryRunAndInvalidInputPreserveConfig(t *testing.T) {

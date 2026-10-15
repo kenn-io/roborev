@@ -43,6 +43,7 @@ func skillsCmd() *cobra.Command {
 				{skills.AgentGemini, "Gemini", "/"},
 				{skills.AgentHermes, "Hermes", "/"},
 				{skills.AgentQwen, "Qwen", "/"},
+				{skills.AgentZcode, "ZCode", "/"},
 			}
 
 			fmt.Println("Skills:")
@@ -127,6 +128,7 @@ Skills are installed for agents whose config directories exist:
   - Grok Build: ~/.grok/skills/ (or $GROK_HOME/skills/ if set)
   - Copilot, Cursor, Gemini, Qwen: ~/.<agent>/skills/
   - Hermes: ~/.hermes/skills/ (or $HERMES_HOME/skills/ if set)
+  - ZCode: ~/.zcode/skills/
 
 Use --path to install directly into a custom final skills directory. Custom
 installs use the Claude variant by default; use --agent to select another supported agent.
@@ -223,7 +225,7 @@ This command is idempotent - running it multiple times is safe.`,
 
 	installCmd.Flags().BoolVar(&installMCP, "mcp", false, "use MCP tools in skills; --mcp=false selects CLI mode")
 	installCmd.Flags().StringVar(&installPath, "path", "", "install directly into this final skills directory")
-	installCmd.Flags().StringVar(&installAgent, "agent", string(skills.AgentClaude), "skill variant for --path (claude, codex, droid, grok, copilot, cursor, gemini, hermes, or qwen)")
+	installCmd.Flags().StringVar(&installAgent, "agent", string(skills.AgentClaude), "skill variant for --path (claude, codex, droid, grok, copilot, cursor, gemini, hermes, qwen, or zcode)")
 
 	updateCmd := &cobra.Command{
 		Use:   "update",

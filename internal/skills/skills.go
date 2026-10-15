@@ -43,6 +43,7 @@ const (
 	AgentGemini  Agent = "gemini"
 	AgentHermes  Agent = "hermes"
 	AgentQwen    Agent = "qwen"
+	AgentZcode   Agent = "zcode"
 )
 
 type agentSpec struct {
@@ -71,6 +72,7 @@ var supportedAgents = []agentSpec{
 	{agent: AgentGemini, configDirName: ".gemini", configDirEnv: "GEMINI_CLI_HOME", embedFS: codexSkills, embedDir: "codex"},
 	{agent: AgentHermes, configDirName: ".hermes", configDirEnv: "HERMES_HOME", embedFS: codexSkills, embedDir: "codex"},
 	{agent: AgentQwen, configDirName: ".qwen", configDirEnv: "QWEN_HOME", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentZcode, configDirName: ".zcode", embedFS: codexSkills, embedDir: "codex"},
 }
 
 var userHomeDir = os.UserHomeDir

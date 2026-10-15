@@ -384,7 +384,7 @@ func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent
 	t.Helper()
 	_, err := h.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark done")
-	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, verdict_bool) VALUES (?, ?, 'p', '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
+	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, ?, '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
 	require.NoError(t, err, "insert review")
 }
 

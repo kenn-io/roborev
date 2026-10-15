@@ -496,7 +496,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 			return false
 		}, "Failed to enable foreign keys: %v", err)
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output) VALUES (99999, 'test', 'p', 'o')`)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, output) VALUES (99999, 'test', 'o')`)
 	if err == nil {
 		assert.Condition(t, func() bool {
 			return false
@@ -571,6 +571,7 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 		VALUES (1, ?, ?, 'codex', 'source response')
 	`, sourceCommitID, sourceJobID)
 	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 
 	db, err = Open(dbPath)
@@ -700,6 +701,7 @@ func TestBudgetMigrationResumesColumnAdditions(t *testing.T) {
 				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN ` + column)
 				require.NoError(t, err)
 			}
+			forgetSchemaVersion(t, db)
 			require.NoError(t, db.Close())
 
 			reopened, err := Open(dbPath)
@@ -1275,7 +1277,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 
 	// Verify prompt was preserved
 	var prompt string
-	err = db.QueryRow(`SELECT prompt FROM review_jobs WHERE id = 1`).Scan(&prompt)
+	err = db.QueryRow(`SELECT zstd_decompress(prompt) FROM job_content WHERE job_id = 1`).Scan(&prompt)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1524,6 +1526,7 @@ func TestRepoNameMigration(t *testing.T) {
 		require.NoError(t, err)
 		jobIDs = append(jobIDs, job.ID)
 	}
+	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
 	db, err = Open(dbPath)
 	require.NoError(t, err)

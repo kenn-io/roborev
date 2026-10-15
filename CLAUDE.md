@@ -79,7 +79,8 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/daemon/server.go` | HTTP API routes and handlers (~2000 lines) |
 | `internal/daemon/worker.go` | Worker pool, job processing, retry/failover |
 | `internal/daemon/ci_poller.go` | GitHub PR polling, synthesis, comment posting |
-| `internal/storage/db.go` | SQLite schema definition, 18 migrations |
+| `internal/storage/db.go` | Frozen baseline SQLite schema and pre-versioning migrations |
+| `internal/storage/migrations.go` | Numbered SQLite schema migrations |
 | `internal/storage/jobs.go` | Job CRUD, state transitions, verdict parsing |
 | `internal/storage/models.go` | Core types: ReviewJob, Repo, Commit, Review |
 | `internal/storage/postgres.go` | PostgreSQL schema (v1-v6) and operations |
@@ -168,7 +169,7 @@ Empty/`"review"` (standard), `"security"`, `"design"` — changes the system pro
 
 ### Migrations
 
-18 incremental migrations in `db.go` handle column additions, CHECK constraint updates, and table rebuilds. Each migration runs idempotically.
+SQLite schema changes are numbered migrations in `internal/storage/migrations.go`, recorded in `schema_migrations`. Migration 1 is a frozen baseline that runs the pre-versioning schema and idempotent `migrate()` steps in `db.go`. See AGENTS.md for the rules.
 
 ## Config System
 

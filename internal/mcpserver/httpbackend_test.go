@@ -260,6 +260,13 @@ func TestHTTPBackendSearchUsesStablePrivateErrors(t *testing.T) {
 		wantText string
 	}{
 		{
+			name:     "unexpected conflict",
+			status:   http.StatusConflict,
+			body:     `{"detail":"provider-secret needle-secret"}`,
+			wantCode: ErrorCodeInvalidArgument,
+			wantText: "search request is invalid",
+		},
+		{
 			name:     "invalid",
 			status:   http.StatusBadRequest,
 			body:     `{"detail":"bad query needle-secret"}`,
@@ -439,4 +446,20 @@ func TestHTTPBackendSearchTransportErrorDoesNotLeakURLOrQuery(t *testing.T) {
 	assert.NotContains(t, err.Error(), "needle-secret")
 	assert.NotContains(t, err.Error(), "daemon.invalid")
 	assert.NotContains(t, err.Error(), "provider-secret")
+}
+
+func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
+	d, backend := newFakeDaemon(t)
+	message := (&storage.AmbiguousRepoNameError{
+		Name: "widgets", Paths: []string{"/workspace/main", "/workspace/worktree"},
+	}).Error()
+	body, err := json.Marshal(map[string]any{"detail": message})
+	require.NoError(t, err)
+	d.routes["/api/search"] = jsonResponse(http.StatusConflict, string(body))
+	result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "needle", "repo": "widgets"})
+	require.True(t, result.IsError)
+	var failure toolErrorOutput
+	decodeText(t, result, &failure)
+	assert.Equal(t, ErrorCodeInvalidArgument, failure.Error.Code)
+	assert.Equal(t, NewError(ErrorCodeInvalidArgument, message).Error(), failure.Error.Message)
 }

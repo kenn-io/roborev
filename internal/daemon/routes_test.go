@@ -73,8 +73,8 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 		require.NoError(t, err)
 		_, err = tx.Exec(
 			`INSERT INTO reviews
-			 (job_id, uuid, agent, prompt, output, created_at, updated_at, verdict_bool)
-			 VALUES (?, ?, 'test-agent', 'prompt', 'No issues found.', ?, ?, 1)`,
+			 (job_id, uuid, agent, output, created_at, updated_at, verdict_bool)
+			 VALUES (?, ?, 'test-agent', 'No issues found.', ?, ?, 1)`,
 			jobID, testUUID("review-"+sha), createdAt, createdAt,
 		)
 		require.NoError(t, err)
@@ -1180,6 +1180,25 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	assert.Equal(t, "#/components/schemas/EnqueueCreatedResponse", createdRefs[0])
 	assert.Contains(t, createdRefs, "#/components/schemas/PanelEnqueueResponse")
 	assert.Contains(t, createdRefs, "#/components/schemas/EnqueueSkippedResponse")
+}
+
+func TestMutationOpenAPIDocumentsHandlerErrorResponses(t *testing.T) {
+	api := (&Server{}).registerHumaAPI(http.NewServeMux())
+	for _, path := range []string{"/api/comment", "/api/review/close", "/api/rebuttal"} {
+		t.Run(path, func(t *testing.T) {
+			operation := api.OpenAPI().Paths[path].Post
+			require.NotNil(t, operation)
+			for _, status := range []string{"400", "404", "409", "422", "500"} {
+				response, ok := operation.Responses[status]
+				require.True(t, ok, "operation %s must document HTTP %s", path, status)
+				require.NotNil(t, response)
+				problem, ok := response.Content["application/problem+json"]
+				require.True(t, ok, "operation %s HTTP %s must document problem details", path, status)
+				require.NotNil(t, problem.Schema)
+				assert.Equal(t, "#/components/schemas/ErrorModel", problem.Schema.Ref)
+			}
+		})
+	}
 }
 
 func TestHumaListRepos(t *testing.T) {

@@ -233,12 +233,12 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 	var jobID int64
 	require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
 	_, err := db.Exec(`UPDATE review_jobs SET
-		prompt = 'excluded-prompt', diff_content = 'excluded-diff', patch = 'excluded-patch',
 		command_line = 'excluded-command', token_usage = 'excluded-token-data',
 		worktree_path = 'excluded-worktree-path', error = 'excluded-log'
 		WHERE id = ?`, jobID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE reviews SET prompt = 'excluded-review-prompt' WHERE id = ?`, reviewID)
+	_, err = db.Exec(`INSERT INTO job_content (job_id, prompt, diff_content, patch)
+		VALUES (?, zstd_compress('excluded-prompt'), zstd_compress('excluded-diff'), zstd_compress('excluded-patch'))`, jobID)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE repos SET root_path = 'excluded-repository-path', identity = 'excluded-remote-identity' WHERE id = ?`, repoID)
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 	for _, excluded := range []string{
 		"excluded-prompt", "excluded-diff", "excluded-patch", "excluded-command",
 		"excluded-token-data", "excluded-worktree-path", "excluded-log",
-		"excluded-review-prompt", "excluded-repository-path", "excluded-remote-identity",
+		"excluded-repository-path", "excluded-remote-identity",
 	} {
 		assert.NotContains(t, string(encoded), excluded)
 	}
@@ -335,8 +335,8 @@ func seedSearchFeedReview(t *testing.T, db *DB, repoID, commitID int64, sequence
 		structured = fixture.structured
 	}
 	reviewResult, err := db.Exec(`
-		INSERT INTO reviews (job_id, agent, prompt, output, structured_output, created_at, closed, uuid)
-		VALUES (?, 'codex', 'review prompt', ?, ?, '2026-09-15T11:00:00Z', 0, ?)`,
+		INSERT INTO reviews (job_id, agent, output, structured_output, created_at, closed, uuid)
+		VALUES (?, 'codex', ?, ?, '2026-09-15T11:00:00Z', 0, ?)`,
 		jobID, fixture.output, structured, reviewUUID)
 	require.NoError(t, err)
 	reviewID, err := reviewResult.LastInsertId()

@@ -72,7 +72,9 @@ func TestRestoreLegacyHistoryAndImport(t *testing.T) {
 func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "sync-head")
+	setStatus(t, env.db, env.job.ID, JobStatusDone)
 	incoming := PulledReview{
+		JobEnqueuedAt: storedJobEnqueuedAt(t, env.db, env.job.ID), JobSourceMachineID: storedJobSourceMachineID(t, env.db, env.job.ID),
 		UUID: testUUID("legacy-sync-document"), JobUUID: *env.job.UUID, Agent: "test", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"The write loses data.","recorded_verdict":null}}`),
 	}
@@ -85,6 +87,7 @@ func TestLegacySyncCannotReplaceConvertedReview(t *testing.T) {
 	require.Len(t, records, 1)
 	raw := jsontext.Value(`{"schema_version":1,"summary":"Converted.","findings":[]}`)
 	require.NoError(t, env.db.ResolveLegacyReview(records[0].ID, raw))
+	require.NoError(t, env.db.MarkReviewSynced(review.ID))
 	incoming.UpdatedAt = incoming.UpdatedAt.Add(time.Hour)
 	require.NoError(t, env.db.UpsertPulledReview(incoming))
 	converted, err := env.db.GetReviewByJobID(env.job.ID)
@@ -97,7 +100,7 @@ func TestMigrateLegacySynthesisValidatesSources(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "synthesis-head")
 	jobID := seedLegacyPanel(t, env, "legacy-source-check")
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', ?, 0, ?)`, jobID, legacyFindingsMarkdown, testUUID("legacy-source-check"))
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, 0, ?)`, jobID, legacyFindingsMarkdown, testUUID("legacy-source-check"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())
@@ -120,7 +123,7 @@ func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
 	env := setupJobEnv(t, t.TempDir(), "synthesis-existing-json")
 	jobID := seedLegacyPanel(t, env, "existing-json")
 	raw := `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}]}`
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, structured_output, verdict_bool, uuid) VALUES (?, 'test', 'prompt', 'Older rendered text without machine-readable attribution.', ?, 0, ?)`, jobID, raw, testUUID("existing-json-review"))
+	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool, uuid) VALUES (?, 'test', 'Older rendered text without machine-readable attribution.', ?, 0, ?)`, jobID, raw, testUUID("existing-json-review"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())

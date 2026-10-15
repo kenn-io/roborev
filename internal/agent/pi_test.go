@@ -139,15 +139,28 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 		},
 		{
 			name:          "structured review",
-			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false),
-			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false),
+			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, ""),
+			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, ""),
 			managed: []string{
-				"--no-session", "--extension", config.DefaultPiJSONSchemaExtension,
+				"--mode", "json", "--extension", config.DefaultPiJSONSchemaExtension,
 				"--json-schema", string(schema), "--json-output", "result.json",
 				"--json-fallback", "none", "-p", "--tools",
 				piStructuredReviewReadOnlyTools, "--provider", "cpa",
 				"--model", "gpt-test", "--thinking", "low", "@prompt.md",
-				"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+				"Follow the attached instructions and write the result with the structured JSON output tool.",
+			},
+		},
+		{
+			name:          "structured resumed review",
+			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl"),
+			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl"),
+			managed: []string{
+				"--mode", "json", "--session", "/tmp/pi-session.jsonl", "--extension", config.DefaultPiJSONSchemaExtension,
+				"--json-schema", string(schema), "--json-output", "result.json",
+				"--json-fallback", "none", "-p", "--tools",
+				piStructuredReviewReadOnlyTools, "--provider", "cpa",
+				"--model", "gpt-test", "--thinking", "low", "@prompt.md",
+				"Follow the attached instructions and write the result with the structured JSON output tool.",
 			},
 		},
 		{
@@ -226,6 +239,7 @@ func TestPiStructuredReviewToolPermissions(t *testing.T) {
 				"result.json",
 				jsonRaw(`{"type":"object"}`),
 				tt.agenticMode,
+				"",
 			)
 			assert.Equal(t, tt.wantTools, argAfter(args, "--tools"))
 		})

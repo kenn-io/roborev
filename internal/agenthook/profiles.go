@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	AgentGrok kitagenthook.Agent = "grok"
+	AgentGrok  kitagenthook.Agent = "grok"
+	AgentZcode kitagenthook.Agent = "zcode"
 )
 
 var profileExecutables = map[kitagenthook.Agent][]string{
@@ -26,44 +27,85 @@ var profileExecutables = map[kitagenthook.Agent][]string{
 	kitagenthook.AgentHermes:  {"hermes"},
 	kitagenthook.AgentQwen:    {"qwen"},
 	AgentGrok:                 {"grok"},
+	AgentZcode:                {"zcode"},
 }
 
 func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if raw != "" && raw != "all" {
-		if raw == string(AgentGrok) {
-			return []kitagenthook.Agent{AgentGrok}, nil
+		if agent, ok := localProfile(raw); ok {
+			return []kitagenthook.Agent{agent}, nil
 		}
 		agent, err := kitagenthook.ParseAgent(raw)
 		if err != nil {
 			return nil, err
 		}
+		if _, supported := profileExecutables[agent]; !supported {
+			return nil, fmt.Errorf("unsupported agent hook profile %q", raw)
+		}
 		return []kitagenthook.Agent{agent}, nil
 	}
 
 	profiles := kitagenthook.Profiles()
+	localAgents := localProfiles()
 	if raw == "all" {
-		agents := make([]kitagenthook.Agent, 0, len(profiles)+1)
+		agents := make([]kitagenthook.Agent, 0, len(profiles)+len(localAgents))
 		for _, profile := range profiles {
-			agents = append(agents, profile.Agent)
+			if _, supported := profileExecutables[profile.Agent]; supported {
+				agents = append(agents, profile.Agent)
+			}
 		}
-		agents = append(agents, AgentGrok)
-		return agents, nil
+		return append(agents, localAgents...), nil
 	}
 
-	agents := make([]kitagenthook.Agent, 0, len(profiles))
+	agents := make([]kitagenthook.Agent, 0, len(profiles)+len(localAgents))
 	for _, profile := range profiles {
-		if profileInstalled(profile.Agent) {
+		if _, supported := profileExecutables[profile.Agent]; supported && profileInstalled(profile.Agent) {
 			agents = append(agents, profile.Agent)
 		}
 	}
-	if profileInstalled(AgentGrok) {
-		agents = append(agents, AgentGrok)
+	for _, agent := range localAgents {
+		if profileInstalled(agent) {
+			agents = append(agents, agent)
+		}
 	}
 	if len(agents) == 0 {
 		return nil, fmt.Errorf("no installed coding agents detected; select one with --agent <name> or install every profile with --agent all")
 	}
 	return agents, nil
+}
+
+// localProfiles lists agent hook integrations this repository implements
+// without a kit profile, in stable display order.
+func localProfiles() []kitagenthook.Agent {
+	return []kitagenthook.Agent{AgentGrok, AgentZcode}
+}
+
+func localProfile(raw string) (kitagenthook.Agent, bool) {
+	for _, agent := range localProfiles() {
+		if raw == string(agent) {
+			return agent, true
+		}
+	}
+	return "", false
+}
+
+// LocalProfile resolves a repository-local agent hook profile name, such as
+// grok or zcode, that kit does not know about.
+func LocalProfile(raw string) (kitagenthook.Agent, bool) {
+	return localProfile(strings.ToLower(strings.TrimSpace(raw)))
+}
+
+// LocalProfileDisplayName returns the harness display name for a
+// repository-local agent hook profile.
+func LocalProfileDisplayName(agent kitagenthook.Agent) (string, bool) {
+	switch agent {
+	case AgentGrok:
+		return "Grok Build", true
+	case AgentZcode:
+		return "ZCode", true
+	}
+	return "", false
 }
 
 func profileInstalled(agent kitagenthook.Agent) bool {
@@ -80,9 +122,12 @@ func profileInstalled(agent kitagenthook.Agent) bool {
 	}
 	path := ""
 	var err error
-	if agent == AgentGrok {
+	switch agent {
+	case AgentGrok:
 		path = DefaultGrokHooksPath()
-	} else {
+	case AgentZcode:
+		path = DefaultZcodeConfigPath()
+	default:
 		path, err = kitagenthook.ConfigPath(agent)
 	}
 	if err != nil {

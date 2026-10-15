@@ -1,10 +1,16 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
 const backend = process.env.ROBOREV_WEB_DEV_BACKEND;
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [
+    svelte({
+      // Shared components outside web must not hash the checkout's absolute path.
+      compilerOptions: { rootDir: resolve(import.meta.dirname, "..") },
+    }),
+  ],
   base: "./",
   optimizeDeps: {
     exclude: ["@kenn-io/kit-ui"],

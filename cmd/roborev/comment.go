@@ -20,9 +20,10 @@ import (
 
 func commentCmd() *cobra.Command {
 	var (
-		commenter  string
-		message    string
-		forceJobID bool
+		commenter    string
+		message      string
+		forceJobID   bool
+		rebuttalOpts rebuttalOptions
 	)
 
 	cmd := &cobra.Command{
@@ -42,17 +43,26 @@ Examples:
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if err := rebuttalOpts.validate(); err != nil {
+				return usageErr(cmd, err)
+			}
 			ref := args[0]
 
 			// Check if ref is a job ID (numeric) or SHA
 			var jobID int64
 			var sha string
 
-			if forceJobID {
-				// --job flag: treat ref as job ID
+			if forceJobID || rebuttalOpts.enabled {
+				// Both explicit job mode and rebuttals require a job ID.
 				id, err := strconv.ParseInt(ref, 10, 64)
 				if err != nil {
+					if rebuttalOpts.enabled {
+						return usageErr(cmd, fmt.Errorf("--rebuttal requires a numeric review job ID, got %q", ref))
+					}
 					return usageErr(cmd, fmt.Errorf("--job requires numeric job ID, got %q", ref))
+				}
+				if rebuttalOpts.enabled && id <= 0 {
+					return usageErr(cmd, fmt.Errorf("--rebuttal requires a positive job ID"))
 				}
 				jobID = id
 			} else {
@@ -125,6 +135,10 @@ Examples:
 				}
 			}
 
+			if rebuttalOpts.enabled {
+				return runCommentRebuttal(cmd, jobID, commenter, message, rebuttalOpts)
+			}
+
 			// Build request with either job_id or sha
 			reqData := map[string]any{
 				"commenter": commenter,
@@ -158,6 +172,10 @@ Examples:
 	cmd.Flags().StringVar(&commenter, "commenter", "", "commenter name (default: $USER)")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "comment message (opens editor if not provided)")
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID (not SHA)")
+
+	cmd.Flags().BoolVar(&rebuttalOpts.enabled, "rebuttal", false, "re-evaluate one finding in the original agent session and wait")
+	cmd.Flags().StringVar(&rebuttalOpts.finding, "finding", "", "original review excerpt to re-evaluate (requires --rebuttal)")
+	cmd.Flags().BoolVar(&rebuttalOpts.close, "close", false, "close the whole review after recording the rebuttal assessment")
 
 	return cmd
 }

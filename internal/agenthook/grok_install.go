@@ -2,11 +2,8 @@ package agenthook
 
 import (
 	"bytes"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,49 +36,33 @@ func planGrokInstall(opts InstallOptions) (kitagenthook.Result, error) {
 	if path == "" {
 		return kitagenthook.Result{}, errors.New("could not resolve Grok Build hooks path")
 	}
-	command, err := grokHookCommand(opts)
+	command, err := hookRunCommand(AgentGrok, opts)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
-	root, err := readGrokConfig(path)
+	root, err := readHooksConfig(path, "Grok Build")
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
-	before, err := marshalGrokConfig(root)
+	before, err := marshalHooksConfig(root)
 	if err != nil {
 		return kitagenthook.Result{}, fmt.Errorf("encode existing Grok Build hook config %s: %w", path, err)
 	}
-	hooks, err := grokHooksObject(root, path)
+	hooks, err := hooksObject(root, path, "Grok Build")
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
-	if err := removeGrokOwnedHooks(hooks, path); err != nil {
+	if err := removeOwnedHooks(hooks, path, "Grok Build"); err != nil {
 		return kitagenthook.Result{}, err
 	}
-	timeout := int(opts.Timeout / time.Second)
-	for _, spec := range []struct {
-		event   string
-		matcher string
-	}{
+	if err := appendHookEntries(hooks, path, "Grok Build", command, opts.Timeout, []hookSpec{
 		{event: "PreToolUse", matcher: GrokShellMatcher},
 		{event: "PostToolUse", matcher: GrokShellMatcher},
 		{event: "Stop"},
-	} {
-		handler := map[string]any{"type": "command", "command": command}
-		if timeout > 0 {
-			handler["timeout"] = timeout
-		}
-		entry := map[string]any{"hooks": []any{handler}}
-		if spec.matcher != "" {
-			entry["matcher"] = spec.matcher
-		}
-		entries, err := grokEventEntries(hooks, spec.event, path)
-		if err != nil {
-			return kitagenthook.Result{}, err
-		}
-		hooks[spec.event] = append(entries, entry)
+	}); err != nil {
+		return kitagenthook.Result{}, err
 	}
-	after, err := marshalGrokConfig(root)
+	after, err := marshalHooksConfig(root)
 	if err != nil {
 		return kitagenthook.Result{}, fmt.Errorf("encode Grok Build hook config %s: %w", path, err)
 	}
@@ -90,149 +71,27 @@ func planGrokInstall(opts InstallOptions) (kitagenthook.Result, error) {
 	}, nil
 }
 
-func grokHookCommand(opts InstallOptions) (string, error) {
-	if command := strings.TrimSpace(opts.Command); command != "" {
-		selected, err := commandAgent(command)
+type hookSpec struct {
+	event   string
+	matcher string
+}
+
+func appendHookEntries(events map[string]any, path, display, command string, timeout time.Duration, specs []hookSpec) error {
+	seconds := int(timeout / time.Second)
+	for _, spec := range specs {
+		handler := map[string]any{"type": "command", "command": command}
+		if seconds > 0 {
+			handler["timeout"] = seconds
+		}
+		entry := map[string]any{"hooks": []any{handler}}
+		if spec.matcher != "" {
+			entry["matcher"] = spec.matcher
+		}
+		entries, err := hookEventEntries(events, spec.event, path, display)
 		if err != nil {
-			return "", err
+			return err
 		}
-		if selected != AgentGrok {
-			return "", fmt.Errorf("hook command selects %s, not %s", selected, AgentGrok)
-		}
-		if opts.RoborevServerAddr != "" {
-			args, err := kitagenthook.BuildCommand("--roborev-server", opts.RoborevServerAddr)
-			if err != nil {
-				return "", err
-			}
-			command += " " + args.Native
-		}
-		if opts.MCP {
-			command += " --mcp"
-		}
-		return command + " " + agentHookMarker, nil
-	}
-	args := []string{"agent-hook", "run", "--agent", string(AgentGrok), agentHookMarker}
-	if opts.RoborevServerAddr != "" {
-		args = append(args, "--roborev-server", opts.RoborevServerAddr)
-	}
-	if opts.MCP {
-		args = append(args, "--mcp")
-	}
-	commands, err := kitagenthook.BuildCommand(opts.Executable, args...)
-	if err != nil {
-		return "", err
-	}
-	return commands.Native, nil
-}
-
-func readGrokConfig(path string) (map[string]any, error) {
-	body, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]any{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read Grok Build hook config %s: %w", path, err)
-	}
-	if len(strings.TrimSpace(string(body))) == 0 {
-		return map[string]any{}, nil
-	}
-	decoder := jsontext.NewDecoder(bytes.NewReader(body))
-	var root map[string]any
-	if err := json.UnmarshalDecode(decoder, &root, json.WithUnmarshalers(json.UnmarshalFromFunc(func(dec *jsontext.Decoder, value *any) error {
-		if dec.PeekKind() != '0' {
-			return errors.ErrUnsupported
-		}
-		raw, err := dec.ReadValue()
-		*value = raw.Clone()
-		return err
-	}))); err != nil {
-		return nil, fmt.Errorf("decode Grok Build hook config %s: %w", path, err)
-	}
-	var trailing any
-	if err := json.UnmarshalDecode(decoder, &trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("multiple JSON values")
-		}
-		return nil, fmt.Errorf("decode Grok Build hook config %s: %w", path, err)
-	}
-	if root == nil {
-		root = map[string]any{}
-	}
-	return root, nil
-}
-
-func marshalGrokConfig(root map[string]any) ([]byte, error) {
-	body, err := json.Marshal(root, jsontext.WithIndent("  "), json.Deterministic(true))
-	if err != nil {
-		return nil, err
-	}
-	return append(body, '\n'), nil
-}
-
-func grokHooksObject(root map[string]any, path string) (map[string]any, error) {
-	raw, ok := root["hooks"]
-	if !ok || raw == nil {
-		hooks := map[string]any{}
-		root["hooks"] = hooks
-		return hooks, nil
-	}
-	hooks, ok := raw.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid Grok Build hook config %s: field %q must be an object", path, "hooks")
-	}
-	return hooks, nil
-}
-
-func grokEventEntries(hooks map[string]any, event, path string) ([]any, error) {
-	raw, ok := hooks[event]
-	if !ok || raw == nil {
-		return nil, nil
-	}
-	entries, ok := raw.([]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid Grok Build hook config %s: event %q must be an array", path, event)
-	}
-	return entries, nil
-}
-
-func removeGrokOwnedHooks(hooks map[string]any, path string) error {
-	for event, rawEntries := range hooks {
-		entries, ok := rawEntries.([]any)
-		if !ok {
-			return fmt.Errorf("invalid Grok Build hook config %s: event %q must be an array", path, event)
-		}
-		keptEntries := make([]any, 0, len(entries))
-		for _, rawEntry := range entries {
-			entry, ok := rawEntry.(map[string]any)
-			rawHandlers, hasHandlers := entry["hooks"]
-			if !ok || !hasHandlers || rawHandlers == nil {
-				keptEntries = append(keptEntries, rawEntry)
-				continue
-			}
-			handlers, ok := rawHandlers.([]any)
-			if !ok {
-				return fmt.Errorf("invalid Grok Build hook config %s: event %q entry hooks must be an array", path, event)
-			}
-			keptHandlers := make([]any, 0, len(handlers))
-			for _, rawHandler := range handlers {
-				handler, _ := rawHandler.(map[string]any)
-				command, _ := handler["command"].(string)
-				if strings.Contains(command, agentHookMarker) {
-					continue
-				}
-				keptHandlers = append(keptHandlers, rawHandler)
-			}
-			if len(keptHandlers) == 0 {
-				continue
-			}
-			entry["hooks"] = keptHandlers
-			keptEntries = append(keptEntries, entry)
-		}
-		if len(keptEntries) == 0 {
-			delete(hooks, event)
-		} else {
-			hooks[event] = keptEntries
-		}
+		events[spec.event] = append(entries, entry)
 	}
 	return nil
 }

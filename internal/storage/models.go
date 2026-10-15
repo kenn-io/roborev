@@ -65,13 +65,15 @@ const (
 
 // Job source values identify daemon-created automation rows.
 const (
+	JobSourceRebuttal   = "rebuttal"
 	JobSourceAutoDesign = "auto_design"
 	JobSourceCI         = "ci"
 	JobSourcePostCommit = "post_commit"
 )
 
 type ReviewJob struct {
-	WebURL              string     `json:"web_url,omitempty"` // Response-only browser link; not persisted.
+	WebURL              string     `json:"web_url,omitempty"`                            // Response-only browser link; not persisted.
+	OriginalReviewUUID  *uuid.UUID `json:"original_review_uuid,omitempty" format:"uuid"` // Response-only rebuttal version token.
 	ID                  int64      `json:"id"`
 	RepoID              int64      `json:"repo_id"`
 	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges
@@ -130,7 +132,7 @@ type ReviewJob struct {
 	TokenUsage            string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            *uuid.UUID `json:"uuid,omitempty" format:"uuid"`              // Globally unique identifier for sync
-	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that created this job
+	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that owns the current attempt
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`                      // Last modification time
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`                       // Last sync time
 
@@ -506,9 +508,16 @@ type SearchHealth struct {
 
 // ComponentHealth represents the health of a single component
 type ComponentHealth struct {
-	Name    string `json:"name"`
-	Healthy bool   `json:"healthy"`
-	Message string `json:"message,omitempty"`
+	Name     string             `json:"name"`
+	Healthy  bool               `json:"healthy"`
+	Message  string             `json:"message,omitempty"`
+	Recovery *ComponentRecovery `json:"recovery,omitempty"`
+}
+
+// ComponentRecovery describes current retry work, not a successful health check.
+type ComponentRecovery struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Deadline   time.Time `json:"deadline"`
 }
 
 // ErrorEntry represents a single error log entry (mirrors daemon.ErrorEntry for API)

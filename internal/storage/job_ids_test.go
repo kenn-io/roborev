@@ -34,14 +34,13 @@ func TestJobIDsSurviveRepositoryDeletion(t *testing.T) {
 func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	t.Parallel()
 	// Build the schema before the forward ID migration, as a shipped database.
+	require.NoError(t, registerContentFunctions())
 	path := filepath.Join(t.TempDir(), "reviews.db")
 	conn, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	db := &DB{DB: conn}
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(schema)
-	require.NoError(t, err)
-	require.NoError(t, db.migrate())
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 	require.NoError(t, db.migrateLegacyReviews())
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)

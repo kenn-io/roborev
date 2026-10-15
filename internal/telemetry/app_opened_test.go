@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -62,8 +64,9 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 		sent := messages()
 		assert.Equal([]string{"app_opened:cli", "app_opened:tui", "app_opened:web", "app_opened:"}, surfacesOf(sent))
 		require.Len(t, sent, 4)
+		assert.NotEmpty(sent[0].DistinctID)
 		for _, message := range sent {
-			assert.Equal("anonymous-install-id", message.DistinctID)
+			assert.Equal(sent[0].DistinctID, message.DistinctID)
 			assert.Equal("roborev", message.Properties["application"])
 			assert.Equal("daemon", message.Properties["source"])
 		}
@@ -151,26 +154,20 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	for _, body := range []string{
-		`{"event":"app_opened","properties":{"surface":"cli"}}`,
-		`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`,
-	} {
-		t.Run(body, func(t *testing.T) {
-			reporter, messages := newPostHogStubReporter(t)
-			limiter := &AppOpenedLimiter{Database: testutil.OpenTestDB(t)}
-			var wg sync.WaitGroup
-			codes := make([]int, 8)
-			for i := range codes {
-				wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
-			}
-			wg.Wait()
-			require.NoError(t, reporter.Close())
-			for _, code := range codes {
-				assert.Equal(t, http.StatusAccepted, code)
-			}
-			assert.Len(t, messages(), 1)
-		})
+	body := `{"event":"app_opened","properties":{"surface":"cli"}}`
+	reporter, messages := newPostHogStubReporter(t)
+	limiter := &AppOpenedLimiter{}
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
 	}
+	wg.Wait()
+	require.NoError(t, reporter.Close())
+	for _, code := range codes {
+		assert.Equal(t, http.StatusAccepted, code)
+	}
+	assert.Len(t, messages(), 1)
 }
 
 func TestPostAppOpened(t *testing.T) {
@@ -226,146 +223,81 @@ func TestPostAppOpened(t *testing.T) {
 	})
 }
 
-func TestScreenViewedLimiterPersistsAcrossInterfacesAndRestarts(t *testing.T) {
+func TestScreenViewedDailyClaims(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	reporter, messages := newPostHogStubReporter(t)
-	now := time.Date(2026, 3, 1, 23, 59, 0, 0, time.UTC)
-	limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-	reviews := `{"event":"screen_viewed","properties":{"screen":"reviews","surface":"web","path":"/private"}}`
-	require.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
-	limiter = &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-	for _, body := range []string{
-		reviews,
-		`{"event":"screen_viewed","properties":{"screen":"reviews","surface":"tui"}}`,
-		`{"event":"screen_viewed","properties":{"screen":"analytics","surface":"web"}}`,
-		`{"event":"app_opened","properties":{"surface":"web"}}`,
-		`{"event":"screen_viewed"}`,
-		`{"event":"screen_viewed","properties":{"screen":123}}`,
-		`{"event":"screen_viewed","properties":{"screen":"unknown"}}`,
-	} {
-		assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-	}
-	now = now.Add(time.Minute)
-	assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, reviews).Code)
-	require.NoError(t, reporter.Close())
-	got := messages()
-	require.Len(t, got, 4)
-	assert.Equal(t, "reviews", got[0].Properties[PropertyScreen])
-	assert.Equal(t, "analytics", got[1].Properties[PropertyScreen])
-	assert.Equal(t, EventAppOpened, got[2].Event)
-	assert.Equal(t, "reviews", got[3].Properties[PropertyScreen])
-	assert.NotContains(t, got[0].Properties, "path")
-	for i := range 8 {
-		t.Run(fmt.Sprint("padded aliases ", i), func(t *testing.T) {
-			reporter, messages := newPostHogStubReporter(t)
+	for _, tc := range []struct {
+		offset  int
+		aliases bool
+		recover bool
+	}{{-1, false, false}, {0, false, false}, {1, false, false}, {0, true, false}, {-1, false, true}} {
+		t.Run(fmt.Sprint(tc), func(t *testing.T) {
 			db := testutil.OpenTestDB(t)
-			limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-			body := `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
-			skip, finish, canonical := limiter.alreadySentToday(reporter, []byte(body))
-			require.False(t, skip)
-			require.NotNil(t, finish)
-			var normalized struct {
-				Properties map[string]any `json:"properties"`
+			now := time.Now().UTC()
+			day := now.AddDate(0, 0, tc.offset).Format(time.DateOnly)
+			require.NoError(t, db.SetSyncState("telemetry.screen.queue", day))
+			endpoint, messages := testutil.NewPostHogStub(t)
+			opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+			if tc.recover {
+				require.NoError(t, os.Mkdir(opts.DailyClaimsPath, 0o700))
 			}
-			require.NoError(t, json.Unmarshal(canonical, &normalized))
-			assert.NotContains(t, normalized.Properties, " screen ")
-			assert.NotContains(t, normalized.Properties, " surface ")
-			assert.NotContains(t, normalized.Properties, "path")
-			stored, err := db.GetSyncState("telemetry.screen." + normalized.Properties[PropertyScreen].(string))
-			require.NoError(t, err)
-			assert.Empty(t, stored)
-			finish(false)
-			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-			claimed := "review"
-			queueDay, err := db.GetSyncState("telemetry.screen.queue")
-			require.NoError(t, err)
-			if queueDay == now.UTC().Format(time.DateOnly) {
-				claimed = "queue"
-			}
-			for _, screen := range []string{"queue", "review"} {
-				ordinary := fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":%q,"surface":"tui"}}`, screen)
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, ordinary).Code)
-			}
-			require.NoError(t, reporter.Close())
-			got := messages()
-			require.Len(t, got, 2)
-			assert.Equal(t, claimed, got[0].Properties[PropertyScreen])
-			assert.ElementsMatch(t, []any{"queue", "review"}, []any{got[0].Properties[PropertyScreen], got[1].Properties[PropertyScreen]})
-		})
-	}
-}
-
-func TestScreenViewedClaimsFinishingOutOfOrder(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	reporter, _ := newPostHogStubReporter(t)
-	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
-	now := time.Date(2026, 3, 1, 23, 59, 0, 0, time.UTC)
-	limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-	body := []byte(`{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`)
-	skip, earlier, _ := limiter.alreadySentToday(reporter, body)
-	require.False(t, skip)
-	require.NotNil(t, earlier)
-	now = now.Add(time.Minute)
-	skip, later, _ := limiter.alreadySentToday(reporter, body)
-	require.False(t, skip)
-	require.NotNil(t, later)
-	later(true)
-	earlier(true)
-	stored, err := db.GetSyncState("telemetry.screen.queue")
-	require.NoError(t, err)
-	assert.Equal(t, now.Format(time.DateOnly), stored)
-	skip, _, _ = limiter.alreadySentToday(reporter, body)
-	assert.True(t, skip)
-	limiter = &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
-	skip, _, _ = limiter.alreadySentToday(reporter, body)
-	assert.True(t, skip)
-	now = now.Add(-time.Minute)
-	skip, _, _ = limiter.alreadySentToday(reporter, body)
-	assert.True(t, skip)
-}
-
-func TestScreenViewedUnacceptedClaims(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	for _, failure := range []string{"read", "write", "enqueue"} {
-		t.Run(failure, func(t *testing.T) {
-			reporter, messages := newPostHogStubReporter(t)
-			db := testutil.OpenTestDB(t)
-			limiter := &AppOpenedLimiter{Database: db}
 			body := `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`
-			switch failure {
-			case "read":
-				require.NoError(t, db.Close())
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-			case "write":
-				_, err := db.Exec(`CREATE TRIGGER reject_screen_claim BEFORE INSERT ON sync_state BEGIN SELECT RAISE(FAIL, 'metadata unavailable'); END`)
-				require.NoError(t, err)
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-				assert.Equal(t, time.Now().UTC().Format(time.DateOnly), limiter.sent["telemetry.screen.queue"])
-				_, err = db.Exec(`DROP TRIGGER reject_screen_claim`)
-				require.NoError(t, err)
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-			case "enqueue":
-				require.NoError(t, db.SetSyncState("telemetry.screen.queue", "2026-01-01"))
-				skip, finish, _ := limiter.alreadySentToday(reporter, []byte(body))
-				require.False(t, skip)
-				require.NotNil(t, finish)
-				finish(false)
-				stored, err := db.GetSyncState("telemetry.screen.queue")
-				require.NoError(t, err)
-				assert.Equal(t, "2026-01-01", stored)
-				assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+			attempts := 1
+			if tc.aliases {
+				body = `{"event":"screen_viewed","properties":{"screen":"queue"," screen ":"review","surface":"web"," surface ":"tui","path":"/private"}}`
+				attempts = 64
 			}
-			require.NoError(t, reporter.Close())
-			if failure == "read" {
-				assert.Empty(t, messages())
+			var installID string
+			for pass := range 2 {
+				reporter, err := NewReporter(opts)
+				require.NoError(t, err)
+				limiter := &AppOpenedLimiter{Database: db, now: func() time.Time { return now }}
+				if tc.recover {
+					if pass == 0 {
+						installID, err = db.GetSyncState(installIDMetadataKey)
+						require.NoError(t, err)
+						assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+						require.NoError(t, reporter.Close())
+						require.NoError(t, os.Remove(opts.DailyClaimsPath))
+						continue
+					}
+					_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+					require.NoError(t, err)
+					assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+					_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
+					require.NoError(t, err)
+				}
+				for range attempts {
+					if tc.aliases {
+						skip, canonical, err := limiter.alreadySentToday(reporter, []byte(body))
+						require.NoError(t, err)
+						var normalized struct {
+							Properties map[string]any `json:"properties"`
+						}
+						require.NoError(t, json.Unmarshal(canonical, &normalized))
+						assert.Equal(t, normalized.Properties[PropertyScreen] == "queue", skip)
+						assert.NotContains(t, normalized.Properties, " screen ")
+						assert.NotContains(t, normalized.Properties, " surface ")
+					}
+					assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+				}
+				require.NoError(t, reporter.Close())
+			}
+			if tc.aliases {
+				for _, message := range messages() {
+					assert.Equal(t, "review", message.Properties[PropertyScreen])
+				}
+			} else if tc.offset < 0 {
+				require.Len(t, messages(), 1)
+				if tc.recover {
+					assert.Equal(t, installID, messages()[0].DistinctID)
+				}
 			} else {
-				assert.Len(t, messages(), 1)
+				assert.Empty(t, messages())
 			}
+			stored, err := db.GetSyncState("telemetry.screen.queue")
+			require.NoError(t, err)
+			assert.Equal(t, day, stored)
 		})
 	}
 }

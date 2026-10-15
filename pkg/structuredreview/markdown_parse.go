@@ -62,8 +62,11 @@ type ParseMarkdownOptions struct {
 // It recognizes three forms:
 //
 //   - The output of Document.Markdown. The result is accepted only when
-//     rendering it again reproduces the input, so d.Markdown("") always
-//     converts back to d.
+//     rendering it again reproduces the input, so conversion never changes
+//     the review's text. A summary that itself ends like rendered structure
+//     can still convert to a different document or be refused: a final
+//     "**Agent assessment:**" line after other summary text is read as the
+//     verdict.
 //   - The findings list older review prompts asked for: a "## Review Findings"
 //     heading, one group of Severity, Location, Problem, and Fix bullets per
 //     finding, and a "## Summary" section.
@@ -170,7 +173,9 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 		header = trimBlankLines(header[:len(header)-1])
 	}
 	doc := Document{SchemaVersion: 1, Findings: []Finding{}}
-	if len(header) > 0 {
+	// A header that is only an assessment line is summary text: a document
+	// with a verdict always has a non-empty summary rendered above that line.
+	if len(header) > 1 {
 		if label, ok := strings.CutPrefix(header[len(header)-1], renderedAssessment); ok {
 			verdict, known := verdictFromLabel(label)
 			if !known {
@@ -186,9 +191,11 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 		return Document{}, "", refuse(RefusalMissingSummary, "the Summary section is empty")
 	}
 	if findingsAt < 0 {
-		// Without this check a Findings section that failed to parse would be
-		// kept as summary text of a review that claims no findings.
-		if slices.Contains(header, "## Findings") {
+		// A review without findings never renders "## Findings", so a final
+		// "## Findings" line is the summary's own. Any text after the first
+		// such line is a Findings section that failed to parse; keeping it as
+		// summary text would hide findings behind a review that claims none.
+		if i := slices.Index(header, "## Findings"); i >= 0 && i != len(header)-1 {
 			return Document{}, "", refuse(RefusalUnrecognizedContent,
 				"the Findings section is not what roborev renders for findings")
 		}

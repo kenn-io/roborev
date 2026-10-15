@@ -261,6 +261,7 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 		skills.AgentCodex:  "Codex",
 		skills.AgentDroid:  "Factory Droid",
 		skills.AgentGrok:   "Grok Build",
+		skills.AgentZcode:  "ZCode",
 	}
 	var installedFor []string
 	for _, status := range statuses {

@@ -16,8 +16,13 @@ func CompleteReviewFixture(db *storage.DB, id int64, agent, prompt, summary stri
 	if err != nil {
 		return err
 	}
+	if prompt != "" {
+		if err := db.SaveJobPrompt(id, prompt); err != nil {
+			return err
+		}
+	}
 	if job.IsTaskJob() || job.IsFixJob() {
-		return db.CompleteJob(id, agent, prompt, summary)
+		return db.CompleteJob(id, agent, summary)
 	}
 	raw := ReviewFixtureJSON(summary)
 	if job.JobType == "synthesis" {
@@ -35,7 +40,7 @@ func CompleteReviewFixture(db *storage.DB, id int64, agent, prompt, summary stri
 		}
 	}
 
-	return db.CompleteJobResult(id, agent, prompt, storage.ReviewCompletion{StructuredOutput: raw})
+	return db.CompleteJobResult(id, agent, storage.ReviewCompletion{StructuredOutput: raw})
 }
 
 // ReviewFixtureJSON describes a synthetic fixture, not a legacy conversion.

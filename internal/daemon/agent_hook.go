@@ -19,7 +19,8 @@ import (
 )
 
 type daemonAgentHookSource struct {
-	db *storage.DB
+	db       *storage.DB
+	errorLog *ErrorLog
 }
 
 func (s daemonAgentHookSource) ResolveTrackedRepo(
@@ -95,6 +96,12 @@ func (s daemonAgentHookSource) ListOpenReviewJobs(
 		string(storage.JobStatusDone), repoRoot, 10000, 0, opts...,
 	)
 	if err != nil {
+		// The agent-hook contract reports this as ok=false and every
+		// reminder goes quiet, so the database error must stay visible.
+		if s.errorLog != nil {
+			s.errorLog.LogError("agent-hook", fmt.Sprintf(
+				"list open review jobs for %q branch %q: %v", repoRoot, branch, err), 0)
+		}
 		return nil, false
 	}
 	return jobs, true

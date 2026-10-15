@@ -81,12 +81,11 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 
 	structured := []byte(`{"schema_version":1,"summary":"Misleading summary.","findings":[]}`)
 	require.NoError(t, env.db.CompleteJobResult(
-		env.job.ID, "codex", "prompt", ReviewCompletion{
+		env.job.ID, "codex", ReviewCompletion{
 			Output:           "No issues found.",
 			Verdict:          VerdictFail,
 			StructuredOutput: structured,
-		},
-	))
+		}))
 	var verdict sql.NullInt64
 	var storedStructured string
 	require.NoError(t, env.db.QueryRow(
@@ -155,11 +154,11 @@ func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 			require.NotNil(t, claimed)
 
 			err := env.db.CompleteJobResult(
-				env.job.ID, "codex", "prompt", ReviewCompletion{
+				env.job.ID, "codex", ReviewCompletion{
 					Output:           "No issues found.",
 					StructuredOutput: tt.raw,
-				},
-			)
+				})
+
 			require.ErrorContains(t, err, "validate structured review output")
 
 			updatedJob, err := env.db.GetJobByID(env.job.ID)
@@ -205,6 +204,35 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 	).Scan(&startedAt))
 
 	assert.Regexp(t, `\.\d{9}Z$`, startedAt)
+}
+
+func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/claim-newer-orphan", 2)
+	orphan, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, orphan)
+	require.Equal(t, jobs[0].ID, orphan.ID)
+	// A clock rollback leaves the orphan with a later start than the next claim.
+	_, err = db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		preciseTimestampAt(time.Now().Add(time.Hour)), orphan.ID,
+	)
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	assert.Equal(jobs[1].ID, claimed.ID)
+	var startedAt string
+	require.NoError(t, db.QueryRow(
+		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
+	).Scan(&startedAt))
+	assert.Equal(startedAt, claimed.StartedAtRaw)
 }
 
 func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
@@ -350,6 +378,85 @@ func TestFailJobOwnerScoped(t *testing.T) {
 
 	assert.Equal(t, JobStatusFailed, j.Status)
 	assert.Equal(t, "legit fail", j.Error)
+}
+
+func TestFailJobAttemptGuard(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	env := setupJobEnv(t, "/tmp/test-repo", "fail-attempt")
+	job, err := env.db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	for _, attempt := range []struct {
+		name      string
+		workerID  string
+		startedAt string
+	}{
+		{name: "wrong worker", workerID: "worker-b", startedAt: job.StartedAtRaw},
+		{name: "wrong attempt", workerID: job.WorkerID, startedAt: "2000-01-01T00:00:00Z"},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
+			updated, err := env.db.FailJobAttempt(context.Background(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
+			require.NoError(t, err)
+			require.False(t, updated)
+		})
+	}
+	updated, err := env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
+	require.NoError(t, err)
+	assert.True(updated)
+	failed, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(JobStatusFailed, failed.Status)
+	assert.Equal("failed attempt", failed.Error)
+	assert.NotNil(failed.FinishedAt)
+	updated, err = env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
+	require.NoError(t, err)
+	assert.False(updated)
+}
+
+func TestListRunningAttemptsOnlyReturnsLocalClaims(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/running-attempts", 3)
+	claimed, err := db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, jobs[0].ID, claimed.ID)
+	_, err = db.Exec(
+		`UPDATE review_jobs SET status = 'running', worker_id = NULL WHERE id = ?`, jobs[1].ID,
+	)
+	require.NoError(t, err)
+
+	attempts, err := db.ListRunningAttemptsContext(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, []RunningAttempt{{JobID: claimed.ID, WorkerID: "worker-a"}}, attempts)
+}
+
+func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, "/tmp/test-repo", "canceled-recovery")
+	job, err := env.db.ClaimJob("worker-a")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = env.db.ListRunningAttemptsContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.GetJobByIDContext(ctx, job.ID)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.FailJobAttempt(ctx, job.ID, job.WorkerID, job.StartedAtRaw, "canceled failure")
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.ListStuckPanelRunsContext(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	err = env.db.MaybeReleasePanelSynthesisContext(ctx, *job.UUID)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = env.db.getExperimentAssignmentsContext(ctx, ReviewUnitJob, *job.UUID)
+	require.ErrorIs(t, err, context.Canceled)
+	current, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusRunning, current.Status)
 }
 
 func TestRetryJobOwnerScoped(t *testing.T) {
@@ -508,55 +615,6 @@ func TestReviewVerdictComputation(t *testing.T) {
 		assert.Equal(t, "P", *review.Job.Verdict)
 	})
 
-	t.Run("compact no remaining output stores pass verdict", func(t *testing.T) {
-		env := setupJobEnv(t, "/tmp/test-repo", "verdict-compact-clean")
-		_, err := env.db.ClaimJob("worker-1")
-		require.NoError(t, err)
-		require.NoError(t, completeReviewFixture(env.db,
-			env.job.ID, "codex", "the prompt",
-			"## Compact Analysis\n\n---\n\nNo remaining findings.",
-		))
-
-		review, err := env.db.GetReviewByJobID(env.job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed")
-
-		assert.NotNil(t, review.Job.Verdict)
-		assert.Equal(t, "P", *review.Job.Verdict)
-
-		var vb sql.NullInt64
-		err = env.db.QueryRow(
-			`SELECT verdict_bool FROM reviews WHERE job_id = ?`,
-			env.job.ID,
-		).Scan(&vb)
-		require.NoError(t, err)
-		assert.True(t, vb.Valid, "verdict_bool should be set")
-		assert.Equal(t, int64(1), vb.Int64)
-	})
-
-	t.Run("verdict nil when output is empty", func(t *testing.T) {
-		env := setupJobEnv(t, "/tmp/test-repo", "verdict-empty")
-		_, err := env.db.ClaimJob("worker-1")
-		require.NoError(t, err)
-		require.NoError(t, completeReviewFixture(env.db,
-			env.job.ID, "codex", "the prompt", "",
-		)) // empty output
-
-		review, err := env.db.GetReviewByJobID(env.job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed")
-
-		assert.Nil(t, review.Job.Verdict)
-
-		// Verify verdict_bool is NULL in DB (not a false fail)
-		var vb sql.NullInt64
-		err = env.db.QueryRow(
-			`SELECT verdict_bool FROM reviews WHERE job_id = ?`,
-			env.job.ID,
-		).Scan(&vb)
-		require.NoError(t, err)
-		assert.False(t, vb.Valid,
-			"verdict_bool should be NULL for empty output")
-	})
-
 	t.Run("verdict nil when job has error", func(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-error")
 		_, err := env.db.ClaimJob("worker-1")
@@ -566,9 +624,10 @@ func TestReviewVerdictComputation(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		// Manually insert a review to simulate edge case
+		// Manually insert a passing review to simulate edge case; only the
+		// job's error may remove its verdict.
 		_, err = env.db.Exec(
-			`INSERT INTO reviews (job_id, agent, prompt, output, structured_output) VALUES (?, 'codex', 'prompt', '', ?)`,
+			`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, 'codex', '', ?, 1)`,
 			env.job.ID, string(reviewFixtureJSON("No issues found.")),
 		)
 		require.NoError(t, err, "Failed to insert review")
@@ -1382,7 +1441,7 @@ func TestReenqueueJob(t *testing.T) {
 			`SELECT enqueued_at FROM review_jobs WHERE id = ?`, job.ID,
 		).Scan(&storedEnqueuedAt)
 		require.NoError(t, err)
-		_, err = time.Parse("2006-01-02 15:04:05", storedEnqueuedAt)
+		_, err = time.Parse(time.RFC3339Nano, storedEnqueuedAt)
 		assert.NoError(t, err)
 	})
 
@@ -1763,76 +1822,6 @@ func TestRemapJobGitRef(t *testing.T) {
 
 		assert.Equal(t, 0, n)
 	})
-}
-
-func TestJobTypeBackfill(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/backfill-test")
-
-	// Insert jobs with job_type='review' to simulate pre-migration state
-	// 1. Normal commit review - should stay 'review'
-	commit := createCommit(t, db, repo.ID, "abc123")
-	_, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type) VALUES (?, ?, 'abc123', 'codex', 'done', 'review')`,
-		repo.ID, commit.ID)
-	require.NoError(t, err, "insert review job: %v")
-
-	// 2. Dirty job (git_ref='dirty') - should become 'dirty'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'dirty', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert dirty job: %v")
-
-	// 3. Dirty job (diff_content set) - should become 'dirty'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, diff_content) VALUES (?, 'some-ref', 'codex', 'done', 'review', 'diff here')`, repo.ID)
-	require.NoError(t, err, "insert dirty-with-diff job: %v")
-
-	// 4. Range job (git_ref has ..) - should become 'range'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'abc..def', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert range job: %v")
-
-	// 5. Task job (no commit_id, no diff, non-dirty git_ref) - should become 'task'
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type) VALUES (?, 'analyze', 'codex', 'done', 'review')`, repo.ID)
-	require.NoError(t, err, "insert task job: %v")
-
-	// Run backfill SQL (same as migration)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'dirty' WHERE (git_ref = 'dirty' OR diff_content IS NOT NULL) AND job_type = 'review'`)
-	require.NoError(t, err, "backfill dirty: %v")
-
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'range' WHERE git_ref LIKE '%..%' AND commit_id IS NULL AND job_type = 'review'`)
-	require.NoError(t, err, "backfill range: %v")
-
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'task' WHERE commit_id IS NULL AND diff_content IS NULL AND git_ref != 'dirty' AND git_ref NOT LIKE '%..%' AND git_ref != '' AND job_type = 'review'`)
-	require.NoError(t, err, "backfill task: %v")
-
-	// Verify results
-	rows, err := db.Query(`SELECT git_ref, job_type FROM review_jobs ORDER BY id`)
-	require.NoError(t, err, "query jobs: %v")
-
-	defer rows.Close()
-
-	expected := []struct {
-		gitRef  string
-		jobType string
-	}{
-		{"abc123", "review"},
-		{"dirty", "dirty"},
-		{"some-ref", "dirty"},
-		{"abc..def", "range"},
-		{"analyze", "task"},
-	}
-
-	i := 0
-	for rows.Next() {
-		var gitRef, jobType string
-		if err := rows.Scan(&gitRef, &jobType); err != nil {
-			require.NoError(t, err, "scan row: %v")
-		}
-		assert.Less(t, i, len(expected), "more rows than expected")
-		assert.False(t, gitRef != expected[i].gitRef || jobType != expected[i].jobType)
-		i++
-	}
-	assert.Equal(t, len(expected), i)
 }
 
 func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
@@ -2574,7 +2563,7 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 	job := enqueueJob(t, db, repo.ID, commit.ID, "fix123")
 	claimJob(t, db, "w1")
 
-	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "p", "", "patch content"))
+	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "", "patch content"))
 
 	var vb sql.NullInt64
 	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
@@ -2592,8 +2581,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 	claimJob(t, db, "w1")
 
 	require.NoError(t, db.CompleteFixJob(
-		job.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content",
-	))
+		job.ID, "codex", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content"))
 
 	var verdict sql.NullInt64
 	require.NoError(t, db.QueryRow(

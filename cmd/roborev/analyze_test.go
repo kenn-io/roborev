@@ -316,6 +316,7 @@ func TestMarkJobClosed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ts := mockCloseServer(t, 123, tt.statusCode)
 			defer ts.Close()
+			patchServerAddr(t, ts.URL)
 
 			err := markJobClosed(context.Background(), ts.URL, 123)
 

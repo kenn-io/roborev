@@ -505,9 +505,10 @@ by this recovery. Startup reports how many archived reviews were restored.
 SQLite job IDs remain unchanged during upgrade and are never reused for new
 jobs. Deleting a repository with its jobs also deletes their archived reviews.
 
-In every case the original record stays archived in `legacy_reviews`. Sync
-ignores Markdown-only review updates from older clients. It does not create new
-legacy records from them, and they cannot replace a converted review.
+In every case the original record stays archived in `legacy_reviews`. The
+archive does not keep a copy of the prompt; the job keeps it. Sync ignores
+Markdown-only review updates from older clients. It does not create new legacy
+records from them, and they cannot replace a converted review.
 
 Roborev does not guess. It never invents a severity, a fix, or the sources of a
 combined panel review, and it never launches an agent to convert historical

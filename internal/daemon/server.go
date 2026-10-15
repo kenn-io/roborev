@@ -72,6 +72,7 @@ type Server struct {
 	allowWebCompilationStub bool
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
+	syncEnabledAtStart      bool // [sync] needs a restart; reloads leave the worker as started
 	ciPoller                *CIPoller
 	hookRunner              *HookRunner
 	errorLog                *ErrorLog
@@ -92,9 +93,10 @@ type Server struct {
 	socketActivated         bool // true if started via systemd socket activation
 	stopOnce                sync.Once
 	stopErr                 error
-	sweepMu                 sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepMu                 sync.Mutex         // protects sweepCancel and sweepDone
 	sweepCancel             context.CancelFunc // cancels the panel sweep goroutine on Stop
-	shutdownCh              chan struct{}      // closed when /api/shutdown is requested
+	sweepDone               chan struct{}
+	shutdownCh              chan struct{} // closed when /api/shutdown is requested
 	shutdownOnce            sync.Once
 	shutdownDrainMu         sync.Mutex
 	shutdownDraining        bool
@@ -194,6 +196,7 @@ func newServerWithLogs(
 
 	s := &Server{
 		authKey:            cfg.AuthKey,
+		syncEnabledAtStart: cfg.Sync.Enabled,
 		goalGate:           newGoalGate(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
@@ -214,7 +217,7 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
-		daemonAgentHookSource{db: db},
+		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
 
 	mux := http.NewServeMux()
@@ -510,8 +513,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
-		s.stopPanelSweep()
 		s.stopGoalWatcher()
+		s.workerPool.BeginStop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
@@ -520,27 +524,33 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) startPanelSweep(ctx context.Context) {
-	// Backstop for a missed worker release of a panel synthesis gate. Own the
-	// cancel so Stop halts the sweep even when Start received a context the
-	// caller never cancels (the worker pool and CI poller are likewise stopped
-	// explicitly in stopOnce0).
-	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	if s.sweepCancel != nil {
-		s.sweepCancel()
+		return
 	}
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
 	s.sweepCancel = cancelSweep
-	s.sweepMu.Unlock()
-	go s.runPanelSweep(sweepCtx, panelSweepInterval)
+	done := make(chan struct{})
+	s.sweepDone = done
+	go func() {
+		defer close(done)
+		var maintenance sync.WaitGroup
+		maintenance.Go(func() { s.runPanelSweep(sweepCtx, panelSweepInterval) })
+		maintenance.Go(func() { s.runRetention(sweepCtx, retentionInterval) })
+		maintenance.Wait()
+	}()
 }
 
 func (s *Server) stopPanelSweep() {
 	s.sweepMu.Lock()
-	sweepCancel := s.sweepCancel
+	cancel, done := s.sweepCancel, s.sweepDone
 	s.sweepCancel = nil
+	s.sweepDone = nil
 	s.sweepMu.Unlock()
-	if sweepCancel != nil {
-		sweepCancel()
+	if cancel != nil {
+		cancel()
+		<-done
 	}
 }
 
@@ -710,12 +720,12 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.BeginStop()
 	}
 
-	// Stop the panel sweep goroutine
-	s.stopPanelSweep()
 	s.stopGoalWatcher()
 
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
+
+	s.stopPanelSweep()
 
 	// Stop worker pool
 	s.workerPool.Stop()
@@ -1704,6 +1714,10 @@ func (s *Server) humaListJobs(
 	// FilteredStats below carries the exact closed-filtered counts for browser
 	// views that need counts matching the visible rows.
 	statsOpts := remoteJobOptions(ctx)
+	// Panel expansion must not scan the entire queue for aggregate counts.
+	if input.PanelRun != uuid.Nil() {
+		statsOpts = append(statsOpts, storage.WithPanelRun(input.PanelRun))
+	}
 	if input.GitRef != "" {
 		statsOpts = append(statsOpts, storage.WithGitRef(input.GitRef))
 	}
@@ -1829,6 +1843,9 @@ func (s *Server) humaGetReview(
 	review.WebURL = s.reviewBrowserURL(review.JobID)
 	if review.Job != nil {
 		review.Job.WebURL = review.WebURL
+		if review.Job.IsFixJob() {
+			review.Prompt = prompt.DisplayFixPlanPrompt(review.Prompt)
+		}
 	}
 	return &GetReviewOutput{Body: review}, nil
 }
@@ -2542,6 +2559,10 @@ func (s *Server) humaRerunJob(
 	}
 	selectedAgent := strings.TrimSpace(input.Body.Agent)
 
+	if job.Source == storage.JobSourceRebuttal {
+		return nil, huma.Error400BadRequest("rebuttal jobs cannot be rerun; submit a new rebuttal on the original review")
+	}
+
 	// Rerunning a panel synthesis parent spawns a brand-new panel run (fresh
 	// members + a re-blocked synthesis) rather than re-queueing the parent in
 	// place, so the new run gets fresh member reviews to synthesize.
@@ -2641,10 +2662,20 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	err := s.db.MarkReviewClosedByJobID(
-		input.Body.JobID, input.Body.Closed,
-	)
+	var err error
+	if input.Body.ExpectedReviewUUID != nil {
+		err = s.db.MarkReviewClosedByJobIDIfReviewUUID(
+			input.Body.JobID, *input.Body.ExpectedReviewUUID, input.Body.Closed,
+		)
+	} else {
+		err = s.db.MarkReviewClosedByJobID(
+			input.Body.JobID, input.Body.Closed,
+		)
+	}
 	if err != nil {
+		if errors.Is(err, storage.ErrReviewChanged) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
 				"review not found for job",
@@ -2691,13 +2722,23 @@ func (s *Server) humaAddComment(
 	}
 
 	if input.Body.JobID != 0 {
-		resp, err = s.db.AddCommentToJobWithSource(
-			input.Body.JobID,
-			input.Body.Commenter,
-			input.Body.Comment,
-			source,
-		)
+		if input.Body.ExpectedReviewUUID != nil {
+			resp, err = s.db.AddCommentToJobWithSourceIfReviewUUID(
+				input.Body.JobID, *input.Body.ExpectedReviewUUID,
+				input.Body.Commenter, input.Body.Comment, source,
+			)
+		} else {
+			resp, err = s.db.AddCommentToJobWithSource(
+				input.Body.JobID,
+				input.Body.Commenter,
+				input.Body.Comment,
+				source,
+			)
+		}
 		if err != nil {
+			if errors.Is(err, storage.ErrReviewChanged) {
+				return nil, huma.Error409Conflict(err.Error())
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, huma.Error404NotFound(
 					"job not found",
@@ -3314,6 +3355,12 @@ func (s *Server) humaBatchJobs(
 		)
 	}
 
+	for _, result := range results {
+		if result.Job.IsFixJob() && result.Review != nil {
+			result.Review.Prompt = prompt.DisplayFixPlanPrompt(result.Review.Prompt)
+		}
+	}
+
 	resp := &BatchJobsOutput{}
 	resp.Body.Results = results
 	return resp, nil
@@ -3821,15 +3868,14 @@ func (s *Server) humaGetHealth(
 	if s.ciPoller != nil {
 		ciReady, _ := s.ciPoller.ReadinessCheck()
 		ready = ready && ciReady
-		ciHealthy, ciMessage := s.ciPoller.HealthCheck()
-		if !ciHealthy {
+		ci := s.ciPoller.HealthObservation()
+		if !ci.Healthy {
 			allHealthy = false
 		}
-		components = append(components, storage.ComponentHealth{
-			Name:    "ci",
-			Healthy: ciHealthy,
-			Message: ciMessage,
-		})
+		if !ready {
+			ci.Recovery = nil
+		}
+		components = append(components, ci)
 	}
 
 	var recentErrors []storage.ErrorEntry

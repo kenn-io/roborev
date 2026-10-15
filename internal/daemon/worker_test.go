@@ -1773,12 +1773,9 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotZero(t, jobID)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(jobID), []byte("classifier progress\n"), 0o600))
 	require.NoError(t, markJobLogForAppend(jobID))
@@ -1843,12 +1840,9 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 		ReviewType: "design",
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(
-		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
-		"prebuilt design review prompt",
-		jobID,
-	)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(
 		JobLogPath(jobID),
@@ -1905,6 +1899,12 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 		{
 			name:       "dirty review",
 			job:        storage.ReviewJob{JobType: storage.JobTypeDirty},
+			wantSkills: true,
+			wantIgnore: true,
+		},
+		{
+			name:       "focused rebuttal",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal},
 			wantSkills: true,
 			wantIgnore: true,
 		},
@@ -3323,6 +3323,55 @@ func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	assert.Equal(0, got, "session-limit error must not consume a retry slot")
 }
 
+func TestFailOrRetryInner_RebuttalLimitErrorsCoolDownWithoutRetryOrFailover(t *testing.T) {
+	originalBackup, err := agent.Get("claude-code")
+	require.NoError(t, err)
+	agent.Register(&agent.FakeAgent{NameStr: "claude-code"})
+	t.Cleanup(func() { agent.Register(originalBackup) })
+
+	for _, limit := range []struct {
+		name string
+		kind agent.LimitKind
+	}{
+		{name: "quota", kind: agent.LimitKindQuota},
+		{name: "session", kind: agent.LimitKindSession},
+	} {
+		t.Run(limit.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.ReviewBackupAgent = "claude-code"
+			tc.reconfigurePool(cfg)
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+			require.NoError(t, err)
+			queued, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test",
+				JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal,
+			})
+			require.NoError(t, err)
+			job, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			assert.Equal(t, queued.ID, job.ID)
+
+			tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+				return agent.LimitClassification{
+					Kind: limit.kind, Agent: agentName, CooldownFor: time.Hour, Message: msg,
+				}
+			}
+
+			tc.Pool.failOrRetryInner(testWorkerID, job, "test", "provider limit", true)
+
+			updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+			assert.Equal(t, "test", updated.Agent)
+			assert.True(t, tc.Pool.isAgentCoolingDown("test"))
+			retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(t, retryCount)
+		})
+	}
+}
+
 func TestFailOrRetryInner_SessionLimitFinalFailureIsRetryableOutage(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJobWithAgent(t, "session-limit-outage-test", testWorkerID, "claude-code")
@@ -3456,6 +3505,55 @@ func TestUnavailableAgentErrorSkipsCoolingBackup(t *testing.T) {
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	assert.Equal(t, "codex", updated.Agent)
 	assert.True(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
+}
+
+func TestFailOrRetryInner_TypographicApostropheLimitSkipsRetries(t *testing.T) {
+	tests := []struct {
+		name       string
+		agentName  string
+		errorText  string
+		wantPrefix string
+	}{
+		{
+			name:      "codex usage limit",
+			agentName: "codex",
+			// Captured from a production daemon log; Codex renders "You’ve" with U+2019.
+			errorText: "agent: codex failed: exit status 1 (parse error: codex stream reported " +
+				"failure: You\u2019ve hit your usage limit. Visit " +
+				"https://chatgpt.com/settings/usage to purchase more credits or try again at " +
+				"Oct 14th, 2026 3:31 AM.)",
+			wantPrefix: review.QuotaErrorPrefix,
+		},
+		{
+			name:       "claude session limit",
+			agentName:  "claude-code",
+			errorText:  "stream errors: You\u2019ve hit your session limit \u00b7 resets 5:50am (UTC)",
+			wantPrefix: review.OutageErrorPrefix,
+		},
+		{
+			name:       "claude weekly limit",
+			agentName:  "claude-code",
+			errorText:  "stream errors: You\u2019ve hit your weekly limit \u00b7 resets 4pm (UTC)",
+			wantPrefix: review.QuotaErrorPrefix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, tt.agentName)
+
+			tc.Pool.failOrRetryInner(testWorkerID, job, tt.agentName, tt.errorText, true)
+
+			updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+			assert.True(t, strings.HasPrefix(updated.Error, tt.wantPrefix), updated.Error)
+			retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Zero(t, retryCount)
+			assert.True(t, tc.Pool.isAgentCoolingDown(tt.agentName))
+		})
+	}
 }
 
 func TestUnavailableAgentErrorPreservesLimitClassification(t *testing.T) {
@@ -4250,4 +4348,25 @@ func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
 		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
 		tc.Repo.ID, "beefc0de").Scan(&n))
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
+}
+
+func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	calls := 0
+	agentName := "prompt-save-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		calls++
+		return "No issues found.", nil
+	}})
+	_, err := tc.DB.Exec(`CREATE TRIGGER reject_prompt BEFORE INSERT ON job_content
+		BEGIN SELECT RAISE(ABORT, 'prompt write rejected'); END`)
+	require.NoError(t, err)
+	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	assert.Zero(t, calls)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, updated.RetryCount)
 }

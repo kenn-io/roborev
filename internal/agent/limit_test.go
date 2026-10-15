@@ -145,6 +145,49 @@ stream: stream errors: You've hit your session limit · resets 5:50am (UTC): exi
 	}
 }
 
+func TestClassifyLimitTypographicApostrophes(t *testing.T) {
+	cases := []struct {
+		name, agent, msg string
+		want             LimitKind
+	}{
+		{
+			// Captured from a production daemon log; Codex renders "You’ve" with U+2019.
+			"codex usage limit with right single quote", "codex",
+			"agent: codex failed: exit status 1 (parse error: codex stream reported failure: " +
+				"You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to " +
+				"purchase more credits or try again at Oct 14th, 2026 3:31 AM.)",
+			LimitKindQuota,
+		},
+		{
+			"claude session limit with right single quote", "claude-code",
+			"stream: stream errors: You\u2019ve hit your session limit \u00b7 resets 5:50am (UTC)",
+			LimitKindSession,
+		},
+		{
+			"claude weekly limit with right single quote", "claude-code",
+			"stream: stream errors: You\u2019ve hit your weekly limit \u00b7 resets 4pm (UTC)",
+			LimitKindQuota,
+		},
+		{
+			"claude session limit with left single quote", "claude-code",
+			"You\u2018ve hit your session limit",
+			LimitKindSession,
+		},
+		{
+			"codex wording stays agent scoped", "gemini",
+			"You\u2019ve hit your usage limit.",
+			LimitKindNone,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cls := ClassifyLimit(tc.agent, tc.msg)
+			assert.Equal(t, tc.want, cls.Kind)
+			assert.Equal(t, tc.msg, cls.Message)
+		})
+	}
+}
+
 func TestClassifyLimitClaudeWeeklyLimitIsQuota(t *testing.T) {
 	const message = "agent: claude-code failed\nstream: stream errors: You've hit your weekly limit · resets 4pm (UTC)"
 

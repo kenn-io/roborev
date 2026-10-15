@@ -7,6 +7,7 @@ export interface AddCommentRequest {
   readonly $schema?: string;
   comment: string;
   commenter: string;
+  expected_review_uuid?: string;
   job_id?: number;
   sha?: string;
 }

@@ -241,6 +241,7 @@ func TestFetchCommentsSkipsLegacyLookupForDirtyJob(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	patchServerAddr(t, server.URL)
 
 	got, err := fetchComments(context.Background(), server.URL, 11, 42, "dirty")
 	require.NoError(t, err)
@@ -378,6 +379,7 @@ func TestFetchJob(t *testing.T) {
 				}
 			}))
 			defer ts.Close()
+			patchServerAddr(t, ts.URL)
 
 			job, err := fetchJob(context.Background(), ts.URL, 42)
 
@@ -445,6 +447,7 @@ func TestFetchReview(t *testing.T) {
 				}
 			}))
 			defer ts.Close()
+			patchServerAddr(t, ts.URL)
 
 			review, err := fetchReview(context.Background(), ts.URL, 42)
 
@@ -472,6 +475,7 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
@@ -566,6 +570,39 @@ func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
 	assert.EqualValues(t, 1, attempts.Load())
 }
 
+func TestWithFixDaemonRetryContextRecoversOnlyFromMissingDaemon(t *testing.T) {
+	discoveryErr := errors.New("runtime directory read failed")
+	for _, tc := range []struct {
+		name        string
+		discovery   error
+		wantErr     error
+		wantEnsures int32
+	}{
+		{name: "missing runtime starts the daemon", discovery: os.ErrNotExist, wantErr: ErrDaemonNotRunning, wantEnsures: 1},
+		{name: "discovery failure is returned", discovery: discoveryErr, wantErr: discoveryErr, wantEnsures: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, tc.discovery }
+			var ensureCalls atomic.Int32
+			patchFixDaemonRetryForTest(t, func() error {
+				ensureCalls.Add(1)
+				return nil
+			})
+
+			_, err := withFixDaemonRetryContext(context.Background(), getDaemonEndpoint().BaseURL(), func(addr string) (struct{}, error) {
+				resp, err := getDaemonHTTPClientForURL(addr, time.Second).Get(addr + "/api/jobs")
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				return struct{}{}, err
+			})
+			require.ErrorIs(t, err, tc.wantErr)
+			assert.Equal(t, tc.wantEnsures, ensureCalls.Load())
+		})
+	}
+}
+
 func TestAddJobResponse(t *testing.T) {
 	var gotJobID int64
 	var gotContent string
@@ -585,6 +622,7 @@ func TestAddJobResponse(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.NoError(t, err, "addJobResponse")
@@ -595,11 +633,11 @@ func TestAddJobResponse(t *testing.T) {
 }
 
 func TestAddJobResponseReturnsAccessDeniedOnUnauthorized(t *testing.T) {
-	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
@@ -628,6 +666,7 @@ func TestPostFixWritesAuthDenialDoesNotAttemptRecovery(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
+			patchServerAddr(t, server.URL)
 
 			var err error
 			if endpoint == "/api/comment" {
@@ -694,6 +733,7 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 		serverAddr = recoveryServer.URL
 		return nil
 	})
+	serverAddr = startServer.URL
 
 	err := addJobResponse(context.Background(), startServer.URL, 123, "roborev-fix", "Fix applied")
 	require.NoError(t, err, "addJobResponse: %v")
@@ -718,6 +758,7 @@ func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
@@ -2426,6 +2467,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
@@ -2457,6 +2499,7 @@ func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
+	serverAddr = ts.URL
 
 	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
@@ -2468,22 +2511,22 @@ func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
 }
 
 func TestVerifyJobForSHAContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
-	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	_, err := verifyJobForSHAContext(context.Background(), ts.URL, "synthetic-sha")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 }
 
 func TestHasJobResponseContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
-	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
+	patchServerAddr(t, ts.URL)
 
 	_, err := hasJobResponseContext(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
@@ -2532,6 +2575,7 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 		serverAddr = recoveryServer.URL
 		return nil
 	})
+	serverAddr = startServer.URL
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
@@ -2574,6 +2618,7 @@ func TestEnqueueIfNeededSkipsEnqueueAfterTransientProbeFailure(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
+	serverAddr = ts.URL
 
 	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
@@ -2619,6 +2664,7 @@ func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *t
 		serverAddr = recoveryServer.URL
 		return nil
 	})
+	serverAddr = startServer.URL
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
 	require.Error(t, err)
@@ -2650,6 +2696,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
+	serverAddr = ts.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()

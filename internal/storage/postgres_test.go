@@ -1128,10 +1128,9 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 
 	reviews := []SyncableReview{
 		{
-			UUID:               uuid.New(),
-			JobUUID:            jobUUID,
+			UUID:    uuid.New(),
+			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
-			Prompt:             "test prompt 1",
 			Output:             "test output 1",
 			Closed:             false,
 			VerdictBool:        new(true),
@@ -1142,10 +1141,9 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 			CreatedAt:          time.Now(),
 		},
 		{
-			UUID:               uuid.New(),
-			JobUUID:            jobUUID,
+			UUID:    uuid.New(),
+			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
-			Prompt:             "test prompt 2",
 			Output:             "test output 2",
 			Closed:             true,
 			UpdatedByMachineID: defaultTestMachineID,
@@ -1156,7 +1154,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 	success, err := pool.BatchUpsertReviews(ctx, reviews)
 	require.NoError(t, err, "BatchUpsertReviews failed: %v")
 
-	assert.Equal(t, 2, countSuccesses(success))
+	assert.Equal(t, []bool{true, false}, success, "unstructured review was not persisted")
 
 	var verdict bool
 	var structuredOutput []byte
@@ -1184,14 +1182,16 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
+		// Both reviews are structured, so the first one is written before the
+		// second fails; the batch must not keep that write.
 		validReviewUUID := uuid.New()
 		reviews := []SyncableReview{
 			{
-				UUID:               validReviewUUID,
-				JobUUID:            jobUUID, // Valid FK
+				UUID:    validReviewUUID,
+				JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID), // Valid FK
 				Agent:              "test",
-				Prompt:             "valid review",
 				Output:             "output",
+				StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
@@ -1199,8 +1199,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 				UUID:               uuid.New(),
 				JobUUID:            uuid.Nil(), // Invalid FK - will fail
 				Agent:              "test",
-				Prompt:             "invalid review",
 				Output:             "output",
+				StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
@@ -1210,7 +1210,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 
 		require.Error(t, err, "Expected error from batch with invalid FK, got nil")
 		assert.Len(t, success, 2)
-		assert.True(t, success[0], "Expected success[0]=true (valid FK)")
+		assert.False(t, success[0], "the later failure rolls back the valid row too")
 		assert.False(t, success[1], "Expected success[1]=false (invalid FK)")
 
 		var count int

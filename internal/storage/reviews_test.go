@@ -114,6 +114,81 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 	}
 }
 
+func TestReviewUUIDGuards(t *testing.T) {
+	t.Parallel()
+
+	t.Run("matching UUID allows comment and close", func(t *testing.T) {
+		env := setupJobEnv(t, "/tmp/review-uuid-match", "review-uuid-match")
+		claimJob(t, env.db, "worker-1")
+		require.NoError(t, completeReviewFixture(env.db, env.job.ID, "test", "prompt", "finding"))
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err)
+		require.NotNil(t, review.UUID)
+
+		response, err := env.db.AddCommentToJobWithSourceIfReviewUUID(
+			env.job.ID, *review.UUID, "reviewer", "assessment", ResponseSourceLocal,
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "assessment", response.Response)
+		require.NoError(t, env.db.MarkReviewClosedByJobIDIfReviewUUID(env.job.ID, *review.UUID, true))
+
+		updated, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err)
+		assert.True(t, updated.Closed)
+		comments, err := env.db.GetCommentsForJob(env.job.ID)
+		require.NoError(t, err)
+		assert.Len(t, comments, 1)
+	})
+
+	t.Run("replaced UUID rejects stale comment and close", func(t *testing.T) {
+		env := setupJobEnv(t, "/tmp/review-uuid-replaced", "review-uuid-replaced")
+		claimJob(t, env.db, "worker-1")
+		require.NoError(t, completeReviewFixture(env.db, env.job.ID, "test", "prompt", "finding"))
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err)
+		require.NotNil(t, review.UUID)
+		replacedUUID := uuid.New()
+		_, err = env.db.Exec(`UPDATE reviews SET uuid = ?, closed = 0 WHERE job_id = ?`, replacedUUID, env.job.ID)
+		require.NoError(t, err)
+
+		_, err = env.db.AddCommentToJobWithSourceIfReviewUUID(
+			env.job.ID, *review.UUID, "reviewer", "stale assessment", ResponseSourceLocal,
+		)
+		require.ErrorIs(t, err, ErrReviewChanged)
+		err = env.db.MarkReviewClosedByJobIDIfReviewUUID(env.job.ID, *review.UUID, true)
+		require.ErrorIs(t, err, ErrReviewChanged)
+
+		updated, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, replacedUUID, *updated.UUID)
+		assert.False(t, updated.Closed)
+		comments, err := env.db.GetCommentsForJob(env.job.ID)
+		require.NoError(t, err)
+		assert.Empty(t, comments)
+	})
+
+	t.Run("missing review returns no rows", func(t *testing.T) {
+		env := setupJobEnv(t, "/tmp/review-uuid-missing", "review-uuid-missing")
+		expectedUUID := uuid.New()
+		for _, tc := range []struct {
+			name  string
+			jobID int64
+		}{
+			{name: "job without review", jobID: env.job.ID},
+			{name: "missing job", jobID: 99999},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := env.db.AddCommentToJobWithSourceIfReviewUUID(
+					tc.jobID, expectedUUID, "reviewer", "assessment", ResponseSourceLocal,
+				)
+				require.ErrorIs(t, err, sql.ErrNoRows)
+				err = env.db.MarkReviewClosedByJobIDIfReviewUUID(tc.jobID, expectedUUID, true)
+				require.ErrorIs(t, err, sql.ErrNoRows)
+			})
+		}
+	})
+}
+
 // TestAddCommentToJobWithNoReview verifies that comments can be added
 // to jobs that have no review (i.e., job exists but has no review record yet).
 func TestAddCommentToJobWithNoReview(t *testing.T) {
@@ -581,7 +656,7 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
 	require.NoError(t, db.CompleteJobResult(
 		job.ID,
 		"test",
-		"prompt",
+
 		ReviewCompletion{
 			Output: "## Summary\n\nHigh: no actionable findings.\n\n" +
 				"No findings at or above the configured severity threshold.\n",
@@ -593,8 +668,7 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`),
-		},
-	))
+		}))
 	canonical, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 

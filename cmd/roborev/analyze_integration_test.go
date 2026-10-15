@@ -122,6 +122,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 		ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
 		DoneAfterPolls: 2,
 	})
+	patchServerAddr(t, ts.URL)
 
 	cmd, output := newTestCmd(t)
 

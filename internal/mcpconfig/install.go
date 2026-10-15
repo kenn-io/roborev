@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
@@ -93,6 +94,8 @@ func ConfigPath(opts Options) (string, error) {
 		name = "settings.json"
 	case skills.AgentHermes:
 		name = "config.yaml"
+	case skills.AgentZcode:
+		name = filepath.Join("cli", "config.json")
 	}
 	if !filepath.IsAbs(name) {
 		name = filepath.Join(dir, name)
@@ -117,6 +120,10 @@ func Merge(data []byte, opts Options) ([]byte, error) {
 		key, format = "mcp_servers", "toml"
 	case skills.AgentHermes:
 		key, format = "mcp_servers", "yaml"
+	case skills.AgentZcode:
+		// ZCode nests server entries under mcp.servers in its shared
+		// configuration file; a dotted key addresses the nested object.
+		key, format = "mcp.servers", "json"
 	}
 	var err error
 	doc := map[string]any{}
@@ -136,13 +143,9 @@ func Merge(data []byte, opts Options) ([]byte, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("MCP config must contain a configuration object")
 	}
-	servers, ok := doc[key].(map[string]any)
-	if !ok {
-		if _, exists := doc[key]; exists {
-			return nil, fmt.Errorf("%s must be an object", key)
-		}
-		servers = map[string]any{}
-		doc[key] = servers
+	servers, err := serversObject(doc, key)
+	if err != nil {
+		return nil, err
 	}
 	entry := map[string]any{}
 	if opts.Transport == "stdio" {
@@ -163,7 +166,7 @@ func Merge(data []byte, opts Options) ([]byte, error) {
 		entry[urlKey] = opts.URL
 	}
 	switch opts.Agent {
-	case skills.AgentClaude, skills.AgentDroid:
+	case skills.AgentClaude, skills.AgentDroid, skills.AgentZcode:
 		entry["type"] = opts.Transport
 	case skills.AgentCopilot:
 		entry["type"] = opts.Transport
@@ -187,6 +190,39 @@ func Merge(data []byte, opts Options) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// serversObject resolves the server map at key, creating missing parent
+// objects. A dotted key addresses a nested object such as ZCode's mcp.servers.
+func serversObject(doc map[string]any, key string) (map[string]any, error) {
+	parts := strings.Split(key, ".")
+	parent := doc
+	for _, part := range parts[:len(parts)-1] {
+		raw, ok := parent[part]
+		if !ok || raw == nil {
+			child := map[string]any{}
+			parent[part] = child
+			parent = child
+			continue
+		}
+		object, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an object", strings.Join(parts, "."))
+		}
+		parent = object
+	}
+	leaf := parts[len(parts)-1]
+	raw, ok := parent[leaf]
+	if !ok || raw == nil {
+		servers := map[string]any{}
+		parent[leaf] = servers
+		return servers, nil
+	}
+	servers, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object", key)
+	}
+	return servers, nil
 }
 
 // DaemonAddress resolves the API base URL belonging to an existing MCP endpoint.

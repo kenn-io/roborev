@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostToolUseAdditionalContextPreservesResolvedInstruction(t *testing.T) {
@@ -40,4 +41,23 @@ func TestBuildOutputWithFixGuidelinesPreservesEmptyPolicyOutput(t *testing.T) {
 	input := Input{HookEventName: "PostToolUse"}
 	resp := Response{Triggered: true, Reason: "Resolve reviews."}
 	assert.Equal(t, BuildOutput(input, resp), BuildOutputWithFixGuidelines(input, resp, ""))
+}
+
+func TestBuildOutputInjectsAdditionalContextForScheduledZCodeEvents(t *testing.T) {
+	assert := assert.New(t)
+	resp := Response{Triggered: true, Reason: "[roborev] demo has findings."}
+
+	for _, event := range []string{"UserPromptSubmit", "SessionStart"} {
+		output := BuildOutput(Input{HookEventName: event}, resp)
+		specific, ok := output["hookSpecificOutput"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(event, specific["hookEventName"])
+		assert.Contains(specific["additionalContext"], "[roborev] demo has findings.")
+		_, blocked := output["decision"]
+		assert.False(blocked)
+	}
+
+	// Lifecycle events keep the stop-decision form.
+	stop := BuildOutput(Input{HookEventName: "Stop"}, resp)
+	assert.Equal("block", stop["decision"])
 }

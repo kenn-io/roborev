@@ -265,29 +265,28 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 	assert.Zero(t, startCalls)
 }
 
-func TestEnsureDaemonDefaultProbeErrors(t *testing.T) {
+func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
-		probeErr      error
+		discoveryErr  error
 		wantAccessErr bool
 		wantStarts    int
 	}{
 		{
 			name:          "access denied blocks startup",
-			probeErr:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES},
+			discoveryErr:  &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES},
 			wantAccessErr: true,
 		},
 		{
 			// Something answered, but its certificate did not verify.
 			name:          "certificate failure blocks startup",
-			probeErr:      &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
+			discoveryErr:  &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
 			wantAccessErr: true,
 		},
 		{
-			// The default address is only a guess without a runtime record.
-			name:       "guessed address key refusal starts a daemon",
-			probeErr:   daemon.ErrGuessedEndpointAuth,
-			wantStarts: 1,
+			name:         "missing runtime starts a daemon",
+			discoveryErr: os.ErrNotExist,
+			wantStarts:   1,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -301,9 +300,11 @@ func TestEnsureDaemonDefaultProbeErrors(t *testing.T) {
 			origStart := startDaemonForEnsure
 			serverAddr = ""
 			parsedServerEndpoint = nil
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, tc.discoveryErr }
+			probeCalls := 0
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				return nil, tc.probeErr
+				probeCalls++
+				return nil, daemon.ErrGuessedEndpointAuth
 			}
 			startCalls := 0
 			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
@@ -320,6 +321,7 @@ func TestEnsureDaemonDefaultProbeErrors(t *testing.T) {
 			err := ensureDaemon()
 			assert.Equal(t, tc.wantAccessErr, daemon.IsDaemonAccessError(err))
 			assert.Equal(t, tc.wantStarts, startCalls)
+			assert.Zero(t, probeCalls)
 		})
 	}
 }
@@ -672,7 +674,7 @@ func TestDaemonSearchMissingCredentialStartsLexical(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJobResult(job.ID, "test", "prompt", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":1,"summary":"needle review","findings":[]}`), Verdict: storage.VerdictPass}))
 	cfg := config.DefaultConfig()
 	cfg.Search.Embeddings = &embedconfig.Embedder{BaseURL: provider.URL, Model: "test", Dims: 2, APIKey: secretref.Ref{Env: "ROBOREV_TEST_EMBEDDING_KEY"}, TrustPrivateNetwork: true}
 	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)

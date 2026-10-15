@@ -6,5 +6,6 @@ export interface CloseReviewRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   closed: boolean;
+  expected_review_uuid?: string;
   job_id: number;
 }

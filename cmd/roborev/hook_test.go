@@ -635,6 +635,26 @@ func TestInitNoDaemon(t *testing.T) {
 	}
 }
 
+func TestInitNoDaemonWithoutRuntimeReportsDaemonNotRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows due to shell script stubs")
+	}
+
+	initNoDaemonSetup(t)
+	oldAddr, oldParsed := serverAddr, parsedServerEndpoint
+	serverAddr, parsedServerEndpoint = "", nil
+	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldParsed })
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	assert.Contains(t, output, "Daemon not running (use 'roborev daemon start' or systemctl)")
+	assert.NotContains(t, output, "failed to register repo")
+}
+
 func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows due to shell script stubs")

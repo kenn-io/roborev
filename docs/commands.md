@@ -150,7 +150,9 @@ roborev show --job <id>          # Force interpretation as job ID
 roborev show --prompt <job_id>   # Show the prompt sent to the agent
 roborev list                     # List jobs for current repo/branch
 roborev list --all-branches      # List jobs for every branch in the current repo
-roborev list --open              # List only open reviews
+roborev list --open              # List open reviews; failed and canceled
+                                 # jobs are excluded unless --status
+                                 # selects them
 roborev list --closed            # List only closed reviews
 roborev list --analysis-type refactor # List recorded refactor analyses
 roborev list --file pkg/a.go     # List analyses that recorded this file
@@ -547,6 +549,9 @@ renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
 reading an orphaned log file. For a daemon using a custom database, select that
 daemon with `--server`; the CLI does not open SQLite.
 
+To remove old logs automatically, set
+[`job_log_retention_days`](/docs/configuration/#stored-prompts-and-retention).
+
 The `clean` subcommand asks the selected daemon to remove log files older than
 the specified number of days (default: 7).
 
@@ -564,6 +569,9 @@ roborev close <job_id> --reopen      # Reopen a closed review
 | `--message, -m` | Comment message (inline) |
 | `--commenter` | Name of commenter |
 | `--job` | Force interpretation as job ID |
+| `--rebuttal` | Re-evaluate one finding in its original agent session and wait |
+| `--finding` | Excerpt of the original review to re-evaluate |
+| `--close` | Close the whole review after recording the assessment (requires `--rebuttal`) |
 
 !!! note
 
@@ -1090,6 +1098,16 @@ See: [Repository Management](/docs/guides/repository-management/)
 
 ## Daemon & Hooks
 
+Automatic daemon discovery uses live runtime records from the selected data
+directory (`~/.roborev` by default, or `ROBOREV_DATA_DIR`). A response on the
+default loopback port does not identify your daemon: another local account may
+own that port. When no runtime is found, commands that start the daemon launch
+your own instance; other requests report that the daemon is not running.
+
+Use `--server <address>` to select an endpoint explicitly, including a manually
+managed daemon without a runtime record. The CLI probes that endpoint and does
+not start or restart a local daemon on its behalf.
+
 ```bash
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
@@ -1352,7 +1370,7 @@ daemon.
 
 | Flag | Description |
 |------|-------------|
-| `--server <addr>` | Daemon address (default: `http://127.0.0.1:7373`). Accepts `unix://` for Unix domain sockets |
+| `--server <addr>` | Daemon address. Without it, the CLI uses the daemon named by this data directory's runtime records. Accepts `unix://` for Unix domain sockets |
 | `-v, --verbose` | Verbose output |
 
 ## Update

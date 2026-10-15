@@ -59,9 +59,12 @@ made with `make build`.
 
 The Reviews workspace follows the daemon's queue in real time. Use the
 repository and branch picker, status filter, ref search, and closed-review
-toggle to narrow the list. The Closed column shows `yes` for a closed review,
-`no` for an open review, and `--` when no closed state is available. Panel
-member rows show `--` because the synthesis row owns the panel's closed state.
+toggle to narrow the list. Hiding closed reviews also hides failed and canceled
+jobs, because they have no review to resolve; select **Failed** or **Canceled**
+in the status filter to list them anyway. The Closed column shows `yes` for a
+closed review, `no` for an open review, and `--` when no closed state is
+available. Panel member rows show `--` because the synthesis row owns the
+panel's closed state.
 
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. Sorting reorders
@@ -73,6 +76,12 @@ Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.
 Panel reviews appear as a synthesis row that can be expanded to show its
 individual reviewers.
+
+The detail drawer shows the job's recorded reasoning level beside the agent and
+model. In an owner-local browser session, the drawer also shows the recorded
+agent command with a copy button above the Review, Log, and Prompt tabs. Long
+commands scroll horizontally. Remote token and proxy sessions omit command lines
+because agent arguments can contain credentials.
 
 The Type column identifies standard reviews as `default` and shows the
 configured name for specialized or custom reviews. The detail drawer repeats

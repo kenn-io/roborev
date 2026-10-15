@@ -142,8 +142,9 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 		normalizedRepo = abs
 	}
 
-	// Query by git_ref and repo to avoid matching jobs from different repos
-	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
+	// Query by git_ref and repo to avoid matching jobs from different repos.
+	// Fetch every match: newer fix and task jobs can share the ref.
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(0))}})
 	if err != nil {
 		return nil, err
 	}
@@ -160,8 +161,10 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
 	}
 
-	if len(result.Jobs) > 0 {
-		return &result.Jobs[0], nil
+	for i := range result.Jobs {
+		if reviewsCommit(result.Jobs[i]) {
+			return &result.Jobs[i], nil
+		}
 	}
 
 	// Fallback: if repo filter yielded no results, try git_ref only
@@ -189,6 +192,9 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	// Filter client-side: find a job whose repo path matches when normalized
 	for i := range fallbackResult.Jobs {
 		job := &fallbackResult.Jobs[i]
+		if !reviewsCommit(*job) {
+			continue
+		}
 		jobRepo := job.RepoPath
 		// Skip empty or relative paths to avoid false matches from cwd resolution
 		if jobRepo == "" || !filepath.IsAbs(jobRepo) {
@@ -203,6 +209,13 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	}
 
 	return nil, nil
+}
+
+// reviewsCommit reports whether a job reviews the commit named by its git_ref.
+// Fix and task jobs, including rebuttals, copy the reviewed commit's ref but
+// produce no review of that commit.
+func reviewsCommit(job storage.ReviewJob) bool {
+	return job.JobType != storage.JobTypeFix && job.JobType != storage.JobTypeTask
 }
 
 // waitForReview waits for a review to complete and returns it

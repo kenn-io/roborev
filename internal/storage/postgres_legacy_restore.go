@@ -44,9 +44,9 @@ func (p *PgPool) restoreLegacyReviews(ctx context.Context) error {
 					return err
 				}
 				_, err = p.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
- structured_output, reviewed_file_count, excluded_file_count, updated_by_machine_id, created_at, updated_at)
+ structured_output, reviewed_file_count, excluded_file_count, updated_by_machine_id, created_at, updated_at, job_enqueued_at, job_source_machine_id)
  SELECT r.uuid, r.job_uuid, r.agent, r.prompt, '', r.closed, r.verdict_bool, $2,
- r.reviewed_file_count, r.excluded_file_count, r.updated_by_machine_id, r.created_at, clock_timestamp()
+ r.reviewed_file_count, r.excluded_file_count, r.updated_by_machine_id, r.created_at, clock_timestamp(), r.job_enqueued_at, r.job_source_machine_id
  FROM legacy_reviews l CROSS JOIN LATERAL jsonb_populate_record(NULL::reviews, l.record) r
  WHERE l.uuid = $1 AND NOT EXISTS(SELECT 1 FROM reviews WHERE uuid = r.uuid OR job_uuid = r.job_uuid)
  ON CONFLICT DO NOTHING`, record.ID, []byte(raw))

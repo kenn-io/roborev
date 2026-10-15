@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -46,10 +47,18 @@ func ParseResetDuration(errMsg string) time.Duration {
 	return d
 }
 
+// resetDateTimePattern matches the dated form Codex usage-limit errors
+// use, such as "oct 14th, 2026 3:31 am", after lowercasing.
+var resetDateTimePattern = regexp.MustCompile(
+	`^([a-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) (\d{1,2}:\d{2} [ap]m)`,
+)
+
 // ParseResetTime extracts an absolute reset time from messages like
-// "resets at 5:42 PM", "resets 5:42pm", or "try again at 17:42". Interprets the parsed
-// clock time in the local timezone. Returns the zero time.Time if no
-// recognized phrase is present or the time is unparseable.
+// "resets at 5:42 PM", "resets 5:42pm", "try again at 17:42", or
+// "try again at Oct 14th, 2026 3:31 AM". Interprets the parsed time in
+// the local timezone. Returns the zero time.Time if no recognized phrase
+// is present, the time is unparseable, or a dated reset is not in the
+// future.
 //
 // If the parsed clock time is at or before now-on-the-same-day, the
 // returned time rolls forward to the same wall-clock time on the next
@@ -79,6 +88,9 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	// can't shift byte offsets out of alignment with errMsg. The
 	// token feeds time.Parse with lowercase formats below.
 	rest := lower[idx:]
+	if m := resetDateTimePattern.FindStringSubmatch(rest); m != nil {
+		return parseResetDateTime(m[1]+" "+m[2]+" "+m[3]+" "+m[4], now)
+	}
 	end := len(rest)
 	for i, r := range rest {
 		// Stop at sentence-ending punctuation or newline.
@@ -115,4 +127,14 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// parseResetDateTime parses a lowercased "oct 14 2026 3:31 am" value in
+// now's location, returning the zero time unless it is after now.
+func parseResetDateTime(value string, now time.Time) time.Time {
+	t, err := time.ParseInLocation("Jan 2 2006 3:04 pm", value, now.Location())
+	if err != nil || !t.After(now) {
+		return time.Time{}
+	}
+	return t
 }

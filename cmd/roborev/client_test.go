@@ -218,7 +218,26 @@ func TestFindJobForCommit(t *testing.T) {
 				return repoDir, []MockStep{
 					{
 						Jobs:          []storage.ReviewJob{{ID: 2, GitRef: "def456", RepoPath: repoDir}},
-						ExpectedQuery: map[string]string{"git_ref": "def456", "repo": repoDir, "limit": "1"},
+						ExpectedQuery: map[string]string{"git_ref": "def456", "repo": repoDir, "limit": "0"},
+					},
+				}
+			},
+			expectedID:  2,
+			expectFound: true,
+		},
+		{
+			name:      "skips newer fix and task jobs that share the commit ref",
+			commitSHA: "def456",
+			setupTest: func(t *testing.T) (string, []MockStep) {
+				repoDir := normalizeTestPath(t, t.TempDir())
+				return repoDir, []MockStep{
+					{
+						Jobs: []storage.ReviewJob{
+							{ID: 4, GitRef: "def456", RepoPath: repoDir, JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal},
+							{ID: 3, GitRef: "def456", RepoPath: repoDir, JobType: storage.JobTypeFix},
+							{ID: 2, GitRef: "def456", RepoPath: repoDir, JobType: storage.JobTypeReview},
+						},
+						ExpectedQuery: map[string]string{"git_ref": "def456", "repo": repoDir, "limit": "0"},
 					},
 				}
 			},
@@ -233,7 +252,7 @@ func TestFindJobForCommit(t *testing.T) {
 				return repoDir, []MockStep{
 					{
 						Jobs:          []storage.ReviewJob{},
-						ExpectedQuery: map[string]string{"git_ref": "notfound", "repo": repoDir, "limit": "1"},
+						ExpectedQuery: map[string]string{"git_ref": "notfound", "repo": repoDir, "limit": "0"},
 					},
 					{
 						Jobs:          []storage.ReviewJob{},
@@ -251,7 +270,7 @@ func TestFindJobForCommit(t *testing.T) {
 				return repoDir, []MockStep{
 					{
 						Jobs:          []storage.ReviewJob{},
-						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoDir, "limit": "1"},
+						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoDir, "limit": "0"},
 					},
 					{
 						Jobs: []storage.ReviewJob{
@@ -276,7 +295,7 @@ func TestFindJobForCommit(t *testing.T) {
 				return repoPath, []MockStep{
 					{
 						Jobs:          []storage.ReviewJob{},
-						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoPath, "limit": "1"},
+						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoPath, "limit": "0"},
 					},
 					{
 						Jobs: []storage.ReviewJob{
@@ -320,7 +339,7 @@ func TestFindJobForCommit(t *testing.T) {
 				return repoDir, []MockStep{
 					{
 						Jobs:          []storage.ReviewJob{},
-						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoDir, "limit": "1"},
+						ExpectedQuery: map[string]string{"git_ref": "abc123", "repo": repoDir, "limit": "0"},
 					},
 					{
 						Jobs: []storage.ReviewJob{

@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/githook"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func agentHookCmd() *cobra.Command {
@@ -90,8 +91,8 @@ func agentHookRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rawAgent == string(agenthook.AgentGrok) {
-				return runGrokAgentHook(resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if selected, ok := agenthook.LocalProfile(rawAgent); ok {
+				return runLocalAgentHook(selected, resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
 			profile, err := kitagenthook.ParseAgent(rawAgent)
 			if err != nil {
@@ -107,33 +108,65 @@ func agentHookRunCmd() *cobra.Command {
 	return cmd
 }
 
-func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io.Writer) error {
+// runLocalAgentHook runs the hook for an agent profile this repository
+// implements without a kit profile. These harnesses follow the Claude Code
+// stdin and JSON output protocol, so one direct runner covers them.
+func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin io.Reader, stdout, stderr io.Writer) error {
+	displayName := "agent"
+	if profile, ok := agenthook.LocalProfileDisplayName(agent); ok {
+		displayName = profile
+	}
 	input, err := agenthook.DecodeInput(stdin)
 	if err != nil {
-		return fmt.Errorf("decode Grok Build input: %w", err)
+		return fmt.Errorf("decode %s input: %w", displayName, err)
 	}
 	if input.SessionID == "" {
-		return fmt.Errorf("decode Grok Build input: missing session_id")
+		return fmt.Errorf("decode %s input: missing session_id", displayName)
+	}
+	instruction := opts.Instruction
+	if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
+		// Injected reminders carry purpose-built guidance in the daemon.
+		// The CLI default-fills Instruction with the stop-decision text,
+		// which would override it, so only explicitly configured
+		// instructions travel for these events.
+		if strings.TrimSpace(instruction) == strings.TrimSpace(agenthook.DefaultInstruction) {
+			instruction = ""
+		}
 	}
 	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
 		MCP:                   opts.MCP,
-		Agent:                 agenthook.AgentGrok,
+		Agent:                 agent,
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
 		FailedReviewThreshold: opts.FailedReviewThreshold,
-		Instruction:           opts.Instruction,
+		Instruction:           instruction,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
+		fmt.Fprintf(stderr, "roborev %s: %v\n", displayName, err)
 		return json.MarshalWrite(stdout, map[string]any{})
+	}
+	if !resp.Triggered && resp.Diagnosis != "" {
+		// Harnesses record a hook's error-stream preview, so the evaluation
+		// summary is visible when debugging why no reminder was injected.
+		fmt.Fprintf(stderr, "roborev %s: %s\n", displayName, resp.Diagnosis)
 	}
 	if resp.Triggered {
 		if resp.TriggeredBy == "fix_session" {
 			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
 		}
+		if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
+			// Injected context must stay self-contained: the daemon reason
+			// already carries the triage guidance, so only append the fix
+			// skill warning and guidelines rather than the stop instruction.
+			resp.Reason = prependAgentHookFixSkillWarning(
+				agent, opts.MCP,
+				agenthook.PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, opts.FixGuidelines),
+			)
+			return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
+		}
 		resp.Reason = prependAgentHookFixSkillWarning(
-			agenthook.AgentGrok, opts.MCP,
+			agent, opts.MCP,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
 		)
 		return json.MarshalWrite(stdout, agenthook.BuildOutput(input, resp))
@@ -165,7 +198,11 @@ func agentHookInstallCmd() *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), resolution.Notice)
 				}
 			}
-			return agenthook.RunInstall(opts, cmd.OutOrStdout())
+			if err := agenthook.RunInstall(opts, cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			printStaleDaemonNotice(cmd.OutOrStdout())
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to update; empty detects installed agents, all updates every profile")
@@ -177,6 +214,7 @@ func agentHookInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into agent hooks (for version-manager shims)")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "hook config path for a single selected agent")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().BoolVar(&opts.StopForm, "stop-form", opts.StopForm, "register ZCode's Stop/PreToolUse/PostToolUse hooks instead of UserPromptSubmit/SessionStart (ZCode does not dispatch those events yet)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", opts.DryRun, "print what would change without writing files")
 	return cmd
 }
@@ -210,6 +248,7 @@ func agentHookDumpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path to read and merge into; defaults to the agent's standard path")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().BoolVar(&opts.StopForm, "stop-form", opts.StopForm, "dump ZCode's Stop/PreToolUse/PostToolUse hook form instead of UserPromptSubmit/SessionStart")
 	return cmd
 }
 
@@ -324,4 +363,21 @@ func (s *agentHookSecondsOrDuration) Set(v string) error {
 
 func (s *agentHookSecondsOrDuration) Type() string {
 	return "duration"
+}
+
+// printStaleDaemonNotice warns when a running daemon is older than this
+// binary: installed hooks call the daemon, and a stale daemon silently skips
+// events and reminder types it does not know, which surfaced as hooks
+// returning empty output during ZCode integration testing.
+var printStaleDaemonNotice = func(stdout io.Writer) {
+	status, err := fetchDaemonStatus(context.Background(), getDaemonEndpoint())
+	if err != nil || status == nil {
+		return
+	}
+	if status.Version == version.Version {
+		return
+	}
+	fmt.Fprintf(stdout,
+		"notice: running daemon version %s differs from this binary (%s); run 'roborev daemon restart' so installed hooks reach current reminder behavior\n",
+		status.Version, version.Version)
 }

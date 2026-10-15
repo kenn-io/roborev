@@ -8,7 +8,9 @@ import type {
   AgentHookResetRequest,
   AgentHookResponse,
   AgentHookSessionsOutputBody,
+  RebuttalRequest,
   Request,
+  ReviewJob,
 } from "../models";
 
 import { roborevFetch } from "../../generated-fetch";
@@ -154,4 +156,34 @@ export const listAgentHookSessions = async (
       method: "GET",
     },
   );
+};
+
+export const getRebuttalUrl = () => {
+  return `/api/rebuttal`;
+};
+
+/**
+ * @summary Re-evaluate one finding in the original agent session
+ */
+export const rebuttal = async (
+  rebuttalRequest: NonReadonly<RebuttalRequest>,
+  options?: RequestInit,
+): Promise<ReviewJob> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+  return roborevFetch<ReviewJob>(getRebuttalUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(rebuttalRequest),
+  });
 };

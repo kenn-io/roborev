@@ -18,6 +18,13 @@ type syncTestHelper struct {
 	repo      *Repo
 }
 
+func storedJobEnqueuedAt(t *testing.T, db *DB, jobID int64) time.Time {
+	t.Helper()
+	job, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	return job.EnqueuedAt
+}
+
 func newSyncTestHelper(t *testing.T) *syncTestHelper {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -60,11 +67,11 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	require.NotNil(h.t, claimed, "ClaimJob returned nil job")
 	require.Equal(h.t, job.ID, claimed.ID, "Claimed wrong job")
 	err = h.db.CompleteJobResult(
-		job.ID, "test", "prompt", ReviewCompletion{
+		job.ID, "test", ReviewCompletion{
 			StructuredOutput: reviewFixtureJSON("output"),
 			Output:           "output", Verdict: VerdictFail,
-		},
-	)
+		})
+
 	require.NoError(h.t, err, "Failed to complete job")
 	return job
 }
@@ -77,16 +84,6 @@ func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, upd
 		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
 	}
 	require.NoError(h.t, err, "Failed to set job timestamps")
-}
-
-func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
-	var err error
-	if syncedAt.Valid {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
-	} else {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
-	}
-	require.NoError(h.t, err, "Failed to set review timestamps")
 }
 
 // Legacy schema DDL constants for migration tests.
@@ -208,4 +205,11 @@ func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
 // openRawDB opens a database without running migrations
 func openRawDB(dbPath string) (*sql.DB, error) {
 	return sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+}
+
+func storedJobSourceMachineID(t *testing.T, db *DB, jobID int64) uuid.UUID {
+	t.Helper()
+	var owner uuid.UUID
+	require.NoError(t, db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID).Scan(&owner))
+	return owner
 }

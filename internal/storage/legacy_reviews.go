@@ -28,7 +28,7 @@ func requiresReviewDocument(jobType string) bool {
 	}
 }
 
-const legacyReviewColumns = `id, job_id, agent, prompt, output, created_at, closed,
+const legacyReviewColumns = `id, job_id, agent, output, created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
  uuid, updated_by_machine_id, updated_at, synced_at`
 
@@ -47,7 +47,7 @@ func (db *DB) migrateLegacyReviews() error {
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS legacy_reviews (
  archive_id INTEGER PRIMARY KEY,
- id INTEGER, job_id INTEGER NOT NULL, agent TEXT NOT NULL, prompt TEXT NOT NULL,
+ id INTEGER, job_id INTEGER NOT NULL, agent TEXT NOT NULL,
  output TEXT NOT NULL, created_at TEXT NOT NULL, closed INTEGER NOT NULL,
  reviewed_file_count INTEGER, excluded_file_count INTEGER, verdict_bool INTEGER,
  structured_output TEXT, uuid TEXT UNIQUE, updated_by_machine_id TEXT,
@@ -257,10 +257,10 @@ func (db *DB) ResolveLegacyReview(id int64, raw jsontext.Value) error {
 	if !doc.UnableToReview() {
 		verdict = verdictToBool(VerdictFromPassed(doc.Passed(threshold)))
 	}
-	_, err = tx.Exec(`INSERT INTO reviews (id, job_id, agent, prompt, output, created_at, closed,
+	_, err = tx.Exec(`INSERT INTO reviews (id, job_id, agent, output, created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output,
  uuid, updated_by_machine_id, updated_at, synced_at)
- SELECT CASE WHEN EXISTS(SELECT 1 FROM reviews WHERE id = l.id) THEN NULL ELSE l.id END, job_id, agent, prompt, '', created_at, closed, reviewed_file_count, excluded_file_count,
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM reviews WHERE id = l.id) THEN NULL ELSE l.id END, job_id, agent, '', created_at, closed, reviewed_file_count, excluded_file_count,
  ?, ?, uuid, ?, datetime('now'), NULL FROM legacy_reviews l WHERE archive_id = ?`, verdict, string(raw), machineID, id)
 	if err != nil {
 		return fmt.Errorf("restore converted review: %w", err)

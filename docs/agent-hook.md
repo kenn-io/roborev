@@ -129,10 +129,10 @@ roborev agent-hook install
 
 An agent is detected when its executable is on `PATH` or its config directory
 already exists. The executable candidates are `claude`, `codex`, `copilot`,
-`agent` (Cursor), `droid`, `gemini`, `hermes`, `qwen`, and `grok`.
+`agent` (Cursor), `droid`, `gemini`, `hermes`, `qwen`, `grok`, and `zcode`.
 
-Select one profile or deliberately install all nine integrations (the eight kit
-profiles plus Grok Build):
+Select one profile or deliberately install all ten integrations (the eight kit
+profiles plus Grok Build and ZCode):
 
 ```bash
 roborev agent-hook install --agent qwen
@@ -157,6 +157,39 @@ daemon endpoint. See [MCP setup](integrations/mcp.md).
 
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
+
+ZCode hooks are delivered as an inline plugin and registered on the events ZCode
+actually schedules. The install writes a manifest plus `hooks/hooks.json` under
+`~/.roborev/zcode-plugin/` and appends that directory to `plugins.dirs` in
+`~/.zcode/cli/config.json`. ZCode documents seven hook events but, on the
+versions tested, dispatches only SessionStart and UserPromptSubmit: a full day
+of session logs plus a post-restart verification with a loaded Stop hook (the
+hook was confirmed registered and a complete turn produced zero dispatch
+records) showed that Stop, PreToolUse, and PostToolUse never fire. The default
+form delivers reminders through the two scheduled events as injected
+`additionalContext` (self-contained text naming the repo, review job IDs,
+commits, and verdicts, plus triage guidance), with the usual acknowledgment and
+threshold throttling. The Stop registration is kept installed alongside them: it
+stays inert until ZCode dispatches the event, then activates on its own with the
+shared thresholds and acknowledgment state. Non-triggering runs print an
+evaluation summary on the hook's error stream (repo, branch, open failed review
+count, unacknowledged count, threshold), so an empty reminder is distinguishable
+from a broken query; ZCode records that stream in its hook execution log. Pass
+`--stop-form` to also register the PreToolUse/PostToolUse shell hooks; ZCode
+hook registrations use a 30-second minimum timeout because a real run measured
+15 seconds end to end.
+
+Reminders stay muted for a repository until it defines its own review
+guidelines: `review_guidelines` in `.roborev.toml` on the default branch, or a
+`REVIEW.md` there. Global review guidelines do not count for this check (they
+tune the prompt, but repo-specific guidance is what makes the reminder worth
+acting on), and the hook's error stream says `review guidelines missing` while
+muted. Repositories that cannot commit guidelines to the default branch can keep
+an uncommitted `.roborev.toml` in the working tree: guideline loading falls back
+to the filesystem when the default branch has no config. Run
+`roborev agent-hook install` with an up-to-date daemon, and restart it after
+upgrading; a stale daemon silently skips events and reminder types it does not
+know.
 
 Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:

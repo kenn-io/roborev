@@ -2,13 +2,20 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -73,11 +80,386 @@ func TestPanelSweepReleasesStuck(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(synth.ClaimBlocked, "synthesis should remain blocked before the sweep")
 
-	server.sweepStuckPanels()
+	server.sweepStuckPanels(context.Background())
 
 	synth, err = db.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
 	assert.False(synth.ClaimBlocked, "sweep should release the stuck synthesis job")
+}
+
+func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		goalReview      bool
+		missingWorktree bool
+	}{
+		{name: "panel member"},
+		{name: "goal review", goalReview: true},
+		{name: "goal review missing worktree", goalReview: true, missingWorktree: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			errorLog := newTestErrorLog()
+			tc.Pool.errorLog = errorLog
+			runUUID := uuid.Nil()
+			eventType := "review.failed"
+			worktreePath := ""
+			wantWorktreePath := ""
+			if test.goalReview {
+				eventType = "goal_review.failed"
+				worktreePath = tc.TmpDir
+				wantWorktreePath = tc.TmpDir
+				if test.missingWorktree {
+					worktreePath = filepath.Join(tc.TmpDir, "missing-worktree")
+					wantWorktreePath = ""
+				}
+				_, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+					RepoID: tc.Repo.ID, Agent: "test", GitRef: "snapshot-digest",
+					JobType: storage.JobTypeGoalReview, ReviewType: "goal", WorktreePath: worktreePath,
+				})
+				require.NoError(t, err)
+			} else {
+				runUUID, _, _ = enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+			}
+			claimed, err := tc.DB.ClaimJob("worker-a")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
+			defer tc.Broadcaster.Unsubscribe(subscriber)
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+
+			server.sweepStuckPanels(context.Background())
+
+			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
+			assert.Equal("daemon did not save the job's outcome", job.Error)
+			require.Len(t, events, 1)
+			event := <-events
+			assert.Equal(eventType, event.Type)
+			assert.Equal(job.ID, event.JobID)
+			assert.Equal(job.Error, event.Error)
+			assert.False(event.SuppressHooks)
+			assert.Equal(wantWorktreePath, event.WorktreePath)
+			errors := errorLog.Recent()
+			require.Len(t, errors, 1)
+			assert.Equal(job.ID, errors[0].JobID)
+			assert.Contains(errors[0].Message, job.Error)
+			if !test.goalReview {
+				synth, err := tc.DB.GetSynthesisJob(runUUID)
+				require.NoError(t, err)
+				assert.False(synth.ClaimBlocked)
+			}
+		})
+	}
+}
+
+func TestPanelSweepClaimOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		pendingRequeue bool
+		clockRollback  bool
+	}{
+		{name: "pending requeue", pendingRequeue: true},
+		{name: "claim gap after clock rollback", clockRollback: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+			tc.Pool.runningJobsMu.Lock()
+			tc.Pool.workerJobs["worker-a"] = workerClaimingJobID
+			tc.Pool.runningJobsMu.Unlock()
+			claimed, err := tc.DB.ClaimJob("worker-a")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			tc.Pool.runningJobsMu.Lock()
+			if test.pendingRequeue {
+				delete(tc.Pool.workerJobs, "worker-a")
+				tc.Pool.failedUpdateRequeues[claimed.ID] = "worker-a"
+			}
+			tc.Pool.runningJobsMu.Unlock()
+			if test.clockRollback {
+				_, err := tc.DB.Exec(`UPDATE review_jobs SET started_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).Format(time.RFC3339Nano), claimed.ID)
+				require.NoError(t, err)
+			}
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+			server.sweepStuckPanels(context.Background())
+
+			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusRunning)
+			assert.Empty(job.Error)
+			synth, err := tc.DB.GetSynthesisJob(runUUID)
+			require.NoError(t, err)
+			assert.True(synth.ClaimBlocked)
+		})
+	}
+}
+
+func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		trigger string
+		err     error
+	}{
+		{name: "result write", trigger: "BEFORE INSERT ON reviews WHEN NEW.job_id = %d"},
+		{name: "failed-status write", trigger: "BEFORE UPDATE OF status ON review_jobs WHEN NEW.id = %d AND NEW.status = 'failed'", err: errors.New("synthetic agent failure")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			tc := newWorkerTestContext(t, 1)
+			const agentName = "panel-sweep-blocking"
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			releaseAgent := sync.OnceFunc(func() { close(release) })
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: agentName,
+				ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+					started <- struct{}{}
+					select {
+					case <-release:
+						return string(testutil.ReviewFixtureJSON("No issues found.")), test.err
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
+				},
+			})
+			_, members, synth := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: agentName}})
+			if test.err != nil {
+				_, err := tc.DB.Exec(`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
+				require.NoError(t, err)
+			}
+			_, err := tc.DB.Exec("CREATE TRIGGER reject_worker_write " + fmt.Sprintf(test.trigger, members[0].ID) + " BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+			require.NoError(t, err)
+			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
+			defer tc.Broadcaster.Unsubscribe(subscriber)
+
+			tc.Pool.Start()
+			defer tc.Pool.Stop()
+			defer releaseAgent()
+			// Wall-clock waits: the started worker pool runs git subprocesses and
+			// SQLite writes, which testing/synctest cannot observe.
+			testutil.ReceiveWithTimeout(t, started, 10*time.Second)
+			startedEvent := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+			require.Equal(t, "review.started", startedEvent.Type)
+			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+
+			server.sweepStuckPanels(context.Background())
+			live := tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
+			assert.Empty(live.Error)
+			assert.Empty(events, "sweeping a live worker must not announce a failure")
+			blocked := tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
+			assert.True(blocked.ClaimBlocked)
+
+			// A later job on the single worker proves the rejected attempt returned.
+			probe := tc.createJob(t, members[0].GitRef)
+			releaseAgent()
+			for {
+				// Wall-clock wait: the worker processes the probe job with git and SQLite.
+				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+				assert.NotEqual(members[0].ID, event.JobID, "a rejected write must not announce a terminal member event")
+				if event.JobID == probe.ID && event.Type == "review.completed" {
+					break
+				}
+			}
+			tc.assertJobStatus(t, probe.ID, storage.JobStatusDone)
+			before := tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
+			_, err = tc.DB.GetReviewByJobID(members[0].ID)
+			require.Error(t, err)
+			_, err = tc.DB.Exec(`DROP TRIGGER reject_worker_write`)
+			require.NoError(t, err)
+
+			// The worker can already be claiming its next job in SQLite after
+			// announcing the probe's completion. A sweep skips that claim gap;
+			// retry until the database operation finishes and recovery can run.
+			require.Eventually(t, func() bool {
+				server.sweepStuckPanels(context.Background())
+				job, err := tc.DB.GetJobByID(members[0].ID)
+				return err == nil && job.Status == storage.JobStatusFailed
+			}, 10*time.Second, 10*time.Millisecond)
+
+			job := tc.assertJobStatus(t, members[0].ID, storage.JobStatusFailed)
+			assert.Equal(before.RetryCount, job.RetryCount)
+			require.NotEmpty(t, events, "the sweep announces the failure before returning")
+			event := <-events
+			assert.Equal(job.ID, event.JobID)
+			for {
+				// Wall-clock wait: the worker runs the released synthesis job with SQLite.
+				event := testutil.ReceiveWithTimeout(t, events, 10*time.Second)
+				require.Equal(t, synth.ID, event.JobID)
+				if event.Type == "review.failed" {
+					assert.Equal("all review agents failed or produced no usable output", event.Error)
+					assert.True(event.SuppressHooks)
+					break
+				}
+				require.Equal(t, "review.started", event.Type)
+			}
+			terminal := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+			assert.Equal(synth.RetryCount, terminal.RetryCount)
+		})
+	}
+}
+
+func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		tc := newWorkerTestContext(t, 1)
+		runUUID, _, _ := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: "test"}})
+		claimed, err := tc.DB.ClaimJob("worker-a")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		stale := claimed
+		changed, err := tc.DB.FailoverJob(stale.ID, stale.WorkerID, "replacement", "")
+		require.NoError(t, err)
+		require.True(t, changed)
+		// Distinct attempts need distinct timestamps even when the host clock has not ticked.
+		time.Sleep(time.Nanosecond)
+		reclaimed, err := tc.DB.ClaimJob(stale.WorkerID)
+		require.NoError(t, err)
+		require.NotNil(t, reclaimed)
+		require.Equal(t, stale.ID, reclaimed.ID)
+		require.Equal(t, stale.WorkerID, reclaimed.WorkerID)
+		require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
+		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
+
+		server.failOrphanedJob(context.Background(), stale)
+
+		job := tc.assertJobStatus(t, reclaimed.ID, storage.JobStatusRunning)
+		assert.Empty(job.Error)
+		synth, err := tc.DB.GetSynthesisJob(runUUID)
+		require.NoError(t, err)
+		assert.True(synth.ClaimBlocked)
+	})
+}
+
+func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		jobs := make([]*storage.ReviewJob, 2)
+		for i := range jobs {
+			enqueued := tc.createJob(t, "deadbeef")
+			// Separate workers keep claims unambiguous when timestamps tie.
+			job, err := tc.DB.ClaimJob(fmt.Sprintf("worker-%d", i))
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			require.Equal(t, enqueued.ID, job.ID)
+			jobs[i] = job
+		}
+		entered := make(chan Event)
+		release := make(chan struct{})
+		b := &observingBroadcaster{Broadcaster: tc.Broadcaster, observe: func(event Event) {
+			entered <- event
+			<-release
+		}}
+		tc.Pool.broadcaster = b
+		server := &Server{
+			db: tc.DB, workerPool: tc.Pool, broadcaster: b,
+			configWatcher: NewConfigWatcher("", tc.Pool.cfgGetter.Config(), b, nil),
+		}
+		server.startPanelSweep(context.Background())
+		time.Sleep(panelSweepInterval)
+		event := <-entered
+		assert.Equal(t, jobs[0].ID, event.JobID)
+		assert.Equal(t, "review.failed", event.Type)
+		stopped := make(chan struct{})
+		go func() {
+			server.stopPanelSweep()
+			close(stopped)
+		}()
+		synctest.Wait()
+		returned := false
+		select {
+		case <-stopped:
+			returned = true
+		default:
+		}
+		assert.False(t, returned, "stop must wait for the failure broadcast to finish")
+		close(release)
+		<-stopped
+		tc.assertJobStatus(t, jobs[0].ID, storage.JobStatusFailed)
+		tc.assertJobStatus(t, jobs[1].ID, storage.JobStatusRunning)
+	})
+}
+
+func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		blockedSweep bool
+	}{
+		{name: "sweep finishes before worker drain"},
+		{name: "claims stop before sweep join", blockedSweep: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, db, tmpDir := newTestServer(t)
+				release := make(chan struct{})
+				releaseWork := sync.OnceFunc(func() { close(release) })
+				entered := make(chan struct{})
+				notifyEntered := sync.OnceFunc(func() { close(entered) })
+				var repo *storage.Repo
+				if test.blockedSweep {
+					var err error
+					repo, err = db.GetOrCreateRepo(tmpDir)
+					require.NoError(t, err)
+					orphan, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+					require.NoError(t, err)
+					claimed, err := db.ClaimJob("worker-a")
+					require.NoError(t, err)
+					require.NotNil(t, claimed)
+					require.Equal(t, orphan.ID, claimed.ID)
+					// The sweep announces failures through the pool's broadcaster.
+					observer := &observingBroadcaster{Broadcaster: server.broadcaster, observe: func(Event) {
+						notifyEntered()
+						<-release
+					}}
+					server.workerPool = NewWorkerPool(db, server.configWatcher, 1, observer, nil, nil)
+				}
+				server.workerPool.Start()
+				defer server.workerPool.Stop()
+				defer releaseWork()
+				if test.blockedSweep {
+					synctest.Wait()
+					server.startPanelSweep(context.Background())
+					time.Sleep(panelSweepInterval)
+					<-entered
+				} else {
+					server.startPanelSweep(context.Background())
+					server.workerPool.wg.Go(func() { <-release })
+					require.NoError(t, server.beginShutdownDrain())
+				}
+				sweepDone := server.sweepDone
+				stopped := make(chan error, 1)
+				go func() { stopped <- server.Stop() }()
+				// Stop writes the drain flag to SQLite before canceling workers.
+				// Wait for cancellation itself, not for synctest quiescence while
+				// that external database operation may still be in progress.
+				select {
+				case <-server.workerPool.stopCtx.Done():
+				case err := <-stopped:
+					require.NoError(t, err)
+				}
+				synctest.Wait()
+				require.ErrorIs(t, server.workerPool.stopCtx.Err(), context.Canceled)
+				if test.blockedSweep {
+					queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, Agent: "test", GitRef: "deadbeef"})
+					require.NoError(t, err)
+					synctest.Wait()
+					job, err := db.GetJobByID(queued.ID)
+					require.NoError(t, err)
+					assert.Equal(t, storage.JobStatusQueued, job.Status)
+				} else {
+					sweepFinished := false
+					select {
+					case <-sweepDone:
+						sweepFinished = true
+					default:
+					}
+					assert.True(t, sweepFinished, "panel sweep must finish before the worker drain")
+				}
+				assert.Empty(t, stopped)
+				releaseWork()
+				require.NoError(t, <-stopped)
+			})
+		})
+	}
 }
 
 func TestRunPanelSweepStopsOnContextCancel(t *testing.T) {

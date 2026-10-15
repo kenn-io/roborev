@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { BottomDock, Button, FitStages, IconButton } from "@kenn-io/kit-ui";
+  import {
+    BottomDock,
+    Button,
+    CopyButton,
+    FitStages,
+    IconButton,
+  } from "@kenn-io/kit-ui";
   import BanIcon from "@lucide/svelte/icons/ban";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
@@ -181,6 +187,9 @@
               / {selectedJob.model}
             {/if}
           </span>
+          {#if selectedJob.reasoning}
+            <span class="review-type">Reasoning: {selectedJob.reasoning}</span>
+          {/if}
           <span class="review-type">
             Review type: {reviewTypeLabel(
               selectedJob.review_type,
@@ -200,6 +209,18 @@
           <StatusBadge status={selectedJob.status} />
         {/if}
       </div>
+
+      {#if selectedJob?.command_line}
+        <div class="command-line">
+          <span>Command</span>
+          <code>{selectedJob.command_line}</code>
+          <CopyButton
+            text={selectedJob.command_line}
+            ariaLabel="Copy command"
+            title="Copy command"
+          />
+        </div>
+      {/if}
 
       {#if panelHeader}
         <div class="panel-line">
@@ -418,6 +439,23 @@
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
     white-space: nowrap;
+  }
+
+  .command-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+  }
+
+  .command-line code {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: var(--font-mono);
   }
 
   .panel-line {

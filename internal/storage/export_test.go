@@ -40,10 +40,10 @@ func TestExportReviewsContentProfile(t *testing.T) {
 		    token_usage = '{"input_tokens":123,"total_output_tokens":45,"cost_usd":0.67,"has_cost":true}',
 		    started_at = '2026-06-29T00:00:00Z',
 		    finished_at = '2026-06-29T00:00:02Z',
-		    diff_content = 'RAW DIFF MUST NOT EXPORT',
 		    command_line = 'TOKEN MUST NOT EXPORT'
 		WHERE id = ?`, job.ID)
 	require.NoError(t, err)
+	require.NoError(t, setJobContent(t.Context(), db, job.ID, jobContentDiff, "RAW DIFF MUST NOT EXPORT"))
 	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:03' WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 
@@ -875,12 +875,11 @@ func TestExportReviewsPreservesLargeContent(t *testing.T) {
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJobResult(
-		job.ID, "codex", "prompt", ReviewCompletion{
+		job.ID, "codex", ReviewCompletion{
 			StructuredOutput: reviewFixtureJSON(strings.Repeat("x", (1<<20)+100)),
 			Output:           strings.Repeat("x", (1<<20)+100),
 			Verdict:          VerdictFail,
-		},
-	))
+		}))
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
 	require.NoError(t, err)
@@ -912,32 +911,6 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
 	assert.Equal(t, "pass", page.Reviews[0].Verdict)
-}
-
-func TestUpsertPulledReviewWithEmptyOutputIsNotExportable(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	commit := createCommit(t, db, repo.ID, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
-	require.NoError(t, err)
-	require.NoError(t, db.UpsertPulledReview(PulledReview{
-		UUID:               testUUID("pulled-review"),
-		JobUUID:            *job.UUID,
-		Agent:              "codex",
-		Prompt:             "prompt",
-		Output:             "",
-		UpdatedByMachineID: testUUID("remote"),
-		CreatedAt:          time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:          time.Date(2026, 6, 29, 0, 0, 1, 0, time.UTC),
-	}))
-
-	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
-	require.NoError(t, err)
-	assert.Empty(t, page.Reviews)
 }
 
 func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, completedAt string, closed bool) *Review {

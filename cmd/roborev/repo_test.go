@@ -245,6 +245,10 @@ func TestRepoCommandsCancelBeforeMutation(t *testing.T) {
 			command.SetArgs(args)
 			output := captureStdout(t, func() { require.NoError(t, command.Execute()) })
 			assert.Contains(t, output, "Cancelled")
+			if action == "merge" {
+				assert.Contains(t, output, "Source: source (/src/source)")
+				assert.Contains(t, output, "Target: target (/src/target)")
+			}
 			assert.Zero(t, mutations)
 		})
 	}
@@ -357,4 +361,66 @@ func TestRepoCommandWaitsForMutation(t *testing.T) {
 		command.SilenceUsage = true
 		require.NoError(t, command.Execute())
 	})
+}
+
+func TestRepoCommandsRejectAmbiguousNames(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"show", []string{"show", "widgets"}},
+		{"rename", []string{"rename", "widgets", "friendly"}},
+		{"move", []string{"move", "widgets", "/new/checkout"}},
+		{"delete", []string{"delete", "--yes", "--cascade", "widgets"}},
+		{"merge source", []string{"merge", "--yes", "widgets", "unique"}},
+		{"merge target", []string{"merge", "--yes", "unique", "widgets"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mutations []string
+			NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+				if !strings.HasPrefix(r.URL.Path, "/api/repos/") {
+					return false
+				}
+				if r.URL.Path != "/api/repos/detail" && r.URL.Path != "/api/repos/rename" {
+					mutations = append(mutations, r.URL.Path)
+					w.WriteHeader(http.StatusNoContent)
+					return true
+				}
+				if r.URL.Query().Get("identifier") == "unique" {
+					w.Header().Set("Content-Type", "application/json")
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": map[string]any{"id": 1, "name": "unique", "root_path": "/src/unique", "created_at": "2026-01-01T00:00:00Z"}}))
+					return true
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusConflict)
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": 409, "detail": "repository name widgets is ambiguous; use a repository path:\n  /src/main\n  /src/worktree"}))
+				return true
+			}})
+			command := repoCmd()
+			command.SetArgs(tc.args)
+			err := command.Execute()
+			require.Error(t, err)
+			require.ErrorContains(t, err, "ambiguous")
+			require.ErrorContains(t, err, "/src/main")
+			require.ErrorContains(t, err, "/src/worktree")
+			assert.Empty(t, mutations)
+		})
+	}
+}
+
+func TestRepoRenameRecoveryHintUsesStoredPath(t *testing.T) {
+	stalePath := filepath.Join(t.TempDir(), "removed-checkout")
+	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/repos/rename" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"repo": map[string]any{"id": 1, "name": "widgets", "root_path": stalePath, "created_at": "2026-01-01T00:00:00Z"}}))
+		return true
+	}})
+	command := repoCmd()
+	command.SetArgs([]string{"rename", "unique", "widgets"})
+	_, output := captureStdoutStderr(t, func() { require.NoError(t, command.Execute()) })
+	assert.Contains(t, output, fmt.Sprintf("roborev repo move %q <new-path>", stalePath))
 }

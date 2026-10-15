@@ -39,7 +39,7 @@ func (sc *StaticConfig) Config() *config.Config {
 //
 // Hot-reloadable settings take effect immediately: default_agent, job_timeout,
 // agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
-// review_context_count.
+// review_context_count, prompt_retention_days, job_log_retention_days.
 //
 // Settings requiring restart: auth_key, server_addr, max_workers, ci.github_api_url,
 // [web], [sync] section.

@@ -248,7 +248,8 @@ func TestGrokAgentHookAppendsFixGuidelines(t *testing.T) {
 	var stdout bytes.Buffer
 	opts := agenthook.DefaultOptions()
 	opts.FixGuidelines = "Verify before editing."
-	err := runGrokAgentHook(
+	err := runLocalAgentHook(
+		agenthook.AgentGrok,
 		opts,
 		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
 		&stdout,
@@ -618,4 +619,90 @@ func TestRunAgentHookMCPCompletesWithExactSession(t *testing.T) {
 	assert.Contains(t, response.Reason, id.String())
 	assert.Contains(t, response.Reason, server.URL)
 	assert.NotContains(t, response.Reason, "agent-hook fix-done")
+}
+
+func TestZcodeUserPromptSubmitHookInjectsAdditionalContext(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{Triggered: true, TriggeredBy: "failed_reviews", Reason: "[roborev] demo has 1 unaddressed review finding.\n- job 3 (abc123, verdict F)"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout bytes.Buffer
+	err := runLocalAgentHook(
+		agenthook.AgentZcode,
+		agenthook.DefaultOptions(),
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&stdout,
+		io.Discard,
+	)
+	require.NoError(t, err)
+
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	_, blocked := output["decision"]
+	assert.False(t, blocked)
+	specific, ok := output["hookSpecificOutput"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "UserPromptSubmit", specific["hookEventName"])
+	assert.Contains(t, specific["additionalContext"], "[roborev] demo has 1 unaddressed review finding.")
+}
+
+func TestLocalAgentHookSurfacesDiagnosisOnStderr(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{
+			SessionID: "s1", Skipped: true,
+			Diagnosis: `repo "C:/code/demo" branch "main": 0 open failed review job(s), 0 unacknowledged, threshold 1`,
+		}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout, stderr bytes.Buffer
+	err := runLocalAgentHook(
+		agenthook.AgentZcode,
+		agenthook.DefaultOptions(),
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"C:/code/demo"}`),
+		&stdout,
+		&stderr,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, stderr.String(), "0 open failed review job(s)")
+	assert.Equal(t, "{}", stdout.String())
+}
+
+func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
+	var captured agenthook.Request
+	oldPost := postAgentHook
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
+		captured = req
+		return agenthook.Response{}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+	opts := agenthook.DefaultOptions()
+
+	err := runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, captured.Instruction, "default-filled instruction must not override injected guidance")
+
+	opts.Instruction = "Custom injected instruction."
+	err = runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+
+	err = runLocalAgentHook(
+		agenthook.AgentZcode, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop","cwd":"/repo"}`),
+		&bytes.Buffer{}, io.Discard,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
 }

@@ -2,6 +2,7 @@ name: CI
 
 on:
   workflow_call:
+  workflow_dispatch:
   push:
     branches: [main]
 concurrency:
@@ -19,15 +20,16 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      changed: ${{ steps.filter.outputs.go }}
-      lint: ${{ steps.filter.outputs.lint }}
-      web: ${{ steps.filter.outputs.web }}
+      changed: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.go == 'true' }}
+      lint: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.lint == 'true' }}
+      web: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.web == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Detect Go changes
+        if: github.event_name != 'workflow_dispatch'
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
         with:
@@ -42,6 +44,7 @@ jobs:
               - 'go.work.sum'
               - 'mise.toml'
               - 'mise.lock'
+              - '.github/workflows/ci.yml'
               - 'docs/screenshots/prepare-demo-db.sh'
               - '.custom-gcl.yml'
               - '.golangci.yml'
@@ -183,7 +186,7 @@ jobs:
 
   test:
     needs: go-changes
-    if: needs.go-changes.outputs.changed == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.go-changes.outputs.changed == 'true'
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -194,7 +197,7 @@ jobs:
           - os: macos-latest
             runner: namespace-profile-mac-6cpu
           - os: windows-latest
-            runner: namespace-profile-windows-4cpu
+            runner: windows-2025
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -203,12 +206,23 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
+      - name: Configure Windows Go paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($name in 'GOCACHE', 'GOMODCACHE', 'GOTMPDIR') {
+            $path = Join-Path $env:RUNNER_TEMP $name
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            "$name=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: '1.27.1'
-          cache: false
+          cache: ${{ runner.os == 'Windows' }}
 
       - name: Configure Namespace Go cache
+        if: runner.os != 'Windows'
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9  # v1
         with:
           cache: go

@@ -29,6 +29,9 @@ var postgresV17Schema string
 //go:embed schemas/postgres_v18.sql
 var postgresV18Schema string
 
+//go:embed schemas/postgres_v23.sql
+var postgresV23Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -53,6 +56,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		14: postgresV14Schema,
 		17: postgresV17Schema,
 		18: postgresV18Schema,
+		23: postgresV23Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)

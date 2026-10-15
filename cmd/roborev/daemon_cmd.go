@@ -45,6 +45,12 @@ type daemonSearch struct {
 	closeErr   error
 }
 
+func newDaemonTelemetry(owner *daemonDatabaseOwner, opts telemetry.Options) *telemetry.Reporter {
+	opts.Version = version.Version
+	opts.DailyClaimsPath = telemetry.DailyClaimsPath(owner.path)
+	return telemetry.NewReporterOrDisabled(opts)
+}
+
 func newDaemonSearch(
 	ctx context.Context, db *storage.DB, dbPath string, cfg *config.Config,
 ) (_ *daemonSearch, err error) {
@@ -332,9 +338,8 @@ func daemonRunCmd() *cobra.Command {
 			}
 			log.Printf("Search database: %s", search.path)
 
-			telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
+			telemetryReporter := newDaemonTelemetry(owner, telemetry.Options{
 				Database: db,
-				Version:  version.Version,
 			})
 			defer func() {
 				if err := telemetryReporter.Close(); err != nil {

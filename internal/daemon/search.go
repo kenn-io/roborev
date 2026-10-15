@@ -130,6 +130,9 @@ func (s *Server) humaSearchReviews(
 
 	params, err := s.searchParams(input)
 	if err != nil {
+		if ambiguity, ok := errors.AsType[*storage.AmbiguousRepoNameError](err); ok {
+			return nil, huma.Error409Conflict(ambiguity.Error())
+		}
 		switch {
 		case errors.Is(err, errSearchRepoNotFound):
 			return nil, huma.Error400BadRequest(errSearchRepoNotFound.Error())

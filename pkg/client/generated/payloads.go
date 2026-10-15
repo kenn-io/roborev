@@ -40,6 +40,8 @@ type ImportLegacyReviewBody = ImportLegacyReviewInputBody
 
 type ScanTokenUsageBody = ScanTokenUsageInputBody
 
+type RebuttalBody = RebuttalRequest
+
 type RemapJobsBody = RemapRequest
 
 type DeleteRepoBody = DeleteRepoInputBody

@@ -303,16 +303,18 @@ type RerunJobRequest struct {
 
 // AddCommentRequest is the JSON body for POST /api/comment.
 type AddCommentRequest struct {
-	SHA       string `json:"sha,omitempty"`    // Legacy: link to commit by SHA
-	JobID     int64  `json:"job_id,omitempty"` // Preferred: link to job
-	Commenter string `json:"commenter"`
-	Comment   string `json:"comment"`
+	SHA                string     `json:"sha,omitempty"`    // Legacy: link to commit by SHA
+	JobID              int64      `json:"job_id,omitempty"` // Preferred: link to job
+	Commenter          string     `json:"commenter"`
+	Comment            string     `json:"comment"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
 }
 
 // CloseReviewRequest is the JSON body for POST /api/review/close.
 type CloseReviewRequest struct {
-	JobID  int64 `json:"job_id"`
-	Closed bool  `json:"closed"`
+	JobID              int64      `json:"job_id"`
+	Closed             bool       `json:"closed"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
 }
 
 // JobOutputResponse is the response for GET /api/job/output.

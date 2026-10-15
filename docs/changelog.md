@@ -14,6 +14,31 @@ All notable changes to roborev, grouped by minor release.
     editing code. Background fix requests and the TUI fix panel can also plan
     before implementation.
 
+- Store job prompts, dirty-review diffs, and fix patches once, compressed with
+    zstd, in a table separate from job metadata. The first daemon start after
+    upgrading converts the database and runs `VACUUM`, which can take several
+    minutes on a large database. See
+    [Stored prompts and retention](/docs/configuration/#stored-prompts-and-retention).
+
+- Remove old prompts and job logs automatically with `prompt_retention_days` and
+    `job_log_retention_days`. Both are off by default.
+
+**Improvements**
+
+- The daemon now records which numbered schema changes its database has received
+    and applies each one only once. It refuses to start on a database written by
+    a newer roborev release instead of modifying it.
+
+**Bug fixes**
+
+- Jobs could stay stuck "running" and hold up panel summaries after the daemon
+    failed to save their result or failed status. The daemon now marks these
+    jobs failed on the next 60-second sweep with "daemon did not save the job's
+    outcome".
+- Open the [browser review queue](/docs/web-ui/#reviews-workspace) faster on
+    histories with large stored prompts. Queue totals remain exact; counting
+    jobs no longer traverses historical prompt payloads.
+
 ## 0.71.0
 
 <small>2026-10-03</small>

@@ -35,6 +35,11 @@ type InstallOptions struct {
 	ConfigPath        string
 	Timeout           time.Duration
 	DryRun            bool
+	// StopForm registers ZCode's lifecycle-control hook form (Stop,
+	// PreToolUse, PostToolUse) instead of the scheduled-event form. ZCode
+	// does not dispatch those events on the versions tested; the switch
+	// exists for harnesses that do.
+	StopForm bool
 }
 
 func resolveMCPDaemon(enabled bool, transport, url, server string) (string, error) {
@@ -109,8 +114,8 @@ func RunDump(opts InstallOptions, stdout io.Writer) error {
 	if raw == "" || strings.EqualFold(raw, "all") {
 		return fmt.Errorf("dump requires one explicit agent")
 	}
-	agent := AgentGrok
-	if !strings.EqualFold(raw, string(AgentGrok)) {
+	agent := kitagenthook.Agent(strings.ToLower(raw))
+	if _, ok := localProfile(string(agent)); !ok {
 		var err error
 		agent, err = kitagenthook.ParseAgent(raw)
 		if err != nil {
@@ -122,13 +127,23 @@ func RunDump(opts InstallOptions, stdout io.Writer) error {
 	if err != nil {
 		return profileError(agent, opts.ConfigPath, err)
 	}
+	if agent == AgentZcode {
+		data, err := zcodeDumpPayload(result, opts)
+		if err != nil {
+			return profileError(agent, opts.ConfigPath, err)
+		}
+		result.Data = data
+	}
 	_, err = stdout.Write(result.Data)
 	return err
 }
 
 func planNativeHooks(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Result, error) {
-	if agent == AgentGrok {
+	switch agent {
+	case AgentGrok:
 		return planGrokInstall(opts)
+	case AgentZcode:
+		return planZcodeInstall(opts)
 	}
 	kitOpts, err := validatedKitInstallOptions(agent, opts)
 	if err != nil {
@@ -145,10 +160,7 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 	if opts.MCP {
 		dir := ""
 		if opts.ConfigPath != "" && agent != kitagenthook.AgentClaude {
-			dir = filepath.Dir(opts.ConfigPath)
-			if (agent == AgentGrok || agent == kitagenthook.AgentCopilot) && strings.EqualFold(filepath.Base(dir), "hooks") {
-				dir = filepath.Dir(dir)
-			}
+			dir = localAgentConfigRoot(agent, filepath.Dir(opts.ConfigPath))
 		}
 		executable := opts.Executable
 		if opts.Command != "" {
@@ -161,6 +173,12 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 		mcpOpts := mcpconfig.Options{
 			Agent: skills.Agent(agent), ConfigDir: dir, Executable: executable,
 			Transport: opts.MCPTransport, URL: opts.MCPURL, Server: opts.RoborevServerAddr, DryRun: true,
+		}
+		if agent == AgentZcode {
+			// ZCode hooks live in the selected shared configuration, so MCP
+			// settings must merge into that same file; the default path
+			// would otherwise receive them instead.
+			mcpOpts.ConfigPath = planned.ConfigPath
 		}
 		path, err := mcpconfig.ConfigPath(mcpOpts)
 		if err != nil {
@@ -197,6 +215,13 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 		fmt.Fprintf(stdout, "would install or update bundled %s skills in %s (MCP: %t)\n", agent, agentHookSkillsDir(agent, planned.ConfigPath), opts.MCP)
 		return planned, nil
 	}
+	if agent == AgentZcode {
+		// Write the plugin payload before registering it so ZCode never sees
+		// a plugins.dirs entry without its manifest and hooks on disk.
+		if err := installZcodePluginFiles(opts); err != nil {
+			return kitagenthook.Result{}, err
+		}
+	}
 	if err := installAgentHookSkills(agent, planned.ConfigPath, opts.MCP); err != nil {
 		return kitagenthook.Result{}, err
 	}
@@ -219,11 +244,23 @@ func installAgentHookSkills(agent kitagenthook.Agent, configPath string, mcp boo
 }
 
 func agentHookSkillsDir(agent kitagenthook.Agent, configPath string) string {
-	configDir := filepath.Dir(configPath)
-	if (agent == AgentGrok || agent == kitagenthook.AgentCopilot) && strings.EqualFold(filepath.Base(configDir), "hooks") {
-		configDir = filepath.Dir(configDir)
-	}
+	configDir := localAgentConfigRoot(agent, filepath.Dir(configPath))
 	return filepath.Join(configDir, "skills")
+}
+
+// localAgentConfigRoot maps a hook config directory to the agent's config
+// root that also holds its skills and MCP configuration. Grok Build and
+// Copilot keep hooks in a hooks subdirectory; ZCode keeps its config file in
+// a cli subdirectory.
+func localAgentConfigRoot(agent kitagenthook.Agent, configDir string) string {
+	base := strings.EqualFold(filepath.Base(configDir), "hooks")
+	if (agent == AgentGrok || agent == kitagenthook.AgentCopilot) && base {
+		return filepath.Dir(configDir)
+	}
+	if agent == AgentZcode && strings.EqualFold(filepath.Base(configDir), "cli") {
+		return filepath.Dir(configDir)
+	}
+	return configDir
 }
 
 func validatedKitInstallOptions(
@@ -344,8 +381,9 @@ func commandAgent(command string) (kitagenthook.Agent, error) {
 	if selected == "" {
 		return "", fmt.Errorf("hook command must select an agent")
 	}
-	if strings.EqualFold(selected, string(AgentGrok)) {
-		return AgentGrok, nil
+	selected = strings.ToLower(selected)
+	if _, ok := localProfile(selected); ok {
+		return kitagenthook.Agent(selected), nil
 	}
 	return kitagenthook.ParseAgent(selected)
 }
@@ -423,38 +461,42 @@ func splitHookCommand(command string) ([]string, error) {
 	return fields, nil
 }
 
-func profileError(agent kitagenthook.Agent, configuredPath string, err error) error {
-	profile, _ := kitagenthook.LookupProfile(agent)
-	if agent == AgentGrok {
-		profile.DisplayName = "Grok Build"
+func profileDisplayName(agent kitagenthook.Agent) string {
+	if displayName, ok := LocalProfileDisplayName(agent); ok {
+		return displayName
 	}
+	profile, _ := kitagenthook.LookupProfile(agent)
+	return profile.DisplayName
+}
+
+func profileError(agent kitagenthook.Agent, configuredPath string, err error) error {
 	path := configuredPath
 	if path == "" {
-		if agent == AgentGrok {
+		switch agent {
+		case AgentGrok:
 			path = DefaultGrokHooksPath()
-		} else {
+		case AgentZcode:
+			path = DefaultZcodeConfigPath()
+		default:
 			path, _ = kitagenthook.ConfigPath(agent)
 		}
 	}
 	if path == "" {
-		return fmt.Errorf("%s: %w", profile.DisplayName, err)
+		return fmt.Errorf("%s: %w", profileDisplayName(agent), err)
 	}
-	return fmt.Errorf("%s (%s): %w", profile.DisplayName, path, err)
+	return fmt.Errorf("%s (%s): %w", profileDisplayName(agent), path, err)
 }
 
 func printInstallResult(stdout io.Writer, result kitagenthook.Result, dryRun bool) {
-	profile, _ := kitagenthook.LookupProfile(result.Agent)
-	if result.Agent == AgentGrok {
-		profile.DisplayName = "Grok Build"
-	}
+	displayName := profileDisplayName(result.Agent)
 	switch {
 	case dryRun && result.Changed:
-		fmt.Fprintf(stdout, "would update %s agent hooks in %s\n", profile.DisplayName, result.ConfigPath)
+		fmt.Fprintf(stdout, "would update %s agent hooks in %s\n", displayName, result.ConfigPath)
 	case dryRun:
-		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", profile.DisplayName, result.ConfigPath)
+		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", displayName, result.ConfigPath)
 	case result.Changed:
-		fmt.Fprintf(stdout, "installed %s agent hooks in %s\n", profile.DisplayName, result.ConfigPath)
+		fmt.Fprintf(stdout, "installed %s agent hooks in %s\n", displayName, result.ConfigPath)
 	default:
-		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", profile.DisplayName, result.ConfigPath)
+		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", displayName, result.ConfigPath)
 	}
 }

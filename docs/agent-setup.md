@@ -182,7 +182,7 @@ user whether to install it. Do not install it by default.
 - `roborev agent-hook install` adds a hook command to each detected coding
     agent's user-level config (for example, `~/.claude/settings.json` or the
     Codex hooks config). It supports Claude Code, Codex, Copilot CLI, Cursor,
-    Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
+    Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode.
 - The hook runs on shell tool calls and when the agent tries to stop. It counts
     turns, commits, and open failed reviews for the current repository.
 - By default, once four open failed reviews accumulate, the hook injects an

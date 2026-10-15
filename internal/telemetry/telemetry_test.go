@@ -12,11 +12,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kittelemetry "go.kenn.io/kit/telemetry"
+	kittelemetry "go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestDailyClaimsPath(t *testing.T) {
+	dir := t.TempDir()
+	assert.Equal(t, filepath.Join(dir, "telemetry-daily.json"), DailyClaimsPath(filepath.Join(dir, "reviews.db")))
+}
 
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 	t.Setenv(EnabledEnv, "0")
@@ -136,7 +141,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
-	reporter, err := kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
+	reporter, err := kittelemetry.NewReporter(kittelemetry.Options{
 		APIKey:      "test-posthog-api-key",
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
@@ -278,15 +283,8 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
 	endpoint, messages := testutil.NewPostHogStub(t)
-	reporter, err := kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
-		APIKey:      "test-posthog-api-key",
-		Application: "roborev",
-		EnvPrefix:   "ROBOREV",
-		DistinctID:  "anonymous-install-id",
-		Version:     "test-version",
-		Source:      "daemon",
-		Endpoint:    endpoint,
-	}, allowedEventOptions()...)
+	path := filepath.Join(t.TempDir(), "daily.json")
+	reporter, err := NewReporter(Options{Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
 	require.NoError(t, err)
 	return reporter, messages
 }
