@@ -1,7 +1,7 @@
 ---
 title: PostgreSQL Sync
 description: Sync reviews across multiple machines using PostgreSQL
-last_edited: 2026-09-24
+last_edited: 2026-10-16
 ---
 
 Sync reviews across multiple machines using PostgreSQL as a central store while
@@ -10,6 +10,13 @@ keeping SQLite as the local primary database.
 Native [request signing](request-signing.md) protects restricted HTTP history
 reads. It does not transport this PostgreSQL protocol or replicate another
 machine's local history over HTTP.
+
+Before upgrading from a version older than 0.72.0, follow the
+[upgrade steps](/docs/installation/#upgrading-to-0720) for all machines sharing
+the mirror. See
+[stored prompts and retention](/docs/configuration/#stored-prompts-and-retention)
+for how the schema change preserves prompts and associates each review with the
+attempt that produced it.
 
 ## Purpose
 

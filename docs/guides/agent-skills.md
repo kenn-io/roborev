@@ -11,7 +11,7 @@ roborev skills install
 ```
 
 Bundled skills support Claude Code, Codex, Factory Droid, Grok Build, Copilot,
-Cursor, Gemini, Hermes, and Qwen. Each agent uses its user configuration
+Cursor, Gemini, Hermes, Qwen, and ZCode. Each agent uses its user configuration
 `skills/` directory, such as `~/.gemini/skills/`. Hermes honors `HERMES_HOME`.
 
 To use MCP for review data, comments, closing reviews, snoozing, and hook fix
@@ -68,6 +68,7 @@ before roborev receives the path. Custom destinations are not tracked by
 | `/roborev-fix [job_id...]` | Discover and fix all open review findings in one pass |
 | `/roborev-refine [--since ...] [--branch ...] [--max-iterations ...]` | Iterative review-fix-review loop until all reviews pass |
 | `/roborev-respond <job_id> [message]` | Add a response to document changes |
+| `/roborev-superpowers <feature or existing spec/plan>` | Carry a feature through specification, planning, implementation, review, and verification with Superpowers and Kata |
 | `/roborev-snooze [on\|off] [duration]` | Silence or resume Agent Hook reminders for the current worktree and branch |
 
 ## Usage
@@ -117,6 +118,15 @@ before roborev receives the path. Custom destinations are not tracked by
     Factory supports `disable-model-invocation`. The bundled `/roborev-snooze`
     definition sets that policy, so only a human can trigger it. Other Droid-derived
     definitions rely on description and body guardrails.
+
+### Implement a feature with Superpowers and Kata
+
+Use `/roborev-superpowers` in Claude Code or `$roborev-superpowers` in Codex to
+carry a feature from a specification to a verified implementation. The skill
+connects Superpowers plans, Kata tasks, goal reviews, and code reviews. It can
+resume existing documents and tasks. Superpowers and Kata must be available;
+goal reviews also need a configured Pi or supported Claude Code reviewer. See
+[setup and workflow](/docs/integrations/goal-review/).
 
 ### Review a commit
 

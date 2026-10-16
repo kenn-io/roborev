@@ -130,6 +130,41 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.72.0
+
+Version 0.72.0 reduces stored prompt size and speeds up large review histories.
+Its first startup converts the local database before accepting requests. Prepare
+for that conversion before updating from 0.71.x or earlier:
+
+1. Stop the daemon with `roborev daemon stop` and back up its data directory. If
+    you use PostgreSQL sync, stop every daemon sharing the mirror and back up
+    the mirror too. If a service manager runs the daemon, stop it through that
+    manager so it stays stopped.
+1. Check free disk space. Conversion keeps the original data while writing
+    compressed copies and a write-ahead log. Its final `VACUUM` can need up to
+    twice the database file's size in free space. See
+    [conversion and disk requirements](/docs/configuration/#stored-prompts-and-retention).
+1. Upgrade through your usual installation method. If you use `roborev update`,
+    add `--no-restart`. Upgrade every machine sharing a PostgreSQL mirror
+    before restarting those daemons; the mirror moves to schema 24, which older
+    clients refuse.
+1. Start the daemon with `roborev daemon start` and allow the conversion to
+    finish, or start it through your service manager. Large histories can take
+    several minutes. Run `roborev doctor` afterward to check the installation.
+
+**Downgrading is unsupported.** Do not run an older binary against the converted
+database. Older releases without schema-version checks may try to use it.
+
+Prompt and log cleanup stays off unless you configure `prompt_retention_days` or
+`job_log_retention_days`. The
+[retention guide](/docs/configuration/#stored-prompts-and-retention) explains
+what each setting removes and how sync affects cleanup.
+
+If you use ZCode, run `roborev agent-hook install --agent zcode` after upgrading
+and restarting the daemon. See [ZCode reminders](/docs/agent-hook/#zcode).
+Update bundled agent skills with `roborev skills install` to add the
+[Superpowers and Kata workflow](/docs/integrations/goal-review/).
+
 ### Upgrading to 0.71.0
 
 Check these items when updating from 0.70.x or earlier:

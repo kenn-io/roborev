@@ -36,8 +36,8 @@ as raw Markdown at /docs/<page>.md.
 - [Post-commit reviews](https://roborev.io/docs/automation/post-commit-reviews.md):
   the two automation layers, batching, and hands-off setup
 - [Agent Hook](https://roborev.io/docs/agent-hook.md): bring open findings
-  back into Claude Code, Codex, Copilot, Cursor, Droid, Gemini, Hermes, and
-  Qwen sessions
+  back into Claude Code, Codex, Copilot, Cursor, Droid, Gemini, Hermes,
+  Qwen, Grok Build, and ZCode sessions
 - [Review event hooks](https://roborev.io/docs/guides/hooks.md): run shell
   commands, notifications, and the built-in kata and beads integrations on
   review events
@@ -57,9 +57,9 @@ as raw Markdown at /docs/<page>.md.
 - [Reviewing code](https://roborev.io/docs/guides/reviewing-code.md): commits,
   ranges, branches, dirty trees, review types
 - [Responding to reviews](https://roborev.io/docs/guides/responding-to-reviews.md):
-  comments, closing, and the review ledger
+  comments, finding reassessment, closing, and the review ledger
 - [Agent skills](https://roborev.io/docs/guides/agent-skills.md): the
-  `/roborev-fix`, `/roborev-refine`, and review skills
+  `/roborev-fix`, `/roborev-refine`, `/roborev-superpowers`, and review skills
 - [Code analysis and refactoring](https://roborev.io/docs/guides/assisted-refactoring.md):
   `roborev analyze` types and `roborev fix`
 - [Auto-fix with refine](https://roborev.io/docs/guides/auto-fixing.md): the
@@ -78,10 +78,17 @@ as raw Markdown at /docs/<page>.md.
   adapters for additional agents
 - [PostgreSQL sync](https://roborev.io/docs/advanced/postgres-sync.md):
   multi-machine review history
+- [Remote history access](https://roborev.io/docs/advanced/request-signing.md):
+  read-only HTTPS access with repository-scoped signing keys
 - [Streaming and daemon API](https://roborev.io/docs/advanced/streaming.md):
   HTTP API and server-sent events
 - [Kata integration](https://roborev.io/docs/integrations/kata.md): task
   context in prompts and findings filed as kata issues
+- [Superpowers and Kata](https://roborev.io/docs/integrations/goal-review.md):
+  review specifications, linked plans, and open tasks; carry a feature through
+  implementation and verification
+- [MCP server](https://roborev.io/docs/integrations/mcp.md): read reviews and
+  update comments, review state, and Agent Hook state from coding agents
 - [Claude Chic integration](https://roborev.io/docs/integrations/claudechic.md):
   review sidebar in Claude Chic
 - [Troubleshooting](https://roborev.io/docs/guides/troubleshooting.md): daemon,

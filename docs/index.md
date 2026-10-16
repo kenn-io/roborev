@@ -67,8 +67,8 @@ the Agent Hook's risks before offering to install it.
     with any supported agent. See
     [Post-Commit Reviews](automation/post-commit-reviews.md).
 - **Agent hook.** Open findings are delivered back into Claude Code, Codex,
-    Copilot, Cursor, Droid, Gemini, Hermes, and Qwen sessions with exact review
-    IDs. See [Agent Hook](agent-hook.md).
+    Copilot, Cursor, Droid, Gemini, Hermes, Qwen, Grok Build, and ZCode sessions
+    with exact review IDs. See [Agent Hook](agent-hook.md).
 - **Fix and refine.** `/roborev-fix` addresses open findings from inside the
     agent session; `/roborev-refine` re-reviews and fixes a whole branch until
     every review passes. See [Agent Skills](guides/agent-skills.md) and
@@ -120,12 +120,16 @@ the Agent Hook's risks before offering to install it.
     [Subagent Review Panels](advanced/subagent-review-panels.md),
     [Custom Review Types](advanced/custom-review-types.md),
     [Custom Tasks](advanced/custom-tasks.md), [ACP](advanced/acp.md),
-    [PostgreSQL Sync](advanced/postgres-sync.md), and
+    [PostgreSQL Sync](advanced/postgres-sync.md),
+    [Remote History Access](advanced/request-signing.md), and
     [Streaming](advanced/streaming.md).
 
 - **Integrations and help**
 
-    [Kata](integrations/kata.md), [Claude Chic](integrations/claudechic.md),
+    [Kata](integrations/kata.md),
+    [Superpowers and Kata](integrations/goal-review.md),
+    [MCP Server](integrations/mcp.md),
+    [Claude Chic](integrations/claudechic.md),
     [Troubleshooting](guides/troubleshooting.md), and
     [Development](development.md).
 

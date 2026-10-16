@@ -3,12 +3,18 @@ title: Engineering with Superpowers and Kata
 description: Help agents carry intent through a tracked, reviewed, and verified implementation
 ---
 
-Superpowers, Kata, and Roborev work together to help agents carry a feature from
-an understood outcome to a verified implementation. Superpowers shapes the spec,
-linked implementation plan, and execution process. Kata keeps tasks,
-dependencies, decisions, and completion evidence visible. Roborev checks whether
-the intent and planned work agree, then reviews the implementation as it
-develops.
+Check that a specification, its implementation plan, and open Kata tasks agree
+before coding. Use `roborev review --type goal` for that check, or invoke the
+bundled `roborev-superpowers` skill to carry a feature through implementation
+and verification.
+
+The three tools have separate jobs:
+
+- Superpowers helps the agent write the specification and plan, then implement
+    them.
+- Kata tracks tasks, dependencies, decisions, and completion evidence.
+- Roborev reviews the specification, plan, and open tasks together, then reviews
+    code as implementation progresses.
 
 The spec is authoritative; the plan explains how to implement it. Reviews give
 agents feedback they can act on throughout the work. A successful review is one

@@ -5,39 +5,185 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.72.0
+
+<small>2026-10-16</small>
+
+Ask reviewers to reassess findings, plan fixes before editing, and check that
+specifications and implementation plans agree. Large review histories also load
+faster. Before updating, read the
+[0.72.0 upgrade steps](/docs/installation/#upgrading-to-0720): the first start
+converts stored data, needs extra disk space, and does not support downgrading.
+Upgrade all machines sharing a PostgreSQL mirror together.
 
 **New features**
 
+- Ask the original reviewer to reassess a finding with
+    `comment --rebuttal --finding` or the same options on `respond`. Codex,
+    Claude Code, Pi, and Grok return a confirmed, refuted, or superseded
+    assessment. Add `--close` to close the whole review after recording the
+    assessment, even if the reviewer confirms the finding. See
+    [re-evaluating a finding](/docs/guides/responding-to-reviews/#re-evaluating-a-finding).
 - Plan fixes before implementation with `roborev fix --plan` or
     `roborev refine --plan`. Use `--plan-only` to print and store plans without
-    editing code. Background fix requests and the TUI fix panel can also plan
-    before implementation.
-
-- Store job prompts, dirty-review diffs, and fix patches once, compressed with
-    zstd, in a table separate from job metadata. The first daemon start after
-    upgrading converts the database and runs `VACUUM`, which can take several
-    minutes on a large database. See
-    [Stored prompts and retention](/docs/configuration/#stored-prompts-and-retention).
-
-- Remove old prompts and job logs automatically with `prompt_retention_days` and
-    `job_log_retention_days`. Both are off by default.
+    editing code. Background fixes also offer a **Plan first** toggle in the
+    TUI. See [fix options](/docs/commands/#fixing-reviews) and
+    [the refine workflow](/docs/guides/auto-fixing/).
+- Review specifications, linked plans, and open Kata tasks with
+    `roborev review --type goal`. The new `roborev-superpowers` skill connects
+    these reviews with implementation and verification. An optional watcher
+    requests reviews when the documents or tasks change. Goal reviews require a
+    configured Pi or supported Claude Code reviewer. See
+    [engineering with Superpowers and Kata](/docs/integrations/goal-review/).
+- Read remote review history over HTTPS with repository-scoped signing keys. The
+    `list`, `show --job`, `wait`, and `stream` commands support this optional
+    read-only listener. See
+    [remote history access](/docs/advanced/request-signing/).
+- Require client certificates for TCP daemon connections with `[daemon_tls]`.
+    `roborev doctor` identifies certificate files that fail to load. See
+    [transport security](/docs/configuration/#transport-security).
+- Receive failed-review reminders in ZCode through `roborev agent-hook install`.
+    The installer detects ZCode and delivers reminders at session start and
+    prompt submission. See [ZCode reminders](/docs/agent-hook/#zcode).
+- Anonymous telemetry now records daily screen use, session duration, and agent
+    activity through MCP tools, hooks, and commands marked `--from-skill`. Agent
+    activity counts separately from human app opens. Existing telemetry opt-outs
+    apply. See [telemetry](/docs/configuration/#telemetry).
 
 **Improvements**
 
-- The daemon now records which numbered schema changes its database has received
-    and applies each one only once. It refuses to start on a database written by
-    a newer roborev release instead of modifying it.
+- Load the [review queue](/docs/web-ui/#reviews-workspace) and expand
+    multi-reviewer panels faster, especially with a large review history. Queue
+    totals remain exact.
+- Load [Analytics](/docs/web-ui/#analytics) faster and use less memory. In one
+    measured history with a warm cache, the default 30-day view dropped from
+    about 530 ms to 46 ms. Results depend on the history and machine; see the
+    [measurement details](https://github.com/kenn-io/roborev/pull/1339).
+- Inspect the recorded reasoning level in the web review drawer. Local owner
+    sessions also show the agent command with a copy button. See
+    [review details](/docs/web-ui/#reviews-workspace).
+- Give reviewers the declared Go version for each module affected by Go source
+    or `go.mod` changes. Each version includes its manifest path.
+- Store prompts, saved dirty-review diffs, and fix patches once in compressed
+    form. The first startup converts existing data and needs extra disk space.
+    Upgrade all machines sharing a PostgreSQL mirror together. Downgrading is
+    unsupported. See
+    [stored prompts and retention](/docs/configuration/#stored-prompts-and-retention).
+- Remove old prompts and job logs automatically with `prompt_retention_days` and
+    `job_log_retention_days`. Both default to keeping everything. Prompt cleanup
+    waits for upload when sync is enabled, and active job logs remain available.
+    See [retention settings](/docs/configuration/#stored-prompts-and-retention).
+- Track numbered database migrations and apply each one only once. The daemon
+    refuses to start on a database written by a newer schema version. This check
+    does not make older releases safe to run against converted data.
+- Recover exhausted CI agent failures with a fresh bounded retry budget when the
+    daemon starts. Health reports distinguish automatic recovery from failures
+    that need intervention and stay unhealthy until delivery succeeds. See
+    [CI health](/docs/advanced/streaming/#ci-health).
+- Retry transient GitHub reads before reporting a CI failure. Persistent
+    failures retain the failed operation and diagnostic details, and daemon
+    output is saved in rotating log files. See
+    [CI retries and recovery](/docs/integrations/github/#safe-ci-retries).
+- Reduce repeated cost lookups for jobs that remain unpriced. The delay doubles
+    after each unsuccessful lookup, reducing repeated process launches for
+    unresolved sessions.
 
 **Bug fixes**
 
+- Keep completed Codex reviews after a stream reconnect succeeds, instead of
+    discarding them and running the review again. Failed reviews show the final
+    failure reason.
+- Switch to the configured backup immediately when Codex access is denied.
+    Usage-limit messages with curly apostrophes also trigger quota cooldown and
+    failover, and dated reset times are recognized.
+- Start a fresh review session when another running review already uses the
+    session selected for reuse. Sequential reviews still reuse sessions.
+- Record structured reviews when a reviewer such as Kiro writes narration before
+    its final JSON answer.
+- Recognize clean verdicts preceded by bracketed timestamps instead of marking
+    them failed.
+- Read back reviews whose summaries contain roborev's own Findings heading or an
+    assessment line.
+- Reject ambiguous repository names and list the matching checkout paths.
+    Repeated names show paths in the web filter, and renaming affects only the
+    selected checkout. Use a stored checkout path to select one explicitly. See
+    [repository management](/docs/guides/repository-management/).
+- Exclude failed and canceled jobs from `roborev list --open` and the web UI's
+    open filter. These jobs have no completed review to resolve.
+- Discover the daemon through the selected data directory instead of accepting
+    another account's process on the default port. Commands no longer send
+    `auth_key` to guessed addresses.
+- Review the current fork PR commit reported by GitHub after a force-push, even
+    when GitHub's pull ref remains stale. A fetch failure for one PR no longer
+    blocks reviews of other PRs.
+- Publish explicit CI panel reruns to their original PR and commit. Failed
+    final-status deliveries retry after daemon restarts without reposting review
+    comments.
+- Keep failed-review hooks responsive on detached HEAD, even with many open
+    reviews.
+- Replace agent configuration files on Windows when running programs permit file
+    replacement, avoiding the previous "Access is denied" error during
+    agent-hook and MCP installation.
+- Include subprocess diagnostic messages in Git and agent errors instead of
+    reporting only an exit status.
+- Keep isolated review sessions out of later session reuse, and build their
+    prompts from the prepared checkout even if the caller's checkout disappears.
 - Jobs could stay stuck "running" and hold up panel summaries after the daemon
     failed to save their result or failed status. The daemon now marks these
     jobs failed on the next 60-second sweep with "daemon did not save the job's
     outcome".
-- Open the [browser review queue](/docs/web-ui/#reviews-workspace) faster on
-    histories with large stored prompts. Queue totals remain exact; counting
-    jobs no longer traverses historical prompt payloads.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Ben Gimpert](https://github.com/someben) fixed verdict parsing for reviews
+    with bracketed timestamps in
+    [#1349](https://github.com/kenn-io/roborev/pull/1349).
+- [Dmitriy Shvadskiy](https://github.com/dshvadskiy) recovered structured
+    reviews after agent narration in
+    [#1358](https://github.com/kenn-io/roborev/pull/1358).
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added mutual TLS and
+    corrected daemon discovery in
+    [#1325](https://github.com/kenn-io/roborev/pull/1325), preserved recovered
+    Codex reviews, prevented concurrent session reuse, reduced repeated cost
+    lookups, and maintained the docs and screenshots.
+- [Phillip Cloud](https://github.com/cpcloud) sped up Analytics in
+    [#1339](https://github.com/kenn-io/roborev/pull/1339) and
+    [#1344](https://github.com/kenn-io/roborev/pull/1344), fixed fork PR head
+    selection and Windows configuration replacement, improved detached-HEAD
+    hooks and subprocess errors, and updated dependencies.
+- [Rod Boev](https://github.com/rodboev) added screen, session, and agent
+    activity telemetry in [#1335](https://github.com/kenn-io/roborev/pull/1335),
+    [#1336](https://github.com/kenn-io/roborev/pull/1336), and
+    [#1337](https://github.com/kenn-io/roborev/pull/1337). Rod also improved
+    Codex failure handling, recovered stuck jobs, and maintained CI and lint
+    checks.
+- [Rusty Shackleford](https://github.com/salmonumbrella) added fix planning in
+    [#1293](https://github.com/kenn-io/roborev/pull/1293), goal reviews in
+    [#1294](https://github.com/kenn-io/roborev/pull/1294), remote history in
+    [#1307](https://github.com/kenn-io/roborev/pull/1307), and finding
+    reassessment in [#1372](https://github.com/kenn-io/roborev/pull/1372). Rusty
+    also fixed isolated reviews, daemon discovery, and ambiguous repository
+    names.
+- [sean0407](https://github.com/sean0407) excluded failed and canceled jobs from
+    open-review filters in
+    [#1365](https://github.com/kenn-io/roborev/pull/1365).
+- [strawberry-little-bear](https://github.com/strawberry-little-bear) fixed
+    reading back summaries containing roborev's own markers in
+    [#1374](https://github.com/kenn-io/roborev/pull/1374).
+- [subaru-ye](https://github.com/subaru-ye) added ZCode reminders in
+    [#1368](https://github.com/kenn-io/roborev/pull/1368) and declared Go
+    versions in review prompts in
+    [#1332](https://github.com/kenn-io/roborev/pull/1332).
+- [Wes McKinney](https://github.com/wesm) added compressed prompt storage and
+    retention in [#1357](https://github.com/kenn-io/roborev/pull/1357) and
+    numbered migrations in
+    [#1359](https://github.com/kenn-io/roborev/pull/1359). Wes also improved
+    queue and panel loading, review details, CI recovery and delivery, quota
+    detection, and reproducible web assets.
+
+[All changes since 0.71.0](https://github.com/kenn-io/roborev/compare/v0.71.0...v0.72.0).
 
 ## 0.71.0
 

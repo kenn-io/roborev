@@ -1375,8 +1375,12 @@ export ROBOREV_DATA_DIR=/custom/path
 
 ### Stored prompts and retention
 
-Most of a large `reviews.db` is prompt text. A review prompt includes the full
-diff under review, so it is usually far larger than the review itself.
+Roborev compresses stored prompts, dirty-review diffs, and fix patches to reduce
+disk use and keep large payloads out of queue queries. A review prompt includes
+the full diff under review, so it is usually far larger than the review itself.
+Before updating from a version older than 0.72.0, follow the
+[upgrade steps](/docs/installation/#upgrading-to-0720). Downgrading after the
+conversion is unsupported.
 
 How roborev stores it:
 
