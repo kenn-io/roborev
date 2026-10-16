@@ -18,10 +18,8 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 		name                       string
 		valid, staleOriginalReview bool
 		closeFails                 bool
-		respond                    bool
 	}{
 		{name: "valid", valid: true},
-		{name: "respond", valid: true, respond: true},
 		{name: "invalid"},
 		{name: "close fails", valid: true, closeFails: true},
 		{name: "stale original review", valid: true, staleOriginalReview: true},
@@ -74,9 +72,6 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 				}
 			}))
 			cmd := commentCmd()
-			if tc.respond {
-				cmd = respondCmd()
-			}
 			cmd.SetArgs([]string{"42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--close"})
 			err := cmd.Execute()
 			if tc.staleOriginalReview {

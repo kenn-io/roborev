@@ -125,7 +125,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			ts, state := newMockServer(t, MockServerOpts{
 				JobIDStart:     99,
 				ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
-				DoneAfterPolls: 1,
+				DoneAfterPolls: 2,
 			})
 			var bodies []string
 			handler := ts.Config.Handler
@@ -151,6 +151,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast"}
 			err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
 			require.NoError(t, err)
+			assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
 			assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
 			assert.Equal(t, int32(1), atomic.LoadInt32(&state.CloseCount))
 			assert.Contains(t, output.String(), "CODE SMELLS")

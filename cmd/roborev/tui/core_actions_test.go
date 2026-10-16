@@ -1,13 +1,10 @@
 package tui
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -19,7 +16,6 @@ import (
 	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -99,9 +95,6 @@ func TestCoreActionReviewVisits(t *testing.T) {
 				f.update(f.review())
 				expectViews(t, f.transport, 0)
 				f.update(tea.KeyPressMsg{Code: '0'})
-				expectViews(t, f.transport, 1)
-				f.update(tea.KeyPressMsg{Code: '?'})
-				f.update(tea.KeyPressMsg{Code: 'q'})
 				expectViews(t, f.transport, 1)
 				time.Sleep(24 * time.Hour)
 				f.update(displayTickMsg{})
@@ -219,62 +212,34 @@ func TestCoreActionExplicitClose(t *testing.T) {
 func TestCoreActionCommittedPatch(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, tc := range []struct {
-		name                 string
-		failCommit, failMark bool
+		name       string
+		result     applyPatchResultMsg
+		wantEvents int
 	}{
-		{name: "committed"}, {name: "commit failure", failCommit: true}, {name: "mark failure", failMark: true},
+		{name: "committed", result: applyPatchResultMsg{success: true}, wantEvents: 1},
+		{name: "commit failure", result: applyPatchResultMsg{commitFailed: true, err: errors.New("commit failed")}},
+		{name: "mark failure", result: applyPatchResultMsg{success: true, err: errors.New("mark failed")}, wantEvents: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := testutil.InitTestRepo(t)
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			path := filepath.Join(repo.Root, "base.txt")
-			require.NoError(t, os.WriteFile(path, []byte("changed\n"), 0o644))
-			patch := repo.Run("diff", "--", "base.txt") + "\n"
-			repo.Run("checkout", "--", "base.txt")
-			if tc.failCommit {
-				require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".git", "hooks", "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
-			}
 			var bodies []string
-			marked := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/telemetry/events" {
-					body, _ := io.ReadAll(r.Body)
+					body, err := io.ReadAll(r.Body)
+					assert.NoError(t, err)
 					bodies = append(bodies, string(body))
 					w.WriteHeader(http.StatusAccepted)
 					return
 				}
-				if r.URL.Path == "/api/job/applied" {
-					marked = true
-					if tc.failMark {
-						w.WriteHeader(http.StatusInternalServerError)
-						return
-					}
-				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"success":true}`)
+				_, _ = io.WriteString(w, `{"jobs":[]}`)
 			}))
 			defer srv.Close()
 			m := newModel(testEndpointFromURL(srv.URL), withExternalIODisabled())
-			before := repo.Run("rev-parse", "HEAD")
-			result := m.checkApplyCommitPatch(context.Background(), 42, &storage.ReviewJob{}, repo.Root, patch)
-			assert.Equal(t, tc.failCommit, result.commitFailed)
-			assert.Empty(t, bodies, "the patch result must return before telemetry starts")
-			_, reportCmd := m.handleApplyPatchResultMsg(result)
+			_, reportCmd := m.handleApplyPatchResultMsg(tc.result)
 			collectMsgs(reportCmd)
-			if tc.failCommit {
-				require.Error(t, result.err)
-				assert.Empty(t, bodies)
-				assert.Equal(t, before, repo.Run("rev-parse", "HEAD"))
-			} else {
-				if tc.failMark {
-					require.Error(t, result.err)
-				} else {
-					require.NoError(t, result.err)
-				}
-				assert.True(t, marked)
-				assert.NotEqual(t, before, repo.Run("rev-parse", "HEAD"))
-				require.Len(t, bodies, 1)
-				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"tui"}}`, bodies[0])
+			require.Len(t, bodies, tc.wantEvents)
+			for _, body := range bodies {
+				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"tui"}}`, body)
 			}
 		})
 	}

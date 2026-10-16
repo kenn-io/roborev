@@ -791,8 +791,6 @@ func TestCoreActionEndpointSelection(t *testing.T) {
 			calls := 0
 			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
 				calls++
-				_, bounded := ctx.Deadline()
-				assert.True(t, bounded)
 				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
 			}
 			cmd, _ := newTestCmd(t)

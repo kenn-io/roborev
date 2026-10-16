@@ -136,8 +136,11 @@ describe("ReviewDrawer", () => {
         );
         await drawer.rerender({ activeTab: "review" });
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        const review = state.review!;
+        state.review = null;
         await drawer.rerender({ activeTab: "log" });
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        state.review = review;
         await drawer.rerender({ activeTab: "review" });
         expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
       },
@@ -178,20 +181,6 @@ describe("ReviewDrawer", () => {
         expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
         await drawer.rerender({ activeTab: "review" });
         expect(state.reportCoreAction).toHaveBeenCalledTimes(3);
-      },
-    },
-    {
-      name: "sends a candidate after a same-day review reload",
-      run: async () => {
-        const drawer = render(ReviewDrawer);
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
-        const review = state.review!;
-        state.review = null;
-        await drawer.rerender({ activeTab: "log" });
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
-        state.review = review;
-        await drawer.rerender({ activeTab: "review" });
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
       },
     },
     {

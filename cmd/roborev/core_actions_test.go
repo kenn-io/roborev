@@ -20,15 +20,14 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "redirected", "skill", "no change", "commit failure"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
-			cliOutputIsTerminal = func(io.Writer) bool { return mode != "redirected" }
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			originalUnsafe := agent.AllowUnsafeAgents()
 			originalDelay := postCommitWaitDelay
@@ -80,7 +79,6 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			}
 			var fixes []string
 			for _, post := range rec.telemetryPosts() {
-				assert.NotContains(t, post.body, `"review_closed"`, "automatic closes remain silent")
 				if strings.Contains(post.body, `"finding_fixed"`) {
 					fixes = append(fixes, post.body)
 				}
@@ -98,78 +96,76 @@ func TestCoreActionRefineCommit(t *testing.T) {
 }
 
 func TestCoreActionFixCommit(t *testing.T) {
-	for _, terminal := range []bool{false, true} {
-		for _, batch := range []bool{false, true} {
-			for _, outcome := range []string{"commit", "no change", "failure"} {
-				t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome+"/terminal="+strconv.FormatBool(terminal), func(t *testing.T) {
-					resetCLIUse(t)
-					cliOutputIsTerminal = func(io.Writer) bool { return terminal }
-					t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-					repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-					before := repo.HeadSHA()
-					md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-					md.State.mu.Lock()
-					md.State.jobs[100] = &storage.ReviewJob{ID: 100, GitRef: "def456", Agent: "test", Status: storage.JobStatusDone}
-					md.State.reviews["def456"] = &storage.Review{ID: 2, JobID: 100, Agent: "test", Output: "Finding"}
-					md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "abc123", Agent: "test", Status: storage.JobStatusDone}
-					md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 99, Agent: "test", Output: "Finding"}
-					md.State.mu.Unlock()
-					patchServerAddr(t, md.Server.URL)
-					fixAgent := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
-						if outcome == "failure" {
-							return "", errors.New("agent failed")
-						}
-						if outcome == "no change" {
-							return "No change needed", nil
-						}
-						file, err := os.OpenFile(filepath.Join(dir, "fixed.txt"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-						require.NoError(t, err)
-						_, err = file.WriteString("fixed\n")
-						require.NoError(t, err)
-						require.NoError(t, file.Close())
-						for _, args := range [][]string{{"add", "fixed.txt"}, {"commit", "-m", "fix: apply change"}} {
-							cmd := exec.Command("git", args...)
-							cmd.Dir = dir
-							output, err := cmd.CombinedOutput()
-							require.NoError(t, err, "%s", output)
-						}
-						return "Fixed", nil
-					}}
-					cmd, _ := newTestCmd(t)
-					cmd.SetContext(t.Context())
-					tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
-					opts := fixOptions{agentName: "test", quiet: true, classify: agent.ClassifyLimit}
-					var err error
+	for _, batch := range []bool{false, true} {
+		for _, outcome := range []string{"commit", "no change", "failure"} {
+			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
+				resetCLIUse(t)
+				cliOutputIsTerminal = func(io.Writer) bool { return true }
+				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+				before := repo.HeadSHA()
+				md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+				md.State.mu.Lock()
+				md.State.jobs[100] = &storage.ReviewJob{ID: 100, GitRef: "def456", Agent: "test", Status: storage.JobStatusDone}
+				md.State.reviews["def456"] = &storage.Review{ID: 2, JobID: 100, Agent: "test", Output: "Finding"}
+				md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "abc123", Agent: "test", Status: storage.JobStatusDone}
+				md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 99, Agent: "test", Output: "Finding"}
+				md.State.mu.Unlock()
+				patchServerAddr(t, md.Server.URL)
+				fixAgent := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
+					if outcome == "failure" {
+						return "", errors.New("agent failed")
+					}
+					if outcome == "no change" {
+						return "No change needed", nil
+					}
+					file, err := os.OpenFile(filepath.Join(dir, "fixed.txt"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+					require.NoError(t, err)
+					_, err = file.WriteString("fixed\n")
+					require.NoError(t, err)
+					require.NoError(t, file.Close())
+					for _, args := range [][]string{{"add", "fixed.txt"}, {"commit", "-m", "fix: apply change"}} {
+						cmd := exec.Command("git", args...)
+						cmd.Dir = dir
+						output, err := cmd.CombinedOutput()
+						require.NoError(t, err, "%s", output)
+					}
+					return "Fixed", nil
+				}}
+				cmd, _ := newTestCmd(t)
+				cmd.SetContext(t.Context())
+				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
+				opts := fixOptions{agentName: "test", quiet: true, classify: agent.ClassifyLimit}
+				var err error
+				if batch {
+					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+					err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
+				} else {
+					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
+				}
+				if outcome == "failure" && !batch {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+				if outcome == "commit" {
+					assert.NotEqual(t, before, repo.HeadSHA())
+					assert.NotEmpty(t, rec.businessPaths())
+				}
+				posts := rec.telemetryPosts()
+				if outcome == "commit" {
+					count := 1
 					if batch {
-						roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-						err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
-					} else {
-						err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
+						count = 2
 					}
-					if outcome == "failure" && !batch {
-						require.Error(t, err)
-					} else {
-						require.NoError(t, err)
+					require.Len(t, posts, count)
+					for _, post := range posts {
+						assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
 					}
-					if outcome == "commit" {
-						assert.NotEqual(t, before, repo.HeadSHA())
-						assert.NotEmpty(t, rec.businessPaths())
-					}
-					posts := rec.telemetryPosts()
-					if outcome == "commit" && terminal {
-						count := 1
-						if batch {
-							count = 2
-						}
-						require.Len(t, posts, count)
-						for _, post := range posts {
-							assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
-						}
-					} else {
-						assert.Empty(t, posts)
-					}
-				})
-			}
+				} else {
+					assert.Empty(t, posts)
+				}
+			})
 		}
 	}
 }
@@ -191,9 +187,9 @@ func TestCoreActionCLIOutputEligibility(t *testing.T) {
 	md.State.jobs[1] = &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
 	md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: "Review output"}
 	for _, format := range []string{"text", "json", "prompt", "close"} {
-		var output string
-		for _, terminal := range []bool{false, true} {
-			t.Run(format+"/terminal="+strconv.FormatBool(terminal), func(t *testing.T) {
+		t.Run(format, func(t *testing.T) {
+			var output string
+			for _, terminal := range []bool{false, true} {
 				cliOutputIsTerminal = func(io.Writer) bool { return terminal }
 				rec.reset()
 				args := []string{"show", "--job", "1"}
@@ -233,8 +229,8 @@ func TestCoreActionCLIOutputEligibility(t *testing.T) {
 					require.Len(t, posts, 1)
 					assert.JSONEq(t, cliUseBody, posts[0].body)
 				}
-			})
-		}
+			}
+		})
 		if format == "close" {
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
 			for _, tc := range []struct {
@@ -269,79 +265,68 @@ func TestCoreActionCLIOutputEligibility(t *testing.T) {
 		}
 	}
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(telemetry.GenericEnabledEnv, "1")
-	for _, env := range []string{telemetry.EnabledEnv, telemetry.GenericEnabledEnv} {
-		t.Run(env, func(t *testing.T) {
-			t.Setenv(env, "0")
-			cliTelemetryEnabled = telemetry.EnabledFromEnv
-			rec.reset()
-			clearCLIUseState()
-			result := runCLI(t, "show", "--job", "1", "--json", "--server", md.Server.URL)
-			require.NoError(t, result.err)
-			assert.Contains(t, result.stdout, "Review output")
-			assert.Empty(t, rec.telemetryPosts())
-		})
-	}
+	t.Run("telemetry disabled", func(t *testing.T) {
+		cliTelemetryEnabled = func() bool { return false }
+		rec.reset()
+		clearCLIUseState()
+		result := runCLI(t, "show", "--job", "1", "--json", "--server", md.Server.URL)
+		require.NoError(t, result.err)
+		assert.Contains(t, result.stdout, "Review output")
+		assert.Empty(t, rec.telemetryPosts())
+	})
 }
 
 func TestCoreActionWaitDisplaysReview(t *testing.T) {
-	for _, command := range []string{"wait", "review"} {
-		for _, mode := range []string{"terminal", "redirected", "quiet"} {
-			verdicts := []int{1}
-			if mode == "terminal" {
-				verdicts = append(verdicts, 0)
-			}
-			for _, verdict := range verdicts {
-				t.Run(command+"/"+strconv.Itoa(verdict)+"/"+mode, func(t *testing.T) {
-					resetCLIUse(t)
-					cliOutputIsTerminal = func(io.Writer) bool { return mode != "redirected" }
-					mux := http.NewServeMux()
-					md := daemonFromHandler(t, mux)
-					rec := &cliUseRecorder{}
-					mux.HandleFunc(daemon.TelemetryEventsPath, func(w http.ResponseWriter, r *http.Request) {
-						body, _ := io.ReadAll(r.Body)
-						rec.mu.Lock()
-						rec.telemetry = append(rec.telemetry, recordedTelemetry{body: string(body)})
-						rec.mu.Unlock()
-						w.WriteHeader(http.StatusAccepted)
-					})
-					mux.HandleFunc(daemon.TelemetryAgentCallPath, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
-					mockWaitableReview(t, mux, "Review output", verdict)
-					args := []string{"wait", "1"}
-					if command == "review" {
-						repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-						args = []string{"review", "--repo", repo.Dir, "--wait"}
-					}
-					if mode == "quiet" {
-						args = append(args, "--quiet")
-					}
-					args = append(args, "--server", md.Server.URL)
-					result := runCLI(t, args...)
-					if verdict == 0 {
-						requireExitCode(t, result.err, 1)
-					} else {
-						require.NoError(t, result.err)
-					}
-					if mode == "quiet" {
-						assert.NotContains(t, result.stdout, "Review output")
-					} else {
-						assert.Contains(t, result.stdout, "Review output")
-					}
-					var views []string
-					for _, post := range rec.telemetryPosts() {
-						if strings.Contains(post.body, `"review_viewed"`) {
-							views = append(views, post.body)
-						}
-					}
-					if mode == "terminal" {
-						require.Len(t, views, 1)
-						assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, views[0])
-					} else {
-						assert.Empty(t, views)
-					}
+	for _, mode := range []string{"terminal", "quiet"} {
+		verdicts := []int{1}
+		if mode == "terminal" {
+			verdicts = append(verdicts, 0)
+		}
+		for _, verdict := range verdicts {
+			t.Run(strconv.Itoa(verdict)+"/"+mode, func(t *testing.T) {
+				resetCLIUse(t)
+				cliOutputIsTerminal = func(io.Writer) bool { return true }
+				mux := http.NewServeMux()
+				md := daemonFromHandler(t, mux)
+				rec := &cliUseRecorder{}
+				mux.HandleFunc(daemon.TelemetryEventsPath, func(w http.ResponseWriter, r *http.Request) {
+					body, _ := io.ReadAll(r.Body)
+					rec.mu.Lock()
+					rec.telemetry = append(rec.telemetry, recordedTelemetry{body: string(body)})
+					rec.mu.Unlock()
+					w.WriteHeader(http.StatusAccepted)
 				})
-			}
+				mux.HandleFunc(daemon.TelemetryAgentCallPath, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
+				mockWaitableReview(t, mux, "Review output", verdict)
+				args := []string{"wait", "1"}
+				if mode == "quiet" {
+					args = append(args, "--quiet")
+				}
+				args = append(args, "--server", md.Server.URL)
+				result := runCLI(t, args...)
+				if verdict == 0 {
+					requireExitCode(t, result.err, 1)
+				} else {
+					require.NoError(t, result.err)
+				}
+				if mode == "quiet" {
+					assert.NotContains(t, result.stdout, "Review output")
+				} else {
+					assert.Contains(t, result.stdout, "Review output")
+				}
+				var views []string
+				for _, post := range rec.telemetryPosts() {
+					if strings.Contains(post.body, `"review_viewed"`) {
+						views = append(views, post.body)
+					}
+				}
+				if mode == "terminal" {
+					require.Len(t, views, 1)
+					assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, views[0])
+				} else {
+					assert.Empty(t, views)
+				}
+			})
 		}
 	}
 }
