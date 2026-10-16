@@ -52,49 +52,33 @@
 
   const isOpen = $derived(stores.roborevJobs?.getSelectedJobId() !== undefined);
 
-  let reportedReviewDay = "";
   let reviewDay = $state(new Date().toISOString().slice(0, 10));
   let pageVisible = $state(false);
   onMount(() => {
-    let timer: ReturnType<typeof setTimeout>;
     function refreshDay(): void {
       pageVisible = !document.hidden;
       if (pageVisible) reviewDay = new Date().toISOString().slice(0, 10);
     }
-    function scheduleDay(): void {
-      const now = new Date();
-      const midnight = Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + 1,
-      );
-      timer = setTimeout(() => {
-        refreshDay();
-        scheduleDay();
-      }, midnight - now.getTime());
-    }
     refreshDay();
-    scheduleDay();
     globalThis.addEventListener("focus", refreshDay);
     document.addEventListener("visibilitychange", refreshDay);
     return () => {
-      clearTimeout(timer);
       globalThis.removeEventListener("focus", refreshDay);
       document.removeEventListener("visibilitychange", refreshDay);
     };
   });
   $effect(() => {
+    // A returning reader can send a new-day candidate; the daemon claims it.
+    void reviewDay;
     const selectedId = stores.roborevJobs?.getSelectedJobId();
     const review = stores.roborevReview?.getReview();
     if (
       pageVisible &&
       isOpen &&
       activeTab === "review" &&
-      review?.job_id === selectedId &&
-      reportedReviewDay !== reviewDay
+      review?.job_id === selectedId
     ) {
       reportCoreAction("review_viewed");
-      reportedReviewDay = reviewDay;
     }
   });
 

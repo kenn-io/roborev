@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sync/atomic"
@@ -13,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -112,38 +116,51 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
-	// This tests the full workflow with mocked daemon and test agent
-	repo := createTestRepo(t, map[string]string{
-		"main.go": "package main\n",
-	})
-
-	ts, state := newMockServer(t, MockServerOpts{
-		JobIDStart:     99,
-		ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
-		DoneAfterPolls: 2,
-	})
-	patchServerAddr(t, ts.URL)
-
-	cmd, output := newTestCmd(t)
-
-	analysisType := analyze.GetType("refactor")
-	opts := analyzeOptions{
-		agentName: "test",
-		fix:       true,
-		fixAgent:  "test",
-		reasoning: "fast",
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprint("committed=", committed), func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			ts, state := newMockServer(t, MockServerOpts{
+				JobIDStart:     99,
+				ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
+				DoneAfterPolls: 1,
+			})
+			var bodies []string
+			handler := ts.Config.Handler
+			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == daemon.TelemetryEventsPath {
+					body, _ := io.ReadAll(r.Body)
+					bodies = append(bodies, string(body))
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				handler.ServeHTTP(w, r)
+			})
+			patchServerAddr(t, ts.URL)
+			name := "analyze-fix-commit-test"
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				if committed {
+					repo.CommitFile("main.go", "package main\n// fixed\n", "Fix duplicate code")
+				}
+				return "Done", nil
+			}})
+			cmd, output := newTestCmd(t)
+			cmd.SetContext(t.Context())
+			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast"}
+			err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
+			require.NoError(t, err)
+			assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
+			assert.Equal(t, int32(1), atomic.LoadInt32(&state.CloseCount))
+			assert.Contains(t, output.String(), "CODE SMELLS")
+			assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), output.String())
+			if committed {
+				require.Len(t, bodies, 1)
+				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, bodies[0])
+			} else {
+				assert.Empty(t, bodies)
+			}
+		})
 	}
-
-	err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analysisType, opts)
-	require.NoError(t, err, "runAnalyzeAndFix failed: %v")
-
-	// Verify the workflow was executed
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
-	assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
-	assert.NotZero(t, atomic.LoadInt32(&state.CloseCount))
-
-	// Verify output contains analysis result
-	outputStr := output.String()
-	assert.Contains(t, outputStr, "CODE SMELLS")
-	assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), outputStr)
 }

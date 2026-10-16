@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -749,4 +750,62 @@ func TestMCPActivity(t *testing.T) {
 		assert.Zero(t, calls)
 		assert.Equal(t, [5]int32{}, counts.snapshot())
 	})
+}
+
+func TestCoreActionDiscoveryDeadline(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	serverAddr, parsedServerEndpoint = "", nil
+	original := getAnyRunningDaemonForStart
+	t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+			calls++
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		cmd, output := newTestCmd(t)
+		cmd.SetContext(t.Context())
+		cmd.Print("Review output\n")
+		start := time.Now()
+		reportCLIAction(cmd, "review_viewed")
+		assert.Equal(t, time.Second, time.Since(start))
+		assert.Equal(t, 1, calls)
+		assert.Equal(t, "Review output\n", output.String())
+	})
+}
+
+func TestCoreActionEndpointSelection(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint("explicit=", explicit), func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			serverAddr, parsedServerEndpoint = "", nil
+			if explicit {
+				serverAddr = md.Server.URL
+			}
+			original := getAnyRunningDaemonForStart
+			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			calls := 0
+			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+				calls++
+				_, bounded := ctx.Deadline()
+				assert.True(t, bounded)
+				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+			}
+			cmd, _ := newTestCmd(t)
+			cmd.SetContext(t.Context())
+			reportCLIAction(cmd, "review_viewed")
+			posts := rec.telemetryPosts()
+			require.Len(t, posts, 1)
+			assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, posts[0].body)
+			if explicit {
+				assert.Zero(t, calls)
+			} else {
+				assert.Equal(t, 1, calls)
+			}
+		})
+	}
 }

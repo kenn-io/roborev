@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -52,7 +53,30 @@ func TestCoreActionReviewVisits(t *testing.T) {
 			f.update(f.review())
 			f.m.selectedJobID = 42
 			f.update(f.review())
-			expectViews(t, f.transport, 3)
+			expectViews(t, f.transport, 1)
+			f.update(tea.KeyPressMsg{Code: '0'})
+			expectViews(t, f.transport, 2)
+		}},
+		{name: "pending interaction belongs to its review", run: func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture()
+			f.update(tea.KeyPressMsg{Code: '0'})
+			f.m.selectedJobID = 43
+			f.update(f.review())
+			expectViews(t, f.transport, 0)
+			f.m.selectedJobID = 42
+			f.update(f.review())
+			expectViews(t, f.transport, 0)
+			f.update(tea.KeyPressMsg{Code: '0'})
+			expectViews(t, f.transport, 1)
+		}},
+		{name: "queue interaction cannot authorize a later review", run: func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture()
+			f.m.currentView = viewQueue
+			f.m.layout = splitlayout.Stacked
+			f.update(tea.KeyPressMsg{Code: '0'})
+			f.m.currentView = viewReview
+			f.update(f.review())
+			expectViews(t, f.transport, 0)
 		}},
 		{name: "same-day reload after rerun", run: func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture()
@@ -69,10 +93,10 @@ func TestCoreActionReviewVisits(t *testing.T) {
 		{name: "one view per UTC day", run: func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture()
-				f.m.currentReview = splitTestReview()
-				f.update(displayTickMsg{})
+				f.update(tea.KeyPressMsg{Code: '0'})
+				expectViews(t, f.transport, 0)
 				time.Sleep(24 * time.Hour)
-				f.update(displayTickMsg{})
+				f.update(f.review())
 				expectViews(t, f.transport, 0)
 				f.update(tea.KeyPressMsg{Code: '0'})
 				expectViews(t, f.transport, 1)
@@ -81,7 +105,7 @@ func TestCoreActionReviewVisits(t *testing.T) {
 				expectViews(t, f.transport, 1)
 				time.Sleep(24 * time.Hour)
 				f.update(displayTickMsg{})
-				expectViews(t, f.transport, 2)
+				expectViews(t, f.transport, 1)
 				f.update(tea.KeyPressMsg{Code: '0'})
 				expectViews(t, f.transport, 2)
 			})

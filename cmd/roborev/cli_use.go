@@ -150,6 +150,9 @@ func reportCLIAction(cmd *cobra.Command, event string) {
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), cliUseTimeout)
 	defer cancel()
-	ep := getDaemonEndpoint()
+	endpoints, err := selectDaemonEndpointsWithDiscovery(func() (*daemon.RuntimeInfo, error) {
+		return getAnyRunningDaemonForStart(ctx)
+	})
+	ep := endpoints[0].WithAccessError(err)
 	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 }

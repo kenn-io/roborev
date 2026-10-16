@@ -169,6 +169,10 @@ func resolveDaemonEndpoint() (daemon.DaemonEndpoint, error) {
 // The result always has at least one endpoint, so callers can build a client
 // that reports the selection error.
 func selectDaemonEndpoints() ([]daemon.DaemonEndpoint, error) {
+	return selectDaemonEndpointsWithDiscovery(getAnyRunningDaemon)
+}
+
+func selectDaemonEndpointsWithDiscovery(discover func() (*daemon.RuntimeInfo, error)) ([]daemon.DaemonEndpoint, error) {
 	// Explicit --server flag takes precedence over auto-discovery
 	if serverAddr != "" {
 		if parsedServerEndpoint != nil {
@@ -181,7 +185,7 @@ func selectDaemonEndpoints() ([]daemon.DaemonEndpoint, error) {
 		return []daemon.DaemonEndpoint{ep}, nil
 	}
 	// No explicit flag: discover running daemon
-	info, err := getAnyRunningDaemon()
+	info, err := discover()
 	if err == nil {
 		return info.Endpoints(), nil
 	}

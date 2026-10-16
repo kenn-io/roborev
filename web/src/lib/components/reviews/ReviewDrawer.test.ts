@@ -128,7 +128,7 @@ import ReviewDrawer from "./ReviewDrawer.svelte";
 describe("ReviewDrawer", () => {
   it.each([
     {
-      name: "keeps one report through same-day tab switches",
+      name: "sends candidates through same-day tab switches",
       run: async () => {
         const drawer = render(ReviewDrawer);
         expect(state.reportCoreAction).toHaveBeenCalledExactlyOnceWith(
@@ -139,18 +139,18 @@ describe("ReviewDrawer", () => {
         await drawer.rerender({ activeTab: "log" });
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
         await drawer.rerender({ activeTab: "review" });
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
       },
     },
     {
-      name: "reports an unchanged visible review on the next UTC day",
+      name: "waits for focus to report a visible review on the next UTC day",
       run: async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-10-16T23:59:59Z"));
         render(ReviewDrawer);
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
         await act(() => vi.advanceTimersByTimeAsync(1000));
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
         await fireEvent(window, new Event("focus"));
         expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
       },
@@ -181,7 +181,7 @@ describe("ReviewDrawer", () => {
       },
     },
     {
-      name: "keeps a same-day report through a review reload",
+      name: "sends a candidate after a same-day review reload",
       run: async () => {
         const drawer = render(ReviewDrawer);
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
@@ -191,7 +191,7 @@ describe("ReviewDrawer", () => {
         expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
         state.review = review;
         await drawer.rerender({ activeTab: "review" });
-        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
       },
     },
     {

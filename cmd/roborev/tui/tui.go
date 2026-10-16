@@ -146,7 +146,7 @@ type model struct {
 	currentView          viewKind
 	reviewVisitJobID     int64
 	reviewVisitDay       string
-	reviewInteracted     bool
+	reviewInputJobID     int64
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1153,6 +1153,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	today := time.Now().UTC().Format(time.DateOnly)
+	if m.reviewVisitDay != today {
+		m.reviewVisitJobID = 0
+		m.reviewInputJobID = 0
+		m.reviewVisitDay = today
+	}
+
 	var result tea.Model
 	var cmd tea.Cmd
 
@@ -1177,13 +1184,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result = m
 		}
 	case tea.KeyMsg:
-		m.reviewInteracted = true
+		m.reviewInputJobID = m.selectedJobID
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
-		m.reviewInteracted = true
 		if !m.mouseEnabled {
 			return m, nil
 		}
+		m.reviewInputJobID = m.selectedJobID
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
 		result, cmd = m.handleWindowSizeMsg(msg)
@@ -1320,21 +1327,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		today := time.Now().UTC().Format(time.DateOnly)
-		if rm.reviewVisitDay != today {
-			rm.reviewVisitJobID = 0
-			rm.reviewVisitDay = today
-		}
+		_, key := msg.(tea.KeyMsg)
+		_, mouse := msg.(tea.MouseMsg)
 		reviewVisible := rm.currentView == viewReview || rm.splitActive()
+		if !reviewVisible {
+			rm.reviewInputJobID = 0
+		} else if rm.selectedJobID != rm.reviewInputJobID {
+			if (key || mouse) && rm.reviewInputJobID != 0 {
+				rm.reviewInputJobID = rm.selectedJobID
+			} else {
+				rm.reviewInputJobID = 0
+			}
+		}
 		if rm.selectedJobID != rm.reviewVisitJobID {
 			rm.reviewVisitJobID = 0
 		}
-		if rm.reviewInteracted && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 && rm.reviewVisitJobID == 0 {
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
-			rm.reviewVisitJobID = rm.currentReview.JobID
+		if rm.reviewInputJobID != 0 && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 {
+			if rm.reviewVisitJobID == 0 {
+				cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
+				rm.reviewVisitJobID = rm.currentReview.JobID
+			}
+			rm.reviewInputJobID = 0
 		}
-		_, key := msg.(tea.KeyMsg)
-		_, mouse := msg.(tea.MouseMsg)
 		if rm.screenDay != today {
 			rm.screenDay, rm.screensSent = today, nil
 		}
