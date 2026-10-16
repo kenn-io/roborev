@@ -222,10 +222,13 @@ usual reminder thresholds, acknowledgments, and
 
 The tested ZCode versions dispatch `SessionStart` and `UserPromptSubmit`, but
 not `Stop`, `PreToolUse`, or `PostToolUse`. A Stop registration stays installed
-and will take effect if ZCode starts dispatching it. Pass `--stop-form` to also
-register the shell-tool events. All forms share the same thresholds and
-acknowledgment state. Registrations allow at least 30 seconds because an
-observed run took 15 seconds from start to finish.
+and will take effect if ZCode starts dispatching it.
+
+`--stop-form` replaces the `SessionStart` and `UserPromptSubmit` registrations
+with `Stop`, `PreToolUse`, and `PostToolUse`. Use it only with a ZCode version
+that dispatches those events; on the tested versions it disables reminders. Both
+forms share the same thresholds and acknowledgment state. Registrations allow at
+least 30 seconds because an observed run took 15 seconds from start to finish.
 
 If no reminder arrives, inspect ZCode's hook execution log. Roborev writes the
 repository, branch, failed-review counts, and threshold to the hook's error

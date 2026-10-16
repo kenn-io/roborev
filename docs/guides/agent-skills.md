@@ -125,7 +125,8 @@ Use `/roborev-superpowers` in Claude Code or `$roborev-superpowers` in Codex to
 carry a feature from a specification to a verified implementation. The skill
 connects Superpowers plans, Kata tasks, goal reviews, and code reviews. It can
 resume existing documents and tasks. Superpowers and Kata must be available;
-goal reviews also need a configured Pi or supported Claude Code reviewer. See
+goal reviews also need a configured Pi reviewer or Claude Code with an Anthropic
+API key or proxy model. See
 [setup and workflow](/docs/integrations/goal-review/).
 
 ### Review a commit

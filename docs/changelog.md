@@ -33,7 +33,8 @@ Upgrade all machines sharing a PostgreSQL mirror together.
     `roborev review --type goal`. The new `roborev-superpowers` skill connects
     these reviews with implementation and verification. An optional watcher
     requests reviews when the documents or tasks change. Goal reviews require a
-    configured Pi or supported Claude Code reviewer. See
+    configured Pi reviewer or Claude Code with an Anthropic API key or proxy
+    model. See
     [engineering with Superpowers and Kata](/docs/integrations/goal-review/).
 - Read remote review history over HTTPS with repository-scoped signing keys. The
     `list`, `show --job`, `wait`, and `stream` commands support this optional
@@ -65,9 +66,8 @@ Upgrade all machines sharing a PostgreSQL mirror together.
 - Give reviewers the declared Go version for each module affected by Go source
     or `go.mod` changes. Each version includes its manifest path.
 - Store prompts, saved dirty-review diffs, and fix patches once in compressed
-    form. The first startup converts existing data and needs extra disk space.
-    Upgrade all machines sharing a PostgreSQL mirror together. Downgrading is
-    unsupported. See
+    form. The first startup converts existing data; follow the
+    [upgrade steps](/docs/installation/#upgrading-to-0720) first. See
     [stored prompts and retention](/docs/configuration/#stored-prompts-and-retention).
 - Remove old prompts and job logs automatically with `prompt_retention_days` and
     `job_log_retention_days`. Both default to keeping everything. Prompt cleanup
@@ -128,10 +128,9 @@ Upgrade all machines sharing a PostgreSQL mirror together.
     reporting only an exit status.
 - Keep isolated review sessions out of later session reuse, and build their
     prompts from the prepared checkout even if the caller's checkout disappears.
-- Jobs could stay stuck "running" and hold up panel summaries after the daemon
-    failed to save their result or failed status. The daemon now marks these
-    jobs failed on the next 60-second sweep with "daemon did not save the job's
-    outcome".
+- Mark jobs failed when the daemon cannot save their result or failed status,
+    instead of leaving them stuck "running" and holding up panel summaries. The
+    next 60-second sweep records "daemon did not save the job's outcome".
 
 **Acknowledgements**
 

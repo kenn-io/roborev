@@ -158,7 +158,8 @@ func planZcodePlugin(opts InstallOptions, configPath string) (zcodePlugin, error
 // Stop registration is kept installed anyway: it is inert until ZCode
 // dispatches the event, then works immediately with the shared thresholds
 // and acknowledgment state, so users need not reinstall when that lands.
-// StopForm adds PreToolUse/PostToolUse for harnesses that dispatch them.
+// StopForm replaces UserPromptSubmit/SessionStart with PreToolUse/PostToolUse
+// for harnesses that dispatch them.
 func zcodeHookSpecs(stopForm bool) []hookSpec {
 	if stopForm {
 		return []hookSpec{

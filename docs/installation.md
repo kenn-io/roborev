@@ -139,14 +139,18 @@ for that conversion before updating from 0.71.x or earlier:
 1. Stop the daemon with `roborev daemon stop` and back up its data directory. If
     you use PostgreSQL sync, stop every daemon sharing the mirror and back up
     the mirror too. If a service manager runs the daemon, stop it through that
-    manager so it stays stopped.
+    manager so it stays stopped. Until step 4, do not commit in repositories
+    with roborev hooks or run roborev commands other than these steps. They
+    start the daemon automatically, and after step 3 that starts the conversion
+    early.
 1. Check free disk space. Conversion keeps the original data while writing
     compressed copies and a write-ahead log. Its final `VACUUM` can need up to
     twice the database file's size in free space. See
     [conversion and disk requirements](/docs/configuration/#stored-prompts-and-retention).
 1. Upgrade through your usual installation method. If you use `roborev update`,
-    add `--no-restart`. Upgrade every machine sharing a PostgreSQL mirror
-    before restarting those daemons; the mirror moves to schema 24, which older
+    add `--no-restart`; without it, the update starts the new daemon to repair
+    git hooks. Upgrade every machine sharing a PostgreSQL mirror before
+    restarting those daemons; the mirror moves to schema 24, which older
     clients refuse.
 1. Start the daemon with `roborev daemon start` and allow the conversion to
     finish, or start it through your service manager. Large histories can take
