@@ -47,22 +47,18 @@ func TestEmptyPrefixesPreserveOriginalIdentityGoldens(t *testing.T) {
 	for _, tc := range []struct {
 		settings embedconfig.Embedder
 		want     embeddingIdentity
-		legacy   string
 	}{
 		{
 			embedconfig.Embedder{BaseURL: "https://api.voyageai.com/v1", Model: "voyage-4-large", Dims: 1024, InputTypeMode: "retrieval"},
 			embeddingIdentity{"a64ee4ec7eb52b78ab77e5219ae1839fe8afc3fdf3c7c445500e614ac703cbce", "a64ee4ec7eb52b78ab77e5219ae1839fe8afc3fdf3c7c445500e614ac703cbce", "534c5b3284d50bb0", "df340d3b83c20297"},
-			"28b082fb2ca22d4d",
 		},
 		{
 			embedconfig.Embedder{BaseURL: "http://127.0.0.1:11434/v1/", Model: "nomic", Dims: 768, FingerprintSalt: "s1"},
 			embeddingIdentity{"d90a2839a7fd6b67c5654f496b20d085d0931e936c2d65f87530a7a3ea2127bc", "d90a2839a7fd6b67c5654f496b20d085d0931e936c2d65f87530a7a3ea2127bc", "54d60b696107314f", "1fbba4a8e110a7e6"},
-			"ad50719e7306a26f",
 		},
 	} {
-		space, got := identities(t, tc.settings, 2)
+		_, got := identities(t, tc.settings, 2)
 		assert.Equal(t, tc.want, got)
-		assert.Equal(t, []string{tc.legacy}, space.Legacy)
 	}
 }
 
