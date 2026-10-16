@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedconfig"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
@@ -127,7 +128,7 @@ func deterministicAxis(text string) []float32 {
 
 func newIntegrationEmbeddingClient(t *testing.T, endpoint, model, apiKey string) *searchindex.Embeddings {
 	t.Helper()
-	client, err := searchindex.NewEmbeddings(config.SearchEmbeddingsConfig{
+	client, err := searchindex.NewEmbeddings(embedconfig.Embedder{
 		BaseURL: endpoint, Model: model, Dims: 3,
 		BatchSize: 8, InputTypeMode: "retrieval",
 	}, apiKey, searchdoc.RecipeVersion)

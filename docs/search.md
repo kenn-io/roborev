@@ -131,14 +131,14 @@ generation is not activated until all current documents have been handled.
 During this initial backfill, `auto` uses lexical search and the health and
 coverage fields report progress.
 
-Changing the model, dimensions, endpoint, input type mode, either role prefix,
-content recipe, or `fingerprint_salt` starts a replacement generation. Upgrading
-Roborev with the same settings keeps serving and filling the existing
-generation, so an upgrade does not re-embed stored reviews. Roborev keeps the
-old generation on disk during the build but does not query vectors from an
-incompatible generation. `auto` therefore degrades to lexical search until the
-replacement activates. Explicit semantic and hybrid requests remain unavailable
-during that window.
+Changing the model, dimensions, `request_dimensions`, endpoint, input type mode,
+a role prefix or suffix, content recipe, or `fingerprint_salt` starts a
+replacement generation. Upgrading Roborev with the same settings keeps serving
+and filling the existing generation, so an upgrade does not re-embed stored
+reviews. Roborev keeps the old generation on disk during the build but does not
+query vectors from an incompatible generation. `auto` therefore degrades to
+lexical search until the replacement activates. Explicit semantic and hybrid
+requests remain unavailable during that window.
 
 Search ranks and filters reviews in the sidecar, then loads the returned page
 from the canonical review database. Closing, reopening, commenting on,
@@ -169,9 +169,9 @@ There is no setting.
 - Startup and periodic safety sweeps also publish existing local vectors.
     Matching shared entries are skipped, and missing entries are retried on the
     next sweep.
-- Only daemons with the same `base_url`, `model`, `dims`, `input_type_mode`,
-    `document_prefix`, `query_prefix`, `fingerprint_salt`, and document recipe
-    share vectors. Other daemons embed for themselves.
+- Only daemons with the same `base_url`, `model`, `dims`, `request_dimensions`,
+    `input_type_mode`, role prefixes and suffixes, `fingerprint_salt`, and
+    document recipe share vectors. Other daemons embed for themselves.
 - Sharing is best effort. If PostgreSQL is unreachable, a stored vector is
     unusable, or the review text differs between machines, the daemon embeds the
     review itself. Search queries never contact PostgreSQL.
@@ -268,11 +268,12 @@ slow query makes explicit semantic/hybrid search unavailable and `auto` falls
 back to lexical results. Choose a deployment that can answer within that query
 budget.
 
-Roborev does not send a `dimensions` request parameter or slice returned
-vectors. Changing `dims` only changes the expected response width. Reduced
-512/256/128-dimensional output requires a separately configured serving recipe
-that truncates and L2-normalizes again before returning vectors. Use native 768
-unless the endpoint explicitly supports that transform for both roles.
+Leave `request_dimensions` unset: Roborev then sends no `dimensions` request
+parameter, and it never slices returned vectors. Changing `dims` only changes
+the expected response width. Reduced 512/256/128-dimensional output requires a
+separately configured serving recipe that truncates and L2-normalizes again
+before returning vectors. Use native 768 unless the endpoint explicitly supports
+that transform for both roles.
 
 The native width and recipe are source-verified, and Roborev's HTTP transport is
 covered with synthetic servers. Actual serving, automatic prompt handling,

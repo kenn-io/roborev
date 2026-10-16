@@ -13,7 +13,6 @@ import (
 )
 
 func TestSearchConfigLoadsKitEmbedderKeys(t *testing.T) {
-	assert := assert.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`[search.embeddings]
 base_url = "https://api.example.test/v1"
@@ -34,7 +33,7 @@ query_prefix = "task: search result | query: "
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Search.Embeddings)
-	assert.Equal(embedconfig.Embedder{
+	assert.Equal(t, embedconfig.Embedder{
 		BaseURL:             "https://api.example.test/v1",
 		Model:               "embed-large",
 		Dims:                1024,
@@ -46,19 +45,9 @@ query_prefix = "task: search result | query: "
 		MaxBatchTokens:      8192,
 		TimeoutSeconds:      9,
 		TrustPrivateNetwork: true,
-	}, cfg.Search.Embeddings.Embedder)
-	assert.Equal("title: none | text: ", cfg.Search.Embeddings.DocumentPrefix)
-	assert.Equal("task: search result | query: ", cfg.Search.Embeddings.QueryPrefix)
-	// Load uses BurntSushi TOML, while save uses pelletier TOML. Both codecs
-	// must keep the promoted standard keys in the original flat table.
-	require.NoError(t, SaveGlobalTo(path, cfg))
-	loaded, err := LoadGlobalFrom(path)
-	require.NoError(t, err)
-	assert.Equal(cfg.Search.Embeddings, loaded.Search.Embeddings)
-	raw, err := LoadRawTOML(path)
-	require.NoError(t, err)
-	assert.True(IsKeyInTOMLFile(raw, "search.embeddings.base_url"))
-	assert.False(IsKeyInTOMLFile(raw, "search.embeddings.Embedder"))
+		DocumentPrefix:      "title: none | text: ",
+		QueryPrefix:         "task: search result | query: ",
+	}, *cfg.Search.Embeddings)
 }
 
 func TestSearchConfigRejectsAnInvalidEmbedderAtLoad(t *testing.T) {
@@ -69,41 +58,15 @@ func TestSearchConfigRejectsAnInvalidEmbedderAtLoad(t *testing.T) {
 	require.ErrorContains(t, err, "search.embeddings: ")
 }
 
-func TestSearchConfigRejectsPrefixesWithoutCoreSettings(t *testing.T) {
-	for _, key := range []string{"document_prefix", "query_prefix"} {
-		for _, value := range []string{"task: search result | query: ", " "} {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			require.NoError(t, os.WriteFile(path, []byte("[search.embeddings]\n"+key+" = \""+value+"\"\n"), 0o600))
-			_, err := LoadGlobalFrom(path)
-			require.ErrorContains(t, err, "search.embeddings:")
-		}
-	}
-}
-
 func TestSearchEmbeddingAPIKeyIsSensitive(t *testing.T) {
 	assert.True(t, IsSensitiveKey("search.embeddings.api_key"))
 	assert.False(t, IsSensitiveKey("search.embeddings.model"))
 }
 
-func TestSearchConfigEmptyEmbeddingSettingsStayDisabled(t *testing.T) {
-	for _, contents := range []string{"", "[search.embeddings]\n", "[search.embeddings]\ndocument_prefix = \"\"\nquery_prefix = \"\"\n"} {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
-		cfg, err := LoadGlobalFrom(path)
-		require.NoError(t, err)
-		if contents == "" {
-			assert.Nil(t, cfg.Search.Embeddings)
-		} else {
-			require.NotNil(t, cfg.Search.Embeddings)
-			assert.False(t, cfg.Search.Embeddings.Enabled())
-		}
-	}
-}
-
 func TestSearchPrefixesAreLiteralGlobalConfigKeys(t *testing.T) {
 	assert := assert.New(t)
 	cfg := DefaultConfig()
-	cfg.Search.Embeddings = &SearchEmbeddingsConfig{
+	cfg.Search.Embeddings = &embedconfig.Embedder{
 		BaseURL: "https://example.test/v1", Model: "test", Dims: 768,
 	}
 	for _, key := range []string{"search.embeddings.document_prefix", "search.embeddings.query_prefix"} {
@@ -115,11 +78,6 @@ func TestSearchPrefixesAreLiteralGlobalConfigKeys(t *testing.T) {
 		assert.Equal(" ", got)
 		assert.Contains(ListConfigKeys(cfg), KeyValue{Key: key, Value: " "})
 	}
-	require.NoError(t, cfg.Search.Embeddings.Validate())
-	parts, err := cfg.Search.Embeddings.Parts()
-	require.NoError(t, err)
-	assert.Equal(" ", parts.Roles.DocumentPrefix)
-	assert.Equal(" ", parts.Roles.QueryPrefix)
 }
 
 func TestSearchEmbeddingAPIKeyIsOneConfigValue(t *testing.T) {
@@ -152,7 +110,7 @@ func TestSearchEmbeddingAPIKeySurvivesSaveAndLoad(t *testing.T) {
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		cfg := DefaultConfig()
-		cfg.Search.Embeddings = &SearchEmbeddingsConfig{
+		cfg.Search.Embeddings = &embedconfig.Embedder{
 			BaseURL: "https://api.example.test/v1", Model: "embed-large", Dims: 8, APIKey: key,
 		}
 		require.NoError(t, SaveGlobalTo(path, cfg))

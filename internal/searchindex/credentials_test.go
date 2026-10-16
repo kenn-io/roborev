@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
 )
 
@@ -33,7 +32,7 @@ func TestCredentialObservationRecovery(t *testing.T) {
 				_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
 			}))
 			defer server.Close()
-			client, err := NewEmbeddings(config.SearchEmbeddingsConfig{
+			client, err := NewEmbeddings(embedconfig.Embedder{
 				BaseURL: server.URL, Model: "test", Dims: 2, TrustPrivateNetwork: true,
 			}, "example-key", searchdoc.RecipeVersion)
 			require.NoError(t, err)

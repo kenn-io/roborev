@@ -1182,8 +1182,11 @@ timeout_seconds = 30
 | `dims` | - | Required positive response dimension |
 | `api_key` | - | The bearer key itself as a string, or `{ env = "NAME" }` or `{ file = "PATH" }` |
 | `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
+| `request_dimensions` | `false` | Send `dims` as the `dimensions` request field; enable only when the endpoint supports it |
 | `document_prefix` | empty | Literal prefix added once to each review chunk before embedding; whitespace is preserved |
+| `document_suffix` | empty | Literal suffix added once to each review chunk before embedding; whitespace is preserved |
 | `query_prefix` | empty | Literal prefix added once to each search query before embedding; whitespace is preserved |
+| `query_suffix` | empty | Literal suffix added once to each search query before embedding; whitespace is preserved |
 | `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
 | `batch_size` | `32` | Maximum inputs per provider request |
 | `model_context_tokens` | - | Operator-supplied conservative per-input token bound for packing batches; set together with `max_batch_tokens`. Does not tokenize or enforce input admission |
@@ -1191,12 +1194,11 @@ timeout_seconds = 30
 | `timeout_seconds` | `30` | Provider request timeout in seconds; search query embeddings retain an independent three-second deadline |
 | `trust_private_network` | `false` | Allow plain HTTP to a private-network endpoint (a private, link-local, or carrier-grade NAT address, or a host name) |
 
-The standard embedding keys are shared by Kenn tools. `document_prefix` and
-`query_prefix` are Roborev extensions. `base_url`, `model`, and `dims` must be
-configured together; nonempty prefixes also require those core settings. Empty
-prefixes preserve existing input and generation identities. Changing either
-prefix starts a replacement generation and prevents reuse of older vectors. See
-the
+These are the standard embedding keys shared by Kenn tools, so the same block
+works in any of them. `base_url`, `model`, and `dims` must be configured
+together, and every other key requires them. Changing a prefix, a suffix, or
+`request_dimensions` starts a replacement generation and prevents reuse of older
+vectors; leaving them unset keeps existing vectors. See the
 [EmbeddingGemma 2 text recipe](/docs/search/#configure-embeddinggemma-2-text-embeddings)
 for an optional local native-768 example and its serving requirements.
 

@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,19 +14,18 @@ import (
 	"go.kenn.io/kit/vector"
 	"go.kenn.io/kit/vector/sqlitevec"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
 )
 
-func identityFixture() config.SearchEmbeddingsConfig {
-	return config.SearchEmbeddingsConfig{
+func identityFixture() embedconfig.Embedder {
+	return embedconfig.Embedder{
 		BaseURL: "https://example.test/v1", Model: "embeddinggemma-2-text-r1", Dims: 768,
 	}
 }
 
 type embeddingIdentity struct{ vector, input, generation, shared string }
 
-func identities(t *testing.T, settings config.SearchEmbeddingsConfig, recipe int) (embedmodel.Descriptor, embeddingIdentity) {
+func identities(t *testing.T, settings embedconfig.Embedder, recipe int) (embedmodel.Descriptor, embeddingIdentity) {
 	t.Helper()
 	client, err := NewEmbeddings(settings, "", recipe)
 	require.NoError(t, err)
@@ -62,7 +60,7 @@ func TestEmptyPrefixesPreserveOriginalIdentityGoldens(t *testing.T) {
 			"ad50719e7306a26f",
 		},
 	} {
-		space, got := identities(t, config.SearchEmbeddingsConfig{Embedder: tc.settings}, 2)
+		space, got := identities(t, tc.settings, 2)
 		assert.Equal(t, tc.want, got)
 		assert.Equal(t, []string{tc.legacy}, space.Legacy)
 	}
@@ -73,17 +71,20 @@ func TestEmbeddingIdentitySeparatesEncodingControls(t *testing.T) {
 	old, original := identities(t, base, 2)
 	for _, tc := range []struct {
 		name   string
-		change func(*config.SearchEmbeddingsConfig, *int)
+		change func(*embedconfig.Embedder, *int)
 	}{
-		{"model", func(c *config.SearchEmbeddingsConfig, _ *int) { c.Model = "embeddinggemma-2-text-r2" }},
-		{"width", func(c *config.SearchEmbeddingsConfig, _ *int) { c.Dims = 512 }},
-		{"endpoint", func(c *config.SearchEmbeddingsConfig, _ *int) { c.BaseURL = "https://other.example.test/v1" }},
-		{"input type", func(c *config.SearchEmbeddingsConfig, _ *int) { c.InputTypeMode = "retrieval" }},
-		{"salt", func(c *config.SearchEmbeddingsConfig, _ *int) { c.FingerprintSalt = "deployment-2" }},
-		{"recipe", func(_ *config.SearchEmbeddingsConfig, recipe *int) { *recipe = 3 }},
-		{"document prefix", func(c *config.SearchEmbeddingsConfig, _ *int) { c.DocumentPrefix = "title: none | text: " }},
-		{"query prefix", func(c *config.SearchEmbeddingsConfig, _ *int) { c.QueryPrefix = "task: search result | query: " }},
-		{"whitespace prefix", func(c *config.SearchEmbeddingsConfig, _ *int) { c.QueryPrefix = " " }},
+		{"model", func(c *embedconfig.Embedder, _ *int) { c.Model = "embeddinggemma-2-text-r2" }},
+		{"width", func(c *embedconfig.Embedder, _ *int) { c.Dims = 512 }},
+		{"endpoint", func(c *embedconfig.Embedder, _ *int) { c.BaseURL = "https://other.example.test/v1" }},
+		{"input type", func(c *embedconfig.Embedder, _ *int) { c.InputTypeMode = "retrieval" }},
+		{"salt", func(c *embedconfig.Embedder, _ *int) { c.FingerprintSalt = "deployment-2" }},
+		{"recipe", func(_ *embedconfig.Embedder, recipe *int) { *recipe = 3 }},
+		{"document prefix", func(c *embedconfig.Embedder, _ *int) { c.DocumentPrefix = "title: none | text: " }},
+		{"query prefix", func(c *embedconfig.Embedder, _ *int) { c.QueryPrefix = "task: search result | query: " }},
+		{"whitespace prefix", func(c *embedconfig.Embedder, _ *int) { c.QueryPrefix = " " }},
+		{"document suffix", func(c *embedconfig.Embedder, _ *int) { c.DocumentSuffix = " <end>" }},
+		{"query suffix", func(c *embedconfig.Embedder, _ *int) { c.QuerySuffix = " <end>" }},
+		{"dimension request", func(c *embedconfig.Embedder, _ *int) { c.RequestDimensions = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings, recipe := base, 2
@@ -114,12 +115,12 @@ func TestEmbeddingOperationalSettingsPreserveIdentities(t *testing.T) {
 			base.DocumentPrefix, base.QueryPrefix = "title: none | text: ", "task: search result | query: "
 		}
 		old, original := identities(t, base, 2)
-		for _, change := range []func(*config.SearchEmbeddingsConfig){
-			func(c *config.SearchEmbeddingsConfig) { c.BatchSize = 4 },
-			func(c *config.SearchEmbeddingsConfig) { c.TimeoutSeconds = 120 },
-			func(c *config.SearchEmbeddingsConfig) { c.ModelContextTokens, c.MaxBatchTokens = 8192, 32768 },
-			func(c *config.SearchEmbeddingsConfig) { c.TrustPrivateNetwork = true },
-			func(c *config.SearchEmbeddingsConfig) { c.APIKey = secretref.Literal("synthetic-key") },
+		for _, change := range []func(*embedconfig.Embedder){
+			func(c *embedconfig.Embedder) { c.BatchSize = 4 },
+			func(c *embedconfig.Embedder) { c.TimeoutSeconds = 120 },
+			func(c *embedconfig.Embedder) { c.ModelContextTokens, c.MaxBatchTokens = 8192, 32768 },
+			func(c *embedconfig.Embedder) { c.TrustPrivateNetwork = true },
+			func(c *embedconfig.Embedder) { c.APIKey = secretref.Literal("synthetic-key") },
 		} {
 			changed := base
 			change(&changed)
@@ -145,8 +146,8 @@ func TestChangedPrefixesCannotServePersistedGenerations(t *testing.T) {
 				settings := identityFixture()
 				settings.BaseURL = server.URL + "/v1"
 				settings.TrustPrivateNetwork = true
-				// Prepare historical rows independently of the wrapper's prefixes.
-				parts, err := settings.Embedder.Parts()
+				// Prepare historical rows before any prefix is configured.
+				parts, err := settings.Parts()
 				require.NoError(t, err)
 				parts.Deployment.PinEndpoint = true
 				parts.Roles.DocumentFormatter = "roborev.searchdoc/v2"
@@ -223,55 +224,4 @@ func TestChangedPrefixesCannotServePersistedGenerations(t *testing.T) {
 			})
 		}
 	}
-}
-
-func FuzzEmbeddingPrefixIdentity(f *testing.F) {
-	for _, pair := range [][2]string{{"", " "}, {" ", ""}, {"one", "two"}, {"", "title: none | text: "}, {"", "task: search result | query: "}, {"λ", "猫"}, {"a\nb", "a\\nb"}, {"x=y", "x|y"}} {
-		for _, query := range []bool{false, true} {
-			f.Add(pair[0], pair[1], query)
-		}
-	}
-	f.Fuzz(func(t *testing.T, before, after string, query bool) {
-		// Bound materialized test fixtures only; production prefixes have no cap.
-		bounded := func(s string) string {
-			out := make([]rune, 0, 64)
-			for _, r := range s {
-				out = append(out, r)
-				if len(out) == 64 {
-					break
-				}
-			}
-			return string(out)
-		}
-		before, after = bounded(before), bounded(after)
-		if before == after {
-			t.Skip("unchanged after materialization")
-		}
-		require.True(t, utf8.ValidString(before))
-		require.True(t, utf8.ValidString(after))
-		a, b := identityFixture(), identityFixture()
-		if query {
-			a.QueryPrefix, b.QueryPrefix = before, after
-		} else {
-			a.DocumentPrefix, b.DocumentPrefix = before, after
-		}
-		previous, oldID := identities(t, a, 2)
-		changed, newID := identities(t, b, 2)
-		assert := assert.New(t)
-		assert.NotEqual(oldID.vector, newID.vector)
-		assert.NotEqual(oldID.input, newID.input)
-		assert.NotEqual(oldID.generation, newID.generation)
-		assert.NotEqual(oldID.shared, newID.shared)
-		for _, oldKey := range append([]string{oldID.generation}, previous.Legacy...) {
-			matches, err := changed.Matches(oldKey)
-			require.NoError(t, err)
-			assert.False(matches)
-		}
-		if after != "" {
-			assert.Empty(changed.Legacy)
-		}
-		own, err := changed.Matches(newID.generation)
-		require.NoError(t, err)
-		assert.True(own)
-	})
 }

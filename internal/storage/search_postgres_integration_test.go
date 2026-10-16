@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedconfig"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/searchdoc"
@@ -54,7 +55,7 @@ func TestIntegration_SearchPullWakeReconcilesAllModes(t *testing.T) { //nolint:p
 	require.NoError(t, err)
 
 	embeddingServer := newSearchEmbeddingServer(t)
-	client, err := searchindex.NewEmbeddings(config.SearchEmbeddingsConfig{
+	client, err := searchindex.NewEmbeddings(embedconfig.Embedder{
 		BaseURL: embeddingServer.URL, Model: "postgres-search-model",
 		Dims: 3, BatchSize: 8, InputTypeMode: "retrieval",
 	}, "api-key-secret", searchdoc.RecipeVersion)
