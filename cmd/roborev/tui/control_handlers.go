@@ -508,7 +508,7 @@ func (m model) handleCtrlCloseReview(
 	}
 
 	closeCmd := m.closeReviewInBackground(
-		params.JobID, newState, oldState, seq, restoreSelection,
+		params.JobID, newState, oldState, seq, restoreSelection, true,
 	)
 	m, followCmd := m.followSelectionChange(prevSelected)
 	return m, controlResponse{OK: true}, tea.Batch(closeCmd, followCmd)

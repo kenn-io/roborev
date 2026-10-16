@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -300,4 +302,94 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 			assert.Equal(t, day, stored)
 		})
 	}
+}
+
+func TestCoreActionCapture(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	handler := (&AppOpenedLimiter{}).Handler(reporter)
+	for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
+		for _, surface := range []string{"web", "tui", "cli"} {
+			body := `{"event":"` + event + `","properties":{"surface":"` + surface + `","job_id":42,"output":"private review"}}`
+			for range 2 {
+				status := http.StatusAccepted
+				if event == "finding_fixed" && surface == "web" {
+					status = http.StatusBadRequest
+				}
+				assert.Equal(t, status, postCaptureEvent(handler, body).Code)
+			}
+		}
+	}
+	for _, properties := range []string{`{}`, `{"surface":"unknown"}`, `{"surface":42}`} {
+		for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
+			assert.Equal(t, http.StatusBadRequest, postCaptureEvent(handler, `{"event":"`+event+`","properties":`+properties+`}`).Code)
+		}
+	}
+	assert.Equal(t, http.StatusBadRequest, postCaptureEvent(handler, `{"event":"unknown_action"}`).Code)
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 13)
+	assert.Equal(t, []string{"review_viewed:web", "review_viewed:tui", "review_viewed:cli"}, surfacesOf(sent[:3]))
+	for _, message := range sent {
+		assert.NotContains(t, message.Properties, "job_id")
+		assert.NotContains(t, message.Properties, "output")
+	}
+	assert.Equal(t, []string{"finding_fixed:tui", "finding_fixed:tui", "finding_fixed:cli", "finding_fixed:cli"}, surfacesOf(sent[3:7]))
+	assert.Equal(t, []string{"review_closed:web", "review_closed:web", "review_closed:tui", "review_closed:tui", "review_closed:cli", "review_closed:cli"}, surfacesOf(sent[7:]))
+}
+
+func TestCoreActionDailyClaims(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	synctest.Test(t, func(t *testing.T) {
+		var sent []testutil.PostHogMessage
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var reader io.Reader = r.Body
+			if r.Header.Get("Content-Encoding") == "gzip" {
+				gz, err := gzip.NewReader(r.Body)
+				if !assert.NoError(t, err) {
+					return
+				}
+				defer gz.Close()
+				reader = gz
+			}
+			var batch struct {
+				Batch []testutil.PostHogMessage `json:"batch"`
+			}
+			assert.NoError(t, json.NewDecoder(reader).Decode(&batch))
+			sent = append(sent, batch.Batch...)
+			_, _ = io.WriteString(w, `{"status":1}`)
+		}))
+		// Kit delegates HTTP to DefaultTransport; the in-memory network lets
+		// PostHog's drain timer and the UTC rollover use virtual time.
+		transport := http.DefaultTransport
+		http.DefaultTransport = srv.Client().Transport
+		defer func() { http.DefaultTransport = transport }()
+		endpoint := "http://posthog.example.com"
+		opts := Options{Database: testutil.OpenTestDB(t), Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+		view := `{"event":"review_viewed","properties":{"surface":"tui"}}`
+		t.Setenv(EnabledEnv, "0")
+		disabled, err := NewReporter(opts)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusAccepted, postCaptureEvent((&AppOpenedLimiter{}).Handler(disabled), view).Code)
+		require.NoError(t, disabled.Close())
+		t.Setenv(EnabledEnv, "1")
+		for range 2 {
+			reporter, err := NewReporter(opts)
+			require.NoError(t, err)
+			handler := (&AppOpenedLimiter{}).Handler(reporter)
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, view).Code)
+			// Review views and screen views are separate daily events on one surface.
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
+			require.NoError(t, reporter.Close())
+		}
+		assert.Equal(t, []string{"review_viewed:tui", "screen_viewed:tui"}, surfacesOf(sent))
+		time.Sleep(time.Until(time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)))
+		reporter, err := NewReporter(opts)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusAccepted, postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), view).Code)
+		require.NoError(t, reporter.Close())
+		assert.Equal(t, []string{"review_viewed:tui", "screen_viewed:tui", "review_viewed:tui"}, surfacesOf(sent))
+	})
 }

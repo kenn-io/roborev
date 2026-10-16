@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
@@ -116,6 +117,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		cmd.Printf("Review (by %s)\n", review.Agent)
 		cmd.Println(strings.Repeat("-", 60))
 		cmd.Println(review.Output)
+		reportCLIAction(cmd, telemetry.EventReviewViewed)
 	}
 
 	// Return exit code based on verdict

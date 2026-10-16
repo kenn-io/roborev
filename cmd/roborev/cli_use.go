@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
@@ -80,6 +81,7 @@ var agentUseCommands = map[string]bool{
 
 var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
+	cliOutputIsTerminal = streamfmt.WriterIsTerminal
 	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
 	cliUseTimeout = telemetry.NotificationTimeout
 	cliUsePost    = telemetry.PostAppOpened
@@ -139,4 +141,15 @@ func waitCLIUse() {
 	if s := cliUseState.Load(); s != nil {
 		<-s.ctx.Done()
 	}
+}
+
+// reportCLIAction bounds best-effort reporting through the running daemon.
+func reportCLIAction(cmd *cobra.Command, event string) {
+	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), cliUseTimeout)
+	defer cancel()
+	ep := getDaemonEndpoint()
+	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 }

@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -143,6 +144,9 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	reviewVisitJobID     int64
+	reviewVisitDay       string
+	reviewInteracted     bool
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1173,8 +1177,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result = m
 		}
 	case tea.KeyMsg:
+		m.reviewInteracted = true
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
+		m.reviewInteracted = true
 		if !m.mouseEnabled {
 			return m, nil
 		}
@@ -1182,7 +1188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		result, cmd = m.handleWindowSizeMsg(msg)
 	case displayTickMsg:
-		return m, m.displayTick()
+		result, cmd = m, m.displayTick()
 	case tickMsg:
 		result, cmd = m.handleTickMsg(msg)
 	case logTickMsg:
@@ -1313,7 +1319,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
 		}
+
 		today := time.Now().UTC().Format(time.DateOnly)
+		if rm.reviewVisitDay != today {
+			rm.reviewVisitJobID = 0
+			rm.reviewVisitDay = today
+		}
+		reviewVisible := rm.currentView == viewReview || rm.splitActive()
+		if rm.selectedJobID != rm.reviewVisitJobID {
+			rm.reviewVisitJobID = 0
+		}
+		if rm.reviewInteracted && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 && rm.reviewVisitJobID == 0 {
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
+			rm.reviewVisitJobID = rm.currentReview.JobID
+		}
 		_, key := msg.(tea.KeyMsg)
 		_, mouse := msg.(tea.MouseMsg)
 		if rm.screenDay != today {

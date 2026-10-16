@@ -301,6 +301,7 @@ type (
 type (
 	closedMsg       bool
 	closedResultMsg struct {
+		programmatic     bool
 		jobID            int64 // job ID for queue view rollback
 		reviewID         int64 // review ID for review view rollback
 		reviewView       bool  // true if from review view (rollback currentReview)

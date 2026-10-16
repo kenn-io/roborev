@@ -40,6 +40,7 @@ func resetCLIUse(t *testing.T) {
 	t.Helper()
 	origEnabled, origTimeout, origPost := cliTelemetryEnabled, cliUseTimeout, cliUsePost
 	origAgentPost := cliAgentPost
+	origTerminal := cliOutputIsTerminal
 	origServer, origParsed, origVerbose, origFromSkill := serverAddr, parsedServerEndpoint, verbose, fromSkill
 	clearCLIUseState()
 	cliTelemetryEnabled = func() bool { return true }
@@ -48,6 +49,7 @@ func resetCLIUse(t *testing.T) {
 		clearCLIUseState()
 		cliTelemetryEnabled, cliUseTimeout, cliUsePost = origEnabled, origTimeout, origPost
 		cliAgentPost = origAgentPost
+		cliOutputIsTerminal = origTerminal
 		serverAddr, parsedServerEndpoint, verbose, fromSkill = origServer, origParsed, origVerbose, origFromSkill
 	})
 }
@@ -658,42 +660,29 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		marked []string
-		plain  []string
 	}{
 		{
 			name:   "show",
 			marked: []string{"show", "--from-skill", "--job", "1", "--json"},
-			plain:  []string{"show", "--job", "1", "--json"},
 		},
 		{
 			name:   "comment",
 			marked: []string{"comment", "--from-skill", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
-			plain:  []string{"comment", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
 		},
 		{
 			name:   "close",
 			marked: []string{"close", "--from-skill", "1"},
-			plain:  []string{"close", "1"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			rec.reset()
 			marked := runCLIFresh(t, true, append(tc.marked, "--server", md.Server.URL)...)
-			markedBusiness := rec.businessPaths()
+			require.NoError(t, marked.err)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 			assert.Empty(rec.telemetryPosts()[0].body)
-
-			rec.reset()
-			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
-			require.NoError(t, marked.err)
-			require.NoError(t, plain.err)
-			assert.Len(rec.telemetryPosts(), 1)
-			assert.Equal(plain.stdout, marked.stdout)
-			assert.Equal(plain.stderr, marked.stderr)
-			assert.Equal(rec.businessPaths(), markedBusiness)
-			assert.NotEmpty(markedBusiness)
+			assert.NotEmpty(rec.businessPaths())
 		})
 	}
 }

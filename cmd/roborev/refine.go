@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 // postCommitWaitDelay is the delay after creating a commit before checking
@@ -824,6 +825,10 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))
+		actionCmd := &cobra.Command{}
+		actionCmd.SetContext(ctx)
+		actionCmd.SetOut(os.Stdout)
+		reportCLIAction(actionCmd, telemetry.EventFindingFixed)
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)

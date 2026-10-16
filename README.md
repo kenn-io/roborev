@@ -490,6 +490,18 @@ per UTC day, so repeated opens on the same day count once, with the same install
 ID and default fields plus `surface` (`web`, `tui` or `cli`). The browser, the TUI and the CLI only talk to the daemon; the TUI and the
 CLI also send nothing when either opt-out variable is set in their own
 environment.
+
+Core actions report `review_viewed` once per installation, surface, and UTC day,
+`finding_fixed` after a fix commits a change, and `review_closed` after an
+explicit close succeeds. Each carries only `surface`: `web`, `tui`, or `cli`.
+The TUI requires a key or mouse interaction before counting a loaded review.
+CLI core actions require terminal output, including JSON read in a terminal;
+redirected output and commands marked `--from-skill` don't count. The browser
+has no fix action. Reopens and automatic closes don't count. Explicit closes
+and committed fixes count individually. Reports are best-effort and use the
+existing daemon. Daily review claims survive daemon restarts in
+`telemetry-daily.json` beside the daemon database.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
 TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,

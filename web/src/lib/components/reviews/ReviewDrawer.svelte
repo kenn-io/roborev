@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import {
     BottomDock,
     Button,
@@ -10,6 +11,7 @@
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import Undo2Icon from "@lucide/svelte/icons/undo-2";
+  import { reportCoreAction } from "../../utils/app-opened";
   import { getReviewStores } from "../../stores/context";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
@@ -49,6 +51,52 @@
   );
 
   const isOpen = $derived(stores.roborevJobs?.getSelectedJobId() !== undefined);
+
+  let reportedReviewDay = "";
+  let reviewDay = $state(new Date().toISOString().slice(0, 10));
+  let pageVisible = $state(false);
+  onMount(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    function refreshDay(): void {
+      pageVisible = !document.hidden;
+      if (pageVisible) reviewDay = new Date().toISOString().slice(0, 10);
+    }
+    function scheduleDay(): void {
+      const now = new Date();
+      const midnight = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+      );
+      timer = setTimeout(() => {
+        refreshDay();
+        scheduleDay();
+      }, midnight - now.getTime());
+    }
+    refreshDay();
+    scheduleDay();
+    globalThis.addEventListener("focus", refreshDay);
+    document.addEventListener("visibilitychange", refreshDay);
+    return () => {
+      clearTimeout(timer);
+      globalThis.removeEventListener("focus", refreshDay);
+      document.removeEventListener("visibilitychange", refreshDay);
+    };
+  });
+  $effect(() => {
+    const selectedId = stores.roborevJobs?.getSelectedJobId();
+    const review = stores.roborevReview?.getReview();
+    if (
+      pageVisible &&
+      isOpen &&
+      activeTab === "review" &&
+      review?.job_id === selectedId &&
+      reportedReviewDay !== reviewDay
+    ) {
+      reportCoreAction("review_viewed");
+      reportedReviewDay = reviewDay;
+    }
+  });
 
   function close(): void {
     stores.roborevJobs?.deselectJob();

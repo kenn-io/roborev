@@ -128,10 +128,10 @@ func (m model) closeReview(reviewID, jobID int64, newState, oldState bool, seq u
 // closeReviewInBackground updates closed status by job ID.
 // Used for optimistic updates from queue view - UI already updated, this syncs to server.
 // On error, returns closedResultMsg with oldState for rollback.
-func (m model) closeReviewInBackground(jobID int64, newState, oldState bool, seq uint64, restoreSelection bool) tea.Cmd {
+func (m model) closeReviewInBackground(jobID int64, newState, oldState bool, seq uint64, restoreSelection, programmatic bool) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postClosed(jobID, newState, "no review for this job")
-		return closedResultMsg{jobID: jobID, restoreSelection: restoreSelection, oldState: oldState, newState: newState, seq: seq, err: err}
+		return closedResultMsg{programmatic: programmatic, jobID: jobID, restoreSelection: restoreSelection, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 

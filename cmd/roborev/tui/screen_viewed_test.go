@@ -26,12 +26,15 @@ type screenRecordingTransport struct {
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Path == "/api/telemetry/events" {
 		var event struct {
+			Event      string            `json:"event"`
 			Properties map[string]string `json:"properties"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 			return nil, err
 		}
-		s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		if event.Event == telemetry.EventScreenViewed {
+			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		}
 	}
 	status := http.StatusAccepted
 	if s.fail {

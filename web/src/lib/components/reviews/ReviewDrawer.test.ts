@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReviewJob } from "../../api/generated/models";
 
@@ -16,7 +22,19 @@ vi.mock("./PromptViewer.svelte", async () => ({
 }));
 
 const state = vi.hoisted(() => ({
+  reportCoreAction: vi.fn(),
   selectedJobId: 42 as number | undefined,
+  review: {
+    id: 1,
+    job_id: 42,
+    output: "review output",
+    closed: false,
+  } as {
+    id: number;
+    job_id: number;
+    output: string;
+    closed: boolean;
+  } | null,
   deselectJob: vi.fn(),
   rerunJob: vi.fn(),
   cancelJob: vi.fn(),
@@ -62,6 +80,10 @@ const job: ReviewJob = {
   }),
 };
 
+vi.mock("../../utils/app-opened", () => ({
+  reportCoreAction: state.reportCoreAction,
+}));
+
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevJobs: {
@@ -92,12 +114,7 @@ vi.mock("../../stores/context", () => ({
     roborevReview: {
       getSelectedJob: () => null,
       getOutput: () => "review output",
-      getReview: () => ({
-        id: 1,
-        job_id: 42,
-        output: "review output",
-        closed: false,
-      }),
+      getReview: () => state.review,
       isClosed: () => false,
       closeReview: state.closeReview,
       copyOutput: state.copyOutput,
@@ -109,8 +126,93 @@ vi.mock("../../stores/context", () => ({
 import ReviewDrawer from "./ReviewDrawer.svelte";
 
 describe("ReviewDrawer", () => {
+  it.each([
+    {
+      name: "keeps one report through same-day tab switches",
+      run: async () => {
+        const drawer = render(ReviewDrawer);
+        expect(state.reportCoreAction).toHaveBeenCalledExactlyOnceWith(
+          "review_viewed",
+        );
+        await drawer.rerender({ activeTab: "review" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        await drawer.rerender({ activeTab: "log" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        await drawer.rerender({ activeTab: "review" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+      },
+    },
+    {
+      name: "reports an unchanged visible review on the next UTC day",
+      run: async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-10-16T23:59:59Z"));
+        render(ReviewDrawer);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        await act(() => vi.advanceTimersByTimeAsync(1000));
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
+        await fireEvent(window, new Event("focus"));
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
+      },
+    },
+    {
+      name: "waits for visibility before reporting next-day reading",
+      run: async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-10-16T23:59:59Z"));
+        const hidden = vi
+          .spyOn(document, "hidden", "get")
+          .mockReturnValue(false);
+        const drawer = render(ReviewDrawer);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        hidden.mockReturnValue(true);
+        await fireEvent(document, new Event("visibilitychange"));
+        await act(() => vi.advanceTimersByTimeAsync(1000));
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        hidden.mockReturnValue(false);
+        await fireEvent(document, new Event("visibilitychange"));
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
+
+        await drawer.rerender({ activeTab: "log" });
+        await act(() => vi.advanceTimersByTimeAsync(86_400_000));
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(2);
+        await drawer.rerender({ activeTab: "review" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(3);
+      },
+    },
+    {
+      name: "keeps a same-day report through a review reload",
+      run: async () => {
+        const drawer = render(ReviewDrawer);
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        const review = state.review!;
+        state.review = null;
+        await drawer.rerender({ activeTab: "log" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+        state.review = review;
+        await drawer.rerender({ activeTab: "review" });
+        expect(state.reportCoreAction).toHaveBeenCalledTimes(1);
+      },
+    },
+    {
+      name: "waits for the selected job's review",
+      run: async () => {
+        state.selectedJobId = 43;
+        render(ReviewDrawer);
+        expect(state.reportCoreAction).not.toHaveBeenCalled();
+      },
+    },
+  ])("$name", async ({ run }) => run());
+
   beforeEach(() => {
+    state.reportCoreAction.mockReset();
     state.selectedJobId = 42;
+    state.review = {
+      id: 1,
+      job_id: 42,
+      output: "review output",
+      closed: false,
+    };
     state.deselectJob.mockReset();
     state.rerunJob.mockReset();
     state.cancelJob.mockReset();
@@ -162,6 +264,7 @@ describe("ReviewDrawer", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

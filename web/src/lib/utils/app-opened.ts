@@ -100,16 +100,19 @@ function postEvent(
   });
 }
 
-export function reportScreenViewed(screen: Screen): void {
+function postBoundedEvent(
+  event: string,
+  properties: Record<string, string>,
+): void {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-  void postEvent(
-    "screen_viewed",
-    { screen, surface: "web" },
-    { signal: controller.signal },
-  )
+  void postEvent(event, properties, { signal: controller.signal })
     .catch(() => undefined)
     .finally(() => clearTimeout(timeout));
+}
+
+export function reportScreenViewed(screen: Screen): void {
+  postBoundedEvent("screen_viewed", { screen, surface: "web" });
 }
 
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
@@ -143,4 +146,10 @@ export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
     pauseSession();
     currentScreen = undefined;
   };
+}
+
+export function reportCoreAction(
+  event: "review_viewed" | "review_closed",
+): void {
+  postBoundedEvent(event, { surface: "web" });
 }
