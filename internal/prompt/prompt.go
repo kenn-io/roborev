@@ -892,7 +892,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 	// Include previous review attempts for this same commit (for re-reviews)
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
-	if files, err := git.GetFilesChangedCtx(b.context(), b.repoPath, sha); err == nil {
+	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, sha, nil); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files)
 	}
@@ -964,7 +964,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	if err != nil {
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
-	if files, err := git.GetRangeFilesChangedCtx(b.context(), b.repoPath, rangeRef); err == nil {
+	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, rangeRef, nil); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, rangeRef, files)
 	}

@@ -1604,7 +1604,7 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 // GetDirtyFilesChanged returns changed file names for staged, unstaged, and
 // untracked working-tree changes before review diff exclusions are applied.
 func GetDirtyFilesChanged(repoPath string) ([]string, error) {
-	cmd := newGitCmd("status", "--porcelain=v1", "-uall")
+	cmd := newGitCmd("status", "--porcelain=v1", "-z", "-uall")
 	cmd.Dir = repoPath
 
 	out, err := gitOutput(cmd)
@@ -1613,18 +1613,18 @@ func GetDirtyFilesChanged(repoPath string) ([]string, error) {
 	}
 
 	seen := make(map[string]struct{})
-	for raw := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
+	entries := strings.Split(string(out), "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
 			continue
 		}
-		path := strings.TrimSpace(line[2:])
-		if before, after, ok := strings.Cut(path, " -> "); ok {
-			seen[normalizeStatusPath(before)] = struct{}{}
-			seen[normalizeStatusPath(after)] = struct{}{}
-			continue
+		seen[entry[3:]] = struct{}{}
+		// In -z output, a rename or copy adds the original path as the next field.
+		if strings.ContainsAny(entry[:2], "RC") && i+1 < len(entries) {
+			i++
+			seen[entries[i]] = struct{}{}
 		}
-		seen[normalizeStatusPath(path)] = struct{}{}
 	}
 
 	files := make([]string, 0, len(seen))
@@ -1635,12 +1635,6 @@ func GetDirtyFilesChanged(repoPath string) ([]string, error) {
 	}
 	slices.Sort(files)
 	return files, nil
-}
-
-func normalizeStatusPath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.Trim(path, `"`)
-	return path
 }
 
 // EmptyTreeSHA is the SHA of an empty tree in git, used for diffing against

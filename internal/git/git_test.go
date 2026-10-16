@@ -1684,6 +1684,38 @@ func TestGetDirtyFilesChangedExpandsUntrackedDirectories(t *testing.T) {
 	assert.NotContains(t, files, "frontend/")
 }
 
+func TestGetDirtyFilesChangedPreservesLiteralPaths(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.Run("config", "core.quotepath", "true")
+	repo.WriteFile("café/old.go", "package example\n")
+	repo.WriteFile("café/modified.go", "package example\n")
+	repo.CommitAll("add source")
+	repo.Run("mv", "café/old.go", "café/new.go")
+	repo.WriteFile("café/modified.go", "package example\nvar Changed = true\n")
+	repo.WriteFile("café/untracked.go", "package example\n")
+
+	files, err := GetDirtyFilesChanged(repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"café/modified.go", "café/new.go", "café/old.go", "café/untracked.go",
+	}, files)
+}
+
+func TestGetDirtyFilesChangedPreservesSpecialCharacters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filenames cannot contain quotes or newlines")
+	}
+	repo := NewTestRepoWithCommit(t)
+	names := []string{" leading.go", "arrow -> name.go", "line\nbreak.go", "quote\".go", "trailing.go "}
+	for _, name := range names {
+		repo.WriteFile(name, "package example\n")
+	}
+
+	files, err := GetDirtyFilesChanged(repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, names, files)
+}
+
 func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, FormatExcludeArgs(nil))
 	assert.Nil(t, FormatExcludeArgs([]string{}))

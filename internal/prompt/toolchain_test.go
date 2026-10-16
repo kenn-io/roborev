@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/git"
 )
 
 func TestBuildToolchainSection(t *testing.T) {
@@ -151,4 +153,36 @@ func TestPromptToolchainUsesOwningModules(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(p, "- `go.mod`: Go 1.27.0\n- `nested/go.mod`: Go 1.22\n")
 	assert.Equal(1, strings.Count(p, "- `nested/go.mod`:"))
+}
+
+func TestPromptToolchainPreservesNonASCIIPaths(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.git("config", "core.quotepath", "true")
+	r.commitFile("go.mod", "module example.com/root\n\ngo 1.27.0\n", "root module")
+	require.NoError(t, os.Mkdir(filepath.Join(r.dir, "café"), 0o755))
+	base := r.commitFile("café/go.mod", "module example.com/nested\n\ngo 1.21\n", "nested module")
+	target := r.commitFile("café/main.go", "package nested\n", "nested source")
+	b := NewBuilder(nil).ForRepo(r.dir, 0)
+
+	for _, tc := range []struct{ name, ref string }{
+		{"single", target},
+		{"range", base + ".." + target},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := b.Build(tc.ref, 0, "test", "", "")
+			require.NoError(t, err)
+			assert.Contains(t, p, "- `café/go.mod`: Go 1.21\n")
+			assert.NotContains(t, p, "- `go.mod`: Go 1.27.0\n")
+		})
+	}
+
+	t.Run("dirty", func(t *testing.T) {
+		r.writeFile("café/main.go", "package nested\nvar Changed = true\n")
+		files, err := git.GetDirtyFilesChanged(r.dir)
+		require.NoError(t, err)
+		p, err := b.BuildDirtyWithFiles("", files, 0, "test", "", "")
+		require.NoError(t, err)
+		assert.Contains(t, p, "- `café/go.mod`: Go 1.21\n")
+		assert.NotContains(t, p, "- `go.mod`: Go 1.27.0\n")
+	})
 }
