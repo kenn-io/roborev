@@ -24,6 +24,7 @@ func TestDailyClaimsPath(t *testing.T) {
 }
 
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
+	t.Setenv(GenericEnabledEnv, "")
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
 
