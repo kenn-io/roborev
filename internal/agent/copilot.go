@@ -11,15 +11,14 @@ import (
 	"log"
 	"os/exec"
 	"strings"
-	"sync"
 )
 
 var (
-	copilotAllowAllToolsSupport      sync.Map
-	copilotStreamOffSupport          sync.Map
-	copilotJSONOutputSupport         sync.Map
-	copilotDisableBuiltInMCPsSupport sync.Map
-	copilotAvailableToolsSupport     sync.Map
+	copilotAllowAllToolsSupport      capabilityCache
+	copilotStreamOffSupport          capabilityCache
+	copilotJSONOutputSupport         capabilityCache
+	copilotDisableBuiltInMCPsSupport capabilityCache
+	copilotAvailableToolsSupport     capabilityCache
 )
 
 var errNoCopilotJSON = errors.New("no valid copilot JSON events parsed from output")
@@ -30,8 +29,8 @@ const copilotPlanningTools = "view,glob,grep,skill"
 // the --allow-all-tools flag needed for non-interactive tool approval.
 // Results are cached per command path.
 func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, error) {
-	if cached, ok := copilotAllowAllToolsSupport.Load(command); ok {
-		return cached.(bool), nil
+	if cached, ok := copilotAllowAllToolsSupport.Load(command, command); ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -40,7 +39,7 @@ func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, er
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	copilotAllowAllToolsSupport.Store(command, supported)
+	copilotAllowAllToolsSupport.Store(command, command, supported)
 	return supported, nil
 }
 
@@ -48,8 +47,8 @@ func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, er
 // disabling streaming output so stdout remains pipe-capturable.
 // Results are cached per command path.
 func copilotSupportsStreamOff(ctx context.Context, command string) (bool, error) {
-	if cached, ok := copilotStreamOffSupport.Load(command); ok {
-		return cached.(bool), nil
+	if cached, ok := copilotStreamOffSupport.Load(command, command); ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -58,13 +57,13 @@ func copilotSupportsStreamOff(ctx context.Context, command string) (bool, error)
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	copilotStreamOffSupport.Store(command, supported)
+	copilotStreamOffSupport.Store(command, command, supported)
 	return supported, nil
 }
 
 func copilotSupportsJSONOutput(ctx context.Context, command string) (bool, error) {
-	if cached, ok := copilotJSONOutputSupport.Load(command); ok {
-		return cached.(bool), nil
+	if cached, ok := copilotJSONOutputSupport.Load(command, command); ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -73,13 +72,13 @@ func copilotSupportsJSONOutput(ctx context.Context, command string) (bool, error
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	copilotJSONOutputSupport.Store(command, supported)
+	copilotJSONOutputSupport.Store(command, command, supported)
 	return supported, nil
 }
 
 func copilotSupportsDisableBuiltInMCPs(ctx context.Context, command string) (bool, error) {
-	if cached, ok := copilotDisableBuiltInMCPsSupport.Load(command); ok {
-		return cached.(bool), nil
+	if cached, ok := copilotDisableBuiltInMCPsSupport.Load(command, command); ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -88,13 +87,13 @@ func copilotSupportsDisableBuiltInMCPs(ctx context.Context, command string) (boo
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	copilotDisableBuiltInMCPsSupport.Store(command, supported)
+	copilotDisableBuiltInMCPsSupport.Store(command, command, supported)
 	return supported, nil
 }
 
 func copilotSupportsAvailableTools(ctx context.Context, command string) (bool, error) {
-	if cached, ok := copilotAvailableToolsSupport.Load(command); ok {
-		return cached.(bool), nil
+	if cached, ok := copilotAvailableToolsSupport.Load(command, command); ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -103,7 +102,7 @@ func copilotSupportsAvailableTools(ctx context.Context, command string) (bool, e
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	copilotAvailableToolsSupport.Store(command, supported)
+	copilotAvailableToolsSupport.Store(command, command, supported)
 	return supported, nil
 }
 
