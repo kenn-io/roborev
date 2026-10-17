@@ -55,7 +55,7 @@ func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
 	if agentic {
 		args = append(args, "--yolo")
 	} else {
-		args = append(args, "--disable-write", "--disable-shell", "--disable-web-tools")
+		args = append(args, "-c", `run.toolset=["read_file","search"]`)
 	}
 	return append(args, "--prompt-file", promptFile)
 }

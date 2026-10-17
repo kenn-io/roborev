@@ -306,7 +306,7 @@ and commands):
 | Kiro | Full (uses `--trust-all-tools`) |
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
-| Muse Code | Full (uses `--yolo`; reviews and planning use `--disable-write --disable-shell`) |
+| Muse Code | Full (uses `--yolo`; reviews and planning allow only `read_file` and `search`) |
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
@@ -336,18 +336,21 @@ restriction.
 
 Requires Muse Code 1.4.10 or later; the flags were verified against 1.4.10.
 
-Reviews and planning pass `--disable-write --disable-shell --disable-web-tools`.
+Reviews and planning pass `-c 'run.toolset=["read_file","search"]'` to allow
+only native file reads and searches, excluding write, shell, web, MCP, and
+workflow tools regardless of saved Muse permissions or MCP configuration.
 Fix and refine pass `--yolo`. Setting `allow_unsafe_agents = true` also enables
-that mode for reviews.
+that mode for reviews. Planning always uses the read-only allowlist.
 
 Muse has no session resume or rebuttal support.
 Muse has no structured-output (schema) review or classification support.
 
-roborev always passes `--contributor-mode off`. It passes `--model` only when
-roborev has a model configured; otherwise, Muse uses its own model settings.
-Muse 1.4.10 reported the contributor variant as the default on pay-as-you-go
-accounts (`muse-spark-1.3-contributor`), so setting `model = "muse-spark-1.3"`
-in roborev or choosing it in Muse's settings keeps reviews off that tier.
+roborev always passes `--contributor-mode off` to turn off Muse's subscription
+Contributor mode for the run. On pay-as-you-go, the tier follows the model name.
+Muse 1.4.10 defaults to `muse-spark-1.3-contributor`, so set
+`model = "muse-spark-1.3"` in roborev to keep pay-as-you-go reviews off that tier.
+roborev passes `--model` only when it has a model configured; otherwise, Muse
+uses its own model settings.
 
 Muse refuses to start when `TMPDIR` points inside the workspace. Use a temporary
 directory outside the repository.

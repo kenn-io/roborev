@@ -367,7 +367,7 @@ func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
 		{"droid", NewDroidAgent("droid"), "--auto", "droid exec --tag roborev"},
 		{"gemini", NewGeminiAgent("gemini"), "--approval-mode yolo", "--approval-mode plan"},
 		{"grok", NewGrokAgent("grok"), "--always-approve", "--sandbox read-only"},
-		{"muse", NewMuseAgent("muse"), "--yolo", "--disable-write --disable-shell --disable-web-tools"},
+		{"muse", NewMuseAgent("muse"), "--yolo", `-c run.toolset=["read_file","search"]`},
 		{"kilo", NewKiloAgent("kilo"), "--auto", "--agent plan"},
 		{"kiro", NewKiroAgent("kiro"), "--trust-all-tools", "--no-interactive"},
 		{"opencode", NewOpenCodeAgent("opencode"), "--write", "--agent plan"},

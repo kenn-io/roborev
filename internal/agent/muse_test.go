@@ -19,10 +19,10 @@ func TestMuseBuildArgs(t *testing.T) {
 		reasoning ReasoningLevel
 		want      []string
 	}{
-		{"review", false, false, "", ReasoningStandard, []string{"--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"review", false, false, "", ReasoningStandard, []string{"-c", `run.toolset=["read_file","search"]`}},
 		{"agentic", true, false, "", ReasoningStandard, []string{"--yolo"}},
 		{"unsafe with configured model", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
-		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "-c", `run.toolset=["read_file","search"]`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
