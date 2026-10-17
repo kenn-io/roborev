@@ -149,7 +149,7 @@ Examples:
 				sha := "HEAD"
 				root, rootErr := gitrepo.Root(ctx, ".")
 				if rootErr != nil {
-					return fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")
+					return usageErr(cmd, fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)"))
 				}
 				if resolved, err := gitrepo.Resolve(ctx, root, sha); err == nil {
 					sha = resolved

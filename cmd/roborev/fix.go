@@ -180,7 +180,7 @@ Examples:
 				for _, arg := range args {
 					var id int64
 					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-						return fmt.Errorf("invalid job ID %q: must be a number", arg)
+						return usageErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
 					}
 					jobIDs = append(jobIDs, id)
 				}
@@ -212,7 +212,7 @@ Examples:
 			for _, arg := range args {
 				var id int64
 				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return fmt.Errorf("invalid job ID %q: must be a number", arg)
+					return usageErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
 				}
 				jobIDs = append(jobIDs, id)
 			}

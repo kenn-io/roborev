@@ -264,10 +264,6 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
 	}
 
-	if opts.fix {
-		armCLIOutcome(telemetry.EventFindingFixed)
-	}
-
 	// Get working directory and repo root
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -299,6 +295,10 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 
 	if len(files) == 0 {
 		return fmt.Errorf("no files matched the provided patterns")
+	}
+
+	if opts.fix {
+		armCLIOutcome(telemetry.EventFindingFixed)
 	}
 
 	// Ensure daemon is running
@@ -755,9 +755,9 @@ func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int
 		case storage.JobStatusDone:
 			return api.getReview(ctx, jobID, "review")
 		case storage.JobStatusFailed:
-			return nil, fmt.Errorf("job failed: %s", job.Error)
+			return nil, fmt.Errorf("%w: %s", errReviewFailed, job.Error)
 		case storage.JobStatusCanceled:
-			return nil, fmt.Errorf("job was canceled")
+			return nil, errReviewCanceled
 		}
 
 		select {

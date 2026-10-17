@@ -24,7 +24,6 @@ type SyncWorker struct {
 	doneCh          chan struct{}
 	mu              sync.Mutex // protects running, pgPool, and afterPullWrite
 	syncMu          sync.Mutex // serializes sync operations (connect, doSync, SyncNow, FinalPush)
-	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterFailure    func(string)
@@ -184,7 +183,7 @@ func (w *SyncWorker) Start() error {
 	} else if outage != "" && outage != "1" {
 		log.Printf("Sync: invalid outage state %q", outage)
 	}
-	w.outage.Store(outage != "")
+	w.outage.Store(outage == "1")
 
 	// Parse sync interval
 	interval, err := time.ParseDuration(w.cfg.Interval)
@@ -516,15 +515,13 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 }
 
 // connect establishes the PostgreSQL connection.
-// Serialized by connectMu to prevent concurrent connection attempts.
+// Serialized by syncMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
 func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
-	w.connectMu.Lock()
 	w.syncMu.Lock()
 	defer func() {
 		fn := w.notifyFailure("connect", err)
 		w.syncMu.Unlock()
-		w.connectMu.Unlock()
 		if fn != nil {
 			fn()
 		}

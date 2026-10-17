@@ -231,7 +231,7 @@ func TestOutcomeSyncConnectionRetries(t *testing.T) {
 				})
 			}
 			switch state {
-			case "1", "unexpected":
+			case "1":
 				assert.Empty(t, reasons)
 			case "unreadable":
 				assert.Equal(t, []string{"connect", "connect"}, reasons)

@@ -95,7 +95,7 @@ Examples:
 					// --job flag: treat as job ID directly
 					id, err := strconv.ParseInt(arg, 10, 64)
 					if err != nil || id <= 0 {
-						return fmt.Errorf("invalid job ID: %s", arg)
+						return usageErr(cmd, fmt.Errorf("invalid job ID: %s", arg))
 					}
 					jobID = id
 				} else {
@@ -110,7 +110,7 @@ Examples:
 						if id, err := strconv.ParseInt(arg, 10, 64); err == nil && id > 0 {
 							jobID = id
 						} else {
-							return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+							return usageErr(cmd, fmt.Errorf("argument %q is not a valid git ref or job ID", arg))
 						}
 					}
 				}
@@ -124,7 +124,7 @@ Examples:
 				repoRoot, _ := gitrepo.Root(ctx, ".")
 				resolved, err := gitrepo.Resolve(ctx, repoRoot, ref)
 				if err != nil {
-					return fmt.Errorf("invalid git ref: %s", ref)
+					return usageErr(cmd, fmt.Errorf("invalid git ref: %s", ref))
 				}
 				sha = resolved
 			}
@@ -202,7 +202,7 @@ func waitMultiple(
 		if forceJobID {
 			id, err := strconv.ParseInt(arg, 10, 64)
 			if err != nil || id <= 0 {
-				return fmt.Errorf("invalid job ID: %s", arg)
+				return usageErr(cmd, fmt.Errorf("invalid job ID: %s", arg))
 			}
 			resolved = append(resolved, resolvedArg{jobID: id})
 		} else {
@@ -218,10 +218,10 @@ func waitMultiple(
 			} else {
 				id, err := strconv.ParseInt(arg, 10, 64)
 				if err != nil || id <= 0 {
-					return fmt.Errorf(
+					return usageErr(cmd, fmt.Errorf(
 						"argument %q is not a valid git ref or job ID",
 						arg,
-					)
+					))
 				}
 				resolved = append(resolved, resolvedArg{jobID: id})
 			}
