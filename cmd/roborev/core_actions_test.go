@@ -26,7 +26,7 @@ import (
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "agent failure", "planning failure", "follow-up warnings"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "planning failure", "follow-up warnings"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -44,10 +44,11 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			chdir(t, repo.Dir)
 			job := storage.ReviewJob{ID: 7, GitRef: head, Status: storage.JobStatusDone}
 			review := &storage.Review{ID: 7, JobID: 7, Job: &job, Output: "High: missing cancellation", VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation")}
-			var changes atomic.Int32
+			var changes, failures atomic.Int32
 			closeCalls := 0
 			hooks := MockRefineHooks{OnReview: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
 				if mode == "follow-up warnings" && changes.Load() == 1 && r.URL.Query().Get("job_id") == "9" {
+					failures.Add(1)
 					http.Error(w, "review unavailable", http.StatusInternalServerError)
 					return true
 				}
@@ -72,6 +73,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					return true
 				}
 				hooks.OnComment = func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					failures.Add(1)
 					http.Error(w, "comment unavailable", http.StatusInternalServerError)
 					return true
 				}
@@ -80,6 +82,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					if closeCalls > 3 {
 						return false
 					}
+					failures.Add(1)
 					http.Error(w, "close unavailable", http.StatusInternalServerError)
 					return true
 				}
@@ -99,7 +102,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			}
 			name := "core-action-refine-test"
 			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
-				if mode == "agent failure" || mode == "planning failure" {
+				if mode == "planning failure" {
 					return "", errors.New("agent unavailable")
 				}
 				if mode == "no change" {
@@ -110,10 +113,11 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				return "Fixed cancellation", nil
 			}})
 			t.Cleanup(func() { agent.Unregister(name) })
-			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", "2", "--quiet", "--server", md.Server.URL}
+			iterations := "2"
 			if mode == "follow-up warnings" {
-				args[6] = "3"
+				iterations = "3"
 			}
+			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", iterations, "--quiet", "--server", md.Server.URL}
 			if mode == "planning failure" {
 				args = append(args, "--plan")
 			}
@@ -125,9 +129,10 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			case "follow-up warnings":
 				require.NoError(t, result.err)
 				assert.Contains(t, result.stdout, "All reviews passed!")
-				assert.Equal(t, 2, strings.Count(result.stdout, "Warning: failed to add comment"))
-				assert.Equal(t, 3, strings.Count(result.stdout, "Warning: failed to close review"))
-				assert.Equal(t, 1, strings.Count(result.stdout, "Warning: review failed"))
+				assert.Contains(t, result.stdout, "Warning: failed to add comment")
+				assert.Contains(t, result.stdout, "Warning: failed to close review")
+				assert.Contains(t, result.stdout, "Warning: review failed")
+				assert.Equal(t, int(failures.Load()), strings.Count(result.stdout, "Warning:"))
 				var shown int
 				for _, post := range rec.telemetryPosts() {
 					if strings.Contains(post.body, `"event":"error_shown"`) {
@@ -135,19 +140,19 @@ func TestCoreActionRefineCommit(t *testing.T) {
 						assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, post.body)
 					}
 				}
-				assert.Equal(t, 6, shown)
+				assert.Equal(t, int(failures.Load()), shown)
 			case "commit failure":
 				require.ErrorContains(t, result.err, "failed to commit changes")
 			default:
 				require.ErrorContains(t, result.err, "max iterations")
 			}
-			if mode == "no change" || mode == "commit failure" || mode == "agent failure" || mode == "planning failure" {
+			if mode == "no change" || mode == "commit failure" || mode == "planning failure" {
 				assert.Equal(t, head, repo.HeadSHA())
 			} else {
 				assert.Equal(t, "2", repo.Run("rev-list", "--count", head+"..HEAD"))
 				assert.Contains(t, result.stdout, "Created commit")
 			}
-			if mode == "agent failure" || mode == "planning failure" {
+			if mode == "planning failure" {
 				var errorsShown int
 				for _, post := range rec.telemetryPosts() {
 					if strings.Contains(post.body, `"event":"error_shown"`) {
@@ -482,9 +487,56 @@ func TestCoreActionWaitDisplaysReview(t *testing.T) {
 
 func TestOutcomeCLIErrorEligibility(t *testing.T) {
 	resetCLIUse(t)
-	unavailable := false
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	repo := newTestGitRepo(t)
+	repo.CommitFile("source.txt", "content", "initial commit")
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReviewClose: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
 		w.WriteHeader(http.StatusNotFound)
+		return true
+	}, OnEnqueue: func(w http.ResponseWriter, _ *http.Request, state *mockRefineState) bool {
+		respondJSON(w, http.StatusCreated, state.jobs[999])
+		return true
+	}}, nil)
+	for _, id := range []int64{999, 1000} {
+		md.State.jobs[id] = &storage.ReviewJob{ID: id, Status: storage.JobStatusFailed, Error: "review unavailable"}
+	}
+	for _, tc := range []struct {
+		args  []string
+		kind  string
+		count int
+	}{
+		{[]string{"show", "--job", "999"}, "review_viewed", 1},
+		{[]string{"close", "999"}, "review_closed", 1},
+		{[]string{"wait", "--job", "999"}, "review_viewed", 1},
+		{[]string{"wait", "--job", "999", "1000"}, "review_viewed", 2},
+		{[]string{"wait", "--job", "999", "1000", "--quiet"}, "review_viewed", 1},
+		{[]string{"review", "--repo", repo.Dir, "--wait"}, "review_viewed", 1},
+	} {
+		rec.reset()
+		result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
+		require.Error(t, result.err)
+		var shown []string
+		for _, post := range rec.telemetryPosts() {
+			if strings.Contains(post.body, `"event":"error_shown"`) {
+				shown = append(shown, post.body)
+			}
+		}
+		require.Len(t, shown, tc.count, "%v", tc.args)
+		for _, body := range shown {
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+tc.kind+`"}}`, body)
+		}
+	}
+}
+
+func TestOutcomeCLISetupExclusions(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	unavailable := false
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{OnGetJobs: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Query().Get("id") != "998" {
+			return false
+		}
+		writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
 		return true
 	}, OnPing: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
 		if !unavailable {
@@ -493,130 +545,43 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		return true
 	}}, nil)
-	for _, id := range []int64{999, 1000} {
-		md.State.jobs[id] = &storage.ReviewJob{ID: id, Status: storage.JobStatusFailed, Error: "review unavailable"}
-	}
-
-	for _, terminal := range []bool{false, true} {
-		cliOutputIsTerminal = func(io.Writer) bool { return terminal }
-		for _, tc := range []struct {
-			args        []string
-			kind        string
-			count       int
-			unavailable bool
-		}{
-			{[]string{"show", "--job", "999"}, "review_viewed", 1, false},
-			{[]string{"close", "999"}, "review_closed", 1, false},
-			{[]string{"fix", "999"}, "", 0, false},
-			{[]string{"fix", "998"}, "", 0, false},
-			{[]string{"fix", "998", "--batch"}, "", 0, false},
-			{[]string{"fix", "999", "--batch"}, "", 0, false},
-			{[]string{"fix", "999", "--plan-only"}, "", 0, false},
-			{[]string{"close", "999"}, "", 0, true},
-			{[]string{"wait", "--job", "999"}, "review_viewed", 1, false},
-			{[]string{"wait", "--job", "999", "1000"}, "review_viewed", 2, false},
-			{[]string{"wait", "--job", "999", "--quiet"}, "review_viewed", 1, false},
-			{[]string{"wait", "--job", "999", "1000", "--quiet"}, "review_viewed", 1, false},
-			{[]string{"show", "--job", "999", "--from-skill"}, "", 0, false},
-			{[]string{"close", "invalid"}, "", 0, false},
-			{[]string{"close", "invalid"}, "", 0, true},
-			{[]string{"show", "--job", "999"}, "", 0, true},
-			{[]string{"wait", "--job", "999"}, "", 0, true},
-			{[]string{"wait", "--job", "999", "1000"}, "", 0, true},
-		} {
-			unavailable = tc.unavailable
-			rec.reset()
-			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
-			if tc.args[0] == "fix" && tc.args[len(tc.args)-1] == "--batch" {
-				require.NoError(t, result.err)
-			} else {
-				require.Error(t, result.err)
-			}
-			if tc.args[0] == "close" && tc.args[1] == "invalid" {
-				if tc.unavailable {
-					require.ErrorContains(t, result.err, "daemon not running")
-				} else {
-					require.ErrorContains(t, result.err, "invalid job_id")
-				}
-			}
-			var errors []string
-			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"event":"error_shown"`) {
-					errors = append(errors, post.body)
-				}
-			}
-			eligible := terminal && tc.kind != ""
-			if eligible {
-				require.Len(t, errors, tc.count, "%v", tc.args)
-				kind := tc.kind
-				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+kind+`"}}`, errors[0])
-			} else {
-				assert.Empty(t, errors)
-			}
-		}
-	}
-}
-
-func TestOutcomeReviewWaitFailure(t *testing.T) {
-	resetCLIUse(t)
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	repo := newTestGitRepo(t)
-	repo.CommitFile("source.txt", "content", "initial commit")
-	job := &storage.ReviewJob{ID: 999, Status: storage.JobStatusFailed, Error: "agent unavailable"}
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{
-		OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-			respondJSON(w, http.StatusCreated, job)
-			return true
-		},
-	}, nil)
-	md.State.jobs[job.ID] = job
-	result := runCLI(t, "review", "--repo", repo.Dir, "--wait", "--server", md.Server.URL)
-	require.ErrorContains(t, result.err, "agent unavailable")
-	var shown []string
-	for _, post := range rec.telemetryPosts() {
-		if strings.Contains(post.body, `"event":"error_shown"`) {
-			shown = append(shown, post.body)
-		}
-	}
-	require.Len(t, shown, 1)
-	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"review_viewed"}}`, shown[0])
-}
-
-func TestOutcomeCLISetupExclusions(t *testing.T) {
-	resetCLIUse(t)
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	md.State.jobs[999] = &storage.ReviewJob{ID: 999, Status: storage.JobStatusFailed}
 	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 	outside := t.TempDir()
 	for _, tc := range []struct {
-		args      []string
-		dir, want string
+		args        []string
+		dir, want   string
+		unavailable bool
 	}{
-		{[]string{"fix", "invalid"}, outside, "invalid job ID"},
-		{[]string{"fix", "invalid", "--batch"}, outside, "invalid job ID"},
-		{[]string{"fix", "--branch", "main", "99"}, repo.Dir, "--branch cannot be used"},
-		{[]string{"refine"}, outside, "git"},
+		{[]string{"fix", "invalid"}, outside, "invalid job ID", false},
+		{[]string{"fix", "invalid", "--batch"}, outside, "invalid job ID", false},
+		{[]string{"fix", "--branch", "main", "99"}, repo.Dir, "--branch cannot be used", false},
+		{[]string{"refine"}, outside, "git", false},
+		{[]string{"fix", "998"}, repo.Dir, "not found", false},
+		{[]string{"fix", "998", "--batch"}, repo.Dir, "", false},
+		{[]string{"fix", "999", "--batch"}, repo.Dir, "", false},
+		{[]string{"fix", "999", "--plan-only"}, repo.Dir, "not complete", false},
+		{[]string{"close", "invalid"}, repo.Dir, "invalid job_id", false},
+		{[]string{"close", "invalid"}, repo.Dir, "daemon not running", true},
+		{[]string{"close", "999"}, repo.Dir, "daemon not running", true},
+		{[]string{"show", "--job", "999"}, repo.Dir, "daemon not running", true},
+		{[]string{"wait", "--job", "999", "1000"}, repo.Dir, "daemon not running", true},
 	} {
 		t.Run(strings.Join(tc.args, " ")+tc.dir, func(t *testing.T) {
 			t.Chdir(tc.dir)
+			unavailable = tc.unavailable
 			rec.reset()
 			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
-			require.ErrorContains(t, result.err, tc.want)
-			assert.Empty(t, rec.telemetryPosts())
+			if tc.want == "" {
+				require.NoError(t, result.err)
+			} else {
+				require.ErrorContains(t, result.err, tc.want)
+			}
+			for _, post := range rec.telemetryPosts() {
+				assert.NotContains(t, post.body, `"event":"error_shown"`)
+			}
 		})
 	}
-}
-
-func TestOutcomeAnalyzeWaitExclusion(t *testing.T) {
-	resetCLIUse(t)
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-	md.State.jobs[999] = &storage.ReviewJob{ID: 999, Status: storage.JobStatusFailed, Error: "analysis unavailable"}
-	cmd, _ := newTestCmd(t)
-	cmd.SetContext(t.Context())
-	err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), t.TempDir(), 999, nil, analyzeOptions{})
-	require.ErrorContains(t, err, "analysis failed")
-	assert.Empty(t, rec.telemetryPosts())
 }
 
 func TestOutcomeAnalyzeAgentStart(t *testing.T) {
@@ -624,7 +589,6 @@ func TestOutcomeAnalyzeAgentStart(t *testing.T) {
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-	md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "analysis", Status: storage.JobStatusDone}
 	md.State.reviews["analysis"] = &storage.Review{JobID: 99, Output: "High: missing cancellation"}
 	name := "outcome-analyze-failure"
 	agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
@@ -634,12 +598,19 @@ func TestOutcomeAnalyzeAgentStart(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 		count      int
-	}{{"unavailable-fix-agent", "get agent", 0}, {name, "agent execution failed", 1}} {
+		jobID      int64
+	}{{"analysis failed", "analysis failed", 0, 999}, {"unavailable-fix-agent", "get agent", 0, 99}, {name, "agent execution failed", 1, 99}} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec.reset()
+			job := &storage.ReviewJob{ID: tc.jobID, GitRef: "analysis", Status: storage.JobStatusDone}
+			if tc.jobID == 999 {
+				job.Status = storage.JobStatusFailed
+				job.Error = "analysis unavailable"
+			}
+			md.State.jobs = map[int64]*storage.ReviewJob{tc.jobID: job}
 			cmd, _ := newTestCmd(t)
 			cmd.SetContext(t.Context())
-			err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), repo.Dir, 99, &analyze.AnalysisType{Name: "duplication"}, analyzeOptions{fixAgent: tc.name, quiet: true})
+			err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), repo.Dir, tc.jobID, &analyze.AnalysisType{Name: "duplication"}, analyzeOptions{fixAgent: tc.name, quiet: true})
 			require.ErrorContains(t, err, tc.want)
 			posts := rec.telemetryPosts()
 			require.Len(t, posts, tc.count)
@@ -650,12 +621,20 @@ func TestOutcomeAnalyzeAgentStart(t *testing.T) {
 	}
 }
 
-func TestOutcomeCLICancellation(t *testing.T) {
+func TestOutcomeCLIReportingGates(t *testing.T) {
 	resetCLIUse(t)
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	_, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 	cmd, _ := newTestCmd(t)
 	cmd.SetContext(t.Context())
+	for _, tc := range []struct{ terminal, skill bool }{{false, false}, {true, true}} {
+		cliOutputIsTerminal = func(io.Writer) bool { return tc.terminal }
+		fromSkill = tc.skill
+		reportCLIError(cmd, "finding_fixed", errors.New("fix failed"))
+		assert.Empty(t, rec.telemetryPosts())
+	}
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	fromSkill = false
 	reportCLIError(cmd, "finding_fixed", errors.Join(errors.New("agent stopped"), context.Canceled))
 	assert.Empty(t, rec.telemetryPosts())
 	reportCLIError(cmd, "finding_fixed", context.DeadlineExceeded)

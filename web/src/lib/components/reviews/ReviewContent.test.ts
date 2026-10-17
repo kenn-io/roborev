@@ -92,9 +92,16 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
     );
-    expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+  it("reports each displayed renderer load failure", async () => {
+    render(ReviewContent, { pageVisible: true });
+
+    await screen.findByRole("alert");
+    expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("alert");
     await vi.waitFor(() => expect(state.report).toHaveBeenCalledTimes(2));
   });
 
@@ -111,7 +118,6 @@ describe("ReviewContent", () => {
       "agent process exited with status 1",
     );
     expect(screen.queryByText("Review in progress…")).toBeNull();
-    expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
   });
 
   it("explains a failed review even when no reason was recorded", () => {

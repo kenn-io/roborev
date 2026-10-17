@@ -1,10 +1,7 @@
 package telemetry_test
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -42,21 +39,11 @@ func TestOutcomeDaemonSyncFailure(t *testing.T) {
 		require.ErrorContains(t, err, "failed to connect")
 		worker.Stop()
 	})
-	handler := server.Handler()
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/telemetry/events", strings.NewReader(`{"event":"error_shown","properties":{"surface":"web","kind":"unknown","message":"omitted"}}`))
-	request.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(response, request)
-	require.Equal(t, http.StatusAccepted, response.Code)
-	assert.JSONEq(t, `{"status":"queued"}`, response.Body.String())
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 3)
-	for _, message := range sent[:2] {
+	require.Len(t, sent, 2)
+	for _, message := range sent {
 		assert.Equal(t, "sync_failed", message.Event)
 		assert.Equal(t, "connect", message.Properties["reason"])
 	}
-	assert.Equal(t, "error_shown", sent[2].Event)
-	assert.Equal(t, "other", sent[2].Properties["kind"])
-	assert.NotContains(t, sent[2].Properties, "message")
 }

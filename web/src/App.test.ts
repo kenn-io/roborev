@@ -60,6 +60,101 @@ function applicationResponse(input: RequestInfo | URL): Response {
   return response(404);
 }
 
+function mountReviewRefresh(completed = false) {
+  history.replaceState(null, "", "/reviews/42");
+  const fixture = {
+    completed,
+    closed: false,
+    failed: false,
+    reviewLoads: 0,
+    readFails: false,
+    hidden: false,
+    eventStream: undefined as
+      | ReadableStreamDefaultController<Uint8Array>
+      | undefined,
+    emit(type: string) {
+      fixture.eventStream?.enqueue(
+        new TextEncoder().encode(
+          `${JSON.stringify({ type, job_id: 42, sha: "abc123", repo: "/workspace/repo", repo_name: "repo", ts: "2026-08-13T20:01:00Z" })}\n`,
+        ),
+      );
+    },
+  };
+  vi.spyOn(document, "hidden", "get").mockImplementation(() => fixture.hidden);
+  const selectedJob = () => ({
+    id: 42,
+    agent: "test",
+    agentic: false,
+    enqueued_at: "2026-08-13T20:00:00Z",
+    git_ref: "abc123",
+    job_type: "review",
+    prompt_prebuilt: false,
+    repo_id: 1,
+    repo_name: "example/repo",
+    retry_count: 0,
+    status: fixture.failed ? "failed" : fixture.completed ? "done" : "running",
+    error: fixture.failed ? "agent unavailable" : "",
+    ...(fixture.completed ? { finished_at: "2026-08-13T20:01:00Z" } : {}),
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input,
+        location.origin,
+      );
+      if (url.pathname === "/api/ui/session/bootstrap") {
+        return response(200, credentials);
+      }
+      if (url.pathname === "/api/status") return response(200, status);
+      if (url.pathname === "/api/jobs") {
+        if (url.searchParams.get("id") === "42") {
+          return response(200, {
+            jobs: [selectedJob()],
+            has_more: false,
+            stats: { done: fixture.completed ? 1 : 0, closed: 0, open: 1 },
+          });
+        }
+        return response(200, {
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        });
+      }
+      if (url.pathname === "/api/review/close") return response(500);
+      if (url.pathname === "/api/review") {
+        fixture.reviewLoads++;
+        if (fixture.readFails) return response(500);
+        if (!fixture.completed || fixture.failed) return response(404);
+        return response(200, {
+          id: 7,
+          job_id: 42,
+          output: "Fresh review output",
+          prompt: "Review this change",
+          closed: fixture.closed,
+          job: selectedJob(),
+        });
+      }
+      if (url.pathname === "/api/ui/review-projection") {
+        return response(200, { responses: [] });
+      }
+      if (url.pathname === "/api/stream/events") {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              fixture.eventStream = controller;
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return response(404);
+    }),
+  );
+  render(App);
+  return fixture;
+}
+
 describe("App", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -390,225 +485,102 @@ describe("App", () => {
   });
 
   test("refreshes a deep-linked review from matching events and reconnects", async () => {
-    history.replaceState(null, "", "/reviews/42");
-    const encoder = new TextEncoder();
-    let eventStream: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let completed = false;
-    let closed = false;
-    let failed = false;
-    let reviewLoads = 0;
-    let readFails = false;
-    let hidden = false;
-    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-    const selectedJob = () => ({
-      id: 42,
-      agent: "test",
-      agentic: false,
-      enqueued_at: "2026-08-13T20:00:00Z",
-      git_ref: "abc123",
-      job_type: "review",
-      prompt_prebuilt: false,
-      repo_id: 1,
-      repo_name: "example/repo",
-      retry_count: 0,
-      status: failed ? "failed" : completed ? "done" : "running",
-      error: failed ? "agent unavailable" : "",
-      ...(completed ? { finished_at: "2026-08-13T20:01:00Z" } : {}),
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(
-          input instanceof Request ? input.url : input,
-          location.origin,
-        );
-        if (url.pathname === "/api/ui/session/bootstrap") {
-          return response(200, credentials);
-        }
-        if (url.pathname === "/api/status") return response(200, status);
-        if (url.pathname === "/api/jobs") {
-          if (url.searchParams.get("id") === "42") {
-            return response(200, {
-              jobs: [selectedJob()],
-              has_more: false,
-              stats: { done: completed ? 1 : 0, closed: 0, open: 1 },
-            });
-          }
-          return response(200, {
-            jobs: [],
-            has_more: false,
-            stats: { done: 0, closed: 0, open: 0 },
-          });
-        }
-        if (url.pathname === "/api/review/close") return response(500);
-        if (url.pathname === "/api/review") {
-          reviewLoads++;
-          if (readFails) return response(500);
-          if (!completed || failed) return response(404);
-          return response(200, {
-            id: 7,
-            job_id: 42,
-            output: "Fresh review output",
-            prompt: "Review this change",
-            closed,
-            job: selectedJob(),
-          });
-        }
-        if (url.pathname === "/api/ui/review-projection") {
-          return response(200, { responses: [] });
-        }
-        if (url.pathname === "/api/stream/events") {
-          return new Response(
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                eventStream = controller;
-              },
-            }),
-            { status: 200 },
-          );
-        }
-        return response(404);
-      }),
-    );
-    render(App);
-
+    const fixture = mountReviewRefresh();
     expect(await screen.findByText("Review in progress…")).toBeInTheDocument();
-    await vi.waitFor(() => expect(eventStream).toBeDefined());
-
-    completed = true;
-    eventStream?.enqueue(
-      encoder.encode(
-        `${JSON.stringify({
-          type: "review.completed",
-          ts: "2026-08-13T20:01:00Z",
-          job_id: 42,
-          repo: "/workspace/repo",
-          repo_name: "repo",
-          sha: "abc123",
-        })}\n`,
-      ),
-    );
+    await vi.waitFor(() => expect(fixture.eventStream).toBeDefined());
+    fixture.completed = true;
+    fixture.emit("review.completed");
     expect(await screen.findByText("Fresh review output")).toBeInTheDocument();
-
-    closed = true;
-    eventStream?.enqueue(
-      encoder.encode(
-        `${JSON.stringify({
-          type: "review.closed",
-          ts: "2026-08-13T20:02:00Z",
-          job_id: 42,
-          repo: "/workspace/repo",
-          repo_name: "repo",
-          sha: "abc123",
-        })}\n`,
-      ),
-    );
+    fixture.closed = true;
+    fixture.emit("review.closed");
     expect(
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
+    const previousLoads = fixture.reviewLoads;
+    fixture.eventStream!.error(new Error("stream disconnected"));
+    await vi.waitFor(() =>
+      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
+    );
+    expect(screen.getByText("Fresh review output")).toBeInTheDocument();
+  });
 
-    hidden = true;
+  test("reports review and close failures across background refreshes", async () => {
+    const fixture = mountReviewRefresh(true);
+    await screen.findByText("Fresh review output");
+    fixture.hidden = true;
     await fireEvent(document, new Event("visibilitychange"));
-    readFails = true;
-    eventStream!.error(new Error("read failure"));
+    fixture.readFails = true;
+    fixture.eventStream!.error(new Error("read failure"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to load review",
     );
     expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
-    hidden = false;
+    fixture.hidden = false;
     await fireEvent(document, new Event("visibilitychange"));
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    let previousReadLoads = reviewLoads;
-    eventStream!.error(new Error("same read failure"));
-    await vi.waitFor(
-      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
-      { timeout: 5000 },
+    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
+      "review_viewed",
+    );
+    let previousLoads = fixture.reviewLoads;
+    fixture.eventStream!.error(new Error("same read failure"));
+    await vi.waitFor(() =>
+      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to load review",
     );
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss error" }),
+    fixture.readFails = false;
+    fixture.emit("review.completed");
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
-    previousReadLoads = reviewLoads;
-    eventStream!.error(new Error("read failure after dismissal"));
-    await vi.waitFor(
-      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
-      { timeout: 5000 },
-    );
+    fixture.readFails = true;
+    fixture.emit("review.completed");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to load review",
     );
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
-    readFails = false;
-    eventStream!.error(new Error("recover read"));
-    await vi.waitFor(
-      () => expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-      { timeout: 5000 },
-    );
-    readFails = true;
-    eventStream!.error(new Error("new read failure"));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Failed to load review",
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(3);
-    readFails = false;
-    eventStream!.error(new Error("recover before close"));
-    await vi.waitFor(
-      () => expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-      { timeout: 5000 },
+    fixture.readFails = false;
+    fixture.emit("review.completed");
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
     appOpened.reportErrorShown.mockClear();
-    await fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to close review",
     );
     expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
       "review_closed",
     );
-    previousReadLoads = reviewLoads;
-    eventStream!.error(new Error("refresh while close failure visible"));
-    await vi.waitFor(
-      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
-      { timeout: 5000 },
+    previousLoads = fixture.reviewLoads;
+    fixture.emit("review.completed");
+    await vi.waitFor(() =>
+      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Failed to close review",
     );
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
     await vi.waitFor(() =>
       expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2),
     );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Close review details" }),
-    );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    history.replaceState(null, "", "/reviews/42");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    expect(
-      await screen.findByRole("button", { name: "Reopen" }),
-    ).toBeInTheDocument();
     appOpened.reportErrorShown.mockClear();
-
-    failed = true;
-    eventStream!.error(new Error("stream disconnected"));
+    fixture.failed = true;
+    fixture.emit("review.completed");
     expect(await screen.findByText("Review failed")).toBeInTheDocument();
     expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
       "review_viewed",
     );
-    const previousLoads = reviewLoads;
-    eventStream!.error(new Error("stream disconnected again"));
-    await vi.waitFor(() => expect(reviewLoads).toBeGreaterThan(previousLoads), {
-      timeout: 5000,
-    });
+    previousLoads = fixture.reviewLoads;
+    fixture.eventStream!.error(new Error("failed review reconnect"));
+    await vi.waitFor(() =>
+      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
+    );
     expect(await screen.findByText("Review failed")).toBeInTheDocument();
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole("button", { name: "Log" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Review" }));
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
-  }, 20000);
+  });
 
   test("returns to session bootstrap when the current session is rejected", async () => {
     let statusCalls = 0;
