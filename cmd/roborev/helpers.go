@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
@@ -62,6 +63,15 @@ func silenceIfExit(cmd *cobra.Command, err error) error {
 // flips it back for the specific case of "the user invoked me wrong."
 func usageErr(cmd *cobra.Command, err error) error {
 	cmd.SilenceUsage = false
+	return err
+}
+
+// agentLookupErr routes an unknown agent name through usageErr, since
+// the user named an agent that doesn't exist.
+func agentLookupErr(cmd *cobra.Command, err error) error {
+	if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
+		return usageErr(cmd, err)
+	}
 	return err
 }
 

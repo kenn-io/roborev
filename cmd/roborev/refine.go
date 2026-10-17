@@ -98,10 +98,10 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 
 			// Flag validation
 			if opts.allBranches && opts.branch != "" {
-				return fmt.Errorf(
-					"--all-branches and --branch are " +
-						"mutually exclusive",
-				)
+				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
+			}
+			if _, err := config.NormalizeMinSeverity(opts.minSeverity); err != nil {
+				return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
 			}
 			if opts.allBranches && opts.since != "" {
 				return fmt.Errorf(

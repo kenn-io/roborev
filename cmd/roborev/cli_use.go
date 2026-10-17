@@ -169,7 +169,7 @@ func armCLIOutcome(kind string) { cliOutcomeKind = kind }
 func markCLIOutcomeFailed() { cliOutcomeFailed = true }
 
 func reportCLIOutcome(cmd *cobra.Command, err error) {
-	if cliOutcomeKind == "" || !cmd.SilenceUsage || cmd.SilenceErrors ||
+	if cliOutcomeKind == "" || !cmd.SilenceUsage || (cmd.SilenceErrors && !cliOutcomeFailed) ||
 		(!cliOutcomeFailed && err == nil) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, errReviewFailed) || errors.Is(err, errReviewCanceled) {
 		return

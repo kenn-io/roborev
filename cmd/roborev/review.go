@@ -524,7 +524,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {
-		return fmt.Errorf("get agent: %w", err)
+		return agentLookupErr(cmd, fmt.Errorf("get agent: %w", err))
 	}
 
 	// Configure agent with model and reasoning. applyModelForAgent

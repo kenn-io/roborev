@@ -292,6 +292,7 @@ func waitMultiple(
 			case isExitCode(r.err, 1):
 				cmd.Printf("Job %d: review has issues\n", r.jobID)
 			default:
+				markCLIOutcomeFailed()
 				cmd.Printf("Job %d: %v\n", r.jobID, r.err)
 			}
 		}
@@ -306,10 +307,7 @@ func waitMultiple(
 		// job-not-found), nothing more useful can be said.
 		if quiet {
 			for _, r := range results {
-				if r.err == nil {
-					continue
-				}
-				if _, ok := errors.AsType[*exitError](r.err); !ok {
+				if _, ok := errors.AsType[*exitError](r.err); r.err != nil && !ok {
 					return r.err
 				}
 			}
