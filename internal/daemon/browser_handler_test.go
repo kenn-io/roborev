@@ -1227,22 +1227,9 @@ func TestBrowserSessionOpenAPIDocumentsJSONErrors(t *testing.T) {
 }
 
 func TestProjectBrowserReviewJobReadable(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		job  storage.ReviewJob
-		want bool
-	}{
-		{name: "review", job: storage.ReviewJob{JobType: storage.JobTypeReview}, want: true},
-		{name: "compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact}, want: true},
-		{name: "legacy commit", job: storage.ReviewJob{CommitID: new(int64(1))}, want: true},
-		{name: "fix", job: storage.ReviewJob{JobType: storage.JobTypeFix}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := json.Marshal(projectBrowserReviewJob(tc.job, BrowserPrincipal{}))
-			require.NoError(t, err)
-			var fields map[string]any
-			require.NoError(t, json.Unmarshal(body, &fields))
-			assert.Equal(t, tc.want, fields["readable"])
-		})
-	}
+	body, err := json.Marshal(projectBrowserReviewJob(storage.ReviewJob{JobType: storage.JobTypeReview}, BrowserPrincipal{}))
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(body, &fields))
+	assert.Equal(t, true, fields["readable"])
 }

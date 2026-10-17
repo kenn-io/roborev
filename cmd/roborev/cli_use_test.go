@@ -891,7 +891,7 @@ func TestCoreActionCompactWait(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(t.Context())
 			cmd.SetOut(&out)
-			cliOutputIsTerminal = func(w io.Writer) bool { return w == &out }
+			cliOutputIsTerminal = func(w io.Writer) bool { return w == nil || w == &out }
 			require.NoError(t, waitForConsolidation(t.Context(), cmd, 1, compactOptions{quiet: mode == "quiet"}))
 			waitCLIUse()
 			if mode == "quiet" {
@@ -907,4 +907,45 @@ func TestCoreActionCompactWait(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
+	resetCLIUse(t)
+	bodies := make(chan string, 1)
+	returned := make(chan struct{})
+	releaseResponse := sync.OnceFunc(func() { close(returned) })
+	defer releaseResponse()
+	var accepted atomic.Int32
+	daemon.SetClientResponseObserver(func(_ daemon.DaemonEndpoint, r *http.Request, resp *http.Response) {
+		if r.URL.Path == daemon.TelemetryEventsPath && resp.StatusCode == http.StatusAccepted {
+			accepted.Add(1)
+		}
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies <- string(body)
+		// Hold the response until the command context has been canceled on return.
+		<-returned
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	ep := mustParseEndpoint(t, server.URL)
+	cliUseEndpoint.Store(&ep)
+	var out bytes.Buffer
+	cliOutputIsTerminal = func(w io.Writer) bool { return w == &out }
+	cmd := &cobra.Command{Run: func(cmd *cobra.Command, _ []string) {
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+		cmd.SetContext(ctx)
+		reportCLIActionOutput(cmd.OutOrStdout(), "finding_fixed")
+	}}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&out)
+	require.NoError(t, cmd.Execute())
+	require.ErrorIs(t, cmd.Context().Err(), context.Canceled)
+	releaseResponse()
+	waitCLIUse()
+	assert.Equal(t, int32(1), accepted.Load())
+	require.Len(t, bodies, 1)
+	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 }

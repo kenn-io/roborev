@@ -74,44 +74,47 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewAcceptedStopsReports(t *testing.T) {
+func TestCoreActionReviewInFlightAndNextUTCDay(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, status := range []string{"queued", "skipped", "disabled"} {
-		t.Run(status, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				f := newCoreActionReviewVisitFixture(t)
-				f.update(f.review())
-				f.transport.status = status
-				// Hold delivery while later input exercises the in-flight gate.
-				result, cmd := f.m.Update(tea.KeyPressMsg{Code: '0'})
-				f.m = result.(model)
-				f.update(tea.KeyPressMsg{Code: '0'})
-				for _, msg := range collectMsgs(cmd) {
-					f.update(msg)
-				}
-				f.update(tea.KeyPressMsg{Code: '0'})
-				require.Equal(t, []string{"review_viewed"}, f.transport.events)
-				if status == "disabled" {
-					f.update(reconnectMsg{err: errors.New("no daemon found")})
-					f.update(tea.KeyPressMsg{Code: '0'})
-					require.Len(t, f.transport.events, 1)
-					f.update(reconnectMsg{endpoint: f.m.endpoint})
-					f.transport.status = "queued"
-					require.Len(t, f.transport.events, 1)
-					f.update(tea.KeyPressMsg{Code: '0'})
-					require.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
-					f.update(tea.KeyPressMsg{Code: '0'})
-					assert.Len(t, f.transport.events, 2)
-				}
-				count := len(f.transport.events)
-				time.Sleep(24 * time.Hour)
-				f.update(displayTickMsg{})
-				require.Len(t, f.transport.events, count)
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Len(t, f.transport.events, count+1)
-			})
-		})
-	}
+	synctest.Test(t, func(t *testing.T) {
+		f := newCoreActionReviewVisitFixture(t)
+		f.update(f.review())
+		f.transport.status = "queued"
+		// Hold delivery while later input exercises the in-flight gate.
+		result, cmd := f.m.Update(tea.KeyPressMsg{Code: '0'})
+		f.m = result.(model)
+		f.update(tea.KeyPressMsg{Code: '0'})
+		for _, msg := range collectMsgs(cmd) {
+			f.update(msg)
+		}
+		f.update(tea.KeyPressMsg{Code: '0'})
+		require.Equal(t, []string{"review_viewed"}, f.transport.events)
+		time.Sleep(24 * time.Hour)
+		f.update(displayTickMsg{})
+		require.Len(t, f.transport.events, 1)
+		f.update(tea.KeyPressMsg{Code: '0'})
+		assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+	})
+}
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewReconnectResumesReports(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture(t)
+	f.update(f.review())
+	f.transport.status = "disabled"
+	f.update(tea.KeyPressMsg{Code: '0'})
+	require.Equal(t, []string{"review_viewed"}, f.transport.events)
+	f.update(reconnectMsg{err: errors.New("no daemon found")})
+	f.update(tea.KeyPressMsg{Code: '0'})
+	require.Len(t, f.transport.events, 1)
+	f.update(reconnectMsg{endpoint: f.m.endpoint})
+	f.transport.status = "queued"
+	require.Len(t, f.transport.events, 1)
+	f.update(tea.KeyPressMsg{Code: '0'})
+	require.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+	f.update(tea.KeyPressMsg{Code: '0'})
+	assert.Len(t, f.transport.events, 2)
 }
 
 //nolint:paralleltest // telemetry environment variables

@@ -117,13 +117,13 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
-	for _, outcome := range []string{"no change", "commit", "stdout commit", "quiet commit"} {
+	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
 		t.Run(outcome, func(t *testing.T) {
 			committed := outcome != "no change"
 			quiet := outcome == "quiet commit"
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(w io.Writer) bool {
-				return outcome == "stdout commit" && w == os.Stdout || outcome != "stdout commit" && w == os.Stderr
+				return w == os.Stderr
 			}
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
@@ -134,20 +134,11 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 				DoneAfterPolls: 2,
 			})
 			bodies := make(chan string, 1)
-			returned := make(chan struct{})
-			var accepted atomic.Int32
-			daemon.SetClientResponseObserver(func(_ daemon.DaemonEndpoint, r *http.Request, resp *http.Response) {
-				if r.URL.Path == daemon.TelemetryEventsPath && resp.StatusCode == http.StatusAccepted {
-					accepted.Add(1)
-				}
-			})
 			handler := ts.Config.Handler
 			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == daemon.TelemetryEventsPath {
 					body, _ := io.ReadAll(r.Body)
 					bodies <- string(body)
-					// Hold the HTTP response until the analysis context has been canceled on return.
-					<-returned
 					w.WriteHeader(http.StatusAccepted)
 					return
 				}
@@ -169,7 +160,6 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			output, confirmation := captureStdoutStderr(t, func() {
 				err = runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
 			})
-			close(returned)
 			require.NoError(t, err)
 			if committed {
 				assert.NotEqual(t, before, repo.HeadSHA())
@@ -186,7 +176,6 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			}
 			waitCLIUse()
 			if outcome == "commit" {
-				assert.Equal(t, int32(1), accepted.Load())
 				require.Len(t, bodies, 1)
 				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 			} else {

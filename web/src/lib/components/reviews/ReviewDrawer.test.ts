@@ -17,17 +17,6 @@ vi.mock("./PromptViewer.svelte", async () => ({
 
 const state = vi.hoisted(() => ({
   selectedJobId: 42 as number | undefined,
-  review: {
-    id: 1,
-    job_id: 42,
-    output: "review output",
-    closed: false,
-  } as {
-    id: number;
-    job_id: number;
-    output: string;
-    closed: boolean;
-  } | null,
   deselectJob: vi.fn(),
   rerunJob: vi.fn(),
   cancelJob: vi.fn(),
@@ -35,7 +24,6 @@ const state = vi.hoisted(() => ({
   copyOutput: vi.fn(),
   jobStatus: "done",
   jobType: "review",
-  readable: true,
   reviewType: undefined as string | undefined,
   agentic: false,
   promptPrebuilt: false,
@@ -82,7 +70,6 @@ vi.mock("../../stores/context", () => ({
           ...job,
           status: state.jobStatus,
           job_type: state.jobType,
-          readable: state.readable,
           review_type: state.reviewType,
           agentic: state.agentic,
           prompt_prebuilt: state.promptPrebuilt,
@@ -105,7 +92,12 @@ vi.mock("../../stores/context", () => ({
     roborevReview: {
       getSelectedJob: () => null,
       getOutput: () => "review output",
-      getReview: () => state.review,
+      getReview: () => ({
+        id: 1,
+        job_id: 42,
+        output: "review output",
+        closed: false,
+      }),
       isClosed: () => false,
       closeReview: state.closeReview,
       copyOutput: state.copyOutput,
@@ -119,12 +111,6 @@ import ReviewDrawer from "./ReviewDrawer.svelte";
 describe("ReviewDrawer", () => {
   beforeEach(() => {
     state.selectedJobId = 42;
-    state.review = {
-      id: 1,
-      job_id: 42,
-      output: "review output",
-      closed: false,
-    };
     state.deselectJob.mockReset();
     state.rerunJob.mockReset();
     state.cancelJob.mockReset();
@@ -132,7 +118,6 @@ describe("ReviewDrawer", () => {
     state.copyOutput.mockReset();
     state.jobStatus = "done";
     state.jobType = "review";
-    state.readable = true;
     state.reviewType = undefined;
     state.agentic = false;
     state.promptPrebuilt = false;

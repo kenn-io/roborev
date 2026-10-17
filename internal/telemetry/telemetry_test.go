@@ -183,6 +183,17 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+		assert.True(reporter.EventAllowed(event))
+		props, err := reporter.SanitizeProperties(event, map[string]any{
+			PropertySurface: "tui", "job_id": 42, "output": "private review",
+		})
+		require.NoError(err)
+		assert.Equal("tui", props[PropertySurface])
+		assert.NotContains(props, "job_id")
+		assert.NotContains(props, "output")
+	}
+
 	for _, tc := range []struct{ event, bucket, want string }{
 		{EventAgentActive, "1-10", "1-10"},
 		{EventAgentCallCount, "11-100", "11-100"},
@@ -234,6 +245,24 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 		{name: "session numeric bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: 120},
 		{name: "session rejects cli", event: EventSessionEnded, value: "cli"},
 	}
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+		for _, surface := range []string{"web", "tui", "cli", "unknown"} {
+			t.Run(event+"/"+surface, func(t *testing.T) {
+				props, err := reporter.SanitizeProperties(event, map[string]any{PropertySurface: surface})
+				if surface == "unknown" || event == EventFindingFixed && surface == "web" {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, surface, props[PropertySurface])
+			})
+		}
+		for _, properties := range []map[string]any{{}, {PropertySurface: 42}} {
+			_, err := reporter.SanitizeProperties(event, properties)
+			require.Error(t, err)
+		}
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event, property := tt.event, tt.property
