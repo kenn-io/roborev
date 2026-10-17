@@ -2494,15 +2494,15 @@ agent-specific behavior.
 
 The legacy values keep their established per-agent behavior:
 
-| Legacy value | Codex | Claude | Grok | Droid | Kilo | Pi |
-|--------------|-------|--------|------|-------|------|----|
-| `fast` | `low` | `low` | `low` | `low` | `minimal` | `low` |
-| `standard` | default | default | default | default | default | `medium` |
-| `thorough` | `high` | `high` | `high` | `high` | `high` | `high` |
-| `maximum` | GPT-5.6 `sol`/`terra`/`luna`: `max`; otherwise `xhigh` | `max` | `max` | `high` | `high` | `high` |
+| Legacy value | Codex | Claude | Grok | Muse | Droid | Kilo | Pi |
+|--------------|-------|--------|------|------|-------|------|----|
+| `fast` | `low` | `low` | `low` | `low` | `low` | `minimal` | `low` |
+| `standard` | default | default | default | default | default | default | `medium` |
+| `thorough` | `high` | `high` | `high` | `high` | `high` | `high` | `high` |
+| `maximum` | GPT-5.6 `sol`/`terra`/`luna`: `max`; otherwise `xhigh` | `max` | `max` | `max` | `high` | `high` | `high` |
 
-Native support is agent-specific. Codex, Claude, Grok, and Pi accept all five
-exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
+Native support is agent-specific. Codex, Claude, Grok, Muse, and Pi accept all
+five exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
 values through as model variants, so availability depends on the selected
 provider and model. Agents without a reasoning flag ignore the level while
 workflow-specific agent and model routing still uses its exact name.
