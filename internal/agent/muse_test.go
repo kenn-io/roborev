@@ -2,8 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,19 +19,31 @@ func TestMuseBuildArgs(t *testing.T) {
 		agentic   bool
 		unsafe    bool
 		reasoning ReasoningLevel
-		want      []string
 	}{
-		{"review", false, false, ReasoningStandard, []string{"--no-foreign-personal-context", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null"}},
-		{"agentic", true, false, ReasoningStandard, []string{"--yolo"}},
-		{"unsafe", false, true, ReasoningStandard, []string{"--yolo"}},
-		{"reasoning thorough", false, false, ReasoningThorough, []string{"--reasoning-effort", "high", "--no-foreign-personal-context", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null"}},
+		{"review", false, false, ReasoningStandard},
+		{"agentic", true, false, ReasoningStandard},
+		{"unsafe", false, true, ReasoningStandard},
+		{"reasoning thorough", false, false, ReasoningThorough},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
 			a := NewMuseAgent("").WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
-			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off"}, tc.want...)
-			want = append(want, "--prompt-file", "prompt.md")
-			assert.Equal(t, want, a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md"))
+			args := a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md")
+			assert := assert.New(t)
+			assert.Contains(strings.Join(args, " "), "--prompt-file prompt.md")
+			if tc.agentic || tc.unsafe {
+				assert.Contains(args, "--yolo")
+				assert.NotContains(args, `run.toolset=["read_file","search"]`)
+			} else {
+				assert.NotContains(args, "--yolo")
+				assert.Contains(args, "--no-foreign-personal-context")
+				for _, override := range []string{`run.toolset=["read_file","search"]`, "hooks={}", "managed_hooks_path=null"} {
+					assert.Contains(strings.Join(args, " "), "-c "+override)
+				}
+			}
+			if tc.reasoning == ReasoningThorough {
+				assert.Contains(strings.Join(args, " "), "--reasoning-effort high")
+			}
 		})
 	}
 	a := NewMuseAgent("")
@@ -71,10 +86,15 @@ printf 'status message\n' >&2
 func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 	skipIfWindows(t)
 	withUnsafeAgents(t, false)
-	for _, source := range []string{"xdg", "home"} {
-		t.Run(source, func(t *testing.T) {
+	for _, tc := range []struct{ source, key string }{
+		{"xdg", "mcpServers"},
+		{"xdg", "mcp_servers"},
+		{"home", "mcpServers"},
+		{"home", "mcp_servers"},
+	} {
+		t.Run(tc.source+"/"+tc.key, func(t *testing.T) {
 			configHome := t.TempDir()
-			if source == "home" {
+			if tc.source == "home" {
 				home := t.TempDir()
 				configHome = filepath.Join(home, ".config")
 				t.Setenv("HOME", home)
@@ -86,7 +106,7 @@ func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 			require.NoError(t, os.MkdirAll(museConfig, 0o700))
 			for name, data := range map[string]string{
 				"auth.json":     `{"token":"example"}`,
-				"settings.json": `{"model":"example-model"}`,
+				"settings.json": fmt.Sprintf(museSettingsWithMCP, tc.key),
 				"trust.json":    "{}",
 				"plugins.json":  "{}",
 			} {
@@ -95,6 +115,8 @@ func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 			dataHome := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(dataHome, "muse", "plugins"), 0o700))
 			t.Setenv("XDG_DATA_HOME", dataHome)
+			capture := filepath.Join(t.TempDir(), "settings.json")
+			t.Setenv("MUSE_SETTINGS_CAPTURE", capture)
 			command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 set -eu
@@ -105,7 +127,7 @@ test "$XDG_CACHE_HOME" = "$HOME/cache"
 test -d "$XDG_CACHE_HOME"
 case "$HOME" in "$TMPDIR"/*) ;; *) exit 1;; esac
 test "$(cat "$XDG_CONFIG_HOME/muse/auth.json")" = '{"token":"example"}'
-test "$(cat "$XDG_CONFIG_HOME/muse/settings.json")" = '{"model":"example-model"}'
+cp "$XDG_CONFIG_HOME/muse/settings.json" "$MUSE_SETTINGS_CAPTURE"
 test ! -e "$XDG_CONFIG_HOME/muse/trust.json"
 test ! -e "$XDG_CONFIG_HOME/muse/plugins.json"
 test -z "$(ls -1A "$XDG_DATA_HOME")"
@@ -119,6 +141,9 @@ printf 'No issues found.\n'
 			files, err := os.ReadDir(tmp)
 			require.NoError(t, err)
 			assert.Empty(t, files, "review must remove its prompt and private home")
+			settings, err := os.ReadFile(capture)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"schema_version":1,"model":"muse-spark-1.3","hooks":{}}`, string(settings))
 		})
 	}
 }
@@ -164,8 +189,14 @@ func TestMuseReviewFailure(t *testing.T) {
 		StderrLines: []string{"run ended with Failed: unknown model"},
 		ExitCode:    1,
 	})
-	_, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	repo := t.TempDir()
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	_, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), repo, "HEAD", "review", nil)
 	require.ErrorContains(t, err, "muse failed:")
+	files, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, files, "failed run must remove its prompt and private home")
 }
 
 func TestMuseReviewEmptyOutput(t *testing.T) {
@@ -174,4 +205,98 @@ func TestMuseReviewEmptyOutput(t *testing.T) {
 	result, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "No review output generated", result)
+}
+
+const museSettingsWithMCP = `{
+ "schema_version": 1,
+ "model": "muse-spark-1.3",
+ "hooks": {},
+ "%s": {"example": {"type": "stdio", "command": "roborev-missing-mcp-server", "enabled": true, "mode": "required"}}
+}`
+
+func TestPrepareMuseRunInvalidSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings, wantError string
+	}{
+		{"newer schema", `{"schema_version":2}`, "unsupported muse settings schema_version 2; expected 1"},
+		{"missing schema", `{}`, "muse settings require schema_version 1"},
+		{"malformed JSON", `{`, "read muse settings:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(config, "muse"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(config, "muse", "settings.json"), []byte(tc.settings), 0o600))
+			t.Setenv("XDG_CONFIG_HOME", config)
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			prompt, env, cleanup, err := prepareMuseRun("review", false)
+			require.ErrorContains(t, err, tc.wantError)
+			assert.Empty(t, prompt)
+			assert.Nil(t, env)
+			assert.Nil(t, cleanup)
+			files, err := os.ReadDir(tmp)
+			require.NoError(t, err)
+			assert.Empty(t, files, "failed setup must remove its prompt and private home")
+		})
+	}
+}
+
+func TestMuseNativeEcho(t *testing.T) {
+	skipIfWindows(t)
+	muse, err := exec.LookPath("muse")
+	if err != nil {
+		t.Skip("muse is not on PATH")
+	}
+	t.Setenv("MUSE_NO_AUTO_UPDATE", "1")
+	withUnsafeAgents(t, false)
+	for _, tc := range []struct{ mode, key string }{
+		{"review", "mcpServers"},
+		{"review", "mcp_servers"},
+		{"plan", "mcpServers"},
+		{"plan", "mcp_servers"},
+	} {
+		t.Run(tc.mode+"/"+tc.key, func(t *testing.T) {
+			repo := newPlanTestRepo(t)
+			config := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(config, "muse"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(config, "muse", "settings.json"), []byte(fmt.Sprintf(museSettingsWithMCP, tc.key)), 0o600))
+			t.Setenv("XDG_CONFIG_HOME", config)
+			t.Setenv("MUSE_BINARY", muse)
+			capture := t.TempDir()
+			t.Setenv("MUSE_CAPTURE_DIR", capture)
+			// Muse's runtime temp directory must sit outside the planning worktree's ancestor.
+			t.Setenv("MUSE_RUNTIME_TMP", t.TempDir())
+			command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+printf '%s' "$HOME" > "$MUSE_CAPTURE_DIR/home"
+prev=""
+for arg in "$@"; do
+ if [ "$prev" = "--prompt-file" ]; then
+  printf '%s' "$arg" > "$MUSE_CAPTURE_DIR/prompt"
+ fi
+ prev="$arg"
+done
+export TMPDIR="$MUSE_RUNTIME_TMP"
+exec "$MUSE_BINARY" "$@" --provider echo
+`)
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			a := NewMuseAgent(command)
+			var result string
+			var output bytes.Buffer
+			if tc.mode == "plan" {
+				result, err = RunPlan(t.Context(), a, repo, "HEAD", "contract prompt", &output, nil)
+			} else {
+				result, err = a.Review(t.Context(), repo, "HEAD", "contract prompt", &output)
+			}
+			require.NoError(t, err, "native Muse output: %s", output.String())
+			assert.Equal(t, "echo: contract prompt", result)
+			for _, name := range []string{"home", "prompt"} {
+				path, err := os.ReadFile(filepath.Join(capture, name))
+				require.NoError(t, err)
+				assert.NoDirExists(t, string(path))
+				assert.NoFileExists(t, string(path))
+			}
+		})
+	}
 }

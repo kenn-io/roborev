@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -162,4 +163,14 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 	}
 
 	return result, nil
+}
+
+func parsePlainTextOutput(r io.Reader, sw *syncWriter) (string, error) {
+	var buf strings.Builder
+	if sw == nil {
+		_, err := io.Copy(&buf, r)
+		return strings.TrimSpace(buf.String()), err
+	}
+	_, err := io.Copy(io.MultiWriter(&buf, sw), r)
+	return strings.TrimSpace(buf.String()), err
 }

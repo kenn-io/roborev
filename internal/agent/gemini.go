@@ -467,16 +467,6 @@ func parseDotVersion(v string) ([3]int, bool) {
 	return out, true
 }
 
-func parsePlainTextOutput(r io.Reader, sw *syncWriter) (string, error) {
-	var buf strings.Builder
-	if sw == nil {
-		_, err := io.Copy(&buf, r)
-		return strings.TrimSpace(buf.String()), err
-	}
-	_, err := io.Copy(io.MultiWriter(&buf, sw), r)
-	return strings.TrimSpace(buf.String()), err
-}
-
 // isModelNotFoundError returns true if stderr indicates the requested
 // model does not exist. Google's API returns 404 with "model not found"
 // or "is not found" messages when a model name is invalid or retired.

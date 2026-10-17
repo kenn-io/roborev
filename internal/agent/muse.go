@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -136,6 +138,9 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 	err = os.Mkdir(filepath.Join(configDir, "muse"), 0o700)
 	for _, name := range []string{"auth.json", "settings.json"} {
 		data, readErr := os.ReadFile(filepath.Join(src, name))
+		if err == nil && readErr == nil && name == "settings.json" {
+			data, err = museReadOnlySettings(data)
+		}
 		if err == nil && readErr == nil {
 			err = os.WriteFile(filepath.Join(configDir, "muse", name), data, 0o600)
 		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
@@ -147,6 +152,24 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
 	}
 	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir), cleanup, nil
+}
+
+// museReadOnlySettings preserves user settings except MCP server declarations.
+func museReadOnlySettings(data []byte) ([]byte, error) {
+	var settings map[string]jsontext.Value
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("read muse settings: %w", err)
+	}
+	var version int
+	if err := json.Unmarshal(settings["schema_version"], &version); err != nil {
+		return nil, fmt.Errorf("muse settings require schema_version 1: %w", err)
+	}
+	if version != 1 {
+		return nil, fmt.Errorf("unsupported muse settings schema_version %d; expected 1", version)
+	}
+	delete(settings, "mcpServers")
+	delete(settings, "mcp_servers")
+	return json.Marshal(settings)
 }
 
 func init() { Register(NewMuseAgent("")) }
