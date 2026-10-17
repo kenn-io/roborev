@@ -391,9 +391,6 @@ func (m model) handleQuitKey() (tea.Model, tea.Cmd) {
 		m.currentView = m.helpFromView
 		return m, nil
 	}
-	if m.pendingReviewOpenJobID == 0 {
-		m.reviewInputJobID = 0
-	}
 	return m, tea.Quit
 }
 

@@ -450,13 +450,9 @@ func (m model) postScreen(screen string) tea.Cmd {
 
 type screenDeliveryMsg struct {
 	screen, day string
+	event       string
+	status      posthog.Status
 	err         error
-}
-
-type reviewDeliveryMsg struct {
-	day    string
-	status posthog.Status
-	err    error
 }
 
 func (m model) fetchReleaseNotes() tea.Cmd {
@@ -1543,7 +1539,7 @@ func (m model) reportAction(event string) tea.Cmd {
 		defer cancel()
 		status, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
 		if event == telemetry.EventReviewViewed {
-			return reviewDeliveryMsg{day: day, status: status, err: err}
+			return screenDeliveryMsg{event: event, day: day, status: status, err: err}
 		}
 		return nil
 	}

@@ -59,83 +59,47 @@ func TestCoreActionReviewVisits(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, tc := range []struct {
-		name, accepted string
-		fail           bool
-	}{
-		{name: "delivery error", accepted: "queued", fail: true},
-		{name: "disabled then queued", accepted: "queued"},
-		{name: "persistent disabled"},
-		{name: "persistent delivery error", fail: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				f := newCoreActionReviewVisitFixture(t)
-				f.update(f.review())
-				f.transport.fail, f.transport.status = tc.fail, "disabled"
+	for _, outcome := range []string{"delivery error", "disabled"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			f.update(f.review())
+			f.transport.fail, f.transport.status = outcome == "delivery error", "disabled"
+			for range 2 {
 				f.update(tea.KeyPressMsg{Code: '0'})
-				require.Len(t, f.transport.events, 1)
-				if tc.accepted != "" {
-					f.transport.fail, f.transport.status = false, tc.accepted
-				}
-				f.update(displayTickMsg{})
-				require.Len(t, f.transport.events, 1)
-				for range 5 {
-					f.update(tea.KeyPressMsg{Code: '0'})
-				}
-				require.Len(t, f.transport.events, 2)
-				time.Sleep(24 * time.Hour)
-				f.transport.fail, f.transport.status = false, "queued"
-				f.update(displayTickMsg{})
-				require.Len(t, f.transport.events, 2)
-				f.update(tea.KeyPressMsg{Code: '0'})
-				require.Len(t, f.transport.events, 3)
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Len(t, f.transport.events, 3)
-			})
+			}
+			require.Len(t, f.transport.events, 2)
+			f.transport.fail, f.transport.status = false, "queued"
+			f.update(displayTickMsg{})
+			require.Len(t, f.transport.events, 2)
+			f.update(tea.KeyPressMsg{Code: '0'})
+			assert.Equal(t, []string{"review_viewed", "review_viewed", "review_viewed"}, f.transport.events)
 		})
 	}
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewSkippedStopsReports(t *testing.T) {
+func TestCoreActionReviewAcceptedStopsReports(t *testing.T) {
 	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture(t)
-		f.update(f.review())
-		f.transport.status = "skipped"
-		f.update(tea.KeyPressMsg{Code: '0'})
-		require.Len(t, f.transport.events, 1)
-		for range 5 {
-			f.update(tea.KeyPressMsg{Code: '0'})
-		}
-		assert.Len(t, f.transport.events, 1)
-	})
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewRetriesAfterReconnect(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, outcome := range []string{"disabled", "delivery error"} {
-		t.Run(outcome, func(t *testing.T) {
+	for _, status := range []string{"queued", "skipped"} {
+		t.Run(status, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
 				f.update(f.review())
-				f.transport.fail, f.transport.status = outcome == "delivery error", "disabled"
-				for range 3 {
-					f.update(tea.KeyPressMsg{Code: '0'})
+				f.transport.status = status
+				// Hold delivery while later input exercises the in-flight gate.
+				result, cmd := f.m.Update(tea.KeyPressMsg{Code: '0'})
+				f.m = result.(model)
+				f.update(tea.KeyPressMsg{Code: '0'})
+				for _, msg := range collectMsgs(cmd) {
+					f.update(msg)
 				}
-				require.Len(t, f.transport.events, 2)
-				f.update(reconnectMsg{err: errors.New("still disconnected")})
 				f.update(tea.KeyPressMsg{Code: '0'})
-				require.Len(t, f.transport.events, 2)
-				f.transport.fail, f.transport.status = false, "queued"
-				f.update(reconnectMsg{endpoint: f.m.endpoint})
-				require.Len(t, f.transport.events, 2)
+				require.Equal(t, []string{"review_viewed"}, f.transport.events)
+				time.Sleep(24 * time.Hour)
+				f.update(displayTickMsg{})
+				require.Len(t, f.transport.events, 1)
 				f.update(tea.KeyPressMsg{Code: '0'})
-				require.Len(t, f.transport.events, 3)
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Len(t, f.transport.events, 3)
+				assert.Len(t, f.transport.events, 2)
 			})
 		})
 	}
@@ -203,6 +167,7 @@ func TestCoreActionExplicitClose(t *testing.T) {
 		result closedResultMsg
 		count  int
 	}{
+		{name: "queue key", result: closedResultMsg{newState: true, fromKey: true}, count: 1},
 		{name: "key", result: closedResultMsg{newState: true, fromKey: true}, count: 1},
 		{name: "control socket", result: closedResultMsg{newState: true}},
 		{name: "reopen", result: closedResultMsg{fromKey: true}},
@@ -225,6 +190,11 @@ func TestCoreActionExplicitClose(t *testing.T) {
 					f.m.currentReview = f.review().review
 					f.m.currentReview.Closed = !tc.result.newState
 					f.m.currentView = viewReview
+					if tc.name == "queue key" {
+						f.m.jobs = []storage.ReviewJob{makeJob(42, withClosed(new(false)))}
+						f.m.selectedIdx, f.m.selectedJobID = 0, 42
+						f.m.currentView = viewQueue
+					}
 					result, cmd = f.m.handleCloseKey()
 				}
 				f.m = result.(model)

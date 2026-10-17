@@ -1858,16 +1858,17 @@ Core actions report `review_viewed` once per installation, surface, and UTC day,
 explicit close. All carry `surface`. Reads and closes support web, TUI and CLI;
 fixes support TUI and CLI. Reads include review, synthesis and compact output.
 The TUI requires key or mouse input before counting loaded content. Quit keys
-`ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. Failed or
-disabled reports allow one retry on later input. A successful daemon reconnect
-restores retry eligibility. The browser reports a visible Review tab on load and
-when focus or visibility returns, with one request in flight at a time. The
-daemon owns daily deduplication. CLI reads include `show`, `wait`,
+`ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. A failed
+or disabled report retries on later input. The browser reports a rendered Review
+tab on load and when focus or visibility returns, with one request in flight at
+a time. The daemon owns daily deduplication. CLI reads include `show`, `wait`,
 `review --wait`, `compact --wait`, and nonquiet `fix` output. CLI actions
-require terminal output and exclude agents and `--from-skill`. Reopens,
-automatic closes, prompts and analysis output stay silent. With a remote
-`--server`, CLI events use an already-running local daemon and its installation
-ID. Without a local daemon, events are dropped. Reporting never starts a daemon.
+require terminal output and exclude agents and `--from-skill`. CLI fixes from
+`fix`, `refine`, and `analyze --fix` report `finding_fixed` when they commit.
+Reopens, automatic closes, prompt reads, and analysis reads stay silent. With a
+remote `--server`, CLI events use an already-running local daemon and its
+installation ID. Without a local daemon, events are dropped. Reporting never
+starts a daemon.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
@@ -1878,13 +1879,13 @@ day across interfaces, including daemon restarts. Screen names contain no paths,
 job IDs, filter text or review contents. Daily screen claims live in
 `telemetry-daily.json` beside the daemon database, wherever `--db` points, with
 a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
-file makes screen reports fail until it's removed. Stop the daemon before
-deleting it. Deletion resets file claims; existing SQLite claims remain
-effective through their recorded UTC dates. Counts mean the report was queued,
-not confirmed delivered to PostHog. The TUI retries a failed screen report on
-the next key or mouse input while that screen is showing. The browser reports
-the visible screen on every window focus and page change, and the daemon counts
-it once per day.
+file makes `screen_viewed` and `review_viewed` reports fail until it's removed.
+Stop the daemon before deleting it. Deletion resets file claims; existing SQLite
+claims remain effective through their recorded UTC dates. Counts mean the report
+was queued, not confirmed delivered to PostHog. The TUI retries a failed screen
+report on the next key or mouse input while that screen is showing. The browser
+reports the visible screen on every window focus and page change, and the daemon
+counts it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

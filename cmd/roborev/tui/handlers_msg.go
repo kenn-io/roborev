@@ -1896,9 +1896,6 @@ func (m model) handleRerunResultMsg(
 			job.Agent = msg.agent
 		})
 	}
-	if m.reviewInputJobID == msg.jobID {
-		m.reviewInputJobID = 0
-	}
 	// Rerun confirmed: a rerun reuses the same job ID, so once the job
 	// finishes again `currentReview.JobID == job.ID` would keep matching
 	// even though currentReview still holds the PREVIOUS attempt's review
@@ -2216,7 +2213,6 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, nil
 	}
-	m.reviewReadAttempts = 0
 
 	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint

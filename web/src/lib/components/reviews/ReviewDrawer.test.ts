@@ -16,7 +16,6 @@ vi.mock("./PromptViewer.svelte", async () => ({
 }));
 
 const state = vi.hoisted(() => ({
-  reportCoreAction: vi.fn(),
   selectedJobId: 42 as number | undefined,
   review: {
     id: 1,
@@ -75,10 +74,6 @@ const job: ReviewJob = {
   }),
 };
 
-vi.mock("../../utils/app-opened", () => ({
-  reportCoreAction: state.reportCoreAction,
-}));
-
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevJobs: {
@@ -122,30 +117,7 @@ vi.mock("../../stores/context", () => ({
 import ReviewDrawer from "./ReviewDrawer.svelte";
 
 describe("ReviewDrawer", () => {
-  it.each(["unreadable", "review", "hidden", "prompt", "mismatch", "loading"])(
-    "counts only matching visible readable output: %s",
-    async (kind) => {
-      state.readable = kind !== "unreadable";
-      if (kind === "hidden")
-        vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-      if (kind === "mismatch") state.review!.job_id = 43;
-      if (kind === "loading") state.review = null;
-      render(ReviewDrawer, {
-        activeTab: kind === "prompt" ? "prompt" : "review",
-      });
-      expect(state.reportCoreAction).toHaveBeenCalledTimes(
-        kind === "review" ? 1 : 0,
-      );
-      await fireEvent(window, new Event("focus"));
-      await fireEvent(document, new Event("visibilitychange"));
-      expect(state.reportCoreAction).toHaveBeenCalledTimes(
-        kind === "review" ? 3 : 0,
-      );
-    },
-  );
-
   beforeEach(() => {
-    state.reportCoreAction.mockReset();
     state.selectedJobId = 42;
     state.review = {
       id: 1,

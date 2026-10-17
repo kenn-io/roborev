@@ -59,7 +59,7 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 	*m = result.(model)
 	for _, msg := range collectMsgs(cmd) {
 		switch msg.(type) {
-		case screenDeliveryMsg, reviewDeliveryMsg:
+		case screenDeliveryMsg:
 			result, _ = m.Update(msg)
 			*m = result.(model)
 		}

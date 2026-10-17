@@ -52,6 +52,9 @@
 
   const isOpen = $derived(stores.roborevJobs?.getSelectedJobId() !== undefined);
 
+  const selectedId = $derived(stores.roborevJobs?.getSelectedJobId());
+  const readable = $derived(selectedJob?.readable ?? false);
+  let visibleJobId = $state<number>();
   let activity = $state(0);
   onMount(() => {
     function returned(): void {
@@ -66,14 +69,13 @@
   });
   $effect(() => {
     void activity;
-    const selectedId = stores.roborevJobs?.getSelectedJobId();
-    const review = stores.roborevReview?.getReview();
     if (
       !document.hidden &&
       isOpen &&
       activeTab === "review" &&
-      review?.job_id === selectedId &&
-      selectedJob?.readable
+      visibleJobId !== undefined &&
+      visibleJobId === selectedId &&
+      readable
     ) {
       reportCoreAction("review_viewed");
     }
@@ -304,7 +306,7 @@
     {#if selectedJob?.status === "skipped" && selectedJob.skip_reason}
       <div class="skip-reason">Skipped: {selectedJob.skip_reason}</div>
     {/if}
-    <ReviewContent />
+    <ReviewContent bind:visibleJobId />
     <div class="responses-section">
       <ResponseList />
     </div>

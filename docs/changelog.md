@@ -5,6 +5,13 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Count review reads, committed fixes, and explicit closes in anonymous
+    telemetry.
+
 ## 0.72.0
 
 <small>2026-10-16</small>
