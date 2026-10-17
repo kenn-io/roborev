@@ -91,11 +91,24 @@ func TestCoreActionReviewAcceptedStopsReports(t *testing.T) {
 				}
 				f.update(tea.KeyPressMsg{Code: '0'})
 				require.Equal(t, []string{"review_viewed"}, f.transport.events)
+				if status == "disabled" {
+					f.update(reconnectMsg{err: errors.New("no daemon found")})
+					f.update(tea.KeyPressMsg{Code: '0'})
+					require.Len(t, f.transport.events, 1)
+					f.update(reconnectMsg{endpoint: f.m.endpoint})
+					f.transport.status = "queued"
+					require.Len(t, f.transport.events, 1)
+					f.update(tea.KeyPressMsg{Code: '0'})
+					require.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+					f.update(tea.KeyPressMsg{Code: '0'})
+					assert.Len(t, f.transport.events, 2)
+				}
+				count := len(f.transport.events)
 				time.Sleep(24 * time.Hour)
 				f.update(displayTickMsg{})
-				require.Len(t, f.transport.events, 1)
+				require.Len(t, f.transport.events, count)
 				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Len(t, f.transport.events, 2)
+				assert.Len(t, f.transport.events, count+1)
 			})
 		})
 	}
