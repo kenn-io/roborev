@@ -1237,7 +1237,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Classify:      opts.classify,
 		OnStart:       opts.onAgentStart,
 		OnWarning: func(err error) {
-			if !opts.quiet && !opts.planOnly {
+			if !opts.quiet {
 				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			}
 		},
@@ -1618,7 +1618,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			Classify:      opts.classify,
 			OnStart:       opts.onAgentStart,
 			OnWarning: func(err error) {
-				if !opts.quiet && !opts.planOnly {
+				if !opts.quiet {
 					reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				}
 			},

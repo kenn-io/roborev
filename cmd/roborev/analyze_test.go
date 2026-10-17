@@ -339,7 +339,7 @@ func TestRunFixAgent(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	// Use the built-in test agent
-	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false)
+	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false, nil)
 	require.NoError(t, err, "runFixAgent failed: %v")
 
 	// Test agent should produce output

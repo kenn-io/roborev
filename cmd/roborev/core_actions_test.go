@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,12 +20,13 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "agent failure", "planning failure"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "agent failure", "planning failure", "follow-up warnings"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -42,16 +44,60 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			chdir(t, repo.Dir)
 			job := storage.ReviewJob{ID: 7, GitRef: head, Status: storage.JobStatusDone}
 			review := &storage.Review{ID: 7, JobID: 7, Job: &job, Output: "High: missing cancellation", VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation")}
-			md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReview: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-				writeJSON(w, review)
+			var changes atomic.Int32
+			closeCalls := 0
+			hooks := MockRefineHooks{OnReview: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+				if mode == "follow-up warnings" && changes.Load() == 1 && r.URL.Query().Get("job_id") == "9" {
+					http.Error(w, "review unavailable", http.StatusInternalServerError)
+					return true
+				}
+				if mode == "follow-up warnings" && changes.Load() >= 2 {
+					writeJSON(w, &storage.Review{ID: 9, JobID: 9, Output: "No issues found.", VerdictBool: testutil.ReviewFixtureVerdict("No issues found.")})
+				} else {
+					writeJSON(w, review)
+				}
 				return true
-			}}, nil)
+			}}
+			if mode == "follow-up warnings" {
+				hooks.OnGetJobs = func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+					ref := r.URL.Query().Get("git_ref")
+					if ref == "" || ref == head || strings.Contains(ref, "..") {
+						return false
+					}
+					job := &storage.ReviewJob{ID: 9, GitRef: ref, Status: storage.JobStatusDone}
+					state.mu.Lock()
+					state.jobs[9] = job
+					state.mu.Unlock()
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{*job}})
+					return true
+				}
+				hooks.OnComment = func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					http.Error(w, "comment unavailable", http.StatusInternalServerError)
+					return true
+				}
+				hooks.OnReviewClose = func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					closeCalls++
+					if closeCalls > 3 {
+						return false
+					}
+					http.Error(w, "close unavailable", http.StatusInternalServerError)
+					return true
+				}
+				hooks.OnEnqueue = func(w http.ResponseWriter, _ *http.Request, state *mockRefineState) bool {
+					job := &storage.ReviewJob{ID: 9, Status: storage.JobStatusDone}
+					state.mu.Lock()
+					state.jobs[9] = job
+					state.mu.Unlock()
+					writeJSON(w, job)
+					return true
+				}
+			}
+			md, rec := newCLIUseDaemon(t, hooks, nil)
 			md.State.jobs[7], md.State.reviews[head] = &job, review
 			if mode == "commit failure" {
 				require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".git", "hooks", "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
 			}
 			name := "core-action-refine-test"
-			changes := 0
 			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
 				if mode == "agent failure" || mode == "planning failure" {
 					return "", errors.New("agent unavailable")
@@ -59,12 +105,15 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				if mode == "no change" {
 					return "No changes needed", nil
 				}
-				changes++
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// fixed "+strconv.Itoa(changes)+"\n"), 0o644))
+				change := changes.Add(1)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// fixed "+strconv.Itoa(int(change))+"\n"), 0o644))
 				return "Fixed cancellation", nil
 			}})
 			t.Cleanup(func() { agent.Unregister(name) })
 			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", "2", "--quiet", "--server", md.Server.URL}
+			if mode == "follow-up warnings" {
+				args[6] = "3"
+			}
 			if mode == "planning failure" {
 				args = append(args, "--plan")
 			}
@@ -72,9 +121,24 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				args = append(args, "--from-skill")
 			}
 			result := runCLI(t, args...)
-			if mode == "commit failure" {
+			switch mode {
+			case "follow-up warnings":
+				require.NoError(t, result.err)
+				assert.Contains(t, result.stdout, "All reviews passed!")
+				assert.Equal(t, 2, strings.Count(result.stdout, "Warning: failed to add comment"))
+				assert.Equal(t, 3, strings.Count(result.stdout, "Warning: failed to close review"))
+				assert.Equal(t, 1, strings.Count(result.stdout, "Warning: review failed"))
+				var shown int
+				for _, post := range rec.telemetryPosts() {
+					if strings.Contains(post.body, `"event":"error_shown"`) {
+						shown++
+						assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, post.body)
+					}
+				}
+				assert.Equal(t, 6, shown)
+			case "commit failure":
 				require.ErrorContains(t, result.err, "failed to commit changes")
-			} else {
+			default:
 				require.ErrorContains(t, result.err, "max iterations")
 			}
 			if mode == "no change" || mode == "commit failure" || mode == "agent failure" || mode == "planning failure" {
@@ -98,7 +162,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					fixes = append(fixes, post.body)
 				}
 			}
-			if mode == "terminal" {
+			if mode == "terminal" || mode == "follow-up warnings" {
 				require.Len(t, fixes, 2)
 				for _, body := range fixes {
 					assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, body)
@@ -553,4 +617,35 @@ func TestOutcomeAnalyzeWaitExclusion(t *testing.T) {
 	err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), t.TempDir(), 999, nil, analyzeOptions{})
 	require.ErrorContains(t, err, "analysis failed")
 	assert.Empty(t, rec.telemetryPosts())
+}
+
+func TestOutcomeAnalyzeAgentStart(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "analysis", Status: storage.JobStatusDone}
+	md.State.reviews["analysis"] = &storage.Review{JobID: 99, Output: "High: missing cancellation"}
+	name := "outcome-analyze-failure"
+	agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		return "", errors.New("agent execution failed")
+	}})
+	t.Cleanup(func() { agent.Unregister(name) })
+	for _, tc := range []struct {
+		name, want string
+		count      int
+	}{{"unavailable-fix-agent", "get agent", 0}, {name, "agent execution failed", 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec.reset()
+			cmd, _ := newTestCmd(t)
+			cmd.SetContext(t.Context())
+			err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), repo.Dir, 99, &analyze.AnalysisType{Name: "duplication"}, analyzeOptions{fixAgent: tc.name, quiet: true})
+			require.ErrorContains(t, err, tc.want)
+			posts := rec.telemetryPosts()
+			require.Len(t, posts, tc.count)
+			if tc.count > 0 {
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
+			}
+		})
+	}
 }
