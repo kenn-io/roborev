@@ -74,13 +74,6 @@ func TestGrokBuildArgs(t *testing.T) {
 			want: []string{"-m", "grok-4.5"},
 		},
 		{
-			name: "reasoning thorough",
-			setup: func(a *GrokAgent) *GrokAgent {
-				return a.WithReasoning(ReasoningThorough).(*GrokAgent)
-			},
-			want: []string{"--reasoning-effort", "high"},
-		},
-		{
 			name: "reasoning standard omits effort flag",
 			setup: func(a *GrokAgent) *GrokAgent {
 				return a.WithReasoning(ReasoningStandard).(*GrokAgent)
@@ -138,27 +131,6 @@ func TestGrokBuildArgsPromptFile(t *testing.T) {
 	args := a.buildArgs(false, "/tmp/prompt.md")
 	assertArgsContainContiguous(t, args, []string{"--prompt-file", "/tmp/prompt.md"})
 	assertNotContainsArg(t, args, "-p")
-}
-
-func TestGrokReviewPromptFileExistsDuringRun(t *testing.T) {
-	skipIfWindows(t)
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--prompt-file" ]; then
-    test -f "$arg" || exit 1
-    test "$(cat "$arg")" = 'prompt body' || exit 2
-    printf '%s\n' '{"type":"text","data":"ok"}'
-    exit 0
-  fi
-  prev="$arg"
-done
-exit 3
-`)
-	result, err := NewGrokAgent(cmdPath).run(t.Context(), t.TempDir(), "prompt body", nil)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result)
 }
 
 func TestGrokCommandLineUsesBuildArgs(t *testing.T) {

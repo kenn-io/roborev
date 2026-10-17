@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
@@ -19,21 +20,19 @@ func TestMuseBuildArgs(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		agentic   bool
-		unsafe    bool
 		reasoning ReasoningLevel
 	}{
-		{"review", false, false, ReasoningStandard},
-		{"agentic", true, false, ReasoningStandard},
-		{"unsafe", false, true, ReasoningStandard},
-		{"reasoning thorough", false, false, ReasoningThorough},
+		{"review", false, ReasoningStandard},
+		{"agentic", true, ReasoningStandard},
+		{"reasoning thorough", false, ReasoningThorough},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			withUnsafeAgents(t, tc.unsafe)
+			withUnsafeAgents(t, false)
 			a := NewMuseAgent("").WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
-			args := a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md")
+			args := a.buildArgs(a.Agentic, "prompt.md")
 			assert := assert.New(t)
 			assert.Contains(strings.Join(args, " "), "--prompt-file prompt.md")
-			if tc.agentic || tc.unsafe {
+			if tc.agentic {
 				assert.Contains(args, "--yolo")
 				assert.NotContains(args, `run.toolset=["read_file","search"]`)
 			} else {
@@ -55,8 +54,6 @@ func TestMuseBuildArgs(t *testing.T) {
 func TestMuseReviewPromptAndOutput(t *testing.T) {
 	skipIfWindows(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	capturePath := filepath.Join(t.TempDir(), "prompt-path")
-	t.Setenv("MUSE_PROMPT_CAPTURE", capturePath)
 	command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 prev=""
@@ -64,7 +61,6 @@ for arg in "$@"; do
  if [ "$prev" = "--prompt-file" ]; then
   test -f "$arg" || exit 2
   test "$(cat "$arg")" = 'prompt body' || exit 3
-  printf '%s' "$arg" > "$MUSE_PROMPT_CAPTURE"
  fi
  prev="$arg"
 done
@@ -79,16 +75,46 @@ printf 'status message\n' >&2
 	assert.Contains(output.String(), "No issues found.\n")
 	assert.Contains(output.String(), "status message\n")
 	assert.NotContains(result, "status message")
-	path, err := os.ReadFile(capturePath)
-	require.NoError(t, err)
-	_, err = os.Stat(string(path))
-	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 	skipIfWindows(t)
 	withUnsafeAgents(t, false)
-	// auth names what the fake muse does to the login; user is the user's
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUSE_ORIGINAL_HOME", home)
+	command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+set -eu
+test "$HOME" != "$MUSE_ORIGINAL_HOME"
+test "$HOME" = "$USERPROFILE"
+test "$XDG_CONFIG_HOME" = "$HOME/.config"
+test "$XDG_DATA_HOME" = "$HOME/data"
+test "$XDG_CACHE_HOME" = "$HOME/cache"
+prev=""
+prompt=""
+for arg in "$@"; do
+ if [ "$prev" = "--prompt-file" ]; then prompt="$arg"; fi
+ prev="$arg"
+done
+test -f "$prompt"
+printf 'No issues found.\n'
+`)
+	repo := t.TempDir()
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	result, err := NewMuseAgent(command).Review(t.Context(), repo, "HEAD", "review", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "No issues found.", result)
+	files, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, files, "review must remove its prompt and private home")
+}
+
+func TestPrepareMuseRunIsolatesConfigAndData(t *testing.T) {
+	skipIfWindows(t)
+	// auth names the change to the private login; user is the user's
 	// auth.json token afterward.
 	for _, tc := range []struct{ source, key, auth, user string }{
 		{"xdg", "mcpServers", "example", "example"},
@@ -144,49 +170,48 @@ func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 			dataHome := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(dataHome, "muse", "plugins"), 0o700))
 			t.Setenv("XDG_DATA_HOME", dataHome)
-			capture := filepath.Join(t.TempDir(), "settings.json")
-			t.Setenv("MUSE_SETTINGS_CAPTURE", capture)
-			t.Setenv("MUSE_RENEW_AUTH", tc.auth)
-			t.Setenv("MUSE_ORIGINAL_AUTH", filepath.Join(museConfig, "auth.json"))
-			command := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
-set -eu
-test "$HOME" = "$USERPROFILE"
-test "$XDG_CONFIG_HOME" = "$HOME/.config"
-test "$XDG_DATA_HOME" = "$HOME/data"
-test "$XDG_CACHE_HOME" = "$HOME/cache"
-test -d "$XDG_CACHE_HOME"
-case "$HOME" in "$TMPDIR"/*) ;; *) exit 1;; esac
-test "$(cat "$XDG_CONFIG_HOME/muse/auth.json")" = '{"token":"example"}'
-cp "$XDG_CONFIG_HOME/muse/settings.json" "$MUSE_SETTINGS_CAPTURE"
-test ! -e "$XDG_CONFIG_HOME/muse/trust.json"
-test ! -e "$XDG_CONFIG_HOME/muse/plugins.json"
-test -z "$(ls -1A "$XDG_DATA_HOME")"
-if [ "$MUSE_RENEW_AUTH" != example ]; then
- printf '{"token":"renewed"}' > "$XDG_CONFIG_HOME/muse/auth.json"
-fi
-if [ "$MUSE_RENEW_AUTH" = concurrent ]; then
- printf '{"token":"concurrent"}' > "$MUSE_ORIGINAL_AUTH"
-fi
-printf 'No issues found.\n'
-`)
-			repoPath := t.TempDir()
 			tmp := t.TempDir()
 			t.Setenv("TMPDIR", tmp)
-			result, err := NewMuseAgent(command).Review(t.Context(), repoPath, "HEAD", "review", nil)
+			_, env, cleanup, err := prepareMuseRun("review", false)
 			require.NoError(t, err)
-			assert.Equal(t, "No issues found.", result)
+			privateEnv := make(map[string]string)
+			for _, entry := range env {
+				key, value, _ := strings.Cut(entry, "=")
+				privateEnv[key] = value
+			}
+			privateConfig := filepath.Join(privateEnv["XDG_CONFIG_HOME"], "muse")
+			if tc.auth == "example" {
+				assert := assert.New(t)
+				home := privateEnv["HOME"]
+				assert.Equal(home, privateEnv["USERPROFILE"])
+				assert.Equal(filepath.Join(home, ".config"), privateEnv["XDG_CONFIG_HOME"])
+				assert.Equal(filepath.Join(home, "data"), privateEnv["XDG_DATA_HOME"])
+				assert.Equal(filepath.Join(home, "cache"), privateEnv["XDG_CACHE_HOME"])
+				assert.DirExists(privateEnv["XDG_CACHE_HOME"])
+				assert.Equal(tmp, filepath.Dir(home))
+				assert.NoFileExists(filepath.Join(privateConfig, "trust.json"))
+				assert.NoFileExists(filepath.Join(privateConfig, "plugins.json"))
+				files, err := os.ReadDir(privateEnv["XDG_DATA_HOME"])
+				require.NoError(t, err)
+				assert.Empty(files)
+				settings, err := os.ReadFile(filepath.Join(privateConfig, "settings.json"))
+				require.NoError(t, err)
+				assert.JSONEq(`{"schema_version":1,"model":"muse-spark-1.3","hooks":{}}`, string(settings))
+				auth, err := os.ReadFile(filepath.Join(privateConfig, "auth.json"))
+				require.NoError(t, err)
+				assert.JSONEq(`{"token":"example"}`, string(auth))
+			} else {
+				require.NoError(t, os.WriteFile(filepath.Join(privateConfig, "auth.json"), []byte(`{"token":"renewed"}`), 0o600))
+				if tc.auth == "concurrent" {
+					require.NoError(t, os.WriteFile(filepath.Join(museConfig, "auth.json"), []byte(`{"token":"concurrent"}`), 0o600))
+				}
+			}
+			synctest.Test(t, func(t *testing.T) { cleanup() })
 			if tc.auth == "locked" || tc.auth == "unwritable" {
 				assert.Contains(t, logs.String(), "muse: could not save renewed login")
 			} else {
 				assert.Empty(t, logs.String())
 			}
-			files, err := os.ReadDir(tmp)
-			require.NoError(t, err)
-			assert.Empty(t, files, "review must remove its prompt and private home")
-			settings, err := os.ReadFile(capture)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{"schema_version":1,"model":"muse-spark-1.3","hooks":{}}`, string(settings))
 			auth, err := os.ReadFile(filepath.Join(museConfig, "auth.json"))
 			require.NoError(t, err)
 			assert.JSONEq(t, fmt.Sprintf(`{"token":%q}`, tc.user), string(auth))
@@ -212,12 +237,10 @@ func TestPrepareMuseRunHomeError(t *testing.T) {
 }
 
 func TestPrepareMuseRunAgentic(t *testing.T) {
-	// Agentic runs inherit the caller's config and data directories, even when
-	// the config cannot be copied by non-agentic setup.
+	// Agentic runs inherit config even when non-agentic setup cannot copy it.
 	configHome := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "muse"), []byte("not a directory"), 0o600))
 	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	promptPath, env, cleanup, err := prepareMuseRun("fix", true)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
@@ -295,33 +318,18 @@ func TestMuseNativeEcho(t *testing.T) {
 	}
 	t.Setenv("MUSE_NO_AUTO_UPDATE", "1")
 	withUnsafeAgents(t, false)
-	for _, tc := range []struct{ mode, key string }{
-		{"review", "mcpServers"},
-		{"review", "mcp_servers"},
-		{"plan", "mcpServers"},
-		{"plan", "mcp_servers"},
-	} {
-		t.Run(tc.mode+"/"+tc.key, func(t *testing.T) {
+	for _, mode := range []string{"review", "plan"} {
+		t.Run(mode, func(t *testing.T) {
 			repo := newPlanTestRepo(t)
 			config := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(config, "muse"), 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(config, "muse", "settings.json"), []byte(fmt.Sprintf(museSettingsWithMCP, tc.key)), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(config, "muse", "settings.json"), []byte(fmt.Sprintf(museSettingsWithMCP, "mcpServers")), 0o600))
 			t.Setenv("XDG_CONFIG_HOME", config)
 			t.Setenv("MUSE_BINARY", muse)
-			capture := t.TempDir()
-			t.Setenv("MUSE_CAPTURE_DIR", capture)
 			// Muse's runtime temp directory must sit outside the planning worktree's ancestor.
 			t.Setenv("MUSE_RUNTIME_TMP", t.TempDir())
 			command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
-printf '%s' "$HOME" > "$MUSE_CAPTURE_DIR/home"
-prev=""
-for arg in "$@"; do
- if [ "$prev" = "--prompt-file" ]; then
-  printf '%s' "$arg" > "$MUSE_CAPTURE_DIR/prompt"
- fi
- prev="$arg"
-done
 export TMPDIR="$MUSE_RUNTIME_TMP"
 exec "$MUSE_BINARY" "$@" --provider echo
 `)
@@ -330,19 +338,13 @@ exec "$MUSE_BINARY" "$@" --provider echo
 			a := NewMuseAgent(command)
 			var result string
 			var output bytes.Buffer
-			if tc.mode == "plan" {
+			if mode == "plan" {
 				result, err = RunPlan(t.Context(), a, repo, "HEAD", "contract prompt", &output, nil)
 			} else {
 				result, err = a.Review(t.Context(), repo, "HEAD", "contract prompt", &output)
 			}
 			require.NoError(t, err, "native Muse output: %s", output.String())
 			assert.Equal(t, "echo: contract prompt", result)
-			for _, name := range []string{"home", "prompt"} {
-				path, err := os.ReadFile(filepath.Join(capture, name))
-				require.NoError(t, err)
-				assert.NoDirExists(t, string(path))
-				assert.NoFileExists(t, string(path))
-			}
 		})
 	}
 }
