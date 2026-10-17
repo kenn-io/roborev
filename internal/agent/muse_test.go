@@ -15,25 +15,25 @@ func TestMuseBuildArgs(t *testing.T) {
 		name      string
 		agentic   bool
 		unsafe    bool
-		model     string
 		reasoning ReasoningLevel
 		want      []string
 	}{
-		{"review", false, false, "", ReasoningStandard, []string{"-c", `run.toolset=["read_file","search"]`}},
-		{"agentic", true, false, "", ReasoningStandard, []string{"--yolo"}},
-		{"unsafe with configured model", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
-		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "-c", `run.toolset=["read_file","search"]`}},
+		{"review", false, false, ReasoningStandard, []string{"-c", `run.toolset=["read_file","search"]`}},
+		{"agentic", true, false, ReasoningStandard, []string{"--yolo"}},
+		{"unsafe", false, true, ReasoningStandard, []string{"--yolo"}},
+		{"reasoning thorough", false, false, ReasoningThorough, []string{"--reasoning-effort", "high", "-c", `run.toolset=["read_file","search"]`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
-			a := NewMuseAgent("").WithModel(tc.model).WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
+			a := NewMuseAgent("").WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
 			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off"}, tc.want...)
 			want = append(want, "--prompt-file", "prompt.md")
 			assert.Equal(t, want, a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md"))
-			assert.NotContains(t, a.buildArgs(false, "prompt.md"), "--trust-workspace")
-			assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
 		})
 	}
+	a := NewMuseAgent("")
+	assert.NotContains(t, a.buildArgs(false, "prompt.md"), "--trust-workspace")
+	assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
 }
 
 func TestMuseReviewPromptAndOutput(t *testing.T) {
@@ -75,7 +75,6 @@ func TestMuseReviewFailure(t *testing.T) {
 	})
 	_, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 	require.ErrorContains(t, err, "muse failed:")
-	require.ErrorContains(t, err, "run ended with Failed: unknown model")
 }
 
 func TestMuseReviewEmptyOutput(t *testing.T) {

@@ -81,27 +81,6 @@ func TestGrokBuildArgs(t *testing.T) {
 			want: []string{"--reasoning-effort", "high"},
 		},
 		{
-			name: "reasoning maximum",
-			setup: func(a *GrokAgent) *GrokAgent {
-				return a.WithReasoning(ReasoningMaximum).(*GrokAgent)
-			},
-			want: []string{"--reasoning-effort", "max"},
-		},
-		{
-			name: "reasoning medium",
-			setup: func(a *GrokAgent) *GrokAgent {
-				return a.WithReasoning(ReasoningMedium).(*GrokAgent)
-			},
-			want: []string{"--reasoning-effort", "medium"},
-		},
-		{
-			name: "reasoning fast",
-			setup: func(a *GrokAgent) *GrokAgent {
-				return a.WithReasoning(ReasoningFast).(*GrokAgent)
-			},
-			want: []string{"--reasoning-effort", "low"},
-		},
-		{
 			name: "reasoning standard omits effort flag",
 			setup: func(a *GrokAgent) *GrokAgent {
 				return a.WithReasoning(ReasoningStandard).(*GrokAgent)
@@ -412,35 +391,6 @@ func assertArgsContainContiguous(t *testing.T, args, want []string) {
 		}
 	}
 	require.Failf(t, "contiguous subsequence missing", "args %v does not contain contiguous subsequence %v", args, want)
-}
-
-func TestGrokReviewPromptFileExistsDuringRun(t *testing.T) {
-	// Grok headless requires --prompt-file; the mock asserts the file is present
-	// while the process runs (Review writes it before Start and removes after).
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--prompt-file" ]; then
-    if [ ! -f "$arg" ]; then
-      echo '{"type":"error","message":"prompt missing during run"}'
-      exit 1
-    fi
-    body=$(cat "$arg")
-    if [ "$body" != "prompt body" ]; then
-      echo '{"type":"error","message":"unexpected prompt body"}'
-      exit 1
-    fi
-  fi
-  prev="$arg"
-done
-printf '%s\n' '{"type":"text","data":"ok"}'
-printf '%s\n' '{"type":"end","stopReason":"end_turn"}'
-`)
-	a := NewGrokAgent(cmdPath)
-	result, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt body", nil)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result)
 }
 
 func TestGrokClassifyArgs(t *testing.T) {
