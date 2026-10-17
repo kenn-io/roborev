@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -96,6 +97,7 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 		}, nil); err != nil {
 			return fmt.Errorf("rebuttal job %d recorded but close failed: %w", job.ID, err)
 		}
+		reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewClosed)
 	}
 	cmd.Printf("%s: %s\n", assessment.Outcome, assessment.Explanation)
 	return nil

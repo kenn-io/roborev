@@ -1225,3 +1225,11 @@ func TestBrowserSessionOpenAPIDocumentsJSONErrors(t *testing.T) {
 	assert.Contains(t, content, "application/json")
 	assert.NotContains(t, content, "application/problem+json")
 }
+
+func TestProjectBrowserReviewJobReadable(t *testing.T) {
+	body, err := json.Marshal(projectBrowserReviewJob(storage.ReviewJob{JobType: storage.JobTypeReview}, BrowserPrincipal{}))
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(body, &fields))
+	assert.Equal(t, true, fields["readable"])
+}

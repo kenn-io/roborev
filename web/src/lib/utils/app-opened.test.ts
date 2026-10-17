@@ -421,21 +421,44 @@ describe("setupAppOpenedReporting", () => {
     ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
   });
 
-  test("bounds screen requests while preserving app-open transport", async () => {
-    vi.useFakeTimers();
-    fetchMock.mockImplementation(
-      (request) =>
-        new Promise((_resolve, reject) =>
-          request.signal.addEventListener("abort", () =>
-            reject(new DOMException("aborted", "AbortError")),
+  test.each(["network error", "settled response"])(
+    "allows successive review captures after %s",
+    async (outcome) => {
+      if (outcome === "network error")
+        fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+      appOpened.reportCoreAction("review_viewed");
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(await fetchMock.mock.calls[1]![0].json()).toEqual({
+        event: "review_viewed",
+        properties: { surface: "web" },
+      });
+    },
+  );
+
+  test.each(["screen", "core action"])(
+    "bounds %s requests while preserving app-open transport",
+    async (kind) => {
+      vi.useFakeTimers();
+      fetchMock.mockImplementation(
+        (request) =>
+          new Promise((_resolve, reject) =>
+            request.signal.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            ),
           ),
-        ),
-    );
-    cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
-    appOpened.reportScreenViewed("reviews");
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
-    expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
-  });
+      );
+      cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
+      if (kind === "screen") appOpened.reportScreenViewed("reviews");
+      else appOpened.reportCoreAction("review_viewed");
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
+      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
+    },
+  );
 });

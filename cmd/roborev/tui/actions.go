@@ -121,17 +121,17 @@ func (m model) postClosed(jobID int64, newState bool, notFoundMsg string) error 
 func (m model) closeReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postClosed(jobID, newState, "review not found")
-		return closedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
+		return closedResultMsg{fromKey: true, reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 
 // closeReviewInBackground updates closed status by job ID.
 // Used for optimistic updates from queue view - UI already updated, this syncs to server.
 // On error, returns closedResultMsg with oldState for rollback.
-func (m model) closeReviewInBackground(jobID int64, newState, oldState bool, seq uint64, restoreSelection bool) tea.Cmd {
+func (m model) closeReviewInBackground(msg closedResultMsg) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postClosed(jobID, newState, "no review for this job")
-		return closedResultMsg{jobID: jobID, restoreSelection: restoreSelection, oldState: oldState, newState: newState, seq: seq, err: err}
+		msg.err = m.postClosed(msg.jobID, msg.newState, "no review for this job")
+		return msg
 	}
 }
 

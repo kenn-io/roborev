@@ -83,6 +83,8 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		EnqueueSkippedResponse{},
 	)
 	jobSchema := jsonSchema(api, storage.ReviewJob{})
+	// Browser projections supply this presentation field; loopback jobs omit it.
+	api.OpenAPI().Components.Schemas.Map()["ReviewJob"].Properties["readable"] = &huma.Schema{Type: "boolean"}
 	huma.Post(api, "/api/goal-review", s.humaGoalGate, func(o *huma.Operation) {
 		o.OperationID = "goal-review"
 		o.Summary = "Review Superpowers intent and a proposed Kata graph edit"

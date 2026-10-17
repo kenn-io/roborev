@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1691,6 +1693,61 @@ func TestRefineFlagValidation(t *testing.T) {
 					strings.Contains(msg, "requires --")
 				assert.False(t, isValidationErr)
 			}
+		})
+	}
+}
+
+func TestCoreActionRefineCommit(t *testing.T) {
+	for _, mode := range []string{"terminal", "commit failure"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			originalUnsafe := agent.AllowUnsafeAgents()
+			originalDelay := postCommitWaitDelay
+			postCommitWaitDelay = time.Millisecond
+			t.Cleanup(func() {
+				agent.SetAllowUnsafeAgents(originalUnsafe)
+				postCommitWaitDelay = originalDelay
+			})
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			base := repo.HeadSHA()
+			head := repo.CommitFile("next.go", "package main\n", "Add source")
+			chdir(t, repo.Dir)
+			job := storage.ReviewJob{ID: 7, GitRef: head, Status: storage.JobStatusDone}
+			review := &storage.Review{ID: 7, JobID: 7, Job: &job, Output: "High: missing cancellation", VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation")}
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReview: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+				writeJSON(w, review)
+				return true
+			}}, nil)
+			md.State.jobs[7], md.State.reviews[head] = &job, review
+			if mode == "commit failure" {
+				require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".git", "hooks", "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
+			}
+			name := "core-action-refine-test"
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// fixed\n"), 0o644))
+				return "Fixed cancellation", nil
+			}})
+			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", "1", "--quiet", "--server", md.Server.URL}
+			result := runCLI(t, args...)
+			if mode == "commit failure" {
+				require.ErrorContains(t, result.err, "failed to commit changes")
+			} else {
+				require.ErrorContains(t, result.err, "max iterations")
+			}
+			expected := 0
+			if mode == "terminal" {
+				expected = 1
+			}
+			assert.Equal(t, strconv.Itoa(expected), repo.Run("rev-list", "--count", head+"..HEAD"))
+			var fixes []string
+			for _, post := range rec.telemetryPosts() {
+				if strings.Contains(post.body, `"finding_fixed"`) {
+					fixes = append(fixes, post.body)
+				}
+			}
+			require.Len(t, fixes, expected)
 		})
 	}
 }

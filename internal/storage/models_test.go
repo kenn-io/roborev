@@ -307,3 +307,23 @@ func TestIsCIReview(t *testing.T) {
 		})
 	}
 }
+
+func TestIsReadableReview(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		job  storage.ReviewJob
+		want bool
+	}{
+		{name: "review", job: storage.ReviewJob{JobType: storage.JobTypeReview}, want: true},
+		{name: "compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact}, want: true},
+		{name: "synthesis", job: storage.ReviewJob{JobType: storage.JobTypeSynthesis}, want: true},
+		{name: "legacy commit", job: storage.ReviewJob{CommitID: new(int64(1))}, want: true},
+		{name: "fix", job: storage.ReviewJob{JobType: storage.JobTypeFix}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.job.IsReadableReview())
+		})
+	}
+}

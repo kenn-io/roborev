@@ -49,6 +49,7 @@ export interface ReviewJob {
   prompt?: string;
   prompt_prebuilt: boolean;
   provider?: string;
+  readable?: boolean;
   reasoning?: string;
   repo_id: number;
   repo_name?: string;

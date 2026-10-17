@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,8 @@ func clearCLIUseState() {
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
 	cliUseState.Store(nil)
+	cliUseEndpoint.Store(nil)
+	cliActions = sync.WaitGroup{}
 	cliUseAgent = false
 }
 
@@ -40,6 +43,7 @@ func resetCLIUse(t *testing.T) {
 	t.Helper()
 	origEnabled, origTimeout, origPost := cliTelemetryEnabled, cliUseTimeout, cliUsePost
 	origAgentPost := cliAgentPost
+	origTerminal := cliOutputIsTerminal
 	origServer, origParsed, origVerbose, origFromSkill := serverAddr, parsedServerEndpoint, verbose, fromSkill
 	clearCLIUseState()
 	cliTelemetryEnabled = func() bool { return true }
@@ -48,6 +52,7 @@ func resetCLIUse(t *testing.T) {
 		clearCLIUseState()
 		cliTelemetryEnabled, cliUseTimeout, cliUsePost = origEnabled, origTimeout, origPost
 		cliAgentPost = origAgentPost
+		cliOutputIsTerminal = origTerminal
 		serverAddr, parsedServerEndpoint, verbose, fromSkill = origServer, origParsed, origVerbose, origFromSkill
 	})
 }
@@ -129,6 +134,7 @@ func newCLIUseDaemon(t *testing.T, hooks MockRefineHooks, onTelemetry http.Handl
 		rec.note(req)
 		if req.URL.Path == daemon.TelemetryEventsPath || req.URL.Path == daemon.TelemetryAgentCallPath {
 			body, _ := io.ReadAll(req.Body)
+			req.Body = io.NopCloser(bytes.NewReader(body))
 			rec.mu.Lock()
 			rec.telemetry = append(rec.telemetry, recordedTelemetry{
 				method: req.Method, contentType: req.Header.Get("Content-Type"), body: string(body),
@@ -719,6 +725,8 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 			assert.Equal(t, start.Add(time.Second), deadline)
 			// The context belongs to this bubble; cleanup's waitCLIUse runs outside it.
 			cliUseState.Store(nil)
+			cliUseEndpoint.Store(nil)
+			cliActions = sync.WaitGroup{}
 		})
 	})
 
@@ -733,6 +741,8 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 
 			assert.Equal(t, time.Duration(0), time.Since(start))
 			cliUseState.Store(nil)
+			cliUseEndpoint.Store(nil)
+			cliActions = sync.WaitGroup{}
 		})
 	})
 }
@@ -760,4 +770,182 @@ func TestMCPActivity(t *testing.T) {
 		assert.Zero(t, calls)
 		assert.Equal(t, [5]int32{}, counts.snapshot())
 	})
+}
+
+func TestCoreActionCloseOutputStream(t *testing.T) {
+	resetCLIUse(t)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	ep := mustParseEndpoint(t, md.Server.URL)
+	cliUseEndpoint.Store(&ep)
+	stdout, stderr := captureStdoutStderr(t, func() {
+		cliOutputIsTerminal = func(out io.Writer) bool { return out == os.Stdout }
+		cmd := closeCmd()
+		cmd.SetOut(io.Discard)
+		cmd.SetContext(t.Context())
+		cmd.SetArgs([]string{"1"})
+		require.NoError(t, cmd.Execute())
+	})
+	assert.Equal(t, "Job 1 closed\n", stdout)
+	assert.Empty(t, stderr)
+	waitCLIUse()
+	posts := rec.telemetryPosts()
+	require.Len(t, posts, 1)
+	assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, posts[0].body)
+}
+
+func TestCoreActionDefaultOutputStreams(t *testing.T) {
+	for _, stdoutTerminal := range []bool{false, true} {
+		t.Run(strconv.FormatBool(stdoutTerminal), func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			job := &storage.ReviewJob{ID: 1, JobType: storage.JobTypeCompact}
+			md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: "Consolidated findings", VerdictBool: new(1), Job: job}
+			ep := mustParseEndpoint(t, md.Server.URL)
+			cliUseEndpoint.Store(&ep)
+			stdout, stderr := captureStdoutStderr(t, func() {
+				cliOutputIsTerminal = func(out io.Writer) bool {
+					return stdoutTerminal && out == os.Stdout || !stdoutTerminal && out == os.Stderr
+				}
+				cmd := &cobra.Command{}
+				require.Nil(t, cmd.Context())
+				require.NoError(t, showReview(cmd, ep, 1, false))
+				waitCLIUse()
+			})
+			assert.Empty(t, stdout)
+			assert.Contains(t, stderr, "Consolidated findings")
+			if stdoutTerminal {
+				assert.Empty(t, rec.telemetryPosts())
+			} else {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.Contains(t, rec.telemetryPosts()[0].body, `"review_viewed"`)
+			}
+		})
+	}
+}
+
+func TestCoreActionRemoteLocalFallback(t *testing.T) {
+	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
+			fromSkill = mode == "skill"
+			original := getAnyRunningDaemonForStart
+			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			calls := 0
+			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+				calls++
+				if mode == "timeout" {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				if mode == "missing" {
+					return nil, os.ErrNotExist
+				}
+				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+			}
+			cmd, out := newTestCmd(t)
+			cliOutputIsTerminal = func(w io.Writer) bool { return mode != "redirected" && w == out }
+			if mode == "latest observed" {
+				cliUsePost = func(context.Context, *http.Client, string, string) {}
+				second, secondPosts := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+				for _, server := range []string{md.Server.URL, second.Server.URL} {
+					observeCLIUse(mustParseEndpoint(t, server), httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+				}
+				waitCLIUse()
+				assert.Empty(t, rec.telemetryPosts())
+				md.Server.Close()
+				rec = secondPosts
+			}
+			reportCLIActionOutput(cmd.OutOrStdout(), "review_viewed")
+			waitCLIUse()
+			if mode == "running" || mode == "latest observed" {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
+			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" {
+				assert.Zero(t, calls)
+			} else {
+				assert.Equal(t, 1, calls)
+			}
+		})
+	}
+}
+
+func TestCoreActionCompactWait(t *testing.T) {
+	for _, mode := range []string{"terminal", "quiet"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone, JobType: storage.JobTypeCompact}
+			output := "Consolidated findings"
+			md.State.jobs[1] = job
+			md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: output, Job: job}
+			patchServerAddr(t, md.Server.URL)
+			ep := mustParseEndpoint(t, md.Server.URL)
+			cliUseEndpoint.Store(&ep)
+			var out bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			cmd.SetOut(&out)
+			cliOutputIsTerminal = func(w io.Writer) bool { return w == nil || w == &out }
+			require.NoError(t, waitForConsolidation(t.Context(), cmd, 1, compactOptions{quiet: mode == "quiet"}))
+			waitCLIUse()
+			if mode == "quiet" {
+				assert.Empty(t, out.String())
+			} else {
+				assert.Equal(t, output, out.String())
+			}
+			if mode == "terminal" {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
+		})
+	}
+}
+
+func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
+	resetCLIUse(t)
+	bodies := make(chan string, 1)
+	returned := make(chan struct{})
+	releaseResponse := sync.OnceFunc(func() { close(returned) })
+	defer releaseResponse()
+	var accepted atomic.Int32
+	daemon.SetClientResponseObserver(func(_ daemon.DaemonEndpoint, r *http.Request, resp *http.Response) {
+		if r.URL.Path == daemon.TelemetryEventsPath && resp.StatusCode == http.StatusAccepted {
+			accepted.Add(1)
+		}
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies <- string(body)
+		// Hold the response until the command context has been canceled on return.
+		<-returned
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	ep := mustParseEndpoint(t, server.URL)
+	cliUseEndpoint.Store(&ep)
+	var out bytes.Buffer
+	cliOutputIsTerminal = func(w io.Writer) bool { return w == &out }
+	cmd := &cobra.Command{Run: func(cmd *cobra.Command, _ []string) {
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+		cmd.SetContext(ctx)
+		reportCLIActionOutput(cmd.OutOrStdout(), "finding_fixed")
+	}}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&out)
+	require.NoError(t, cmd.Execute())
+	require.ErrorIs(t, cmd.Context().Err(), context.Canceled)
+	releaseResponse()
+	waitCLIUse()
+	assert.Equal(t, int32(1), accepted.Load())
+	require.Len(t, bodies, 1)
+	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 }

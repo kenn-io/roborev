@@ -259,7 +259,7 @@ func eligibleSearchReview(job ReviewJob, source SearchReviewSource) bool {
 	if !job.HasViewableOutput() || (source.Output == "" && len(source.StructuredOutput) == 0) {
 		return false
 	}
-	return job.IsReviewJob() || job.IsSynthesisJob() || job.JobType == JobTypeCompact
+	return job.IsReadableReview()
 }
 
 func (db *DB) attachSearchResponses(source *SearchReviewSource, job ReviewJob) error {

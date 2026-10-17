@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -143,6 +144,8 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	reviewInputJobID     int64 // opening input survives only for the matching job, view, fetch, and UTC day
+	reviewReadSent       bool
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1139,6 +1142,12 @@ func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	today := time.Now().UTC().Format(time.DateOnly)
+	if m.screenDay != today {
+		m.screenDay, m.screensSent = today, nil
+		m.reviewReadSent, m.reviewInputJobID = false, 0
+	}
+
 	// Signal that the event loop is running (once). The control
 	// listener waits on this before accepting connections.
 	if m.ready != nil {
@@ -1149,6 +1158,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	inputAttempt := m.jobAttemptGen[m.selectedJobID]
 	var result tea.Model
 	var cmd tea.Cmd
 
@@ -1173,10 +1183,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result = m
 		}
 	case tea.KeyMsg:
+		if m.currentView == viewReview || m.splitActive() {
+			m.reviewInputJobID = m.selectedJobID
+		}
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
 		if !m.mouseEnabled {
 			return m, nil
+		}
+		if m.currentView == viewReview || m.splitActive() {
+			m.reviewInputJobID = m.selectedJobID
 		}
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
@@ -1280,7 +1296,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result = m
 	case screenDeliveryMsg:
 		if msg.day == m.screenDay && msg.err != nil {
-			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+			if msg.screen == "" {
+				m.reviewReadSent = false
+			} else {
+				m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+			}
 		}
 		result = m
 	case controlSocketReadyMsg:
@@ -1313,11 +1333,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
 		}
-		today := time.Now().UTC().Format(time.DateOnly)
+
 		_, key := msg.(tea.KeyMsg)
 		_, mouse := msg.(tea.MouseMsg)
-		if rm.screenDay != today {
-			rm.screenDay, rm.screensSent = today, nil
+		reviewVisible := rm.currentView == viewReview || rm.splitActive()
+		reviewPending := rm.pendingReviewOpenJobID != 0 && rm.pendingReviewOpenJobID == rm.selectedJobID && rm.pendingReviewOpenOrigin == rm.currentView
+		if (key || mouse) && (rm.reviewInputJobID != 0 || reviewPending && rm.pendingReviewOpenSeq != m.pendingReviewOpenSeq) {
+			rm.reviewInputJobID = rm.selectedJobID
+		}
+		if !reviewVisible && !reviewPending || rm.reviewInputJobID != rm.selectedJobID || rm.selectedJobID == m.selectedJobID && rm.jobAttemptGen[rm.selectedJobID] != inputAttempt {
+			rm.reviewInputJobID = 0
+		}
+		quit := false
+		if input, ok := msg.(tea.KeyMsg); ok && (input.String() == "ctrl+c" || input.String() == "ctrl+d") {
+			quit = true
+			rm.reviewInputJobID = 0
+		}
+		read := !quit && (key || mouse) && (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.ID != 0 && m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
+		if rm.reviewInputJobID != 0 && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 {
+			read = read || rm.currentReview.Job != nil && rm.currentReview.Job.IsReadableReview()
+			rm.reviewInputJobID = 0
+		}
+		if read && !rm.reviewReadSent {
+			rm.reviewReadSent = true
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {

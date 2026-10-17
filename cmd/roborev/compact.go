@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -285,9 +286,13 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 		output = cmd.OutOrStdout()
 	}
 
-	_, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
+	review, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
 	if err != nil {
 		return fmt.Errorf("verification failed: %w", err)
+	}
+
+	if output != nil && review.Output != "" && review.Job != nil && review.Job.IsReadableReview() {
+		reportCLIActionOutput(output, telemetry.EventReviewViewed)
 	}
 
 	return nil

@@ -497,10 +497,16 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 `column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
-Daily screen claims live in `telemetry-daily.json` beside the daemon database,
-wherever `--db` points, with a `telemetry-daily.json.lock` sidecar. Deleting the
-file resets its claims; existing SQLite claims remain effective through their
-recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+`review_viewed` counts a rendered review read once per installation, surface,
+and UTC day. It carries `surface=web|tui|cli`; the TUI requires key or mouse
+input before counting loaded content. `finding_fixed` counts each committed fix
+with `surface=tui|cli`, and `review_closed` counts each successful explicit close
+with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
+and `--from-skill`. Reopens and automatic closes stay silent.
+Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
+daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
+sidecar. Deleting the file resets its claims; existing SQLite claims remain
+effective through their recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
 for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The TUI retries a failed screen report on the next key or mouse input while

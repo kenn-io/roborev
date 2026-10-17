@@ -19,6 +19,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -241,7 +242,13 @@ Examples:
 					}
 				}
 				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-				return json.MarshalEncode(enc, &out)
+				if err := json.MarshalEncode(enc, &out); err != nil {
+					return err
+				}
+				if !showPrompt && review.Job != nil && review.Job.IsReadableReview() {
+					reportCLIActionOutput(cmd.OutOrStdout(), telemetry.EventReviewViewed)
+				}
+				return nil
 			}
 
 			// Avoid redundant "job X (job X, ...)" output
@@ -286,6 +293,9 @@ Examples:
 				}
 			}
 
+			if !showPrompt && review.Job != nil && review.Job.IsReadableReview() {
+				reportCLIActionOutput(os.Stdout, telemetry.EventReviewViewed)
+			}
 			return nil
 		},
 	}

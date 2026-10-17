@@ -4,15 +4,20 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -112,38 +117,70 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
-	// This tests the full workflow with mocked daemon and test agent
-	repo := createTestRepo(t, map[string]string{
-		"main.go": "package main\n",
-	})
-
-	ts, state := newMockServer(t, MockServerOpts{
-		JobIDStart:     99,
-		ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
-		DoneAfterPolls: 2,
-	})
-	patchServerAddr(t, ts.URL)
-
-	cmd, output := newTestCmd(t)
-
-	analysisType := analyze.GetType("refactor")
-	opts := analyzeOptions{
-		agentName: "test",
-		fix:       true,
-		fixAgent:  "test",
-		reasoning: "fast",
+	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
+		t.Run(outcome, func(t *testing.T) {
+			committed := outcome != "no change"
+			quiet := outcome == "quiet commit"
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(w io.Writer) bool {
+				return w == os.Stderr
+			}
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			before := repo.HeadSHA()
+			ts, state := newMockServer(t, MockServerOpts{
+				JobIDStart:     99,
+				ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
+				DoneAfterPolls: 2,
+			})
+			bodies := make(chan string, 1)
+			handler := ts.Config.Handler
+			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == daemon.TelemetryEventsPath {
+					body, _ := io.ReadAll(r.Body)
+					bodies <- string(body)
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				handler.ServeHTTP(w, r)
+			})
+			patchServerAddr(t, ts.URL)
+			ep := mustParseEndpoint(t, ts.URL)
+			cliUseEndpoint.Store(&ep)
+			name := "analyze-fix-commit-test"
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				if committed {
+					repo.CommitFile("main.go", "package main\n// fixed\n", "Fix duplicate code")
+				}
+				return "Done", nil
+			}})
+			cmd := &cobra.Command{}
+			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast", quiet: quiet}
+			var err error
+			output, confirmation := captureStdoutStderr(t, func() {
+				err = runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
+			})
+			require.NoError(t, err)
+			if committed {
+				assert.NotEqual(t, before, repo.HeadSHA())
+			}
+			assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
+			assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
+			assert.Equal(t, int32(1), atomic.LoadInt32(&state.CloseCount))
+			if quiet {
+				assert.Empty(t, output)
+				assert.Empty(t, confirmation)
+			} else {
+				assert.Contains(t, confirmation, "CODE SMELLS")
+				assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), confirmation)
+			}
+			waitCLIUse()
+			if outcome == "commit" {
+				require.Len(t, bodies, 1)
+				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
+			} else {
+				assert.Empty(t, bodies)
+			}
+		})
 	}
-
-	err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analysisType, opts)
-	require.NoError(t, err, "runAnalyzeAndFix failed: %v")
-
-	// Verify the workflow was executed
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
-	assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
-	assert.NotZero(t, atomic.LoadInt32(&state.CloseCount))
-
-	// Verify output contains analysis result
-	outputStr := output.String()
-	assert.Contains(t, outputStr, "CODE SMELLS")
-	assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), outputStr)
 }

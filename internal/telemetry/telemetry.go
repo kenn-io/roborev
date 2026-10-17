@@ -29,6 +29,9 @@ const (
 	EventAppOpened          = "app_opened"
 	EventSessionEnded       = "session_ended"
 	EventScreenViewed       = "screen_viewed"
+	EventReviewViewed       = "review_viewed"
+	EventFindingFixed       = "finding_fixed"
+	EventReviewClosed       = "review_closed"
 	EventAgentActive        = "agent_active"
 	EventAgentCallCount     = "agent_call_count"
 	PropertyCallCountBucket = "call_count_bucket"
@@ -81,6 +84,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, err
 	}
 
+	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
 	return posthog.NewReporter(posthog.Options{
 		APIKey:      postHogAPIKey,
 		Endpoint:    opts.Endpoint,
@@ -90,7 +94,10 @@ func NewReporter(opts Options) (*Reporter, error) {
 		InstalledAt: installedAt,
 		Version:     opts.Version,
 		Source:      "daemon",
-	}, append(allowedEventOptions(), posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, posthog.NewDailyClaims(opts.DailyClaimsPath)))...)
+	}, append(allowedEventOptions(),
+		posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, claims),
+		posthog.WithDailyEvent(EventReviewViewed, PropertySurface, claims),
+	)...)
 }
 
 func DisabledReporter() *Reporter {
@@ -115,7 +122,11 @@ func allowedEventOptions() []posthog.Option {
 		posthog.AllowProperty("auto_design_enabled", posthog.AllowBool),
 	}
 
+	actionSurface := posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))
 	return []posthog.Option{
+		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
+		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
+		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),
 		posthog.WithAllowedEvent(EventAgentActive,
 			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
 		posthog.WithAllowedEvent(EventAgentCallCount,
