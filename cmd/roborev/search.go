@@ -14,6 +14,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
@@ -160,6 +161,9 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 		return errors.New("search reviews: daemon returned an empty response")
 	}
 
+	if !opts.agentOutput && len(response.JSON200.Hits) == 0 {
+		reportCLIAction(cmd, telemetry.EventSearchEmpty)
+	}
 	if opts.jsonOutput {
 		_, err := cmd.OutOrStdout().Write(response.Body)
 		return err

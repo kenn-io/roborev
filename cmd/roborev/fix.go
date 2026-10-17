@@ -93,7 +93,7 @@ Examples:
   roborev fix --list                     # List open jobs without fixing
 `,
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly. Best-
 			// effort: runs from a CLI path the user invokes
@@ -150,6 +150,22 @@ Examples:
 					allBranches, branch != "", newestFirst,
 				)
 			}
+
+			// Parse job IDs
+			var jobIDs []int64
+			for _, arg := range args {
+				var id int64
+				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
+					return fmt.Errorf("invalid job ID %q: must be a number", arg)
+				}
+				jobIDs = append(jobIDs, id)
+			}
+
+			defer func() {
+				if !planOnly {
+					reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+				}
+			}()
 			opts := fixOptions{
 				agentName:   agentName,
 				model:       model,
@@ -173,14 +189,6 @@ Examples:
 			}
 
 			if batch || batchSize > 0 {
-				var jobIDs []int64
-				for _, arg := range args {
-					var id int64
-					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-						return fmt.Errorf("invalid job ID %q: must be a number", arg)
-					}
-					jobIDs = append(jobIDs, id)
-				}
 				if len(jobIDs) > 0 && (branch != "" || allBranches || newestFirst) {
 					return usageErr(cmd, fmt.Errorf("--branch, --all-branches, and --newest-first cannot be used with explicit job IDs"))
 				}
@@ -202,16 +210,6 @@ Examples:
 					ctx, roots.worktreeRoot, branch, allBranches,
 				)
 				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts, tracker)
-			}
-
-			// Parse job IDs
-			var jobIDs []int64
-			for _, arg := range args {
-				var id int64
-				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return fmt.Errorf("invalid job ID %q: must be a number", arg)
-				}
-				jobIDs = append(jobIDs, id)
 			}
 
 			return runFix(cmd, jobIDs, opts, tracker)
@@ -576,6 +574,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			// planning snapshot. Explicit job IDs also return the error so
 			// the CLI exits non-zero.
 			if seen != nil && !opts.planOnly {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
 				seen[jobID] = true
 				continue

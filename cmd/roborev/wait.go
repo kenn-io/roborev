@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 func waitCmd() *cobra.Command {
@@ -126,6 +128,8 @@ Examples:
 				sha = resolved
 			}
 
+			defer func() { reportCLIError(cmd, telemetry.EventReviewViewed, err) }()
+
 			// All local validation passed — now ensure daemon is running
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
@@ -191,7 +195,7 @@ func waitMultiple(
 	cmd *cobra.Command,
 	args []string,
 	forceJobID, quiet bool,
-) error {
+) (resultErr error) {
 	// Phase 1: Local validation (no daemon contact).
 	repoRoot, _ := gitrepo.Root(ctx, ".")
 	resolved := make([]resolvedArg, 0, len(args))
@@ -224,6 +228,8 @@ func waitMultiple(
 			}
 		}
 	}
+
+	defer func() { reportCLIError(cmd, telemetry.EventReviewViewed, resultErr) }()
 
 	// Phase 2: Ensure daemon is running.
 	if err := ensureDaemon(); err != nil {
@@ -290,6 +296,7 @@ func waitMultiple(
 				cmd.Printf("Job %d: review has issues\n", r.jobID)
 			default:
 				cmd.Printf("Job %d: %v\n", r.jobID, r.err)
+				reportCLIError(cmd, telemetry.EventReviewViewed, r.err)
 			}
 		}
 	}

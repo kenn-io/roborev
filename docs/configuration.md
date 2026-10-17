@@ -1869,6 +1869,14 @@ committed fixes count individually. Reports are best-effort and use the existing
 daemon. Daily review claims survive daemon restarts in `telemetry-daily.json`
 beside the daemon database.
 
+Outcome events count each completed attempt:
+
+- `search_empty` carries `surface=web` or `cli` after a nonblank browser ref search or `roborev search` completes successfully with zero matches. Explicit retries and repeated searches count again. Failed or superseded requests, stream refreshes, picker filters, and `--agent` output stay silent.
+- `error_shown` carries `surface=web`, `tui`, or `cli` and `kind=review_viewed`, `finding_fixed`, or `review_closed`. It counts when an error from a supported review action becomes visible. Repeated renders of the same error count once. Dismissing or clearing an error allows the next failure to count. Hidden browser tabs defer reporting until visible. CLI errors follow the core-action terminal and `--from-skill` gates.
+- `sync_failed` carries `reason=connect`, `push`, or `pull` for each failed daemon sync attempt, including retries and the final shutdown push. Disabled sync and cancellation stay silent.
+
+Unlisted error kinds and sync reasons become `other`. Reports use the existing daemon and remain best effort. They send no search text, error messages, job identifiers, or connection details.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
 screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,

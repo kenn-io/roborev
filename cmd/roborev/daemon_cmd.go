@@ -369,6 +369,9 @@ func daemonRunCmd() *cobra.Command {
 				}
 
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
+				syncWorker.SetAfterFailure(func(reason string) {
+					_ = telemetryReporter.Capture(telemetry.EventSyncFailed, map[string]any{telemetry.PropertyReason: reason})
+				})
 				search.reconciler.ShareVectors(syncWorker)
 				syncWorker.SetAfterReviewPush(search.reconciler.ReviewsPushed)
 				if err := syncWorker.Start(); err != nil {

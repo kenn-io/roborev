@@ -86,7 +86,7 @@ limit how far back to look for reviews to address.
 Use --list to preview which reviews would be refined without running.
 Use --branch to validate the current branch before refining.
 Use --all-branches to discover and refine all branches with failed reviews.`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (resultErr error) {
 			// --fast is shorthand for --reasoning fast
 			opts.reasoning = resolveReasoningWithFast(
 				opts.reasoning, fast,
@@ -131,6 +131,10 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 			if opts.list {
 				return runRefineList(cmd, opts)
 			}
+
+			defer func() {
+				reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+			}()
 			if opts.allBranches {
 				return runRefineAllBranches(cmd, opts)
 			}

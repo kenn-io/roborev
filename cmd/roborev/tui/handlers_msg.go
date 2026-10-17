@@ -1226,6 +1226,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		m.flashErrorKind = telemetry.EventReviewViewed
 	}
 	return m, nil
 }
@@ -1317,6 +1318,7 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		m.flashErrorKind = telemetry.EventReviewViewed
 	}
 	return m, reconnectCmd
 }
@@ -1751,6 +1753,9 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 				flashView = viewReview
 			}
 			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
+			if !msg.programmatic {
+				m.flashErrorKind = telemetry.EventReviewClosed
+			}
 			m.err = msg.err
 		}
 	} else {
@@ -2500,6 +2505,7 @@ func (m model) handleFixTriggerResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Fix failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.flashErrorKind = telemetry.EventFindingFixed
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
@@ -2563,10 +2569,12 @@ func (m model) handleApplyPatchResultMsg(
 			)
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
+		m.flashErrorKind = telemetry.EventFindingFixed
 	} else if msg.err != nil {
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.flashErrorKind = telemetry.EventFindingFixed
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Patch from job #%d applied and committed",

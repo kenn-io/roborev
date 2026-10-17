@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"strings"
@@ -59,7 +60,7 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 						http.Error(w, "read telemetry claim", http.StatusInternalServerError)
 						return
 					}
-				case EventSessionEnded, EventReviewViewed, EventFindingFixed, EventReviewClosed:
+				case EventSessionEnded, EventReviewViewed, EventFindingFixed, EventReviewClosed, EventSearchEmpty, EventErrorShown:
 				default:
 					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 					return
@@ -154,8 +155,12 @@ func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, sur
 }
 
 // PostReviewEvent reports a completed review action through the daemon.
-func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) {
-	_, _ = posthog.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
+func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string, properties ...map[string]any) {
+	props := map[string]any{PropertySurface: surface}
+	for _, extra := range properties {
+		maps.Copy(props, extra)
+	}
+	_, _ = posthog.PostEvent(ctx, client, url, event, props)
 }
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.

@@ -250,10 +250,14 @@ type model struct {
 	pendingClosed map[int64]pendingState // job ID -> pending state
 
 	// Flash message (temporary status message shown briefly)
-	flashMessage   string
-	flashExpiresAt time.Time
-	flashView      viewKind // View where flash was triggered (only show in same view)
-	flashWarning   bool
+	flashMessage       string
+	flashExpiresAt     time.Time
+	flashView          viewKind // View where flash was triggered (only show in same view)
+	flashErrorKind     string
+	flashErrorReported uint64
+	flashGeneration    uint64
+	paneErrorReported  string
+	flashWarning       bool
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -1312,6 +1316,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if rm, ok := result.(model); ok {
 		rm = rm.normalizeSplitState()
+		if rm.splitDetailErr == nil {
+			rm.paneErrorReported = ""
+		}
+		flashFailure := rm.flashErrorKind != "" && rm.renderFlash(rm.currentView) != "" &&
+			(rm.currentView == viewQueue || rm.currentView == viewReview || rm.currentView == viewTasks)
+		if flashFailure && rm.flashErrorReported != rm.flashGeneration {
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: rm.flashErrorKind}))
+			rm.flashErrorReported = rm.flashGeneration
+			if rm.flashErrorKind == telemetry.EventReviewViewed && rm.splitDetailErr != nil {
+				rm.paneErrorReported = rm.splitDetailErr.Error()
+			}
+		}
+		if job, selected := rm.selectedJob(); selected && rm.splitActive() && job.Status == storage.JobStatusDone && !rm.selectedReviewLoaded() && rm.splitDetailErr != nil && rm.paneErrorReported != rm.splitDetailErr.Error() {
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
+			rm.paneErrorReported = rm.splitDetailErr.Error()
+		}
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles
 		// whatever the selected job's state is by now: restart the tail if

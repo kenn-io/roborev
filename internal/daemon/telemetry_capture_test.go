@@ -236,3 +236,24 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcomeCaptureRoute(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	reporter, err := telemetry.NewReporter(telemetry.Options{})
+	require.NoError(t, err)
+	server.SetTelemetry(reporter)
+	for _, tc := range []struct {
+		body   string
+		status int
+	}{
+		{`{"event":"search_empty","properties":{"surface":"cli"}}`, http.StatusAccepted},
+		{`{"event":"error_shown","properties":{"surface":"web","kind":"review_closed"}}`, http.StatusAccepted},
+		{`{"event":"error_shown","properties":{"surface":"tui","kind":"unknown"}}`, http.StatusAccepted},
+		{`{"event":"search_empty","properties":{"surface":"other"}}`, http.StatusBadRequest},
+		{`{"event":"error_shown","properties":{"surface":"web"}}`, http.StatusBadRequest},
+		{`{"event":"sync_failed","properties":{"reason":"connect"}}`, http.StatusBadRequest},
+	} {
+		response := serveTelemetryCapture(server.httpServer.Handler, newTelemetryCaptureRequest(http.MethodPost, []byte(tc.body)))
+		assert.Equal(t, tc.status, response.Code, tc.body)
+	}
+}

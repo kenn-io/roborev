@@ -1753,3 +1753,59 @@ describe("createJobsStore panel expansion", () => {
     );
   });
 });
+
+it("reports completed explicit empty searches, including retries, and ignores refreshes and superseded requests", async () => {
+  const events: unknown[] = [];
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) => {
+      const request = input as Request;
+      if (request.url.endsWith("/api/telemetry/events"))
+        events.push(await request.json());
+      return new Response("{}", {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+  const pending = Promise.withResolvers<{
+    jobs: ReviewJob[];
+    has_more: boolean;
+  }>();
+  const listJobs = vi.fn().mockResolvedValue({ jobs: [], has_more: false });
+  const store = createJobsStore({
+    api: { listJobs } as never,
+    navigate: vi.fn(),
+  });
+  store.setFilter("search", "missing");
+  await vi.waitFor(() => expect(events).toHaveLength(1));
+  store.loadJobs();
+  await vi.waitFor(() => expect(events).toHaveLength(2));
+  await loadJobs(store);
+  expect(events).toHaveLength(2);
+  listJobs.mockReturnValueOnce(pending.promise);
+  store.setFilter("search", "old");
+  await vi.waitFor(() =>
+    expect(listJobs).toHaveBeenCalledWith(
+      expect.objectContaining({ git_ref: "old" }),
+      expect.anything(),
+    ),
+  );
+  listJobs.mockResolvedValueOnce({ jobs: [makeJob(42)], has_more: false });
+  store.setFilter("search", "new");
+  await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
+  pending.resolve({ jobs: [], has_more: false });
+  await loadJobs(store);
+  expect(events).toHaveLength(2);
+  listJobs.mockRejectedValueOnce(new Response("unavailable", { status: 500 }));
+  store.loadJobs();
+  await vi.waitFor(() => expect(store.getError()).toBeTruthy());
+  expect(events).toHaveLength(2);
+  listJobs.mockResolvedValue({ jobs: [], has_more: false });
+  store.setFilter("search", "  ");
+  await loadJobs(store);
+  expect(events).toEqual([
+    { event: "search_empty", properties: { surface: "web" } },
+    { event: "search_empty", properties: { surface: "web" } },
+  ]);
+  fetch.mockRestore();
+});

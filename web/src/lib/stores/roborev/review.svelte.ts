@@ -42,7 +42,8 @@ export interface ReviewStoreOptions {
   };
   runtime: AppRuntime;
   owner: string;
-  onError?: (msg: string) => void;
+  onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
+  onErrorCleared?: () => void;
   refreshJobs?: () => Effect.Effect<void, never, RoborevWorkflow>;
 }
 
@@ -170,6 +171,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             loading = true;
             reviewNotFound = false;
             storeError = null;
+            opts.onErrorCleared?.();
             review = null;
             selectedJob = null;
             responses = [];
@@ -181,7 +183,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
               storeError = "Failed to load review";
-              opts.onError?.("Failed to load review");
+              opts.onError?.("Failed to load review", "review_viewed");
             }),
           ),
           Effect.ensuring(
@@ -199,7 +201,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     opts.runtime.runCommand(loadReviewEffect(jobId), {
       operation: "load Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: () => opts.onError?.("Failed to load review"),
+      onFailure: () => opts.onError?.("Failed to load review", "review_viewed"),
     });
   }
 
@@ -235,6 +237,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() =>
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
+                "review_closed",
               ),
             ),
         })
@@ -250,7 +253,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function closeReview(jobId: number): void {
     if (selectedJobId !== jobId || review?.job_id !== jobId) {
-      opts.onError?.("Failed to close review");
+      opts.onError?.("Failed to close review", "review_closed");
       return;
     }
     const closed = !review.closed;
@@ -260,6 +263,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       onFailure: (failure) =>
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
+          "review_closed",
         ),
     });
   }

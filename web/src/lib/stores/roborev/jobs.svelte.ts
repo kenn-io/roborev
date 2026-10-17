@@ -1,3 +1,4 @@
+import { reportSearchEmpty } from "../../utils/app-opened";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest, RoborevStreamError } from "../../api/client";
@@ -396,7 +397,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return Array.from(runs);
     });
 
-  const refreshJobsAuthority = (query: ListJobsQuery) =>
+  const refreshJobsAuthority = (query: ListJobsQuery, reportSearch = false) =>
     Effect.gen(function* () {
       const generation = yield* Effect.sync(() => {
         jobsAuthorityGeneration += 1;
@@ -404,13 +405,23 @@ export function createJobsStore(opts: JobsStoreOptions) {
       });
       const authority = yield* fetchJobsAuthority(query);
       const expandedRuns = yield* publishJobsAuthority(authority, generation);
+      if (
+        reportSearch &&
+        generation === jobsAuthorityGeneration &&
+        query.git_ref?.trim() &&
+        authority.jobs.length === 0
+      )
+        reportSearchEmpty();
       yield* Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
         discard: true,
       });
       return authority;
     });
 
-  const loadJobsRequestEffect = (requestOwner = opts.owner) =>
+  const loadJobsRequestEffect = (
+    requestOwner = opts.owner,
+    reportSearch = false,
+  ) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
@@ -423,7 +434,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
           if (hasActiveFilters() && filteredStatusCountsScope !== countScope)
             filteredStatusCounts = undefined;
         }).pipe(
-          Effect.andThen(refreshJobsAuthority(query)),
+          Effect.andThen(refreshJobsAuthority(query, reportSearch)),
           Effect.asVoid,
           Effect.ensuring(
             Effect.sync(() => {
@@ -434,8 +445,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       );
     });
 
-  const loadJobsEffect = () =>
-    loadJobsRequestEffect().pipe(
+  const loadJobsEffect = (reportSearch = false) =>
+    loadJobsRequestEffect(opts.owner, reportSearch).pipe(
       Effect.catch((failure) =>
         Effect.sync(() => {
           storeError =
@@ -444,8 +455,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       ),
     );
 
-  function loadJobs(): void {
-    opts.runtime.runCommand(loadJobsEffect(), {
+  function loadJobs(reportSearch = true): void {
+    opts.runtime.runCommand(loadJobsEffect(reportSearch), {
       operation: "load Roborev jobs",
       safeContext: { owner: opts.owner },
       onFailure: () => {},
@@ -1169,7 +1180,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   booleanFilterSubscribers.set(filterOwner, () => {
     if (!disposed) {
       loadedLimit = DEFAULT_PAGE_LIMIT;
-      loadJobs();
+      loadJobs(false);
     }
   });
 

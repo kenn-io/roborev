@@ -26,8 +26,33 @@ type SyncWorker struct {
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
+	afterFailure    func(string)
 	afterPullWrite  func()
 	afterReviewPush func([]string)
+}
+
+// SetAfterFailure registers a callback for failed sync attempts.
+func (w *SyncWorker) SetAfterFailure(fn func(string)) {
+	w.mu.Lock()
+	w.afterFailure = fn
+	w.mu.Unlock()
+}
+
+func (w *SyncWorker) notifyFailure(reason string, err error) {
+	if reason == "" || err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	w.mu.Lock()
+	fn, enabled, stopCh := w.afterFailure, w.cfg.Enabled, w.stopCh
+	w.mu.Unlock()
+	select {
+	case <-stopCh:
+		return
+	default:
+	}
+	if fn != nil && enabled {
+		fn(reason)
+	}
 }
 
 // SetAfterPullWrite registers a callback for successfully committed local
@@ -209,7 +234,15 @@ type SyncStats struct {
 // This ensures all local changes are pushed before the daemon exits.
 // Loops until all pending items are synced (not just one batch).
 // Does not pull changes since we're shutting down.
-func (w *SyncWorker) FinalPush() error {
+func (w *SyncWorker) FinalPush() (err error) {
+	reason := "push"
+	var pushFailure error
+	defer func() {
+		if pushFailure != nil && (err == nil || reason != "push") {
+			w.notifyFailure("push", pushFailure)
+		}
+		w.notifyFailure(reason, err)
+	}()
 	w.mu.Lock()
 	pool := w.pgPool
 	w.mu.Unlock()
@@ -229,6 +262,9 @@ func (w *SyncWorker) FinalPush() error {
 	var totalJobs, totalReviews, totalResponses int
 	for {
 		stats, err := w.pushChangesWithStats(ctx, pool)
+		if stats.failure != nil {
+			pushFailure = stats.failure
+		}
 		if err != nil {
 			return fmt.Errorf("final push: %w", err)
 		}
@@ -272,7 +308,15 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 
 // SyncNowWithProgress is like SyncNow but calls progressFn after each batch.
 // If not connected, attempts to connect first.
-func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*SyncStats, error) {
+func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ *SyncStats, err error) {
+	reason := ""
+	var pushFailure error
+	defer func() {
+		if pushFailure != nil && (err == nil || reason != "push") {
+			w.notifyFailure("push", pushFailure)
+		}
+		w.notifyFailure(reason, err)
+	}()
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
@@ -325,7 +369,11 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	const maxPushBatches = 20
 	batchNum := 0
 	for batchNum < maxPushBatches {
+		reason = "push"
 		pushed, err := w.pushChangesWithStats(ctx, pool)
+		if pushed.failure != nil {
+			pushFailure = pushed.failure
+		}
 		if err != nil {
 			return nil, fmt.Errorf("push: %w", err)
 		}
@@ -363,6 +411,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	}
 
 	// Pull remote changes
+	reason = "pull"
 	pulled, err := w.pullChangesWithStats(ctx, pool)
 	if err != nil {
 		return nil, fmt.Errorf("pull: %w", err)
@@ -394,6 +443,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 
 // pushPullStats tracks counts for push/pull operations
 type pushPullStats struct {
+	failure   error // Partial push failures preserve the successful item counts.
 	Jobs      int
 	Reviews   int
 	Responses int
@@ -458,7 +508,9 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // connect establishes the PostgreSQL connection.
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
-func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
+func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
+	reason := "connect"
+	defer func() { w.notifyFailure(reason, err) }()
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
 
@@ -599,7 +651,15 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 
 // doSync performs a single sync cycle (push then pull)
 // Loops until all pending items are pushed.
-func (w *SyncWorker) doSync() error {
+func (w *SyncWorker) doSync() (err error) {
+	reason := ""
+	var pushFailure error
+	defer func() {
+		if pushFailure != nil && (err == nil || reason != "push") {
+			w.notifyFailure("push", pushFailure)
+		}
+		w.notifyFailure(reason, err)
+	}()
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()
 
@@ -617,7 +677,11 @@ func (w *SyncWorker) doSync() error {
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
 	for {
+		reason = "push"
 		stats, err := w.pushChangesWithStats(ctx, pool)
+		if stats.failure != nil {
+			pushFailure = stats.failure
+		}
 		if err != nil {
 			return fmt.Errorf("push: %w", err)
 		}
@@ -632,6 +696,7 @@ func (w *SyncWorker) doSync() error {
 	}
 
 	// Pull remote changes from PostgreSQL
+	reason = "pull"
 	if err := w.pullChanges(ctx, pool); err != nil {
 		return fmt.Errorf("pull: %w", err)
 	}
@@ -690,6 +755,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
+				stats.failure = err
 				continue
 			}
 
@@ -698,6 +764,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
+					stats.failure = err
 					continue
 				}
 				pgCommitID = &id
@@ -715,6 +782,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
 				log.Printf("Sync: batch upsert jobs error: %v", err)
+				stats.failure = err
 			}
 
 			// Only mark successfully synced jobs. Carry each job's pushed
@@ -731,6 +799,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if len(syncedMarks) > 0 {
 				if err := w.db.MarkJobsSynced(syncedMarks); err != nil {
 					log.Printf("Sync: failed to mark jobs synced: %v", err)
+					stats.failure = err
 				}
 			}
 		}
@@ -775,6 +844,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(syncedReviews) > 0 {
 			if err := w.db.MarkReviewsSynced(syncedReviews); err != nil {
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
+				stats.failure = err
 			}
 		}
 		w.notifyAfterReviewPush(syncedReviewUUIDs)
@@ -790,6 +860,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
 			log.Printf("Sync: batch insert responses error: %v", err)
+			stats.failure = err
 		}
 
 		// Only mark successfully synced responses
@@ -803,6 +874,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(syncedResponseIDs) > 0 {
 			if err := w.db.MarkCommentsSynced(syncedResponseIDs); err != nil {
 				log.Printf("Sync: failed to mark comments synced: %v", err)
+				stats.failure = err
 			}
 		}
 	}

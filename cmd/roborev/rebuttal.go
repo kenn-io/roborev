@@ -62,7 +62,13 @@ func postRebuttalAPI[O any](ctx context.Context, call rawDaemonCall[O], body, re
 	return json.UnmarshalRead(resp.Body, result)
 }
 
-func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message string, o rebuttalOptions) error {
+func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message string, o rebuttalOptions) (resultErr error) {
+	defer func() {
+		if o.close {
+			reportCLIError(cmd, telemetry.EventReviewClosed, resultErr)
+		}
+	}()
+
 	ctx := cmd.Context()
 	ep := getDaemonEndpoint()
 	api := ep.APIClient(30 * time.Second)

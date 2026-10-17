@@ -21,6 +21,7 @@
   import { provideReviewStores } from "../stores/context";
   import {
     reportScreenViewed,
+    reportErrorShown,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
   import AnalyticsView from "../views/AnalyticsView.svelte";
@@ -42,6 +43,9 @@
     { id: "analytics", label: "Analytics" },
   ];
   let actionError = $state<string | null>(null);
+  let actionErrorKind = $state<"review_viewed" | "review_closed" | undefined>();
+  let errorReported = false;
+  let tabHidden = $state(document.hidden);
   let releaseNotesOpen = $state(false);
   let releaseNotes = $state<ReadonlyArray<ReleaseNote>>([]);
   let releaseNotesLoading = $state(false);
@@ -53,7 +57,14 @@
     navigate: router.navigateToReview,
     getCapabilities: () => capabilities,
     daemonInitiallyAvailable: true,
-    onError: (message) => {
+    onErrorCleared: () => {
+      actionError = null;
+      errorReported = false;
+    },
+    onError: (message, kind) => {
+      if (message !== actionError || kind !== actionErrorKind)
+        errorReported = false;
+      actionErrorKind = kind;
       actionError = message;
     },
   });
@@ -61,6 +72,23 @@
   provideReviewStores(stores);
   onMount(() => setupAppOpenedReporting(() => page));
   $effect(() => reportScreenViewed(page));
+  onMount(() => {
+    const visibility = () => {
+      tabHidden = document.hidden;
+    };
+    document.addEventListener("visibilitychange", visibility);
+    return () => document.removeEventListener("visibilitychange", visibility);
+  });
+  $effect(() => {
+    if (!actionError) {
+      errorReported = false;
+      return;
+    }
+    if (!tabHidden && actionErrorKind && !errorReported) {
+      errorReported = true;
+      reportErrorShown(actionErrorKind);
+    }
+  });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

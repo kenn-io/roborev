@@ -1526,14 +1526,14 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 	return m.fetchFixJobs()
 }
 
-func (m model) reportAction(event string) tea.Cmd {
+func (m model) reportAction(event string, properties ...map[string]any) tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI, properties...)
 		return nil
 	}
 }

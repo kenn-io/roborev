@@ -256,8 +256,39 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 			return nil, err
 		}
 	}
-	if strings.Contains(string(body), `"review_viewed"`) {
+	if strings.Contains(string(body), `"review_viewed"`) || strings.Contains(string(body), `"event":"error_shown"`) {
 		r.events = append(r.events, string(body))
 	}
 	return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+}
+
+//nolint:paralleltest // telemetry opt-out variables are process-wide
+func TestOutcomeVisibleTUIErrors(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture()
+	f.m.currentReview = nil
+	failure := reviewFollowErrMsg{jobID: f.m.selectedJobID, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, attempt: f.m.jobAttemptGen[f.m.selectedJobID], err: errors.New("unavailable")}
+	f.update(failure)
+	require.Len(t, f.transport.events, 1)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
+	f.update(displayTickMsg{})
+	f.update(failure)
+	assert.Len(t, f.transport.events, 1)
+	f.m.splitDetailErr = nil
+	f.update(displayTickMsg{})
+	f.update(failure)
+	assert.Len(t, f.transport.events, 2)
+	// A superseded request cannot replace the visible error or report it again.
+	failure.fetchSeq++
+	f.update(failure)
+	assert.Len(t, f.transport.events, 2)
+
+	f.m.currentView = viewTasks
+	f.update(applyPatchResultMsg{err: errors.New("apply failed")})
+	require.Len(t, f.transport.events, 3)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[2])
+	f.update(displayTickMsg{})
+	assert.Len(t, f.transport.events, 3)
+	f.update(applyPatchResultMsg{err: errors.New("apply failed")})
+	assert.Len(t, f.transport.events, 4)
 }

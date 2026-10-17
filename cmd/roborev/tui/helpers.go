@@ -59,6 +59,8 @@ func keyRunes(msg tea.KeyMsg) []rune {
 
 // setFlash sets a flash message with the given duration and view.
 func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
+	m.flashErrorKind = ""
+	m.flashGeneration++
 	m.flashMessage = msg
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
@@ -66,6 +68,8 @@ func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
 }
 
 func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
+	m.flashErrorKind = ""
+	m.flashGeneration++
 	m.flashMessage = msg
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v

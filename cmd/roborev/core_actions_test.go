@@ -79,7 +79,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			}
 			var fixes []string
 			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"finding_fixed"`) {
+				if strings.Contains(post.body, `"event":"finding_fixed"`) {
 					fixes = append(fixes, post.body)
 				}
 			}
@@ -250,7 +250,7 @@ func TestCoreActionCLIOutputEligibility(t *testing.T) {
 						require.NoError(t, result.err)
 					}
 					for _, post := range rec.telemetryPosts() {
-						assert.NotContains(t, post.body, `"review_closed"`)
+						assert.NotContains(t, post.body, `"event":"review_closed"`)
 					}
 				})
 			}
@@ -327,6 +327,52 @@ func TestCoreActionWaitDisplaysReview(t *testing.T) {
 					assert.Empty(t, views)
 				}
 			})
+		}
+	}
+}
+
+func TestOutcomeCLIErrorEligibility(t *testing.T) {
+	resetCLIUse(t)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReviewClose: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+		w.WriteHeader(http.StatusNotFound)
+		return true
+	}}, nil)
+	for _, id := range []int64{999, 1000} {
+		md.State.jobs[id] = &storage.ReviewJob{ID: id, Status: storage.JobStatusFailed, Error: "review unavailable"}
+	}
+
+	for _, terminal := range []bool{false, true} {
+		cliOutputIsTerminal = func(io.Writer) bool { return terminal }
+		for _, tc := range []struct {
+			args  []string
+			kind  string
+			count int
+		}{
+			{[]string{"show", "--job", "999"}, "review_viewed", 1},
+			{[]string{"close", "999"}, "review_closed", 1},
+			{[]string{"wait", "--job", "999"}, "review_viewed", 1},
+			{[]string{"wait", "--job", "999", "1000"}, "review_viewed", 2},
+			{[]string{"wait", "--job", "999", "--quiet"}, "review_viewed", 1},
+			{[]string{"show", "--job", "999", "--from-skill"}, "", 0},
+			{[]string{"close", "invalid"}, "", 0},
+		} {
+			rec.reset()
+			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
+			require.Error(t, result.err)
+			var errors []string
+			for _, post := range rec.telemetryPosts() {
+				if strings.Contains(post.body, `"event":"error_shown"`) {
+					errors = append(errors, post.body)
+				}
+			}
+			eligible := terminal && tc.kind != ""
+			if eligible {
+				require.Len(t, errors, tc.count, "%v", tc.args)
+				kind := tc.kind
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+kind+`"}}`, errors[0])
+			} else {
+				assert.Empty(t, errors)
+			}
 		}
 	}
 }

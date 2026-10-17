@@ -393,3 +393,43 @@ func TestCoreActionDailyClaims(t *testing.T) {
 		assert.Equal(t, []string{"review_viewed:tui", "screen_viewed:tui", "review_viewed:tui"}, surfacesOf(sent))
 	})
 }
+
+func TestOutcomeCapture(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	reporter, messages := newPostHogStubReporter(t)
+	handler := (&AppOpenedLimiter{}).Handler(reporter)
+	for _, surface := range []string{"web", "tui", "cli"} {
+		for range 2 {
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"search_empty","properties":{"surface":"`+surface+`","query":"private"}}`).Code)
+		}
+		for _, kind := range []string{"review_viewed", "finding_fixed", "review_closed", "private error"} {
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"error_shown","properties":{"surface":"`+surface+`","kind":"`+kind+`","message":"private"}}`).Code)
+		}
+	}
+	for _, body := range []string{
+		`{"event":"search_empty"}`,
+		`{"event":"search_empty","properties":{"surface":"unknown"}}`,
+		`{"event":"error_shown","properties":{"surface":"cli"}}`,
+		`{"event":"error_shown","properties":{"kind":"review_viewed"}}`,
+		`{"event":"sync_failed","properties":{"reason":"connect"}}`,
+	} {
+		assert.Equal(t, http.StatusBadRequest, postCaptureEvent(handler, body).Code)
+	}
+	for _, reason := range []string{"connect", "push", "pull", "private connection"} {
+		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{PropertyReason: reason, "url": "private"}))
+	}
+	require.Error(t, reporter.Capture(EventSyncFailed, nil))
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 22)
+	for i, message := range sent {
+		assert.NotContains(t, message.Properties, "query")
+		assert.NotContains(t, message.Properties, "message")
+		assert.NotContains(t, message.Properties, "url")
+		if i < 18 && i%6 == 5 {
+			assert.Equal(t, "other", message.Properties[PropertyKind])
+		}
+	}
+	assert.Equal(t, "other", sent[21].Properties[PropertyReason])
+}

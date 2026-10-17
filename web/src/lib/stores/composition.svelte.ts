@@ -34,7 +34,8 @@ export interface ReviewStoreOptions {
   reviewApi?: NativeReviewStoreOptions["api"];
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
-  onError?: (message: string) => void;
+  onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
+  onErrorCleared?: () => void;
   daemonInitiallyAvailable?: boolean;
 }
 
@@ -62,6 +63,7 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
     ...(options.reviewApi !== undefined && { api: options.reviewApi }),
     owner,
     refreshJobs: roborevJobs.loadJobsEffect,
+    onErrorCleared: options.onErrorCleared,
     ...shared,
   });
   const roborevLog = createLogStore({

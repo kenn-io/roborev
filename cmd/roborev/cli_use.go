@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -144,7 +145,7 @@ func waitCLIUse() {
 }
 
 // reportCLIAction bounds best-effort reporting through the running daemon.
-func reportCLIAction(cmd *cobra.Command, event string) {
+func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]any) {
 	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) {
 		return
 	}
@@ -154,5 +155,15 @@ func reportCLIAction(cmd *cobra.Command, event string) {
 		return getAnyRunningDaemonForStart(ctx)
 	})
 	ep := endpoints[0].WithAccessError(err)
-	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI, properties...)
+}
+
+func reportCLIError(cmd *cobra.Command, kind string, err error) {
+	if err == nil {
+		return
+	}
+	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {
+		return
+	}
+	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})
 }

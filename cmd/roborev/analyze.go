@@ -601,7 +601,11 @@ func analysisWorkflow(label string) string {
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
-func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
+func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) (resultErr error) {
+	defer func() {
+		reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+	}()
+
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()

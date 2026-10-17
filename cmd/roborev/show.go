@@ -110,7 +110,7 @@ Examples:
   roborev show --job 42     # Force as job ID even if "42" is a valid ref
   roborev show --prompt 42  # Show the prompt sent to the agent`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			ctx := cmd.Context()
 			ep := getDaemonEndpoint()
 			if ep.IsRemote() {
@@ -191,6 +191,11 @@ Examples:
 				}
 			}
 
+			defer func() {
+				if !showPrompt {
+					reportCLIError(cmd, telemetry.EventReviewViewed, resultErr)
+				}
+			}()
 			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -648,4 +649,41 @@ func writeSearchResponse(t *testing.T, w http.ResponseWriter, response any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
 	assert.NoError(t, json.NewEncoder(w).Encode(response))
+}
+
+func TestOutcomeSearchEmpty(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/search" {
+			return false
+		}
+		if r.URL.Query().Get("q") == "failed" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		writeSearchResponse(t, w, emptySearchResponse("missing", "lexical"))
+		return true
+	}}, nil)
+	for _, args := range [][]string{{"missing"}, {"missing"}, {"failed"}, {"missing", "--agent"}, {"missing", "--from-skill"}} {
+		rec.reset()
+		result := runCLIFresh(t, true, append(append([]string{"search"}, args...), "--server", md.Server.URL)...)
+		if args[0] == "failed" {
+			require.Error(t, result.err)
+		} else {
+			require.NoError(t, result.err)
+		}
+		var empties []string
+		for _, post := range rec.telemetryPosts() {
+			if strings.Contains(post.body, `"event":"search_empty"`) {
+				empties = append(empties, post.body)
+			}
+		}
+		if len(args) == 1 && args[0] == "missing" {
+			require.Len(t, empties, 1)
+			assert.JSONEq(t, `{"event":"search_empty","properties":{"surface":"cli"}}`, empties[0])
+		} else {
+			assert.Empty(t, empties)
+		}
+	}
 }

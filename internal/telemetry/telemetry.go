@@ -33,6 +33,11 @@ const (
 	EventReviewViewed       = "review_viewed"
 	EventFindingFixed       = "finding_fixed"
 	EventReviewClosed       = "review_closed"
+	EventSearchEmpty        = "search_empty"
+	EventErrorShown         = "error_shown"
+	EventSyncFailed         = "sync_failed"
+	PropertyKind            = "kind"
+	PropertyReason          = "reason"
 	EventAgentActive        = "agent_active"
 	EventAgentCallCount     = "agent_call_count"
 	PropertyCallCountBucket = "call_count_bucket"
@@ -126,6 +131,9 @@ func allowedEventOptions() []posthog.Option {
 	actionSurface := posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))
 	return []posthog.Option{
 		posthog.WithAllowedEvent(EventSetupFinished),
+		posthog.WithAllowedEvent(EventSearchEmpty, actionSurface),
+		posthog.WithAllowedEvent(EventErrorShown, actionSurface, posthog.RequireProperty(PropertyKind, outcomeValues(EventReviewViewed, EventFindingFixed, EventReviewClosed))),
+		posthog.WithAllowedEvent(EventSyncFailed, posthog.RequireProperty(PropertyReason, outcomeValues("connect", "push", "pull"))),
 		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
 		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
 		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),
@@ -144,6 +152,17 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
 			posthog.AllowProperty(PropertyDurationBucket, posthog.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+	}
+}
+
+func outcomeValues(values ...string) posthog.PropertyFilter {
+	return func(value any) (any, bool) {
+		for _, allowed := range values {
+			if value == allowed {
+				return allowed, true
+			}
+		}
+		return "other", true
 	}
 }
 
