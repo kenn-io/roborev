@@ -285,9 +285,13 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 		output = cmd.OutOrStdout()
 	}
 
-	_, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
+	review, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
 	if err != nil {
 		return fmt.Errorf("verification failed: %w", err)
+	}
+
+	if output != nil && review.Output != "" && review.Job != nil && review.Job.IsReadableReview() {
+		reportCLIActionOutput(cmd.Context(), output, "review_viewed")
 	}
 
 	return nil

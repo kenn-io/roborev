@@ -91,8 +91,8 @@ function postEvent(
   event: string,
   properties: Record<string, string>,
   init: { signal?: AbortSignal; keepalive?: boolean } = {},
-): Promise<unknown> {
-  return roborevFetch(telemetryEventsPath, {
+): Promise<{ status: string }> {
+  return roborevFetch<{ status: string }>(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
@@ -103,7 +103,7 @@ function postEvent(
 function postBoundedEvent(
   event: string,
   properties: Record<string, string>,
-): Promise<unknown> {
+): Promise<{ status: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   return postEvent(event, properties, { signal: controller.signal }).finally(
@@ -161,8 +161,12 @@ export function reportCoreAction(
     pendingReviewDay = day;
   }
   void postBoundedEvent(event, { surface: "web" })
-    .then(() => {
-      if (event === "review_viewed") reviewDay = day;
+    .then(({ status }) => {
+      if (
+        event === "review_viewed" &&
+        (status === "queued" || status === "skipped")
+      )
+        reviewDay = day;
     })
     .catch(() => undefined)
     .finally(() => {

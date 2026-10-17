@@ -22,6 +22,7 @@ type screenRecordingTransport struct {
 	events  []string
 	screens []string
 	fail    bool
+	status  string
 }
 
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -46,7 +47,11 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 	if s.fail {
 		status = http.StatusServiceUnavailable
 	}
-	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+	captureStatus := s.status
+	if captureStatus == "" {
+		captureStatus = "queued"
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"` + captureStatus + `"}`)), Header: make(http.Header)}, nil
 }
 
 func updateScreenTestModel(m *model, msg tea.Msg) {

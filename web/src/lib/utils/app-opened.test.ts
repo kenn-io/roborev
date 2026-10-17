@@ -442,6 +442,32 @@ describe("setupAppOpenedReporting", () => {
     });
   });
 
+  test.each(["queued", "skipped"])(
+    "retries disabled review capture until %s acknowledges it",
+    async (status) => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "disabled" }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      appOpened.reportCoreAction("review_viewed");
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ status }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
   test.each(["screen", "core action"])(
     "bounds %s requests while preserving app-open transport",
     async (kind) => {

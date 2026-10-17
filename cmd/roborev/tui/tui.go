@@ -22,6 +22,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/muesli/termenv"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
 	"go.kenn.io/kit/tui/splitlayout"
@@ -1291,7 +1292,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		result = m
 	case screenDeliveryMsg:
-		if msg.day == m.screenDay && msg.err != nil {
+		if msg.day == m.screenDay && (msg.err != nil || msg.screen == telemetry.EventReviewViewed && msg.status != posthog.StatusQueued && msg.status != posthog.StatusSkipped) {
 			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
 		}
 		result = m

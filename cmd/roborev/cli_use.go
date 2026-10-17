@@ -171,6 +171,6 @@ func reportCLIActionOutput(ctx context.Context, out io.Writer, event string) {
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
 		}
-		_ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 	})
 }

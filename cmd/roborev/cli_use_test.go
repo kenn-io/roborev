@@ -891,3 +891,47 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestCoreActionCompactWait(t *testing.T) {
+	for _, mode := range []string{"terminal", "quiet", "redirected", "skill", "task", "fix", "empty"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone, JobType: storage.JobTypeCompact}
+			if mode == "task" {
+				job.JobType = storage.JobTypeTask
+			}
+			if mode == "fix" {
+				job.JobType = storage.JobTypeFix
+			}
+			output := "Consolidated findings"
+			if mode == "empty" {
+				output = ""
+			}
+			md.State.jobs[1] = job
+			md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: output, Job: job}
+			patchServerAddr(t, md.Server.URL)
+			ep := mustParseEndpoint(t, md.Server.URL)
+			cliUseEndpoint.Store(&ep)
+			var out bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			cmd.SetOut(&out)
+			cliOutputIsTerminal = func(w io.Writer) bool { return mode != "redirected" && w == &out }
+			fromSkill = mode == "skill"
+			require.NoError(t, waitForConsolidation(t.Context(), cmd, 1, compactOptions{quiet: mode == "quiet"}))
+			waitCLIUse()
+			if mode == "quiet" {
+				assert.Empty(t, out.String())
+			} else {
+				assert.Equal(t, output, out.String())
+			}
+			if mode == "terminal" {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
+		})
+	}
+}

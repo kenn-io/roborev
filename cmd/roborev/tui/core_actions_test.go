@@ -75,9 +75,30 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewDisabledRetriesOnInput(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, status := range []string{"queued", "skipped"} {
+		t.Run(status, func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			f.update(f.review())
+			f.transport.status = "disabled"
+			f.update(tea.KeyPressMsg{Code: '0'})
+			require.Len(t, f.transport.events, 1)
+			f.transport.status = status
+			f.update(displayTickMsg{})
+			require.Len(t, f.transport.events, 1)
+			f.update(tea.KeyPressMsg{Code: '0'})
+			require.Len(t, f.transport.events, 2)
+			f.update(tea.KeyPressMsg{Code: '0'})
+			assert.Len(t, f.transport.events, 2)
+		})
+	}
+}
+
+//nolint:paralleltest // telemetry environment variables
 func TestCoreActionPendingReviewOpen(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "abandoned", "task", "next day"} {
+	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "abandoned", "task", "fix output", "next day"} {
 		t.Run(outcome, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
@@ -86,19 +107,29 @@ func TestCoreActionPendingReviewOpen(t *testing.T) {
 				f.m.tasksEnabled = true
 				f.m.api = newDaemonAPI(f.m.endpoint, f.m.client)
 				origin := viewQueue
-				if outcome == "tasks" || outcome == "loaded tasks" {
+				key := tea.KeyPressMsg{Code: tea.KeyEnter}
+				if outcome == "tasks" || outcome == "loaded tasks" || outcome == "fix output" {
 					origin = viewTasks
 					f.m.currentView = viewTasks
-					f.m.fixJobs = []storage.ReviewJob{{ID: 9, Status: storage.JobStatusDone, JobType: storage.JobTypeReview}}
+					f.m.fixJobs = []storage.ReviewJob{{ID: 9, Status: storage.JobStatusDone, JobType: storage.JobTypeFix, ParentJobID: new(int64(42))}}
+					if outcome != "fix output" {
+						key = tea.KeyPressMsg{Code: 'P'}
+					}
 					f.m.fixSelectedIdx = 0
 				}
-				result, cmd := f.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				result, cmd := f.m.Update(key)
 				f.m = result.(model)
 				require.NotNil(t, cmd)
+				if outcome == "tasks" || outcome == "loaded tasks" {
+					require.Equal(t, int64(42), f.m.selectedJobID)
+				}
 				response := f.review()
 				response.follow, response.dispatchedFrom = false, origin
 				if outcome == "abandoned" {
 					f.update(tea.KeyPressMsg{Code: 'T'})
+				}
+				if outcome == "fix output" {
+					response.review.Job.JobType = storage.JobTypeFix
 				}
 				if outcome == "task" {
 					response.review.Job.JobType = storage.JobTypeTask
@@ -115,7 +146,7 @@ func TestCoreActionPendingReviewOpen(t *testing.T) {
 					f.update(tea.KeyPressMsg{Code: 'q'})
 				}
 				count := 1
-				if outcome == "abandoned" || outcome == "task" || outcome == "next day" {
+				if outcome == "abandoned" || outcome == "task" || outcome == "fix output" || outcome == "next day" {
 					count = 0
 				}
 				assert.Len(t, f.transport.events, count)
