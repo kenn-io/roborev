@@ -21,7 +21,7 @@ func TestMuseBuildArgs(t *testing.T) {
 	}{
 		{"review", false, false, "", ReasoningStandard, []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
 		{"agentic", true, false, "", ReasoningStandard, []string{"--yolo"}},
-		{"unsafe with contributor mode off", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
+		{"unsafe with configured model", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
 		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,19 +68,18 @@ printf 'status message\n' >&2
 }
 
 func TestMuseReviewFailure(t *testing.T) {
-	command := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
-printf 'run ended with Failed: unknown model\n' >&2
-exit 1
-`)
-	_, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	cli := mockAgentCLI(t, MockCLIOpts{
+		StderrLines: []string{"run ended with Failed: unknown model"},
+		ExitCode:    1,
+	})
+	_, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 	require.ErrorContains(t, err, "muse failed:")
 	require.ErrorContains(t, err, "run ended with Failed: unknown model")
 }
 
 func TestMuseReviewEmptyOutput(t *testing.T) {
-	command := writeTempCommand(t, "#!/bin/sh\nprintf '  \\n'\n")
-	result, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	cli := mockAgentCLI(t, MockCLIOpts{StdoutLines: []string{"  "}})
+	result, err := NewMuseAgent(cli.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "No review output generated", result)
 }

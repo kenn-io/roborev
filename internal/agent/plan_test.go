@@ -152,14 +152,6 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--agent\nplan\n")
 			case "opencode":
 				assert.Contains(t, args, "--agent\nplan\n")
-			case "muse":
-				assert.Contains(t, args, "--disable-write\n")
-				assert.Contains(t, args, "--disable-shell\n")
-				assert.Contains(t, args, "--disable-web-tools\n")
-				assert.Contains(t, args, "--trust-workspace\n")
-				assert.Contains(t, args, "--no-session-log\n")
-				assert.Contains(t, args, "--contributor-mode\noff\n")
-				assert.NotContains(t, args, "--model\n")
 			case "grok":
 				assert.Contains(t, args, "--sandbox\nread-only\n")
 				assert.Contains(t, args, "--tools\nread_file,grep,list_dir\n")

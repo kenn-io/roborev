@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -642,20 +641,11 @@ func (a *GrokAgent) classifyWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	tmpFile, err := os.CreateTemp("", "roborev-grok-classify-*.md")
+	promptPath, cleanup, err := createPromptFile("grok-classify", prompt)
 	if err != nil {
-		return nil, fmt.Errorf("create temp classify prompt: %w", err)
+		return nil, err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("write classify prompt: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return nil, fmt.Errorf("close classify prompt: %w", err)
-	}
+	defer cleanup()
 
 	args := a.classifyArgs(schema, promptPath)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
@@ -705,19 +695,11 @@ func (a *GrokAgent) reviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	tmpFile, err := os.CreateTemp("", "roborev-grok-review-*.md")
+	promptPath, cleanup, err := createPromptFile("grok-review", prompt)
 	if err != nil {
-		return nil, fmt.Errorf("create temp structured review prompt: %w", err)
+		return nil, err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("write structured review prompt: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return nil, fmt.Errorf("close structured review prompt: %w", err)
-	}
+	defer cleanup()
 
 	args := []string{
 		"--no-auto-update",

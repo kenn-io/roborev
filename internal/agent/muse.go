@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -80,15 +79,7 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		Name: "muse", Command: a.Command,
 		Args: a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath),
 		Dir:  repoPath, Output: output, StreamStderr: true, DrainStdout: true,
-		Parse: func(r io.Reader, output *syncWriter) (string, error) {
-			var buf bytes.Buffer
-			var dst io.Writer = &buf
-			if output != nil {
-				dst = io.MultiWriter(&buf, output)
-			}
-			_, err := io.Copy(dst, r)
-			return strings.TrimSpace(buf.String()), err
-		},
+		Parse: parseAntigravityOutput,
 	})
 	if err != nil {
 		return "", err

@@ -334,16 +334,19 @@ restriction.
 `muse exec`. Authenticate with `muse login` or set `META_API_KEY`. Set
 `muse_cmd` in global config to use a custom binary path.
 
-Reviews and planning pass `--trust-workspace` to load repository rules, plus
+Reviews and planning pass `--trust-workspace` so Muse loads the repository's own
+rules, like other agents read `AGENTS.md`, plus
 `--disable-write --disable-shell --disable-web-tools`. Fix and refine pass
 `--yolo`. Setting `allow_unsafe_agents = true` also enables that mode for
 reviews.
 
+Muse has no session resume or rebuttal support.
+
 roborev always passes `--contributor-mode off`. It passes `--model` only when
 roborev has a model configured; otherwise, Muse uses its own model settings.
-On pay-as-you-go accounts, Muse's default model is the contributor variant
-(`muse-spark-1.3-contributor`), so setting `model = "muse-spark-1.3"` in roborev
-or choosing it in Muse's settings keeps reviews off that tier.
+Muse 1.4.10 reported the contributor variant as the default on pay-as-you-go
+accounts (`muse-spark-1.3-contributor`), so setting `model = "muse-spark-1.3"`
+in roborev or choosing it in Muse's settings keeps reviews off that tier.
 
 Muse refuses to start when `TMPDIR` points inside the workspace. Use a temporary
 directory outside the repository.
