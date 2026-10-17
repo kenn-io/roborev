@@ -218,6 +218,7 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 				server.searchReconciler = reconciler
 			}
 			server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
+			require.Empty(t, client.events)
 			repo, err := db.GetOrCreateRepo(tmpDir)
 			require.NoError(t, err)
 			now := time.Now().UTC().Truncate(time.Second)
