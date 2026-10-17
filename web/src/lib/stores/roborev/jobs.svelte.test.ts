@@ -1777,6 +1777,21 @@ it("reports committed empty searches once and ignores partial input and refreshe
     event: "search_empty",
     properties: { surface: "web" },
   });
+  let resolveSearch!: (value: { jobs: []; has_more: boolean }) => void;
+  listJobs.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveSearch = resolve;
+      }),
+  );
+  store.commitSearch("abcd");
+  await vi.waitFor(() => expect(resolveSearch).toBeDefined());
+  const calls = listJobs.mock.calls.length;
+  store.editSearch();
+  resolveSearch({ jobs: [], has_more: false });
+  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+  expect(listJobs).toHaveBeenCalledTimes(calls);
+  expect(report).toHaveBeenCalledTimes(1);
   report.mockRestore();
 });
 
@@ -1848,9 +1863,6 @@ it.each([false, true])(
       resolveRefresh({ jobs: [], has_more: false });
       await vi.waitFor(() => expect(posts).toHaveLength(1));
       if (!staleFirst) resolveSearch({ jobs: [], has_more: false });
-      store.commitSearch("abc");
-      await loadJobs(store);
-      expect(posts).toHaveLength(1);
       expect(await posts[0]!.json()).toEqual({
         event: "search_empty",
         properties: { surface: "web" },

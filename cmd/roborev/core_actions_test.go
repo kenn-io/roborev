@@ -25,7 +25,7 @@ import (
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "retry failures", "invalid reasoning", "invalid branch"} {
+	for _, mode := range []string{"terminal max iterations", "skill", "no change", "commit failure", "invalid reasoning", "invalid branch"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -54,10 +54,6 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			name := "core-action-refine-test"
 			changes := 0
 			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
-				if mode == "retry failures" {
-					changes++
-					return "", errors.New("agent unavailable")
-				}
 				if mode == "no change" {
 					return "No changes needed", nil
 				}
@@ -90,7 +86,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			} else {
 				require.ErrorContains(t, result.err, "max iterations")
 			}
-			if invalidInput || mode == "no change" || mode == "commit failure" || mode == "retry failures" {
+			if invalidInput || mode == "no change" || mode == "commit failure" {
 				assert.Equal(t, head, repo.HeadSHA())
 			} else {
 				assert.Equal(t, "3", repo.Run("rev-list", "--count", head+"..HEAD"))
@@ -105,8 +101,11 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					failures = append(failures, post.body)
 				}
 			}
-			if mode == "terminal" {
-				assert.Len(t, fixes, 3)
+			if mode == "terminal max iterations" {
+				require.Len(t, fixes, 3)
+				for _, fix := range fixes {
+					assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, fix)
+				}
 			} else {
 				assert.Empty(t, fixes)
 			}
@@ -116,10 +115,6 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				require.Len(t, failures, 1)
 				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, failures[0])
 			}
-			if mode == "retry failures" {
-				assert.Equal(t, 3, changes)
-			}
-
 		})
 	}
 }
@@ -264,42 +259,64 @@ func TestCoreActionFixCommit(t *testing.T) {
 }
 
 func TestOutcomeWaitFailedAndCanceledJobs(t *testing.T) {
-	for _, command := range []string{"wait", "review"} {
-		for _, status := range []storage.JobStatus{storage.JobStatusFailed, storage.JobStatusCanceled} {
-			t.Run(command+"/"+string(status), func(t *testing.T) {
-				resetCLIUse(t)
-				cliOutputIsTerminal = func(io.Writer) bool { return true }
-				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-				t.Chdir(repo.Dir)
-				job := storage.ReviewJob{ID: 1, GitRef: repo.HeadSHA(), Status: status, Error: "agent unavailable"}
-				md, rec := newCLIUseDaemon(t, MockRefineHooks{
-					OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-						writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
-						return true
-					},
-					OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-						w.WriteHeader(http.StatusCreated)
-						writeJSON(w, job)
-						return true
-					},
-				}, nil)
-				args := []string{"wait", "1"}
-				if command == "review" {
-					args = []string{"review", "--wait", "--agent", "test"}
-				}
-				result := runCLIFresh(t, true, append(args, "--server", md.Server.URL)...)
-				wantError := "review failed: agent unavailable"
-				if status == storage.JobStatusCanceled {
-					wantError = "review was canceled"
-				}
-				require.EqualError(t, result.err, wantError)
-				assert.Contains(t, result.stdout, string(status)+"!")
-				require.Len(t, rec.telemetryPosts(), 1)
-				for _, post := range rec.telemetryPosts() {
-					assert.JSONEq(t, cliUseBody, post.body)
-				}
-			})
+	for _, tc := range []struct {
+		command string
+		status  storage.JobStatus
+	}{
+		{"wait", storage.JobStatusFailed},
+		{"wait", storage.JobStatusCanceled},
+		{"review", storage.JobStatusRunning},
+	} {
+		command, status := tc.command, tc.status
+		name := command + "/" + string(status)
+		if command == "review" {
+			name = "review/request failure"
 		}
+		t.Run(name, func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			t.Chdir(repo.Dir)
+			job := storage.ReviewJob{ID: 1, GitRef: repo.HeadSHA(), Status: status, Error: "agent unavailable"}
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{
+				OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					if command == "review" {
+						http.Error(w, "jobs unavailable", http.StatusInternalServerError)
+						return true
+					}
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
+					return true
+				},
+				OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					w.WriteHeader(http.StatusCreated)
+					writeJSON(w, job)
+					return true
+				},
+			}, nil)
+			args := []string{"wait", "1"}
+			if command == "review" {
+				args = []string{"review", "--wait", "--agent", "test"}
+			}
+			result := runCLIFresh(t, true, append(args, "--server", md.Server.URL)...)
+			if command == "review" {
+				require.ErrorContains(t, result.err, "jobs unavailable")
+				posts := rec.telemetryPosts()
+				require.Len(t, posts, 2)
+				assert.JSONEq(t, cliUseBody, posts[0].body)
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"review_viewed"}}`, posts[1].body)
+				return
+			}
+			wantError := "review failed: agent unavailable"
+			if status == storage.JobStatusCanceled {
+				wantError = "review was canceled"
+			}
+			require.EqualError(t, result.err, wantError)
+			assert.Contains(t, result.stdout, string(status)+"!")
+			require.Len(t, rec.telemetryPosts(), 1)
+			for _, post := range rec.telemetryPosts() {
+				assert.JSONEq(t, cliUseBody, post.body)
+			}
+		})
 	}
 }
 

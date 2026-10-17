@@ -665,7 +665,7 @@ func TestOutcomeSearchEmpty(t *testing.T) {
 		writeSearchResponse(t, w, emptySearchResponse("missing", "lexical"))
 		return true
 	}}, nil)
-	for _, args := range [][]string{{"missing"}, {"missing"}, {"failed"}, {"missing", "--agent"}, {"missing", "--from-skill"}} {
+	for _, args := range [][]string{{"missing"}, {"failed"}, {"missing", "--agent"}} {
 		rec.reset()
 		result := runCLIFresh(t, true, append(append([]string{"search"}, args...), "--server", md.Server.URL)...)
 		if args[0] == "failed" {

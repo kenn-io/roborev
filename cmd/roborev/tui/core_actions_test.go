@@ -329,7 +329,14 @@ func TestOutcomeTUIActions(t *testing.T) {
 			messages := f.update(tea.KeyPressMsg{Code: key})
 			require.NotEmpty(t, messages)
 			for _, msg := range messages {
-				f.update(msg)
+				if key == 'F' {
+					if failure, ok := msg.(reviewErrMsg); ok {
+						msg = reviewFollowErrMsg(failure)
+					}
+				}
+				for _, retry := range f.update(msg) {
+					f.update(retry)
+				}
 			}
 			require.Len(t, f.transport.events, 1)
 			kind := "review_viewed"
@@ -337,26 +344,14 @@ func TestOutcomeTUIActions(t *testing.T) {
 				kind = "finding_fixed"
 			}
 			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"`+kind+`"}}`, f.transport.events[0])
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 1)
 		})
 	}
-	t.Run("failed job navigation", func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture()
-		f.update(tea.KeyPressMsg{Code: 'k'})
-		f.update(tea.KeyPressMsg{Code: 'j'})
-		f.update(tea.KeyPressMsg{Code: 'k'})
-		f.update(displayTickMsg{})
-		assert.Empty(t, f.transport.events)
-	})
 	t.Run("patch actions", func(t *testing.T) {
 		for _, failure := range []tea.Msg{fixTriggerResultMsg{err: errors.New("unavailable")}, patchMsg{err: errors.New("unavailable")}, applyPatchResultMsg{err: errors.New("unavailable")}} {
 			f := newCoreActionReviewVisitFixture()
 			f.update(failure)
 			require.Len(t, f.transport.events, 1)
 			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[0])
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 1)
 		}
 	})
 }

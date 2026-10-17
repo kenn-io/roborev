@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -202,25 +203,42 @@ func testSyncConfig() config.SyncConfig {
 
 func TestOutcomeSyncConnectionRetries(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-	synctest.Test(t, func(t *testing.T) {
-		worker := NewSyncWorker(db, testSyncConfig())
-		var reasons []string
-		worker.SetAfterFailure(func(reason string) {
-			require.True(t, worker.mu.TryLock())
-			worker.mu.Unlock()
-			reasons = append(reasons, reason)
+	for _, state := range []string{"", "1", "unexpected", "unreadable"} {
+		t.Run("stored outage/"+state, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+			if state == "unreadable" {
+				_, err := db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, db.SetSyncState(syncStateOutage, state))
+			}
+			synctest.Test(t, func(t *testing.T) {
+				worker := NewSyncWorker(db, testSyncConfig())
+				var reasons []string
+				worker.SetAfterFailure(func(reason string) {
+					require.True(t, worker.mu.TryLock())
+					worker.mu.Unlock()
+					reasons = append(reasons, reason)
+				})
+				require.NoError(t, worker.Start())
+				t.Cleanup(worker.Stop)
+				synctest.Wait()
+				for range 3 {
+					_, err := worker.SyncNow()
+					require.ErrorContains(t, err, "failed to connect")
+				}
+				if state == "1" || state == "unexpected" {
+					assert.Empty(t, reasons)
+					stored, err := db.GetSyncState(syncStateOutage)
+					require.NoError(t, err)
+					assert.Equal(t, state, stored)
+				} else {
+					assert.Equal(t, []string{"connect"}, reasons)
+				}
+			})
 		})
-		require.NoError(t, worker.Start())
-		synctest.Wait()
-		for range 3 {
-			_, err := worker.SyncNow()
-			require.Error(t, err)
-		}
-		assert.Equal(t, []string{"connect"}, reasons)
-		worker.Stop()
-	})
+	}
 }
 
 func TestOutcomeSyncRowFailures(t *testing.T) {
@@ -249,4 +267,63 @@ func TestOutcomeSyncRowFailures(t *testing.T) {
 	require.NoError(t, worker.FinalPush())
 	require.ErrorContains(t, worker.doSync(), "pull:")
 	assert.Equal(t, []string{"pull"}, reasons)
+}
+
+func TestIntegrationOutcomeSyncRecovery(t *testing.T) {
+	pgURL := os.Getenv("TEST_POSTGRES_URL")
+	if pgURL == "" {
+		t.Skip("requires an isolated PostgreSQL database via TEST_POSTGRES_URL")
+	}
+	for _, recovery := range []string{"connect only", "manual", "background"} {
+		t.Run(recovery, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+			var reasons []string
+			cfg := config.SyncConfig{Enabled: true, Interval: "1h"}
+			// Each phase replaces the worker but keeps its SQLite state.
+			phase := func(cfg config.SyncConfig, background bool, interact func(*SyncWorker)) {
+				t.Helper()
+				worker := NewSyncWorker(db, cfg)
+				worker.SetAfterFailure(func(reason string) { reasons = append(reasons, reason) })
+				defer worker.Stop()
+				require.NoError(t, worker.SetSkipInitialSync(!background))
+				require.NoError(t, worker.Start())
+				interact(worker)
+			}
+			fail := func(worker *SyncWorker) {
+				_, err := worker.SyncNow()
+				require.ErrorContains(t, err, "failed to connect")
+			}
+			phase(cfg, false, fail)
+			require.Equal(t, []string{"connect"}, reasons)
+			// Restart during the same outage and retry without a successful cycle.
+			phase(cfg, false, fail)
+			require.Equal(t, []string{"connect"}, reasons)
+			connected := cfg
+			connected.PostgresURL = pgURL
+			phase(connected, recovery == "background", func(worker *SyncWorker) {
+				// The external PostgreSQL connection cannot use synctest virtual time.
+				require.Eventually(t, func() bool { healthy, _ := worker.HealthCheck(); return healthy }, 10*time.Second, 10*time.Millisecond)
+				require.NoError(t, worker.FinalPush())
+				switch recovery {
+				case "manual":
+					_, err := worker.SyncNow()
+					require.NoError(t, err)
+				case "background":
+					// Wait for the background PostgreSQL push-and-pull cycle to finish.
+					require.Eventually(t, func() bool {
+						outage, err := db.GetSyncState("telemetry.sync_outage")
+						return err == nil && outage == ""
+					}, 10*time.Second, 10*time.Millisecond)
+				}
+			})
+			require.Equal(t, []string{"connect"}, reasons)
+			phase(cfg, false, fail)
+			expected := []string{"connect"}
+			if recovery != "connect only" {
+				expected = append(expected, "connect")
+			}
+			assert.Equal(t, expected, reasons)
+		})
+	}
 }

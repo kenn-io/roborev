@@ -10,10 +10,6 @@ import {
   type Mock,
 } from "vitest";
 import { makeAppRuntime, type OwnedAppRuntime } from "../../runtime/runtime";
-import {
-  createJobsStore,
-  type JobsStore,
-} from "../../stores/roborev/jobs.svelte";
 
 import FilterBarTestHarness from "./FilterBarTestHarness.svelte";
 
@@ -31,7 +27,7 @@ type JobsStoreStub = {
 
 const state = {
   showAutoDesign: false,
-  jobs: null as JobsStoreStub | JobsStore | null,
+  jobs: null as JobsStoreStub | null,
 };
 
 const repoApi = vi.hoisted(() => ({
@@ -95,6 +91,7 @@ describe("FilterBar", () => {
     render(FilterBarTestHarness, { props: { runtime } });
     const input = screen.getByRole("searchbox", { name: "Search by ref" });
     await fireEvent.input(input, { target: { value: "ab" } });
+    expect(state.jobs?.editSearch).toHaveBeenCalledExactlyOnceWith();
     await vi.advanceTimersByTimeAsync(300);
     await fireEvent.input(input, { target: { value: "abc" } });
     await vi.advanceTimersByTimeAsync(300);
@@ -120,47 +117,5 @@ describe("FilterBar", () => {
       "search",
       "feature/refactor",
     );
-  });
-
-  it("ignores a committed empty response after typing resumes before debounce", async () => {
-    vi.useFakeTimers();
-    const posts: Request[] = [];
-    const report = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (input) => {
-        posts.push(input as Request);
-        return new Response("{}", { status: 202 });
-      });
-    let resolveSearch!: (value: { jobs: []; has_more: boolean }) => void;
-    const listJobs = vi.fn().mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveSearch = resolve;
-        }),
-    );
-    const store = createJobsStore({
-      runtime,
-      owner: "filter-bar-search-test",
-      api: { listJobs } as never,
-      navigate: vi.fn(),
-    });
-    state.jobs = store;
-    try {
-      render(FilterBarTestHarness, { props: { runtime } });
-      const input = screen.getByRole("searchbox", { name: "Search by ref" });
-      await fireEvent.input(input, { target: { value: "abc" } });
-      await fireEvent.change(input);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(listJobs).toHaveBeenCalledTimes(1);
-      await fireEvent.input(input, { target: { value: "abcd" } });
-      resolveSearch({ jobs: [], has_more: false });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(store.isLoading()).toBe(false);
-      expect(listJobs).toHaveBeenCalledTimes(1);
-      expect(await Promise.all(posts.map((post) => post.json()))).toEqual([]);
-    } finally {
-      store.dispose();
-      report.mockRestore();
-    }
   });
 });
