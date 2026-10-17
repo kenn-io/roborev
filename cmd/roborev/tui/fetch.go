@@ -19,7 +19,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	gitrepo "go.kenn.io/kit/git/repo"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -450,8 +449,6 @@ func (m model) postScreen(screen string) tea.Cmd {
 
 type screenDeliveryMsg struct {
 	screen, day string
-	event       string
-	status      posthog.Status
 	err         error
 }
 
@@ -1537,9 +1534,9 @@ func (m model) reportAction(event string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		status, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		_, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
 		if event == telemetry.EventReviewViewed {
-			return screenDeliveryMsg{event: event, day: day, status: status, err: err}
+			return screenDeliveryMsg{day: day, err: err}
 		}
 		return nil
 	}

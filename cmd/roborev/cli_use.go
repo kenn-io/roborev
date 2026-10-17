@@ -116,8 +116,8 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 	if !cliUseEligible(req, resp) {
 		return
 	}
+	cliUseEndpoint.Store(&ep)
 	cliUseOnce.Do(func() {
-		cliUseEndpoint.Store(&ep)
 		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
 		cliUseState.Store(&cliUsePostState{ctx: ctx})
 		go func() {

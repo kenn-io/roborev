@@ -197,7 +197,7 @@ type closeRequest struct {
 func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
 	t.Parallel()
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 42, Closed: true}, map[string]bool{"success": true}))
-	cmd := m.closeReviewInBackground(42, true, false, 1, false)
+	cmd := m.closeReviewInBackground(closedResultMsg{jobID: 42, newState: true, seq: 1})
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
@@ -218,7 +218,7 @@ func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.closeReviewInBackground(42, true, false, 1, false)
+	cmd := m.closeReviewInBackground(closedResultMsg{jobID: 42, newState: true, seq: 1})
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
@@ -243,7 +243,7 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	cmd := m.closeReviewInBackground(42, true, false, 1, false)
+	cmd := m.closeReviewInBackground(closedResultMsg{jobID: 42, newState: true, seq: 1})
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)

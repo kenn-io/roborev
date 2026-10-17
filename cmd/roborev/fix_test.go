@@ -4849,10 +4849,12 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 
 func TestCoreActionFixReadAndCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "quiet commit", "no change"} {
+		for _, outcome := range []string{"commit", "stdout commit", "quiet commit", "no change"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
-				cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stdout }
+				cliOutputIsTerminal = func(w io.Writer) bool {
+					return outcome == "stdout commit" && w == os.Stdout || outcome != "stdout commit" && w == os.Stderr
+				}
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				before := repo.HeadSHA()
@@ -4873,13 +4875,11 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 					repo.CommitFile("fixed.txt", repo.Run("rev-parse", "HEAD"), "Fix review finding")
 					return "Fixed", nil
 				}}
-				cmd, _ := newTestCmd(t)
-				cmd.SetContext(t.Context())
+				cmd := &cobra.Command{}
 				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
 				opts := fixOptions{agentName: "test", quiet: outcome == "quiet commit", classify: agent.ClassifyLimit}
 				var err error
-				output, _ := captureStdoutStderr(t, func() {
-					cmd.SetOut(os.Stdout)
+				output, confirmation := captureStdoutStderr(t, func() {
 					if batch {
 						roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
 						err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
@@ -4895,13 +4895,20 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				posts := rec.telemetryPosts()
 				if outcome == "quiet commit" {
 					assert.Empty(t, output)
+					assert.Empty(t, confirmation)
 					assert.Empty(t, posts)
 					return
 				}
 				assert.Contains(t, output, "Finding")
-				events := []string{"review_viewed"}
-				if batch {
+				if outcome != "no change" {
+					assert.Contains(t, confirmation, "committed successfully")
+				}
+				var events []string
+				if outcome == "stdout commit" {
 					events = append(events, "review_viewed")
+					if batch {
+						events = append(events, "review_viewed")
+					}
 				}
 				if outcome == "commit" {
 					events = append(events, "finding_fixed")

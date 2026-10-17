@@ -59,28 +59,24 @@ func TestCoreActionReviewVisits(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"delivery error", "disabled"} {
-		t.Run(outcome, func(t *testing.T) {
-			f := newCoreActionReviewVisitFixture(t)
-			f.update(f.review())
-			f.transport.fail, f.transport.status = outcome == "delivery error", "disabled"
-			for range 2 {
-				f.update(tea.KeyPressMsg{Code: '0'})
-			}
-			require.Len(t, f.transport.events, 2)
-			f.transport.fail, f.transport.status = false, "queued"
-			f.update(displayTickMsg{})
-			require.Len(t, f.transport.events, 2)
-			f.update(tea.KeyPressMsg{Code: '0'})
-			assert.Equal(t, []string{"review_viewed", "review_viewed", "review_viewed"}, f.transport.events)
-		})
+	f := newCoreActionReviewVisitFixture(t)
+	f.update(f.review())
+	f.transport.fail = true
+	for range 2 {
+		f.update(tea.KeyPressMsg{Code: '0'})
 	}
+	require.Len(t, f.transport.events, 2)
+	f.transport.fail = false
+	f.update(displayTickMsg{})
+	require.Len(t, f.transport.events, 2)
+	f.update(tea.KeyPressMsg{Code: '0'})
+	assert.Equal(t, []string{"review_viewed", "review_viewed", "review_viewed"}, f.transport.events)
 }
 
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewAcceptedStopsReports(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, status := range []string{"queued", "skipped"} {
+	for _, status := range []string{"queued", "skipped", "disabled"} {
 		t.Run(status, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
@@ -108,7 +104,7 @@ func TestCoreActionReviewAcceptedStopsReports(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionPendingReviewOpen(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "fix output", "next day"} {
+	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "rerun destination", "fix output", "next day"} {
 		t.Run(outcome, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
@@ -118,12 +114,16 @@ func TestCoreActionPendingReviewOpen(t *testing.T) {
 				f.m.api = newDaemonAPI(f.m.endpoint, f.m.client)
 				origin := viewQueue
 				key := tea.KeyPressMsg{Code: tea.KeyEnter}
-				if outcome == "tasks" || outcome == "loaded tasks" || outcome == "fix output" {
+				if outcome == "tasks" || outcome == "loaded tasks" || outcome == "rerun destination" || outcome == "fix output" {
 					origin = viewTasks
 					f.m.currentView = viewTasks
 					f.m.fixJobs = []storage.ReviewJob{{ID: 9, Status: storage.JobStatusDone, JobType: storage.JobTypeFix, ParentJobID: new(int64(42))}}
 					if outcome != "fix output" {
 						key = tea.KeyPressMsg{Code: 'P'}
+					}
+					if outcome == "rerun destination" {
+						f.m.selectedJobID = 43
+						f.m.jobAttemptGen = map[int64]uint64{42: 1}
 					}
 					f.m.fixSelectedIdx = 0
 				}

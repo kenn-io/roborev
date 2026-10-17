@@ -1858,17 +1858,17 @@ Core actions report `review_viewed` once per installation, surface, and UTC day,
 explicit close. All carry `surface`. Reads and closes support web, TUI and CLI;
 fixes support TUI and CLI. Reads include review, synthesis and compact output.
 The TUI requires key or mouse input before counting loaded content. Quit keys
-`ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. A failed
-or disabled report retries on later input. The browser reports a rendered Review
-tab on load and when focus or visibility returns, with one request in flight at
-a time. The daemon owns daily deduplication. CLI reads include `show`, `wait`,
-`review --wait`, `compact --wait`, and nonquiet `fix` output. CLI actions
-require terminal output and exclude agents and `--from-skill`. CLI fixes from
-`fix`, `refine`, and `analyze --fix` report `finding_fixed` when they commit.
-Reopens, automatic closes, prompt reads, and analysis reads stay silent. With a
-remote `--server`, CLI events use an already-running local daemon and its
-installation ID. Without a local daemon, events are dropped. Reporting never
-starts a daemon.
+`ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. A
+transport error allows another report on later input. The browser reports a
+rendered Review tab on load and when focus or visibility returns, with one
+request in flight at a time. The daemon owns daily deduplication. CLI reads
+include `show`, `wait`, `review --wait`, `compact --wait`, and nonquiet `fix`
+output. CLI actions require terminal output and exclude agents and
+`--from-skill`. CLI fixes from `fix`, `refine`, and `analyze --fix` report
+`finding_fixed` when they commit. Reopens, automatic closes, prompt reads, and
+analysis reads stay silent. With a remote `--server`, CLI events use an
+already-running local daemon and its installation ID. Without a local daemon,
+events are dropped. Reporting never starts a daemon.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

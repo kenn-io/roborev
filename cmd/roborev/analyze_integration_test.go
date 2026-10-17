@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -116,12 +117,14 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
-	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
+	for _, outcome := range []string{"no change", "commit", "stdout commit", "quiet commit"} {
 		t.Run(outcome, func(t *testing.T) {
 			committed := outcome != "no change"
 			quiet := outcome == "quiet commit"
 			resetCLIUse(t)
-			cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stdout }
+			cliOutputIsTerminal = func(w io.Writer) bool {
+				return outcome == "stdout commit" && w == os.Stdout || outcome != "stdout commit" && w == os.Stderr
+			}
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 			before := repo.HeadSHA()
@@ -151,12 +154,10 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 				}
 				return "Done", nil
 			}})
-			cmd, _ := newTestCmd(t)
-			cmd.SetContext(t.Context())
+			cmd := &cobra.Command{}
 			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast", quiet: quiet}
 			var err error
-			output, _ := captureStdoutStderr(t, func() {
-				cmd.SetOut(os.Stdout)
+			output, confirmation := captureStdoutStderr(t, func() {
 				err = runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
 			})
 			require.NoError(t, err)
@@ -168,12 +169,13 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			assert.Equal(t, int32(1), atomic.LoadInt32(&state.CloseCount))
 			if quiet {
 				assert.Empty(t, output)
+				assert.Empty(t, confirmation)
 			} else {
-				assert.Contains(t, output, "CODE SMELLS")
-				assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), output)
+				assert.Contains(t, confirmation, "CODE SMELLS")
+				assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), confirmation)
 			}
 			waitCLIUse()
-			if committed && !quiet {
+			if outcome == "commit" {
 				require.Len(t, bodies, 1)
 				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, bodies[0])
 			} else {

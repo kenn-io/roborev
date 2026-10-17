@@ -712,7 +712,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	// Ensure the fix commit gets a review enqueued
 	if commitCreated {
 		if !opts.quiet {
-			reportCLIAction(cmd, telemetry.EventFindingFixed)
+			reportCLIActionOutput(ctx, cmd.OutOrStderr(), telemetry.EventFindingFixed)
 		}
 		if head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD"); err == nil {
 			if err := enqueueIfNeeded(ctx, ep.BaseURL(), repoRoot, head); err != nil && !opts.quiet {

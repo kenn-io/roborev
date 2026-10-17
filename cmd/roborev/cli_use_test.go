@@ -807,7 +807,7 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 					return stdoutTerminal && out == os.Stdout || !stdoutTerminal && out == os.Stderr
 				}
 				cmd := &cobra.Command{}
-				cmd.SetContext(t.Context())
+				require.Nil(t, cmd.Context())
 				require.NoError(t, showReview(cmd, ep, 1, false))
 				waitCLIUse()
 			})
@@ -824,7 +824,7 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 }
 
 func TestCoreActionRemoteLocalFallback(t *testing.T) {
-	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "first observed"} {
+	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
@@ -847,24 +847,27 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			}
 			cmd, out := newTestCmd(t)
 			cliOutputIsTerminal = func(w io.Writer) bool { return mode != "redirected" && w == out }
-			if mode == "first observed" {
+			if mode == "latest observed" {
 				cliUsePost = func(context.Context, *http.Client, string, string) {}
 				second, secondPosts := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 				for _, server := range []string{md.Server.URL, second.Server.URL} {
 					observeCLIUse(mustParseEndpoint(t, server), httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
 				}
-				t.Cleanup(func() { assert.Empty(t, secondPosts.telemetryPosts()) })
+				waitCLIUse()
+				assert.Empty(t, rec.telemetryPosts())
+				md.Server.Close()
+				rec = secondPosts
 			}
 			cmd.SetContext(t.Context())
 			reportCLIAction(cmd, "review_viewed")
 			waitCLIUse()
-			if mode == "running" || mode == "first observed" {
+			if mode == "running" || mode == "latest observed" {
 				require.Len(t, rec.telemetryPosts(), 1)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
 			} else {
 				assert.Empty(t, rec.telemetryPosts())
 			}
-			if mode == "first observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" {
+			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" {
 				assert.Zero(t, calls)
 			} else {
 				assert.Equal(t, 1, calls)
