@@ -62,6 +62,16 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		GrokCmd:       "custom-grok",
 		MuseCmd:       "custom-muse",
 	}
+	expectedOverrides := map[string]string{
+		"codex":       "custom-codex",
+		"claude-code": "custom-claude",
+		"gemini":      "custom-gemini",
+		"cursor":      "custom-cursor",
+		"pi":          "custom-pi",
+		"opencode":    "custom-opencode",
+		"grok":        "custom-grok",
+		"muse":        "custom-muse",
+	}
 
 	for _, spec := range allAgentSpecs {
 		t.Run(spec.Name, func(t *testing.T) {
@@ -77,7 +87,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 
 			require.True(t, ok)
 			expectedCommand := spec.DefaultCommand
-			if override := commandOverrideForAgent(spec.Name, cfg); override != "" {
+			if override := expectedOverrides[spec.Name]; override != "" {
 				expectedCommand = override
 			}
 			assert.Equal(t, expectedCommand, commandAgent.CommandName())
