@@ -1869,29 +1869,24 @@ committed fixes count individually. Reports are best-effort and use the existing
 daemon. Daily review claims survive daemon restarts in `telemetry-daily.json`
 beside the daemon database.
 
-Outcome events count each completed attempt:
+Outcome events count completed actions:
 
 - `search_empty` carries `surface=web` or `cli` once per nonblank committed
-  search with zero matches. Browser searches commit on Enter or blur. Live
-  filtering, refreshes, failed requests, and superseded responses stay silent.
-  A refresh that replaces a pending committed search resolves its outcome.
-- `error_shown` carries `surface=web`, `tui`, or `cli` and a fixed `kind`:
-  `review_viewed`, `finding_fixed`, `review_closed`, or `other`. Each failed
-  user action counts once. Stored failed or canceled jobs, including CLI waits,
-  pane selection, redraws, and automatic refreshes stay silent. CLI errors count
-  at most once per process and use the core-action terminal and `--from-skill`
-  gates; cancellation, usage errors, and planning-only fixes stay silent.
-  Runtime fix failures count even
-  before the agent starts. Enqueue, comment, and close warnings after a successful
-  fix leave that fix's outcome unchanged.
+    search with zero matches. Browser searches commit on Enter or blur. Typing
+    again drops the pending outcome; live filtering and refreshes stay silent.
+- `error_shown` carries `surface=web`, `tui`, or `cli` and `kind=review_viewed`,
+    `finding_fixed`, `review_closed`, or `other`. Each failed action counts
+    once. CLI commands report at exit with the core-action terminal and skill
+    gates. Usage errors, cancellation, stored failed or canceled jobs, and
+    planning-only fixes stay silent. Skipped fixes count; bookkeeping warnings
+    after a successful fix and refresh failures after an acknowledged close stay
+    silent.
 - `sync_failed` carries `reason=connect`, `push`, `pull`, or `other` once per
-  outage, starting with the first returned error and continuing across daemon
-  restarts. Only a successful push-and-pull cycle ends it. Connect success,
-  final-push success,
-  cancellation, and individual row failures leave it alone. Row failures stay in
-  the log.
+    outage across daemon restarts. A successful push-and-pull cycle ends it.
+    Shutdown and individual row failures leave the outage unchanged.
 
-Unlisted error kinds and sync reasons become `other`. Reports use the existing daemon and remain best effort. They send no search text, error messages, job identifiers, or connection details.
+Unlisted kinds and reasons become `other`. Events exclude search text, error
+messages, job identifiers, and connection details.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

@@ -264,6 +264,10 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
 	}
 
+	if opts.fix {
+		armCLIOutcome(telemetry.EventFindingFixed)
+	}
+
 	// Get working directory and repo root
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -601,10 +605,7 @@ func analysisWorkflow(label string) string {
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
-func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) (resultErr error) {
-	defer func() {
-		reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-	}()
+func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -683,14 +684,10 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 
 				commitPrompt := buildCommitPromptWithMetadata(analysisType, metadata)
 				retryErr := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet)
-
-				// Check again if commit was created
 				headFinal, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
-				if err == nil && headFinal != headAfter {
-					commitCreated = true
-				}
+				commitCreated = err == nil && headFinal != headAfter
 				if retryErr != nil && !commitCreated && !opts.quiet {
-					reportCLIError(cmd, telemetry.EventFindingFixed, retryErr)
+					markCLIOutcomeFailed()
 					cmd.Printf("\nWarning: commit agent failed: %v\n", retryErr)
 				}
 			}

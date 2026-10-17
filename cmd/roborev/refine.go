@@ -131,6 +131,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 			if opts.list {
 				return runRefineList(cmd, opts)
 			}
+			armCLIOutcome(telemetry.EventFindingFixed)
 			if opts.allBranches {
 				return runRefineAllBranches(cmd, opts)
 			}
@@ -362,10 +363,7 @@ type RunContext struct {
 	PostCommitDelay time.Duration
 }
 
-func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
-	actionCmd := &cobra.Command{}
-	actionCmd.SetContext(runCtx.Context)
-	actionCmd.SetOut(os.Stdout)
+func runRefine(runCtx RunContext, opts refineOptions) error {
 	ctx := runCtx.Context
 	if ctx == nil {
 		return fmt.Errorf("run refine: missing context")
@@ -410,10 +408,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve workflow config: %w", err)
 	}
-
-	defer func() {
-		reportCLIError(actionCmd, telemetry.EventFindingFixed, resultErr)
-	}()
 
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {
@@ -512,7 +506,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 				fmt.Printf("Waiting for in-progress review (job %d)...\n", pendingJob.ID)
 				review, err := client.WaitForReview(pendingJob.ID)
 				if err != nil {
-					reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 					fmt.Printf("Warning: review failed: %v\n", err)
 					continue // Loop back, will re-check
 				}
@@ -647,7 +640,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 				if _, stateChanged := errors.AsType[*planningStateError](planErr); stateChanged {
 					return fmt.Errorf("planning cannot continue: %w", planErr)
 				}
-				reportCLIError(planCmd, telemetry.EventFindingFixed, planErr)
 				fmt.Println("Will retry in next iteration")
 				continue
 			}
@@ -763,7 +755,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 					return saveErr
 				}
 			}
-			reportCLIError(actionCmd, telemetry.EventFindingFixed, agentErr)
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -835,6 +826,9 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))
+		actionCmd := &cobra.Command{}
+		actionCmd.SetContext(ctx)
+		actionCmd.SetOut(os.Stdout)
 		reportCLIAction(actionCmd, telemetry.EventFindingFixed)
 
 		// Add response recording what was done

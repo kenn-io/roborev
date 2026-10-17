@@ -92,7 +92,10 @@ var (
 	cliUseAgent   bool
 )
 
-var cliErrorReported atomic.Bool
+var (
+	cliOutcomeKind   string
+	cliOutcomeFailed bool
+)
 
 type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
 
@@ -151,9 +154,6 @@ func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]
 	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) {
 		return
 	}
-	if event == telemetry.EventErrorShown && cliErrorReported.Swap(true) {
-		return
-	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), cliUseTimeout)
 	defer cancel()
 	endpoints, err := selectDaemonEndpointsWithDiscovery(func() (*daemon.RuntimeInfo, error) {
@@ -163,20 +163,16 @@ func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]
 	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI, properties...)
 }
 
-// actionInputError marks rejected action options before runtime work begins.
-type actionInputError struct{ error }
+// armCLIOutcome records the action whose final error main will report.
+func armCLIOutcome(kind string) { cliOutcomeKind = kind }
 
-func (e *actionInputError) Unwrap() error { return e.error }
+func markCLIOutcomeFailed() { cliOutcomeFailed = true }
 
-func reportCLIError(cmd *cobra.Command, kind string, err error) {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, errReviewFailed) || errors.Is(err, errReviewCanceled) {
+func reportCLIOutcome(cmd *cobra.Command, err error) {
+	if cliOutcomeKind == "" || !cmd.SilenceUsage || cmd.SilenceErrors ||
+		(!cliOutcomeFailed && err == nil) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, errReviewFailed) || errors.Is(err, errReviewCanceled) {
 		return
 	}
-	if _, ok := errors.AsType[*actionInputError](err); ok {
-		return
-	}
-	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {
-		return
-	}
-	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})
+	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: cliOutcomeKind})
 }

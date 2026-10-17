@@ -76,6 +76,7 @@ Examples:
 				}
 			}
 
+			armCLIOutcome(telemetry.EventReviewViewed)
 			// Multiple args: wait for all concurrently
 			if len(args) > 1 {
 				return waitMultiple(ctx, cmd, args, forceJobID, quiet)
@@ -154,9 +155,6 @@ Examples:
 
 			ep := getDaemonEndpoint()
 			waitErr := waitForJob(cmd, ep, jobID, quiet)
-			if !errors.Is(waitErr, ErrJobNotFound) {
-				reportCLIError(cmd, telemetry.EventReviewViewed, waitErr)
-			}
 			if waitErr != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -295,7 +293,6 @@ func waitMultiple(
 				cmd.Printf("Job %d: review has issues\n", r.jobID)
 			default:
 				cmd.Printf("Job %d: %v\n", r.jobID, r.err)
-				reportCLIError(cmd, telemetry.EventReviewViewed, r.err)
 			}
 		}
 	}
@@ -313,7 +310,6 @@ func waitMultiple(
 					continue
 				}
 				if _, ok := errors.AsType[*exitError](r.err); !ok {
-					reportCLIError(cmd, telemetry.EventReviewViewed, r.err)
 					return r.err
 				}
 			}

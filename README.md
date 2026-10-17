@@ -508,17 +508,13 @@ and committed fixes count individually. Reports are best-effort and use the
 existing daemon. Daily review claims survive daemon restarts in
 `telemetry-daily.json` beside the daemon database.
 
-Searches with no matches report `search_empty` with only `surface` (`web` or
-`cli`), once per committed search. Browser searches commit on Enter or blur;
-live filtering stays silent. Failed review, fix, and close actions report
-`error_shown` once per user action with `surface` and `kind` (`review_viewed`,
-`finding_fixed`, `review_closed`, or `other`). CLI failures count at most once
-per process, with the same terminal and skill gates as core actions. Stored
-failed or canceled jobs, including CLI waits, and automatic refreshes stay
-silent. The daemon reports `sync_failed` once per outage with only `reason`
-(`connect`, `push`, `pull`, or `other`). A
-successful push-and-pull cycle ends the outage; individual row failures stay in
-the log. Search text and error details are excluded.
+Outcome events count committed empty searches (`search_empty`), failed core
+actions (`error_shown`), and sync outages (`sync_failed`). Browser searches commit
+on Enter or blur; typing and refreshes stay silent. CLI errors count once when
+the command ends, with the core-action terminal and skill gates. Skipped fixes
+count; bookkeeping warnings after a successful fix stay silent. Sync outages
+survive daemon restarts and end after a successful push-and-pull cycle.
+See [outcome event properties](https://roborev.io/docs/configuration/#telemetry).
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.

@@ -242,7 +242,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
               );
-              if (closed) reportErrorShown("review_closed");
             }),
         })
         .pipe(
@@ -255,10 +254,14 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         );
     });
 
+  function showCloseFailure(closed: boolean, message: string): void {
+    opts.onError?.(message);
+    if (closed) reportErrorShown("review_closed");
+  }
+
   function closeReview(jobId: number): void {
     if (selectedJobId !== jobId || review?.job_id !== jobId) {
-      opts.onError?.("Failed to close review");
-      reportErrorShown("review_closed");
+      showCloseFailure(!review?.closed, "Failed to close review");
       return;
     }
     const closed = !review.closed;
@@ -266,10 +269,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       operation: "close Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
       onFailure: (failure) => {
-        opts.onError?.(
+        showCloseFailure(
+          closed,
           roborevMutationFailureMessage("Failed to close review", failure),
         );
-        if (closed) reportErrorShown("review_closed");
       },
     });
   }

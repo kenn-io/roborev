@@ -162,6 +162,9 @@ Examples:
 				classify:    agent.ClassifyLimit,
 			}
 
+			if !planOnly {
+				armCLIOutcome(telemetry.EventFindingFixed)
+			}
 			roots, err := resolveCurrentRepoRoots(ctx)
 			if err != nil {
 				return err
@@ -339,8 +342,6 @@ type fixJobParams struct {
 	// Classify is the rate-limit classifier used for the commit-retry
 	// path. nil defaults to agent.ClassifyLimit. Tests inject a stub.
 	Classify agent.LimitClassifier
-
-	OnWarning func(error)
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -463,12 +464,11 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
 	}
 
-	if retryErr != nil && params.OnWarning != nil {
-		params.OnWarning(retryErr)
-	}
-
 	// Still no commit - report whether changes remain
 	hasChanges, _ = gitrepo.HasUncommittedChanges(ctx, params.RepoRoot)
+	if retryErr != nil && hasChanges {
+		markCLIOutcomeFailed()
+	}
 	return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
 }
 
@@ -504,7 +504,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 
 	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
-		return nil, &actionInputError{fmt.Errorf("resolve fix reasoning: %w", err)}
+		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
 	}
 	if err := config.ValidateRepoConfig(repoPath); err != nil {
 		return nil, fmt.Errorf("resolve workflow config: %w", err)
@@ -1064,12 +1064,7 @@ func firstLine(s string) string {
 	return truncateString(s, 80)
 }
 
-func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) (resultErr error) {
-	defer func() {
-		if !opts.planOnly {
-			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-		}
-	}()
+func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
 	if opts.classify == nil {
 		opts.classify = agent.ClassifyLimit
 	}
@@ -1137,7 +1132,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 			opts.minSeverity, repoRoot, fixCfg,
 		)
 		if err != nil {
-			return &actionInputError{fmt.Errorf("resolve min-severity: %w", err)}
+			return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
 		}
 	}
 
@@ -1226,9 +1221,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Metadata:      metadata,
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
-		OnWarning: func(err error) {
-			reportCLIError(cmd, telemetry.EventFindingFixed, err)
-		},
 	}, implementationPrompt)
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
@@ -1395,12 +1387,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 // processFixBatch fetches reviews for the given job IDs, splits them into
 // batches by prompt size and count, runs each batch as a single agent
 // invocation, and marks the jobs closed when done.
-func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) (resultErr error) {
-	defer func() {
-		if !opts.planOnly {
-			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-		}
-	}()
+func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
 	if len(jobIDs) == 0 {
 		if !opts.quiet {
 			cmd.Println("No open jobs found.")
@@ -1418,7 +1405,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				return fmt.Errorf("fetch job %d: %w", id, err)
 			}
 			if !opts.quiet {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+				markCLIOutcomeFailed()
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
 			continue
@@ -1447,7 +1434,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				return fmt.Errorf("fetch review %d: %w", id, err)
 			}
 			if !opts.quiet {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+				markCLIOutcomeFailed()
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
 			continue
@@ -1501,7 +1488,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		opts.minSeverity, roots.worktreeRoot, cfg,
 	)
 	if err != nil {
-		return &actionInputError{fmt.Errorf("resolve min-severity: %w", err)}
+		return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
 	}
 	if minSev != "" {
 		for _, e := range entries {
@@ -1602,9 +1589,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			Metadata:      metadata,
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
-			OnWarning: func(err error) {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
-			},
 		}, fixPrompt)
 		if cleanupPrompt != nil {
 			cleanupPrompt()
@@ -1636,7 +1620,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				}
 			}
 			if !opts.planOnly {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+				markCLIOutcomeFailed()
 			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
 			continue

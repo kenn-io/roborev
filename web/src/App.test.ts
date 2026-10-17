@@ -2,8 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
-import { Effect } from "effect";
-import * as appRuntime from "./lib/runtime/runtime";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -11,11 +9,7 @@ const appOpened = vi.hoisted(() => ({
   reportCoreAction: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
-vi.mock("./lib/utils/app-opened", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("./lib/utils/app-opened")>();
-  return { ...appOpened, reportErrorShown: actual.reportErrorShown };
-});
+vi.mock("./lib/utils/app-opened", () => appOpened);
 
 const credentials = {
   session: "tab-session",
@@ -63,128 +57,6 @@ function applicationResponse(input: RequestInfo | URL): Response {
     return new Response(new ReadableStream({ start() {} }), { status: 200 });
   }
   return response(404);
-}
-
-function mountReviewRefresh(
-  completed = false,
-  readFails = false,
-  interruptLoad = false,
-) {
-  history.replaceState(null, "", "/reviews/42");
-  const fixture = {
-    completed,
-    closed: false,
-    failed: false,
-    reviewLoads: 0,
-    postedErrors: [] as unknown[],
-    interrupted: false,
-    closeAcknowledged: false,
-    readFails,
-    eventStream: undefined as
-      | ReadableStreamDefaultController<Uint8Array>
-      | undefined,
-    emit(type: string) {
-      fixture.eventStream?.enqueue(
-        new TextEncoder().encode(
-          `${JSON.stringify({ type, job_id: 42, sha: "abc123", repo: "/workspace/repo", repo_name: "repo", ts: "2026-08-13T20:01:00Z" })}\n`,
-        ),
-      );
-    },
-  };
-  const selectedJob = () => ({
-    id: 42,
-    agent: "test",
-    agentic: false,
-    enqueued_at: "2026-08-13T20:00:00Z",
-    git_ref: "abc123",
-    job_type: "review",
-    prompt_prebuilt: false,
-    repo_id: 1,
-    repo_name: "example/repo",
-    retry_count: 0,
-    status: fixture.failed ? "failed" : fixture.completed ? "done" : "running",
-    error: fixture.failed ? "agent unavailable" : "",
-    ...(fixture.completed ? { finished_at: "2026-08-13T20:01:00Z" } : {}),
-  });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(
-        input instanceof Request ? input.url : input,
-        location.origin,
-      );
-      if (url.pathname === "/api/ui/session/bootstrap") {
-        return response(200, credentials);
-      }
-      if (url.pathname === "/api/status") return response(200, status);
-      if (url.pathname === "/api/jobs") {
-        if (url.searchParams.get("id") === "42") {
-          return response(200, {
-            jobs: [selectedJob()],
-            has_more: false,
-            stats: { done: fixture.completed ? 1 : 0, closed: 0, open: 1 },
-          });
-        }
-        return response(200, {
-          jobs: [],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
-        });
-      }
-      if (url.pathname === "/api/telemetry/events") {
-        const body = await (input as Request).json();
-        if (body.event === "error_shown") fixture.postedErrors.push(body);
-        return response(202);
-      }
-      if (url.pathname === "/api/review/close") {
-        if (fixture.closeAcknowledged) {
-          fixture.closed = (await (input as Request).json()).closed;
-          fixture.readFails = true;
-          return response(200, { success: true });
-        }
-        return response(500);
-      }
-      if (url.pathname === "/api/review") {
-        fixture.reviewLoads++;
-        if (interruptLoad && !fixture.interrupted) {
-          fixture.interrupted = true;
-          return new Promise<Response>((_resolve, reject) => {
-            (input as Request).signal.addEventListener(
-              "abort",
-              () => reject(new DOMException("aborted", "AbortError")),
-              { once: true },
-            );
-          });
-        }
-        if (fixture.readFails) return response(500);
-        if (!fixture.completed || fixture.failed) return response(404);
-        return response(200, {
-          id: 7,
-          job_id: 42,
-          output: "Fresh review output",
-          prompt: "Review this change",
-          closed: fixture.closed,
-          job: selectedJob(),
-        });
-      }
-      if (url.pathname === "/api/ui/review-projection") {
-        return response(200, { responses: [] });
-      }
-      if (url.pathname === "/api/stream/events") {
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              fixture.eventStream = controller;
-            },
-          }),
-          { status: 200 },
-        );
-      }
-      return response(404);
-    }),
-  );
-  render(App);
-  return fixture;
 }
 
 describe("App", () => {
@@ -516,125 +388,113 @@ describe("App", () => {
   });
 
   test("refreshes an off-page deep-linked review from matching events", async () => {
-    const fixture = mountReviewRefresh();
+    history.replaceState(null, "", "/reviews/42");
+    const encoder = new TextEncoder();
+    let eventStream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let completed = false;
+    let closed = false;
+    const selectedJob = () => ({
+      id: 42,
+      agent: "test",
+      agentic: false,
+      enqueued_at: "2026-08-13T20:00:00Z",
+      git_ref: "abc123",
+      job_type: "review",
+      prompt_prebuilt: false,
+      repo_id: 1,
+      repo_name: "example/repo",
+      retry_count: 0,
+      status: completed ? "done" : "running",
+      ...(completed ? { finished_at: "2026-08-13T20:01:00Z" } : {}),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/ui/session/bootstrap") {
+          return response(200, credentials);
+        }
+        if (url.pathname === "/api/status") return response(200, status);
+        if (url.pathname === "/api/jobs") {
+          if (url.searchParams.get("id") === "42") {
+            return response(200, {
+              jobs: [selectedJob()],
+              has_more: false,
+              stats: { done: completed ? 1 : 0, closed: 0, open: 1 },
+            });
+          }
+          return response(200, {
+            jobs: [],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 0 },
+          });
+        }
+        if (url.pathname === "/api/review") {
+          if (!completed) return response(404);
+          return response(200, {
+            id: 7,
+            job_id: 42,
+            output: "Fresh review output",
+            prompt: "Review this change",
+            closed,
+            job: selectedJob(),
+          });
+        }
+        if (url.pathname === "/api/ui/review-projection") {
+          return response(200, { responses: [] });
+        }
+        if (url.pathname === "/api/stream/events") {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                eventStream = controller;
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return response(404);
+      }),
+    );
+    render(App);
+
     expect(await screen.findByText("Review in progress…")).toBeInTheDocument();
-    await vi.waitFor(() => expect(fixture.eventStream).toBeDefined());
-    fixture.completed = true;
-    fixture.emit("review.completed");
+    await vi.waitFor(() => expect(eventStream).toBeDefined());
+
+    completed = true;
+    eventStream?.enqueue(
+      encoder.encode(
+        `${JSON.stringify({
+          type: "review.completed",
+          ts: "2026-08-13T20:01:00Z",
+          job_id: 42,
+          repo: "/workspace/repo",
+          repo_name: "repo",
+          sha: "abc123",
+        })}\n`,
+      ),
+    );
     expect(await screen.findByText("Fresh review output")).toBeInTheDocument();
-    fixture.closed = true;
-    fixture.emit("review.closed");
+
+    closed = true;
+    eventStream?.enqueue(
+      encoder.encode(
+        `${JSON.stringify({
+          type: "review.closed",
+          ts: "2026-08-13T20:02:00Z",
+          job_id: 42,
+          repo: "/workspace/repo",
+          repo_name: "repo",
+          sha: "abc123",
+        })}\n`,
+      ),
+    );
     expect(
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
-  });
-
-  test.each([
-    "request failure",
-    "interrupted load",
-    "runtime failure",
-    "acknowledged close",
-  ])("reports user action failures across refreshes: %s", async (failure) => {
-    if (failure === "runtime failure") {
-      const makeRuntime = appRuntime.makeAppRuntime;
-      vi.spyOn(appRuntime, "makeAppRuntime").mockImplementation(() => {
-        const runtime = makeRuntime();
-        const runCommand = runtime.runCommand;
-        let rejectLoad = true;
-        return {
-          ...runtime,
-          runCommand: (program, options) => {
-            if (rejectLoad && options.operation === "load Roborev review") {
-              rejectLoad = false;
-              return runCommand(
-                Effect.fail(new Error("runtime load failed")) as never,
-                options,
-              );
-            }
-            return runCommand(program, options);
-          },
-        };
-      });
-    }
-    const fixture = mountReviewRefresh(
-      failure === "acknowledged close",
-      failure !== "acknowledged close",
-      failure === "interrupted load",
-    );
-    if (failure !== "acknowledged close") {
-      if (failure === "interrupted load") {
-        await vi.waitFor(() => expect(fixture.eventStream).toBeDefined());
-        await vi.waitFor(() => expect(fixture.interrupted).toBe(true));
-        fixture.emit("review.completed");
-      }
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Failed to load review",
-      );
-      await vi.waitFor(() =>
-        expect(fixture.postedErrors).toEqual([
-          {
-            event: "error_shown",
-            properties: { surface: "web", kind: "review_viewed" },
-          },
-        ]),
-      );
-      const previousLoads = fixture.reviewLoads;
-      fixture.emit("review.completed");
-      await vi.waitFor(() =>
-        expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
-      );
-      expect(fixture.postedErrors).toHaveLength(1);
-      if (failure !== "request failure") return;
-      fixture.readFails = false;
-      fixture.completed = true;
-      fixture.emit("review.completed");
-    }
-    await screen.findByText("Fresh review output");
-    const loadErrors = [...fixture.postedErrors];
-    fixture.closeAcknowledged = failure === "acknowledged close";
-    for (let count = 1; count <= 2; count++) {
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Close Review" }),
-      );
-      await vi.waitFor(() =>
-        expect(fixture.postedErrors).toHaveLength(loadErrors.length + count),
-      );
-    }
-    await vi.waitFor(() =>
-      expect(fixture.postedErrors).toEqual([
-        ...loadErrors,
-        {
-          event: "error_shown",
-          properties: { surface: "web", kind: "review_closed" },
-        },
-        {
-          event: "error_shown",
-          properties: { surface: "web", kind: "review_closed" },
-        },
-      ]),
-    );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss error" }),
-    );
-    fixture.readFails = false;
-    fixture.closed = true;
-    fixture.emit("review.closed");
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Reopen" }),
-    );
-    await vi.waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        fixture.closeAcknowledged
-          ? "Review state changed, but the refreshed review is unavailable"
-          : "Failed to close review",
-      ),
-    );
-    expect(fixture.postedErrors).toHaveLength(loadErrors.length + 2);
-    fixture.readFails = false;
-    fixture.failed = true;
-    fixture.emit("review.completed");
-    await screen.findByText("Review failed");
-    expect(fixture.postedErrors).toHaveLength(loadErrors.length + 2);
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {

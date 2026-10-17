@@ -375,6 +375,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.sync(() => {
       if (generation !== jobsAuthorityGeneration) return [];
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
+      acceptedScope = authority.queryScope;
       daemonOrder = new Map(
         authority.jobs.map((job, index) => [job.id, index]),
       );
@@ -394,9 +395,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
       }
       if (interestedPanelRun) runs.add(interestedPanelRun);
       adjustHiddenHighlight();
-      if (pendingSearch !== undefined && filterSearch === pendingSearch) {
-        pendingSearch = undefined;
-        if (filterSearch.trim() && authority.jobs.length === 0)
+      if (authority.queryScope === committedScope) {
+        committedScope = undefined;
+        if (filterSearch?.trim() && authority.jobs.length === 0)
           reportSearchEmpty();
       }
       return Array.from(runs);
@@ -581,18 +582,21 @@ export function createJobsStore(opts: JobsStoreOptions) {
     loadJobs();
   }
 
-  let committedSearch: string | undefined;
-  let pendingSearch: string | undefined;
+  let committedScope: string | undefined;
+  let acceptedScope: string | undefined;
   function editSearch(): void {
-    committedSearch = pendingSearch = undefined;
+    committedScope = undefined;
   }
   function commitSearch(value: string): void {
-    if (committedSearch === value) return;
-    committedSearch = value;
-    pendingSearch = value || undefined;
-    if (filterSearch !== value) loadedLimit = DEFAULT_PAGE_LIMIT;
+    if (filterSearch !== (value || undefined)) loadedLimit = DEFAULT_PAGE_LIMIT;
     filterSearch = value || undefined;
-    loadJobs();
+    committedScope = JSON.stringify(buildQuery());
+    if (acceptedScope === committedScope) {
+      committedScope = undefined;
+      if (value.trim() && jobs.length === 0) reportSearchEmpty();
+    } else {
+      loadJobs();
+    }
   }
 
   function setRepoBranchFilter(

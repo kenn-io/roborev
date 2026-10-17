@@ -6,7 +6,11 @@ import { createJobsStore } from "./jobs.svelte";
 import { createReviewStore } from "./review.svelte";
 
 const actionReports = vi.hoisted(() => vi.fn());
-vi.mock("../../utils/app-opened", () => ({ reportCoreAction: actionReports }));
+const outcomeReports = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({
+  reportCoreAction: actionReports,
+  reportErrorShown: outcomeReports,
+}));
 let runtime: OwnedAppRuntime | undefined;
 
 function reviewStore(
@@ -25,6 +29,7 @@ function reviewStore(
 
 beforeEach(() => {
   actionReports.mockReset();
+  outcomeReports.mockReset();
   runtime = makeTestAppRuntime();
 });
 
@@ -377,10 +382,10 @@ describe("Roborev request cancellation", () => {
 });
 
 describe("review close reporting", () => {
-  it.each(["close", "reopen", "failure"])(
-    "reports only a successful explicit close: %s",
+  it.each(["close", "reopen", "failure", "reopen failure", "acknowledged"])(
+    "reports review close activity and failures: %s",
     async (action) => {
-      let closed = action === "reopen";
+      let closed = action.startsWith("reopen");
       const getReview = vi.fn(async () => ({
         id: 1,
         job_id: 42,
@@ -392,7 +397,9 @@ describe("review close reporting", () => {
         getReviewProjection: vi.fn(async () => ({ responses: [] })),
         listJobs: vi.fn(async () => ({ jobs: [] })),
         closeReview: vi.fn(async (request: { closed: boolean }) => {
-          if (action === "failure") throw new Error("close failed");
+          if (action.includes("failure")) throw new Error("close failed");
+          if (action === "acknowledged")
+            getReview.mockRejectedValue(new Error("refresh unavailable"));
           closed = request.closed;
           return { success: true };
         }),
@@ -401,7 +408,7 @@ describe("review close reporting", () => {
       store.loadReview(42);
       await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
       store.closeReview(42);
-      if (action === "close")
+      if (action === "close" || action === "acknowledged")
         await vi.waitFor(() =>
           expect(actionReports).toHaveBeenCalledExactlyOnceWith(
             "review_closed",
@@ -411,6 +418,32 @@ describe("review close reporting", () => {
         await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
         expect(actionReports).not.toHaveBeenCalled();
       }
+      expect(outcomeReports.mock.calls).toEqual(
+        action === "failure" ? [["review_closed"]] : [],
+      );
     },
   );
+});
+
+it("reports a failed review open once across an interrupting refresh", async () => {
+  const getReview = abortingRequest();
+  const onError = vi.fn();
+  const store = reviewStore(
+    {
+      getReview,
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs: vi.fn().mockResolvedValue({ jobs: [] }),
+    } as never,
+    onError,
+  );
+  store.setSelectedJobId(42);
+  store.loadReview(42);
+  await vi.waitFor(() => expect(getReview).toHaveBeenCalledOnce());
+  getReview.mockRejectedValue(new Error("unavailable"));
+  store.loadReview(42);
+  await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+  store.loadReview(42);
+  await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(3));
+  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+  expect(outcomeReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
 });

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -658,32 +659,23 @@ func TestOutcomeSearchEmpty(t *testing.T) {
 		if r.URL.Path != "/api/search" {
 			return false
 		}
-		if r.URL.Query().Get("q") == "failed" {
-			w.WriteHeader(http.StatusInternalServerError)
-			return true
+		response := emptySearchResponse("missing", "lexical")
+		if r.URL.Query().Get("q") == "found" {
+			response["hits"] = []map[string]any{{"job_id": 7, "excerpt": "match"}}
 		}
-		writeSearchResponse(t, w, emptySearchResponse("missing", "lexical"))
+		writeSearchResponse(t, w, response)
 		return true
 	}}, nil)
-	for _, args := range [][]string{{"missing"}, {"failed"}, {"missing", "--agent"}} {
+	for _, args := range [][]string{{"missing"}, {"found"}, {"missing", "--agent"}} {
 		rec.reset()
 		result := runCLIFresh(t, true, append(append([]string{"search"}, args...), "--server", md.Server.URL)...)
-		if args[0] == "failed" {
-			require.Error(t, result.err)
-		} else {
-			require.NoError(t, result.err)
-		}
-		var empties []string
-		for _, post := range rec.telemetryPosts() {
-			if strings.Contains(post.body, `"event":"search_empty"`) {
-				empties = append(empties, post.body)
-			}
-		}
+		require.NoError(t, result.err)
+		posts := slices.DeleteFunc(rec.telemetryPosts(), func(post recordedTelemetry) bool { return post.body == cliUseBody })
 		if len(args) == 1 && args[0] == "missing" {
-			require.Len(t, empties, 1)
-			assert.JSONEq(t, `{"event":"search_empty","properties":{"surface":"cli"}}`, empties[0])
+			require.Len(t, posts, 1)
+			assert.JSONEq(t, `{"event":"search_empty","properties":{"surface":"cli"}}`, posts[0].body)
 		} else {
-			assert.Empty(t, empties)
+			assert.Empty(t, posts)
 		}
 	}
 }

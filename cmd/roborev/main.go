@@ -19,7 +19,8 @@ var (
 )
 
 func main() {
-	err := newRootCmd().Execute()
+	cmd, err := newRootCmd().ExecuteC()
+	reportCLIOutcome(cmd, err)
 	waitCLIUse()
 	if err != nil {
 		// exitError carries a specific exit code; the RunE that returned

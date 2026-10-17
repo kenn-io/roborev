@@ -9,6 +9,9 @@ import {
 } from "./jobs.svelte";
 import type { ReviewJob } from "../../api/generated/models";
 
+const report = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({ reportSearchEmpty: report }));
+
 const originalFetch = globalThis.fetch;
 const runtimes = new Set<OwnedAppRuntime>();
 const stores = new Set<JobsStore>();
@@ -64,6 +67,7 @@ async function loadMoreJobs(store: JobsStore): Promise<void> {
 
 beforeEach(() => {
   localStorage.clear();
+  report.mockReset();
 });
 
 afterEach(async () => {
@@ -1754,10 +1758,7 @@ describe("createJobsStore panel expansion", () => {
   });
 });
 
-it("reports committed empty searches once and ignores partial input and refreshes", async () => {
-  const report = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(new Response("{}", { status: 202 }));
+it("reports committed empty searches once, reusing accepted results", async () => {
   const listJobs = vi.fn().mockResolvedValue({ jobs: [], has_more: false });
   const store = createJobsStore({
     api: { listJobs } as never,
@@ -1768,75 +1769,27 @@ it("reports committed empty searches once and ignores partial input and refreshe
   store.setFilter("search", "abc");
   await loadJobs(store);
   expect(report).not.toHaveBeenCalled();
-  store.commitSearch("abc");
-  await vi.waitFor(() => expect(report).toHaveBeenCalledTimes(1));
-  store.commitSearch("abc");
-  await loadJobs(store);
-  expect(report).toHaveBeenCalledTimes(1);
-  expect(await (report.mock.calls[0]![0] as Request).json()).toEqual({
-    event: "search_empty",
-    properties: { surface: "web" },
-  });
-  let resolveSearch!: (value: { jobs: []; has_more: boolean }) => void;
-  listJobs.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        resolveSearch = resolve;
-      }),
-  );
-  store.commitSearch("abcd");
-  await vi.waitFor(() => expect(resolveSearch).toBeDefined());
   const calls = listJobs.mock.calls.length;
-  store.editSearch();
-  resolveSearch({ jobs: [], has_more: false });
-  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+  store.commitSearch("abc");
+  expect(report).toHaveBeenCalledOnce();
   expect(listJobs).toHaveBeenCalledTimes(calls);
-  expect(report).toHaveBeenCalledTimes(1);
-  report.mockRestore();
+  await loadJobs(store);
+  expect(report).toHaveBeenCalledOnce();
 });
 
 it.each([false, true])(
-  "resolves a committed search superseded by a live refresh: stale first=%s",
-  async (staleFirst) => {
-    let stream!: ReadableStreamDefaultController<Uint8Array>;
-    const posts: Request[] = [];
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (input) => {
-        const request = input as Request;
-        if (request.url.endsWith("/api/stream/events")) {
-          return new Response(
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                stream = controller;
-              },
-            }),
-          );
-        }
-        posts.push(request);
-        return new Response("{}", { status: 202 });
-      });
+  "resolves committed empty searches after refresh or typing: typed=%s",
+  async (typed) => {
     let resolveSearch!: (value: {
-      jobs: ReviewJob[];
-      has_more: boolean;
-    }) => void;
-    let resolveRefresh!: (value: {
       jobs: ReviewJob[];
       has_more: boolean;
     }) => void;
     const listJobs = vi
       .fn()
-      .mockResolvedValueOnce({ jobs: [], has_more: false })
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveSearch = resolve;
-          }),
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
           }),
       )
       .mockResolvedValue({ jobs: [], has_more: false });
@@ -1844,32 +1797,14 @@ it.each([false, true])(
       api: { listJobs } as never,
       navigate: vi.fn(),
     });
-    const owner = store.connectEventStream("/api/roborev");
-    try {
-      await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
-      store.commitSearch("abc");
-      await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(2));
-      stream.enqueue(
-        new TextEncoder().encode(
-          '{"type":"review.completed","job_id":42,"ts":"2026-08-04T13:00:00Z"}\n',
-        ),
-      );
-      await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(3));
-      if (staleFirst) {
-        resolveSearch({ jobs: [makeJob(42)], has_more: false });
-        await vi.waitFor(() => expect(store.isLoading()).toBe(false));
-        expect(posts).toHaveLength(0);
-      }
-      resolveRefresh({ jobs: [], has_more: false });
-      await vi.waitFor(() => expect(posts).toHaveLength(1));
-      if (!staleFirst) resolveSearch({ jobs: [], has_more: false });
-      expect(await posts[0]!.json()).toEqual({
-        event: "search_empty",
-        properties: { surface: "web" },
-      });
-    } finally {
-      store.disconnectEventStream(owner);
-      fetchMock.mockRestore();
-    }
+    store.commitSearch("abc");
+    await vi.waitFor(() => expect(resolveSearch).toBeDefined());
+    if (typed) store.editSearch();
+    else await loadJobs(store); // A live refresh takes over the same query.
+    resolveSearch({ jobs: [], has_more: false });
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(report).toHaveBeenCalledTimes(typed ? 0 : 1);
+    await loadJobs(store);
+    expect(report).toHaveBeenCalledTimes(typed ? 0 : 1);
   },
 );

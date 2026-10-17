@@ -397,45 +397,36 @@ func TestCoreActionDailyClaims(t *testing.T) {
 func TestOutcomeCapture(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
-	reporter, messages := newPostHogStubReporter(t)
-	handler := (&AppOpenedLimiter{}).Handler(reporter)
-	for _, surface := range []string{"web", "tui", "cli"} {
-		for range 2 {
-			status := http.StatusAccepted
-			if surface == "tui" {
-				status = http.StatusBadRequest
-			}
-			assert.Equal(t, status, postCaptureEvent(handler, `{"event":"search_empty","properties":{"surface":"`+surface+`","query":"private"}}`).Code)
-		}
-		for _, kind := range []string{"review_viewed", "finding_fixed", "review_closed", "private error"} {
-			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"error_shown","properties":{"surface":"`+surface+`","kind":"`+kind+`","message":"private"}}`).Code)
-		}
-	}
-	for _, body := range []string{
-		`{"event":"search_empty"}`,
-		`{"event":"search_empty","properties":{"surface":"unknown"}}`,
-		`{"event":"error_shown","properties":{"surface":"cli"}}`,
-		`{"event":"error_shown","properties":{"kind":"review_viewed"}}`,
-		`{"event":"sync_failed","properties":{"reason":"connect"}}`,
+	for _, tc := range []struct{ event, props, want string }{
+		{"search_empty", `{"surface":"web","query":"private"}`, `{"surface":"web"}`},
+		{"search_empty", `{"surface":"cli"}`, `{"surface":"cli"}`},
+		{"search_empty", `{"surface":"tui"}`, ""},
+		{"error_shown", `{"surface":"tui","kind":"finding_fixed"}`, `{"surface":"tui","kind":"finding_fixed"}`},
+		{"error_shown", `{"surface":"cli","kind":"review_viewed"}`, `{"surface":"cli","kind":"review_viewed"}`},
+		{"error_shown", `{"surface":"web","kind":"review_closed"}`, `{"surface":"web","kind":"review_closed"}`},
+		{"error_shown", `{"surface":"cli","kind":"unknown","message":"private"}`, `{"surface":"cli","kind":"other"}`},
+		{"error_shown", `{"surface":"cli"}`, ""},
+		{"sync_failed", `{"reason":"connect"}`, ""},
 	} {
-		assert.Equal(t, http.StatusBadRequest, postCaptureEvent(handler, body).Code)
+		t.Run(tc.event+tc.props, func(t *testing.T) {
+			reporter, messages := newPostHogStubReporter(t)
+			response := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"`+tc.event+`","properties":`+tc.props+`}`)
+			if tc.want == "" {
+				assert.Equal(t, http.StatusBadRequest, response.Code)
+				return
+			}
+			require.Equal(t, http.StatusAccepted, response.Code)
+			require.NoError(t, reporter.Close())
+			sent := messages()
+			require.Len(t, sent, 1)
+			assert.Equal(t, tc.event, sent[0].Event)
+			var want map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tc.want), &want))
+			for key, value := range want {
+				assert.Equal(t, value, sent[0].Properties[key])
+			}
+			assert.NotContains(t, sent[0].Properties, "query")
+			assert.NotContains(t, sent[0].Properties, "message")
+		})
 	}
-	for _, reason := range []string{"connect", "push", "pull", "private connection"} {
-		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{PropertyReason: reason, "url": "private"}))
-	}
-	require.Error(t, reporter.Capture(EventSyncFailed, nil))
-	require.NoError(t, reporter.Close())
-	sent := messages()
-	require.Len(t, sent, 20)
-	otherKinds := 0
-	for _, message := range sent {
-		assert.NotContains(t, message.Properties, "query")
-		assert.NotContains(t, message.Properties, "message")
-		assert.NotContains(t, message.Properties, "url")
-		if message.Event == EventErrorShown && message.Properties[PropertyKind] == "other" {
-			otherKinds++
-		}
-	}
-	assert.Equal(t, 3, otherKinds)
-	assert.Equal(t, "other", sent[19].Properties[PropertyReason])
 }

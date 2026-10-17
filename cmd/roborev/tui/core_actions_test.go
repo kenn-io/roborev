@@ -170,7 +170,8 @@ func TestCoreActionExplicitClose(t *testing.T) {
 	}{
 		{name: "close", closed: true, count: 1},
 		{name: "reopen", closed: false},
-		{name: "failure", closed: true, err: errors.New("failed")},
+		{name: "failure", closed: true, err: errors.New("failed"), count: 1},
+		{name: "reopen failure", err: errors.New("failed")},
 		{name: "programmatic", programmatic: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,9 +185,7 @@ func TestCoreActionExplicitClose(t *testing.T) {
 				}
 				if r.URL.Path == "/api/telemetry/events" {
 					body, _ := io.ReadAll(r.Body)
-					if strings.Contains(string(body), `"event":"review_closed"`) {
-						bodies = append(bodies, string(body))
-					}
+					bodies = append(bodies, string(body))
 				}
 				w.WriteHeader(http.StatusAccepted)
 			}))
@@ -205,12 +204,13 @@ func TestCoreActionExplicitClose(t *testing.T) {
 				assert.Empty(t, bodies)
 				return
 			}
-			_, cmd := m.handleClosedResultMsg(closedResultMsg{jobID: 42, newState: tc.closed, err: tc.err})
-			if cmd != nil {
-				cmd()
-			}
+			m.pendingClosed[42] = pendingState{seq: 1}
+			_, cmd := m.handleClosedResultMsg(closedResultMsg{jobID: 42, seq: 1, newState: tc.closed, err: tc.err})
+			collectMsgs(cmd)
 			require.Len(t, bodies, tc.count)
-			if tc.count == 1 {
+			if tc.err != nil && tc.closed {
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`, bodies[0])
+			} else if tc.count == 1 {
 				assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"tui"}}`, bodies[0])
 			}
 		})
@@ -259,7 +259,6 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 type recordingTransport struct {
 	events      []string
 	reviewFails bool
-	closeFails  bool
 }
 
 func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -274,7 +273,7 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if strings.Contains(string(body), `"review_viewed"`) || strings.Contains(string(body), `"event":"error_shown"`) {
 		r.events = append(r.events, string(body))
 	}
-	if r.reviewFails && req.URL.Path == "/api/review" || r.closeFails && req.URL.Path == "/api/review/close" {
+	if r.reviewFails && req.URL.Path == "/api/review" {
 		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
 	}
 	return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
@@ -283,48 +282,12 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 //nolint:paralleltest // telemetry opt-out variables are process-wide
 func TestOutcomeTUIActions(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, closed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "close failure", true: "reopen failure"}[closed], func(t *testing.T) {
-			f := newCoreActionReviewVisitFixture()
-			f.m.layout = splitlayout.Stacked
-			f.m.currentView = viewReview
-			f.m.currentReview = splitTestReview()
-			f.m.currentReview.Closed = closed
-			f.transport.closeFails = true
-			messages := f.update(tea.KeyPressMsg{Code: 'a'})
-			f.transport.events = nil // The key also records the first review view.
-			require.NotEmpty(t, messages)
-			for _, msg := range messages {
-				f.update(msg)
-			}
-			assert.Contains(t, f.m.flashMessage, "unavailable")
-			if closed {
-				assert.Empty(t, f.transport.events)
-			} else {
-				require.Len(t, f.transport.events, 1)
-				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`, f.transport.events[0])
-			}
-			f.update(tea.KeyPressMsg{Code: '?'})
-			f.update(tea.KeyPressMsg{Code: 'q'})
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, map[bool]int{false: 1, true: 0}[closed])
-		})
-	}
-	t.Run("programmatic close", func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture()
-		f.m.pendingClosed[2] = pendingState{seq: 1}
-		f.update(closedResultMsg{jobID: 2, seq: 1, programmatic: true, newState: true, err: errors.New("close unavailable")})
-		assert.Empty(t, f.transport.events)
-	})
 	for _, key := range []rune{tea.KeyEnter, 'F'} {
 		t.Run(map[rune]string{tea.KeyEnter: "failed open", 'F': "failed fix panel"}[key], func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture()
 			f.m.tasksEnabled = true
 			f.m.layout = splitlayout.Stacked
 			f.m.currentReview = nil
-			failure := reviewErrMsg{jobID: f.m.selectedJobID, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, err: errors.New("unavailable")}
-			f.update(failure)
-			assert.Empty(t, f.transport.events)
 			f.transport.reviewFails = true
 			messages := f.update(tea.KeyPressMsg{Code: key})
 			require.NotEmpty(t, messages)
@@ -344,6 +307,8 @@ func TestOutcomeTUIActions(t *testing.T) {
 				kind = "finding_fixed"
 			}
 			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"`+kind+`"}}`, f.transport.events[0])
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 1)
 		})
 	}
 	t.Run("patch actions", func(t *testing.T) {

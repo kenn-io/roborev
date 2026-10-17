@@ -102,6 +102,9 @@ Examples:
 			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
 			reasoning = resolveReasoningWithFast(reasoning, fast, cmd.Flags().Changed("reasoning"))
 
+			if wait {
+				armCLIOutcome(telemetry.EventReviewViewed)
+			}
 			// Default to current directory
 			if repoPath == "" {
 				repoPath = "."
@@ -438,9 +441,7 @@ Examples:
 			// here so the user doesn't see "Error: exit code 1" after the
 			// review output is already on screen.
 			if wait {
-				waitErr := waitForJob(cmd, ep, job.ID, quiet)
-				reportCLIError(cmd, telemetry.EventReviewViewed, waitErr)
-				return silenceIfExit(cmd, waitErr)
+				return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet))
 			}
 
 			return nil

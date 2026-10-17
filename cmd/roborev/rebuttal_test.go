@@ -73,7 +73,9 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 			}))
 			cmd := commentCmd()
 			cmd.SetArgs([]string{"42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--close"})
+			cmd.SilenceUsage = true
 			err := cmd.Execute()
+			reportCLIOutcome(cmd, err)
 			if tc.staleOriginalReview {
 				require.ErrorContains(t, err, "original review left open")
 				assert.Equal(t, []string{"rebuttal", "assessment"}, actions)

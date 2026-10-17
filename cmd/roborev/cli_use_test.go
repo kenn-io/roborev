@@ -34,7 +34,7 @@ func clearCLIUseState() {
 	cliUseOnce = sync.Once{}
 	cliUseState.Store(nil)
 	cliUseAgent = false
-	cliErrorReported.Store(false)
+	cliOutcomeKind, cliOutcomeFailed = "", false
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
@@ -199,7 +199,9 @@ func runCLI(t *testing.T, args ...string) cliRun {
 	root.SetArgs(args)
 	var run cliRun
 	stdout, stderr := captureStdoutStderr(t, func() {
-		run.err = root.Execute()
+		cmd, err := root.ExecuteC()
+		run.err = err
+		reportCLIOutcome(cmd, err)
 		waitCLIUse()
 	})
 	run.stdout = stdout + outBuf.String()

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -27,7 +28,7 @@ type SyncWorker struct {
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterFailure    func(string)
-	outage          bool
+	outage          atomic.Bool
 	afterPullWrite  func()
 	afterReviewPush func([]string)
 }
@@ -46,35 +47,22 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 	if reason == "" || errors.Is(err, context.Canceled) {
 		return
 	}
-	w.mu.Lock()
-	select {
-	case <-w.stopCh:
-		w.mu.Unlock()
-		return
-	default:
-	}
 	if err == nil {
-		if reason == "pull" && w.outage {
+		if reason == "pull" && w.outage.Swap(false) {
 			if saveErr := w.db.SetSyncState(syncStateOutage, ""); saveErr != nil {
 				log.Printf("Sync: clear outage state: %v", saveErr)
-			} else {
-				w.outage = false
 			}
-			w.mu.Unlock()
-			return
 		}
-		w.mu.Unlock()
 		return
 	}
-	if !w.cfg.Enabled || w.outage {
-		w.mu.Unlock()
+	if !w.cfg.Enabled || !w.outage.CompareAndSwap(false, true) {
 		return
 	}
-	w.outage = true
-	fn := w.afterFailure
 	if saveErr := w.db.SetSyncState(syncStateOutage, "1"); saveErr != nil {
 		log.Printf("Sync: save outage state: %v", saveErr)
 	}
+	w.mu.Lock()
+	fn := w.afterFailure
 	w.mu.Unlock()
 	if fn != nil {
 		fn(reason)
@@ -187,10 +175,13 @@ func (w *SyncWorker) Start() error {
 	}
 
 	outage, err := w.db.GetSyncState(syncStateOutage)
-	if err != nil || (outage != "" && outage != "1") {
-		log.Printf("Sync: invalid or unreadable outage state %q: %v", outage, err)
+	if err != nil {
+		log.Printf("Sync: read outage state: %v", err)
+		outage = ""
+	} else if outage != "" && outage != "1" {
+		log.Printf("Sync: invalid outage state %q", outage)
 	}
-	w.outage = outage != ""
+	w.outage.Store(outage != "")
 
 	// Parse sync interval
 	interval, err := time.ParseDuration(w.cfg.Interval)
@@ -266,10 +257,7 @@ type SyncStats struct {
 // This ensures all local changes are pushed before the daemon exits.
 // Loops until all pending items are synced (not just one batch).
 // Does not pull changes since we're shutting down.
-func (w *SyncWorker) FinalPush() (err error) {
-	defer func() {
-		w.notifyFailure("push", err)
-	}()
+func (w *SyncWorker) FinalPush() error {
 	w.mu.Lock()
 	pool := w.pgPool
 	w.mu.Unlock()
