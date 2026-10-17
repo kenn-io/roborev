@@ -202,7 +202,7 @@ func testSyncConfig() config.SyncConfig {
 
 func TestOutcomeSyncConnectionRetries(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"", "1", "unexpected", "unreadable"} {
+	for _, state := range []string{"", "1", "unreadable"} {
 		t.Run("stored outage/"+state, func(t *testing.T) {
 			db := openTestDB(t)
 			defer db.Close()

@@ -548,7 +548,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		label, analysisWorkflow(label), "",
 	)
 	if err != nil {
-		return nil, fmt.Errorf("resolve analyze config: %w", err)
+		return nil, excludeCLIOutcome(fmt.Errorf("resolve analyze config: %w", err))
 	}
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{

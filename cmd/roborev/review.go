@@ -125,9 +125,9 @@ Examples:
 						b.WriteString("\n  roborev review --repo ")
 						b.WriteString(filepath.Join(absDir, name))
 					}
-					return usageErr(cmd, fmt.Errorf("%s", b.String()))
+					return excludeCLIOutcome(fmt.Errorf("%s", b.String()))
 				}
-				return usageErr(cmd, fmt.Errorf("not a git repository: %w", err))
+				return excludeCLIOutcome(fmt.Errorf("not a git repository: %w", err))
 			}
 
 			if reviewType == config.ReviewTypeGoal {
@@ -225,7 +225,7 @@ Examples:
 					targetRef = branch
 					targetLabel = branch
 					if _, err := gitrepo.Resolve(ctx, root, targetRef); err != nil {
-						return usageErr(cmd, fmt.Errorf("cannot resolve branch %q: %w", branch, err))
+						return excludeCLIOutcome(fmt.Errorf("cannot resolve branch %q: %w", branch, err))
 					}
 				}
 
@@ -271,14 +271,14 @@ Examples:
 				if targetRef == "HEAD" {
 					currentBranch := gitrepo.CurrentBranch(ctx, root)
 					if git.IsOnBaseBranch(root, currentBranch, base) {
-						return usageErr(cmd, fmt.Errorf("already on %s - create a feature branch first", currentBranch))
+						return excludeCLIOutcome(fmt.Errorf("already on %s - create a feature branch first", currentBranch))
 					}
 				}
 
 				// Get merge-base
 				mergeBase, err := git.GetMergeBase(root, base, targetRef)
 				if err != nil {
-					return usageErr(cmd, fmt.Errorf("cannot find merge-base with %s: %w", base, err))
+					return excludeCLIOutcome(fmt.Errorf("cannot find merge-base with %s: %w", base, err))
 				}
 
 				// Validate has commits
@@ -288,7 +288,7 @@ Examples:
 					return fmt.Errorf("cannot get commits: %w", err)
 				}
 				if len(commits) == 0 {
-					return usageErr(cmd, fmt.Errorf("no commits on branch since %s", base))
+					return excludeCLIOutcome(fmt.Errorf("no commits on branch since %s", base))
 				}
 
 				gitRef = rangeRef
@@ -301,7 +301,7 @@ Examples:
 				// Review commits since a specific commit (exclusive)
 				sinceCommit, err := gitrepo.Resolve(ctx, root, since)
 				if err != nil {
-					return usageErr(cmd, fmt.Errorf("invalid --since commit %q: %w", since, err))
+					return excludeCLIOutcome(fmt.Errorf("invalid --since commit %q: %w", since, err))
 				}
 
 				// Validate has commits
@@ -310,7 +310,7 @@ Examples:
 					return fmt.Errorf("cannot get commits: %w", err)
 				}
 				if len(commits) == 0 {
-					return usageErr(cmd, fmt.Errorf("no commits since %s", since))
+					return excludeCLIOutcome(fmt.Errorf("no commits since %s", since))
 				}
 
 				gitRef = sinceCommit + ".." + "HEAD"
@@ -325,7 +325,7 @@ Examples:
 					return fmt.Errorf("check uncommitted changes: %w", err)
 				}
 				if !hasChanges {
-					return usageErr(cmd, fmt.Errorf("no uncommitted changes to review"))
+					return excludeCLIOutcome(fmt.Errorf("no uncommitted changes to review"))
 				}
 				dirtyFiles, err = git.GetDirtyFilesChanged(root)
 				if err != nil {
@@ -345,7 +345,7 @@ Examples:
 				}
 
 				if diffContent == "" && !prompt.HasDependencyMetadataFiles(dirtyFiles) {
-					return usageErr(cmd, fmt.Errorf("no changes to review (diff is empty)"))
+					return excludeCLIOutcome(fmt.Errorf("no changes to review (diff is empty)"))
 				}
 
 				gitRef = "dirty"
@@ -496,13 +496,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		reasoning, repoCfg, cfg, reviewType,
 	)
 	if err != nil {
-		return usageErr(cmd, fmt.Errorf("invalid reasoning: %w", err))
+		return excludeCLIOutcome(fmt.Errorf("invalid reasoning: %w", err))
 	}
 
 	// Resolve review min-severity
 	resolvedMinSev, err := config.ResolveReviewMinSeverity(minSeverity, repoPath, cfg)
 	if err != nil {
-		return usageErr(cmd, fmt.Errorf("invalid min-severity: %w", err))
+		return excludeCLIOutcome(fmt.Errorf("invalid min-severity: %w", err))
 	}
 
 	// Map review_type to config workflow (matches daemon behavior)

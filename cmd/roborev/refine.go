@@ -100,9 +100,6 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 			if opts.allBranches && opts.branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
-			if _, err := config.NormalizeMinSeverity(opts.minSeverity); err != nil {
-				return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
-			}
 			if opts.allBranches && opts.since != "" {
 				return fmt.Errorf(
 					"--all-branches and --since are " +
@@ -461,7 +458,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		opts.minSeverity, repoPath, cfg,
 	)
 	if err != nil {
-		return fmt.Errorf("resolve min-severity: %w", err)
+		return excludeCLIOutcome(fmt.Errorf("resolve min-severity: %w", err))
 	}
 
 	// 3. Refinement loop

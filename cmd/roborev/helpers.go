@@ -66,11 +66,10 @@ func usageErr(cmd *cobra.Command, err error) error {
 	return err
 }
 
-// agentLookupErr routes an unknown agent name through usageErr, since
-// the user named an agent that doesn't exist.
+// agentLookupErr excludes an unknown agent name from failure outcomes.
 func agentLookupErr(cmd *cobra.Command, err error) error {
 	if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
-		return usageErr(cmd, err)
+		return excludeCLIOutcome(err)
 	}
 	return err
 }

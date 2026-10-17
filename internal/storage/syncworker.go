@@ -179,9 +179,9 @@ func (w *SyncWorker) Start() error {
 	outage, err := w.db.GetSyncState(syncStateOutage)
 	if err != nil {
 		log.Printf("Sync: read outage state: %v", err)
-		outage = ""
 	} else if outage != "" && outage != "1" {
 		log.Printf("Sync: invalid outage state %q", outage)
+		return fmt.Errorf("unsupported sync outage state %q", outage)
 	}
 	w.outage.Store(outage == "1")
 

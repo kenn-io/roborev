@@ -169,10 +169,22 @@ func armCLIOutcome(kind string) { cliOutcomeKind = kind }
 func markCLIOutcomeFailed() { cliOutcomeFailed = true }
 
 func reportCLIOutcome(cmd *cobra.Command, err error) {
-	if cliOutcomeKind == "" || !cmd.SilenceUsage || (cmd.SilenceErrors && !cliOutcomeFailed) ||
+	if cliOutcomeKind == "" || isCLIOutcomeExcluded(err) || !cmd.SilenceUsage || (cmd.SilenceErrors && !cliOutcomeFailed) ||
 		(!cliOutcomeFailed && err == nil) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, errReviewFailed) || errors.Is(err, errReviewCanceled) {
 		return
 	}
 	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: cliOutcomeKind})
+}
+
+// outcomeExcludedError preserves the displayed error while excluding input and state errors from outcomes.
+type outcomeExcludedError struct{ error }
+
+func (e *outcomeExcludedError) Unwrap() error { return e.error }
+
+func excludeCLIOutcome(err error) error { return &outcomeExcludedError{err} }
+
+func isCLIOutcomeExcluded(err error) bool {
+	var excluded *outcomeExcludedError
+	return errors.As(err, &excluded)
 }

@@ -180,7 +180,7 @@ Examples:
 				for _, arg := range args {
 					var id int64
 					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-						return usageErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+						return excludeCLIOutcome(fmt.Errorf("invalid job ID %q: must be a number", arg))
 					}
 					jobIDs = append(jobIDs, id)
 				}
@@ -212,7 +212,7 @@ Examples:
 			for _, arg := range args {
 				var id int64
 				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return usageErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+					return excludeCLIOutcome(fmt.Errorf("invalid job ID %q: must be a number", arg))
 				}
 				jobIDs = append(jobIDs, id)
 			}
@@ -504,7 +504,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 
 	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
+		return nil, excludeCLIOutcome(fmt.Errorf("resolve fix reasoning: %w", err))
 	}
 	if err := config.ValidateRepoConfig(repoPath); err != nil {
 		return nil, fmt.Errorf("resolve workflow config: %w", err)
@@ -1132,7 +1132,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 			opts.minSeverity, repoRoot, fixCfg,
 		)
 		if err != nil {
-			return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
+			return excludeCLIOutcome(fmt.Errorf("resolve min-severity: %w", err))
 		}
 	}
 
@@ -1488,7 +1488,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		opts.minSeverity, roots.worktreeRoot, cfg,
 	)
 	if err != nil {
-		return usageErr(cmd, fmt.Errorf("resolve min-severity: %w", err))
+		return excludeCLIOutcome(fmt.Errorf("resolve min-severity: %w", err))
 	}
 	if minSev != "" {
 		for _, e := range entries {
