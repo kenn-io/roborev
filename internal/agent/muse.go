@@ -1,0 +1,129 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"strings"
+)
+
+// Remove this default when Muse's Contributor mode override alone selects the standard model.
+const museDefaultModel = "muse-spark-1.3"
+
+// MuseAgent runs Meta's Muse Code CLI in headless mode.
+type MuseAgent struct {
+	Command   string
+	Model     string
+	Reasoning ReasoningLevel
+	Agentic   bool
+}
+
+func NewMuseAgent(command string) *MuseAgent {
+	if command == "" {
+		command = "muse"
+	}
+	return &MuseAgent{Command: command, Reasoning: ReasoningStandard}
+}
+
+func (a *MuseAgent) clone(opts ...agentCloneOption) *MuseAgent {
+	cfg := newAgentCloneConfig(a.Command, a.Model, a.Reasoning, a.Agentic, "", opts...)
+	return &MuseAgent{Command: cfg.Command, Model: cfg.Model, Reasoning: cfg.Reasoning, Agentic: cfg.Agentic}
+}
+
+func (a *MuseAgent) WithReasoning(level ReasoningLevel) Agent {
+	return a.clone(withClonedReasoning(level))
+}
+
+func (a *MuseAgent) WithAgentic(agentic bool) Agent {
+	return a.clone(withClonedAgentic(agentic))
+}
+
+func (a *MuseAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
+	return a.clone(withClonedModel(model))
+}
+
+func (a *MuseAgent) Name() string        { return "muse" }
+func (a *MuseAgent) CommandName() string { return a.Command }
+
+func (a *MuseAgent) museReasoningEffort() string {
+	switch a.Reasoning {
+	case ReasoningMaximum, ReasoningMax:
+		return "max"
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningThorough, ReasoningHigh:
+		return "high"
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningFast, ReasoningLow:
+		return "low"
+	default:
+		return ""
+	}
+}
+
+func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
+	model := a.Model
+	if model == "" {
+		model = museDefaultModel
+	}
+	args := []string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", model}
+	if effort := a.museReasoningEffort(); effort != "" {
+		args = append(args, "--reasoning-effort", effort)
+	}
+	if agentic {
+		args = append(args, "--yolo")
+	} else {
+		args = append(args, "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools")
+	}
+	return append(args, "--prompt-file", promptFile)
+}
+
+func (a *MuseAgent) CommandLine() string {
+	return a.Command + " " + strings.Join(a.buildArgs(a.Agentic || AllowUnsafeAgents(), "<prompt-file>"), " ")
+}
+
+func (a *MuseAgent) PlanningCommandLine() string {
+	return a.Command + " " + strings.Join(a.buildArgs(false, "<prompt-file>"), " ")
+}
+
+func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	// Muse requires a real file for prompts that exceed argv limits.
+	promptPath, cleanup, err := createPromptFile("muse", prompt)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	result, err := runStreamingCLI(ctx, streamingCLISpec{
+		Name: "muse", Command: a.Command,
+		Args: a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath),
+		Dir:  repoPath, Output: output, StreamStderr: true, DrainStdout: true,
+		Parse: func(r io.Reader, output *syncWriter) (string, error) {
+			var buf bytes.Buffer
+			var dst io.Writer = &buf
+			if output != nil {
+				dst = io.MultiWriter(&buf, output)
+			}
+			_, err := io.Copy(dst, r)
+			return strings.TrimSpace(buf.String()), err
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if result.WaitErr != nil {
+		return "", formatStreamingCLIWaitError("muse", result, result.Stderr)
+	}
+	if result.ParseErr != nil {
+		return result.Result, result.ParseErr
+	}
+	if result.Result == "" {
+		return "No review output generated", nil
+	}
+	return result.Result, nil
+}
+
+func init() { Register(NewMuseAgent("")) }

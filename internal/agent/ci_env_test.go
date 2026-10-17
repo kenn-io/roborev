@@ -98,6 +98,7 @@ func TestCIAgentEnvironment(t *testing.T) {
 		func(p string) Agent { return NewKiloAgent(p) },
 		func(p string) Agent { return NewDroidAgent(p) },
 		func(p string) Agent { return NewGrokAgent(p) },
+		func(p string) Agent { return NewMuseAgent(p) },
 	} {
 		t.Run(factory("").Name(), func(t *testing.T) {
 			capture := filepath.Join(t.TempDir(), "env")

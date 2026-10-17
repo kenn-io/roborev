@@ -90,7 +90,7 @@ func TestRunPlanFreshSession(t *testing.T) {
 func TestPlanningOverridesUnsafeMode(t *testing.T) {
 	SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok"} {
+	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok", "muse"} {
 		t.Run(name, func(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
 			argsPath := filepath.Join(t.TempDir(), "args")
@@ -116,6 +116,8 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				a = NewOpenCodeAgent(command)
 			case "kilo":
 				a = NewKiloAgent(command)
+			case "muse":
+				a = NewMuseAgent(command)
 			case "grok":
 				a = NewGrokAgent(command)
 			}
@@ -150,6 +152,14 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--agent\nplan\n")
 			case "opencode":
 				assert.Contains(t, args, "--agent\nplan\n")
+			case "muse":
+				assert.Contains(t, args, "--disable-write\n")
+				assert.Contains(t, args, "--disable-shell\n")
+				assert.Contains(t, args, "--disable-web-tools\n")
+				assert.Contains(t, args, "--trust-workspace\n")
+				assert.Contains(t, args, "--no-session-log\n")
+				assert.Contains(t, args, "--contributor-mode\noff\n")
+				assert.Contains(t, args, "--model\nmuse-spark-1.3\n")
 			case "grok":
 				assert.Contains(t, args, "--sandbox\nread-only\n")
 				assert.Contains(t, args, "--tools\nread_file,grep,list_dir\n")

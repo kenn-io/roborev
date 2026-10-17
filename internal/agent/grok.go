@@ -509,20 +509,11 @@ func (a *GrokAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.Writer) (string, error) {
 	// Grok headless does not read the prompt from stdin; use a temp file
 	// like Pi to avoid OS command-line length limits.
-	tmpFile, err := os.CreateTemp("", "roborev-grok-prompt-*.md")
+	promptPath, cleanup, err := createPromptFile("grok", prompt)
 	if err != nil {
-		return "", fmt.Errorf("create temp prompt file: %w", err)
+		return "", err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return "", fmt.Errorf("write prompt to temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return "", fmt.Errorf("close temp prompt file: %w", err)
-	}
+	defer cleanup()
 
 	var args []string
 	if planningReadOnly(ctx) {

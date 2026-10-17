@@ -21,6 +21,7 @@ installed.
 | Kiro | `kiro-cli` | See [kiro.dev](https://kiro.dev/) |
 | Pi | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
 | Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
+| Muse Code | `muse` | `curl -fsSL https://dev.meta.ai/install.sh \| sh` ([Meta installation guide](https://dev.meta.ai/docs/overview)) |
 
 ## Auto-Detection
 
@@ -37,6 +38,7 @@ roborev auto-detects installed agents and falls back in this order:
 1. Droid
 1. Pi
 1. Grok Build
+1. Muse Code
 
 The first available agent is used unless you specify one explicitly.
 
@@ -89,6 +91,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Kiro | Model name | (see Kiro docs) |
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
 | Grok Build | xAI model ID | `grok-4.5` (see [x.ai/cli](https://x.ai/cli)) |
+| Muse Code | Meta model ID | `muse-spark-1.3` |
 
 ### Configuration
 
@@ -303,6 +306,7 @@ and commands):
 | Kiro | Full (uses `--trust-all-tools`) |
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
+| Muse Code | Full (uses `--yolo`; reviews and planning use `--disable-write --disable-shell`) |
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
@@ -323,6 +327,24 @@ use Pi's default tools, including `bash`, `edit`, and `write`.
 Roborev appends the managed allowlist after `[agent.pi].launch_args`, so a
 duplicate `--tools` option in global configuration does not replace the review
 restriction.
+
+## Muse Code
+
+[Muse Code](https://dev.meta.ai/docs/muse-code) runs headlessly with
+`muse exec`. Authenticate with `muse login` or set `META_API_KEY`. Set
+`muse_cmd` in global config to use a custom binary path.
+
+Reviews and planning pass `--trust-workspace` to load repository rules, plus
+`--disable-write --disable-shell --disable-web-tools`. Fix and refine pass
+`--yolo`. Setting `allow_unsafe_agents = true` also enables that mode for
+reviews.
+
+roborev passes `--contributor-mode off` and the standard `muse-spark-1.3` model
+unless a model is configured; naming a `-contributor` model opts in to
+Contributor mode.
+
+Muse refuses to start when `TMPDIR` points inside the workspace. Use a temporary
+directory outside the repository.
 
 ## Grok Build
 
