@@ -284,7 +284,8 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 
 func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
 	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
-	if cached, ok := codexDangerousSupport.Load(command, cacheKey); ok {
+	executable, cached, ok := codexDangerousSupport.Load(command, cacheKey)
+	if ok {
 		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
@@ -297,7 +298,7 @@ func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserC
 		}
 		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
 	}
-	codexDangerousSupport.Store(command, cacheKey, supported)
+	codexDangerousSupport.Store(command, cacheKey, executable, supported)
 	return supported, nil
 }
 
@@ -305,7 +306,8 @@ func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserC
 // needed for non-agentic review mode (--sandbox read-only).
 func codexSupportsNonInteractive(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
 	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
-	if cached, ok := codexAutoApproveSupport.Load(command, cacheKey); ok {
+	executable, cached, ok := codexAutoApproveSupport.Load(command, cacheKey)
+	if ok {
 		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
@@ -318,7 +320,7 @@ func codexSupportsNonInteractive(ctx context.Context, command string, ignoreUser
 		}
 		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
 	}
-	codexAutoApproveSupport.Store(command, cacheKey, supported)
+	codexAutoApproveSupport.Store(command, cacheKey, executable, supported)
 	return supported, nil
 }
 
@@ -344,7 +346,8 @@ func codexExecHelpArgs(ignoreUserConfig bool) []string {
 // produce false positives if the flag is listed globally but rejected
 // in the exec subcommand.
 func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, error) {
-	if cached, ok := codexIgnoreUserConfigSupport.Load(command, command); ok {
+	executable, cached, ok := codexIgnoreUserConfigSupport.Load(command, command)
+	if ok {
 		return cached, nil
 	}
 
@@ -355,11 +358,11 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
 		}
-		codexIgnoreUserConfigSupport.Store(command, command, false)
+		codexIgnoreUserConfigSupport.Store(command, command, executable, false)
 		return false, nil
 	}
 	supported := strings.Contains(string(output), codexIgnoreUserConfigFlag)
-	codexIgnoreUserConfigSupport.Store(command, command, supported)
+	codexIgnoreUserConfigSupport.Store(command, command, executable, supported)
 	return supported, nil
 }
 
@@ -369,7 +372,8 @@ func codexSupportsThreadSource(
 	ctx context.Context, command string, ignoreUserConfig bool,
 ) (bool, error) {
 	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
-	if cached, ok := codexThreadSourceSupport.Load(command, cacheKey); ok {
+	executable, cached, ok := codexThreadSourceSupport.Load(command, cacheKey)
+	if ok {
 		return cached, nil
 	}
 
@@ -385,11 +389,11 @@ func codexSupportsThreadSource(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
 		}
-		codexThreadSourceSupport.Store(command, cacheKey, false)
+		codexThreadSourceSupport.Store(command, cacheKey, executable, false)
 		return false, nil
 	}
 	supported := strings.Contains(string(output), codexThreadSourceFlag)
-	codexThreadSourceSupport.Store(command, cacheKey, supported)
+	codexThreadSourceSupport.Store(command, cacheKey, executable, supported)
 	return supported, nil
 }
 

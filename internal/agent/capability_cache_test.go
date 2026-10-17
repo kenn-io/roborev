@@ -44,9 +44,10 @@ func TestCapabilityCacheReusesUnchangedCommand(t *testing.T) {
 	writeHelpCommand(t, command, "--output-format", installed)
 
 	var cache capabilityCache
-	cache.Store(command, command, true)
+	executable, _, _ := cache.Load(command, command)
+	cache.Store(command, command, executable, true)
 
-	supported, ok := cache.Load(command, command)
+	_, supported, ok := cache.Load(command, command)
 	assert.True(t, ok)
 	assert.True(t, supported)
 }
@@ -62,10 +63,53 @@ func TestCapabilityCacheFollowsSymlinkTarget(t *testing.T) {
 	require.NoError(t, os.Symlink(target, link))
 
 	var cache capabilityCache
-	cache.Store(link, link, false)
+	executable, _, _ := cache.Load(link, link)
+	cache.Store(link, link, executable, false)
 	// Package managers such as npm upgrade the file the stable name links to.
 	writeHelpCommand(t, target, "--stream --output-format", installed.Add(time.Minute))
 
-	_, ok := cache.Load(link, link)
+	_, _, ok := cache.Load(link, link)
 	assert.False(t, ok)
+}
+
+func TestCapabilityCacheDropsResultWhenUpgradedDuringProbe(t *testing.T) {
+	skipIfWindows(t)
+
+	dir := t.TempDir()
+	command := filepath.Join(dir, "copilot")
+	started := filepath.Join(dir, "started")
+	release := filepath.Join(dir, "release")
+	script := "#!/bin/sh\ntouch '" + started + "'\nwhile [ ! -f '" + release + "' ]; do sleep 0.01; done\nprintf '%s\\n' '--stream'\n"
+	require.NoError(t, os.WriteFile(command, []byte(script), 0o755))
+	installed := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(command, installed, installed))
+
+	type probeResult struct {
+		supported bool
+		err       error
+	}
+	done := make(chan probeResult, 1)
+	go func() {
+		supported, err := copilotSupportsJSONOutput(context.Background(), command)
+		done <- probeResult{supported, err}
+	}()
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(started)
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Upgrade by renaming a new file into place, so the running probe keeps
+	// executing the old script.
+	upgraded := filepath.Join(dir, "copilot.new")
+	writeHelpCommand(t, upgraded, "--stream --output-format", installed.Add(time.Minute))
+	require.NoError(t, os.Rename(upgraded, command))
+	require.NoError(t, os.WriteFile(release, nil, 0o644))
+
+	result := <-done
+	require.NoError(t, result.err)
+	assert.False(t, result.supported, "the probe ran the executable from before the upgrade")
+
+	supported, err := copilotSupportsJSONOutput(context.Background(), command)
+	require.NoError(t, err)
+	assert.True(t, supported, "the old executable's answer must not be cached for the upgraded one")
 }

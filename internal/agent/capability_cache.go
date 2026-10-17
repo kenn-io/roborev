@@ -44,24 +44,28 @@ func fingerprintExecutable(command string) executableFingerprint {
 }
 
 // Load returns the cached probe result for key, if command still resolves to
-// the executable that produced it.
-func (c *capabilityCache) Load(command string, key any) (supported, ok bool) {
+// the executable that produced it. On a miss, pass the returned fingerprint to
+// Store, so a result is never attributed to an executable that replaced the
+// probed one while the probe was running.
+func (c *capabilityCache) Load(command string, key any) (executable executableFingerprint, supported, ok bool) {
+	executable = fingerprintExecutable(command)
 	cached, found := c.entries.Load(key)
 	if !found {
-		return false, false
+		return executable, false, false
 	}
 	entry := cached.(capabilityCacheEntry)
-	if entry.executable != fingerprintExecutable(command) {
-		return false, false
+	if entry.executable != executable {
+		return executable, false, false
 	}
-	return entry.supported, true
+	return executable, entry.supported, true
 }
 
-// Store records a probe result for key against the executable command
-// currently resolves to.
-func (c *capabilityCache) Store(command string, key any, supported bool) {
-	c.entries.Store(key, capabilityCacheEntry{
-		executable: fingerprintExecutable(command),
-		supported:  supported,
-	})
+// Store records a probe result for key against the executable that Load
+// fingerprinted before the probe. The result is dropped if command no longer
+// resolves to that executable, so the next Load probes the new one.
+func (c *capabilityCache) Store(command string, key any, executable executableFingerprint, supported bool) {
+	if fingerprintExecutable(command) != executable {
+		return
+	}
+	c.entries.Store(key, capabilityCacheEntry{executable: executable, supported: supported})
 }
