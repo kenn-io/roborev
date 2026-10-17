@@ -349,7 +349,7 @@ var agentFixtures = []agentTestDef{
 	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4", false, false},
 	{"kilo", func(s string) Agent { return NewKiloAgent(s) }, "--model", "", "anthropic/claude-sonnet-4-20250514", false, false},
 	{"grok", func(s string) Agent { return NewGrokAgent(s) }, "-m", "", "grok-4.5", false, false},
-	{"muse", func(s string) Agent { return NewMuseAgent(s) }, "--model", "", "muse-spark-1.3-contributor", false, false},
+	{"muse", func(s string) Agent { return NewMuseAgent(s) }, "--model", "", "muse-spark-1.3", false, false},
 }
 
 func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
@@ -367,7 +367,7 @@ func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
 		{"droid", NewDroidAgent("droid"), "--auto", "droid exec --tag roborev"},
 		{"gemini", NewGeminiAgent("gemini"), "--approval-mode yolo", "--approval-mode plan"},
 		{"grok", NewGrokAgent("grok"), "--always-approve", "--sandbox read-only"},
-		{"muse", NewMuseAgent("muse"), "--yolo", `-c run.toolset=["read_file","search"]`},
+		{"muse", NewMuseAgent("muse"), "--yolo", `-c run.toolset=["read_file","search"] -c hooks={}`},
 		{"kilo", NewKiloAgent("kilo"), "--auto", "--agent plan"},
 		{"kiro", NewKiroAgent("kiro"), "--trust-all-tools", "--no-interactive"},
 		{"opencode", NewOpenCodeAgent("opencode"), "--write", "--agent plan"},
@@ -467,13 +467,11 @@ func TestClaudeBuildArgsNoEffortForStandard(t *testing.T) {
 
 func TestAgentBuildArgsWithModel(t *testing.T) {
 	for _, tt := range agentFixtures {
-		if tt.name != "muse" {
-			t.Run(tt.name+" with explicit model", func(t *testing.T) {
-				agent := tt.factory("").WithModel(tt.testModel)
-				cmdLine := agent.CommandLine()
-				assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-			})
-		}
+		t.Run(tt.name+" with explicit model", func(t *testing.T) {
+			agent := tt.factory("").WithModel(tt.testModel)
+			cmdLine := agent.CommandLine()
+			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
+		})
 
 		t.Run(tt.name+" without model", func(t *testing.T) {
 			agent := tt.factory("")

@@ -332,7 +332,9 @@ restriction.
 
 [Muse Code](https://dev.meta.ai/docs/muse-code) runs headlessly with
 `muse exec`. Authenticate with `muse login` or set `META_API_KEY`. Set
-`muse_cmd` in global config to use a custom binary path.
+`muse_cmd` in global config to use a custom binary path. Auto-detection uses the
+bare `muse` binary name, so another program with that name on `PATH` can be
+selected.
 
 Requires Muse Code 1.4.10 or later; the flags were verified against 1.4.10.
 
@@ -340,7 +342,8 @@ Reviews and planning pass `-c 'run.toolset=["read_file","search"]'` to allow
 only native file reads and searches, excluding write, shell, web, MCP, and
 workflow tools regardless of saved Muse permissions or MCP configuration. Fix
 and refine pass `--yolo`. Setting `allow_unsafe_agents = true` also enables that
-mode for reviews. Planning always uses the read-only allowlist.
+mode for reviews. Planning always uses the read-only allowlist. Reviews and
+planning also pass `-c 'hooks={}'` to clear user hooks for the run.
 
 Muse has no session resume or rebuttal support. Muse has no structured-output
 (schema) review or classification support.
