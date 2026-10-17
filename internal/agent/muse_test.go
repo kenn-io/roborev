@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,41 @@ printf 'status message\n' >&2
 	require.NoError(t, err)
 	_, err = os.Stat(string(path))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestMuseReviewIsolatesSavedWorkspaceTrust(t *testing.T) {
+	skipIfWindows(t)
+	withUnsafeAgents(t, false)
+	configHome := t.TempDir()
+	museConfig := filepath.Join(configHome, "muse")
+	require.NoError(t, os.MkdirAll(museConfig, 0o700))
+	for _, name := range []string{"auth.json", "settings.json", "trust.json"} {
+		require.NoError(t, os.WriteFile(filepath.Join(museConfig, name), []byte("{}"), 0o600))
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	captureDir := t.TempDir()
+	t.Setenv("MUSE_CONFIG_CAPTURE", captureDir)
+	command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+set -eu
+printf '%s' "$XDG_CONFIG_HOME" > "$MUSE_CONFIG_CAPTURE/config-home"
+ls -1A "$XDG_CONFIG_HOME/muse" > "$MUSE_CONFIG_CAPTURE/files"
+printf 'No issues found.\n'
+`)
+	_, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	require.NoError(t, err)
+	home, err := os.ReadFile(filepath.Join(captureDir, "config-home"))
+	require.NoError(t, err)
+	require.NotEmpty(t, home)
+	files, err := os.ReadFile(filepath.Join(captureDir, "files"))
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.NotEqual(configHome, string(home), "review must use a private config directory")
+	names := strings.Fields(string(files))
+	assert.Contains(names, "auth.json")
+	assert.Contains(names, "settings.json")
+	assert.NotContains(names, "trust.json", "review must not inherit saved workspace trust")
+	assert.NoDirExists(string(home), "per-run config directory must be removed after review")
 }
 
 func TestMuseReviewFailure(t *testing.T) {
