@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestPostcap3StateErrorOutput(t *testing.T) {
+func TestOutcomeStateErrorOutput(t *testing.T) {
 	resetCLIUse(t)
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
@@ -28,7 +28,7 @@ func outcomePosts(rec *cliUseRecorder) []recordedTelemetry {
 	return slices.DeleteFunc(rec.telemetryPosts(), func(post recordedTelemetry) bool { return post.body == cliUseBody })
 }
 
-func TestPostcap3InvalidReasoning(t *testing.T) {
+func TestOutcomeInvalidReasoning(t *testing.T) {
 	for _, args := range [][]string{{"fix", "99"}, {"analyze", "refactor", "--fix", "main.go"}} {
 		t.Run(args[0], func(t *testing.T) {
 			resetCLIUse(t)
@@ -46,7 +46,7 @@ func TestPostcap3InvalidReasoning(t *testing.T) {
 	}
 }
 
-func TestPostcap3MultiWaitStoredFailures(t *testing.T) {
+func TestOutcomeMultiWaitStoredFailures(t *testing.T) {
 	for _, status := range []storage.JobStatus{storage.JobStatusFailed, storage.JobStatusCanceled} {
 		t.Run(string(status), func(t *testing.T) {
 			resetCLIUse(t)

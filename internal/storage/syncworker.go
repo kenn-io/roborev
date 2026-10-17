@@ -28,6 +28,7 @@ type SyncWorker struct {
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterFailure    func(string)
 	outage          atomic.Bool
+	outageRefused   bool // an unsupported stored outage value turns off outage reporting for this run
 	afterPullWrite  func()
 	afterReviewPush func([]string)
 }
@@ -49,14 +50,14 @@ func (w *SyncWorker) notifyFailure(reason string, err error) func() {
 		return nil
 	}
 	if err == nil {
-		if reason == "pull" && w.outage.Swap(false) {
+		if reason == "pull" && !w.outageRefused && w.outage.Swap(false) {
 			if saveErr := w.db.SetSyncState(syncStateOutage, ""); saveErr != nil {
 				log.Printf("Sync: clear outage state: %v", saveErr)
 			}
 		}
 		return nil
 	}
-	if !w.cfg.Enabled || !w.outage.CompareAndSwap(false, true) {
+	if !w.cfg.Enabled || w.outageRefused || !w.outage.CompareAndSwap(false, true) {
 		return nil
 	}
 	if saveErr := w.db.SetSyncState(syncStateOutage, "1"); saveErr != nil {
@@ -179,9 +180,9 @@ func (w *SyncWorker) Start() error {
 	outage, err := w.db.GetSyncState(syncStateOutage)
 	if err != nil {
 		log.Printf("Sync: read outage state: %v", err)
-	} else if outage != "" && outage != "1" {
-		log.Printf("Sync: invalid outage state %q", outage)
-		return fmt.Errorf("unsupported sync outage state %q", outage)
+	}
+	if w.outageRefused = outage != "" && outage != "1"; w.outageRefused {
+		log.Printf("Sync: ignoring unsupported outage state %q", outage)
 	}
 	w.outage.Store(outage == "1")
 

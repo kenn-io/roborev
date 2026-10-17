@@ -21,7 +21,7 @@ func TestOutcomeContinuedFixFailures(t *testing.T) {
 			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 			t.Chdir(repo.Dir)
 			calls := 0
-			name := "postcap-failing-agent"
+			name := "outcome-failing-agent"
 			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 				calls++
 				return "", errors.New("provider unavailable")

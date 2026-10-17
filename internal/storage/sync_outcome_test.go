@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostcap3SyncUnknownOutage(t *testing.T) {
+func TestOutcomeSyncUnknownOutage(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 	require.NoError(t, db.SetSyncState(syncStateOutage, "future-encoding"))
@@ -21,14 +21,16 @@ func TestPostcap3SyncUnknownOutage(t *testing.T) {
 	worker := NewSyncWorker(db, testSyncConfig())
 	reports := 0
 	worker.SetAfterFailure(func(string) { reports++ })
-	var startErr error
 	synctest.Test(t, func(t *testing.T) {
-		startErr = worker.Start()
+		// Sync still starts; an unknown stored value only turns off outage reporting.
+		require.NoError(t, worker.Start())
+		defer worker.Stop()
 		synctest.Wait()
-		worker.Stop()
+		for range 2 {
+			_, err := worker.SyncNow()
+			require.ErrorContains(t, err, "failed to connect")
+		}
 	})
-	// Refuse the unsupported state before starting a run that can replace it.
-	assert.ErrorContains(t, startErr, "outage state")
 	assert.Contains(t, output.String(), "outage state")
 	assert.Equal(t, 0, reports)
 	stored, err := db.GetSyncState(syncStateOutage)
