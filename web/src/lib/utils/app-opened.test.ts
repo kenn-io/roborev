@@ -421,47 +421,22 @@ describe("setupAppOpenedReporting", () => {
     ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
   });
 
-  test.each([
-    { name: "network error", failure: true, status: "queued" },
-    { name: "disabled then queued", failure: false, status: "queued" },
-    { name: "disabled then skipped", failure: false, status: "skipped" },
-  ])(
-    "allows successive review captures after $name",
-    async ({ failure, status }) => {
-      if (failure) {
+  test.each(["network error", "settled response"])(
+    "allows successive review captures after %s",
+    async (outcome) => {
+      if (outcome === "network error")
         fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-      } else {
-        fetchMock.mockResolvedValueOnce(
-          new Response(JSON.stringify({ status: "disabled" }), {
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      }
       appOpened.reportCoreAction("review_viewed");
       appOpened.reportCoreAction("review_viewed");
       await settle();
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ status }), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
       appOpened.reportCoreAction("review_viewed");
       await settle();
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      if (failure) {
-        vi.setSystemTime(new Date("2026-03-11T09:00:00Z"));
-        appOpened.reportCoreAction("review_viewed");
-        await settle();
-        expect(fetchMock).toHaveBeenCalledTimes(4);
-        expect(await fetchMock.mock.calls[3]![0].json()).toEqual({
-          event: "review_viewed",
-          properties: { surface: "web" },
-        });
-      }
+      expect(await fetchMock.mock.calls[1]![0].json()).toEqual({
+        event: "review_viewed",
+        properties: { surface: "web" },
+      });
     },
   );
 

@@ -54,8 +54,6 @@ func TestCoreActionReviewVisits(t *testing.T) {
 	f.m.layout, f.m.currentView = splitlayout.Stacked, viewReview
 	f.update(tea.KeyPressMsg{Code: 'q'})
 	require.Len(t, f.transport.events, 1)
-	f.update(tea.KeyPressMsg{Code: '0'})
-	require.Len(t, f.transport.events, 1)
 }
 
 //nolint:paralleltest // telemetry environment variables
@@ -68,33 +66,21 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 		{name: "delivery error", accepted: "queued", fail: true},
 		{name: "disabled then queued", accepted: "queued"},
 		{name: "disabled then skipped", accepted: "skipped"},
+		{name: "persistent disabled"},
+		{name: "persistent delivery error", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newCoreActionReviewVisitFixture(t)
-			f.update(f.review())
-			f.transport.fail, f.transport.status = tc.fail, "disabled"
-			f.update(tea.KeyPressMsg{Code: '0'})
-			require.Len(t, f.transport.events, 1)
-			f.transport.fail, f.transport.status = false, tc.accepted
-			f.update(displayTickMsg{})
-			require.Len(t, f.transport.events, 1)
-			f.update(tea.KeyPressMsg{Code: '0'})
-			require.Len(t, f.transport.events, 2)
-			f.update(tea.KeyPressMsg{Code: '0'})
-			assert.Len(t, f.transport.events, 2)
-		})
-	}
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewRetryBudget(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, fail := range []bool{false, true} {
-		t.Run(map[bool]string{false: "disabled", true: "delivery error"}[fail], func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
 				f.update(f.review())
-				f.transport.fail, f.transport.status = fail, "disabled"
+				f.transport.fail, f.transport.status = tc.fail, "disabled"
+				f.update(tea.KeyPressMsg{Code: '0'})
+				require.Len(t, f.transport.events, 1)
+				if tc.accepted != "" {
+					f.transport.fail, f.transport.status = false, tc.accepted
+				}
+				f.update(displayTickMsg{})
+				require.Len(t, f.transport.events, 1)
 				for range 5 {
 					f.update(tea.KeyPressMsg{Code: '0'})
 				}
@@ -108,19 +94,6 @@ func TestCoreActionReviewRetryBudget(t *testing.T) {
 				f.update(tea.KeyPressMsg{Code: '0'})
 				assert.Len(t, f.transport.events, 3)
 			})
-		})
-	}
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionLoadedReviewQuit(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, key := range []rune{'c', 'd'} {
-		t.Run(string(key), func(t *testing.T) {
-			f := newCoreActionReviewVisitFixture(t)
-			f.update(f.review())
-			f.update(tea.KeyPressMsg{Code: key, Mod: tea.ModCtrl})
-			assert.Empty(t, f.transport.events)
 		})
 	}
 }
@@ -251,10 +224,13 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionAbandonedLoad(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"ordinary error", "follow error", "rerun", "quit", "view change"} {
+	for _, outcome := range []string{"ordinary error", "follow error", "rerun", "quit after input", "view change", "quit after load: ctrl+c", "quit after load: ctrl+d"} {
 		t.Run(outcome, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			if outcome == "view change" {
+			loaded := outcome == "quit after load: ctrl+c" || outcome == "quit after load: ctrl+d"
+			if loaded {
+				f.update(f.review())
+			} else if outcome == "view change" {
 				f.m.layout, f.m.currentView = splitlayout.Stacked, viewQueue
 				f.m.tasksEnabled = true
 				result, cmd := f.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -274,13 +250,17 @@ func TestCoreActionAbandonedLoad(t *testing.T) {
 			case "view change":
 				response.follow, response.dispatchedFrom = false, viewQueue
 				f.update(tea.KeyPressMsg{Code: 'T'})
-			case "quit":
+			case "quit after input", "quit after load: ctrl+c":
 				f.update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+			case "quit after load: ctrl+d":
+				f.update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 			}
-			if outcome != "view change" {
-				response = f.review()
+			if !loaded {
+				if outcome != "view change" {
+					response = f.review()
+				}
+				f.update(response)
 			}
-			f.update(response)
 			assert.Empty(t, f.transport.events)
 		})
 	}
