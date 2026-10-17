@@ -455,7 +455,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       ),
     );
 
-  function loadJobs(reportSearch = true): void {
+  function loadJobs(reportSearch = false): void {
     opts.runtime.runCommand(loadJobsEffect(reportSearch), {
       operation: "load Roborev jobs",
       safeContext: { owner: opts.owner },
@@ -583,7 +583,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
     }
     if (filterScope() !== previousScope) loadedLimit = DEFAULT_PAGE_LIMIT;
-    loadJobs();
+    loadJobs(key === "search");
   }
 
   function setRepoBranchFilter(

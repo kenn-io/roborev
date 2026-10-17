@@ -643,6 +643,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				if _, stateChanged := errors.AsType[*planningStateError](planErr); stateChanged {
 					return fmt.Errorf("planning cannot continue: %w", planErr)
 				}
+				reportCLIError(planCmd, telemetry.EventFindingFixed, planErr)
 				fmt.Println("Will retry in next iteration")
 				continue
 			}
@@ -758,6 +759,10 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					return saveErr
 				}
 			}
+			actionCmd := &cobra.Command{}
+			actionCmd.SetContext(ctx)
+			actionCmd.SetOut(os.Stdout)
+			reportCLIError(actionCmd, telemetry.EventFindingFixed, agentErr)
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue

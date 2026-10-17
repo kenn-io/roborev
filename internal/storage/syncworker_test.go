@@ -274,9 +274,11 @@ func TestOutcomeSyncPushAndPullFailures(t *testing.T) {
 	assert.Equal(t, []string{"pull", "push", "push"}, reasons)
 	_, err = worker.SyncNow()
 	require.ErrorContains(t, err, "pull:")
-	assert.Equal(t, []string{"pull", "push", "push", "push", "pull"}, reasons)
+	assert.Equal(t, []string{"pull", "push", "push", "pull"}, reasons)
+	require.ErrorContains(t, worker.doSync(), "pull:")
+	assert.Equal(t, []string{"pull", "push", "push", "pull", "pull"}, reasons)
 	// Propagated push errors count once, too.
 	require.NoError(t, h.db.Close())
 	require.ErrorContains(t, worker.doSync(), "push:")
-	assert.Equal(t, []string{"pull", "push", "push", "push", "pull", "push"}, reasons)
+	assert.Equal(t, []string{"pull", "push", "push", "pull", "pull", "push"}, reasons)
 }

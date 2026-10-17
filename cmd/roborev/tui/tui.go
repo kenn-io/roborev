@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -145,6 +146,7 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	reviewVisitJobID     int64
+	failedReviewReported string
 	reviewVisitDay       string
 	reviewInputJobID     int64
 	screenDay            string   // UTC day that screensSent covers
@@ -1331,6 +1333,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if job, selected := rm.selectedJob(); selected && rm.splitActive() && job.Status == storage.JobStatusDone && !rm.selectedReviewLoaded() && rm.splitDetailErr != nil && rm.paneErrorReported != rm.splitDetailErr.Error() {
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
 			rm.paneErrorReported = rm.splitDetailErr.Error()
+		}
+		failedOccurrence := ""
+		if (rm.currentView == viewReview || rm.splitActive()) && rm.selectedReviewLoaded() && rm.currentReview.Job != nil && rm.currentReview.Job.Status == storage.JobStatusFailed {
+			job := rm.currentReview.Job
+			failedOccurrence = fmt.Sprintf("%d:%d:%v:%v", job.ID, rm.jobAttemptGen[job.ID], job.StartedAt, job.FinishedAt)
+		}
+		if failedOccurrence != "" && failedOccurrence != rm.failedReviewReported {
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
+			rm.failedReviewReported = failedOccurrence
+		} else if failedOccurrence == "" {
+			rm.failedReviewReported = ""
 		}
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles

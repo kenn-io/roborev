@@ -55,6 +55,15 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 	}
 }
 
+// notifyAttemptFailure reports the returned phase, or a best-effort push failure.
+func (w *SyncWorker) notifyAttemptFailure(reason string, err, pushFailure error) {
+	if err != nil {
+		w.notifyFailure(reason, err)
+	} else {
+		w.notifyFailure("push", pushFailure)
+	}
+}
+
 // SetAfterPullWrite registers a callback for successfully committed local
 // canonical writes made by the pull path. The callback may be replaced or
 // cleared while the worker is running.
@@ -238,10 +247,7 @@ func (w *SyncWorker) FinalPush() (err error) {
 	reason := "push"
 	var pushFailure error
 	defer func() {
-		if pushFailure != nil && (err == nil || reason != "push") {
-			w.notifyFailure("push", pushFailure)
-		}
-		w.notifyFailure(reason, err)
+		w.notifyAttemptFailure(reason, err, pushFailure)
 	}()
 	w.mu.Lock()
 	pool := w.pgPool
@@ -312,10 +318,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ 
 	reason := ""
 	var pushFailure error
 	defer func() {
-		if pushFailure != nil && (err == nil || reason != "push") {
-			w.notifyFailure("push", pushFailure)
-		}
-		w.notifyFailure(reason, err)
+		w.notifyAttemptFailure(reason, err, pushFailure)
 	}()
 	w.mu.Lock()
 	if !w.running {
@@ -655,10 +658,7 @@ func (w *SyncWorker) doSync() (err error) {
 	reason := ""
 	var pushFailure error
 	defer func() {
-		if pushFailure != nil && (err == nil || reason != "push") {
-			w.notifyFailure("push", pushFailure)
-		}
-		w.notifyFailure(reason, err)
+		w.notifyAttemptFailure(reason, err, pushFailure)
 	}()
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()

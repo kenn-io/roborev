@@ -1778,8 +1778,25 @@ it("reports completed explicit empty searches, including retries, and ignores re
   });
   store.setFilter("search", "missing");
   await vi.waitFor(() => expect(events).toHaveLength(1));
-  store.loadJobs();
+  store.loadJobs(true);
   await vi.waitFor(() => expect(events).toHaveLength(2));
+  store.setFilter("status", "failed");
+  await vi.waitFor(() =>
+    expect(listJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    ),
+  );
+  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+  store.setRepoBranchFilter("example", "main");
+  await vi.waitFor(() =>
+    expect(listJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ branch: "main" }),
+      expect.anything(),
+    ),
+  );
+  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+  expect(events).toHaveLength(2);
   await loadJobs(store);
   expect(events).toHaveLength(2);
   listJobs.mockReturnValueOnce(pending.promise);

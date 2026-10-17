@@ -24,7 +24,7 @@ import (
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "agent failure", "planning failure"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -53,6 +53,9 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			name := "core-action-refine-test"
 			changes := 0
 			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
+				if mode == "agent failure" || mode == "planning failure" {
+					return "", errors.New("agent unavailable")
+				}
 				if mode == "no change" {
 					return "No changes needed", nil
 				}
@@ -62,6 +65,9 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			}})
 			t.Cleanup(func() { agent.Unregister(name) })
 			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", "2", "--quiet", "--server", md.Server.URL}
+			if mode == "planning failure" {
+				args = append(args, "--plan")
+			}
 			if mode == "skill" {
 				args = append(args, "--from-skill")
 			}
@@ -71,11 +77,20 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			} else {
 				require.ErrorContains(t, result.err, "max iterations")
 			}
-			if mode == "no change" || mode == "commit failure" {
+			if mode == "no change" || mode == "commit failure" || mode == "agent failure" || mode == "planning failure" {
 				assert.Equal(t, head, repo.HeadSHA())
 			} else {
 				assert.Equal(t, "2", repo.Run("rev-list", "--count", head+"..HEAD"))
 				assert.Contains(t, result.stdout, "Created commit")
+			}
+			if mode == "agent failure" || mode == "planning failure" {
+				var errorsShown int
+				for _, post := range rec.telemetryPosts() {
+					if strings.Contains(post.body, `"event":"error_shown"`) {
+						errorsShown++
+					}
+				}
+				assert.Equal(t, 3, errorsShown) // Two printed retries and the returned iteration limit.
 			}
 			var fixes []string
 			for _, post := range rec.telemetryPosts() {
@@ -161,6 +176,11 @@ func TestCoreActionFixCommit(t *testing.T) {
 					require.Len(t, posts, count)
 					for _, post := range posts {
 						assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
+					}
+				} else if batch && outcome == "failure" {
+					require.Len(t, posts, 2)
+					for _, post := range posts {
+						assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, post.body)
 					}
 				} else {
 					assert.Empty(t, posts)
@@ -353,6 +373,7 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 			{[]string{"wait", "--job", "999"}, "review_viewed", 1},
 			{[]string{"wait", "--job", "999", "1000"}, "review_viewed", 2},
 			{[]string{"wait", "--job", "999", "--quiet"}, "review_viewed", 1},
+			{[]string{"wait", "--job", "999", "1000", "--quiet"}, "review_viewed", 1},
 			{[]string{"show", "--job", "999", "--from-skill"}, "", 0},
 			{[]string{"close", "invalid"}, "", 0},
 		} {
@@ -375,4 +396,29 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestOutcomeReviewWaitFailure(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	repo := newTestGitRepo(t)
+	repo.CommitFile("source.txt", "content", "initial commit")
+	job := &storage.ReviewJob{ID: 999, Status: storage.JobStatusFailed, Error: "agent unavailable"}
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{
+		OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+			respondJSON(w, http.StatusCreated, job)
+			return true
+		},
+	}, nil)
+	md.State.jobs[job.ID] = job
+	result := runCLI(t, "review", "--repo", repo.Dir, "--wait", "--server", md.Server.URL)
+	require.ErrorContains(t, result.err, "agent unavailable")
+	var shown []string
+	for _, post := range rec.telemetryPosts() {
+		if strings.Contains(post.body, `"event":"error_shown"`) {
+			shown = append(shown, post.body)
+		}
+	}
+	require.Len(t, shown, 1)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"review_viewed"}}`, shown[0])
 }

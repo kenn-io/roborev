@@ -117,7 +117,9 @@ func TestCoreActionReviewVisits(t *testing.T) {
 			require.NotNil(t, f.m.currentReview)
 			assert.Contains(t, f.m.currentReview.Output, "Job failed")
 			assert.Zero(t, f.m.currentReview.ID)
-			expectViews(t, f.transport, 0)
+			require.Len(t, f.transport.events, 1)
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
+			f.transport.events = nil
 			f.update(tea.KeyPressMsg{Code: 'k'})
 			f.update(f.review())
 			expectViews(t, f.transport, 1)
@@ -291,4 +293,47 @@ func TestOutcomeVisibleTUIErrors(t *testing.T) {
 	assert.Len(t, f.transport.events, 3)
 	f.update(applyPatchResultMsg{err: errors.New("apply failed")})
 	assert.Len(t, f.transport.events, 4)
+}
+
+//nolint:paralleltest // telemetry opt-out variables are process-wide
+func TestOutcomeFailedReviewLayouts(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, fullScreen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "split", true: "full screen"}[fullScreen], func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture()
+			f.m.selectedJobID = 1
+			f.m.currentReview = nil
+			if fullScreen {
+				f.m.currentView = viewReview
+				f.m.layout = splitlayout.Stacked
+			}
+			job, ok := f.m.selectedJob()
+			require.True(t, ok)
+			require.Equal(t, storage.JobStatusFailed, job.Status)
+			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
+			f.update(displayTickMsg{})
+			require.Len(t, f.transport.events, 1)
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 1)
+			f.m.currentView = viewReview
+			f.m.layout = splitlayout.Stacked
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 1)
+			f.m.currentView = viewHelp
+			f.update(displayTickMsg{})
+			f.m.jobAttemptGen[job.ID]++
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 1)
+			if fullScreen {
+				f.m.currentView = viewReview
+			} else {
+				f.m.currentView = viewQueue
+				f.m.layout = splitlayout.Split
+			}
+			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 2)
+		})
+	}
 }
