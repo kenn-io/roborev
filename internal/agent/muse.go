@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/kit/atomicfile"
 )
 
@@ -149,7 +152,7 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 			err = os.WriteFile(filepath.Join(configDir, "muse", name), data, 0o600)
 			if err == nil && name == "auth.json" {
 				cleanupAuth = func() {
-					_ = writeBackMuseAuth(filepath.Join(configDir, "muse", name), filepath.Join(src, name), data)
+					saveMuseAuth(filepath.Join(configDir, "muse", name), filepath.Join(src, name), data)
 				}
 			}
 		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
@@ -170,11 +173,51 @@ func writeBackMuseAuth(privatePath, userPath string, original []byte) error {
 	if err != nil || bytes.Equal(updated, original) {
 		return err
 	}
+	return replaceMuseAuthIfUnchanged(userPath, original, updated)
+}
+
+// saveMuseAuth reports a renewed login it could not save, without failing the run.
+func saveMuseAuth(privatePath, userPath string, original []byte) {
+	if err := writeBackMuseAuth(privatePath, userPath, original); err != nil {
+		log.Printf("muse: could not save renewed login to %s: %v", userPath, err)
+	}
+}
+
+// replaceMuseAuthIfUnchanged holds Muse's auth lock from the comparison
+// through the replacement, so a concurrent Muse login is never overwritten.
+func replaceMuseAuthIfUnchanged(userPath string, original, updated []byte) error {
+	unlock, err := lockMuseAuth(userPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	current, err := os.ReadFile(userPath)
 	if err != nil || !bytes.Equal(current, original) {
 		return err
 	}
 	return atomicfile.WriteFile(userPath, updated, atomicfile.WithPrivate())
+}
+
+const (
+	museAuthLockTimeout    = 3 * time.Second
+	museAuthLockRetryDelay = 10 * time.Millisecond
+)
+
+// lockMuseAuth takes the lock Muse holds while it writes auth.json.
+func lockMuseAuth(userPath string) (func(), error) {
+	lockPath := filepath.Join(filepath.Dir(userPath), ".auth.json.lock")
+	lock := flock.New(lockPath, flock.SetPermissions(0o600))
+	ctx, cancel := context.WithTimeout(context.Background(), museAuthLockTimeout)
+	defer cancel()
+	locked, err := lock.TryLockContext(ctx, museAuthLockRetryDelay)
+	if err == nil && !locked {
+		err = ctx.Err()
+	}
+	if err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("lock %s: %w", lockPath, err)
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 // museReadOnlySettings preserves user settings except MCP server declarations.

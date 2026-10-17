@@ -3,12 +3,14 @@ package agent
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,13 +88,17 @@ printf 'status message\n' >&2
 func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 	skipIfWindows(t)
 	withUnsafeAgents(t, false)
-	for _, tc := range []struct{ source, key, auth string }{
-		{"xdg", "mcpServers", "example"},
-		{"xdg", "mcp_servers", "example"},
-		{"home", "mcpServers", "example"},
-		{"home", "mcp_servers", "example"},
-		{"xdg", "mcpServers", "renewed"},
-		{"xdg", "mcpServers", "concurrent"},
+	// auth names what the fake muse does to the login; user is the user's
+	// auth.json token afterward.
+	for _, tc := range []struct{ source, key, auth, user string }{
+		{"xdg", "mcpServers", "example", "example"},
+		{"xdg", "mcp_servers", "example", "example"},
+		{"home", "mcpServers", "example", "example"},
+		{"home", "mcp_servers", "example", "example"},
+		{"xdg", "mcpServers", "renewed", "renewed"},
+		{"xdg", "mcpServers", "concurrent", "concurrent"},
+		{"xdg", "mcpServers", "locked", "example"},
+		{"xdg", "mcpServers", "unwritable", "example"},
 	} {
 		t.Run(tc.source+"/"+tc.key+"/"+tc.auth, func(t *testing.T) {
 			configHome := t.TempDir()
@@ -111,9 +117,30 @@ func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 				"settings.json": fmt.Sprintf(museSettingsWithMCP, tc.key),
 				"trust.json":    "{}",
 				"plugins.json":  "{}",
+				// Muse creates its lock file beside auth.json.
+				".auth.json.lock": "",
 			} {
 				require.NoError(t, os.WriteFile(filepath.Join(museConfig, name), []byte(data), 0o600))
 			}
+			lockPath := filepath.Join(museConfig, ".auth.json.lock")
+			lock := flock.New(lockPath, flock.SetPermissions(0o600))
+			if tc.auth == "locked" {
+				locked, err := lock.TryLock()
+				require.NoError(t, err)
+				require.True(t, locked)
+			}
+			t.Cleanup(func() { _ = lock.Close() })
+			if tc.auth == "unwritable" {
+				if os.Geteuid() == 0 {
+					t.Skip("root can write to a read-only directory")
+				}
+				require.NoError(t, os.Chmod(museConfig, 0o500))
+				t.Cleanup(func() { _ = os.Chmod(museConfig, 0o700) })
+			}
+			var logs bytes.Buffer
+			prevLog := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(prevLog) })
 			dataHome := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(dataHome, "muse", "plugins"), 0o700))
 			t.Setenv("XDG_DATA_HOME", dataHome)
@@ -146,8 +173,14 @@ printf 'No issues found.\n'
 			repoPath := t.TempDir()
 			tmp := t.TempDir()
 			t.Setenv("TMPDIR", tmp)
-			_, err := NewMuseAgent(command).Review(t.Context(), repoPath, "HEAD", "review", nil)
+			result, err := NewMuseAgent(command).Review(t.Context(), repoPath, "HEAD", "review", nil)
 			require.NoError(t, err)
+			assert.Equal(t, "No issues found.", result)
+			if tc.auth == "locked" || tc.auth == "unwritable" {
+				assert.Contains(t, logs.String(), "muse: could not save renewed login")
+			} else {
+				assert.Empty(t, logs.String())
+			}
 			files, err := os.ReadDir(tmp)
 			require.NoError(t, err)
 			assert.Empty(t, files, "review must remove its prompt and private home")
@@ -156,7 +189,7 @@ printf 'No issues found.\n'
 			assert.JSONEq(t, `{"schema_version":1,"model":"muse-spark-1.3","hooks":{}}`, string(settings))
 			auth, err := os.ReadFile(filepath.Join(museConfig, "auth.json"))
 			require.NoError(t, err)
-			assert.JSONEq(t, fmt.Sprintf(`{"token":%q}`, tc.auth), string(auth))
+			assert.JSONEq(t, fmt.Sprintf(`{"token":%q}`, tc.user), string(auth))
 		})
 	}
 }
