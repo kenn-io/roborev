@@ -344,8 +344,8 @@ workflow tools regardless of saved Muse permissions. Muse still starts any
 required MCP servers in its settings. An unavailable server fails the review
 until you fix that setting. Fix and refine pass `--yolo`. Setting
 `allow_unsafe_agents = true` also enables that mode for reviews. Planning always
-uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` to
-clear user hooks for the run.
+uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
+`-c managed_hooks_path=null` to clear user and managed hooks for the run.
 
 Muse has no session resume or rebuttal support. Muse has no structured-output
 (schema) review or classification support.

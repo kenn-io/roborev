@@ -18,10 +18,10 @@ func TestMuseBuildArgs(t *testing.T) {
 		reasoning ReasoningLevel
 		want      []string
 	}{
-		{"review", false, false, ReasoningStandard, []string{"-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`}},
+		{"review", false, false, ReasoningStandard, []string{"-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null"}},
 		{"agentic", true, false, ReasoningStandard, []string{"--yolo"}},
 		{"unsafe", false, true, ReasoningStandard, []string{"--yolo"}},
-		{"reasoning thorough", false, false, ReasoningThorough, []string{"--reasoning-effort", "high", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`}},
+		{"reasoning thorough", false, false, ReasoningThorough, []string{"--reasoning-effort", "high", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
