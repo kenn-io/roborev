@@ -858,8 +858,7 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 				md.Server.Close()
 				rec = secondPosts
 			}
-			cmd.SetContext(t.Context())
-			reportCLIAction(cmd, "review_viewed")
+			reportCLIActionOutput(cmd.OutOrStdout(), "review_viewed")
 			waitCLIUse()
 			if mode == "running" || mode == "latest observed" {
 				require.Len(t, rec.telemetryPosts(), 1)

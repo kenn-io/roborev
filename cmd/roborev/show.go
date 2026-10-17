@@ -246,7 +246,7 @@ Examples:
 					return err
 				}
 				if !showPrompt && review.Job != nil && review.Job.IsReadableReview() {
-					reportCLIActionOutput(cmd.Context(), cmd.OutOrStdout(), telemetry.EventReviewViewed)
+					reportCLIActionOutput(cmd.OutOrStdout(), telemetry.EventReviewViewed)
 				}
 				return nil
 			}
@@ -294,7 +294,7 @@ Examples:
 			}
 
 			if !showPrompt && review.Job != nil && review.Job.IsReadableReview() {
-				reportCLIActionOutput(cmd.Context(), os.Stdout, telemetry.EventReviewViewed)
+				reportCLIActionOutput(os.Stdout, telemetry.EventReviewViewed)
 			}
 			return nil
 		},

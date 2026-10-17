@@ -148,12 +148,8 @@ func waitCLIUse() {
 	}
 }
 
-// reportCLIAction bounds best-effort reporting through the running daemon.
-func reportCLIAction(cmd *cobra.Command, event string) {
-	reportCLIActionOutput(cmd.Context(), cmd.OutOrStdout(), event)
-}
-
-func reportCLIActionOutput(ctx context.Context, out io.Writer, event string) {
+// reportCLIActionOutput bounds best-effort reporting independently of the command's lifetime.
+func reportCLIActionOutput(out io.Writer, event string) {
 	if fromSkill || cliUseAgent || !cliTelemetryEnabled() || !cliOutputIsTerminal(out) {
 		return
 	}
@@ -161,7 +157,7 @@ func reportCLIActionOutput(ctx context.Context, out io.Writer, event string) {
 	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, cliUseTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
 	cliActions.Go(func() {
 		defer cancel()
 		if ep == nil {

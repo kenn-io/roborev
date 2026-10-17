@@ -97,7 +97,7 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 		}, nil); err != nil {
 			return fmt.Errorf("rebuttal job %d recorded but close failed: %w", job.ID, err)
 		}
-		reportCLIActionOutput(ctx, cmd.OutOrStderr(), telemetry.EventReviewClosed)
+		reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewClosed)
 	}
 	cmd.Printf("%s: %s\n", assessment.Outcome, assessment.Explanation)
 	return nil

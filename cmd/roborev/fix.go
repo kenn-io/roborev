@@ -1113,7 +1113,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		cmd.Println(strings.Repeat("-", 60))
 		cmd.Println()
 		if job.IsReadableReview() {
-			reportCLIActionOutput(ctx, cmd.OutOrStdout(), telemetry.EventReviewViewed)
+			reportCLIActionOutput(cmd.OutOrStdout(), telemetry.EventReviewViewed)
 		}
 	}
 
@@ -1271,7 +1271,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Enqueue review for fix commit
 	if result.CommitCreated {
 		if !opts.quiet {
-			reportCLIActionOutput(ctx, cmd.OutOrStderr(), telemetry.EventFindingFixed)
+			reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 		}
 		if err := enqueueIfNeeded(ctx, addr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
@@ -1529,7 +1529,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				cmd.Println(strings.Repeat("-", 60))
 				cmd.Println()
 				if e.job.IsReadableReview() {
-					reportCLIActionOutput(ctx, w, telemetry.EventReviewViewed)
+					reportCLIActionOutput(w, telemetry.EventReviewViewed)
 				}
 			}
 			if resuming {
@@ -1640,7 +1640,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		// Enqueue review for fix commit
 		if result.CommitCreated {
 			if !opts.quiet {
-				reportCLIActionOutput(ctx, cmd.OutOrStderr(), telemetry.EventFindingFixed)
+				reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 			}
 			if enqErr := enqueueIfNeeded(ctx, batchAddr, roots.worktreeRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)

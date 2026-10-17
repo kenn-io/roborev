@@ -292,7 +292,7 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 	}
 
 	if output != nil && review.Output != "" && review.Job != nil && review.Job.IsReadableReview() {
-		reportCLIActionOutput(cmd.Context(), output, telemetry.EventReviewViewed)
+		reportCLIActionOutput(output, telemetry.EventReviewViewed)
 	}
 
 	return nil

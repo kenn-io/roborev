@@ -228,7 +228,7 @@ func closeCmd() *cobra.Command {
 
 			if closed {
 				fmt.Printf("Job %d closed\n", jobID)
-				reportCLIActionOutput(cmd.Context(), os.Stdout, telemetry.EventReviewClosed)
+				reportCLIActionOutput(os.Stdout, telemetry.EventReviewClosed)
 			} else {
 				fmt.Printf("Job %d reopened\n", jobID)
 			}

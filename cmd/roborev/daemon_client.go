@@ -118,7 +118,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		cmd.Println(strings.Repeat("-", 60))
 		cmd.Println(review.Output)
 		if review.Job != nil && review.Job.IsReadableReview() {
-			reportCLIActionOutput(ctx, cmd.OutOrStderr(), telemetry.EventReviewViewed)
+			reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 		}
 	}
 

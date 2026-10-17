@@ -825,7 +825,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))
-		reportCLIActionOutput(ctx, os.Stdout, telemetry.EventFindingFixed)
+		reportCLIActionOutput(os.Stdout, telemetry.EventFindingFixed)
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
