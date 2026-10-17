@@ -65,7 +65,6 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 	}{
 		{name: "delivery error", accepted: "queued", fail: true},
 		{name: "disabled then queued", accepted: "queued"},
-		{name: "disabled then skipped", accepted: "skipped"},
 		{name: "persistent disabled"},
 		{name: "persistent delivery error", fail: true},
 	} {
@@ -96,6 +95,22 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 			})
 		})
 	}
+}
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewSkippedStopsReports(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newCoreActionReviewVisitFixture(t)
+		f.update(f.review())
+		f.transport.status = "skipped"
+		f.update(tea.KeyPressMsg{Code: '0'})
+		require.Len(t, f.transport.events, 1)
+		for range 5 {
+			f.update(tea.KeyPressMsg{Code: '0'})
+		}
+		assert.Len(t, f.transport.events, 1)
+	})
 }
 
 //nolint:paralleltest // telemetry environment variables
