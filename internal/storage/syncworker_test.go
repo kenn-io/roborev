@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -203,8 +202,10 @@ func testSyncConfig() config.SyncConfig {
 
 func TestOutcomeSyncConnectionRetries(t *testing.T) {
 	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
 	synctest.Test(t, func(t *testing.T) {
-		worker := NewSyncWorker(nil, testSyncConfig())
+		worker := NewSyncWorker(db, testSyncConfig())
 		var reasons []string
 		worker.SetAfterFailure(func(reason string) {
 			require.True(t, worker.mu.TryLock())
@@ -222,7 +223,7 @@ func TestOutcomeSyncConnectionRetries(t *testing.T) {
 	})
 }
 
-func TestOutcomeSyncOutages(t *testing.T) {
+func TestOutcomeSyncRowFailures(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	pool, err := pgxpool.New(t.Context(), "postgres://test@127.0.0.1:1/test")
@@ -233,7 +234,6 @@ func TestOutcomeSyncOutages(t *testing.T) {
 	worker.running = true
 	var reasons []string
 	worker.SetAfterFailure(func(reason string) { reasons = append(reasons, reason) })
-	worker.notifyFailure("pull", context.Canceled)
 	// Best-effort row failures return success and leave later outages reportable.
 	_, err = h.db.Exec(`UPDATE repos SET identity = 'github.com/example/outcomes' WHERE id = ?`, h.repo.ID)
 	require.NoError(t, err)
@@ -245,14 +245,8 @@ func TestOutcomeSyncOutages(t *testing.T) {
 	require.ErrorContains(t, worker.doSync(), "pull:")
 	require.ErrorContains(t, worker.doSync(), "pull:")
 	assert.Equal(t, []string{"pull"}, reasons)
-	// Connect and final push success do not end an outage; cancellation leaves it alone.
-	worker.notifyFailure("connect", nil)
+	// A final push alone does not end an outage.
 	require.NoError(t, worker.FinalPush())
-	worker.notifyFailure("pull", context.Canceled)
 	require.ErrorContains(t, worker.doSync(), "pull:")
 	assert.Equal(t, []string{"pull"}, reasons)
-	// A completed push-and-pull cycle re-arms the callback.
-	worker.notifyFailure("pull", nil)
-	require.ErrorContains(t, worker.doSync(), "pull:")
-	assert.Equal(t, []string{"pull", "pull"}, reasons)
 }

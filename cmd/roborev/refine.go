@@ -520,7 +520,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 					currentFailedReview = review
 				} else if verdict == "P" {
 					if err := client.MarkReviewClosed(review.JobID); err != nil {
-						reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 						fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
@@ -798,7 +797,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 				if err := client.MarkReviewClosed(
 					currentFailedReview.JobID,
 				); err != nil {
-					reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 					fmt.Printf(
 						"Warning: failed to close "+
 							"review (job %d): %v\n",
@@ -811,7 +809,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 
 			fmt.Println("Agent made no changes - skipping this review")
 			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
-				reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 			}
 			skippedReviews[currentFailedReview.ID] = true
@@ -842,7 +839,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
 		if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
-			reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -853,7 +849,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 
 		// Close old review
 		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
-			reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -869,7 +864,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 		fmt.Printf("Waiting for review of new commit (job %d)...\n", newJob.ID)
 		review, err := client.WaitForReview(newJob.ID)
 		if err != nil {
-			reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 			fmt.Printf("Warning: review failed: %v\n", err)
 			currentFailedReview = nil
 			continue
@@ -881,7 +875,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 			chainHead = ""
 			fmt.Println("New commit passed review!")
 			if err := client.MarkReviewClosed(review.JobID); err != nil {
-				reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
 				fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 			}
 			currentFailedReview = nil

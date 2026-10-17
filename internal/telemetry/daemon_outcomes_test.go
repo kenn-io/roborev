@@ -1,9 +1,11 @@
 package telemetry_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,5 +47,81 @@ func TestOutcomeDaemonSyncFailure(t *testing.T) {
 	for _, message := range sent {
 		assert.Equal(t, "sync_failed", message.Event)
 		assert.Equal(t, "connect", message.Properties["reason"])
+	}
+}
+
+func TestOutcomeDaemonSyncRecovery(t *testing.T) {
+	pgURL := os.Getenv("TEST_POSTGRES_URL")
+	if pgURL == "" {
+		t.Skip("requires an isolated PostgreSQL database via TEST_POSTGRES_URL")
+	}
+	for _, recovery := range []string{"connect only", "manual", "background"} {
+		t.Run(recovery, func(t *testing.T) {
+			t.Setenv(telemetry.EnabledEnv, "1")
+			t.Setenv(telemetry.GenericEnabledEnv, "1")
+			testenv.SetDataDir(t)
+			endpoint, messages := testutil.NewPostHogStub(t)
+			db := testutil.OpenTestDB(t)
+			cfg := config.SyncConfig{Enabled: true, Interval: "1h"}
+			// Each phase replaces the daemon and worker but keeps their SQLite state.
+			phase := func(cfg config.SyncConfig, background bool, interact func(*storage.SyncWorker)) {
+				t.Helper()
+				reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+				require.NoError(t, err)
+				server := daemon.NewServer(db, config.DefaultConfig(), "")
+				server.SetTelemetry(reporter)
+				worker := storage.NewSyncWorker(db, cfg)
+				server.SetSyncWorker(worker)
+				defer func() {
+					worker.Stop()
+					require.NoError(t, server.Close())
+					require.NoError(t, reporter.Close())
+				}()
+				require.NoError(t, worker.SetSkipInitialSync(!background))
+				require.NoError(t, worker.Start())
+				interact(worker)
+			}
+			fail := func(worker *storage.SyncWorker) {
+				for range 3 {
+					_, err := worker.SyncNow()
+					require.ErrorContains(t, err, "failed to connect")
+				}
+			}
+			phase(cfg, false, fail)
+			require.Len(t, messages(), 1)
+			// Restart during the same outage and retry without a successful cycle.
+			phase(cfg, false, fail)
+			require.Len(t, messages(), 1)
+			connected := cfg
+			connected.PostgresURL = pgURL
+			phase(connected, recovery == "background", func(worker *storage.SyncWorker) {
+				// The external PostgreSQL connection cannot use synctest virtual time.
+				require.Eventually(t, func() bool { healthy, _ := worker.HealthCheck(); return healthy }, 10*time.Second, 10*time.Millisecond)
+				require.NoError(t, worker.FinalPush())
+				switch recovery {
+				case "manual":
+					_, err := worker.SyncNow()
+					require.NoError(t, err)
+				case "background":
+					// Wait for the background PostgreSQL push-and-pull cycle to finish.
+					require.Eventually(t, func() bool {
+						outage, err := db.GetSyncState("telemetry.sync_outage")
+						return err == nil && outage == ""
+					}, 10*time.Second, 10*time.Millisecond)
+				}
+			})
+			require.Len(t, messages(), 1)
+			phase(cfg, false, fail)
+			sent := messages()
+			want := 2
+			if recovery == "connect only" {
+				want = 1
+			}
+			require.Len(t, sent, want)
+			for _, message := range sent {
+				assert.Equal(t, "sync_failed", message.Event)
+				assert.Equal(t, "connect", message.Properties["reason"])
+			}
+		})
 	}
 }

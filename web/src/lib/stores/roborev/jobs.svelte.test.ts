@@ -1779,3 +1779,85 @@ it("reports committed empty searches once and ignores partial input and refreshe
   });
   report.mockRestore();
 });
+
+it.each([false, true])(
+  "resolves a committed search superseded by a live refresh: stale first=%s",
+  async (staleFirst) => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const posts: Request[] = [];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const request = input as Request;
+        if (request.url.endsWith("/api/stream/events")) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                stream = controller;
+              },
+            }),
+          );
+        }
+        posts.push(request);
+        return new Response("{}", { status: 202 });
+      });
+    let resolveSearch!: (value: {
+      jobs: ReviewJob[];
+      has_more: boolean;
+    }) => void;
+    let resolveRefresh!: (value: {
+      jobs: ReviewJob[];
+      has_more: boolean;
+    }) => void;
+    const listJobs = vi
+      .fn()
+      .mockResolvedValueOnce({ jobs: [], has_more: false })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSearch = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      )
+      .mockResolvedValue({ jobs: [], has_more: false });
+    const store = createJobsStore({
+      api: { listJobs } as never,
+      navigate: vi.fn(),
+    });
+    const owner = store.connectEventStream("/api/roborev");
+    try {
+      await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+      store.commitSearch("abc");
+      await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(2));
+      stream.enqueue(
+        new TextEncoder().encode(
+          '{"type":"review.completed","job_id":42,"ts":"2026-08-04T13:00:00Z"}\n',
+        ),
+      );
+      await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(3));
+      if (staleFirst) {
+        resolveSearch({ jobs: [makeJob(42)], has_more: false });
+        await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+        expect(posts).toHaveLength(0);
+      }
+      resolveRefresh({ jobs: [], has_more: false });
+      await vi.waitFor(() => expect(posts).toHaveLength(1));
+      if (!staleFirst) resolveSearch({ jobs: [], has_more: false });
+      store.commitSearch("abc");
+      await loadJobs(store);
+      expect(posts).toHaveLength(1);
+      expect(await posts[0]!.json()).toEqual({
+        event: "search_empty",
+        properties: { surface: "web" },
+      });
+    } finally {
+      store.disconnectEventStream(owner);
+      fetchMock.mockRestore();
+    }
+  },
+);

@@ -151,6 +151,9 @@ func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]
 	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) {
 		return
 	}
+	if event == telemetry.EventErrorShown && cliErrorReported.Swap(true) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), cliUseTimeout)
 	defer cancel()
 	endpoints, err := selectDaemonEndpointsWithDiscovery(func() (*daemon.RuntimeInfo, error) {
@@ -165,9 +168,6 @@ func reportCLIError(cmd *cobra.Command, kind string, err error) {
 		return
 	}
 	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {
-		return
-	}
-	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) || cliErrorReported.Swap(true) {
 		return
 	}
 	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})

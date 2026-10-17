@@ -63,7 +63,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
-  let loadAttempted = false;
+  let pendingReviewOpen = false;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
@@ -162,8 +162,8 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
-      const reportFailure = !loadAttempted;
-      loadAttempted = true;
+      const reportFailure = pendingReviewOpen;
+      pendingReviewOpen = false;
       const workflow = yield* RoborevWorkflow;
       return yield* workflow.review(
         opts.owner,
@@ -200,14 +200,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     });
 
   function loadReview(jobId: number): void {
-    loadAttempted = false;
     opts.runtime.runCommand(loadReviewEffect(jobId), {
       operation: "load Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: () => {
-        opts.onError?.("Failed to load review");
-        reportErrorShown("review_viewed");
-      },
+      onFailure: () => {},
     });
   }
 
@@ -380,7 +376,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
-    if (selectedJobId !== jobId) loadAttempted = false;
+    if (selectedJobId !== jobId) pendingReviewOpen = jobId !== undefined;
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;

@@ -32,6 +32,8 @@ type SyncWorker struct {
 	afterReviewPush func([]string)
 }
 
+const syncStateOutage = "telemetry.sync_outage"
+
 // SetAfterFailure registers a callback for the first failure in a sync outage.
 func (w *SyncWorker) SetAfterFailure(fn func(string)) {
 	w.mu.Lock()
@@ -52,8 +54,12 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 	default:
 	}
 	if err == nil {
-		if reason == "pull" {
-			w.outage = false
+		if reason == "pull" && w.outage {
+			if saveErr := w.db.SetSyncState(syncStateOutage, ""); saveErr != nil {
+				log.Printf("Sync: clear outage state: %v", saveErr)
+			} else {
+				w.outage = false
+			}
 		}
 		w.mu.Unlock()
 		return
@@ -63,6 +69,9 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 		return
 	}
 	w.outage = true
+	if saveErr := w.db.SetSyncState(syncStateOutage, "1"); saveErr != nil {
+		log.Printf("Sync: save outage state: %v", saveErr)
+	}
 	fn := w.afterFailure
 	w.mu.Unlock()
 	if fn != nil {
@@ -174,6 +183,12 @@ func (w *SyncWorker) Start() error {
 	if !w.cfg.Enabled {
 		return fmt.Errorf("sync is not enabled in config")
 	}
+
+	outage, err := w.db.GetSyncState(syncStateOutage)
+	if err != nil {
+		return fmt.Errorf("load sync outage state: %w", err)
+	}
+	w.outage = outage != ""
 
 	// Parse sync interval
 	interval, err := time.ParseDuration(w.cfg.Interval)

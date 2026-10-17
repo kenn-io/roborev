@@ -394,10 +394,15 @@ export function createJobsStore(opts: JobsStoreOptions) {
       }
       if (interestedPanelRun) runs.add(interestedPanelRun);
       adjustHiddenHighlight();
+      if (pendingSearch !== undefined && filterSearch === pendingSearch) {
+        pendingSearch = undefined;
+        if (filterSearch.trim() && authority.jobs.length === 0)
+          reportSearchEmpty();
+      }
       return Array.from(runs);
     });
 
-  const refreshJobsAuthority = (query: ListJobsQuery, reportSearch = false) =>
+  const refreshJobsAuthority = (query: ListJobsQuery) =>
     Effect.gen(function* () {
       const generation = yield* Effect.sync(() => {
         jobsAuthorityGeneration += 1;
@@ -405,23 +410,13 @@ export function createJobsStore(opts: JobsStoreOptions) {
       });
       const authority = yield* fetchJobsAuthority(query);
       const expandedRuns = yield* publishJobsAuthority(authority, generation);
-      if (
-        reportSearch &&
-        generation === jobsAuthorityGeneration &&
-        query.git_ref?.trim() &&
-        authority.jobs.length === 0
-      )
-        reportSearchEmpty();
       yield* Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
         discard: true,
       });
       return authority;
     });
 
-  const loadJobsRequestEffect = (
-    requestOwner = opts.owner,
-    reportSearch = false,
-  ) =>
+  const loadJobsRequestEffect = (requestOwner = opts.owner) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
@@ -434,7 +429,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
           if (hasActiveFilters() && filteredStatusCountsScope !== countScope)
             filteredStatusCounts = undefined;
         }).pipe(
-          Effect.andThen(refreshJobsAuthority(query, reportSearch)),
+          Effect.andThen(refreshJobsAuthority(query)),
           Effect.asVoid,
           Effect.ensuring(
             Effect.sync(() => {
@@ -445,8 +440,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       );
     });
 
-  const loadJobsEffect = (reportSearch = false) =>
-    loadJobsRequestEffect(opts.owner, reportSearch).pipe(
+  const loadJobsEffect = () =>
+    loadJobsRequestEffect(opts.owner).pipe(
       Effect.catch((failure) =>
         Effect.sync(() => {
           storeError =
@@ -455,8 +450,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       ),
     );
 
-  function loadJobs(reportSearch = false): void {
-    opts.runtime.runCommand(loadJobsEffect(reportSearch), {
+  function loadJobs(): void {
+    opts.runtime.runCommand(loadJobsEffect(), {
       operation: "load Roborev jobs",
       safeContext: { owner: opts.owner },
       onFailure: () => {},
@@ -567,7 +562,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
       case "search":
         if (typeof value === "boolean") return;
-        if (filterSearch !== value) committedSearch = undefined;
+        if (filterSearch !== value) {
+          committedSearch = undefined;
+          pendingSearch = undefined;
+        }
         filterSearch = value;
         break;
       case "hideClosed":
@@ -588,12 +586,14 @@ export function createJobsStore(opts: JobsStoreOptions) {
   }
 
   let committedSearch: string | undefined;
+  let pendingSearch: string | undefined;
   function commitSearch(value: string): void {
     if (committedSearch === value) return;
     committedSearch = value;
+    pendingSearch = value || undefined;
     if (filterSearch !== value) loadedLimit = DEFAULT_PAGE_LIMIT;
     filterSearch = value || undefined;
-    loadJobs(true);
+    loadJobs();
   }
 
   function setRepoBranchFilter(

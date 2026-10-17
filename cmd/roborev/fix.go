@@ -1284,7 +1284,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if result.CommitCreated {
 		reportCLIAction(cmd, telemetry.EventFindingFixed)
 		if err := enqueueIfNeeded(ctx, addr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
-			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 		}
 	}
@@ -1420,6 +1419,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				return fmt.Errorf("fetch job %d: %w", id, err)
 			}
 			if !opts.quiet {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
 			continue
@@ -1448,6 +1448,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				return fmt.Errorf("fetch review %d: %w", id, err)
 			}
 			if !opts.quiet {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
 			}
 			continue
@@ -1662,7 +1663,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		if result.CommitCreated {
 			reportCLIAction(cmd, telemetry.EventFindingFixed)
 			if enqErr := enqueueIfNeeded(ctx, batchAddr, roots.worktreeRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
-				reportCLIError(cmd, telemetry.EventFindingFixed, enqErr)
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}
 		}
@@ -2106,7 +2106,6 @@ func recordAndCloseFixJob(
 ) {
 	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
 		if !quiet {
-			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("Warning: could not add response to job %d: %v\n", jobID, err)
 		}
 		if strings.TrimSpace(fixGuidelines) != "" {
@@ -2116,7 +2115,6 @@ func recordAndCloseFixJob(
 
 	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
 		if !quiet {
-			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 	} else if !quiet {
