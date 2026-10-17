@@ -56,6 +56,9 @@ func planFixAtRevision(ctx context.Context, cmd *cobra.Command, repoPath, ref st
 	planCtx, cancelPlan := withAgentCallTimeout(ctx)
 	plan, planErr := agent.RunPlan(planCtx, a, repoPath, planningHead, planningPrompt, io.Discard, func(path, text string) (string, func(), error) {
 		prepared, err := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0).Prepare(text, prompt.SnapshotTarget{RepoPath: path, ConfigRepoPath: repoPath})
+		if err == nil && opts.onAgentStart != nil {
+			opts.onAgentStart()
+		}
 		return prepared.Prompt, prepared.Cleanup, err
 	})
 	cancelPlan()

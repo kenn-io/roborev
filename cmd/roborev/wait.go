@@ -196,7 +196,7 @@ func waitMultiple(
 	cmd *cobra.Command,
 	args []string,
 	forceJobID, quiet bool,
-) (resultErr error) {
+) error {
 	// Phase 1: Local validation (no daemon contact).
 	repoRoot, _ := gitrepo.Root(ctx, ".")
 	resolved := make([]resolvedArg, 0, len(args))

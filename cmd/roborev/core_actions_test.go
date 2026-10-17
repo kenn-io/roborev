@@ -112,7 +112,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 
 func TestCoreActionFixCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "no change", "failure", "visible retry failure", "quiet retry failure", "visible recording failure", "quiet recording failure", "planning failure"} {
+		for _, outcome := range []string{"commit", "no change", "failure", "visible retry failure", "quiet retry failure", "visible recording failure", "quiet recording failure", "planning failure", "visible enqueue failure", "quiet enqueue failure", "agent setup failure", "config setup failure"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
 				cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -120,6 +120,15 @@ func TestCoreActionFixCommit(t *testing.T) {
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				before := repo.HeadSHA()
 				hooks := MockRefineHooks{}
+				if strings.Contains(outcome, "enqueue failure") {
+					hooks.OnGetJobs = func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+						if r.URL.Query().Get("git_ref") == "" {
+							return false
+						}
+						http.Error(w, "enqueue unavailable", http.StatusUnauthorized)
+						return true
+					}
+				}
 				if strings.Contains(outcome, "recording failure") {
 					fail := func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
 						http.Error(w, "unavailable", http.StatusInternalServerError)
@@ -167,6 +176,13 @@ func TestCoreActionFixCommit(t *testing.T) {
 				cmd.SetContext(t.Context())
 				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
 				opts := fixOptions{agentName: "test", quiet: !strings.HasPrefix(outcome, "visible"), planOnly: outcome == "planning failure", classify: agent.ClassifyLimit}
+				if outcome == "agent setup failure" {
+					tracker.base = nil
+					opts.agentName = "agent-does-not-exist"
+				}
+				if outcome == "config setup failure" {
+					require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("[invalid"), 0o600))
+				}
 				var err error
 				if batch {
 					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
@@ -174,7 +190,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 				} else {
 					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 				}
-				if (outcome == "failure" && !batch) || outcome == "planning failure" {
+				if (outcome == "failure" && !batch) || outcome == "planning failure" || strings.Contains(outcome, "setup failure") {
 					require.Error(t, err)
 				} else {
 					require.NoError(t, err)
@@ -193,7 +209,28 @@ func TestCoreActionFixCommit(t *testing.T) {
 					for _, post := range posts {
 						assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
 					}
-				} else if (batch && outcome == "failure") || strings.HasPrefix(outcome, "visible") {
+				} else if strings.Contains(outcome, "enqueue failure") {
+					successes, shown := 0, 0
+					for _, post := range posts {
+						if strings.Contains(post.body, `"event":"error_shown"`) {
+							shown++
+						} else {
+							successes++
+						}
+					}
+					count := 1
+					if batch {
+						count = 2
+					}
+					assert.Equal(t, count, successes)
+					if strings.HasPrefix(outcome, "visible") {
+						assert.Contains(t, out.String(), "Warning: could not enqueue review for fix commit")
+						assert.Equal(t, count, shown)
+					} else {
+						assert.NotContains(t, out.String(), "Warning: could not enqueue")
+						assert.Zero(t, shown)
+					}
+				} else if outcome == "failure" || strings.HasPrefix(outcome, "visible") {
 					count := 1
 					if batch {
 						count = 2
@@ -406,7 +443,10 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 		}{
 			{[]string{"show", "--job", "999"}, "review_viewed", 1, false},
 			{[]string{"close", "999"}, "review_closed", 1, false},
-			{[]string{"fix", "999"}, "finding_fixed", 1, false},
+			{[]string{"fix", "999"}, "", 0, false},
+			{[]string{"fix", "998"}, "", 0, false},
+			{[]string{"fix", "998", "--batch"}, "", 0, false},
+			{[]string{"fix", "999", "--batch"}, "", 0, false},
 			{[]string{"fix", "999", "--plan-only"}, "", 0, false},
 			{[]string{"close", "999"}, "", 0, true},
 			{[]string{"wait", "--job", "999"}, "review_viewed", 1, false},
@@ -423,7 +463,11 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 			unavailable = tc.unavailable
 			rec.reset()
 			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
-			require.Error(t, result.err)
+			if tc.args[0] == "fix" && tc.args[len(tc.args)-1] == "--batch" {
+				require.NoError(t, result.err)
+			} else {
+				require.Error(t, result.err)
+			}
 			if tc.args[0] == "close" && tc.args[1] == "invalid" {
 				if tc.unavailable {
 					require.ErrorContains(t, result.err, "daemon not running")

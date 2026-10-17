@@ -371,7 +371,6 @@ func daemonRunCmd() *cobra.Command {
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
 				search.reconciler.ShareVectors(syncWorker)
 				syncWorker.SetAfterReviewPush(search.reconciler.ReviewsPushed)
-
 			}
 
 			// Create context for config watcher

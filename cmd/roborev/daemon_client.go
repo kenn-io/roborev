@@ -23,7 +23,7 @@ import (
 
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
-func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) (resultErr error) {
+func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()

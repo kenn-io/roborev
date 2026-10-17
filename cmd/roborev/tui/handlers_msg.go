@@ -1465,7 +1465,7 @@ func (m model) handleLogOutputMsg(
 				m.logStreaming = false
 				return m, nil
 			}
-			flash := "No log available for this job"
+			flash, errorKind := "No log available for this job", ""
 			if job != nil &&
 				job.Status == storage.JobStatusFailed &&
 				job.Error != "" {
@@ -1473,8 +1473,12 @@ func (m model) handleLogOutputMsg(
 					"Job #%d failed: %s",
 					m.logJobID, job.Error,
 				)
+				if m.logFromView == viewTasks {
+					errorKind = telemetry.EventFindingFixed
+				}
 			}
 			m.setFlash(flash, 5*time.Second, m.logFromView)
+			m.flashErrorKind = errorKind
 			m.currentView = m.logFromView
 			m.logStreaming = false
 			return m, nil

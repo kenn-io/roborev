@@ -296,13 +296,24 @@ func TestOutcomeVisibleTUIErrors(t *testing.T) {
 		assert.Empty(t, delayed.transport.events)
 		time.Sleep(time.Second)
 		delayed.m.currentView = viewTasks
-		delayed.update(displayTickMsg{})
+		delayed.update(tea.KeyPressMsg{Code: '0'})
+		assert.NotContains(t, delayed.m.renderTasksView(), "patch unavailable")
+		assert.Empty(t, delayed.transport.events)
+		delayed.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed}}
+		delayed.m.fixShowHelp = true
+		delayed.update(tea.KeyPressMsg{Code: '0'})
+		assert.NotContains(t, delayed.m.renderTasksView(), "patch unavailable")
+		assert.Empty(t, delayed.transport.events)
+		delayed.m.fixShowHelp = false
+		delayed.update(tea.KeyPressMsg{Code: '0'})
+		assert.Contains(t, delayed.m.renderTasksView(), "patch unavailable")
 		require.Len(t, delayed.transport.events, 1)
 		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, delayed.transport.events[0])
-		delayed.update(displayTickMsg{})
+		delayed.update(tea.KeyPressMsg{Code: '0'})
 		assert.Len(t, delayed.transport.events, 1)
 	})
 	f.m.currentView = viewTasks
+	f.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed}}
 	f.update(applyPatchResultMsg{err: errors.New("apply failed")})
 	require.Len(t, f.transport.events, 3)
 	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[2])
@@ -367,5 +378,26 @@ func TestOutcomeFailedReviewLayouts(t *testing.T) {
 			f.update(displayTickMsg{})
 			assert.Len(t, f.transport.events, 3)
 		})
+	}
+}
+
+//nolint:paralleltest // telemetry opt-out variables are process-wide
+func TestOutcomeFailedTaskWithoutLog(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture()
+	f.m.currentView = viewTasks
+	f.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed, Error: "agent unavailable"}}
+	f.m.fixSelectedIdx = 0
+	for range 2 {
+		f.update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		require.Equal(t, viewLog, f.m.currentView)
+		f.update(logOutputMsg{seq: f.m.logFetchSeq, err: errNoLog})
+		require.Equal(t, viewTasks, f.m.currentView)
+		assert.Contains(t, f.m.renderTasksView(), "Job #87 failed: agent unavailable")
+		f.update(displayTickMsg{})
+	}
+	require.Len(t, f.transport.events, 2)
+	for _, event := range f.transport.events {
+		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, event)
 	}
 }

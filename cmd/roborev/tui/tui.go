@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -1317,43 +1316,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if rm, ok := result.(model); ok {
 		rm = rm.normalizeSplitState()
-		attempt := fmt.Sprintf("%d:%d:", rm.selectedJobID, rm.jobAttemptGen[rm.selectedJobID])
-		if rm.selectedReviewLoaded() || !rm.splitActive() || !strings.HasPrefix(rm.paneErrorReported, attempt) {
-			rm.paneErrorReported = ""
-		}
-		paneOccurrence := ""
-		if rm.splitDetailErr != nil {
-			paneOccurrence = attempt + rm.splitDetailErr.Error()
-		}
-		flashFailure := rm.flashErrorKind != "" && rm.renderFlash(rm.currentView) != "" &&
-			(rm.currentView == viewQueue || rm.currentView == viewReview || rm.currentView == viewTasks)
-		if flashFailure {
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: rm.flashErrorKind}))
-			if rm.flashErrorKind == telemetry.EventReviewViewed && rm.splitDetailErr != nil {
-				rm.paneErrorReported = paneOccurrence
-			}
-			rm.flashErrorKind = ""
-		}
-		if job, selected := rm.selectedJob(); selected && rm.splitActive() && job.Status == storage.JobStatusDone && !rm.selectedReviewLoaded() && rm.splitDetailErr != nil && rm.paneErrorReported != paneOccurrence {
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-			rm.paneErrorReported = paneOccurrence
-		}
-		failedOccurrence := ""
-		if (rm.currentView == viewReview || rm.splitActive()) && rm.selectedReviewLoaded() && rm.currentReview.Job != nil && rm.currentReview.Job.Status == storage.JobStatusFailed {
-			job := rm.currentReview.Job
-			failedOccurrence = fmt.Sprintf("%d:%d:%v:%v", job.ID, rm.jobAttemptGen[job.ID], job.StartedAt, job.FinishedAt)
-		}
-		if failedOccurrence != "" && failedOccurrence != rm.failedReviewReported {
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-		}
-		// A cleared review can temporarily return to the queue while reloading.
-		leftReview := rm.currentView != viewReview && !rm.splitActive() &&
-			(rm.currentView != viewQueue || (m.currentView != viewQueue && m.currentReview != nil))
-		if failedOccurrence != "" {
-			rm.failedReviewReported = failedOccurrence
-		} else if job, selected := rm.selectedJob(); !selected || leftReview || job.Status != storage.JobStatusFailed || !strings.HasPrefix(rm.failedReviewReported, attempt) {
-			rm.failedReviewReported = ""
-		}
+		cmd = tea.Batch(cmd, rm.reportVisibleErrors(m))
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles
 		// whatever the selected job's state is by now: restart the tail if
