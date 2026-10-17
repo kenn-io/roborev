@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestPostcap3ContinuedFixFailures(t *testing.T) {
+func TestOutcomeContinuedFixFailures(t *testing.T) {
 	for _, mode := range []string{"discovery", "per-file"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)

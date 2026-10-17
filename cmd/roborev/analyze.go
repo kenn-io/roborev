@@ -489,9 +489,9 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 			}
 			if err := runAnalyzeAndFix(cmd, ep, repoRoot, info.ID, analysisType, opts); err != nil {
 				if !opts.quiet {
+					markCLIOutcomeFailed()
 					cmd.Printf("Warning: fix for job %d failed: %v\n", info.ID, err)
 				}
-				// Continue with other jobs
 			}
 		}
 		return nil

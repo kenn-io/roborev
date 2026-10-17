@@ -577,11 +577,11 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			if _, ok := errors.AsType[*planningStateError](err); ok {
 				return err
 			}
-			// Discovery mode skips failures for best-effort processing,
-			// except --plan-only, which aborts rather than return a partial
-			// planning snapshot. Explicit job IDs also return the error so
-			// the CLI exits non-zero.
+			// Discovery mode skips failures for best-effort processing, except
+			// --plan-only, which aborts rather than return a partial snapshot.
+			// Explicit job IDs also return the error so the CLI exits non-zero.
 			if seen != nil && !opts.planOnly {
+				markCLIOutcomeFailed()
 				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
 				seen[jobID] = true
 				continue
