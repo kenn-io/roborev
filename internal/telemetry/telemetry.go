@@ -26,6 +26,7 @@ const (
 
 	EventDaemonStarted      = "daemon_started"
 	EventDaemonActive       = "daemon_active"
+	EventSetupFinished      = "setup_finished"
 	EventAppOpened          = "app_opened"
 	EventSessionEnded       = "session_ended"
 	EventScreenViewed       = "screen_viewed"
@@ -124,6 +125,7 @@ func allowedEventOptions() []posthog.Option {
 
 	actionSurface := posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))
 	return []posthog.Option{
+		posthog.WithAllowedEvent(EventSetupFinished),
 		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
 		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
 		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),

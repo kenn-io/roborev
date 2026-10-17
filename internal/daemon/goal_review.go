@@ -207,6 +207,9 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		if err != nil || current.Status != storage.JobStatusDone {
 			return
 		}
+		if wp.captureSetupFinished != nil {
+			wp.captureSetupFinished()
+		}
 		verdict := storage.ParseVerdict(output)
 		wp.autoClosePassingReview(workerID, job, verdict)
 		event.Type = "goal_review.completed"

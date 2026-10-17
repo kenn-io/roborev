@@ -48,12 +48,13 @@ type runningJobCancellation struct {
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
-	db           *storage.DB
-	cfgGetter    ConfigGetter
-	broadcaster  Broadcaster
-	errorLog     *ErrorLog
-	activityLog  *ActivityLog
-	budgetRouter *BudgetRouter
+	db                   *storage.DB
+	cfgGetter            ConfigGetter
+	broadcaster          Broadcaster
+	errorLog             *ErrorLog
+	activityLog          *ActivityLog
+	budgetRouter         *BudgetRouter
+	captureSetupFinished func()
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -1558,6 +1559,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			} else if j.Status != storage.JobStatusDone {
 				log.Printf("[%s] Job %d not completed (status=%s), skipping broadcast", workerID, job.ID, j.Status)
 				return
+			} else if wp.captureSetupFinished != nil {
+				wp.captureSetupFinished()
 			}
 		}
 

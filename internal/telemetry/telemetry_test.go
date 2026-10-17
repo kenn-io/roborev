@@ -155,6 +155,11 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 
 	assert.True(reporter.EventAllowed(EventDaemonStarted))
 	assert.True(reporter.EventAllowed(EventDaemonActive))
+	assert.True(reporter.EventAllowed(EventSetupFinished))
+	setupProps, err := reporter.SanitizeProperties(EventSetupFinished, map[string]any{"surface": "cli", "repo_count": 3})
+	require.NoError(err)
+	assert.NotContains(setupProps, "surface")
+	assert.NotContains(setupProps, "repo_count")
 	assert.True(reporter.EventAllowed(EventAppOpened))
 	assert.False(reporter.EventAllowed("repo_opened"))
 
