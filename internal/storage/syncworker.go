@@ -23,7 +23,7 @@ type SyncWorker struct {
 	stopCh          chan struct{}
 	doneCh          chan struct{}
 	mu              sync.Mutex // protects running, pgPool, and afterPullWrite
-	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
+	syncMu          sync.Mutex // serializes sync operations (connect, doSync, SyncNow, FinalPush)
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
@@ -42,10 +42,12 @@ func (w *SyncWorker) SetAfterFailure(fn func(string)) {
 	w.mu.Unlock()
 }
 
+// notifyFailure records the outcome while the operation is serialized and
+// returns a callback to invoke after releasing locks.
 // Only a completed push-and-pull cycle ends an outage.
-func (w *SyncWorker) notifyFailure(reason string, err error) {
+func (w *SyncWorker) notifyFailure(reason string, err error) func() {
 	if reason == "" || errors.Is(err, context.Canceled) {
-		return
+		return nil
 	}
 	if err == nil {
 		if reason == "pull" && w.outage.Swap(false) {
@@ -53,10 +55,10 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 				log.Printf("Sync: clear outage state: %v", saveErr)
 			}
 		}
-		return
+		return nil
 	}
 	if !w.cfg.Enabled || !w.outage.CompareAndSwap(false, true) {
-		return
+		return nil
 	}
 	if saveErr := w.db.SetSyncState(syncStateOutage, "1"); saveErr != nil {
 		log.Printf("Sync: save outage state: %v", saveErr)
@@ -65,8 +67,9 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 	fn := w.afterFailure
 	w.mu.Unlock()
 	if fn != nil {
-		fn(reason)
+		return func() { fn(reason) }
 	}
+	return nil
 }
 
 // SetAfterPullWrite registers a callback for successfully committed local
@@ -322,9 +325,6 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 // If not connected, attempts to connect first.
 func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ *SyncStats, err error) {
 	reason := ""
-	defer func() {
-		w.notifyFailure(reason, err)
-	}()
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
@@ -364,7 +364,13 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ 
 
 	// Serialize with other sync operations
 	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	defer func() {
+		fn := w.notifyFailure(reason, err)
+		w.syncMu.Unlock()
+		if fn != nil {
+			fn()
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -513,9 +519,16 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
 func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
-	defer func() { w.notifyFailure("connect", err) }()
 	w.connectMu.Lock()
-	defer w.connectMu.Unlock()
+	w.syncMu.Lock()
+	defer func() {
+		fn := w.notifyFailure("connect", err)
+		w.syncMu.Unlock()
+		w.connectMu.Unlock()
+		if fn != nil {
+			fn()
+		}
+	}()
 
 	// Check if already connected (another goroutine may have connected while we waited)
 	w.mu.Lock()
@@ -656,11 +669,14 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() (err error) {
 	reason := ""
-	defer func() {
-		w.notifyFailure(reason, err)
-	}()
 	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	defer func() {
+		fn := w.notifyFailure(reason, err)
+		w.syncMu.Unlock()
+		if fn != nil {
+			fn()
+		}
+	}()
 
 	w.mu.Lock()
 	pool := w.pgPool
