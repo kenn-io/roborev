@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,22 @@ func TestMuseBuildArgs(t *testing.T) {
 	assert.NotContains(t, a.buildArgs(false, "prompt.md"), "--trust-workspace")
 	assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
 	assert.Contains(t, a.WithAgentic(true).(*MuseAgent).PlanningCommandLine(), "--no-foreign-personal-context")
+}
+
+func TestMuseReviewPlanningOverridesUnsafeMode(t *testing.T) {
+	withUnsafeAgents(t, true)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cli := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, StdoutLines: []string{"plan"}})
+	ctx := context.WithValue(t.Context(), planningContextKey{}, true)
+	_, err := NewMuseAgent(cli.CmdPath).WithAgentic(true).Review(ctx, t.TempDir(), "HEAD", "plan", nil)
+	require.NoError(t, err)
+	args := readMockArgs(t, cli.ArgsFile)
+	assert := assert.New(t)
+	assert.NotContains(args, "--yolo")
+	assert.Contains(args, "--no-foreign-personal-context")
+	assert.Contains(strings.Join(args, "\n"), "-c\n"+`run.toolset=["read_file","search"]`)
+	assert.Contains(strings.Join(args, "\n"), "-c\nhooks={}")
+	assert.Contains(strings.Join(args, "\n"), "-c\nmanaged_hooks_path=null")
 }
 
 func TestMuseReviewPromptAndOutput(t *testing.T) {
