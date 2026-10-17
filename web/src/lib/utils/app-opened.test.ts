@@ -421,52 +421,46 @@ describe("setupAppOpenedReporting", () => {
     ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
   });
 
-  test("retries failed review capture and suppresses acknowledged reads until the next day", async () => {
-    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    vi.setSystemTime(new Date("2026-03-11T09:00:00Z"));
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
-      event: "review_viewed",
-      properties: { surface: "web" },
-    });
-  });
-
-  test.each(["queued", "skipped"])(
-    "retries disabled review capture until %s acknowledges it",
-    async (status) => {
+  test.each([
+    { name: "network error", failure: true, status: "queued" },
+    { name: "disabled then queued", failure: false, status: "queued" },
+    { name: "disabled then skipped", failure: false, status: "skipped" },
+  ])("retries review capture after $name", async ({ failure, status }) => {
+    if (failure) {
+      fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+    } else {
       fetchMock.mockResolvedValueOnce(
         new Response(JSON.stringify({ status: "disabled" }), {
           headers: { "Content-Type": "application/json" },
         }),
       );
-      appOpened.reportCoreAction("review_viewed");
+    }
+    appOpened.reportCoreAction("review_viewed");
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    if (failure) {
+      vi.setSystemTime(new Date("2026-03-11T09:00:00Z"));
       appOpened.reportCoreAction("review_viewed");
       await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ status }), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    },
-  );
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
+        event: "review_viewed",
+        properties: { surface: "web" },
+      });
+    }
+  });
 
   test.each(["screen", "core action"])(
     "bounds %s requests while preserving app-open transport",

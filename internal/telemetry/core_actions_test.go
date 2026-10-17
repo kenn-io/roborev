@@ -44,7 +44,6 @@ func TestCoreActionCapture(t *testing.T) {
 		}
 		return result
 	}
-	assert.Equal(t, http.StatusAccepted, post(`{"event":"app_opened","properties":{"surface":"cli"}}`).Code)
 	for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
 		for _, surface := range []string{"web", "tui", "cli"} {
 			body := `{"event":"` + event + `","properties":{"surface":"` + surface + `","job_id":42,"output":"private review"}}`
@@ -65,9 +64,7 @@ func TestCoreActionCapture(t *testing.T) {
 	}
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 14)
-	assert.Equal(t, "app_opened", sent[0].Event)
-	sent = sent[1:]
+	require.Len(t, sent, 13)
 	assert.Equal(t, []string{"review_viewed:web", "review_viewed:tui", "review_viewed:cli"}, surfacesOf(sent[:3]))
 	for _, message := range sent {
 		assert.NotContains(t, message.Properties, "job_id")

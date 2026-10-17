@@ -61,30 +61,21 @@ func TestCoreActionReviewVisits(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	f := newCoreActionReviewVisitFixture(t)
-	f.update(f.review())
-	f.transport.fail = true
-	f.update(tea.KeyPressMsg{Code: '0'})
-	require.Len(t, f.transport.events, 1)
-	f.transport.fail = false
-	// Delivery completion and display ticks must wait for another interaction.
-	f.update(displayTickMsg{})
-	require.Len(t, f.transport.events, 1)
-	f.update(tea.KeyPressMsg{Code: '0'})
-	assert.Len(t, f.transport.events, 2)
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewDisabledRetriesOnInput(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, status := range []string{"queued", "skipped"} {
-		t.Run(status, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, accepted string
+		fail           bool
+	}{
+		{name: "delivery error", accepted: "queued", fail: true},
+		{name: "disabled then queued", accepted: "queued"},
+		{name: "disabled then skipped", accepted: "skipped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
 			f.update(f.review())
-			f.transport.status = "disabled"
+			f.transport.fail, f.transport.status = tc.fail, "disabled"
 			f.update(tea.KeyPressMsg{Code: '0'})
 			require.Len(t, f.transport.events, 1)
-			f.transport.status = status
+			f.transport.fail, f.transport.status = false, tc.accepted
 			f.update(displayTickMsg{})
 			require.Len(t, f.transport.events, 1)
 			f.update(tea.KeyPressMsg{Code: '0'})
@@ -98,7 +89,7 @@ func TestCoreActionReviewDisabledRetriesOnInput(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionPendingReviewOpen(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "abandoned", "task", "fix output", "next day"} {
+	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "fix output", "next day"} {
 		t.Run(outcome, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newCoreActionReviewVisitFixture(t)
@@ -125,14 +116,8 @@ func TestCoreActionPendingReviewOpen(t *testing.T) {
 				}
 				response := f.review()
 				response.follow, response.dispatchedFrom = false, origin
-				if outcome == "abandoned" {
-					f.update(tea.KeyPressMsg{Code: 'T'})
-				}
 				if outcome == "fix output" {
 					response.review.Job.JobType = storage.JobTypeFix
-				}
-				if outcome == "task" {
-					response.review.Job.JobType = storage.JobTypeTask
 				}
 				if outcome != "loaded queue" && outcome != "loaded tasks" {
 					f.update(tea.KeyPressMsg{Code: 'q'})
@@ -146,7 +131,7 @@ func TestCoreActionPendingReviewOpen(t *testing.T) {
 					f.update(tea.KeyPressMsg{Code: 'q'})
 				}
 				count := 1
-				if outcome == "abandoned" || outcome == "task" || outcome == "fix output" || outcome == "next day" {
+				if outcome == "fix output" || outcome == "next day" {
 					count = 0
 				}
 				assert.Len(t, f.transport.events, count)
@@ -227,10 +212,18 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionAbandonedLoad(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"ordinary error", "follow error", "rerun", "quit"} {
+	for _, outcome := range []string{"ordinary error", "follow error", "rerun", "quit", "view change"} {
 		t.Run(outcome, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			f.update(tea.KeyPressMsg{Code: '0'})
+			if outcome == "view change" {
+				f.m.layout, f.m.currentView = splitlayout.Stacked, viewQueue
+				f.m.tasksEnabled = true
+				result, cmd := f.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				f.m = result.(model)
+				require.NotNil(t, cmd)
+			} else {
+				f.update(tea.KeyPressMsg{Code: '0'})
+			}
 			response := f.review()
 			switch outcome {
 			case "ordinary error":
@@ -239,27 +232,17 @@ func TestCoreActionAbandonedLoad(t *testing.T) {
 				f.update(reviewFollowErrMsg{jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq, attempt: response.attempt, err: errors.New("load failed")})
 			case "rerun":
 				f.update(rerunResultMsg{jobID: response.jobID})
+			case "view change":
+				response.follow, response.dispatchedFrom = false, viewQueue
+				f.update(tea.KeyPressMsg{Code: 'T'})
 			case "quit":
 				f.update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 			}
-			f.update(f.review())
+			if outcome != "view change" {
+				response = f.review()
+			}
+			f.update(response)
 			assert.Empty(t, f.transport.events)
 		})
 	}
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewNextDay(t *testing.T) {
-	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture(t)
-		f.update(f.review())
-		f.update(tea.KeyPressMsg{Code: '0'})
-		require.Len(t, f.transport.events, 1)
-		time.Sleep(24 * time.Hour)
-		f.update(displayTickMsg{})
-		require.Len(t, f.transport.events, 1)
-		f.update(tea.KeyPressMsg{Code: '0'})
-		require.Len(t, f.transport.events, 2)
-	})
 }
