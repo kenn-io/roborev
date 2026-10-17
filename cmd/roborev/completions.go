@@ -71,7 +71,7 @@ func registerReasoningCompletion(cmd *cobra.Command) {
 // Panics if the flag doesn't exist on the command (programming error).
 func registerReviewTypeCompletion(cmd *cobra.Command) {
 	if err := cmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
-		globalCfg, _ := config.LoadGlobal()
+		globalCfg := loadGlobalConfigOrWarn()
 		repoCfg, _, _ := loadCommandRepoConfig(cmd)
 		types := append(config.ReviewTypesFromConfig(repoCfg, globalCfg), config.ReviewTypeGoal)
 		completions := make([]cobra.Completion, len(types))

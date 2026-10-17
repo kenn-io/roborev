@@ -107,6 +107,8 @@ The `--wait` flag blocks until the review completes.
 
 ### 3. Present the results
 
+For warnings naming an unused daemon config section on stderr, present the review result normally and suggest `roborev config validate --global` to diagnose that section.
+
 If the command output contains an error (e.g., daemon not running, repo not initialized, review errored), report it to the user. Suggest `roborev status` to check the daemon, `roborev init` if the repo is not initialized, or re-running the review.
 
 Otherwise, present the review to the user:

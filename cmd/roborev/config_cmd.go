@@ -304,7 +304,7 @@ func configValidateCmd() *cobra.Command {
 func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 	switch scope {
 	case scopeGlobal:
-		globalCfg, err := config.LoadGlobal()
+		globalCfg, err := config.LoadGlobalFrom(config.GlobalConfigPath())
 		if err != nil {
 			return fmt.Errorf("load global config: %w", err)
 		}
@@ -340,7 +340,7 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		return nil
 
 	default:
-		globalCfg, err := config.LoadGlobal()
+		globalCfg, err := config.LoadGlobalFrom(config.GlobalConfigPath())
 		if err != nil {
 			return fmt.Errorf("load global config: %w", err)
 		}

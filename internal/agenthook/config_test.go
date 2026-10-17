@@ -281,3 +281,21 @@ func TestResolveOptionsForAgentGrokUsesSelfContainedInstruction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, DefaultInstruction, opts.Instruction)
 }
+
+func TestResolveOptionsPreservesHookSettingsWithInvalidWebConfig(t *testing.T) {
+	for _, agent := range []string{"claude", "droid"} {
+		t.Run(agent, func(t *testing.T) {
+			clearAgentHookEnv(t)
+			path := writeAgentHookConfig(t, `[agent_hook]
+commit_threshold = 7
+[droid_hook]
+commit_threshold = 7
+[web]
+auth_token_file = "missing-token"
+`)
+			opts, err := ResolveOptionsForAgent(agent, Options{ConfigPath: path}, map[string]bool{"config": true})
+			require.NoError(t, err)
+			assert.Equal(t, 7, opts.CommitThreshold)
+		})
+	}
+}

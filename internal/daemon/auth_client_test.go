@@ -146,7 +146,7 @@ func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
 		t.Run(setting, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n"+setting), 0o600))
-			_, err := config.LoadGlobal()
+			_, err := config.LoadGlobalFrom(config.GlobalConfigPath())
 			require.Error(t, err, "fixture must fail full config validation")
 			s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			server := httptest.NewServer(s.httpServer.Handler)
