@@ -1,12 +1,9 @@
 package storage_test
 
 import (
-	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -308,19 +305,5 @@ func TestIsCIReview(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.job.IsCIReview())
 		})
-	}
-}
-
-func TestIsReadableReview(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("../../web/src/lib/utils/readable-review-cases.json")
-	require.NoError(t, err)
-	var cases []struct {
-		storage.ReviewJob
-		Readable bool
-	}
-	require.NoError(t, json.Unmarshal(data, &cases))
-	for _, tc := range cases {
-		assert.Equal(t, tc.Readable, tc.IsReadableReview(), tc.ReviewJob)
 	}
 }

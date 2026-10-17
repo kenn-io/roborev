@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -291,7 +292,7 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 	}
 
 	if output != nil && review.Output != "" && review.Job != nil && review.Job.IsReadableReview() {
-		reportCLIActionOutput(cmd.Context(), output, "review_viewed")
+		reportCLIActionOutput(cmd.Context(), output, telemetry.EventReviewViewed)
 	}
 
 	return nil

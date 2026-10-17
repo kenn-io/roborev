@@ -3353,6 +3353,7 @@ type ReviewJob struct {
 	Prompt                *string                `json:"prompt,omitempty"`
 	PromptPrebuilt        bool                   `json:"prompt_prebuilt"`
 	Provider              *string                `json:"provider,omitempty"`
+	Readable              *bool                  `json:"readable,omitempty"`
 	Reasoning             *string                `json:"reasoning,omitempty"`
 	RepoID                int64                  `json:"repo_id"`
 	RepoName              *string                `json:"repo_name,omitempty"`

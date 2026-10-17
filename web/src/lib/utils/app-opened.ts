@@ -91,8 +91,8 @@ function postEvent(
   event: string,
   properties: Record<string, string>,
   init: { signal?: AbortSignal; keepalive?: boolean } = {},
-): Promise<{ status: string }> {
-  return roborevFetch<{ status: string }>(telemetryEventsPath, {
+): Promise<unknown> {
+  return roborevFetch(telemetryEventsPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
@@ -103,7 +103,7 @@ function postEvent(
 function postBoundedEvent(
   event: string,
   properties: Record<string, string>,
-): Promise<{ status: string }> {
+): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   return postEvent(event, properties, { signal: controller.signal }).finally(
@@ -150,27 +150,17 @@ export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
   };
 }
 
-let reviewDay = "";
-let pendingReviewDay = "";
+let reviewPending = false;
 export function reportCoreAction(
   event: "review_viewed" | "review_closed",
 ): void {
-  const day = new Date().toISOString().slice(0, 10);
   if (event === "review_viewed") {
-    if (reviewDay === day || pendingReviewDay === day) return;
-    pendingReviewDay = day;
+    if (reviewPending) return;
+    reviewPending = true;
   }
   void postBoundedEvent(event, { surface: "web" })
-    .then(({ status }) => {
-      if (
-        event === "review_viewed" &&
-        (status === "queued" || status === "skipped")
-      )
-        reviewDay = day;
-    })
     .catch(() => undefined)
     .finally(() => {
-      if (event === "review_viewed" && pendingReviewDay === day)
-        pendingReviewDay = "";
+      if (event === "review_viewed") reviewPending = false;
     });
 }

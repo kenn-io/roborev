@@ -145,7 +145,11 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
-	reviewInputJobID     int64
+	reviewInputJobID     int64 // opening input survives only for the matching job, view, fetch, and UTC day
+	reviewReadDay        string
+	reviewReadAttempts   int
+	reviewReadPending    bool
+	reviewReadStatus     posthog.Status
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1142,7 +1146,7 @@ func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.screenDay != "" && m.screenDay != time.Now().UTC().Format(time.DateOnly) {
+	if m.reviewReadDay != "" && m.reviewReadDay != time.Now().UTC().Format(time.DateOnly) {
 		m.reviewInputJobID = 0
 	}
 
@@ -1292,8 +1296,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		result = m
 	case screenDeliveryMsg:
-		if msg.day == m.screenDay && (msg.err != nil || msg.screen == telemetry.EventReviewViewed && msg.status != posthog.StatusQueued && msg.status != posthog.StatusSkipped) {
+		if msg.day == m.screenDay && msg.err != nil {
 			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+		}
+		result = m
+	case reviewDeliveryMsg:
+		if msg.day == m.reviewReadDay {
+			m.reviewReadPending = false
+			m.reviewReadStatus = msg.status
+			if msg.err != nil {
+				m.reviewReadStatus = ""
+			}
 		}
 		result = m
 	case controlSocketReadyMsg:
@@ -1331,6 +1344,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if rm.screenDay != today {
 			rm.screenDay, rm.screensSent = today, nil
 		}
+		if rm.reviewReadDay != today {
+			rm.reviewReadDay, rm.reviewReadAttempts = today, 0
+			rm.reviewReadPending, rm.reviewReadStatus = false, ""
+		}
 		_, key := msg.(tea.KeyMsg)
 		_, mouse := msg.(tea.MouseMsg)
 		reviewVisible := rm.currentView == viewReview || rm.splitActive()
@@ -1341,16 +1358,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !reviewVisible && !reviewPending || rm.reviewInputJobID != rm.selectedJobID {
 			rm.reviewInputJobID = 0
 		}
+		quit := false
 		if input, ok := msg.(tea.KeyMsg); ok && (input.String() == "ctrl+c" || input.String() == "ctrl+d") {
+			quit = true
 			rm.reviewInputJobID = 0
 		}
-		read := (key || mouse) && (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.ID != 0 && m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
+		read := !quit && (key || mouse) && (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.ID != 0 && m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
 		if rm.reviewInputJobID != 0 && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 {
 			read = read || rm.currentReview.Job != nil && rm.currentReview.Job.IsReadableReview()
 			rm.reviewInputJobID = 0
 		}
-		if read && !slices.Contains(rm.screensSent, telemetry.EventReviewViewed) {
-			rm.screensSent = append(rm.screensSent, telemetry.EventReviewViewed)
+		if read && !rm.reviewReadPending && rm.reviewReadAttempts < 2 && rm.reviewReadStatus != posthog.StatusQueued && rm.reviewReadStatus != posthog.StatusSkipped {
+			rm.reviewReadAttempts++
+			rm.reviewReadPending = true
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
 		}
 		for _, screen := range rm.screensShown() {

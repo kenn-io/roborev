@@ -196,6 +196,7 @@ func browserStreamContext(
 // arguments can contain credentials. Error is populated only for failed jobs
 // so the Review tab can explain missing output.
 type browserReviewJob struct {
+	Readable         bool                  `json:"readable"`
 	ID               int64                 `json:"id"`
 	RepoID           int64                 `json:"repo_id"`
 	CommitID         *int64                `json:"commit_id,omitempty"`
@@ -286,7 +287,8 @@ func projectBrowserReviewJob(job storage.ReviewJob, principal BrowserPrincipal) 
 		displayPrompt = prompt.DisplayFixPlanPrompt(displayPrompt)
 	}
 	return browserReviewJob{
-		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
+		Readable: job.IsReadableReview(),
+		ID:       job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
 		CommandLine: commandLine,

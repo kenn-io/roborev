@@ -87,6 +87,45 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewRetryBudget(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "delivery error"}[fail], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newCoreActionReviewVisitFixture(t)
+				f.update(f.review())
+				f.transport.fail, f.transport.status = fail, "disabled"
+				for range 5 {
+					f.update(tea.KeyPressMsg{Code: '0'})
+				}
+				require.Len(t, f.transport.events, 2)
+				time.Sleep(24 * time.Hour)
+				f.transport.fail, f.transport.status = false, "queued"
+				f.update(displayTickMsg{})
+				require.Len(t, f.transport.events, 2)
+				f.update(tea.KeyPressMsg{Code: '0'})
+				require.Len(t, f.transport.events, 3)
+				f.update(tea.KeyPressMsg{Code: '0'})
+				assert.Len(t, f.transport.events, 3)
+			})
+		})
+	}
+}
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionLoadedReviewQuit(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, key := range []rune{'c', 'd'} {
+		t.Run(string(key), func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			f.update(f.review())
+			f.update(tea.KeyPressMsg{Code: key, Mod: tea.ModCtrl})
+			assert.Empty(t, f.transport.events)
+		})
+	}
+}
+
+//nolint:paralleltest // telemetry environment variables
 func TestCoreActionPendingReviewOpen(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "fix output", "next day"} {

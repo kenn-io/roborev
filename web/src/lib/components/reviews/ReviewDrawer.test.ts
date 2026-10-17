@@ -36,6 +36,7 @@ const state = vi.hoisted(() => ({
   copyOutput: vi.fn(),
   jobStatus: "done",
   jobType: "review",
+  readable: true,
   reviewType: undefined as string | undefined,
   agentic: false,
   promptPrebuilt: false,
@@ -86,6 +87,7 @@ vi.mock("../../stores/context", () => ({
           ...job,
           status: state.jobStatus,
           job_type: state.jobType,
+          readable: state.readable,
           review_type: state.reviewType,
           agentic: state.agentic,
           prompt_prebuilt: state.promptPrebuilt,
@@ -120,10 +122,10 @@ vi.mock("../../stores/context", () => ({
 import ReviewDrawer from "./ReviewDrawer.svelte";
 
 describe("ReviewDrawer", () => {
-  it.each(["task", "review", "hidden", "prompt", "mismatch", "loading"])(
+  it.each(["unreadable", "review", "hidden", "prompt", "mismatch", "loading"])(
     "counts only matching visible readable output: %s",
     async (kind) => {
-      state.jobType = kind === "task" ? "task" : "review";
+      state.readable = kind !== "unreadable";
       if (kind === "hidden")
         vi.spyOn(document, "hidden", "get").mockReturnValue(true);
       if (kind === "mismatch") state.review!.job_id = 43;
@@ -158,6 +160,7 @@ describe("ReviewDrawer", () => {
     state.copyOutput.mockReset();
     state.jobStatus = "done";
     state.jobType = "review";
+    state.readable = true;
     state.reviewType = undefined;
     state.agentic = false;
     state.promptPrebuilt = false;

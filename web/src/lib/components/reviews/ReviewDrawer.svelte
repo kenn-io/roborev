@@ -31,10 +31,7 @@
     tokenUsageDetail,
     tokenUsageStats,
   } from "../../utils/roborev-usage";
-  import {
-    isReadableReview,
-    reviewTypeLabel,
-  } from "../../utils/roborev-review-type";
+  import { reviewTypeLabel } from "../../utils/roborev-review-type";
 
   interface Props {
     activeTab?: "review" | "log" | "prompt";
@@ -76,7 +73,7 @@
       isOpen &&
       activeTab === "review" &&
       review?.job_id === selectedId &&
-      isReadableReview(selectedJob)
+      selectedJob?.readable
     ) {
       reportCoreAction("review_viewed");
     }

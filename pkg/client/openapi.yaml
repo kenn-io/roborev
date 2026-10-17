@@ -3768,6 +3768,8 @@ components:
           type: boolean
         provider:
           type: string
+        readable:
+          type: boolean
         reasoning:
           type: string
         repo_id:

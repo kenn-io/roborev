@@ -58,8 +58,9 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 	result, cmd := m.Update(msg)
 	*m = result.(model)
 	for _, msg := range collectMsgs(cmd) {
-		if delivery, ok := msg.(screenDeliveryMsg); ok {
-			result, _ = m.Update(delivery)
+		switch msg.(type) {
+		case screenDeliveryMsg, reviewDeliveryMsg:
+			result, _ = m.Update(msg)
 			*m = result.(model)
 		}
 	}

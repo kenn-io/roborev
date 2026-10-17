@@ -1,5 +1,3 @@
-import type { ReviewJob } from "../api/generated/models";
-
 export function reviewTypeLabel(
   reviewType: string | undefined,
   panelRole?: string,
@@ -34,29 +32,4 @@ export function reviewTypeColumnLabel(job: {
   const label = reviewTypeLabel(job.review_type, job.panel_role);
   const jobType = displayedJobType(job.job_type);
   return jobType === undefined ? label : `${jobType} · ${label}`;
-}
-
-/** Jobs whose output contains review findings. */
-export function isReadableReview(
-  job:
-    | Pick<ReviewJob, "job_type" | "commit_id" | "git_ref" | "diff_content">
-    | undefined
-    | null,
-): boolean {
-  if (!job) return false;
-  if (!job.job_type)
-    return (
-      job.commit_id != null ||
-      job.git_ref === "dirty" ||
-      job.diff_content != null ||
-      job.git_ref.includes("..")
-    );
-  return [
-    "review",
-    "range",
-    "dirty",
-    "goal_review",
-    "synthesis",
-    "compact",
-  ].includes(job.job_type);
 }
