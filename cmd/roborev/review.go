@@ -331,7 +331,7 @@ Examples:
 				// Generate dirty diff (includes untracked files).
 				// Use working-tree repo config (not default branch) for
 				// dirty reviews so local exclude_patterns changes apply.
-				globalCfg, _ := config.LoadGlobal()
+				globalCfg := loadGlobalConfigOrWarn()
 				excludes := config.ResolveExcludePatternsLocal(
 					root, globalCfg, reviewType,
 				)

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-03
+last_edited: 2026-10-17
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -13,6 +13,21 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **Project defaults** in global `projects` tables, matched by Git remote
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
+
+## Validation scope
+
+All commands reject malformed global TOML, including values with the wrong TOML
+type. Client commands retain their configured workflow settings when an
+unrelated `[web]`, `[remote]`, `[search]`, `[budget]`, or CI installation
+setting is invalid. They print a warning naming each invalid daemon section on
+stderr, keeping stdout suitable for piping. For example, an unavailable
+`web.auth_token_file` does not prevent
+`roborev config get hook_timeout_seconds --global` from returning its value.
+
+Daemon startup, configuration reloads, `roborev doctor`, and
+`roborev config validate --global` still validate daemon settings. A failed
+reload keeps the previous configuration. Configuration writes also remain
+strict. Unknown TOML keys keep their existing behavior: loading ignores them.
 
 ## The `config` Command
 

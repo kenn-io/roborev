@@ -468,7 +468,7 @@ func buildCompactPrompt(ctx context.Context, jobReviews []jobReview, branch, rep
 
 	// Include project review guidelines so the compact agent
 	// respects the same rules as regular reviews.
-	globalCfg, _ := config.LoadGlobal()
+	globalCfg := loadGlobalConfigOrWarn()
 	guidelines := prompt.LoadGuidelinesWithConfig(ctx, repoRoot, globalCfg)
 	if guidelines != "" {
 		sb.WriteString("## Project Guidelines\n\n")

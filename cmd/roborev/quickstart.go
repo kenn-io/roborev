@@ -52,7 +52,7 @@ var quickstartCheckIDs = []string{
 
 func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstartState {
 	daemonUp := daemonReachable()
-	global, _ := config.LoadGlobal()
+	global := loadGlobalConfigOrWarn()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
 	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
 	codexPath, _ := kitagenthook.ConfigPath(kitagenthook.AgentCodex)
@@ -191,7 +191,7 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 		return c
 	}
 	explicit := false
-	global, _ := config.LoadGlobal()
+	global := loadGlobalConfigOrWarn()
 	global = global.ForRepo(repoRoot)
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil {
 		reasoning := ""
