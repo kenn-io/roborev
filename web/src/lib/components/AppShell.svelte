@@ -20,6 +20,7 @@
   import { createReviewStores } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
   import {
+    type ErrorKind,
     reportScreenViewed,
     reportErrorShown,
     setupAppOpenedReporting,
@@ -43,7 +44,7 @@
     { id: "analytics", label: "Analytics" },
   ];
   let actionError = $state<string | null>(null);
-  let actionErrorKind = $state<"review_viewed" | "review_closed" | undefined>();
+  let actionErrorKind = $state<ErrorKind | undefined>();
   let errorReported = false;
   let tabHidden = $state(document.hidden);
   let releaseNotesOpen = $state(false);

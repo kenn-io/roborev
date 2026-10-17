@@ -1,4 +1,4 @@
-import { reportCoreAction } from "../../utils/app-opened";
+import { reportCoreAction, type ErrorKind } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
@@ -42,8 +42,8 @@ export interface ReviewStoreOptions {
   };
   runtime: AppRuntime;
   owner: string;
-  onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
-  onErrorCleared?: (kind: "review_viewed" | "review_closed") => void;
+  onError?: (message: string, kind?: ErrorKind) => void;
+  onErrorCleared?: (kind: ErrorKind) => void;
   refreshJobs?: () => Effect.Effect<void, never, RoborevWorkflow>;
 }
 

@@ -1158,6 +1158,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not load review to fix job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, m.currentView,
 		)
+		m.flashErrorKind = telemetry.EventFindingFixed
 		// The 'F' fetch is an ordinary dispatch, so dispatchReviewFetch
 		// armed the plain open intent alongside this panel. The panel's
 		// terminal failure resolves BOTH: left armed, the block below

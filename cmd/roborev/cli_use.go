@@ -159,7 +159,7 @@ func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]
 }
 
 func reportCLIError(cmd *cobra.Command, kind string, err error) {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
 	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {

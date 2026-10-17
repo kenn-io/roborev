@@ -649,3 +649,16 @@ func TestOutcomeAnalyzeAgentStart(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcomeCLICancellation(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	_, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	cmd, _ := newTestCmd(t)
+	cmd.SetContext(t.Context())
+	reportCLIError(cmd, "finding_fixed", errors.Join(errors.New("agent stopped"), context.Canceled))
+	assert.Empty(t, rec.telemetryPosts())
+	reportCLIError(cmd, "finding_fixed", context.DeadlineExceeded)
+	require.Len(t, rec.telemetryPosts(), 1)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, rec.telemetryPosts()[0].body)
+}

@@ -104,7 +104,8 @@ func (m *model) reportVisibleErrors(previous model) tea.Cmd {
 	if m.splitDetailErr != nil {
 		paneOccurrence = attempt + m.splitDetailErr.Error()
 	}
-	flashFailure := m.flashErrorKind != "" && m.renderFlash(m.currentView) != ""
+	flashFailure := m.flashErrorKind != "" && m.renderFlash(m.currentView) != "" &&
+		(m.currentView != viewQueue || m.splitActive() || !m.queueCompact())
 	if flashFailure {
 		cmd = tea.Batch(cmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: m.flashErrorKind}))
 		if m.flashErrorKind == telemetry.EventReviewViewed && m.splitDetailErr != nil {

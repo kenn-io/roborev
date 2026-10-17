@@ -1,3 +1,4 @@
+import type { ErrorKind } from "../utils/app-opened";
 import { appPath } from "../base-path";
 import type { SessionCapabilities } from "../api/session";
 import type { OwnedAppRuntime } from "../runtime/runtime";
@@ -34,8 +35,8 @@ export interface ReviewStoreOptions {
   reviewApi?: NativeReviewStoreOptions["api"];
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
-  onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
-  onErrorCleared?: (kind: "review_viewed" | "review_closed") => void;
+  onError?: (message: string, kind?: ErrorKind) => void;
+  onErrorCleared?: (kind: ErrorKind) => void;
   daemonInitiallyAvailable?: boolean;
 }
 

@@ -508,6 +508,16 @@ and committed fixes count individually. Reports are best-effort and use the
 existing daemon. Daily review claims survive daemon restarts in
 `telemetry-daily.json` beside the daemon database.
 
+Searches with no matches report `search_empty` with only `surface` (`web` or
+`cli`). Visible review, fix, and close failures report `error_shown` with
+`surface` and `kind` (`review_viewed`, `finding_fixed`, `review_closed`, or
+`other`). Repeated renders and background refreshes of one visible failure count
+once; later navigation can make it visible again and count a new transition.
+CLI errors use the same terminal and skill gates as core actions. The daemon
+reports `sync_failed` once per failed sync attempt with only `reason` (`connect`,
+`push`, `pull`, or `other`), including partial push failures. Search text and error
+details are excluded.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
 TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,

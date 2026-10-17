@@ -401,3 +401,54 @@ func TestOutcomeFailedTaskWithoutLog(t *testing.T) {
 		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, event)
 	}
 }
+
+//nolint:paralleltest // telemetry opt-out variables are process-wide
+func TestOutcomeCompactQueueFlash(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, distraction := range []bool{false, true} {
+		t.Run(map[bool]string{false: "short terminal", true: "distraction free"}[distraction], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newCoreActionReviewVisitFixture()
+				f.m.layout = splitlayout.Stacked
+				f.m.height = 10
+				if distraction {
+					f.m.height = 40
+					f.m.distractionFree = true
+				}
+				f.m.pendingClosed[2] = pendingState{seq: 1}
+				f.update(closedResultMsg{jobID: 2, seq: 1, err: errors.New("close unavailable")})
+				assert.NotContains(t, f.m.renderQueueView(), "close unavailable")
+				assert.Empty(t, f.transport.events)
+				f.m.height = 40
+				f.m.distractionFree = false
+				f.update(tea.KeyPressMsg{Code: '0'})
+				assert.Contains(t, f.m.renderQueueView(), "close unavailable")
+				require.Len(t, f.transport.events, 1)
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`, f.transport.events[0])
+				f.update(tea.KeyPressMsg{Code: '0'})
+				assert.Len(t, f.transport.events, 1)
+			})
+		})
+	}
+}
+
+//nolint:paralleltest // telemetry opt-out variables are process-wide
+func TestOutcomePendingFixFollowFailure(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture()
+	f.m = splitModel(withReview(splitTestReview()), withSelection(1, 2), withTasksEnabled(true))
+	f.m.endpoint = testEndpointFromURL("http://127.0.0.1:7373")
+	f.m.client = &http.Client{Transport: f.transport}
+	result, _ := f.m.handleFixKey()
+	f.m = result.(model)
+	require.True(t, f.m.reviewFixPanelPending)
+	f.m.dispatchReviewFollow(2)
+	for range 2 {
+		f.update(reviewFollowErrMsg{jobID: 2, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, err: errors.New("review unavailable")})
+	}
+	assert.Contains(t, f.m.renderSplit(), "Could not load review to fix job #2")
+	require.Len(t, f.transport.events, 1)
+	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[0])
+	f.update(displayTickMsg{})
+	assert.Len(t, f.transport.events, 1)
+}
