@@ -1227,9 +1227,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
 		OnWarning: func(err error) {
-			if !opts.quiet {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
-			}
+			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 		},
 	}, implementationPrompt)
 	// Flush capture FIRST so session extraction completes before reading SessionID.
@@ -1605,9 +1603,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
 			OnWarning: func(err error) {
-				if !opts.quiet {
-					reportCLIError(cmd, telemetry.EventFindingFixed, err)
-				}
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			},
 		}, fixPrompt)
 		if cleanupPrompt != nil {

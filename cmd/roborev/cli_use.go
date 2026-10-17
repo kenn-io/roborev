@@ -169,7 +169,7 @@ type actionInputError struct{ error }
 func (e *actionInputError) Unwrap() error { return e.error }
 
 func reportCLIError(cmd *cobra.Command, kind string, err error) {
-	if err == nil || errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, errReviewFailed) || errors.Is(err, errReviewCanceled) {
 		return
 	}
 	if _, ok := errors.AsType[*actionInputError](err); ok {

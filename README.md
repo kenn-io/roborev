@@ -513,9 +513,10 @@ Searches with no matches report `search_empty` with only `surface` (`web` or
 live filtering stays silent. Failed review, fix, and close actions report
 `error_shown` once per user action with `surface` and `kind` (`review_viewed`,
 `finding_fixed`, `review_closed`, or `other`). CLI failures count at most once
-per process, with the same terminal and skill gates as core actions. Failed-job
-cards and automatic refreshes stay silent. The daemon reports `sync_failed`
-once per outage with only `reason` (`connect`, `push`, `pull`, or `other`). A
+per process, with the same terminal and skill gates as core actions. Stored
+failed or canceled jobs, including CLI waits, and automatic refreshes stay
+silent. The daemon reports `sync_failed` once per outage with only `reason`
+(`connect`, `push`, `pull`, or `other`). A
 successful push-and-pull cycle ends the outage; individual row failures stay in
 the log. Search text and error details are excluded.
 

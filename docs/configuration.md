@@ -1877,10 +1877,11 @@ Outcome events count each completed attempt:
   A refresh that replaces a pending committed search resolves its outcome.
 - `error_shown` carries `surface=web`, `tui`, or `cli` and a fixed `kind`:
   `review_viewed`, `finding_fixed`, `review_closed`, or `other`. Each failed
-  user action counts once. Failed-job cards, pane selection, redraws, and
-  automatic refreshes stay silent. CLI errors count at most once per process and
-  use the core-action terminal and `--from-skill` gates; cancellation, usage
-  errors, and planning-only fixes stay silent. Runtime fix failures count even
+  user action counts once. Stored failed or canceled jobs, including CLI waits,
+  pane selection, redraws, and automatic refreshes stay silent. CLI errors count
+  at most once per process and use the core-action terminal and `--from-skill`
+  gates; cancellation, usage errors, and planning-only fixes stay silent.
+  Runtime fix failures count even
   before the agent starts. Enqueue, comment, and close warnings after a successful
   fix leave that fix's outcome unchanged.
 - `sync_failed` carries `reason=connect`, `push`, `pull`, or `other` once per

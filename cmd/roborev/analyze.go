@@ -682,17 +682,16 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 				}
 
 				commitPrompt := buildCommitPromptWithMetadata(analysisType, metadata)
-				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
-					if !opts.quiet {
-						reportCLIError(cmd, telemetry.EventFindingFixed, err)
-						cmd.Printf("\nWarning: commit agent failed: %v\n", err)
-					}
-				}
+				retryErr := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet)
 
 				// Check again if commit was created
 				headFinal, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 				if err == nil && headFinal != headAfter {
 					commitCreated = true
+				}
+				if retryErr != nil && !commitCreated && !opts.quiet {
+					reportCLIError(cmd, telemetry.EventFindingFixed, retryErr)
+					cmd.Printf("\nWarning: commit agent failed: %v\n", retryErr)
 				}
 			}
 		}

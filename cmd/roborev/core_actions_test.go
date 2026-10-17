@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -125,7 +126,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 
 func TestCoreActionFixCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "retry warning after commit", "retry failure", "bookkeeping failure", "no change", "failure", "invalid min-severity", "invalid reasoning"} {
+		for _, outcome := range []string{"commit", "retry warning after commit", "retry failure", "quiet retry failure", "bookkeeping failure", "no change", "failure", "invalid min-severity", "invalid reasoning"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
 				cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -183,10 +184,10 @@ func TestCoreActionFixCommit(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, file.Close())
 					calls++
-					if strings.HasPrefix(outcome, "retry ") && calls%2 == 1 {
+					if strings.Contains(outcome, "retry ") && calls%2 == 1 {
 						return "Changes ready to commit", nil
 					}
-					if outcome == "retry failure" {
+					if strings.HasSuffix(outcome, "retry failure") {
 						return "", errors.New("commit agent failed")
 					}
 					for _, args := range [][]string{{"add", "fixed.txt"}, {"commit", "-m", "fix: apply change"}} {
@@ -234,7 +235,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 					assert.Contains(t, output.String(), "could not add response to job")
 					assert.Contains(t, output.String(), "could not close job")
 				}
-				if strings.HasPrefix(outcome, "retry ") {
+				if strings.Contains(outcome, "retry ") {
 					wantCalls := 2
 					if batch {
 						wantCalls = 4
@@ -251,7 +252,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 					for _, post := range posts {
 						assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
 					}
-				} else if outcome == "failure" || outcome == "retry failure" {
+				} else if outcome == "failure" || strings.HasSuffix(outcome, "retry failure") {
 					require.Len(t, posts, 1)
 					assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
 				} else {
@@ -259,6 +260,92 @@ func TestCoreActionFixCommit(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOutcomeWaitFailedAndCanceledJobs(t *testing.T) {
+	for _, command := range []string{"wait", "review"} {
+		for _, status := range []storage.JobStatus{storage.JobStatusFailed, storage.JobStatusCanceled} {
+			t.Run(command+"/"+string(status), func(t *testing.T) {
+				resetCLIUse(t)
+				cliOutputIsTerminal = func(io.Writer) bool { return true }
+				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+				t.Chdir(repo.Dir)
+				job := storage.ReviewJob{ID: 1, GitRef: repo.HeadSHA(), Status: status, Error: "agent unavailable"}
+				md, rec := newCLIUseDaemon(t, MockRefineHooks{
+					OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+						writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
+						return true
+					},
+					OnEnqueue: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+						w.WriteHeader(http.StatusCreated)
+						writeJSON(w, job)
+						return true
+					},
+				}, nil)
+				args := []string{"wait", "1"}
+				if command == "review" {
+					args = []string{"review", "--wait", "--agent", "test"}
+				}
+				result := runCLIFresh(t, true, append(args, "--server", md.Server.URL)...)
+				wantError := "review failed: agent unavailable"
+				if status == storage.JobStatusCanceled {
+					wantError = "review was canceled"
+				}
+				require.EqualError(t, result.err, wantError)
+				assert.Contains(t, result.stdout, string(status)+"!")
+				require.Len(t, rec.telemetryPosts(), 1)
+				for _, post := range rec.telemetryPosts() {
+					assert.JSONEq(t, cliUseBody, post.body)
+				}
+			})
+		}
+	}
+}
+
+func TestOutcomeAnalyzeCommitRetry(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(committed), func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			before := repo.HeadSHA()
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			md.State.jobs[1] = &storage.ReviewJob{ID: 1, GitRef: before, Status: storage.JobStatusDone}
+			md.State.reviews[before] = &storage.Review{ID: 1, JobID: 1, Output: "Finding"}
+			patchServerAddr(t, md.Server.URL)
+			calls := 0
+			name := "analyze-commit-retry-test"
+			agent.Register(&agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
+				calls++
+				if calls == 1 {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "fixed.txt"), []byte("fixed\n"), 0o644))
+					return "Changes ready to commit", nil
+				}
+				if committed {
+					repo.Run("add", "fixed.txt")
+					repo.Run("commit", "-m", "fix: apply change")
+				}
+				return "", errors.New("commit agent ended with an error")
+			}})
+			t.Cleanup(func() { agent.Unregister(name) })
+			cmd, output := newTestCmd(t)
+			cmd.SetContext(t.Context())
+			err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, md.Server.URL), repo.Dir, 1, &analyze.AnalysisType{Name: "test"}, analyzeOptions{fixAgent: name})
+			require.NoError(t, err)
+			assert.Equal(t, 2, calls)
+			posts := rec.telemetryPosts()
+			require.Len(t, posts, 1)
+			if committed {
+				assert.NotEqual(t, before, repo.HeadSHA())
+				assert.Contains(t, output.String(), "Changes committed successfully")
+				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, posts[0].body)
+			} else {
+				assert.Equal(t, before, repo.HeadSHA())
+				assert.Contains(t, output.String(), "Warning: commit agent failed")
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
+			}
+		})
 	}
 }
 

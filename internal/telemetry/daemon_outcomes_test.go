@@ -47,16 +47,51 @@ func TestOutcomeDaemonSyncFailure(t *testing.T) {
 			require.NoError(t, reporter.Close())
 			sent := messages()
 			want := 1
-			if state == "1" {
+			if state != "" {
 				want = 0
 			}
 			require.Len(t, sent, want)
+			stored, err := db.GetSyncState("telemetry.sync_outage")
+			require.NoError(t, err)
+			if state != "" {
+				assert.Equal(t, state, stored)
+			}
 			for _, message := range sent {
 				assert.Equal(t, "sync_failed", message.Event)
 				assert.Equal(t, "connect", message.Properties["reason"])
 			}
 		})
 	}
+}
+
+func TestOutcomeDaemonSyncStateReadFailure(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(telemetry.GenericEnabledEnv, "1")
+	testenv.SetDataDir(t)
+	endpoint, messages := testutil.NewPostHogStub(t)
+	db := testutil.OpenTestDB(t)
+	reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		server := daemon.NewServer(db, config.DefaultConfig(), "")
+		t.Cleanup(func() { require.NoError(t, server.Close()) })
+		server.SetTelemetry(reporter)
+		worker := storage.NewSyncWorker(db, config.SyncConfig{Enabled: true, Interval: "1h"})
+		server.SetSyncWorker(worker)
+		t.Cleanup(worker.Stop)
+		require.NoError(t, worker.Start())
+		synctest.Wait()
+		_, err := worker.SyncNow()
+		require.ErrorContains(t, err, "failed to connect")
+	})
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 1)
+	assert.Equal(t, "sync_failed", sent[0].Event)
+	assert.Equal(t, "connect", sent[0].Properties["reason"])
 }
 
 func TestIntegrationOutcomeDaemonSyncRecovery(t *testing.T) {

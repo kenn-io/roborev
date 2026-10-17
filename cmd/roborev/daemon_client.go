@@ -21,6 +21,11 @@ import (
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
+var (
+	errReviewFailed   = errors.New("review failed")
+	errReviewCanceled = errors.New("review was canceled")
+)
+
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
 func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
@@ -58,13 +63,13 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 			if !quiet {
 				cmd.Printf(" failed!\n")
 			}
-			return fmt.Errorf("review failed: %s", job.Error)
+			return fmt.Errorf("%w: %s", errReviewFailed, job.Error)
 
 		case storage.JobStatusCanceled:
 			if !quiet {
 				cmd.Printf(" canceled!\n")
 			}
-			return fmt.Errorf("review was canceled")
+			return errReviewCanceled
 
 		case storage.JobStatusQueued, storage.JobStatusRunning:
 			// Still in progress, continue polling

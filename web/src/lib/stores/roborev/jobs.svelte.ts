@@ -441,7 +441,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     });
 
   const loadJobsEffect = () =>
-    loadJobsRequestEffect(opts.owner).pipe(
+    loadJobsRequestEffect().pipe(
       Effect.catch((failure) =>
         Effect.sync(() => {
           storeError =
