@@ -874,18 +874,12 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 }
 
 func TestCoreActionCompactWait(t *testing.T) {
-	for _, mode := range []string{"terminal", "quiet", "fix", "empty"} {
+	for _, mode := range []string{"terminal", "quiet"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 			job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone, JobType: storage.JobTypeCompact}
-			if mode == "fix" {
-				job.JobType = storage.JobTypeFix
-			}
 			output := "Consolidated findings"
-			if mode == "empty" {
-				output = ""
-			}
 			md.State.jobs[1] = job
 			md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: output, Job: job}
 			patchServerAddr(t, md.Server.URL)

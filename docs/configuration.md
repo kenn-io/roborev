@@ -1860,13 +1860,12 @@ fixes support TUI and CLI. Reads include review, synthesis and compact output.
 The TUI requires key or mouse input before counting loaded content. Quit keys
 `ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. Failed or
 disabled reports allow one retry on later input. A successful daemon reconnect
-restores retry eligibility.
-The browser reports a visible Review tab on load and when focus or visibility
-returns, with one request in flight at a time. The daemon owns daily deduplication.
-CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and nonquiet
-`fix` output. CLI actions require terminal output and exclude agents and
-`--from-skill`.
-Reopens, automatic closes, prompts and analysis output stay silent. With a remote
+restores retry eligibility. The browser reports a visible Review tab on load and
+when focus or visibility returns, with one request in flight at a time. The
+daemon owns daily deduplication. CLI reads include `show`, `wait`,
+`review --wait`, `compact --wait`, and nonquiet `fix` output. CLI actions
+require terminal output and exclude agents and `--from-skill`. Reopens,
+automatic closes, prompts and analysis output stay silent. With a remote
 `--server`, CLI events use an already-running local daemon and its installation
 ID. Without a local daemon, events are dropped. Reporting never starts a daemon.
 
