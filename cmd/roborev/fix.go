@@ -337,6 +337,8 @@ type fixJobParams struct {
 	// Classify is the rate-limit classifier used for the commit-retry
 	// path. nil defaults to agent.ClassifyLimit. Tests inject a stub.
 	Classify agent.LimitClassifier
+
+	OnWarning func(error)
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -454,6 +456,9 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 			return nil, &agentLimitError{Classification: cls}
 		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
+		if params.OnWarning != nil {
+			params.OnWarning(retryErr)
+		}
 	}
 	if sha, ok := detectNewCommit(ctx, params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
@@ -1214,6 +1219,11 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Metadata:      metadata,
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
+		OnWarning: func(err error) {
+			if !opts.quiet {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+			}
+		},
 	}, implementationPrompt)
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
@@ -1580,6 +1590,11 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			Metadata:      metadata,
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
+			OnWarning: func(err error) {
+				if !opts.quiet {
+					reportCLIError(cmd, telemetry.EventFindingFixed, err)
+				}
+			},
 		}, fixPrompt)
 		if cleanupPrompt != nil {
 			cleanupPrompt()
@@ -2076,6 +2091,7 @@ func recordAndCloseFixJob(
 ) {
 	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
 		if !quiet {
+			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("Warning: could not add response to job %d: %v\n", jobID, err)
 		}
 		if strings.TrimSpace(fixGuidelines) != "" {
@@ -2085,6 +2101,7 @@ func recordAndCloseFixJob(
 
 	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
 		if !quiet {
+			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 	} else if !quiet {

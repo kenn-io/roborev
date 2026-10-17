@@ -244,10 +244,9 @@ type SyncStats struct {
 // Loops until all pending items are synced (not just one batch).
 // Does not pull changes since we're shutting down.
 func (w *SyncWorker) FinalPush() (err error) {
-	reason := "push"
 	var pushFailure error
 	defer func() {
-		w.notifyAttemptFailure(reason, err, pushFailure)
+		w.notifyAttemptFailure("push", err, pushFailure)
 	}()
 	w.mu.Lock()
 	pool := w.pgPool
@@ -512,8 +511,7 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
 func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
-	reason := "connect"
-	defer func() { w.notifyFailure(reason, err) }()
+	defer func() { w.notifyFailure("connect", err) }()
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
 

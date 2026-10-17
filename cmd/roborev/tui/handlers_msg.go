@@ -2526,6 +2526,7 @@ func (m model) handlePatchResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Patch fetch failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.flashErrorKind = telemetry.EventFindingFixed
 	} else {
 		m.patchText = msg.patch
 		m.patchJobID = msg.jobID

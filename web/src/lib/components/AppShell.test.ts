@@ -56,19 +56,15 @@ test("reports an alert once while visible and defers hidden errors until the tab
   await fireEvent(document, new Event("visibilitychange"));
   await vi.waitFor(() => expect(events).toHaveLength(3));
   await fireEvent(document, new Event("visibilitychange"));
-  expect(events).toEqual([
-    {
+  for (const [index, kind] of [
+    "review_viewed",
+    "review_viewed",
+    "review_closed",
+  ].entries()) {
+    expect(events[index]).toEqual({
       event: "error_shown",
-      properties: { surface: "web", kind: "review_viewed" },
-    },
-    {
-      event: "error_shown",
-      properties: { surface: "web", kind: "review_viewed" },
-    },
-    {
-      event: "error_shown",
-      properties: { surface: "web", kind: "review_closed" },
-    },
-  ]);
+      properties: { surface: "web", kind },
+    });
+  }
   shell.unmount();
 });

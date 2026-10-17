@@ -10,6 +10,7 @@
     pending?: boolean;
   }>;
 
+  const { pageVisible }: { pageVisible: boolean } = $props();
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
   const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
@@ -26,7 +27,6 @@
   let RichReviewContent = $state<RichReviewContentComponent>();
   let loadError = $state(false);
   let rendererAttempt = $state(0);
-  let visible = $state(document.visibilityState !== "hidden");
   let reportedOccurrence: string | undefined;
   let loadPromise: Promise<void> | undefined;
 
@@ -48,30 +48,21 @@
     return loadPromise;
   }
 
-  onMount(() => {
-    const updateVisibility = () => {
-      visible = document.visibilityState !== "hidden";
-    };
-    document.addEventListener("visibilitychange", updateVisibility);
-    return () =>
-      document.removeEventListener("visibilitychange", updateVisibility);
-  });
-
   $effect(() => {
-    const occurrence = stores.roborevReview?.isLoading()
-      ? undefined
-      : failed
-        ? JSON.stringify([
-            "job",
-            selectedJob?.id,
-            selectedJob?.started_at,
-            selectedJob?.finished_at,
-          ])
-        : loadError && output && !RichReviewContent
-          ? `renderer:${selectedJob?.id}:${rendererAttempt}`
-          : undefined;
+    // Background reloads temporarily clear the selected job.
+    if (stores.roborevReview?.isLoading()) return;
+    const occurrence = failed
+      ? JSON.stringify([
+          "job",
+          selectedJob?.id,
+          selectedJob?.started_at,
+          selectedJob?.finished_at,
+        ])
+      : loadError && output && !RichReviewContent
+        ? `renderer:${selectedJob?.id}:${rendererAttempt}`
+        : undefined;
     if (!occurrence) reportedOccurrence = undefined;
-    else if (visible && occurrence !== reportedOccurrence) {
+    else if (pageVisible && occurrence !== reportedOccurrence) {
       reportErrorShown("review_viewed");
       reportedOccurrence = occurrence;
     }

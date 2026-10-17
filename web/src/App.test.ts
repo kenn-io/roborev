@@ -7,6 +7,7 @@ const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
   reportScreenViewed: vi.fn(),
   reportCoreAction: vi.fn(),
+  reportErrorShown: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
@@ -69,6 +70,7 @@ describe("App", () => {
     appOpened.setupAppOpenedReporting.mockClear();
     appOpened.reportScreenViewed.mockClear();
     appOpened.reportCoreAction.mockClear();
+    appOpened.reportErrorShown.mockClear();
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -387,12 +389,14 @@ describe("App", () => {
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
   });
 
-  test("refreshes an off-page deep-linked review from matching events", async () => {
+  test("refreshes a deep-linked review from matching events and reconnects", async () => {
     history.replaceState(null, "", "/reviews/42");
     const encoder = new TextEncoder();
     let eventStream: ReadableStreamDefaultController<Uint8Array> | undefined;
     let completed = false;
     let closed = false;
+    let failed = false;
+    let reviewLoads = 0;
     const selectedJob = () => ({
       id: 42,
       agent: "test",
@@ -404,7 +408,8 @@ describe("App", () => {
       repo_id: 1,
       repo_name: "example/repo",
       retry_count: 0,
-      status: completed ? "done" : "running",
+      status: failed ? "failed" : completed ? "done" : "running",
+      error: failed ? "agent unavailable" : "",
       ...(completed ? { finished_at: "2026-08-13T20:01:00Z" } : {}),
     });
     vi.stubGlobal(
@@ -433,7 +438,8 @@ describe("App", () => {
           });
         }
         if (url.pathname === "/api/review") {
-          if (!completed) return response(404);
+          reviewLoads++;
+          if (!completed || failed) return response(404);
           return response(200, {
             id: 7,
             job_id: 42,
@@ -495,6 +501,23 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
+
+    failed = true;
+    eventStream!.error(new Error("stream disconnected"));
+    expect(await screen.findByText("Review failed")).toBeInTheDocument();
+    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
+      "review_viewed",
+    );
+    const previousLoads = reviewLoads;
+    eventStream!.error(new Error("stream disconnected again"));
+    await vi.waitFor(() => expect(reviewLoads).toBeGreaterThan(previousLoads), {
+      timeout: 5000,
+    });
+    expect(await screen.findByText("Review failed")).toBeInTheDocument();
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Log" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {

@@ -50,11 +50,10 @@ afterEach(() => {
   state.status = "done";
   state.error = "";
   state.report.mockClear();
-  vi.restoreAllMocks();
 });
 
 describe("ReviewContent", () => {
-  it("counts a failed retry once and clears the previous visible failure", async () => {
+  it("counts a failed retry once and clears it after success", async () => {
     state.output = "";
     const job = {
       id: 1,
@@ -63,12 +62,12 @@ describe("ReviewContent", () => {
       error: "agent failed",
     };
     reactiveJob.set(1, job);
-    render(ReviewContent);
+    render(ReviewContent, { pageVisible: true });
     expect(state.report).toHaveBeenCalledTimes(1);
     reactiveJob.set(1, { ...job });
     await tick();
     expect(state.report).toHaveBeenCalledTimes(1);
-    reactiveJob.set(1, { ...job, status: "running" });
+    reactiveJob.set(1, { ...job, status: "done" });
     await tick();
     reactiveJob.set(1, { ...job, started_at: "2026-01-01T00:01:00Z" });
     await tick();
@@ -78,22 +77,17 @@ describe("ReviewContent", () => {
     expect(state.report).toHaveBeenCalledTimes(3);
   });
   it("defers failed reviews until the tab becomes visible", async () => {
-    let visibility = "hidden";
-    vi.spyOn(document, "visibilityState", "get").mockImplementation(
-      () => visibility as DocumentVisibilityState,
-    );
     state.status = "failed";
     state.output = "";
-    render(ReviewContent);
+    const content = render(ReviewContent, { pageVisible: false });
     expect(state.report).not.toHaveBeenCalled();
-    visibility = "visible";
-    await fireEvent(document, new Event("visibilitychange"));
+    await content.rerender({ pageVisible: true });
     expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
-    await fireEvent(document, new Event("visibilitychange"));
+    await content.rerender({ pageVisible: true });
     expect(state.report).toHaveBeenCalledTimes(1);
   });
   it("offers a retry when the rich renderer cannot load", async () => {
-    render(ReviewContent);
+    render(ReviewContent, { pageVisible: true });
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
@@ -110,7 +104,7 @@ describe("ReviewContent", () => {
     state.status = "failed";
     state.error = "agent process exited with status 1";
 
-    render(ReviewContent);
+    render(ReviewContent, { pageVisible: true });
 
     expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -125,7 +119,7 @@ describe("ReviewContent", () => {
     state.notFound = true;
     state.status = "failed";
 
-    render(ReviewContent);
+    render(ReviewContent, { pageVisible: true });
 
     expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
     expect(screen.getByRole("alert")).toHaveTextContent(

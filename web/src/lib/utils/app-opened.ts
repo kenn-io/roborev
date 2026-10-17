@@ -158,7 +158,7 @@ export function reportSearchEmpty(): void {
   postBoundedEvent("search_empty", { surface: "web" });
 }
 
-export type ErrorKind = "review_viewed" | "finding_fixed" | "review_closed";
+export type ErrorKind = "review_viewed" | "review_closed";
 
 export function reportErrorShown(kind: ErrorKind): void {
   postBoundedEvent("error_shown", { surface: "web", kind });

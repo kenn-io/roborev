@@ -285,6 +285,19 @@ func TestOutcomeVisibleTUIErrors(t *testing.T) {
 	f.update(failure)
 	assert.Len(t, f.transport.events, 2)
 
+	synctest.Test(t, func(t *testing.T) {
+		delayed := newCoreActionReviewVisitFixture()
+		delayed.m.currentView = viewQueue
+		delayed.update(patchMsg{err: errors.New("patch unavailable")})
+		assert.Empty(t, delayed.transport.events)
+		time.Sleep(time.Second)
+		delayed.m.currentView = viewTasks
+		delayed.update(displayTickMsg{})
+		require.Len(t, delayed.transport.events, 1)
+		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, delayed.transport.events[0])
+		delayed.update(displayTickMsg{})
+		assert.Len(t, delayed.transport.events, 1)
+	})
 	f.m.currentView = viewTasks
 	f.update(applyPatchResultMsg{err: errors.New("apply failed")})
 	require.Len(t, f.transport.events, 3)

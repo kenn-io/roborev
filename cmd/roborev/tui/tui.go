@@ -252,14 +252,15 @@ type model struct {
 	pendingClosed map[int64]pendingState // job ID -> pending state
 
 	// Flash message (temporary status message shown briefly)
-	flashMessage       string
-	flashExpiresAt     time.Time
-	flashView          viewKind // View where flash was triggered (only show in same view)
+	flashMessage   string
+	flashExpiresAt time.Time
+	flashView      viewKind // View where flash was triggered (only show in same view)
+	flashWarning   bool
+
 	flashErrorKind     string
 	flashErrorReported uint64
 	flashGeneration    uint64
 	paneErrorReported  string
-	flashWarning       bool
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -1341,10 +1342,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if failedOccurrence != "" && failedOccurrence != rm.failedReviewReported {
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-			rm.failedReviewReported = failedOccurrence
-		} else if failedOccurrence == "" {
-			rm.failedReviewReported = ""
 		}
+		rm.failedReviewReported = failedOccurrence
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles
 		// whatever the selected job's state is by now: restart the tail if
