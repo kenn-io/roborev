@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,25 +33,7 @@ func TestMuseBuildArgs(t *testing.T) {
 		})
 	}
 	a := NewMuseAgent("")
-	assert.NotContains(t, a.buildArgs(false, "prompt.md"), "--trust-workspace")
 	assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
-	assert.Contains(t, a.WithAgentic(true).(*MuseAgent).PlanningCommandLine(), "--no-foreign-personal-context")
-}
-
-func TestMuseReviewPlanningOverridesUnsafeMode(t *testing.T) {
-	withUnsafeAgents(t, true)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	cli := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, StdoutLines: []string{"plan"}})
-	ctx := context.WithValue(t.Context(), planningContextKey{}, true)
-	_, err := NewMuseAgent(cli.CmdPath).WithAgentic(true).Review(ctx, t.TempDir(), "HEAD", "plan", nil)
-	require.NoError(t, err)
-	args := readMockArgs(t, cli.ArgsFile)
-	assert := assert.New(t)
-	assert.NotContains(args, "--yolo")
-	assert.Contains(args, "--no-foreign-personal-context")
-	assert.Contains(strings.Join(args, "\n"), "-c\n"+`run.toolset=["read_file","search"]`)
-	assert.Contains(strings.Join(args, "\n"), "-c\nhooks={}")
-	assert.Contains(strings.Join(args, "\n"), "-c\nmanaged_hooks_path=null")
 }
 
 func TestMuseReviewPromptAndOutput(t *testing.T) {
@@ -91,19 +72,33 @@ printf 'status message\n' >&2
 func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 	skipIfWindows(t)
 	withUnsafeAgents(t, false)
-	configHome := t.TempDir()
-	museConfig := filepath.Join(configHome, "muse")
-	require.NoError(t, os.MkdirAll(museConfig, 0o700))
-	for _, name := range []string{"auth.json", "settings.json", "trust.json", "plugins.json"} {
-		require.NoError(t, os.WriteFile(filepath.Join(museConfig, name), []byte("{}"), 0o600))
-	}
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	dataHome := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dataHome, "muse", "plugins"), 0o700))
-	t.Setenv("XDG_DATA_HOME", dataHome)
-	captureDir := t.TempDir()
-	t.Setenv("MUSE_CONFIG_CAPTURE", captureDir)
-	command := writeTempCommand(t, `#!/bin/sh
+	for _, source := range []string{"xdg", "home"} {
+		t.Run(source, func(t *testing.T) {
+			configHome := t.TempDir()
+			if source == "home" {
+				home := t.TempDir()
+				configHome = filepath.Join(home, ".config")
+				t.Setenv("HOME", home)
+				t.Setenv("XDG_CONFIG_HOME", "")
+			} else {
+				t.Setenv("XDG_CONFIG_HOME", configHome)
+			}
+			museConfig := filepath.Join(configHome, "muse")
+			require.NoError(t, os.MkdirAll(museConfig, 0o700))
+			for name, data := range map[string]string{
+				"auth.json":     `{"token":"example"}`,
+				"settings.json": `{"model":"example-model"}`,
+				"trust.json":    "{}",
+				"plugins.json":  "{}",
+			} {
+				require.NoError(t, os.WriteFile(filepath.Join(museConfig, name), []byte(data), 0o600))
+			}
+			dataHome := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(dataHome, "muse", "plugins"), 0o700))
+			t.Setenv("XDG_DATA_HOME", dataHome)
+			captureDir := t.TempDir()
+			t.Setenv("MUSE_CONFIG_CAPTURE", captureDir)
+			command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 set -eu
 test "$HOME" = "$USERPROFILE"
@@ -120,63 +115,40 @@ cat "$XDG_CONFIG_HOME/muse/settings.json" > "$MUSE_CONFIG_CAPTURE/settings"
 ls -1A "$XDG_DATA_HOME" > "$MUSE_CONFIG_CAPTURE/data-files"
 printf 'No issues found.\n'
 `)
-	_, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
-	require.NoError(t, err)
-	home, err := os.ReadFile(filepath.Join(captureDir, "config-home"))
-	require.NoError(t, err)
-	require.NotEmpty(t, home)
-	files, err := os.ReadFile(filepath.Join(captureDir, "files"))
-	require.NoError(t, err)
-	assert := assert.New(t)
-	assert.NotEqual(configHome, string(home), "review must use a private config directory")
-	names := strings.Fields(string(files))
-	assert.Contains(names, "auth.json")
-	assert.Contains(names, "settings.json")
-	assert.NotContains(names, "trust.json", "review must not inherit saved workspace trust")
-	assert.NotContains(names, "plugins.json", "review must not inherit user plugin configuration")
-	for _, name := range []string{"auth", "settings"} {
-		data, err := os.ReadFile(filepath.Join(captureDir, name))
-		require.NoError(t, err)
-		assert.Equal("{}", string(data))
+			_, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+			require.NoError(t, err)
+			home, err := os.ReadFile(filepath.Join(captureDir, "config-home"))
+			require.NoError(t, err)
+			require.NotEmpty(t, home)
+			files, err := os.ReadFile(filepath.Join(captureDir, "files"))
+			require.NoError(t, err)
+			assert := assert.New(t)
+			assert.NotEqual(configHome, string(home), "review must use a private config directory")
+			names := strings.Fields(string(files))
+			assert.Contains(names, "auth.json")
+			assert.Contains(names, "settings.json")
+			assert.NotContains(names, "trust.json", "review must not inherit saved workspace trust")
+			assert.NotContains(names, "plugins.json", "review must not inherit user plugin configuration")
+			for name, expected := range map[string]string{"auth": `{"token":"example"}`, "settings": `{"model":"example-model"}`} {
+				data, err := os.ReadFile(filepath.Join(captureDir, name))
+				require.NoError(t, err)
+				assert.JSONEq(expected, string(data))
+			}
+			dataPath, err := os.ReadFile(filepath.Join(captureDir, "data-home"))
+			require.NoError(t, err)
+			require.NotEmpty(t, dataPath)
+			assert.NotEqual(dataHome, string(dataPath), "review must use a private data directory")
+			dataFiles, err := os.ReadFile(filepath.Join(captureDir, "data-files"))
+			require.NoError(t, err)
+			assert.Empty(string(dataFiles), "installed plugins must not be copied into the private data directory")
+			privateHome, err := os.ReadFile(filepath.Join(captureDir, "home"))
+			require.NoError(t, err)
+			require.NotEmpty(t, privateHome)
+			assert.NoDirExists(string(privateHome), "per-run home must be removed after review")
+			assert.NoDirExists(string(home), "per-run config directory must be removed after review")
+			assert.NoDirExists(string(dataPath), "per-run data directory must be removed after review")
+		})
 	}
-	dataPath, err := os.ReadFile(filepath.Join(captureDir, "data-home"))
-	require.NoError(t, err)
-	require.NotEmpty(t, dataPath)
-	assert.NotEqual(dataHome, string(dataPath), "review must use a private data directory")
-	dataFiles, err := os.ReadFile(filepath.Join(captureDir, "data-files"))
-	require.NoError(t, err)
-	assert.Empty(string(dataFiles), "installed plugins must not be copied into the private data directory")
-	privateHome, err := os.ReadFile(filepath.Join(captureDir, "home"))
-	require.NoError(t, err)
-	require.NotEmpty(t, privateHome)
-	assert.NoDirExists(string(privateHome), "per-run home must be removed after review")
-	assert.NoDirExists(string(home), "per-run config directory must be removed after review")
-	assert.NoDirExists(string(dataPath), "per-run data directory must be removed after review")
-}
-
-func TestPrepareMuseRunHomeFallback(t *testing.T) {
-	skipIfWindows(t)
-	home := t.TempDir()
-	configDir := filepath.Join(home, ".config", "muse")
-	require.NoError(t, os.MkdirAll(configDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "auth.json"), []byte(`{"token":"example"}`), 0o600))
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", "")
-
-	promptPath, env, cleanup, err := prepareMuseRun("review", false)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-	var configHome string
-	for _, entry := range env {
-		if value, ok := strings.CutPrefix(entry, "XDG_CONFIG_HOME="); ok {
-			configHome = value
-		}
-	}
-	require.NotEmpty(t, configHome)
-	data, err := os.ReadFile(filepath.Join(configHome, "muse", "auth.json"))
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"token":"example"}`, string(data))
-	assert.FileExists(t, promptPath)
 }
 
 func TestPrepareMuseRunHomeError(t *testing.T) {

@@ -86,6 +86,7 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 }
 
 func TestCIAgentEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	skipIfWindows(t)
 	for _, factory := range []func(string) Agent{
 		func(p string) Agent { return NewCodexAgent(p) },

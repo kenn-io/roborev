@@ -88,6 +88,7 @@ func TestRunPlanFreshSession(t *testing.T) {
 }
 
 func TestPlanningOverridesUnsafeMode(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
 	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok", "muse"} {
