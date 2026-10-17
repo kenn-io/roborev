@@ -158,7 +158,7 @@ func TestPrepareMuseRunHomeFallback(t *testing.T) {
 	require.NotEmpty(t, configHome)
 	data, err := os.ReadFile(filepath.Join(configHome, "muse", "auth.json"))
 	require.NoError(t, err)
-	assert.Equal(t, `{"token":"example"}`, string(data))
+	assert.JSONEq(t, `{"token":"example"}`, string(data))
 	assert.FileExists(t, promptPath)
 }
 
