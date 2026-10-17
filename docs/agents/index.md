@@ -345,10 +345,9 @@ required MCP servers in its settings. An unavailable server fails the review
 until you fix that setting. Fix and refine pass `--yolo`. Setting
 `allow_unsafe_agents = true` also enables that mode for reviews. Planning always
 uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
-`-c managed_hooks_path=null` to clear user and managed hooks for the run. Muse
-1.4.10 has no per-run switch for project hooks, so if you have trusted a
-repository in Muse, its `.muse/hooks.json` hooks still run during reviews;
-enable `isolate_reviews` to run reviews in a separate checkout.
+`-c managed_hooks_path=null` to clear user and managed hooks for the run.
+Reviews and planning run with a private copy of the Muse login and settings and
+without saved workspace trust, so project `.muse/hooks.json` hooks don't run.
 
 Muse has no session resume or rebuttal support. Muse has no structured-output
 (schema) review or classification support.

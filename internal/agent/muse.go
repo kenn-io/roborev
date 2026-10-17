@@ -2,7 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -70,7 +75,7 @@ func (a *MuseAgent) PlanningCommandLine() string {
 
 func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Muse requires a real file for prompts that exceed argv limits.
-	promptPath, cleanup, err := createPromptFile("muse", prompt)
+	promptPath, env, cleanup, err := prepareMuseRun(prompt, effectiveAgentic(ctx, a.Agentic))
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +83,7 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "muse", Command: a.Command,
 		Args: a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath),
-		Dir:  repoPath, Output: output, StreamStderr: true, DrainStdout: true,
+		Dir:  repoPath, Env: env, Output: output, StreamStderr: true, DrainStdout: true,
 		Parse: parseAntigravityOutput,
 	})
 	if err != nil {
@@ -94,6 +99,41 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		return "No review output generated", nil
 	}
 	return result.Result, nil
+}
+
+// prepareMuseRun writes the prompt file. Non-agentic runs also get a private
+// XDG_CONFIG_HOME holding only the Muse login and settings, so saved workspace
+// trust, and the project hooks it enables, don't apply.
+func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), error) {
+	promptPath, cleanupPrompt, err := createPromptFile("muse", prompt)
+	if err != nil || agentic {
+		return promptPath, nil, cleanupPrompt, err
+	}
+	src := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "muse")
+	if os.Getenv("XDG_CONFIG_HOME") == "" {
+		home, _ := os.UserHomeDir()
+		src = filepath.Join(home, ".config", "muse")
+	}
+	dir, err := os.MkdirTemp("", "roborev-muse-config-*")
+	if err != nil {
+		cleanupPrompt()
+		return "", nil, nil, fmt.Errorf("create muse config dir: %w", err)
+	}
+	cleanup := func() { cleanupPrompt(); _ = os.RemoveAll(dir) }
+	err = os.Mkdir(filepath.Join(dir, "muse"), 0o700)
+	for _, name := range []string{"auth.json", "settings.json"} {
+		data, readErr := os.ReadFile(filepath.Join(src, name))
+		if err == nil && readErr == nil {
+			err = os.WriteFile(filepath.Join(dir, "muse", name), data, 0o600)
+		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
+			err = readErr
+		}
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
+	}
+	return promptPath, append(os.Environ(), "XDG_CONFIG_HOME="+dir), cleanup, nil
 }
 
 func init() { Register(NewMuseAgent("")) }
