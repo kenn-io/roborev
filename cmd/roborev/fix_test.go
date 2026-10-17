@@ -4849,10 +4849,10 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 
 func TestCoreActionFixReadAndCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "no change"} {
+		for _, outcome := range []string{"commit", "quiet commit", "no change"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
-				cliOutputIsTerminal = func(io.Writer) bool { return true }
+				cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stdout }
 				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 				before := repo.HeadSHA()
@@ -4873,36 +4873,53 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 					repo.CommitFile("fixed.txt", repo.Run("rev-parse", "HEAD"), "Fix review finding")
 					return "Fixed", nil
 				}}
-				cmd, output := newTestCmd(t)
+				cmd, _ := newTestCmd(t)
 				cmd.SetContext(t.Context())
 				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
-				opts := fixOptions{agentName: "test", quiet: outcome == "commit", classify: agent.ClassifyLimit}
+				opts := fixOptions{agentName: "test", quiet: outcome == "quiet commit", classify: agent.ClassifyLimit}
 				var err error
-				if batch {
-					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-					err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
-				} else {
-					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
-				}
+				output, _ := captureStdoutStderr(t, func() {
+					cmd.SetOut(os.Stdout)
+					if batch {
+						roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+						err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
+					} else {
+						err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
+					}
+				})
 				require.NoError(t, err)
-				if outcome == "commit" {
+				if outcome != "no change" {
 					assert.NotEqual(t, before, repo.HeadSHA())
 				}
 				waitCLIUse()
 				posts := rec.telemetryPosts()
-				count, event := 1, "review_viewed"
+				if outcome == "quiet commit" {
+					assert.Empty(t, output)
+					assert.Empty(t, posts)
+					return
+				}
+				assert.Contains(t, output, "Finding")
+				events := []string{"review_viewed"}
 				if batch {
-					count = 2
+					events = append(events, "review_viewed")
 				}
 				if outcome == "commit" {
-					event = "finding_fixed"
-				} else {
-					assert.Contains(t, output.String(), "Finding")
+					events = append(events, "finding_fixed")
+					if batch {
+						events = append(events, "finding_fixed")
+					}
 				}
-				require.Len(t, posts, count)
+				require.Len(t, posts, len(events))
+				var actualEvents []string
 				for _, post := range posts {
-					assert.JSONEq(t, `{"event":"`+event+`","properties":{"surface":"cli"}}`, post.body)
+					var body struct {
+						Event string `json:"event"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(post.body), &body))
+					actualEvents = append(actualEvents, body.Event)
+					assert.JSONEq(t, `{"event":"`+body.Event+`","properties":{"surface":"cli"}}`, post.body)
 				}
+				assert.ElementsMatch(t, events, actualEvents)
 			})
 		}
 	}

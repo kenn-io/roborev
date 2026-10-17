@@ -4,9 +4,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"sync/atomic"
 	"testing"
@@ -116,12 +116,15 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
-	for _, committed := range []bool{false, true} {
-		t.Run(fmt.Sprint("committed=", committed), func(t *testing.T) {
+	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
+		t.Run(outcome, func(t *testing.T) {
+			committed := outcome != "no change"
+			quiet := outcome == "quiet commit"
 			resetCLIUse(t)
-			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stdout }
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			before := repo.HeadSHA()
 			ts, state := newMockServer(t, MockServerOpts{
 				JobIDStart:     99,
 				ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
@@ -148,18 +151,29 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 				}
 				return "Done", nil
 			}})
-			cmd, output := newTestCmd(t)
+			cmd, _ := newTestCmd(t)
 			cmd.SetContext(t.Context())
-			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast"}
-			err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
+			opts := analyzeOptions{agentName: name, fix: true, fixAgent: name, reasoning: "fast", quiet: quiet}
+			var err error
+			output, _ := captureStdoutStderr(t, func() {
+				cmd.SetOut(os.Stdout)
+				err = runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analyze.GetType("refactor"), opts)
+			})
 			require.NoError(t, err)
+			if committed {
+				assert.NotEqual(t, before, repo.HeadSHA())
+			}
 			assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
 			assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
 			assert.Equal(t, int32(1), atomic.LoadInt32(&state.CloseCount))
-			assert.Contains(t, output.String(), "CODE SMELLS")
-			assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), output.String())
+			if quiet {
+				assert.Empty(t, output)
+			} else {
+				assert.Contains(t, output, "CODE SMELLS")
+				assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), output)
+			}
 			waitCLIUse()
-			if committed {
+			if committed && !quiet {
 				require.Len(t, bodies, 1)
 				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, bodies[0])
 			} else {

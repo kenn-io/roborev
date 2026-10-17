@@ -1270,7 +1270,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	// Enqueue review for fix commit
 	if result.CommitCreated {
-		reportCLIAction(cmd, telemetry.EventFindingFixed)
+		if !opts.quiet {
+			reportCLIAction(cmd, telemetry.EventFindingFixed)
+		}
 		if err := enqueueIfNeeded(ctx, addr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 		}
@@ -1637,7 +1639,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 
 		// Enqueue review for fix commit
 		if result.CommitCreated {
-			reportCLIAction(cmd, telemetry.EventFindingFixed)
+			if !opts.quiet {
+				reportCLIAction(cmd, telemetry.EventFindingFixed)
+			}
 			if enqErr := enqueueIfNeeded(ctx, batchAddr, roots.worktreeRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}

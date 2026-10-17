@@ -99,6 +99,34 @@ func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewRetriesAfterReconnect(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, outcome := range []string{"disabled", "delivery error"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newCoreActionReviewVisitFixture(t)
+				f.update(f.review())
+				f.transport.fail, f.transport.status = outcome == "delivery error", "disabled"
+				for range 3 {
+					f.update(tea.KeyPressMsg{Code: '0'})
+				}
+				require.Len(t, f.transport.events, 2)
+				f.update(reconnectMsg{err: errors.New("still disconnected")})
+				f.update(tea.KeyPressMsg{Code: '0'})
+				require.Len(t, f.transport.events, 2)
+				f.transport.fail, f.transport.status = false, "queued"
+				f.update(reconnectMsg{endpoint: f.m.endpoint})
+				require.Len(t, f.transport.events, 2)
+				f.update(tea.KeyPressMsg{Code: '0'})
+				require.Len(t, f.transport.events, 3)
+				f.update(tea.KeyPressMsg{Code: '0'})
+				assert.Len(t, f.transport.events, 3)
+			})
+		})
+	}
+}
+
+//nolint:paralleltest // telemetry environment variables
 func TestCoreActionPendingReviewOpen(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "fix output", "next day"} {

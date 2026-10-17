@@ -2216,6 +2216,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, nil
 	}
+	m.reviewReadAttempts = 0
 
 	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
