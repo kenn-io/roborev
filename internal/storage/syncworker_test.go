@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -203,46 +204,27 @@ func testSyncConfig() config.SyncConfig {
 func TestOutcomeSyncConnectionRetries(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		worker := NewSyncWorker(nil, config.SyncConfig{Enabled: true, Interval: "1h"})
+		worker := NewSyncWorker(nil, testSyncConfig())
 		var reasons []string
-		attempts := make(chan string, 10)
 		worker.SetAfterFailure(func(reason string) {
 			require.True(t, worker.mu.TryLock())
 			worker.mu.Unlock()
-			require.True(t, worker.syncMu.TryLock())
-			worker.syncMu.Unlock()
-			require.True(t, worker.connectMu.TryLock())
-			worker.connectMu.Unlock()
 			reasons = append(reasons, reason)
-			attempts <- reason
 		})
 		require.NoError(t, worker.Start())
 		synctest.Wait()
+		for range 3 {
+			_, err := worker.SyncNow()
+			require.Error(t, err)
+		}
 		assert.Equal(t, []string{"connect"}, reasons)
-		require.Equal(t, "connect", <-attempts)
-		require.Equal(t, "connect", <-attempts)
-		synctest.Wait()
-		assert.Equal(t, []string{"connect", "connect"}, reasons)
-		_, err := worker.SyncNow()
-		require.Error(t, err)
-		assert.Equal(t, []string{"connect", "connect", "connect"}, reasons)
 		worker.Stop()
-		time.Sleep(time.Hour)
-		assert.Len(t, reasons, 3)
-		require.NoError(t, worker.FinalPush())
-		assert.Len(t, reasons, 3)
 	})
-	disabled := NewSyncWorker(nil, config.SyncConfig{})
-	disabled.SetAfterFailure(func(string) { t.Fatal("disabled sync reported a failure") })
-	require.Error(t, disabled.Start())
-	_, err := disabled.SyncNow()
-	require.Error(t, err)
 }
 
-func TestOutcomeSyncPushAndPullFailures(t *testing.T) {
+func TestOutcomeSyncOutages(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
-	// A closed pool fails immediately, without contacting a PostgreSQL server.
 	pool, err := pgxpool.New(t.Context(), "postgres://test@127.0.0.1:1/test")
 	require.NoError(t, err)
 	pool.Close()
@@ -250,35 +232,27 @@ func TestOutcomeSyncPushAndPullFailures(t *testing.T) {
 	worker.pgPool = &PgPool{pool: pool}
 	worker.running = true
 	var reasons []string
-	worker.SetAfterFailure(func(reason string) {
-		require.True(t, worker.syncMu.TryLock())
-		worker.syncMu.Unlock()
-		reasons = append(reasons, reason)
-	})
-	// With no pending rows the push succeeds and the pull fails.
-	_, err = worker.SyncNow()
-	require.ErrorContains(t, err, "pull:")
-	assert.Equal(t, []string{"pull"}, reasons)
-	require.NoError(t, worker.FinalPush())
-	assert.Equal(t, []string{"pull"}, reasons)
-	// Job preparation failures keep the worker's existing best-effort result.
+	worker.SetAfterFailure(func(reason string) { reasons = append(reasons, reason) })
+	worker.notifyFailure("pull", context.Canceled)
+	// Best-effort row failures return success and leave later outages reportable.
 	_, err = h.db.Exec(`UPDATE repos SET identity = 'github.com/example/outcomes' WHERE id = ?`, h.repo.ID)
 	require.NoError(t, err)
-	for _, sha := range []string{"first", "second"} {
-		job := h.createPendingJob(sha)
-		require.NoError(t, h.db.CancelJob(job.ID))
-	}
+	job := h.createPendingJob("first")
+	require.NoError(t, h.db.CancelJob(job.ID))
 	require.NoError(t, worker.FinalPush())
-	assert.Equal(t, []string{"pull", "push"}, reasons)
 	require.NoError(t, worker.FinalPush())
-	assert.Equal(t, []string{"pull", "push", "push"}, reasons)
-	_, err = worker.SyncNow()
-	require.ErrorContains(t, err, "pull:")
-	assert.Equal(t, []string{"pull", "push", "push", "pull"}, reasons)
+	assert.Empty(t, reasons)
 	require.ErrorContains(t, worker.doSync(), "pull:")
-	assert.Equal(t, []string{"pull", "push", "push", "pull", "pull"}, reasons)
-	// Propagated push errors count once, too.
-	require.NoError(t, h.db.Close())
-	require.ErrorContains(t, worker.doSync(), "push:")
-	assert.Equal(t, []string{"pull", "push", "push", "pull", "pull", "push"}, reasons)
+	require.ErrorContains(t, worker.doSync(), "pull:")
+	assert.Equal(t, []string{"pull"}, reasons)
+	// Connect and final push success do not end an outage; cancellation leaves it alone.
+	worker.notifyFailure("connect", nil)
+	require.NoError(t, worker.FinalPush())
+	worker.notifyFailure("pull", context.Canceled)
+	require.ErrorContains(t, worker.doSync(), "pull:")
+	assert.Equal(t, []string{"pull"}, reasons)
+	// A completed push-and-pull cycle re-arms the callback.
+	worker.notifyFailure("pull", nil)
+	require.ErrorContains(t, worker.doSync(), "pull:")
+	assert.Equal(t, []string{"pull", "pull"}, reasons)
 }

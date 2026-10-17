@@ -34,6 +34,7 @@ func clearCLIUseState() {
 	cliUseOnce = sync.Once{}
 	cliUseState.Store(nil)
 	cliUseAgent = false
+	cliErrorReported.Store(false)
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.

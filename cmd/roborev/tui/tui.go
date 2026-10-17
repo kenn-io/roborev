@@ -145,7 +145,6 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	reviewVisitJobID     int64
-	failedReviewReported string
 	reviewVisitDay       string
 	reviewInputJobID     int64
 	screenDay            string   // UTC day that screensSent covers
@@ -255,9 +254,6 @@ type model struct {
 	flashExpiresAt time.Time
 	flashView      viewKind // View where flash was triggered (only show in same view)
 	flashWarning   bool
-
-	flashErrorKind    string
-	paneErrorReported string
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -1316,7 +1312,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if rm, ok := result.(model); ok {
 		rm = rm.normalizeSplitState()
-		cmd = tea.Batch(cmd, rm.reportVisibleErrors(m))
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles
 		// whatever the selected job's state is by now: restart the tail if

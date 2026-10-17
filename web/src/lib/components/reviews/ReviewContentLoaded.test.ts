@@ -40,7 +40,7 @@ it("keeps the failure reason visible after the rich renderer loads", async () =>
     },
   );
   vi.stubGlobal("cancelIdleCallback", vi.fn());
-  render(ReviewContent, { pageVisible: true });
+  render(ReviewContent);
 
   await state.loaded.promise;
   await tick();

@@ -602,6 +602,9 @@ func analysisWorkflow(label string) string {
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
 func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) (resultErr error) {
+	defer func() {
+		reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+	}()
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -656,15 +659,8 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	headBefore, headErr := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 	canVerifyCommits := headErr == nil
 
-	started := false
-	defer func() {
-		if started {
-			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-		}
-	}()
-
 	// Run the fix agent locally in agentic mode
-	if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, fixPrompt, opts.quiet, func() { started = true }); err != nil {
+	if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, fixPrompt, opts.quiet); err != nil {
 		return fmt.Errorf("fix agent failed: %w", err)
 	}
 
@@ -686,7 +682,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 				}
 
 				commitPrompt := buildCommitPromptWithMetadata(analysisType, metadata)
-				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet, nil); err != nil {
+				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
 					if !opts.quiet {
 						reportCLIError(cmd, telemetry.EventFindingFixed, err)
 						cmd.Printf("\nWarning: commit agent failed: %v\n", err)
@@ -836,7 +832,7 @@ func buildCommitPromptWithMetadata(
 }
 
 // runFixAgent runs an agent locally in agentic mode to apply fixes
-func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prompt string, quiet bool, onStart func()) error {
+func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prompt string, quiet bool) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -897,9 +893,6 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		ctx = context.Background()
 	}
 
-	if onStart != nil {
-		onStart()
-	}
 	_, err = a.Review(ctx, repoPath, "fix", prompt, out)
 	if fmtr != nil {
 		fmtr.Flush()

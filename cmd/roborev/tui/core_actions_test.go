@@ -183,7 +183,9 @@ func TestCoreActionExplicitClose(t *testing.T) {
 				}
 				if r.URL.Path == "/api/telemetry/events" {
 					body, _ := io.ReadAll(r.Body)
-					bodies = append(bodies, string(body))
+					if strings.Contains(string(body), `"event":"review_closed"`) {
+						bodies = append(bodies, string(body))
+					}
 				}
 				w.WriteHeader(http.StatusAccepted)
 			}))
@@ -232,7 +234,9 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 				if r.URL.Path == "/api/telemetry/events" {
 					body, err := io.ReadAll(r.Body)
 					assert.NoError(t, err)
-					bodies = append(bodies, string(body))
+					if strings.Contains(string(body), `"event":"finding_fixed"`) {
+						bodies = append(bodies, string(body))
+					}
 					w.WriteHeader(http.StatusAccepted)
 					return
 				}
@@ -269,198 +273,55 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 //nolint:paralleltest // telemetry opt-out variables are process-wide
-func TestOutcomeVisibleTUIErrors(t *testing.T) {
+func TestOutcomeTUIActions(t *testing.T) {
 	enableTelemetryEnv(t)
-
-	t.Run("review fetch", func(t *testing.T) {
+	t.Run("close failure survives help without repeating", func(t *testing.T) {
+		f := newCoreActionReviewVisitFixture()
+		f.m.pendingClosed[2] = pendingState{seq: 1}
+		f.update(closedResultMsg{jobID: 2, seq: 1, err: errors.New("close unavailable")})
+		require.Len(t, f.transport.events, 1)
+		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`, f.transport.events[0])
+		f.update(tea.KeyPressMsg{Code: '?'})
+		f.update(tea.KeyPressMsg{Code: 'q'})
+		f.update(displayTickMsg{})
+		assert.Len(t, f.transport.events, 1)
+	})
+	t.Run("programmatic close", func(t *testing.T) {
+		f := newCoreActionReviewVisitFixture()
+		f.m.pendingClosed[2] = pendingState{seq: 1}
+		f.update(closedResultMsg{jobID: 2, seq: 1, programmatic: true, err: errors.New("close unavailable")})
+		assert.Empty(t, f.transport.events)
+	})
+	t.Run("selection fetch and explicit open", func(t *testing.T) {
 		f := newCoreActionReviewVisitFixture()
 		f.m.currentReview = nil
-		failure := reviewFollowErrMsg{jobID: f.m.selectedJobID, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, attempt: f.m.jobAttemptGen[f.m.selectedJobID], err: errors.New("unavailable")}
+		failure := reviewErrMsg{jobID: f.m.selectedJobID, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, err: errors.New("unavailable")}
+		f.update(failure)
+		assert.Empty(t, f.transport.events)
+		f.m.pendingReviewOpenJobID = f.m.selectedJobID
+		f.m.pendingReviewOpenOrigin = viewQueue
 		f.update(failure)
 		require.Len(t, f.transport.events, 1)
 		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
 		f.update(displayTickMsg{})
-		f.update(failure)
 		assert.Len(t, f.transport.events, 1)
-		f.m.splitDetailErr = nil
-		f.update(displayTickMsg{})
-		f.update(failure)
-		assert.Len(t, f.transport.events, 1)
-		f.update(f.review())
-		f.m.currentReview = nil
-		f.update(failure)
-		assert.Len(t, f.transport.events, 2)
-		// A superseded request cannot replace the visible error or report it again.
-		require.NotNil(t, f.m.dispatchReviewFollow(f.m.selectedJobID))
-		failure.err = errors.New("stale request failed")
-		f.update(failure)
-		require.ErrorContains(t, f.m.splitDetailErr, "unavailable")
-		assert.Contains(t, f.m.renderSplit(), "unavailable")
-		assert.NotContains(t, f.m.renderSplit(), "stale request failed")
-		assert.Len(t, f.transport.events, 2)
 	})
-
-	t.Run("apply patch", func(t *testing.T) {
+	t.Run("failed job navigation", func(t *testing.T) {
 		f := newCoreActionReviewVisitFixture()
-		f.m.currentView = viewTasks
-		f.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed}}
-		f.update(applyPatchResultMsg{err: errors.New("apply failed")})
-		require.Len(t, f.transport.events, 1)
-		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[0])
+		f.update(tea.KeyPressMsg{Code: 'k'})
+		f.update(tea.KeyPressMsg{Code: 'j'})
+		f.update(tea.KeyPressMsg{Code: 'k'})
 		f.update(displayTickMsg{})
-		assert.Len(t, f.transport.events, 1)
-		f.update(applyPatchResultMsg{err: errors.New("apply failed")})
-		assert.Len(t, f.transport.events, 2)
+		assert.Empty(t, f.transport.events)
 	})
-
-	t.Run("missing task log", func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture()
-		f.m.currentView = viewTasks
-		f.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed, Error: "agent unavailable"}}
-		f.m.fixSelectedIdx = 0
-		for range 2 {
-			f.update(tea.KeyPressMsg{Code: tea.KeyEnter})
-			require.Equal(t, viewLog, f.m.currentView)
-			f.update(logOutputMsg{seq: f.m.logFetchSeq, err: errNoLog})
-			require.Equal(t, viewTasks, f.m.currentView)
-			assert.Contains(t, f.m.renderTasksView(), "Job #87 failed: agent unavailable")
-			f.update(displayTickMsg{})
-		}
-		require.Len(t, f.transport.events, 2)
-		for _, event := range f.transport.events {
-			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, event)
-		}
-	})
-
-	t.Run("cached fix follow", func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture()
-		f.m = splitModel(withReview(splitTestReview()), withSelection(1, 2), withTasksEnabled(true))
-		f.m.endpoint = testEndpointFromURL("http://127.0.0.1:7373")
-		f.m.client = &http.Client{Transport: f.transport}
-		result, _ := f.m.handleFixKey()
-		f.m = result.(model)
-		require.True(t, f.m.reviewFixPanelPending)
-		f.m.dispatchReviewFollow(2)
-		for range 2 {
-			f.update(reviewFollowErrMsg{jobID: 2, gen: f.m.detailFollowGen, fetchSeq: f.m.reviewFetchSeq, err: errors.New("review unavailable")})
-		}
-		assert.Contains(t, f.m.renderSplit(), "Could not load review to fix job #2")
-		require.Len(t, f.transport.events, 1)
-		assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[0])
-		f.update(displayTickMsg{})
-		assert.Len(t, f.transport.events, 1)
-	})
-}
-
-//nolint:paralleltest // telemetry opt-out variables are process-wide
-func TestOutcomeFailedReviewLayouts(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, fullScreen := range []bool{false, true} {
-		t.Run(map[bool]string{false: "split", true: "full screen"}[fullScreen], func(t *testing.T) {
+	t.Run("patch actions", func(t *testing.T) {
+		for _, failure := range []tea.Msg{fixTriggerResultMsg{err: errors.New("unavailable")}, patchMsg{err: errors.New("unavailable")}, applyPatchResultMsg{err: errors.New("unavailable")}} {
 			f := newCoreActionReviewVisitFixture()
-			f.m.selectedJobID = 1
-			f.m.currentReview = nil
-			if fullScreen {
-				f.m.currentView = viewReview
-				f.m.layout = splitlayout.Stacked
-			}
-			job, ok := f.m.selectedJob()
-			require.True(t, ok)
-			require.Equal(t, storage.JobStatusFailed, job.Status)
-			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
-			f.update(displayTickMsg{})
+			f.update(failure)
 			require.Len(t, f.transport.events, 1)
-			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, f.transport.events[0])
 			f.update(displayTickMsg{})
 			assert.Len(t, f.transport.events, 1)
-			// A background job refresh can temporarily remove the cached review.
-			f.m.currentReview = nil
-			f.update(jobsMsg{jobs: f.m.jobs, seq: f.m.fetchSeq})
-			assert.Len(t, f.transport.events, 1)
-			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 1)
-			f.m.currentView = viewReview
-			f.m.layout = splitlayout.Stacked
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 1)
-			f.m.currentView = viewHelp
-			f.update(displayTickMsg{})
-			f.m.jobAttemptGen[job.ID]++
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 1)
-			if fullScreen {
-				f.m.currentView = viewReview
-			} else {
-				f.m.currentView = viewQueue
-				f.m.layout = splitlayout.Split
-			}
-			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 2)
-			job.Status = storage.JobStatusDone
-			f.update(jobsMsg{jobs: f.m.jobs, seq: f.m.fetchSeq})
-			f.update(f.review())
-			job.Status = storage.JobStatusFailed
-			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
-			f.m.currentView = viewReview
-			f.update(displayTickMsg{})
-			assert.Len(t, f.transport.events, 3)
-		})
-	}
-}
-
-//nolint:paralleltest // telemetry opt-out variables are process-wide
-func TestOutcomeFlashVisibility(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, distraction := range []bool{false, true} {
-		t.Run(map[bool]string{false: "short terminal", true: "distraction free"}[distraction], func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				f := newCoreActionReviewVisitFixture()
-				f.m.layout = splitlayout.Stacked
-				f.m.height = 10
-				if distraction {
-					f.m.height = 40
-					f.m.distractionFree = true
-				}
-				f.m.pendingClosed[2] = pendingState{seq: 1}
-				f.update(closedResultMsg{jobID: 2, seq: 1, err: errors.New("close unavailable")})
-				assert.NotContains(t, f.m.renderQueueView(), "close unavailable")
-				assert.Empty(t, f.transport.events)
-				f.m.height = 40
-				f.m.distractionFree = false
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Contains(t, f.m.renderQueueView(), "close unavailable")
-				require.Len(t, f.transport.events, 1)
-				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`, f.transport.events[0])
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Len(t, f.transport.events, 1)
-			})
-		})
-	}
-	t.Run("delayed tasks help", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			delayed := newCoreActionReviewVisitFixture()
-			delayed.m.currentView = viewQueue
-			delayed.update(patchMsg{err: errors.New("patch unavailable")})
-			assert.Empty(t, delayed.transport.events)
-			time.Sleep(time.Second)
-			delayed.m.currentView = viewTasks
-			delayed.update(tea.KeyPressMsg{Code: '0'})
-			assert.NotContains(t, delayed.m.renderTasksView(), "patch unavailable")
-			assert.Empty(t, delayed.transport.events)
-			delayed.m.fixJobs = []storage.ReviewJob{{ID: 87, Status: storage.JobStatusFailed}}
-			delayed.m.fixShowHelp = true
-			delayed.update(tea.KeyPressMsg{Code: '0'})
-			assert.NotContains(t, delayed.m.renderTasksView(), "patch unavailable")
-			assert.Empty(t, delayed.transport.events)
-			delayed.m.fixShowHelp = false
-			delayed.update(tea.KeyPressMsg{Code: '0'})
-			assert.Contains(t, delayed.m.renderTasksView(), "patch unavailable")
-			require.Len(t, delayed.transport.events, 1)
-			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"finding_fixed"}}`, delayed.transport.events[0])
-			delayed.update(tea.KeyPressMsg{Code: '0'})
-			assert.Len(t, delayed.transport.events, 1)
-		})
+		}
 	})
 }

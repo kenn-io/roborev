@@ -1046,6 +1046,7 @@ func (m model) handleReviewMsg(
 // m.splitDetailErr so renderDetailPane can surface it instead of leaving
 // the "Loading review..." placeholder stuck forever.
 func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.Cmd) {
+	var actionCmd tea.Cmd
 	m.releaseReconcileFetch(msg.fetchSeq)
 	// jobID and gen are checked together, mirroring handleReviewMsg's
 	// success-path rejection exactly: a stale error from a fetch
@@ -1158,7 +1159,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not load review to fix job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, m.currentView,
 		)
-		m.flashErrorKind = telemetry.EventFindingFixed
+		actionCmd = m.reportError(telemetry.EventFindingFixed)
 		// The 'F' fetch is an ordinary dispatch, so dispatchReviewFetch
 		// armed the plain open intent alongside this panel. The panel's
 		// terminal failure resolves BOTH: left armed, the block below
@@ -1227,9 +1228,9 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		m.flashErrorKind = telemetry.EventReviewViewed
+		actionCmd = m.reportError(telemetry.EventReviewViewed)
 	}
-	return m, nil
+	return m, actionCmd
 }
 
 // handleReviewErrMsg processes a failed ORDINARY (non-follow) review fetch
@@ -1319,7 +1320,7 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		m.flashErrorKind = telemetry.EventReviewViewed
+		return m, tea.Batch(reconnectCmd, m.reportError(telemetry.EventReviewViewed))
 	}
 	return m, reconnectCmd
 }
@@ -1466,7 +1467,7 @@ func (m model) handleLogOutputMsg(
 				m.logStreaming = false
 				return m, nil
 			}
-			flash, errorKind := "No log available for this job", ""
+			flash := "No log available for this job"
 			if job != nil &&
 				job.Status == storage.JobStatusFailed &&
 				job.Error != "" {
@@ -1474,12 +1475,8 @@ func (m model) handleLogOutputMsg(
 					"Job #%d failed: %s",
 					m.logJobID, job.Error,
 				)
-				if m.logFromView == viewTasks {
-					errorKind = telemetry.EventFindingFixed
-				}
 			}
 			m.setFlash(flash, 5*time.Second, m.logFromView)
-			m.flashErrorKind = errorKind
 			m.currentView = m.logFromView
 			m.logStreaming = false
 			return m, nil
@@ -1759,7 +1756,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 			}
 			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
 			if !msg.programmatic {
-				m.flashErrorKind = telemetry.EventReviewClosed
+				actionCmd = m.reportError(telemetry.EventReviewClosed)
 			}
 			m.err = msg.err
 		}
@@ -2510,7 +2507,7 @@ func (m model) handleFixTriggerResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Fix failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
-		m.flashErrorKind = telemetry.EventFindingFixed
+		return m, m.reportError(telemetry.EventFindingFixed)
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
@@ -2520,7 +2517,6 @@ func (m model) handleFixTriggerResultMsg(
 		), 3*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
 	}
-	return m, nil
 }
 
 // handlePatchResultMsg processes patch fetch results.
@@ -2531,7 +2527,7 @@ func (m model) handlePatchResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Patch fetch failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
-		m.flashErrorKind = telemetry.EventFindingFixed
+		return m, m.reportError(telemetry.EventFindingFixed)
 	} else {
 		m.patchText = msg.patch
 		m.patchJobID = msg.jobID
@@ -2575,12 +2571,12 @@ func (m model) handleApplyPatchResultMsg(
 			)
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
-		m.flashErrorKind = telemetry.EventFindingFixed
+		actionCmd = tea.Batch(actionCmd, m.reportError(telemetry.EventFindingFixed))
 	} else if msg.err != nil {
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
-		m.flashErrorKind = telemetry.EventFindingFixed
+		actionCmd = tea.Batch(actionCmd, m.reportError(telemetry.EventFindingFixed))
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Patch from job #%d applied and committed",

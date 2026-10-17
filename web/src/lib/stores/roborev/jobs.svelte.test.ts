@@ -1754,81 +1754,28 @@ describe("createJobsStore panel expansion", () => {
   });
 });
 
-it("reports completed explicit empty searches, including retries, and ignores refreshes and superseded requests", async () => {
-  const events: unknown[] = [];
-  const fetch = vi
+it("reports committed empty searches once and ignores partial input and refreshes", async () => {
+  const report = vi
     .spyOn(globalThis, "fetch")
-    .mockImplementation(async (input) => {
-      const request = input as Request;
-      if (request.url.endsWith("/api/telemetry/events"))
-        events.push(await request.json());
-      return new Response("{}", {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
-  const pending = Promise.withResolvers<{
-    jobs: ReviewJob[];
-    has_more: boolean;
-  }>();
+    .mockResolvedValue(new Response("{}", { status: 202 }));
   const listJobs = vi.fn().mockResolvedValue({ jobs: [], has_more: false });
   const store = createJobsStore({
     api: { listJobs } as never,
     navigate: vi.fn(),
   });
-  store.setFilter("search", "missing");
-  await vi.waitFor(() => expect(events).toHaveLength(1));
-  store.loadJobs(true);
-  await vi.waitFor(() => expect(events).toHaveLength(2));
-  store.setFilter("status", "failed");
-  await vi.waitFor(() =>
-    expect(listJobs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ status: "failed" }),
-      expect.anything(),
-    ),
-  );
-  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
-  store.setRepoBranchFilter("example", "main");
-  await vi.waitFor(() =>
-    expect(listJobs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ branch: "main" }),
-      expect.anything(),
-    ),
-  );
-  await vi.waitFor(() => expect(store.isLoading()).toBe(false));
-  expect(events).toHaveLength(2);
+  store.setFilter("search", "ab");
   await loadJobs(store);
-  expect(events).toHaveLength(2);
-  listJobs.mockReturnValueOnce(pending.promise);
-  store.setFilter("search", "old");
-  await vi.waitFor(() =>
-    expect(listJobs).toHaveBeenCalledWith(
-      expect.objectContaining({ git_ref: "old" }),
-      expect.anything(),
-    ),
-  );
-  listJobs.mockResolvedValueOnce({ jobs: [makeJob(42)], has_more: false });
-  store.setFilter("search", "new");
-  await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
-  pending.resolve({ jobs: [], has_more: false });
+  store.setFilter("search", "abc");
   await loadJobs(store);
-  expect(events).toHaveLength(2);
-  listJobs.mockRejectedValueOnce(new Response("unavailable", { status: 500 }));
-  store.loadJobs();
-  await vi.waitFor(() => expect(store.getError()).toBeTruthy());
-  expect(events).toHaveLength(2);
-  listJobs.mockResolvedValue({ jobs: [], has_more: false });
-  store.setFilter("search", "  ");
-  await vi.waitFor(() => {
-    expect(listJobs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ git_ref: "  " }),
-      expect.anything(),
-    );
-    expect(store.isLoading()).toBe(false);
+  expect(report).not.toHaveBeenCalled();
+  store.commitSearch("abc");
+  await vi.waitFor(() => expect(report).toHaveBeenCalledTimes(1));
+  store.commitSearch("abc");
+  await loadJobs(store);
+  expect(report).toHaveBeenCalledTimes(1);
+  expect(await (report.mock.calls[0]![0] as Request).json()).toEqual({
+    event: "search_empty",
+    properties: { surface: "web" },
   });
-  expect(events).toEqual([
-    { event: "search_empty", properties: { surface: "web" } },
-    { event: "search_empty", properties: { surface: "web" } },
-  ]);
-  fetch.mockRestore();
+  report.mockRestore();
 });

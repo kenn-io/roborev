@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -16,7 +15,6 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
-	"go.kenn.io/roborev/internal/telemetry"
 )
 
 // Filter type constants used in filterStack and popFilter/pushFilter.
@@ -61,7 +59,6 @@ func keyRunes(msg tea.KeyMsg) []rune {
 
 // setFlash sets a flash message with the given duration and view.
 func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
-	m.flashErrorKind = ""
 	m.flashMessage = msg
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
@@ -69,7 +66,6 @@ func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
 }
 
 func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
-	m.flashErrorKind = ""
 	m.flashMessage = msg
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
@@ -77,12 +73,6 @@ func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
 }
 
 func (m model) renderFlash(view viewKind) string {
-	if view != viewQueue && view != viewReview && view != viewTasks {
-		return ""
-	}
-	if view == viewTasks && (m.fixShowHelp || len(m.fixJobs) == 0) {
-		return ""
-	}
 	if m.flashMessage == "" || !time.Now().Before(m.flashExpiresAt) || m.flashView != view {
 		return ""
 	}
@@ -90,50 +80,6 @@ func (m model) renderFlash(view viewKind) string {
 		return warningFlashStyle.Render(m.flashMessage)
 	}
 	return flashStyle.Render(m.flashMessage)
-}
-
-// reportVisibleErrors keeps separate occurrences for flashes, pane fetches,
-// and failed reviews, whose loading and visibility lifetimes differ.
-func (m *model) reportVisibleErrors(previous model) tea.Cmd {
-	var cmd tea.Cmd
-	attempt := fmt.Sprintf("%d:%d:", m.selectedJobID, m.jobAttemptGen[m.selectedJobID])
-	if m.selectedReviewLoaded() || !m.splitActive() || !strings.HasPrefix(m.paneErrorReported, attempt) {
-		m.paneErrorReported = ""
-	}
-	paneOccurrence := ""
-	if m.splitDetailErr != nil {
-		paneOccurrence = attempt + m.splitDetailErr.Error()
-	}
-	flashFailure := m.flashErrorKind != "" && m.renderFlash(m.currentView) != "" &&
-		(m.currentView != viewQueue || m.splitActive() || !m.queueCompact())
-	if flashFailure {
-		cmd = tea.Batch(cmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: m.flashErrorKind}))
-		if m.flashErrorKind == telemetry.EventReviewViewed && m.splitDetailErr != nil {
-			m.paneErrorReported = paneOccurrence
-		}
-		m.flashErrorKind = ""
-	}
-	if job, selected := m.selectedJob(); selected && m.splitActive() && job.Status == storage.JobStatusDone && !m.selectedReviewLoaded() && m.splitDetailErr != nil && m.paneErrorReported != paneOccurrence {
-		cmd = tea.Batch(cmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-		m.paneErrorReported = paneOccurrence
-	}
-	failedOccurrence := ""
-	if (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.Job != nil && m.currentReview.Job.Status == storage.JobStatusFailed {
-		job := m.currentReview.Job
-		failedOccurrence = fmt.Sprintf("%d:%d:%v:%v", job.ID, m.jobAttemptGen[job.ID], job.StartedAt, job.FinishedAt)
-	}
-	if failedOccurrence != "" && failedOccurrence != m.failedReviewReported {
-		cmd = tea.Batch(cmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-	}
-	// A cleared review can temporarily return to the queue while reloading.
-	leftReview := m.currentView != viewReview && !m.splitActive() &&
-		(m.currentView != viewQueue || (previous.currentView != viewQueue && previous.currentReview != nil))
-	if failedOccurrence != "" {
-		m.failedReviewReported = failedOccurrence
-	} else if job, selected := m.selectedJob(); !selected || leftReview || job.Status != storage.JobStatusFailed || !strings.HasPrefix(m.failedReviewReported, attempt) {
-		m.failedReviewReported = ""
-	}
-	return cmd
 }
 
 // selectedJob returns the currently selected job (a panel parent / standalone

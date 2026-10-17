@@ -1,4 +1,4 @@
-import { reportCoreAction, type ErrorKind } from "../../utils/app-opened";
+import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
@@ -42,8 +42,7 @@ export interface ReviewStoreOptions {
   };
   runtime: AppRuntime;
   owner: string;
-  onError?: (message: string, kind?: ErrorKind) => void;
-  onErrorCleared?: (kind: ErrorKind) => void;
+  onError?: (msg: string) => void;
   refreshJobs?: () => Effect.Effect<void, never, RoborevWorkflow>;
 }
 
@@ -64,6 +63,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
+  let loadAttempted = false;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
@@ -153,7 +153,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       responses = [...authority.responses];
       reviewNotFound = authority.reviewNotFound;
       storeError = null;
-      opts.onErrorCleared?.("review_viewed");
     });
 
   const reconcileReview = (jobId: number) =>
@@ -163,6 +162,8 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
+      const reportFailure = !loadAttempted;
+      loadAttempted = true;
       const workflow = yield* RoborevWorkflow;
       return yield* workflow.review(
         opts.owner,
@@ -183,7 +184,8 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
               storeError = "Failed to load review";
-              opts.onError?.("Failed to load review", "review_viewed");
+              opts.onError?.("Failed to load review");
+              if (reportFailure) reportErrorShown("review_viewed");
             }),
           ),
           Effect.ensuring(
@@ -198,10 +200,14 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     });
 
   function loadReview(jobId: number): void {
+    loadAttempted = false;
     opts.runtime.runCommand(loadReviewEffect(jobId), {
       operation: "load Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: () => opts.onError?.("Failed to load review", "review_viewed"),
+      onFailure: () => {
+        opts.onError?.("Failed to load review");
+        reportErrorShown("review_viewed");
+      },
     });
   }
 
@@ -234,12 +240,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               ),
             ),
           onAcknowledgedRefreshFailure: () =>
-            Effect.sync(() =>
+            Effect.sync(() => {
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
-                "review_closed",
-              ),
-            ),
+              );
+              reportErrorShown("review_closed");
+            }),
         })
         .pipe(
           Effect.tap(() =>
@@ -253,19 +259,20 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function closeReview(jobId: number): void {
     if (selectedJobId !== jobId || review?.job_id !== jobId) {
-      opts.onError?.("Failed to close review", "review_closed");
+      opts.onError?.("Failed to close review");
+      reportErrorShown("review_closed");
       return;
     }
-    opts.onErrorCleared?.("review_closed");
     const closed = !review.closed;
     opts.runtime.runCommand(closeReviewEffect(jobId, closed), {
       operation: "close Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: (failure) =>
+      onFailure: (failure) => {
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
-          "review_closed",
-        ),
+        );
+        reportErrorShown("review_closed");
+      },
     });
   }
 
@@ -373,10 +380,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
-    if (selectedJobId !== jobId) {
-      opts.onErrorCleared?.("review_viewed");
-      opts.onErrorCleared?.("review_closed");
-    }
+    if (selectedJobId !== jobId) loadAttempted = false;
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;

@@ -256,8 +256,7 @@ type fixOptions struct {
 	// agent.ClassifyLimit in the production cobra command's RunE; tests
 	// inject a stub to drive deterministic KindQuota / KindSession
 	// outcomes without depending on real agent error wording.
-	classify     agent.LimitClassifier
-	onAgentStart func()
+	classify agent.LimitClassifier
 }
 
 // agentLimitError is returned by the fix loop when the configured agent
@@ -342,7 +341,6 @@ type fixJobParams struct {
 	Classify agent.LimitClassifier
 
 	OnWarning func(error)
-	OnStart   func()
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -381,9 +379,6 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 			return nil, fmt.Errorf("resolve HEAD: %w", err)
 		}
 		// Unborn HEAD (empty repo) - run agent and check outcome
-		if params.OnStart != nil {
-			params.OnStart()
-		}
 		agentOutput, agentErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", fixPrompt, out)
 		if agentErr != nil {
 			return nil, fmt.Errorf("fix agent failed: %w", agentErr)
@@ -400,9 +395,6 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 		return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
 	}
 
-	if params.OnStart != nil {
-		params.OnStart()
-	}
 	agentOutput, agentErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", fixPrompt, out)
 	if agentErr != nil {
 		return nil, fmt.Errorf("fix agent failed: %w", agentErr)
@@ -1072,10 +1064,8 @@ func firstLine(s string) string {
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) (resultErr error) {
-	started := false
-	opts.onAgentStart = func() { started = true }
 	defer func() {
-		if started && !opts.planOnly {
+		if !opts.planOnly {
 			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
 		}
 	}()
@@ -1235,7 +1225,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Metadata:      metadata,
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
-		OnStart:       opts.onAgentStart,
 		OnWarning: func(err error) {
 			if !opts.quiet {
 				reportCLIError(cmd, telemetry.EventFindingFixed, err)
@@ -1409,10 +1398,8 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 // batches by prompt size and count, runs each batch as a single agent
 // invocation, and marks the jobs closed when done.
 func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) (resultErr error) {
-	started := false
-	opts.onAgentStart = func() { started = true }
 	defer func() {
-		if started && !opts.planOnly {
+		if !opts.planOnly {
 			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
 		}
 	}()
@@ -1541,7 +1528,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	}
 
 	for i, batch := range batches {
-		started = false
 		batchJobIDs := make([]int64, len(batch))
 		for j, e := range batch {
 			batchJobIDs[j] = e.jobID
@@ -1616,7 +1602,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			Metadata:      metadata,
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
-			OnStart:       opts.onAgentStart,
 			OnWarning: func(err error) {
 				if !opts.quiet {
 					reportCLIError(cmd, telemetry.EventFindingFixed, err)
@@ -1652,7 +1637,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 					)
 				}
 			}
-			if started && !opts.planOnly {
+			if !opts.planOnly {
 				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)

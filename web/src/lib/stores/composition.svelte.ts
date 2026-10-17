@@ -1,4 +1,3 @@
-import type { ErrorKind } from "../utils/app-opened";
 import { appPath } from "../base-path";
 import type { SessionCapabilities } from "../api/session";
 import type { OwnedAppRuntime } from "../runtime/runtime";
@@ -35,8 +34,7 @@ export interface ReviewStoreOptions {
   reviewApi?: NativeReviewStoreOptions["api"];
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
-  onError?: (message: string, kind?: ErrorKind) => void;
-  onErrorCleared?: (kind: ErrorKind) => void;
+  onError?: (message: string) => void;
   daemonInitiallyAvailable?: boolean;
 }
 
@@ -64,7 +62,6 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
     ...(options.reviewApi !== undefined && { api: options.reviewApi }),
     owner,
     refreshJobs: roborevJobs.loadJobsEffect,
-    onErrorCleared: options.onErrorCleared,
     ...shared,
   });
   const roborevLog = createLogStore({

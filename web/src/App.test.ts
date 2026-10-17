@@ -60,15 +60,14 @@ function applicationResponse(input: RequestInfo | URL): Response {
   return response(404);
 }
 
-function mountReviewRefresh(completed = false) {
+function mountReviewRefresh(completed = false, readFails = false) {
   history.replaceState(null, "", "/reviews/42");
   const fixture = {
     completed,
     closed: false,
     failed: false,
     reviewLoads: 0,
-    readFails: false,
-    hidden: false,
+    readFails,
     eventStream: undefined as
       | ReadableStreamDefaultController<Uint8Array>
       | undefined,
@@ -80,7 +79,6 @@ function mountReviewRefresh(completed = false) {
       );
     },
   };
-  vi.spyOn(document, "hidden", "get").mockImplementation(() => fixture.hidden);
   const selectedJob = () => ({
     id: 42,
     agent: "test",
@@ -504,82 +502,42 @@ describe("App", () => {
     expect(screen.getByText("Fresh review output")).toBeInTheDocument();
   });
 
-  test("reports review and close failures across background refreshes", async () => {
-    const fixture = mountReviewRefresh(true);
-    await screen.findByText("Fresh review output");
-    fixture.hidden = true;
-    await fireEvent(document, new Event("visibilitychange"));
-    fixture.readFails = true;
-    fixture.eventStream!.error(new Error("read failure"));
+  test("reports a failed user load once across refreshes and each failed close", async () => {
+    const fixture = mountReviewRefresh(false, true);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Failed to load review",
     );
-    expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
-    fixture.hidden = false;
-    await fireEvent(document, new Event("visibilitychange"));
     expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
       "review_viewed",
     );
-    let previousLoads = fixture.reviewLoads;
-    fixture.eventStream!.error(new Error("same read failure"));
+    const previousLoads = fixture.reviewLoads;
+    fixture.emit("review.completed");
     await vi.waitFor(() =>
       expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Failed to load review",
-    );
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
     fixture.readFails = false;
+    fixture.completed = true;
     fixture.emit("review.completed");
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-    );
-    fixture.readFails = true;
-    fixture.emit("review.completed");
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Failed to load review",
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
-    fixture.readFails = false;
-    fixture.emit("review.completed");
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-    );
+    await screen.findByText("Fresh review output");
     appOpened.reportErrorShown.mockClear();
-    await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Failed to close review",
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
-      "review_closed",
-    );
-    previousLoads = fixture.reviewLoads;
-    fixture.emit("review.completed");
-    await vi.waitFor(() =>
-      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to close review",
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
-    await vi.waitFor(() =>
-      expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2),
-    );
+    for (let count = 1; count <= 2; count++) {
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Close Review" }),
+      );
+      await vi.waitFor(() =>
+        expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(count),
+      );
+    }
+    expect(appOpened.reportErrorShown.mock.calls).toEqual([
+      ["review_closed"],
+      ["review_closed"],
+    ]);
     appOpened.reportErrorShown.mockClear();
     fixture.failed = true;
     fixture.emit("review.completed");
-    expect(await screen.findByText("Review failed")).toBeInTheDocument();
-    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
-      "review_viewed",
-    );
-    previousLoads = fixture.reviewLoads;
-    fixture.eventStream!.error(new Error("failed review reconnect"));
-    await vi.waitFor(() =>
-      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
-    );
-    expect(await screen.findByText("Review failed")).toBeInTheDocument();
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+    await screen.findByText("Review failed");
+    expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {

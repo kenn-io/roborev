@@ -20,6 +20,7 @@ type JobsStoreStub = {
   getFilterShowAutoDesign: () => boolean;
   getFilterRepo: () => string | undefined;
   getFilterBranch: () => string | undefined;
+  commitSearch: Mock<(value: string) => void>;
   setFilter: Mock<(key: string, value: string | boolean | undefined) => void>;
 };
 
@@ -53,6 +54,7 @@ describe("FilterBar", () => {
       getFilterShowAutoDesign: () => state.showAutoDesign,
       getFilterRepo: () => undefined,
       getFilterBranch: () => undefined,
+      commitSearch: vi.fn(),
       setFilter: vi.fn((key: string, value: string | boolean | undefined) => {
         if (key === "showAutoDesign") state.showAutoDesign = value === true;
       }),
@@ -80,6 +82,19 @@ describe("FilterBar", () => {
     await fireEvent.click(checkbox);
 
     expect(state.jobs?.setFilter).toHaveBeenCalledWith("showAutoDesign", true);
+  });
+
+  it("commits the settled value while partial typing stays debounced", async () => {
+    vi.useFakeTimers();
+    render(FilterBarTestHarness, { props: { runtime } });
+    const input = screen.getByRole("searchbox", { name: "Search by ref" });
+    await fireEvent.input(input, { target: { value: "ab" } });
+    await vi.advanceTimersByTimeAsync(300);
+    await fireEvent.input(input, { target: { value: "abc" } });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(state.jobs?.commitSearch).not.toHaveBeenCalled();
+    await fireEvent.change(input);
+    expect(state.jobs?.commitSearch).toHaveBeenCalledExactlyOnceWith("abc");
   });
 
   it("does not apply a pending search after the filter bar unmounts", async () => {

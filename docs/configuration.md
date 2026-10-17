@@ -1871,9 +1871,21 @@ beside the daemon database.
 
 Outcome events count each completed attempt:
 
-- `search_empty` carries `surface=web` or `cli` after a nonblank browser ref search or `roborev search` completes successfully with zero matches. Explicit retries and repeated searches count again. Failed or superseded requests, stream refreshes, repo, branch, status and type filters, pagination, picker filters, and `--agent` output stay silent.
-- `error_shown` carries `surface=web`, `tui`, or `cli` and `kind=review_viewed`, `finding_fixed`, or `review_closed`. It counts when an error from a supported review action becomes visible. Repeated renders and background refreshes of the same failed attempt count once. Clearing an error or navigating away allows a later visible error transition to count. Failed review jobs count as `kind=review_viewed` in the browser and both TUI review layouts, once while the attempt stays visible. Renderer retries can count a new failure. Hidden browser tabs defer reporting until visible. CLI errors follow the core-action terminal and `--from-skill` gates. Only started actions count; validation, repository discovery, daemon setup, analysis waiting, and planning-only fixes stay silent. Quiet mode still counts runtime errors returned for display. A retry failure and a final exhaustion error each count when printed. Batch fix warnings and each printed refine retry failure count individually. Ordinary `wait` counts each runtime error it prints; quiet `wait` counts its first returned error, and `review --wait` counts its displayed failure once.
-- `sync_failed` carries `reason=connect`, `push`, or `pull` for each failed daemon sync attempt, including retries and the final shutdown push. Each attempt sends at most one event: the returned failing phase takes precedence over a partial push failure. Disabled sync and cancellation stay silent.
+- `search_empty` carries `surface=web` or `cli` once per nonblank committed
+  search with zero matches. Browser searches commit on Enter or blur. Live
+  filtering, refreshes, failed requests, and superseded responses stay silent.
+- `error_shown` carries `surface=web`, `tui`, or `cli` and a fixed `kind`:
+  `review_viewed`, `finding_fixed`, `review_closed`, or `other`. Each failed
+  user action counts once. Failed-job cards, pane selection, redraws, and
+  automatic refreshes stay silent. CLI errors count at most once per process and
+  use the core-action terminal and `--from-skill` gates; cancellation, usage
+  errors, and planning-only fixes stay silent. Runtime fix failures count even
+  before the agent starts.
+- `sync_failed` carries `reason=connect`, `push`, `pull`, or `other` once per
+  outage, starting with the first returned error. Only a successful
+  push-and-pull cycle ends it. Connect success, final-push success,
+  cancellation, and individual row failures leave it alone. Row failures stay in
+  the log.
 
 Unlisted error kinds and sync reasons become `other`. Reports use the existing daemon and remain best effort. They send no search text, error messages, job identifiers, or connection details.
 

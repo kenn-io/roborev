@@ -1,6 +1,4 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { tick } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ReviewContent from "./ReviewContent.svelte";
@@ -11,15 +9,7 @@ const state = vi.hoisted(() => ({
   notFound: false,
   status: "done",
   error: "",
-  report: vi.fn(),
 }));
-
-const reactiveJob = new SvelteMap<
-  number,
-  { id: number; status: string; started_at: string; error: string }
->();
-
-vi.mock("../../utils/app-opened", () => ({ reportErrorShown: state.report }));
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -27,12 +17,7 @@ vi.mock("../../stores/context", () => ({
       getOutput: () => state.output,
       isLoading: () => state.loading,
       isReviewNotFound: () => state.notFound,
-      getSelectedJob: () =>
-        reactiveJob.get(1) ?? {
-          id: 1,
-          status: state.status,
-          error: state.error,
-        },
+      getSelectedJob: () => ({ status: state.status, error: state.error }),
     },
   }),
 }));
@@ -43,66 +28,22 @@ vi.mock("@kenn-io/roborev-ui/review-content", () => {
 
 afterEach(() => {
   cleanup();
-  reactiveJob.clear();
   state.output = "## Review output";
   state.loading = false;
   state.notFound = false;
   state.status = "done";
   state.error = "";
-  state.report.mockClear();
 });
 
 describe("ReviewContent", () => {
-  it("counts a failed retry once and clears it after success", async () => {
-    state.output = "";
-    const job = {
-      id: 1,
-      status: "failed",
-      started_at: "2026-01-01T00:00:00Z",
-      error: "agent failed",
-    };
-    reactiveJob.set(1, job);
-    render(ReviewContent, { pageVisible: true });
-    expect(state.report).toHaveBeenCalledTimes(1);
-    reactiveJob.set(1, { ...job });
-    await tick();
-    expect(state.report).toHaveBeenCalledTimes(1);
-    reactiveJob.set(1, { ...job, status: "done" });
-    await tick();
-    reactiveJob.set(1, { ...job, started_at: "2026-01-01T00:01:00Z" });
-    await tick();
-    expect(state.report).toHaveBeenCalledTimes(2);
-    reactiveJob.set(1, { ...job, started_at: "2026-01-01T00:02:00Z" });
-    await tick();
-    expect(state.report).toHaveBeenCalledTimes(3);
-  });
-  it("defers failed reviews until the tab becomes visible", async () => {
-    state.status = "failed";
-    state.output = "";
-    const content = render(ReviewContent, { pageVisible: false });
-    expect(state.report).not.toHaveBeenCalled();
-    await content.rerender({ pageVisible: true });
-    expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
-    await content.rerender({ pageVisible: true });
-    expect(state.report).toHaveBeenCalledTimes(1);
-  });
   it("offers a retry when the rich renderer cannot load", async () => {
-    render(ReviewContent, { pageVisible: true });
+    render(ReviewContent);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-  });
-  it("reports each displayed renderer load failure", async () => {
-    render(ReviewContent, { pageVisible: true });
-
-    await screen.findByRole("alert");
-    expect(state.report).toHaveBeenCalledExactlyOnceWith("review_viewed");
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByRole("alert");
-    await vi.waitFor(() => expect(state.report).toHaveBeenCalledTimes(2));
   });
 
   it("shows why a failed review produced no output", () => {
@@ -111,7 +52,7 @@ describe("ReviewContent", () => {
     state.status = "failed";
     state.error = "agent process exited with status 1";
 
-    render(ReviewContent, { pageVisible: true });
+    render(ReviewContent);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -125,7 +66,7 @@ describe("ReviewContent", () => {
     state.notFound = true;
     state.status = "failed";
 
-    render(ReviewContent, { pageVisible: true });
+    render(ReviewContent);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
     expect(screen.getByRole("alert")).toHaveTextContent(

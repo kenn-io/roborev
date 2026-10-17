@@ -92,6 +92,8 @@ var (
 	cliUseAgent   bool
 )
 
+var cliErrorReported atomic.Bool
+
 type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
 
 // armCLIUse selects human or agent activity for commands that work through the daemon.
@@ -163,6 +165,9 @@ func reportCLIError(cmd *cobra.Command, kind string, err error) {
 		return
 	}
 	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {
+		return
+	}
+	if fromSkill || !cliTelemetryEnabled() || !cliOutputIsTerminal(cmd.OutOrStdout()) || cliErrorReported.Swap(true) {
 		return
 	}
 	reportCLIAction(cmd, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})

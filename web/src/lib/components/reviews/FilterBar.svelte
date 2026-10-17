@@ -116,6 +116,10 @@
       placeholder="Search by ref..."
       ariaLabel="Search by ref"
       oninput={onSearchInput}
+      onchange={(value) => {
+        searchExecution?.interrupt();
+        jobsStore?.commitSearch(value);
+      }}
       {disabled}
     />
   </div>

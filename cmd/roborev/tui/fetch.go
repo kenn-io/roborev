@@ -1537,3 +1537,7 @@ func (m model) reportAction(event string, properties ...map[string]any) tea.Cmd 
 		return nil
 	}
 }
+
+func (m model) reportError(kind string) tea.Cmd {
+	return m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})
+}

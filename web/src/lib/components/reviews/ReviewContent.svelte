@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { reportErrorShown } from "../../utils/app-opened";
   import { onMount } from "svelte";
   import type { Component } from "svelte";
   import { getReviewStores } from "../../stores/context";
@@ -10,7 +9,6 @@
     pending?: boolean;
   }>;
 
-  const { pageVisible }: { pageVisible: boolean } = $props();
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
   const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
@@ -26,15 +24,12 @@
   });
   let RichReviewContent = $state<RichReviewContentComponent>();
   let loadError = $state(false);
-  let rendererAttempt = $state(0);
-  let reportedOccurrence: string | undefined;
   let loadPromise: Promise<void> | undefined;
 
   async function loadRichReviewContent(): Promise<void> {
     if (RichReviewContent) return;
     if (loadPromise) return loadPromise;
     loadError = false;
-    rendererAttempt += 1;
     loadPromise = import("@kenn-io/roborev-ui/review-content")
       .then((module) => {
         RichReviewContent = module.default;
@@ -47,26 +42,6 @@
       });
     return loadPromise;
   }
-
-  $effect(() => {
-    // Background reloads temporarily clear the selected job.
-    if (stores.roborevReview?.isLoading()) return;
-    const occurrence = failed
-      ? JSON.stringify([
-          "job",
-          selectedJob?.id,
-          selectedJob?.started_at,
-          selectedJob?.finished_at,
-        ])
-      : loadError && output && !RichReviewContent
-        ? `renderer:${selectedJob?.id}:${rendererAttempt}`
-        : undefined;
-    if (!occurrence) reportedOccurrence = undefined;
-    else if (pageVisible && occurrence !== reportedOccurrence) {
-      reportErrorShown("review_viewed");
-      reportedOccurrence = occurrence;
-    }
-  });
 
   onMount(() => {
     if ("requestIdleCallback" in globalThis) {

@@ -27,40 +27,46 @@ type SyncWorker struct {
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterFailure    func(string)
+	outage          bool
 	afterPullWrite  func()
 	afterReviewPush func([]string)
 }
 
-// SetAfterFailure registers a callback for failed sync attempts.
+// SetAfterFailure registers a callback for the first failure in a sync outage.
 func (w *SyncWorker) SetAfterFailure(fn func(string)) {
 	w.mu.Lock()
 	w.afterFailure = fn
 	w.mu.Unlock()
 }
 
+// Only a completed push-and-pull cycle ends an outage.
 func (w *SyncWorker) notifyFailure(reason string, err error) {
-	if reason == "" || err == nil || errors.Is(err, context.Canceled) {
+	if reason == "" || errors.Is(err, context.Canceled) {
 		return
 	}
 	w.mu.Lock()
-	fn, enabled, stopCh := w.afterFailure, w.cfg.Enabled, w.stopCh
-	w.mu.Unlock()
 	select {
-	case <-stopCh:
+	case <-w.stopCh:
+		w.mu.Unlock()
 		return
 	default:
 	}
-	if fn != nil && enabled {
-		fn(reason)
+	if err == nil {
+		if reason == "pull" {
+			w.outage = false
+		}
+		w.mu.Unlock()
+		return
 	}
-}
-
-// notifyAttemptFailure reports the returned phase, or a best-effort push failure.
-func (w *SyncWorker) notifyAttemptFailure(reason string, err, pushFailure error) {
-	if err != nil {
-		w.notifyFailure(reason, err)
-	} else {
-		w.notifyFailure("push", pushFailure)
+	if !w.cfg.Enabled || w.outage {
+		w.mu.Unlock()
+		return
+	}
+	w.outage = true
+	fn := w.afterFailure
+	w.mu.Unlock()
+	if fn != nil {
+		fn(reason)
 	}
 }
 
@@ -244,9 +250,8 @@ type SyncStats struct {
 // Loops until all pending items are synced (not just one batch).
 // Does not pull changes since we're shutting down.
 func (w *SyncWorker) FinalPush() (err error) {
-	var pushFailure error
 	defer func() {
-		w.notifyAttemptFailure("push", err, pushFailure)
+		w.notifyFailure("push", err)
 	}()
 	w.mu.Lock()
 	pool := w.pgPool
@@ -267,9 +272,6 @@ func (w *SyncWorker) FinalPush() (err error) {
 	var totalJobs, totalReviews, totalResponses int
 	for {
 		stats, err := w.pushChangesWithStats(ctx, pool)
-		if stats.failure != nil {
-			pushFailure = stats.failure
-		}
 		if err != nil {
 			return fmt.Errorf("final push: %w", err)
 		}
@@ -315,9 +317,8 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 // If not connected, attempts to connect first.
 func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ *SyncStats, err error) {
 	reason := ""
-	var pushFailure error
 	defer func() {
-		w.notifyAttemptFailure(reason, err, pushFailure)
+		w.notifyFailure(reason, err)
 	}()
 	w.mu.Lock()
 	if !w.running {
@@ -373,9 +374,6 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ 
 	for batchNum < maxPushBatches {
 		reason = "push"
 		pushed, err := w.pushChangesWithStats(ctx, pool)
-		if pushed.failure != nil {
-			pushFailure = pushed.failure
-		}
 		if err != nil {
 			return nil, fmt.Errorf("push: %w", err)
 		}
@@ -445,7 +443,6 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (_ 
 
 // pushPullStats tracks counts for push/pull operations
 type pushPullStats struct {
-	failure   error // Partial push failures preserve the successful item counts.
 	Jobs      int
 	Reviews   int
 	Responses int
@@ -654,9 +651,8 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() (err error) {
 	reason := ""
-	var pushFailure error
 	defer func() {
-		w.notifyAttemptFailure(reason, err, pushFailure)
+		w.notifyFailure(reason, err)
 	}()
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()
@@ -677,9 +673,6 @@ func (w *SyncWorker) doSync() (err error) {
 	for {
 		reason = "push"
 		stats, err := w.pushChangesWithStats(ctx, pool)
-		if stats.failure != nil {
-			pushFailure = stats.failure
-		}
 		if err != nil {
 			return fmt.Errorf("push: %w", err)
 		}
@@ -753,7 +746,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
-				stats.failure = err
 				continue
 			}
 
@@ -762,7 +754,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
-					stats.failure = err
 					continue
 				}
 				pgCommitID = &id
@@ -780,7 +771,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
 				log.Printf("Sync: batch upsert jobs error: %v", err)
-				stats.failure = err
 			}
 
 			// Only mark successfully synced jobs. Carry each job's pushed
@@ -797,7 +787,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if len(syncedMarks) > 0 {
 				if err := w.db.MarkJobsSynced(syncedMarks); err != nil {
 					log.Printf("Sync: failed to mark jobs synced: %v", err)
-					stats.failure = err
 				}
 			}
 		}
@@ -842,7 +831,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(syncedReviews) > 0 {
 			if err := w.db.MarkReviewsSynced(syncedReviews); err != nil {
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
-				stats.failure = err
 			}
 		}
 		w.notifyAfterReviewPush(syncedReviewUUIDs)
@@ -858,7 +846,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
 			log.Printf("Sync: batch insert responses error: %v", err)
-			stats.failure = err
 		}
 
 		// Only mark successfully synced responses
@@ -872,7 +859,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(syncedResponseIDs) > 0 {
 			if err := w.db.MarkCommentsSynced(syncedResponseIDs); err != nil {
 				log.Printf("Sync: failed to mark comments synced: %v", err)
-				stats.failure = err
 			}
 		}
 	}

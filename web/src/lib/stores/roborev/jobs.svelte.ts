@@ -567,6 +567,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
       case "search":
         if (typeof value === "boolean") return;
+        if (filterSearch !== value) committedSearch = undefined;
         filterSearch = value;
         break;
       case "hideClosed":
@@ -583,7 +584,16 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
     }
     if (filterScope() !== previousScope) loadedLimit = DEFAULT_PAGE_LIMIT;
-    loadJobs(key === "search");
+    loadJobs();
+  }
+
+  let committedSearch: string | undefined;
+  function commitSearch(value: string): void {
+    if (committedSearch === value) return;
+    committedSearch = value;
+    if (filterSearch !== value) loadedLimit = DEFAULT_PAGE_LIMIT;
+    filterSearch = value || undefined;
+    loadJobs(true);
   }
 
   function setRepoBranchFilter(
@@ -1180,7 +1190,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   booleanFilterSubscribers.set(filterOwner, () => {
     if (!disposed) {
       loadedLimit = DEFAULT_PAGE_LIMIT;
-      loadJobs(false);
+      loadJobs();
     }
   });
 
@@ -1222,6 +1232,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     loadMoreEffect,
     setFilter,
     setRepoBranchFilter,
+    commitSearch,
     setSortColumn,
     cancelJob,
     cancelJobEffect,

@@ -307,7 +307,7 @@
     {#if selectedJob?.status === "skipped" && selectedJob.skip_reason}
       <div class="skip-reason">Skipped: {selectedJob.skip_reason}</div>
     {/if}
-    <ReviewContent {pageVisible} />
+    <ReviewContent />
     <div class="responses-section">
       <ResponseList />
     </div>
