@@ -16,7 +16,7 @@ import (
 // Allowed values for validation (prevent injection).
 // Pi remains local-only: its review mode does not yet disable builtin tools,
 // so it must not receive generated-workflow credentials on untrusted PRs.
-// Muse remains local-only: it is not yet wired for CI.
+// Muse remains local-only: the workflow generator has no Muse install or auth step.
 var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",

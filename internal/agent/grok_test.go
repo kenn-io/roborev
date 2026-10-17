@@ -140,6 +140,27 @@ func TestGrokBuildArgsPromptFile(t *testing.T) {
 	assertNotContainsArg(t, args, "-p")
 }
 
+func TestGrokReviewPromptFileExistsDuringRun(t *testing.T) {
+	skipIfWindows(t)
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--prompt-file" ]; then
+    test -f "$arg" || exit 1
+    test "$(cat "$arg")" = 'prompt body' || exit 2
+    printf '%s\n' '{"type":"text","data":"ok"}'
+    exit 0
+  fi
+  prev="$arg"
+done
+exit 3
+`)
+	result, err := NewGrokAgent(cmdPath).run(t.Context(), t.TempDir(), "prompt body", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+}
+
 func TestGrokCommandLineUsesBuildArgs(t *testing.T) {
 	a := NewGrokAgent("grok").
 		WithModel("grok-4.5").
