@@ -163,8 +163,16 @@ func reportCLIAction(cmd *cobra.Command, event string, properties ...map[string]
 	telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI, properties...)
 }
 
+// actionInputError marks rejected action options before runtime work begins.
+type actionInputError struct{ error }
+
+func (e *actionInputError) Unwrap() error { return e.error }
+
 func reportCLIError(cmd *cobra.Command, kind string, err error) {
 	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	if _, ok := errors.AsType[*actionInputError](err); ok {
 		return
 	}
 	if exit, ok := errors.AsType[*exitError](err); ok && exit.cause == nil {

@@ -458,12 +458,13 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 			return nil, &agentLimitError{Classification: cls}
 		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
-		if params.OnWarning != nil {
-			params.OnWarning(retryErr)
-		}
 	}
 	if sha, ok := detectNewCommit(ctx, params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
+	}
+
+	if retryErr != nil && params.OnWarning != nil {
+		params.OnWarning(retryErr)
 	}
 
 	// Still no commit - report whether changes remain
@@ -503,7 +504,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 
 	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
+		return nil, &actionInputError{fmt.Errorf("resolve fix reasoning: %w", err)}
 	}
 	if err := config.ValidateRepoConfig(repoPath); err != nil {
 		return nil, fmt.Errorf("resolve workflow config: %w", err)
@@ -1136,7 +1137,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 			opts.minSeverity, repoRoot, fixCfg,
 		)
 		if err != nil {
-			return fmt.Errorf("resolve min-severity: %w", err)
+			return &actionInputError{fmt.Errorf("resolve min-severity: %w", err)}
 		}
 	}
 
@@ -1502,7 +1503,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		opts.minSeverity, roots.worktreeRoot, cfg,
 	)
 	if err != nil {
-		return fmt.Errorf("resolve min-severity: %w", err)
+		return &actionInputError{fmt.Errorf("resolve min-severity: %w", err)}
 	}
 	if minSev != "" {
 		for _, e := range entries {

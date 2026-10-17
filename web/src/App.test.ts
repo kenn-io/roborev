@@ -2,6 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
+import { Effect } from "effect";
+import * as appRuntime from "./lib/runtime/runtime";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -10,7 +12,12 @@ const appOpened = vi.hoisted(() => ({
   reportErrorShown: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
-vi.mock("./lib/utils/app-opened", () => appOpened);
+vi.mock("./lib/utils/app-opened", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./lib/utils/app-opened")>();
+  appOpened.reportErrorShown.mockImplementation(actual.reportErrorShown);
+  return appOpened;
+});
 
 const credentials = {
   session: "tab-session",
@@ -60,13 +67,20 @@ function applicationResponse(input: RequestInfo | URL): Response {
   return response(404);
 }
 
-function mountReviewRefresh(completed = false, readFails = false) {
+function mountReviewRefresh(
+  completed = false,
+  readFails = false,
+  interruptLoad = false,
+) {
   history.replaceState(null, "", "/reviews/42");
   const fixture = {
     completed,
     closed: false,
     failed: false,
     reviewLoads: 0,
+    postedErrors: [] as unknown[],
+    interrupted: false,
+    closeAcknowledged: false,
     readFails,
     eventStream: undefined as
       | ReadableStreamDefaultController<Uint8Array>
@@ -119,9 +133,31 @@ function mountReviewRefresh(completed = false, readFails = false) {
           stats: { done: 0, closed: 0, open: 0 },
         });
       }
-      if (url.pathname === "/api/review/close") return response(500);
+      if (url.pathname === "/api/telemetry/events") {
+        const body = await (input as Request).json();
+        if (body.event === "error_shown") fixture.postedErrors.push(body);
+        return response(202);
+      }
+      if (url.pathname === "/api/review/close") {
+        if (fixture.closeAcknowledged) {
+          fixture.closed = (await (input as Request).json()).closed;
+          fixture.readFails = true;
+          return response(200, { success: true });
+        }
+        return response(500);
+      }
       if (url.pathname === "/api/review") {
         fixture.reviewLoads++;
+        if (interruptLoad && !fixture.interrupted) {
+          fixture.interrupted = true;
+          return new Promise<Response>((_resolve, reject) => {
+            (input as Request).signal.addEventListener(
+              "abort",
+              () => reject(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          });
+        }
         if (fixture.readFails) return response(500);
         if (!fixture.completed || fixture.failed) return response(404);
         return response(200, {
@@ -502,43 +538,126 @@ describe("App", () => {
     expect(screen.getByText("Fresh review output")).toBeInTheDocument();
   });
 
-  test("reports a failed user load once across refreshes and each failed close", async () => {
-    const fixture = mountReviewRefresh(false, true);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Failed to load review",
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
-      "review_viewed",
-    );
-    const previousLoads = fixture.reviewLoads;
-    fixture.emit("review.completed");
-    await vi.waitFor(() =>
-      expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
-    );
-    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
-    fixture.readFails = false;
-    fixture.completed = true;
-    fixture.emit("review.completed");
-    await screen.findByText("Fresh review output");
-    appOpened.reportErrorShown.mockClear();
-    for (let count = 1; count <= 2; count++) {
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Close Review" }),
+  test.each([
+    "request failure",
+    "interrupted load",
+    "runtime failure",
+    "acknowledged close",
+  ])(
+    "reports a failed user load once across refreshes and each failed close: %s",
+    async (failure) => {
+      if (failure === "runtime failure") {
+        const makeRuntime = appRuntime.makeAppRuntime;
+        vi.spyOn(appRuntime, "makeAppRuntime").mockImplementation(() => {
+          const runtime = makeRuntime();
+          const runCommand = runtime.runCommand;
+          let rejectLoad = true;
+          return {
+            ...runtime,
+            runCommand: (program, options) => {
+              if (rejectLoad && options.operation === "load Roborev review") {
+                rejectLoad = false;
+                return runCommand(
+                  Effect.fail(new Error("runtime load failed")) as never,
+                  options,
+                );
+              }
+              return runCommand(program, options);
+            },
+          };
+        });
+      }
+      const fixture = mountReviewRefresh(
+        false,
+        true,
+        failure === "interrupted load",
+      );
+      if (failure === "interrupted load") {
+        await vi.waitFor(() => expect(fixture.eventStream).toBeDefined());
+        await vi.waitFor(() => expect(fixture.interrupted).toBe(true));
+        fixture.emit("review.completed");
+      }
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Failed to load review",
+      );
+      expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
+        "review_viewed",
       );
       await vi.waitFor(() =>
-        expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(count),
+        expect(fixture.postedErrors).toEqual([
+          {
+            event: "error_shown",
+            properties: { surface: "web", kind: "review_viewed" },
+          },
+        ]),
       );
-    }
-    expect(appOpened.reportErrorShown.mock.calls).toEqual([
-      ["review_closed"],
-      ["review_closed"],
-    ]);
-    appOpened.reportErrorShown.mockClear();
-    fixture.failed = true;
-    fixture.emit("review.completed");
-    await screen.findByText("Review failed");
-    expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
-  });
+      const previousLoads = fixture.reviewLoads;
+      fixture.emit("review.completed");
+      await vi.waitFor(() =>
+        expect(fixture.reviewLoads).toBeGreaterThan(previousLoads),
+      );
+      expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+      expect(fixture.postedErrors).toHaveLength(1);
+      fixture.readFails = false;
+      fixture.completed = true;
+      fixture.emit("review.completed");
+      await screen.findByText("Fresh review output");
+      appOpened.reportErrorShown.mockClear();
+      fixture.closeAcknowledged = failure === "acknowledged close";
+      for (let count = 1; count <= 2; count++) {
+        await fireEvent.click(
+          screen.getByRole("button", { name: "Close Review" }),
+        );
+        await vi.waitFor(() =>
+          expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(count),
+        );
+      }
+      expect(appOpened.reportErrorShown.mock.calls).toEqual([
+        ["review_closed"],
+        ["review_closed"],
+      ]);
+      await vi.waitFor(() =>
+        expect(fixture.postedErrors).toEqual([
+          {
+            event: "error_shown",
+            properties: { surface: "web", kind: "review_viewed" },
+          },
+          {
+            event: "error_shown",
+            properties: { surface: "web", kind: "review_closed" },
+          },
+          {
+            event: "error_shown",
+            properties: { surface: "web", kind: "review_closed" },
+          },
+        ]),
+      );
+      appOpened.reportErrorShown.mockClear();
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Dismiss error" }),
+      );
+      fixture.readFails = false;
+      fixture.closed = true;
+      fixture.emit("review.closed");
+      await fireEvent.click(
+        await screen.findByRole("button", { name: "Reopen" }),
+      );
+      await vi.waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          fixture.closeAcknowledged
+            ? "Review state changed, but the refreshed review is unavailable"
+            : "Failed to close review",
+        ),
+      );
+      expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
+      expect(fixture.postedErrors).toHaveLength(3);
+      fixture.readFails = false;
+      fixture.failed = true;
+      fixture.emit("review.completed");
+      await screen.findByText("Review failed");
+      expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
+    },
+  );
 
   test("returns to session bootstrap when the current session is rejected", async () => {
     let statusCalls = 0;

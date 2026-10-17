@@ -160,10 +160,18 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       Effect.tap((authority) => publishReviewAuthority(jobId, authority)),
     );
 
+  function showLoadFailure(jobId: number): void {
+    if (selectedJobId !== jobId) return;
+    storeError = "Failed to load review";
+    opts.onError?.("Failed to load review");
+    if (pendingReviewOpen) {
+      pendingReviewOpen = false;
+      reportErrorShown("review_viewed");
+    }
+  }
+
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
-      const reportFailure = pendingReviewOpen;
-      pendingReviewOpen = false;
       const workflow = yield* RoborevWorkflow;
       return yield* workflow.review(
         opts.owner,
@@ -179,15 +187,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           });
           const authority = yield* fetchReviewAuthority(jobId);
           yield* publishReviewAuthority(jobId, authority);
+          if (selectedJobId === jobId) pendingReviewOpen = false;
         }).pipe(
-          Effect.catch(() =>
-            Effect.sync(() => {
-              if (selectedJobId !== jobId) return;
-              storeError = "Failed to load review";
-              opts.onError?.("Failed to load review");
-              if (reportFailure) reportErrorShown("review_viewed");
-            }),
-          ),
+          Effect.catch(() => Effect.sync(() => showLoadFailure(jobId))),
           Effect.ensuring(
             Effect.sync(() => {
               if (selectedJobId !== undefined && selectedJobId !== jobId)
@@ -203,7 +205,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     opts.runtime.runCommand(loadReviewEffect(jobId), {
       operation: "load Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: () => {},
+      onFailure: () => showLoadFailure(jobId),
     });
   }
 
@@ -240,7 +242,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
               );
-              reportErrorShown("review_closed");
+              if (closed) reportErrorShown("review_closed");
             }),
         })
         .pipe(
@@ -267,7 +269,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
         );
-        reportErrorShown("review_closed");
+        if (closed) reportErrorShown("review_closed");
       },
     });
   }

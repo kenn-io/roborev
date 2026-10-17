@@ -426,7 +426,7 @@ jobs:
           cache: go
 
       - name: Run integration tests
-        run: go test -shuffle=on -tags=postgres -v ./internal/storage/... -run Integration
+        run: go test -shuffle=on -tags=postgres -v ./internal/storage/... ./internal/telemetry -run Integration
         env:
           TEST_POSTGRES_URL: postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test
 

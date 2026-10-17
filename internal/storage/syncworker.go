@@ -28,6 +28,7 @@ type SyncWorker struct {
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterFailure    func(string)
 	outage          bool
+	outageMu        sync.Mutex // serializes outage transitions and persistence
 	afterPullWrite  func()
 	afterReviewPush func([]string)
 }
@@ -46,34 +47,44 @@ func (w *SyncWorker) notifyFailure(reason string, err error) {
 	if reason == "" || errors.Is(err, context.Canceled) {
 		return
 	}
+	w.outageMu.Lock()
 	w.mu.Lock()
 	select {
 	case <-w.stopCh:
 		w.mu.Unlock()
+		w.outageMu.Unlock()
 		return
 	default:
 	}
 	if err == nil {
 		if reason == "pull" && w.outage {
+			w.mu.Unlock()
 			if saveErr := w.db.SetSyncState(syncStateOutage, ""); saveErr != nil {
 				log.Printf("Sync: clear outage state: %v", saveErr)
 			} else {
+				w.mu.Lock()
 				w.outage = false
+				w.mu.Unlock()
 			}
+			w.outageMu.Unlock()
+			return
 		}
 		w.mu.Unlock()
+		w.outageMu.Unlock()
 		return
 	}
 	if !w.cfg.Enabled || w.outage {
 		w.mu.Unlock()
+		w.outageMu.Unlock()
 		return
 	}
 	w.outage = true
+	fn := w.afterFailure
+	w.mu.Unlock()
 	if saveErr := w.db.SetSyncState(syncStateOutage, "1"); saveErr != nil {
 		log.Printf("Sync: save outage state: %v", saveErr)
 	}
-	fn := w.afterFailure
-	w.mu.Unlock()
+	w.outageMu.Unlock()
 	if fn != nil {
 		fn(reason)
 	}
@@ -173,6 +184,8 @@ func (w *SyncWorker) SetSkipInitialSync(skip bool) error {
 // Start begins the sync worker in a background goroutine.
 // The worker can be stopped with Stop() and restarted with Start().
 func (w *SyncWorker) Start() error {
+	w.outageMu.Lock()
+	defer w.outageMu.Unlock()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -188,7 +201,7 @@ func (w *SyncWorker) Start() error {
 	if err != nil {
 		return fmt.Errorf("load sync outage state: %w", err)
 	}
-	w.outage = outage != ""
+	w.outage = outage == "1"
 
 	// Parse sync interval
 	interval, err := time.ParseDuration(w.cfg.Interval)

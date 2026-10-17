@@ -366,9 +366,6 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 	actionCmd := &cobra.Command{}
 	actionCmd.SetContext(runCtx.Context)
 	actionCmd.SetOut(os.Stdout)
-	defer func() {
-		reportCLIError(actionCmd, telemetry.EventFindingFixed, resultErr)
-	}()
 	ctx := runCtx.Context
 	if ctx == nil {
 		return fmt.Errorf("run refine: missing context")
@@ -413,6 +410,10 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve workflow config: %w", err)
 	}
+
+	defer func() {
+		reportCLIError(actionCmd, telemetry.EventFindingFixed, resultErr)
+	}()
 
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {

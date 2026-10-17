@@ -1303,7 +1303,9 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 	// The pending fix panel ('F') is resolved the same way a selection
 	// change resolves it (closeFixPanel) -- this job's own dispatch is
 	// what would have opened it, and it just failed outright.
+	kind := telemetry.EventReviewViewed
 	if m.reviewFixPanelPending && m.fixPromptJobID == msg.jobID {
+		kind = telemetry.EventFindingFixed
 		m.closeFixPanel()
 	}
 	// No silent clear for the plain "open the review" intent, matching
@@ -1320,7 +1322,7 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		return m, tea.Batch(reconnectCmd, m.reportError(telemetry.EventReviewViewed))
+		return m, tea.Batch(reconnectCmd, m.reportError(kind))
 	}
 	return m, reconnectCmd
 }
@@ -1755,7 +1757,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 				flashView = viewReview
 			}
 			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
-			if !msg.programmatic {
+			if !msg.programmatic && msg.newState {
 				actionCmd = m.reportError(telemetry.EventReviewClosed)
 			}
 			m.err = msg.err

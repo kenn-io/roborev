@@ -22,35 +22,44 @@ import (
 // beside the reporter tests so it can verify actual queued events.
 
 func TestOutcomeDaemonSyncFailure(t *testing.T) {
-	t.Setenv(telemetry.EnabledEnv, "1")
-	t.Setenv(telemetry.GenericEnabledEnv, "1")
-	endpoint, messages := testutil.NewPostHogStub(t)
-	testenv.SetDataDir(t)
-	db := testutil.OpenTestDB(t)
-	reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
-	require.NoError(t, err)
-	synctest.Test(t, func(t *testing.T) {
-		server := daemon.NewServer(db, config.DefaultConfig(), "")
-		t.Cleanup(func() { require.NoError(t, server.Close()) })
-		server.SetTelemetry(reporter)
-		worker := storage.NewSyncWorker(db, config.SyncConfig{Enabled: true, Interval: "1h"})
-		server.SetSyncWorker(worker)
-		require.NoError(t, worker.Start())
-		synctest.Wait()
-		_, err := worker.SyncNow()
-		require.ErrorContains(t, err, "failed to connect")
-		worker.Stop()
-	})
-	require.NoError(t, reporter.Close())
-	sent := messages()
-	require.Len(t, sent, 1)
-	for _, message := range sent {
-		assert.Equal(t, "sync_failed", message.Event)
-		assert.Equal(t, "connect", message.Properties["reason"])
+	for _, state := range []string{"", "1", "unexpected"} {
+		t.Run("stored outage/"+state, func(t *testing.T) {
+			t.Setenv(telemetry.EnabledEnv, "1")
+			t.Setenv(telemetry.GenericEnabledEnv, "1")
+			endpoint, messages := testutil.NewPostHogStub(t)
+			testenv.SetDataDir(t)
+			db := testutil.OpenTestDB(t)
+			require.NoError(t, db.SetSyncState("telemetry.sync_outage", state))
+			reporter, err := telemetry.NewReporter(telemetry.Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+			require.NoError(t, err)
+			synctest.Test(t, func(t *testing.T) {
+				server := daemon.NewServer(db, config.DefaultConfig(), "")
+				t.Cleanup(func() { require.NoError(t, server.Close()) })
+				server.SetTelemetry(reporter)
+				worker := storage.NewSyncWorker(db, config.SyncConfig{Enabled: true, Interval: "1h"})
+				server.SetSyncWorker(worker)
+				require.NoError(t, worker.Start())
+				synctest.Wait()
+				_, err := worker.SyncNow()
+				require.ErrorContains(t, err, "failed to connect")
+				worker.Stop()
+			})
+			require.NoError(t, reporter.Close())
+			sent := messages()
+			want := 1
+			if state == "1" {
+				want = 0
+			}
+			require.Len(t, sent, want)
+			for _, message := range sent {
+				assert.Equal(t, "sync_failed", message.Event)
+				assert.Equal(t, "connect", message.Properties["reason"])
+			}
+		})
 	}
 }
 
-func TestOutcomeDaemonSyncRecovery(t *testing.T) {
+func TestIntegrationOutcomeDaemonSyncRecovery(t *testing.T) {
 	pgURL := os.Getenv("TEST_POSTGRES_URL")
 	if pgURL == "" {
 		t.Skip("requires an isolated PostgreSQL database via TEST_POSTGRES_URL")

@@ -24,7 +24,7 @@ import (
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "retry failures"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "retry failures", "invalid reasoning", "invalid branch"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -69,13 +69,27 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			if mode == "skill" {
 				args = append(args, "--from-skill")
 			}
+			if mode == "invalid reasoning" {
+				args = append(args, "--reasoning", "typo")
+			}
+			if mode == "invalid branch" {
+				args = append(args, "--branch", "missing-branch")
+			}
 			result := runCLI(t, args...)
-			if mode == "commit failure" {
+			invalidInput := strings.HasPrefix(mode, "invalid ")
+			if invalidInput {
+				if mode == "invalid branch" {
+					require.ErrorContains(t, result.err, "not on branch")
+				} else {
+					require.ErrorContains(t, result.err, "reasoning")
+				}
+				assert.Zero(t, changes)
+			} else if mode == "commit failure" {
 				require.ErrorContains(t, result.err, "failed to commit changes")
 			} else {
 				require.ErrorContains(t, result.err, "max iterations")
 			}
-			if mode == "no change" || mode == "commit failure" || mode == "retry failures" {
+			if invalidInput || mode == "no change" || mode == "commit failure" || mode == "retry failures" {
 				assert.Equal(t, head, repo.HeadSHA())
 			} else {
 				assert.Equal(t, "3", repo.Run("rev-list", "--count", head+"..HEAD"))
@@ -95,7 +109,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			} else {
 				assert.Empty(t, fixes)
 			}
-			if mode == "skill" {
+			if mode == "skill" || invalidInput {
 				assert.Empty(t, failures)
 			} else {
 				require.Len(t, failures, 1)
@@ -111,7 +125,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 
 func TestCoreActionFixCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "bookkeeping failure", "no change", "failure"} {
+		for _, outcome := range []string{"commit", "retry warning after commit", "retry failure", "bookkeeping failure", "no change", "failure", "invalid min-severity", "invalid reasoning"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
 				cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -149,12 +163,13 @@ func TestCoreActionFixCommit(t *testing.T) {
 					},
 				}, nil)
 				md.State.mu.Lock()
-				md.State.jobs[100] = &storage.ReviewJob{ID: 100, GitRef: "def456", Agent: "test", Status: storage.JobStatusDone}
+				md.State.jobs[100] = &storage.ReviewJob{ID: 100, GitRef: "def456", Agent: "test", JobType: storage.JobTypeReview, Status: storage.JobStatusDone}
 				md.State.reviews["def456"] = &storage.Review{ID: 2, JobID: 100, Agent: "test", Output: "Finding"}
-				md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "abc123", Agent: "test", Status: storage.JobStatusDone}
+				md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "abc123", Agent: "test", JobType: storage.JobTypeReview, Status: storage.JobStatusDone}
 				md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 99, Agent: "test", Output: "Finding"}
 				md.State.mu.Unlock()
 				patchServerAddr(t, md.Server.URL)
+				calls := 0
 				fixAgent := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
 					if outcome == "failure" {
 						return "", errors.New("agent failed")
@@ -167,18 +182,35 @@ func TestCoreActionFixCommit(t *testing.T) {
 					_, err = file.WriteString("fixed\n")
 					require.NoError(t, err)
 					require.NoError(t, file.Close())
+					calls++
+					if strings.HasPrefix(outcome, "retry ") && calls%2 == 1 {
+						return "Changes ready to commit", nil
+					}
+					if outcome == "retry failure" {
+						return "", errors.New("commit agent failed")
+					}
 					for _, args := range [][]string{{"add", "fixed.txt"}, {"commit", "-m", "fix: apply change"}} {
 						cmd := exec.Command("git", args...)
 						cmd.Dir = dir
 						output, err := cmd.CombinedOutput()
 						require.NoError(t, err, "%s", output)
 					}
+					if outcome == "retry warning after commit" {
+						return "Fixed", errors.New("commit agent ended with an error")
+					}
 					return "Fixed", nil
 				}}
 				cmd, output := newTestCmd(t)
 				cmd.SetContext(t.Context())
 				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
-				opts := fixOptions{agentName: "test", quiet: outcome != "bookkeeping failure", classify: agent.ClassifyLimit}
+				opts := fixOptions{agentName: "test", quiet: outcome != "bookkeeping failure" && !strings.HasPrefix(outcome, "retry "), classify: agent.ClassifyLimit}
+				if outcome == "invalid min-severity" {
+					opts.minSeverity = "typo"
+				}
+				if outcome == "invalid reasoning" {
+					opts.reasoning = "typo"
+					tracker.base = nil
+				}
 				var err error
 				if batch {
 					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
@@ -186,12 +218,14 @@ func TestCoreActionFixCommit(t *testing.T) {
 				} else {
 					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 				}
-				if outcome == "failure" && !batch {
+				if strings.HasPrefix(outcome, "invalid ") {
+					require.ErrorContains(t, err, strings.TrimPrefix(outcome, "invalid "))
+				} else if outcome == "failure" && !batch {
 					require.Error(t, err)
 				} else {
 					require.NoError(t, err)
 				}
-				if outcome == "commit" || outcome == "bookkeeping failure" {
+				if outcome == "commit" || outcome == "retry warning after commit" || outcome == "bookkeeping failure" {
 					assert.NotEqual(t, before, repo.HeadSHA())
 					assert.NotEmpty(t, rec.businessPaths())
 				}
@@ -200,8 +234,15 @@ func TestCoreActionFixCommit(t *testing.T) {
 					assert.Contains(t, output.String(), "could not add response to job")
 					assert.Contains(t, output.String(), "could not close job")
 				}
+				if strings.HasPrefix(outcome, "retry ") {
+					wantCalls := 2
+					if batch {
+						wantCalls = 4
+					}
+					assert.Equal(t, wantCalls, calls)
+				}
 				posts := rec.telemetryPosts()
-				if outcome == "commit" || outcome == "bookkeeping failure" {
+				if outcome == "commit" || outcome == "retry warning after commit" || outcome == "bookkeeping failure" {
 					count := 1
 					if batch {
 						count = 2
@@ -210,7 +251,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 					for _, post := range posts {
 						assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, post.body)
 					}
-				} else if outcome == "failure" {
+				} else if outcome == "failure" || outcome == "retry failure" {
 					require.Len(t, posts, 1)
 					assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
 				} else {
