@@ -309,6 +309,7 @@ func TestIsCIReview(t *testing.T) {
 }
 
 func TestIsReadableReview(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		job  storage.ReviewJob
@@ -321,6 +322,7 @@ func TestIsReadableReview(t *testing.T) {
 		{name: "fix", job: storage.ReviewJob{JobType: storage.JobTypeFix}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.want, tc.job.IsReadableReview())
 		})
 	}
