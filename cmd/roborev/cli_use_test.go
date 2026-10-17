@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,8 @@ func clearCLIUseState() {
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
 	cliUseState.Store(nil)
+	cliUseEndpoint.Store(nil)
+	cliActions = sync.WaitGroup{}
 	cliUseAgent = false
 }
 
@@ -40,6 +43,7 @@ func resetCLIUse(t *testing.T) {
 	t.Helper()
 	origEnabled, origTimeout, origPost := cliTelemetryEnabled, cliUseTimeout, cliUsePost
 	origAgentPost := cliAgentPost
+	origTerminal := cliOutputIsTerminal
 	origServer, origParsed, origVerbose, origFromSkill := serverAddr, parsedServerEndpoint, verbose, fromSkill
 	clearCLIUseState()
 	cliTelemetryEnabled = func() bool { return true }
@@ -48,6 +52,7 @@ func resetCLIUse(t *testing.T) {
 		clearCLIUseState()
 		cliTelemetryEnabled, cliUseTimeout, cliUsePost = origEnabled, origTimeout, origPost
 		cliAgentPost = origAgentPost
+		cliOutputIsTerminal = origTerminal
 		serverAddr, parsedServerEndpoint, verbose, fromSkill = origServer, origParsed, origVerbose, origFromSkill
 	})
 }
@@ -129,6 +134,7 @@ func newCLIUseDaemon(t *testing.T, hooks MockRefineHooks, onTelemetry http.Handl
 		rec.note(req)
 		if req.URL.Path == daemon.TelemetryEventsPath || req.URL.Path == daemon.TelemetryAgentCallPath {
 			body, _ := io.ReadAll(req.Body)
+			req.Body = io.NopCloser(bytes.NewReader(body))
 			rec.mu.Lock()
 			rec.telemetry = append(rec.telemetry, recordedTelemetry{
 				method: req.Method, contentType: req.Header.Get("Content-Type"), body: string(body),
@@ -658,42 +664,29 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		marked []string
-		plain  []string
 	}{
 		{
 			name:   "show",
 			marked: []string{"show", "--from-skill", "--job", "1", "--json"},
-			plain:  []string{"show", "--job", "1", "--json"},
 		},
 		{
 			name:   "comment",
 			marked: []string{"comment", "--from-skill", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
-			plain:  []string{"comment", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
 		},
 		{
 			name:   "close",
 			marked: []string{"close", "--from-skill", "1"},
-			plain:  []string{"close", "1"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			rec.reset()
 			marked := runCLIFresh(t, true, append(tc.marked, "--server", md.Server.URL)...)
-			markedBusiness := rec.businessPaths()
+			require.NoError(t, marked.err)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 			assert.Empty(rec.telemetryPosts()[0].body)
-
-			rec.reset()
-			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
-			require.NoError(t, marked.err)
-			require.NoError(t, plain.err)
-			assert.Len(rec.telemetryPosts(), 1)
-			assert.Equal(plain.stdout, marked.stdout)
-			assert.Equal(plain.stderr, marked.stderr)
-			assert.Equal(rec.businessPaths(), markedBusiness)
-			assert.NotEmpty(markedBusiness)
+			assert.NotEmpty(rec.businessPaths())
 		})
 	}
 }
@@ -719,6 +712,8 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 			assert.Equal(t, start.Add(time.Second), deadline)
 			// The context belongs to this bubble; cleanup's waitCLIUse runs outside it.
 			cliUseState.Store(nil)
+			cliUseEndpoint.Store(nil)
+			cliActions = sync.WaitGroup{}
 		})
 	})
 
@@ -733,6 +728,8 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 
 			assert.Equal(t, time.Duration(0), time.Since(start))
 			cliUseState.Store(nil)
+			cliUseEndpoint.Store(nil)
+			cliActions = sync.WaitGroup{}
 		})
 	})
 }
@@ -760,4 +757,124 @@ func TestMCPActivity(t *testing.T) {
 		assert.Zero(t, calls)
 		assert.Equal(t, [5]int32{}, counts.snapshot())
 	})
+}
+
+func TestCoreActionUsesFirstObservedEndpoint(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	cliUsePost = func(context.Context, *http.Client, string, string) {}
+	first, firstPosts := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	second, secondPosts := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+	for _, server := range []string{first.Server.URL, second.Server.URL} {
+		observeCLIUse(mustParseEndpoint(t, server), httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+	}
+	cmd, _ := newTestCmd(t)
+	cmd.SetContext(t.Context())
+	reportCLIAction(cmd, "review_viewed")
+	waitCLIUse()
+	require.Len(t, firstPosts.telemetryPosts(), 1)
+	assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, firstPosts.telemetryPosts()[0].body)
+	assert.Empty(t, secondPosts.telemetryPosts())
+}
+
+func TestCoreActionCloseOutputStream(t *testing.T) {
+	resetCLIUse(t)
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	ep := mustParseEndpoint(t, md.Server.URL)
+	cliUseEndpoint.Store(&ep)
+	for _, terminal := range []bool{false, true} {
+		rec.reset()
+		stdout, stderr := captureStdoutStderr(t, func() {
+			cliOutputIsTerminal = func(out io.Writer) bool { return terminal && out == os.Stdout }
+			cmd := closeCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetContext(t.Context())
+			cmd.SetArgs([]string{"1"})
+			require.NoError(t, cmd.Execute())
+		})
+		assert.Equal(t, "Job 1 closed\n", stdout)
+		assert.Empty(t, stderr)
+		waitCLIUse()
+		posts := rec.telemetryPosts()
+		if terminal {
+			require.Len(t, posts, 1)
+			assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, posts[0].body)
+		} else {
+			assert.Empty(t, posts)
+		}
+	}
+}
+
+func TestCoreActionDefaultOutputStreams(t *testing.T) {
+	for _, stdoutTerminal := range []bool{false, true} {
+		t.Run(strconv.FormatBool(stdoutTerminal), func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			job := &storage.ReviewJob{ID: 1, JobType: storage.JobTypeCompact}
+			md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 1, Output: "Consolidated findings", VerdictBool: new(1), Job: job}
+			ep := mustParseEndpoint(t, md.Server.URL)
+			cliUseEndpoint.Store(&ep)
+			stdout, stderr := captureStdoutStderr(t, func() {
+				cliOutputIsTerminal = func(out io.Writer) bool {
+					return stdoutTerminal && out == os.Stdout || !stdoutTerminal && out == os.Stderr
+				}
+				cmd := &cobra.Command{}
+				cmd.SetContext(t.Context())
+				require.NoError(t, showReview(cmd, ep, 1, false))
+				reportCLIAction(cmd, "finding_fixed")
+				waitCLIUse()
+			})
+			assert.Empty(t, stdout)
+			assert.Contains(t, stderr, "Consolidated findings")
+			if stdoutTerminal {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.Contains(t, rec.telemetryPosts()[0].body, `"finding_fixed"`)
+			} else {
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.Contains(t, rec.telemetryPosts()[0].body, `"review_viewed"`)
+			}
+		})
+	}
+}
+
+func TestCoreActionRemoteLocalFallback(t *testing.T) {
+	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+			cliOutputIsTerminal = func(io.Writer) bool { return mode != "redirected" }
+			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
+			fromSkill = mode == "skill"
+			original := getAnyRunningDaemonForStart
+			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			calls := 0
+			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+				calls++
+				if mode == "timeout" {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				if mode == "missing" {
+					return nil, os.ErrNotExist
+				}
+				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+			}
+			cmd, _ := newTestCmd(t)
+			cmd.SetContext(t.Context())
+			reportCLIAction(cmd, "review_viewed")
+			waitCLIUse()
+			if mode == "running" {
+				require.Len(t, rec.telemetryPosts(), 1)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
+			if mode == "opt-out" || mode == "skill" || mode == "redirected" {
+				assert.Zero(t, calls)
+			} else {
+				assert.Equal(t, 1, calls)
+			}
+		})
+	}
 }

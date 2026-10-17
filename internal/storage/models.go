@@ -258,6 +258,11 @@ func (j ReviewJob) IsReviewJob() bool {
 	return false
 }
 
+// IsReadableReview reports whether this job produces review findings for a reader.
+func (j ReviewJob) IsReadableReview() bool {
+	return j.IsReviewJob() || j.IsSynthesisJob() || j.JobType == JobTypeCompact
+}
+
 // IsGoalReviewJob reports whether this job reviews intent artifacts and Kata.
 func (j ReviewJob) IsGoalReviewJob() bool {
 	return j.JobType == JobTypeGoalReview

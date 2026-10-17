@@ -1853,6 +1853,19 @@ Delivery is best effort; failed delivery isn't retried. Both opt-out variables
 apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
 and never start a daemon just for telemetry.
 
+Core actions report `review_viewed` once per installation, surface, and UTC day,
+`finding_fixed` after each committed fix, and `review_closed` after each
+explicit close. All carry `surface`. Reads and closes support web, TUI and CLI;
+fixes support TUI and CLI. Reads include review, synthesis and compact output.
+The TUI requires key or mouse input before counting loaded content. The browser
+reports a visible Review tab on load and when focus or visibility returns,
+retrying failed reports and suppressing acknowledged reads for the UTC day. CLI
+reads include `show`, `wait`, `review --wait`, and nonquiet `fix` output. CLI
+actions require terminal output and exclude agents and `--from-skill`. Reopens,
+automatic closes, prompts and analysis output stay silent. With a remote
+`--server`, CLI events use an already-running local daemon and its installation
+ID. Without a local daemon, events are dropped. Reporting never starts a daemon.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
 screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,

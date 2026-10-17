@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReviewJob } from "../../api/generated/models";
 
@@ -16,7 +22,19 @@ vi.mock("./PromptViewer.svelte", async () => ({
 }));
 
 const state = vi.hoisted(() => ({
+  reportCoreAction: vi.fn(),
   selectedJobId: 42 as number | undefined,
+  review: {
+    id: 1,
+    job_id: 42,
+    output: "review output",
+    closed: false,
+  } as {
+    id: number;
+    job_id: number;
+    output: string;
+    closed: boolean;
+  } | null,
   deselectJob: vi.fn(),
   rerunJob: vi.fn(),
   cancelJob: vi.fn(),
@@ -62,6 +80,10 @@ const job: ReviewJob = {
   }),
 };
 
+vi.mock("../../utils/app-opened", () => ({
+  reportCoreAction: state.reportCoreAction,
+}));
+
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevJobs: {
@@ -92,12 +114,7 @@ vi.mock("../../stores/context", () => ({
     roborevReview: {
       getSelectedJob: () => null,
       getOutput: () => "review output",
-      getReview: () => ({
-        id: 1,
-        job_id: 42,
-        output: "review output",
-        closed: false,
-      }),
+      getReview: () => state.review,
       isClosed: () => false,
       closeReview: state.closeReview,
       copyOutput: state.copyOutput,
@@ -109,8 +126,62 @@ vi.mock("../../stores/context", () => ({
 import ReviewDrawer from "./ReviewDrawer.svelte";
 
 describe("ReviewDrawer", () => {
+  it("retries a failed capture when focus returns the same day", async () => {
+    const { reportCoreAction } = await vi.importActual<
+      typeof import("../../utils/app-opened")
+    >("../../utils/app-opened");
+    state.reportCoreAction.mockImplementation(reportCoreAction);
+    const fetchMock = vi
+      .fn<(request: Request) => Promise<Response>>()
+      .mockRejectedValueOnce(new TypeError("network down"))
+      .mockResolvedValue(new Response('{"status":"queued"}', { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(ReviewDrawer);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await fireEvent(window, new Event("focus"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const review = state.review!;
+    state.review = { ...review, output: "refreshed" };
+    await fireEvent(window, new Event("focus"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(Date.now() + 86_400_000));
+    await fireEvent(document, new Event("visibilitychange"));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
+      event: "review_viewed",
+      properties: { surface: "web" },
+    });
+  });
+
+  it.each(["task", "review", "hidden", "prompt", "mismatch", "loading"])(
+    "counts only matching visible readable output: %s",
+    (kind) => {
+      state.jobType = kind === "task" ? "task" : "review";
+      if (kind === "hidden")
+        vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+      if (kind === "mismatch") state.review!.job_id = 43;
+      if (kind === "loading") state.review = null;
+      render(ReviewDrawer, {
+        activeTab: kind === "prompt" ? "prompt" : "review",
+      });
+      expect(state.reportCoreAction).toHaveBeenCalledTimes(
+        kind === "review" ? 1 : 0,
+      );
+    },
+  );
+
   beforeEach(() => {
+    state.reportCoreAction.mockReset();
     state.selectedJobId = 42;
+    state.review = {
+      id: 1,
+      job_id: 42,
+      output: "review output",
+      closed: false,
+    };
     state.deselectJob.mockReset();
     state.rerunJob.mockReset();
     state.cancelJob.mockReset();
@@ -162,6 +233,7 @@ describe("ReviewDrawer", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

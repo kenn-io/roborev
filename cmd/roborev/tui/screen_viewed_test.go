@@ -19,6 +19,7 @@ import (
 )
 
 type screenRecordingTransport struct {
+	events  []string
 	screens []string
 	fail    bool
 }
@@ -26,14 +27,22 @@ type screenRecordingTransport struct {
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Path == "/api/telemetry/events" {
 		var event struct {
+			Event      string            `json:"event"`
 			Properties map[string]string `json:"properties"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 			return nil, err
 		}
-		s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		if event.Event == telemetry.EventScreenViewed {
+			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		} else {
+			s.events = append(s.events, event.Event)
+		}
 	}
 	status := http.StatusAccepted
+	if req.URL.Path == "/api/review/close" {
+		status = http.StatusOK
+	}
 	if s.fail {
 		status = http.StatusServiceUnavailable
 	}
@@ -94,6 +103,7 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 		m.currentReview = splitTestReview()
 		m.currentView = viewReview
 		m.focus = focusDetail
+		m.paneLogPaused = true
 		transport := &screenRecordingTransport{}
 		m.client.Transport = transport
 		time.Sleep(24 * time.Hour)
@@ -101,6 +111,8 @@ func TestScreenViewedNextDayWaitsForInput(t *testing.T) {
 		collectMsgs(cmd)
 		assert.Empty(t, transport.screens)
 		m = result.(model)
+		assert.True(t, m.paneLogPaused, "display ticks leave log resumption to input or daemon messages")
+		m.paneLogPaused = false
 		updateScreenTestModel(&m, keyPressMsg('x'))
 		assert.ElementsMatch(t, []string{"queue", "review"}, transport.screens)
 		require.Equal(t, focusDetail, m.focus)

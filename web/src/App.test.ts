@@ -6,6 +6,7 @@ import App from "./App.svelte";
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
   reportScreenViewed: vi.fn(),
+  reportCoreAction: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
@@ -67,6 +68,7 @@ describe("App", () => {
     vi.restoreAllMocks();
     appOpened.setupAppOpenedReporting.mockClear();
     appOpened.reportScreenViewed.mockClear();
+    appOpened.reportCoreAction.mockClear();
   });
 
   test("checks the ambient browser session on mount", () => {

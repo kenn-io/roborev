@@ -1,3 +1,4 @@
+import { reportCoreAction } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
@@ -237,7 +238,14 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               ),
             ),
         })
-        .pipe(Effect.tap(() => opts.refreshJobs?.() ?? Effect.void));
+        .pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (closed) reportCoreAction("review_closed");
+            }),
+          ),
+          Effect.tap(() => opts.refreshJobs?.() ?? Effect.void),
+        );
     });
 
   function closeReview(jobId: number): void {

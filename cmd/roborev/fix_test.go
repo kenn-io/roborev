@@ -4846,3 +4846,64 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 		"limit-abort retry path should still warn about uncommitted changes",
 	)
 }
+
+func TestCoreActionFixCommit(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, outcome := range []string{"commit", "no change"} {
+			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
+				resetCLIUse(t)
+				cliOutputIsTerminal = func(io.Writer) bool { return true }
+				t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+				repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+				before := repo.HeadSHA()
+				md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+				md.State.mu.Lock()
+				md.State.jobs[100] = &storage.ReviewJob{ID: 100, GitRef: "def456", JobType: storage.JobTypeReview, Agent: "test", Status: storage.JobStatusDone}
+				md.State.reviews["def456"] = &storage.Review{ID: 2, JobID: 100, Agent: "test", Output: "Finding"}
+				md.State.jobs[99] = &storage.ReviewJob{ID: 99, GitRef: "abc123", JobType: storage.JobTypeReview, Agent: "test", Status: storage.JobStatusDone}
+				md.State.reviews["abc123"] = &storage.Review{ID: 1, JobID: 99, Agent: "test", Output: "Finding"}
+				md.State.mu.Unlock()
+				patchServerAddr(t, md.Server.URL)
+				ep := mustParseEndpoint(t, md.Server.URL)
+				cliUseEndpoint.Store(&ep)
+				fixAgent := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
+					if outcome == "no change" {
+						return "No change needed", nil
+					}
+					repo.CommitFile("fixed.txt", repo.Run("rev-parse", "HEAD"), "Fix review finding")
+					return "Fixed", nil
+				}}
+				cmd, output := newTestCmd(t)
+				cmd.SetContext(t.Context())
+				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
+				opts := fixOptions{agentName: "test", quiet: outcome == "commit", classify: agent.ClassifyLimit}
+				var err error
+				if batch {
+					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+					err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
+				} else {
+					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
+				}
+				require.NoError(t, err)
+				if outcome == "commit" {
+					assert.NotEqual(t, before, repo.HeadSHA())
+				}
+				waitCLIUse()
+				posts := rec.telemetryPosts()
+				count, event := 1, "review_viewed"
+				if batch {
+					count = 2
+				}
+				if outcome == "commit" {
+					event = "finding_fixed"
+				} else {
+					assert.Contains(t, output.String(), "Finding")
+				}
+				require.Len(t, posts, count)
+				for _, post := range posts {
+					assert.JSONEq(t, `{"event":"`+event+`","properties":{"surface":"cli"}}`, post.body)
+				}
+			})
+		}
+	}
+}

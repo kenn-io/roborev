@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -300,4 +301,37 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 			assert.Equal(t, day, stored)
 		})
 	}
+}
+
+func TestCoreActionDailyClaims(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	synctest.Test(t, func(t *testing.T) {
+		handler, messages := testutil.NewPostHogRecorder(t)
+		srv := httptest.NewTestServer(t, handler)
+		// Kit delegates HTTP to DefaultTransport; the in-memory network lets
+		// PostHog's drain timer and the UTC rollover use virtual time.
+		transport := http.DefaultTransport
+		http.DefaultTransport = srv.Client().Transport
+		defer func() { http.DefaultTransport = transport }()
+		endpoint := "http://posthog.example.com"
+		opts := Options{Database: testutil.OpenTestDB(t), Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+		view := `{"event":"review_viewed","properties":{"surface":"tui"}}`
+		for range 2 {
+			reporter, err := NewReporter(opts)
+			require.NoError(t, err)
+			handler := (&AppOpenedLimiter{}).Handler(reporter)
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, view).Code)
+			// Review views and screen views are separate daily events on one surface.
+			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
+			require.NoError(t, reporter.Close())
+		}
+		assert.Equal(t, []string{"review_viewed:tui", "screen_viewed:tui"}, surfacesOf(messages()))
+		time.Sleep(time.Until(time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)))
+		reporter, err := NewReporter(opts)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusAccepted, postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), view).Code)
+		require.NoError(t, reporter.Close())
+		assert.Equal(t, []string{"review_viewed:tui", "screen_viewed:tui", "review_viewed:tui"}, surfacesOf(messages()))
+	})
 }

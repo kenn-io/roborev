@@ -1,0 +1,23 @@
+[
+  { "job_type": "review", "git_ref": "a..b", "readable": true },
+  { "job_type": "range", "git_ref": "a..b", "readable": true },
+  { "job_type": "dirty", "git_ref": "a..b", "readable": true },
+  { "job_type": "goal_review", "git_ref": "a..b", "readable": true },
+  { "job_type": "synthesis", "git_ref": "a..b", "readable": true },
+  { "job_type": "compact", "git_ref": "a..b", "readable": true },
+  { "job_type": "task", "git_ref": "a..b", "readable": false },
+  { "job_type": "analysis", "git_ref": "a..b", "readable": false },
+  { "job_type": "unknown", "git_ref": "a..b", "readable": false },
+  { "job_type": "", "git_ref": "abc", "commit_id": 1, "readable": true },
+  { "job_type": "", "git_ref": "dirty", "readable": true },
+  { "job_type": "", "git_ref": "abc", "diff_content": "", "readable": true },
+  { "job_type": "", "git_ref": "a..b", "readable": true },
+  { "job_type": "", "git_ref": "abc", "readable": false },
+  {
+    "job_type": "task",
+    "git_ref": "abc",
+    "commit_id": 1,
+    "diff_content": "",
+    "readable": false
+  }
+]

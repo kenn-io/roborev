@@ -1525,3 +1525,19 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 	m.loadingFixJobs = true
 	return m.fetchFixJobs()
 }
+
+func (m model) reportAction(event string) tea.Cmd {
+	if !telemetry.EnabledFromEnv() {
+		return nil
+	}
+	day := time.Now().UTC().Format(time.DateOnly)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
+		defer cancel()
+		err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		if event == telemetry.EventReviewViewed {
+			return screenDeliveryMsg{screen: event, day: day, err: err}
+		}
+		return nil
+	}
+}

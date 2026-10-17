@@ -21,9 +21,18 @@ type PostHogMessage struct {
 // NewPostHogStub records plain or gzip-compressed batches from a reporter.
 func NewPostHogStub(t *testing.T) (string, func() []PostHogMessage) {
 	t.Helper()
+	handler, messages := NewPostHogRecorder(t)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv.URL, messages
+}
+
+// NewPostHogRecorder can serve either a socket or an in-memory test server.
+func NewPostHogRecorder(t *testing.T) (http.Handler, func() []PostHogMessage) {
+	t.Helper()
 	var mu sync.Mutex
 	var bodies [][]byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var reader io.Reader = r.Body
 		if r.Header.Get("Content-Encoding") == "gzip" {
 			gz, err := gzip.NewReader(r.Body)
@@ -43,9 +52,8 @@ func NewPostHogStub(t *testing.T) (string, func() []PostHogMessage) {
 		bodies = append(bodies, body)
 		mu.Unlock()
 		_, _ = w.Write([]byte(`{"status":1}`))
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL, func() []PostHogMessage {
+	})
+	return handler, func() []PostHogMessage {
 		mu.Lock()
 		defer mu.Unlock()
 		var messages []PostHogMessage

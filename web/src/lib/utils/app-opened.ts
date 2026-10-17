@@ -100,16 +100,21 @@ function postEvent(
   });
 }
 
-export function reportScreenViewed(screen: Screen): void {
+function postBoundedEvent(
+  event: string,
+  properties: Record<string, string>,
+): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-  void postEvent(
-    "screen_viewed",
-    { screen, surface: "web" },
-    { signal: controller.signal },
-  )
-    .catch(() => undefined)
-    .finally(() => clearTimeout(timeout));
+  return postEvent(event, properties, { signal: controller.signal }).finally(
+    () => clearTimeout(timeout),
+  );
+}
+
+export function reportScreenViewed(screen: Screen): void {
+  void postBoundedEvent("screen_viewed", { screen, surface: "web" }).catch(
+    () => undefined,
+  );
 }
 
 // Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
@@ -143,4 +148,25 @@ export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
     pauseSession();
     currentScreen = undefined;
   };
+}
+
+let reviewDay = "";
+let pendingReviewDay = "";
+export function reportCoreAction(
+  event: "review_viewed" | "review_closed",
+): void {
+  const day = new Date().toISOString().slice(0, 10);
+  if (event === "review_viewed") {
+    if (reviewDay === day || pendingReviewDay === day) return;
+    pendingReviewDay = day;
+  }
+  void postBoundedEvent(event, { surface: "web" })
+    .then(() => {
+      if (event === "review_viewed") reviewDay = day;
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (event === "review_viewed" && pendingReviewDay === day)
+        pendingReviewDay = "";
+    });
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
@@ -80,13 +82,16 @@ var agentUseCommands = map[string]bool{
 
 var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
+	cliOutputIsTerminal = streamfmt.WriterIsTerminal
 	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
-	cliUseTimeout = telemetry.NotificationTimeout
-	cliUsePost    = telemetry.PostAppOpened
-	cliAgentPost  = telemetry.PostAgentCall
-	cliUseOnce    sync.Once
-	cliUseState   atomic.Pointer[cliUsePostState] // nil until a post starts
-	cliUseAgent   bool
+	cliUseTimeout  = telemetry.NotificationTimeout
+	cliUsePost     = telemetry.PostAppOpened
+	cliAgentPost   = telemetry.PostAgentCall
+	cliUseOnce     sync.Once
+	cliUseState    atomic.Pointer[cliUsePostState] // nil until a post starts
+	cliUseAgent    bool
+	cliUseEndpoint atomic.Pointer[daemon.DaemonEndpoint]
+	cliActions     sync.WaitGroup
 )
 
 type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
@@ -112,6 +117,7 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 		return
 	}
 	cliUseOnce.Do(func() {
+		cliUseEndpoint.Store(&ep)
 		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
 		cliUseState.Store(&cliUsePostState{ctx: ctx})
 		go func() {
@@ -136,7 +142,35 @@ func reportMCPActivity(ctx context.Context, ep daemon.DaemonEndpoint) {
 
 // waitCLIUse waits for a started post to finish or reach its deadline.
 func waitCLIUse() {
+	cliActions.Wait()
 	if s := cliUseState.Load(); s != nil {
 		<-s.ctx.Done()
 	}
+}
+
+// reportCLIAction bounds best-effort reporting through the running daemon.
+func reportCLIAction(cmd *cobra.Command, event string) {
+	reportCLIActionOutput(cmd.Context(), cmd.OutOrStdout(), event)
+}
+
+func reportCLIActionOutput(ctx context.Context, out io.Writer, event string) {
+	if fromSkill || cliUseAgent || !cliTelemetryEnabled() || !cliOutputIsTerminal(out) {
+		return
+	}
+	ep := cliUseEndpoint.Load()
+	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, cliUseTimeout)
+	cliActions.Go(func() {
+		defer cancel()
+		if ep == nil {
+			info, err := getAnyRunningDaemonForStart(ctx)
+			if err != nil || info == nil {
+				return
+			}
+			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
+		}
+		_ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+	})
 }

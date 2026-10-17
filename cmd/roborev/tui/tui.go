@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -143,6 +144,7 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	reviewInputJobID     int64
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1139,6 +1141,10 @@ func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.screenDay != "" && m.screenDay != time.Now().UTC().Format(time.DateOnly) {
+		m.reviewInputJobID = 0
+	}
+
 	// Signal that the event loop is running (once). The control
 	// listener waits on this before accepting connections.
 	if m.ready != nil {
@@ -1173,10 +1179,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result = m
 		}
 	case tea.KeyMsg:
+		if m.currentView == viewReview || m.splitActive() {
+			m.reviewInputJobID = m.selectedJobID
+		}
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
 		if !m.mouseEnabled {
 			return m, nil
+		}
+		if m.currentView == viewReview || m.splitActive() {
+			m.reviewInputJobID = m.selectedJobID
 		}
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
@@ -1313,11 +1325,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
 		}
+
 		today := time.Now().UTC().Format(time.DateOnly)
-		_, key := msg.(tea.KeyMsg)
-		_, mouse := msg.(tea.MouseMsg)
 		if rm.screenDay != today {
 			rm.screenDay, rm.screensSent = today, nil
+		}
+		_, key := msg.(tea.KeyMsg)
+		_, mouse := msg.(tea.MouseMsg)
+		reviewVisible := rm.currentView == viewReview || rm.splitActive()
+		reviewPending := rm.pendingReviewOpenJobID != 0 && rm.pendingReviewOpenJobID == rm.selectedJobID && rm.pendingReviewOpenOrigin == rm.currentView
+		if (key || mouse) && (rm.reviewInputJobID != 0 || reviewPending && rm.pendingReviewOpenSeq != m.pendingReviewOpenSeq) {
+			rm.reviewInputJobID = rm.selectedJobID
+		}
+		if !reviewVisible && !reviewPending || rm.reviewInputJobID != rm.selectedJobID {
+			rm.reviewInputJobID = 0
+		}
+		if input, ok := msg.(tea.KeyMsg); ok && (input.String() == "ctrl+c" || input.String() == "ctrl+d") {
+			rm.reviewInputJobID = 0
+		}
+		read := (key || mouse) && (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.ID != 0 && m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
+		if rm.reviewInputJobID != 0 && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 {
+			read = read || rm.currentReview.Job != nil && rm.currentReview.Job.IsReadableReview()
+			rm.reviewInputJobID = 0
+		}
+		if read && !slices.Contains(rm.screensSent, telemetry.EventReviewViewed) {
+			rm.screensSent = append(rm.screensSent, telemetry.EventReviewViewed)
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {

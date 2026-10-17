@@ -28,7 +28,7 @@ type AppOpenedLimiter struct {
 // appOpenedMaxBodyBytes matches kit's maxPostHogCaptureBodyBytes at the pinned version; a larger body goes to kit for its 413.
 const appOpenedMaxBodyBytes = 64 << 10
 
-// Handler accepts app_opened, session_ended, and screen_viewed. It limits app_opened to one send per surface per UTC day.
+// Handler accepts usage events. It limits app_opened to one send per surface per UTC day.
 // Build it per request if needed; the state lives on the limiter.
 func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 						http.Error(w, "read telemetry claim", http.StatusInternalServerError)
 						return
 					}
-				case EventSessionEnded:
+				case EventSessionEnded, EventReviewViewed, EventFindingFixed, EventReviewClosed:
 				default:
 					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 					return
@@ -150,6 +150,12 @@ func PostSessionEnded(ctx context.Context, client *http.Client, url, surface str
 
 func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, surface string) error {
 	_, err := posthog.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
+	return err
+}
+
+// PostReviewEvent reports a completed review action through the daemon.
+func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) error {
+	_, err := posthog.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
 	return err
 }
 
