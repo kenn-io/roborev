@@ -514,6 +514,9 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 				fmt.Printf("Waiting for in-progress review (job %d)...\n", pendingJob.ID)
 				review, err := client.WaitForReview(pendingJob.ID)
 				if err != nil {
+					if started {
+						reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
+					}
 					fmt.Printf("Warning: review failed: %v\n", err)
 					continue // Loop back, will re-check
 				}
@@ -522,6 +525,9 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 					currentFailedReview = review
 				} else if verdict == "P" {
 					if err := client.MarkReviewClosed(review.JobID); err != nil {
+						if started {
+							reportCLIError(actionCmd, telemetry.EventFindingFixed, err)
+						}
 						fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
@@ -642,14 +648,15 @@ func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
 			planCmd := &cobra.Command{}
 			planCmd.SetContext(ctx)
 			planCmd.SetOut(os.Stdout)
-			started = true
-			addressPrompt, planErr = planFixAtRevision(ctx, planCmd, repoPath, headBefore, addressAgent, planningPrompt, addressPrompt, []int64{currentFailedReview.JobID}, fixOptions{quiet: opts.quiet}, cfg)
+			addressPrompt, planErr = planFixAtRevision(ctx, planCmd, repoPath, headBefore, addressAgent, planningPrompt, addressPrompt, []int64{currentFailedReview.JobID}, fixOptions{quiet: opts.quiet, onAgentStart: func() { started = true }}, cfg)
 			if planErr != nil {
 				fmt.Printf("Planning error: %v\n", planErr)
 				if _, stateChanged := errors.AsType[*planningStateError](planErr); stateChanged {
 					return fmt.Errorf("planning cannot continue: %w", planErr)
 				}
-				reportCLIError(planCmd, telemetry.EventFindingFixed, planErr)
+				if started {
+					reportCLIError(planCmd, telemetry.EventFindingFixed, planErr)
+				}
 				fmt.Println("Will retry in next iteration")
 				continue
 			}

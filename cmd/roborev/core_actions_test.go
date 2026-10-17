@@ -26,7 +26,7 @@ import (
 )
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "planning failure", "follow-up warnings"} {
+	for _, mode := range []string{"terminal", "skill", "no change", "commit failure", "planning failure", "planning setup failure", "follow-up warnings", "pending before fix", "pending after fix"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -95,6 +95,57 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					return true
 				}
 			}
+
+			if strings.HasPrefix(mode, "pending ") {
+				var phase atomic.Int32
+				hooks.OnReview = func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					switch r.URL.Query().Get("job_id") {
+					case "8":
+						phase.Store(1)
+						http.Error(w, "pending review unavailable", http.StatusInternalServerError)
+					case "9", "10":
+						id, err := strconv.ParseInt(r.URL.Query().Get("job_id"), 10, 64)
+						require.NoError(t, err)
+						writeJSON(w, &storage.Review{JobID: id, Output: "No issues found.", VerdictBool: testutil.ReviewFixtureVerdict("No issues found.")})
+					default:
+						if mode == "pending after fix" && changes.Load() == 0 {
+							writeJSON(w, review)
+						} else {
+							w.WriteHeader(http.StatusNotFound)
+						}
+					}
+					return true
+				}
+				hooks.OnGetJobs = func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					var jobs []storage.ReviewJob
+					if id := r.URL.Query().Get("id"); id != "" {
+						parsed, err := strconv.ParseInt(id, 10, 64)
+						require.NoError(t, err)
+						jobs = []storage.ReviewJob{{ID: parsed, GitRef: head, Status: storage.JobStatusDone}}
+					} else if r.URL.Query().Get("git_ref") == head && phase.Load() < 2 && (mode == "pending before fix" || changes.Load() > 0) {
+						jobs = []storage.ReviewJob{{ID: 8 + int64(phase.Load()), GitRef: head, Status: storage.JobStatusQueued}}
+					}
+					writeJSON(w, map[string]any{"jobs": jobs})
+					return true
+				}
+				hooks.OnReviewClose = func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					var body struct {
+						JobID int64 `json:"job_id"`
+					}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					if body.JobID != 9 {
+						return false
+					}
+					phase.Store(2)
+					http.Error(w, "pending close unavailable", http.StatusInternalServerError)
+					return true
+				}
+				hooks.OnEnqueue = func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					respondJSON(w, http.StatusCreated, &storage.ReviewJob{ID: 10, Status: storage.JobStatusDone})
+					return true
+				}
+			}
+
 			md, rec := newCLIUseDaemon(t, hooks, nil)
 			md.State.jobs[7], md.State.reviews[head] = &job, review
 			if mode == "commit failure" {
@@ -118,14 +169,40 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				iterations = "3"
 			}
 			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", iterations, "--quiet", "--server", md.Server.URL}
-			if mode == "planning failure" {
+			if mode == "planning failure" || mode == "planning setup failure" {
 				args = append(args, "--plan")
 			}
 			if mode == "skill" {
 				args = append(args, "--from-skill")
 			}
+			if mode == "planning setup failure" {
+				tempFile := filepath.Join(t.TempDir(), "blocked-temp-root")
+				require.NoError(t, os.WriteFile(tempFile, []byte("blocked"), 0o600))
+				for _, key := range []string{"TMPDIR", "TEMP", "TMP"} {
+					t.Setenv(key, tempFile)
+				}
+			}
 			result := runCLI(t, args...)
 			switch mode {
+			case "pending before fix", "pending after fix":
+				require.NoError(t, result.err)
+				assert.Contains(t, result.stdout, "Waiting for in-progress review (job 8)")
+				assert.Contains(t, result.stdout, "Waiting for in-progress review (job 9)")
+				assert.Contains(t, result.stdout, "Warning: review failed:")
+				assert.Contains(t, result.stdout, "Warning: failed to close review (job 9)")
+				assert.Contains(t, result.stdout, "All reviews passed!")
+				shown := 0
+				for _, post := range rec.telemetryPosts() {
+					if strings.Contains(post.body, `"event":"error_shown"`) {
+						shown++
+						assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, post.body)
+					}
+				}
+				if mode == "pending after fix" {
+					assert.Equal(t, 2, shown)
+				} else {
+					assert.Zero(t, shown)
+				}
 			case "follow-up warnings":
 				require.NoError(t, result.err)
 				assert.Contains(t, result.stdout, "All reviews passed!")
@@ -146,9 +223,19 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			default:
 				require.ErrorContains(t, result.err, "max iterations")
 			}
-			if mode == "no change" || mode == "commit failure" || mode == "planning failure" {
+			if mode == "planning setup failure" {
+				assert.Equal(t, int32(0), changes.Load())
+				assert.Equal(t, 2, strings.Count(result.stdout, "Planning error: create planning worktree:"))
+				for _, post := range rec.telemetryPosts() {
+					assert.NotContains(t, post.body, `"event":"error_shown"`)
+				}
+			}
+			switch mode {
+			case "pending after fix":
+				assert.Equal(t, "1", repo.Run("rev-list", "--count", head+"..HEAD"))
+			case "no change", "commit failure", "planning failure", "planning setup failure", "pending before fix":
 				assert.Equal(t, head, repo.HeadSHA())
-			} else {
+			default:
 				assert.Equal(t, "2", repo.Run("rev-list", "--count", head+"..HEAD"))
 				assert.Contains(t, result.stdout, "Created commit")
 			}
@@ -167,8 +254,12 @@ func TestCoreActionRefineCommit(t *testing.T) {
 					fixes = append(fixes, post.body)
 				}
 			}
-			if mode == "terminal" || mode == "follow-up warnings" {
-				require.Len(t, fixes, 2)
+			if mode == "terminal" || mode == "follow-up warnings" || mode == "pending after fix" {
+				count := 2
+				if mode == "pending after fix" {
+					count = 1
+				}
+				require.Len(t, fixes, count)
 				for _, body := range fixes {
 					assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, body)
 				}

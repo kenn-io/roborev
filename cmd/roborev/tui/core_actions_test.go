@@ -291,8 +291,12 @@ func TestOutcomeVisibleTUIErrors(t *testing.T) {
 		f.update(failure)
 		assert.Len(t, f.transport.events, 2)
 		// A superseded request cannot replace the visible error or report it again.
-		failure.fetchSeq++
+		require.NotNil(t, f.m.dispatchReviewFollow(f.m.selectedJobID))
+		failure.err = errors.New("stale request failed")
 		f.update(failure)
+		require.ErrorContains(t, f.m.splitDetailErr, "unavailable")
+		assert.Contains(t, f.m.renderSplit(), "unavailable")
+		assert.NotContains(t, f.m.renderSplit(), "stale request failed")
 		assert.Len(t, f.transport.events, 2)
 	})
 
