@@ -1819,7 +1819,13 @@ it("reports completed explicit empty searches, including retries, and ignores re
   expect(events).toHaveLength(2);
   listJobs.mockResolvedValue({ jobs: [], has_more: false });
   store.setFilter("search", "  ");
-  await loadJobs(store);
+  await vi.waitFor(() => {
+    expect(listJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ git_ref: "  " }),
+      expect.anything(),
+    );
+    expect(store.isLoading()).toBe(false);
+  });
   expect(events).toEqual([
     { event: "search_empty", properties: { surface: "web" } },
     { event: "search_empty", properties: { surface: "web" } },
