@@ -16,19 +16,18 @@ func TestMuseBuildArgs(t *testing.T) {
 		agentic   bool
 		unsafe    bool
 		model     string
-		wantModel string
 		reasoning ReasoningLevel
 		want      []string
 	}{
-		{"review", false, false, "", "muse-spark-1.3", ReasoningStandard, []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
-		{"agentic", true, false, "", "muse-spark-1.3", ReasoningStandard, []string{"--yolo"}},
-		{"unsafe with contributor mode off", false, true, "muse-spark-1.3-contributor", "muse-spark-1.3-contributor", ReasoningStandard, []string{"--yolo"}},
-		{"configured model and reasoning", false, false, "custom-model", "custom-model", ReasoningThorough, []string{"--reasoning-effort", "high", "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"review", false, false, "", ReasoningStandard, []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"agentic", true, false, "", ReasoningStandard, []string{"--yolo"}},
+		{"unsafe with contributor mode off", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
+		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
 			a := NewMuseAgent("").WithModel(tc.model).WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
-			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", tc.wantModel}, tc.want...)
+			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off"}, tc.want...)
 			want = append(want, "--prompt-file", "prompt.md")
 			assert.Equal(t, want, a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md"))
 			assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")

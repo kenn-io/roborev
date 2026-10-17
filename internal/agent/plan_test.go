@@ -159,7 +159,7 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--trust-workspace\n")
 				assert.Contains(t, args, "--no-session-log\n")
 				assert.Contains(t, args, "--contributor-mode\noff\n")
-				assert.Contains(t, args, "--model\nmuse-spark-1.3\n")
+				assert.NotContains(t, args, "--model\n")
 			case "grok":
 				assert.Contains(t, args, "--sandbox\nread-only\n")
 				assert.Contains(t, args, "--tools\nread_file,grep,list_dir\n")

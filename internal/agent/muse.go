@@ -7,9 +7,6 @@ import (
 	"strings"
 )
 
-// Remove this default when Muse's Contributor mode override alone selects the standard model.
-const museDefaultModel = "muse-spark-1.3"
-
 // MuseAgent runs Meta's Muse Code CLI in headless mode.
 type MuseAgent struct {
 	Command   string
@@ -49,11 +46,10 @@ func (a *MuseAgent) Name() string        { return "muse" }
 func (a *MuseAgent) CommandName() string { return a.Command }
 
 func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
-	model := a.Model
-	if model == "" {
-		model = museDefaultModel
+	args := []string{"exec", "--no-session-log", "--contributor-mode", "off"}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
-	args := []string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", model}
 	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}

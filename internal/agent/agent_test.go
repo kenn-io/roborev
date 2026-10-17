@@ -349,7 +349,7 @@ var agentFixtures = []agentTestDef{
 	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4", false, false},
 	{"kilo", func(s string) Agent { return NewKiloAgent(s) }, "--model", "", "anthropic/claude-sonnet-4-20250514", false, false},
 	{"grok", func(s string) Agent { return NewGrokAgent(s) }, "-m", "", "grok-4.5", false, false},
-	{"muse", func(s string) Agent { return NewMuseAgent(s) }, "--model", "muse-spark-1.3", "muse-spark-1.3-contributor", false, false},
+	{"muse", func(s string) Agent { return NewMuseAgent(s) }, "--model", "", "muse-spark-1.3-contributor", false, false},
 }
 
 func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
