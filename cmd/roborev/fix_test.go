@@ -4847,7 +4847,7 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 	)
 }
 
-func TestCoreActionFixCommit(t *testing.T) {
+func TestCoreActionFixReadAndCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
 		for _, outcome := range []string{"commit", "no change"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {

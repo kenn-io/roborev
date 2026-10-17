@@ -421,6 +421,27 @@ describe("setupAppOpenedReporting", () => {
     ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
   });
 
+  test("retries failed review capture and suppresses acknowledged reads until the next day", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(new Date("2026-03-11T09:00:00Z"));
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
+      event: "review_viewed",
+      properties: { surface: "web" },
+    });
+  });
+
   test.each(["screen", "core action"])(
     "bounds %s requests while preserving app-open transport",
     async (kind) => {

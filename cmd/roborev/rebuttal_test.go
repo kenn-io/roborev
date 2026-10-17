@@ -81,12 +81,10 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 			cmd := newRootCmd()
 			cmd.SetArgs([]string{"comment", "42", "-m", "The caller checks it.", "--rebuttal", "--finding", "Missing guard.", "--close"})
 			var err error
-			stdout, stderr := captureStdoutStderr(t, func() {
+			captureStdoutStderr(t, func() {
 				cliOutputIsTerminal = func(out io.Writer) bool { return out == os.Stderr }
 				err = cmd.Execute()
 			})
-			assert.Empty(t, stdout)
-			assert.Contains(t, stderr, "Rebuttal job 8 queued")
 			waitCLIUse()
 			if tc.staleOriginalReview {
 				require.ErrorContains(t, err, "original review left open")

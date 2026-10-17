@@ -664,29 +664,42 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		marked []string
+		plain  []string
 	}{
 		{
 			name:   "show",
 			marked: []string{"show", "--from-skill", "--job", "1", "--json"},
+			plain:  []string{"show", "--job", "1", "--json"},
 		},
 		{
 			name:   "comment",
 			marked: []string{"comment", "--from-skill", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
+			plain:  []string{"comment", "--commenter", "roborev-fix", "--job", "1", "-m", "checked"},
 		},
 		{
 			name:   "close",
 			marked: []string{"close", "--from-skill", "1"},
+			plain:  []string{"close", "1"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			rec.reset()
 			marked := runCLIFresh(t, true, append(tc.marked, "--server", md.Server.URL)...)
-			require.NoError(t, marked.err)
+			markedBusiness := rec.businessPaths()
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 			assert.Empty(rec.telemetryPosts()[0].body)
-			assert.NotEmpty(rec.businessPaths())
+
+			rec.reset()
+			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
+			require.NoError(t, marked.err)
+			require.NoError(t, plain.err)
+			assert.Len(rec.telemetryPosts(), 1)
+			assert.Equal(plain.stdout, marked.stdout)
+			assert.Equal(plain.stderr, marked.stderr)
+			assert.Equal(rec.businessPaths(), markedBusiness)
+			assert.NotEmpty(markedBusiness)
 		})
 	}
 }

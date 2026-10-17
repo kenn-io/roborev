@@ -48,11 +48,12 @@ func TestCoreActionCapture(t *testing.T) {
 	for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
 		for _, surface := range []string{"web", "tui", "cli"} {
 			body := `{"event":"` + event + `","properties":{"surface":"` + surface + `","job_id":42,"output":"private review"}}`
-			for range 2 {
-				status := http.StatusAccepted
-				if event == "finding_fixed" && surface == "web" {
-					status = http.StatusBadRequest
-				}
+			status := http.StatusAccepted
+			if event == "finding_fixed" && surface == "web" {
+				status = http.StatusBadRequest
+			}
+			assert.Equal(t, status, post(body).Code)
+			if event != "review_viewed" {
 				assert.Equal(t, status, post(body).Code)
 			}
 		}
