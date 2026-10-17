@@ -348,6 +348,8 @@ uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
 `-c managed_hooks_path=null` to clear user and managed hooks for the run.
 Reviews and planning run with a private copy of the Muse login and settings and
 without saved workspace trust, so project `.muse/hooks.json` hooks don't run.
+They also use an empty data directory, so your installed Muse plugins and their
+hooks are unavailable during reviews and planning.
 
 Muse has no session resume or rebuttal support. Muse has no structured-output
 (schema) review or classification support.
@@ -358,9 +360,6 @@ Muse 1.4.10 defaults to `muse-spark-1.3-contributor`, so set
 `model = "muse-spark-1.3"` in roborev to keep pay-as-you-go reviews off that
 tier. roborev passes `--model` only when it has a model configured; otherwise,
 Muse uses its own model settings.
-
-Muse refuses to start when `TMPDIR` points inside the workspace. Use a temporary
-directory outside the repository.
 
 ## Grok Build
 

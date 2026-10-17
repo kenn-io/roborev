@@ -84,7 +84,7 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		Name: "muse", Command: a.Command,
 		Args: a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath),
 		Dir:  repoPath, Env: env, Output: output, StreamStderr: true, DrainStdout: true,
-		Parse: parseAntigravityOutput,
+		Parse: parsePlainTextOutput,
 	})
 	if err != nil {
 		return "", err
@@ -102,8 +102,8 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 }
 
 // prepareMuseRun writes the prompt file. Non-agentic runs also get a private
-// XDG_CONFIG_HOME holding only the Muse login and settings, so saved workspace
-// trust, and the project hooks it enables, don't apply.
+// XDG_CONFIG_HOME holding only the Muse login and settings, plus an empty
+// XDG_DATA_HOME, to exclude saved workspace trust and installed plugins.
 func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), error) {
 	promptPath, cleanupPrompt, err := createPromptFile("muse", prompt)
 	if err != nil || agentic {
@@ -111,7 +111,11 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 	}
 	src := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "muse")
 	if os.Getenv("XDG_CONFIG_HOME") == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			cleanupPrompt()
+			return "", nil, nil, fmt.Errorf("resolve muse config home: %w", err)
+		}
 		src = filepath.Join(home, ".config", "muse")
 	}
 	dir, err := os.MkdirTemp("", "roborev-muse-config-*")
@@ -120,6 +124,11 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		return "", nil, nil, fmt.Errorf("create muse config dir: %w", err)
 	}
 	cleanup := func() { cleanupPrompt(); _ = os.RemoveAll(dir) }
+	dataDir := filepath.Join(dir, "data")
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		cleanup()
+		return "", nil, nil, fmt.Errorf("create muse data dir: %w", err)
+	}
 	err = os.Mkdir(filepath.Join(dir, "muse"), 0o700)
 	for _, name := range []string{"auth.json", "settings.json"} {
 		data, readErr := os.ReadFile(filepath.Join(src, name))
@@ -133,7 +142,7 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		cleanup()
 		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
 	}
-	return promptPath, append(os.Environ(), "XDG_CONFIG_HOME="+dir), cleanup, nil
+	return promptPath, append(os.Environ(), "XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dataDir), cleanup, nil
 }
 
 func init() { Register(NewMuseAgent("")) }
