@@ -19,10 +19,10 @@ func TestMuseBuildArgs(t *testing.T) {
 		reasoning ReasoningLevel
 		want      []string
 	}{
-		{"review", false, false, "", ReasoningStandard, []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"review", false, false, "", ReasoningStandard, []string{"--disable-write", "--disable-shell", "--disable-web-tools"}},
 		{"agentic", true, false, "", ReasoningStandard, []string{"--yolo"}},
 		{"unsafe with configured model", false, true, "muse-spark-1.3-contributor", ReasoningStandard, []string{"--model", "muse-spark-1.3-contributor", "--yolo"}},
-		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"configured model and reasoning", false, false, "custom-model", ReasoningThorough, []string{"--model", "custom-model", "--reasoning-effort", "high", "--disable-write", "--disable-shell", "--disable-web-tools"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
@@ -30,6 +30,7 @@ func TestMuseBuildArgs(t *testing.T) {
 			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off"}, tc.want...)
 			want = append(want, "--prompt-file", "prompt.md")
 			assert.Equal(t, want, a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md"))
+			assert.NotContains(t, a.buildArgs(false, "prompt.md"), "--trust-workspace")
 			assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
 		})
 	}
