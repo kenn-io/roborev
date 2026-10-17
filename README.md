@@ -482,7 +482,7 @@ across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
 The daemon sends `setup_finished` once per install for a readable local, synced,
-or startup review; panels count after synthesis. It has no properties. Claiming
+or startup review, including a panel member's review. It has no properties. Claiming
 before best-effort delivery can lose the event. Its timestamp marks detection,
 including upgrades or enabling telemetry after a review exists.
 
