@@ -25,6 +25,7 @@ type JobsStoreStub = {
   getFilterRepo: () => string | undefined;
   getFilterBranch: () => string | undefined;
   commitSearch: Mock<(value: string) => void>;
+  editSearch: () => void;
   setFilter: Mock<(key: string, value: string | boolean | undefined) => void>;
 };
 
@@ -59,6 +60,7 @@ describe("FilterBar", () => {
       getFilterRepo: () => undefined,
       getFilterBranch: () => undefined,
       commitSearch: vi.fn(),
+      editSearch: vi.fn(),
       setFilter: vi.fn((key: string, value: string | boolean | undefined) => {
         if (key === "showAutoDesign") state.showAutoDesign = value === true;
       }),

@@ -562,10 +562,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
       case "search":
         if (typeof value === "boolean") return;
-        if (filterSearch !== value) {
-          committedSearch = undefined;
-          pendingSearch = undefined;
-        }
         filterSearch = value;
         break;
       case "hideClosed":
@@ -587,6 +583,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   let committedSearch: string | undefined;
   let pendingSearch: string | undefined;
+  function editSearch(): void {
+    committedSearch = pendingSearch = undefined;
+  }
   function commitSearch(value: string): void {
     if (committedSearch === value) return;
     committedSearch = value;
@@ -1233,6 +1232,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     setFilter,
     setRepoBranchFilter,
     commitSearch,
+    editSearch,
     setSortColumn,
     cancelJob,
     cancelJobEffect,

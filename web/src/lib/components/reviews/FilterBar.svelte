@@ -63,7 +63,7 @@
   ]);
 
   function onSearchInput(value: string): void {
-    searchValue = value;
+    jobsStore?.editSearch();
     searchExecution?.interrupt();
     searchExecution = runtime.runCommand(
       Effect.sleep("300 millis").pipe(
