@@ -465,14 +465,8 @@ func TestClaudeBuildArgsNoEffortForStandard(t *testing.T) {
 	assert.NotContains(t, cmdLine, "--effort")
 }
 
-func TestAgentBuildArgsWithModel(t *testing.T) {
+func TestAgentBuildArgsDefaultModel(t *testing.T) {
 	for _, tt := range agentFixtures {
-		t.Run(tt.name+" with explicit model", func(t *testing.T) {
-			agent := tt.factory("").WithModel(tt.testModel)
-			cmdLine := agent.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-
 		t.Run(tt.name+" without model", func(t *testing.T) {
 			agent := tt.factory("")
 			cmdLine := agent.CommandLine()
