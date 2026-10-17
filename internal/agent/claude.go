@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -32,10 +31,10 @@ const (
 )
 
 var (
-	claudeDangerousSupport sync.Map
-	claudeEffortSupport    sync.Map
-	claudeToolsSupport     sync.Map
-	claudeBareSupport      sync.Map
+	claudeDangerousSupport capabilityCache
+	claudeEffortSupport    capabilityCache
+	claudeToolsSupport     capabilityCache
+	claudeBareSupport      capabilityCache
 )
 
 // NewClaudeAgent creates a new Claude Code agent
@@ -261,8 +260,9 @@ func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
 }
 
 func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
-	if cached, ok := claudeDangerousSupport.Load(command); ok {
-		return cached.(bool), nil
+	executable, cached, ok := claudeDangerousSupport.Load(command, command)
+	if ok {
+		return cached, nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -271,19 +271,20 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
-	claudeDangerousSupport.Store(command, supported)
+	claudeDangerousSupport.Store(command, command, executable, supported)
 	return supported, nil
 }
 
 func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
-	if cached, ok := claudeEffortSupport.Load(command); ok {
-		return cached.(bool)
+	executable, cached, ok := claudeEffortSupport.Load(command, command)
+	if ok {
+		return cached
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
 	output, _ := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeEffortFlag)
-	claudeEffortSupport.Store(command, supported)
+	claudeEffortSupport.Store(command, command, executable, supported)
 	return supported
 }
 
@@ -294,8 +295,9 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 // against untrusted commit text. Errors are treated as "unsupported"
 // so the caller fails closed.
 func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
-	if cached, ok := claudeToolsSupport.Load(command); ok {
-		return cached.(bool)
+	executable, cached, ok := claudeToolsSupport.Load(command, command)
+	if ok {
+		return cached
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -305,13 +307,14 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 		return false
 	}
 	supported := strings.Contains(string(output), "--tools")
-	claudeToolsSupport.Store(command, supported)
+	claudeToolsSupport.Store(command, command, executable, supported)
 	return supported
 }
 
 func claudeSupportsBareFlag(ctx context.Context, command string) bool {
-	if cached, ok := claudeBareSupport.Load(command); ok {
-		return cached.(bool)
+	executable, cached, ok := claudeBareSupport.Load(command, command)
+	if ok {
+		return cached
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	configureCapabilityProbe(ctx, cmd)
@@ -320,7 +323,7 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 		return false
 	}
 	supported := strings.Contains(string(output), "--bare")
-	claudeBareSupport.Store(command, supported)
+	claudeBareSupport.Store(command, command, executable, supported)
 	return supported
 }
 
