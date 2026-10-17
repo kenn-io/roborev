@@ -347,9 +347,10 @@ uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
 `-c managed_hooks_path=null` to clear user and managed hooks for the run.
 Reviews and planning set `HOME` and `USERPROFILE` to one temporary home, with
 private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` directories
-under it. Muse's `auth.json` is copied unchanged. Its `settings.json` is copied
-with `mcpServers` and `mcp_servers` removed; only settings schema version 1 is
-accepted. Saved workspace trust and installed user plugins are excluded, so
+under it. Muse's `auth.json` is copied, and a login Muse renews during the run
+is saved back if the original credentials are unchanged. Its `settings.json` is
+copied with `mcpServers` and `mcp_servers` removed; only settings schema version
+1 is accepted. Saved workspace trust and installed user plugins are excluded, so
 trusted project `.muse/hooks.json` hooks and user plugin hooks don't run. The
 `--no-foreign-personal-context` flag also excludes foreign personal rules and
 skills, including configured foreign roots. Muse's bundled plugins remain

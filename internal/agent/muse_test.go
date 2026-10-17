@@ -86,13 +86,15 @@ printf 'status message\n' >&2
 func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 	skipIfWindows(t)
 	withUnsafeAgents(t, false)
-	for _, tc := range []struct{ source, key string }{
-		{"xdg", "mcpServers"},
-		{"xdg", "mcp_servers"},
-		{"home", "mcpServers"},
-		{"home", "mcp_servers"},
+	for _, tc := range []struct{ source, key, auth string }{
+		{"xdg", "mcpServers", "example"},
+		{"xdg", "mcp_servers", "example"},
+		{"home", "mcpServers", "example"},
+		{"home", "mcp_servers", "example"},
+		{"xdg", "mcpServers", "renewed"},
+		{"xdg", "mcpServers", "concurrent"},
 	} {
-		t.Run(tc.source+"/"+tc.key, func(t *testing.T) {
+		t.Run(tc.source+"/"+tc.key+"/"+tc.auth, func(t *testing.T) {
 			configHome := t.TempDir()
 			if tc.source == "home" {
 				home := t.TempDir()
@@ -117,6 +119,8 @@ func TestMuseReviewIsolatesConfigAndData(t *testing.T) {
 			t.Setenv("XDG_DATA_HOME", dataHome)
 			capture := filepath.Join(t.TempDir(), "settings.json")
 			t.Setenv("MUSE_SETTINGS_CAPTURE", capture)
+			t.Setenv("MUSE_RENEW_AUTH", tc.auth)
+			t.Setenv("MUSE_ORIGINAL_AUTH", filepath.Join(museConfig, "auth.json"))
 			command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 set -eu
@@ -131,6 +135,12 @@ cp "$XDG_CONFIG_HOME/muse/settings.json" "$MUSE_SETTINGS_CAPTURE"
 test ! -e "$XDG_CONFIG_HOME/muse/trust.json"
 test ! -e "$XDG_CONFIG_HOME/muse/plugins.json"
 test -z "$(ls -1A "$XDG_DATA_HOME")"
+if [ "$MUSE_RENEW_AUTH" != example ]; then
+ printf '{"token":"renewed"}' > "$XDG_CONFIG_HOME/muse/auth.json"
+fi
+if [ "$MUSE_RENEW_AUTH" = concurrent ]; then
+ printf '{"token":"concurrent"}' > "$MUSE_ORIGINAL_AUTH"
+fi
 printf 'No issues found.\n'
 `)
 			repoPath := t.TempDir()
@@ -144,6 +154,9 @@ printf 'No issues found.\n'
 			settings, err := os.ReadFile(capture)
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"schema_version":1,"model":"muse-spark-1.3","hooks":{}}`, string(settings))
+			auth, err := os.ReadFile(filepath.Join(museConfig, "auth.json"))
+			require.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(`{"token":%q}`, tc.auth), string(auth))
 		})
 	}
 }

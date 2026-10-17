@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 // MuseAgent runs Meta's Muse Code CLI in headless mode.
@@ -125,7 +128,8 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		cleanupPrompt()
 		return "", nil, nil, fmt.Errorf("create muse config dir: %w", err)
 	}
-	cleanup := func() { cleanupPrompt(); _ = os.RemoveAll(dir) }
+	cleanupAuth := func() {}
+	cleanup := func() { cleanupAuth(); cleanupPrompt(); _ = os.RemoveAll(dir) }
 	configDir := filepath.Join(dir, ".config")
 	dataDir := filepath.Join(dir, "data")
 	cacheDir := filepath.Join(dir, "cache")
@@ -143,6 +147,11 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		}
 		if err == nil && readErr == nil {
 			err = os.WriteFile(filepath.Join(configDir, "muse", name), data, 0o600)
+			if err == nil && name == "auth.json" {
+				cleanupAuth = func() {
+					_ = writeBackMuseAuth(filepath.Join(configDir, "muse", name), filepath.Join(src, name), data)
+				}
+			}
 		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
 			err = readErr
 		}
@@ -152,6 +161,20 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
 	}
 	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir), cleanup, nil
+}
+
+// writeBackMuseAuth saves a login Muse renewed in the private home, unless
+// another Muse login or run has changed the user's file since it was copied.
+func writeBackMuseAuth(privatePath, userPath string, original []byte) error {
+	updated, err := os.ReadFile(privatePath)
+	if err != nil || bytes.Equal(updated, original) {
+		return err
+	}
+	current, err := os.ReadFile(userPath)
+	if err != nil || !bytes.Equal(current, original) {
+		return err
+	}
+	return atomicfile.WriteFile(userPath, updated, atomicfile.WithPrivate())
 }
 
 // museReadOnlySettings preserves user settings except MCP server declarations.
