@@ -83,14 +83,15 @@ func (a *MuseAgent) PlanningCommandLine() string {
 
 func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Muse requires a real file for prompts that exceed argv limits.
-	promptPath, env, cleanup, err := prepareMuseRun(prompt, effectiveAgentic(ctx, a.Agentic))
+	agentic := effectiveAgentic(ctx, a.Agentic)
+	promptPath, env, cleanup, err := prepareMuseRun(prompt, agentic)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "muse", Command: a.Command,
-		Args: a.buildArgs(effectiveAgentic(ctx, a.Agentic), promptPath),
+		Args: a.buildArgs(agentic, promptPath),
 		Dir:  repoPath, Env: env, Output: output, StreamStderr: true, DrainStdout: true,
 		Parse: parsePlainTextOutput,
 	})
