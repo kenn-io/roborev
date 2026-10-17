@@ -75,6 +75,9 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 
 	for _, spec := range allAgentSpecs {
 		t.Run(spec.Name, func(t *testing.T) {
+			if spec.CommandOverride != nil {
+				require.Contains(t, expectedOverrides, spec.Name, "command override needs an independent expected value")
+			}
 			agent, err := Get(spec.Name)
 			require.NoError(t, err)
 

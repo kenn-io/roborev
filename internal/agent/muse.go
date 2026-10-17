@@ -60,7 +60,7 @@ func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
 	if agentic {
 		args = append(args, "--yolo")
 	} else {
-		args = append(args, "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null")
+		args = append(args, "--no-foreign-personal-context", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null")
 	}
 	return append(args, "--prompt-file", promptFile)
 }
@@ -102,8 +102,8 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 }
 
 // prepareMuseRun writes the prompt file. Non-agentic runs also get a private
-// XDG_CONFIG_HOME holding only the Muse login and settings, plus an empty
-// XDG_DATA_HOME, to exclude saved workspace trust and installed plugins.
+// home holding only the Muse login and settings, plus empty data and cache
+// directories, to exclude saved workspace trust and installed user plugins.
 func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), error) {
 	promptPath, cleanupPrompt, err := createPromptFile("muse", prompt)
 	if err != nil || agentic {
@@ -124,16 +124,20 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		return "", nil, nil, fmt.Errorf("create muse config dir: %w", err)
 	}
 	cleanup := func() { cleanupPrompt(); _ = os.RemoveAll(dir) }
+	configDir := filepath.Join(dir, ".config")
 	dataDir := filepath.Join(dir, "data")
-	if err := os.Mkdir(dataDir, 0o700); err != nil {
-		cleanup()
-		return "", nil, nil, fmt.Errorf("create muse data dir: %w", err)
+	cacheDir := filepath.Join(dir, "cache")
+	for _, path := range []string{configDir, dataDir, cacheDir} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			cleanup()
+			return "", nil, nil, fmt.Errorf("create muse private directory: %w", err)
+		}
 	}
-	err = os.Mkdir(filepath.Join(dir, "muse"), 0o700)
+	err = os.Mkdir(filepath.Join(configDir, "muse"), 0o700)
 	for _, name := range []string{"auth.json", "settings.json"} {
 		data, readErr := os.ReadFile(filepath.Join(src, name))
 		if err == nil && readErr == nil {
-			err = os.WriteFile(filepath.Join(dir, "muse", name), data, 0o600)
+			err = os.WriteFile(filepath.Join(configDir, "muse", name), data, 0o600)
 		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
 			err = readErr
 		}
@@ -142,7 +146,7 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		cleanup()
 		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
 	}
-	return promptPath, append(os.Environ(), "XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dataDir), cleanup, nil
+	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir), cleanup, nil
 }
 
 func init() { Register(NewMuseAgent("")) }

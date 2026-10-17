@@ -346,10 +346,15 @@ until you fix that setting. Fix and refine pass `--yolo`. Setting
 `allow_unsafe_agents = true` also enables that mode for reviews. Planning always
 uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
 `-c managed_hooks_path=null` to clear user and managed hooks for the run.
-Reviews and planning run with a private copy of the Muse login and settings and
-without saved workspace trust, so project `.muse/hooks.json` hooks don't run.
-They also use an empty data directory, so your installed Muse plugins and their
-hooks are unavailable during reviews and planning.
+Reviews and planning set `HOME` and `USERPROFILE` to one temporary home, with
+private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` directories
+under it. Only Muse's `auth.json` and `settings.json` are copied. Saved
+workspace trust and installed user plugins are excluded, so trusted project
+`.muse/hooks.json` hooks and user plugin hooks don't run. The
+`--no-foreign-personal-context` flag also excludes foreign personal rules and
+skills, including configured foreign roots. Muse's bundled plugins remain
+available, and configured MCP servers still start as described above. Agentic
+runs inherit your environment and plugins.
 
 Muse has no session resume or rebuttal support. Muse has no structured-output
 (schema) review or classification support.
