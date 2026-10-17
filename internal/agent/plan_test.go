@@ -88,9 +88,10 @@ func TestRunPlanFreshSession(t *testing.T) {
 }
 
 func TestPlanningOverridesUnsafeMode(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok"} {
+	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok", "muse"} {
 		t.Run(name, func(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
 			argsPath := filepath.Join(t.TempDir(), "args")
@@ -116,6 +117,8 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				a = NewOpenCodeAgent(command)
 			case "kilo":
 				a = NewKiloAgent(command)
+			case "muse":
+				a = NewMuseAgent(command)
 			case "grok":
 				a = NewGrokAgent(command)
 			}

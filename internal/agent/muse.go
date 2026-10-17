@@ -1,0 +1,242 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gofrs/flock"
+	"go.kenn.io/kit/atomicfile"
+)
+
+// MuseAgent runs Meta's Muse Code CLI in headless mode.
+type MuseAgent struct {
+	Command   string
+	Model     string
+	Reasoning ReasoningLevel
+	Agentic   bool
+}
+
+func NewMuseAgent(command string) *MuseAgent {
+	if command == "" {
+		command = "muse"
+	}
+	return &MuseAgent{Command: command, Reasoning: ReasoningStandard}
+}
+
+func (a *MuseAgent) clone(opts ...agentCloneOption) *MuseAgent {
+	cfg := newAgentCloneConfig(a.Command, a.Model, a.Reasoning, a.Agentic, "", opts...)
+	return &MuseAgent{Command: cfg.Command, Model: cfg.Model, Reasoning: cfg.Reasoning, Agentic: cfg.Agentic}
+}
+
+func (a *MuseAgent) WithReasoning(level ReasoningLevel) Agent {
+	return a.clone(withClonedReasoning(level))
+}
+
+func (a *MuseAgent) WithAgentic(agentic bool) Agent {
+	return a.clone(withClonedAgentic(agentic))
+}
+
+func (a *MuseAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
+	return a.clone(withClonedModel(model))
+}
+
+func (a *MuseAgent) Name() string        { return "muse" }
+func (a *MuseAgent) CommandName() string { return a.Command }
+
+func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
+	args := []string{"exec", "--no-session-log", "--contributor-mode", "off"}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
+		args = append(args, "--reasoning-effort", effort)
+	}
+	if agentic {
+		args = append(args, "--yolo")
+	} else {
+		args = append(args, "--no-foreign-personal-context", "-c", `run.toolset=["read_file","search"]`, "-c", `hooks={}`, "-c", "managed_hooks_path=null")
+	}
+	return append(args, "--prompt-file", promptFile)
+}
+
+func (a *MuseAgent) CommandLine() string {
+	return a.Command + " " + strings.Join(a.buildArgs(a.Agentic || AllowUnsafeAgents(), "<prompt-file>"), " ")
+}
+
+func (a *MuseAgent) PlanningCommandLine() string {
+	return a.Command + " " + strings.Join(a.buildArgs(false, "<prompt-file>"), " ")
+}
+
+func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	// Muse requires a real file for prompts that exceed argv limits.
+	agentic := effectiveAgentic(ctx, a.Agentic)
+	promptPath, env, cleanup, err := prepareMuseRun(prompt, agentic)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	result, err := runStreamingCLI(ctx, streamingCLISpec{
+		Name: "muse", Command: a.Command,
+		Args: a.buildArgs(agentic, promptPath),
+		Dir:  repoPath, Env: env, Output: output, StreamStderr: true, DrainStdout: true,
+		Parse: parsePlainTextOutput,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result.WaitErr != nil {
+		return "", formatStreamingCLIWaitError("muse", result, result.Stderr)
+	}
+	if result.ParseErr != nil {
+		return result.Result, result.ParseErr
+	}
+	if result.Result == "" {
+		return "No review output generated", nil
+	}
+	return result.Result, nil
+}
+
+// prepareMuseRun writes the prompt file. Non-agentic runs also get a private
+// home holding only the Muse login and settings, plus empty data and cache
+// directories, to exclude saved workspace trust and installed user plugins.
+func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), error) {
+	promptPath, cleanupPrompt, err := createPromptFile("muse", prompt)
+	if err != nil || agentic {
+		return promptPath, nil, cleanupPrompt, err
+	}
+	src := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "muse")
+	if os.Getenv("XDG_CONFIG_HOME") == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			cleanupPrompt()
+			return "", nil, nil, fmt.Errorf("resolve muse config home: %w", err)
+		}
+		src = filepath.Join(home, ".config", "muse")
+	}
+	dir, err := os.MkdirTemp("", "roborev-muse-config-*")
+	if err != nil {
+		cleanupPrompt()
+		return "", nil, nil, fmt.Errorf("create muse config dir: %w", err)
+	}
+	cleanupAuth := func() {}
+	cleanup := func() { cleanupAuth(); cleanupPrompt(); _ = os.RemoveAll(dir) }
+	configDir := filepath.Join(dir, ".config")
+	dataDir := filepath.Join(dir, "data")
+	cacheDir := filepath.Join(dir, "cache")
+	for _, path := range []string{configDir, dataDir, cacheDir} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			cleanup()
+			return "", nil, nil, fmt.Errorf("create muse private directory: %w", err)
+		}
+	}
+	err = os.Mkdir(filepath.Join(configDir, "muse"), 0o700)
+	for _, name := range []string{"auth.json", "settings.json"} {
+		data, readErr := os.ReadFile(filepath.Join(src, name))
+		if err == nil && readErr == nil && name == "settings.json" {
+			data, err = museReadOnlySettings(data)
+		}
+		if err == nil && readErr == nil {
+			err = os.WriteFile(filepath.Join(configDir, "muse", name), data, 0o600)
+			if err == nil && name == "auth.json" {
+				cleanupAuth = func() {
+					saveMuseAuth(filepath.Join(configDir, "muse", name), filepath.Join(src, name), data)
+				}
+			}
+		} else if err == nil && !errors.Is(readErr, fs.ErrNotExist) {
+			err = readErr
+		}
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
+	}
+	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir), cleanup, nil
+}
+
+// writeBackMuseAuth saves a login Muse renewed in the private home, unless
+// another Muse login or run has changed the user's file since it was copied.
+func writeBackMuseAuth(privatePath, userPath string, original []byte) error {
+	updated, err := os.ReadFile(privatePath)
+	if err != nil || bytes.Equal(updated, original) {
+		return err
+	}
+	return replaceMuseAuthIfUnchanged(userPath, original, updated)
+}
+
+// saveMuseAuth reports a renewed login it could not save, without failing the run.
+func saveMuseAuth(privatePath, userPath string, original []byte) {
+	if err := writeBackMuseAuth(privatePath, userPath, original); err != nil {
+		log.Printf("muse: could not save renewed login to %s: %v", userPath, err)
+	}
+}
+
+// replaceMuseAuthIfUnchanged holds Muse's auth lock from the comparison
+// through the replacement, so a concurrent Muse login is never overwritten.
+func replaceMuseAuthIfUnchanged(userPath string, original, updated []byte) error {
+	unlock, err := lockMuseAuth(userPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := os.ReadFile(userPath)
+	if err != nil || !bytes.Equal(current, original) {
+		return err
+	}
+	return atomicfile.WriteFile(userPath, updated, atomicfile.WithPrivate())
+}
+
+const (
+	museAuthLockTimeout    = 3 * time.Second
+	museAuthLockRetryDelay = 10 * time.Millisecond
+)
+
+// lockMuseAuth takes the lock Muse holds while it writes auth.json.
+func lockMuseAuth(userPath string) (func(), error) {
+	lockPath := filepath.Join(filepath.Dir(userPath), ".auth.json.lock")
+	lock := flock.New(lockPath, flock.SetPermissions(0o600))
+	ctx, cancel := context.WithTimeout(context.Background(), museAuthLockTimeout)
+	defer cancel()
+	locked, err := lock.TryLockContext(ctx, museAuthLockRetryDelay)
+	if err == nil && !locked {
+		err = ctx.Err()
+	}
+	if err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("lock %s: %w", lockPath, err)
+	}
+	return func() { _ = lock.Close() }, nil
+}
+
+// museReadOnlySettings preserves user settings except MCP server declarations.
+func museReadOnlySettings(data []byte) ([]byte, error) {
+	var settings map[string]jsontext.Value
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("read muse settings: %w", err)
+	}
+	var version int
+	if err := json.Unmarshal(settings["schema_version"], &version); err != nil {
+		return nil, fmt.Errorf("muse settings require schema_version 1: %w", err)
+	}
+	if version != 1 {
+		return nil, fmt.Errorf("unsupported muse settings schema_version %d; expected 1", version)
+	}
+	delete(settings, "mcpServers")
+	delete(settings, "mcp_servers")
+	return json.Marshal(settings)
+}
+
+func init() { Register(NewMuseAgent("")) }

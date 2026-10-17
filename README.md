@@ -76,7 +76,7 @@ You can also choose the exact binary path with
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
+  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Muse Code.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -414,6 +414,7 @@ hook, so a configured integration never goes dark unnoticed.
 | Kilo | `npm install -g @kilocode/cli` |
 | Droid | [factory.ai](https://factory.ai/) |
 | Pi | [pi.dev](https://pi.dev/) |
+| Muse Code | [Meta installation guide](https://dev.meta.ai/docs/overview) |
 
 roborev auto-detects installed agents.
 

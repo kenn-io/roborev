@@ -87,24 +87,6 @@ func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
 	return a.clone(withClonedSessionID(sessionID))
 }
 
-// claudeEffort maps ReasoningLevel to Claude Code's --effort flag values
-func (a *ClaudeAgent) claudeEffort() string {
-	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningMax:
-		return "max"
-	case ReasoningXHigh:
-		return "xhigh"
-	case ReasoningThorough, ReasoningHigh:
-		return "high"
-	case ReasoningMedium:
-		return "medium"
-	case ReasoningFast, ReasoningLow:
-		return "low"
-	default:
-		return "" // use claude default (standard = no override)
-	}
-}
-
 func (a *ClaudeAgent) Name() string {
 	return "claude-code"
 }
@@ -237,7 +219,7 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 	}
 
 	if includeEffort {
-		if effort := a.claudeEffort(); effort != "" {
+		if effort := reasoningEffort(a.Reasoning); effort != "" {
 			args = append(args, claudeEffortFlag, effort)
 		}
 	}
@@ -344,7 +326,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Only pass --effort if the installed Claude Code supports it
-	includeEffort := a.claudeEffort() != "" && claudeSupportsEffortFlag(ctx, a.Command)
+	includeEffort := reasoningEffort(a.Reasoning) != "" && claudeSupportsEffortFlag(ctx, a.Command)
 
 	// Build args - always uses stdin piping + stream-json for non-interactive execution
 	args := a.buildArgs(agenticMode, includeEffort)
@@ -628,7 +610,7 @@ func (a *ClaudeAgent) classifyArgs(schema jsontext.Value) []string {
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	if eff := a.claudeEffort(); eff != "" {
+	if eff := reasoningEffort(a.Reasoning); eff != "" {
 		args = append(args, claudeEffortFlag, eff)
 	}
 	return args
@@ -864,7 +846,7 @@ func (a *ClaudeAgent) ReviewWithSchema(
 			)
 		}
 	}
-	includeEffort := a.claudeEffort() != "" &&
+	includeEffort := reasoningEffort(a.Reasoning) != "" &&
 		claudeSupportsEffortFlag(ctx, a.Command)
 	args := a.buildArgs(agenticMode, includeEffort)
 	if planningReadOnly(ctx) {

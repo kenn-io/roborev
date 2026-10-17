@@ -50,7 +50,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 |---------|---------|
 | `cmd/roborev/` | CLI entry point, 25+ Cobra subcommands |
 | `cmd/roborev/tui/` | Bubbletea terminal UI (queue/review/task views) |
-| `internal/agent/` | Agent interface, registry, 11 implementations |
+| `internal/agent/` | Agent interface, registry, 12 implementations |
 | `internal/config/` | Config structs, loading, 20+ Resolve* functions |
 | `internal/daemon/` | HTTP server, worker pool, CI poller, hooks, SSE |
 | `internal/storage/` | SQLite + PostgreSQL, schema migrations, job CRUD |
@@ -115,7 +115,7 @@ type Agent interface {
 
 ### Registered agents
 
-codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, grok, test
+codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, grok, muse, test
 
 ### Aliases
 
@@ -125,7 +125,7 @@ codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, gr
 
 ### Availability
 
-Agents are discovered via PATH lookup (`CommandAgent.CommandName()`). The `test` agent is always available. `GetAvailable(preferred)` walks a fallback cascade: codex → claude-code → gemini → copilot → opencode → cursor → kiro → kilo → droid → pi → grok.
+Agents are discovered via PATH lookup (`CommandAgent.CommandName()`). The `test` agent is always available. `GetAvailable(preferred)` walks a fallback cascade: codex → claude-code → gemini → copilot → opencode → cursor → kiro → kilo → droid → pi → grok → muse.
 
 ### Reasoning levels
 
