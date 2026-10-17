@@ -302,6 +302,9 @@ func (wp *WorkerPool) completeSynthesisLocked(
 			workerID, job.ID, j.Status)
 		return
 	}
+	if wp.captureSetupFinished != nil {
+		wp.captureSetupFinished()
+	}
 	wp.invalidateBudgetSpend()
 	if res.captureUsage {
 		wp.captureTokenUsageForSession(
